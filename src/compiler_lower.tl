@@ -32079,7 +32079,7 @@
   [type-env : TcTypeEnv]
   [place : AstExpr]
   [origin : AstExpr]) : ResultLowerState
-  (match (tc-move-root-projection-var-id place)
+  (match (tc-move-root-projection-var-id (tc-context-expr-bases ctx) place)
     [(TcMaybeNameId.Some root-id)
       (let
         [local-id : i64

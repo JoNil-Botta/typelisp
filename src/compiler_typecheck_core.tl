@@ -3563,6 +3563,7 @@
   (define (compiler-tc-reinfer-profile-borrow-call-info-id
     [site : String]
     [ctx : TcContext]
+    [expr-bases : i64]
     [env : TcTypeEnv]
     [func-id : i64]
     [args : AstExprList]) : ResultTcBorrowCallInfo
@@ -3571,7 +3572,7 @@
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
       [result : ResultTcBorrowCallInfo
-        (tc-borrow-call-info-id-raw ctx env func-id args)]
+        (tc-borrow-call-info-id-raw ctx expr-bases env func-id args)]
       (begin
         (compiler-tc-reinfer-profile-record
           site
@@ -20386,16 +20387,17 @@
 
 (define (tc-spmd-cpuid-like
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : AstType]
   [leaf : AstExpr]
   [subleaf : AstExpr]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-expr ctx env spmd-env leaf)
+  (match (tc-spmd-expr ctx expr-bases env spmd-env leaf)
     [(ResultTcSpmdExprInfo.Ok leaf-info)
       (match leaf-info
         [(TcSpmdExprInfo _ leaf-class leaf-env)
-          (match (tc-spmd-expr ctx env leaf-env subleaf)
+          (match (tc-spmd-expr ctx expr-bases env leaf-env subleaf)
             [(ResultTcSpmdExprInfo.Ok subleaf-info)
               (match subleaf-info
                 [(TcSpmdExprInfo _ subleaf-class subleaf-env)
@@ -24934,7 +24936,14 @@
           (let
             [place : AstExpr (ast-node-get place-box)]
             (if (and mutable allow-mut-by-value-borrow)
-              (tc-borrow-expr-with-policy ctx env mutable lifetime place true)
+              (tc-borrow-expr-with-policy
+                ctx
+                (tc-context-expr-bases ctx)
+                env
+                mutable
+                lifetime
+                place
+                true)
               (tc-expr ctx env expr)))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Box inner-box)
@@ -26599,7 +26608,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [arg : AstExpr]) : ResultTcType
-  (match (tc-borrow-place ctx env arg)
+  (match (tc-borrow-place ctx (tc-context-expr-bases ctx) env arg)
     [(ResultTcBorrowPlace.Ok place)
       (match place
         [(TcBorrowPlace lifetime referent-ty)
@@ -31814,13 +31823,14 @@
     [_ (TcNameLookup.Err "")]))
 
 (define (tc-spmd-inline-helper-from-decl
+  [expr-bases : i64]
   [name-id : i64]
   [module-id : i64]
   [decl : AstDecl]) : ResultTcSpmdInlineHelper
   (match decl
     [(AstDecl.DefFn decl-meta _ params ret body-box _)
       (let
-        [body : AstExpr (ast-node-get body-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
         (ResultTcSpmdInlineHelper.Ok
           (TcSpmdInlineHelper.Some name-id module-id params ret body)))]
     [(AstDecl.Extern _ _ (AstExternKind.Function) metadata ty)
@@ -31833,11 +31843,12 @@
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (tc-spmd-inline-helper-from-decl name-id module-id inner))]
+        (tc-spmd-inline-helper-from-decl expr-bases name-id module-id inner))]
     [_ (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))]))
 
 (define (tc-spmd-inline-helper-lookup
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [func : AstExpr]) : ResultTcSpmdInlineHelper
@@ -31870,7 +31881,11 @@
                   (tc-context-symbols ctx)
                   declaration-id)
                   [(ResultAstDecl.Ok decl)
-                    (tc-spmd-inline-helper-from-decl lookup-id module-id decl)]
+                    (tc-spmd-inline-helper-from-decl
+                      expr-bases
+                      lookup-id
+                      module-id
+                      decl)]
                   [(ResultAstDecl.Err message)
                     (ResultTcSpmdInlineHelper.Err message)]))
               (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No)))
@@ -31894,14 +31909,26 @@
     [(ResultTcEnv.Ok helper-env) helper-env]
     [(ResultTcEnv.Err _) fallback]))
 
-(define (tc-spmd-inline-helper-arg-role [spmd-env : TcSpmdEnv] [arg : AstExpr]) : TcSpmdRole
+(define (tc-spmd-inline-helper-arg-role
+  [expr-bases : i64]
+  [spmd-env : TcSpmdEnv]
+  [arg : AstExpr]) : TcSpmdRole
   (match arg
     [(AstExpr.Spanned inner-box _)
-      (tc-spmd-inline-helper-arg-role spmd-env (ast-node-get inner-box))]
+      (tc-spmd-inline-helper-arg-role
+        expr-bases
+        spmd-env
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Ann inner-box _)
-      (tc-spmd-inline-helper-arg-role spmd-env (ast-node-get inner-box))]
+      (tc-spmd-inline-helper-arg-role
+        expr-bases
+        spmd-env
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Cast inner-box _)
-      (tc-spmd-inline-helper-arg-role spmd-env (ast-node-get inner-box))]
+      (tc-spmd-inline-helper-arg-role
+        expr-bases
+        spmd-env
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Var name)
       (match (tc-spmd-env-lookup-id spmd-env name)
         [(TcSpmdLookup.Found _ _ _ role) role]
@@ -31910,6 +31937,7 @@
 
 (define (tc-spmd-inline-helper-bind-args
   [ctx : TcContext]
+  [expr-bases : i64]
   [caller-env : TcTypeEnv]
   [caller-spmd-env : TcSpmdEnv]
   [func : AstExpr]
@@ -31921,6 +31949,7 @@
   [seen-class : TcSpmdClass]) : ResultTcSpmdInlineCallState
   (tc-spmd-inline-helper-bind-args-at
     ctx
+    expr-bases
     caller-env
     caller-spmd-env
     func
@@ -31934,6 +31963,7 @@
 
 (define (tc-spmd-inline-helper-bind-args-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [caller-env : TcTypeEnv]
   [caller-spmd-env : TcSpmdEnv]
   [func : AstExpr]
@@ -31966,8 +31996,11 @@
           (struct-get args len)))]
     [else
       (let
-        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
-        (match (tc-spmd-expr ctx caller-env caller-spmd-env arg)
+        [arg : AstExpr
+          (ast-expr-segment-bases-get
+            expr-bases
+            (ast-expr-list-get args index 0))]
+        (match (tc-spmd-expr ctx expr-bases caller-env caller-spmd-env arg)
           [(ResultTcSpmdExprInfo.Ok arg-info)
             (match arg-info
               [(TcSpmdExprInfo _ arg-class next-caller-spmd-env)
@@ -31984,6 +32017,7 @@
                             (tc-type-render (tc-type-strip-region bound-ty))))
                         (tc-spmd-inline-helper-bind-args-at
                           ctx
+                          expr-bases
                           caller-env
                           next-caller-spmd-env
                           func
@@ -31995,7 +32029,10 @@
                             bound-ty
                             arg-class
                             TcSpmdScope.Local
-                            (tc-spmd-inline-helper-arg-role caller-spmd-env arg))
+                            (tc-spmd-inline-helper-arg-role
+                              expr-bases
+                              caller-spmd-env
+                              arg))
                           params
                           args
                           (+ index 1)
@@ -32005,6 +32042,7 @@
 
 (define (tc-spmd-inline-helper-body
   [ctx : TcContext]
+  [expr-bases : i64]
   [helper-env : TcTypeEnv]
   [helper-spmd-env : TcSpmdEnv]
   [name-id : i64]
@@ -32015,22 +32053,25 @@
       (ResultTcSpmdExprInfo.Err (tc-spmd-inline-helper-recursive-message))]
     (begin
       (set! tc-spmd-inline-helper-stack (tc-name-id-list-add previous name-id))
-      (set! result (tc-spmd-expr ctx helper-env helper-spmd-env body))
+      (set!
+        result
+        (tc-spmd-expr ctx expr-bases helper-env helper-spmd-env body))
       (set! tc-spmd-inline-helper-stack previous)
       result)))
 
 (define (tc-spmd-call-uniform-only
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : AstType]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-expr ctx env spmd-env func)
+  (match (tc-spmd-expr ctx expr-bases env spmd-env func)
     [(ResultTcSpmdExprInfo.Ok func-info)
       (match func-info
         [(TcSpmdExprInfo _ _ func-env)
-          (match (tc-spmd-expr-list ctx env func-env args)
+          (match (tc-spmd-expr-list ctx expr-bases env func-env args)
             [(ResultTcSpmdExprListInfo.Ok args-info)
               (match args-info
                 [(TcSpmdExprListInfo args-class args-env)
@@ -32137,6 +32178,7 @@
 
 (define (tc-spmd-imported-call
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : AstType]
@@ -32144,11 +32186,11 @@
   [callables : (& callables AstImportedSpmdCallableList)]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-expr ctx env spmd-env func)
+  (match (tc-spmd-expr ctx expr-bases env spmd-env func)
     [(ResultTcSpmdExprInfo.Ok func-info)
       (match func-info
         [(TcSpmdExprInfo _ _ func-env)
-          (match (tc-spmd-expr-list ctx env func-env args)
+          (match (tc-spmd-expr-list ctx expr-bases env func-env args)
             [(ResultTcSpmdExprListInfo.Ok args-info)
               (match args-info
                 [(TcSpmdExprListInfo args-class args-env)
@@ -32320,17 +32362,18 @@
 
 (define (tc-spmd-atomic-call-with-symbol
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : AstType]
   [func : AstExpr]
   [args : AstExprList]
   [symbol : String]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-expr ctx env spmd-env func)
+  (match (tc-spmd-expr ctx expr-bases env spmd-env func)
     [(ResultTcSpmdExprInfo.Ok func-info)
       (match func-info
         [(TcSpmdExprInfo _ _ func-env)
-          (match (tc-spmd-expr-list ctx env func-env args)
+          (match (tc-spmd-expr-list ctx expr-bases env func-env args)
             [(ResultTcSpmdExprListInfo.Ok args-info)
               (match args-info
                 [(TcSpmdExprListInfo args-class args-env)
@@ -32346,6 +32389,7 @@
 
 (define (tc-spmd-atomic-call
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : AstType]
@@ -32354,9 +32398,10 @@
   (match (tc-spmd-atomic-call-symbol ctx env spmd-env func)
     [(ResultTcString.Ok symbol)
       (if (string.eq symbol "")
-        (tc-spmd-inline-call ctx env spmd-env expr-ty func args)
+        (tc-spmd-inline-call ctx expr-bases env spmd-env expr-ty func args)
         (tc-spmd-atomic-call-with-symbol
           ctx
+          expr-bases
           env
           spmd-env
           expr-ty
@@ -32367,12 +32412,13 @@
 
 (define (tc-spmd-inline-call-inner
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : AstType]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-inline-helper-lookup ctx env spmd-env func)
+  (match (tc-spmd-inline-helper-lookup ctx expr-bases env spmd-env func)
     [(ResultTcSpmdInlineHelper.Ok helper)
       (match helper
         [(TcSpmdInlineHelper.Some name-id module-id params _ body)
@@ -32386,6 +32432,7 @@
               (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env base-env))]
             (match (tc-spmd-inline-helper-bind-args
               ctx
+              expr-bases
               env
               spmd-env
               func
@@ -32405,6 +32452,7 @@
                     (if (tc-spmd-varying? args-class)
                       (match (tc-spmd-inline-helper-body
                         helper-ctx
+                        expr-bases
                         helper-env
                         helper-spmd-env
                         name-id
@@ -32423,6 +32471,7 @@
             [callable-items : AstImportedSpmdCallableList (box-get callables)]
             (tc-spmd-imported-call
               ctx
+              expr-bases
               env
               spmd-env
               expr-ty
@@ -32431,11 +32480,19 @@
               func
               args))]
         [(TcSpmdInlineHelper.No)
-          (tc-spmd-call-uniform-only ctx env spmd-env expr-ty func args)])]
+          (tc-spmd-call-uniform-only
+            ctx
+            expr-bases
+            env
+            spmd-env
+            expr-ty
+            func
+            args)])]
     [(ResultTcSpmdInlineHelper.Err message) (ResultTcSpmdExprInfo.Err message)]))
 
 (define (tc-spmd-inline-call
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : AstType]
@@ -32445,14 +32502,22 @@
     (let
       [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-suspend!)]
       [result : ResultTcSpmdExprInfo
-        (tc-spmd-inline-call-inner ctx env spmd-env expr-ty func args)]
+        (tc-spmd-inline-call-inner
+          ctx
+          expr-bases
+          env
+          spmd-env
+          expr-ty
+          func
+          args)]
       (begin
         (tc-type-env-scoped-runtime-restore! saved)
         result))
-    (tc-spmd-inline-call-inner ctx env spmd-env expr-ty func args)))
+    (tc-spmd-inline-call-inner ctx expr-bases env spmd-env expr-ty func args)))
 
 (define (tc-spmd-masked-if-inline-helper-body
   [ctx : TcContext]
+  [expr-bases : i64]
   [helper-env : TcTypeEnv]
   [helper-spmd-env : TcSpmdEnv]
   [name-id : i64]
@@ -32463,17 +32528,20 @@
       (ResultTcUnit.Err (tc-spmd-inline-helper-recursive-message))]
     (begin
       (set! tc-spmd-inline-helper-stack (tc-name-id-list-add previous name-id))
-      (set! result (tc-spmd-masked-if-expr ctx helper-env helper-spmd-env body))
+      (set!
+        result
+        (tc-spmd-masked-if-expr ctx expr-bases helper-env helper-spmd-env body))
       (set! tc-spmd-inline-helper-stack previous)
       result)))
 
 (define (tc-spmd-masked-if-inline-call-inner
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcUnit
-  (match (tc-spmd-inline-helper-lookup ctx env spmd-env func)
+  (match (tc-spmd-inline-helper-lookup ctx expr-bases env spmd-env func)
     [(ResultTcSpmdInlineHelper.Ok helper)
       (match helper
         [(TcSpmdInlineHelper.Some name-id module-id params _ body)
@@ -32487,6 +32555,7 @@
               (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env base-env))]
             (match (tc-spmd-inline-helper-bind-args
               ctx
+              expr-bases
               env
               spmd-env
               func
@@ -32501,6 +32570,7 @@
                   [(TcSpmdInlineCallState _ helper-env helper-spmd-env _)
                     (tc-spmd-masked-if-inline-helper-body
                       helper-ctx
+                      expr-bases
                       helper-env
                       helper-spmd-env
                       name-id
@@ -32508,13 +32578,14 @@
               [(ResultTcSpmdInlineCallState.Err message)
                 (ResultTcUnit.Err message)]))]
         [(TcSpmdInlineHelper.Imported _ _)
-          (tc-spmd-masked-if-expr-list ctx env spmd-env args)]
+          (tc-spmd-masked-if-expr-list ctx expr-bases env spmd-env args)]
         [(TcSpmdInlineHelper.No)
           (tc-spmd-masked-if-unsupported "varying calls inside masked branches")])]
     [(ResultTcSpmdInlineHelper.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-spmd-masked-if-inline-call
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [func : AstExpr]
@@ -32523,14 +32594,21 @@
     (let
       [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-suspend!)]
       [result : ResultTcUnit
-        (tc-spmd-masked-if-inline-call-inner ctx env spmd-env func args)]
+        (tc-spmd-masked-if-inline-call-inner
+          ctx
+          expr-bases
+          env
+          spmd-env
+          func
+          args)]
       (begin
         (tc-type-env-scoped-runtime-restore! saved)
         result))
-    (tc-spmd-masked-if-inline-call-inner ctx env spmd-env func args)))
+    (tc-spmd-masked-if-inline-call-inner ctx expr-bases env spmd-env func args)))
 
 (define (tc-spmd-masked-if-call
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [func : AstExpr]
@@ -32539,9 +32617,10 @@
   (match (tc-spmd-atomic-call-symbol ctx env spmd-env func)
     [(ResultTcString.Ok symbol)
       (if (string.eq symbol "")
-        (tc-spmd-masked-if-inline-call ctx env spmd-env func args)
+        (tc-spmd-masked-if-inline-call ctx expr-bases env spmd-env func args)
         (match (tc-spmd-atomic-call-with-symbol
           ctx
+          expr-bases
           env
           spmd-env
           (match (tc-expr ctx env expr)
@@ -32587,10 +32666,11 @@
 
 (define (tc-spmd-foreach-uniform-offset
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]) : ResultTcUnit
-  (match (tc-spmd-expr ctx env spmd-env expr)
+  (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
     [(ResultTcSpmdExprInfo.Ok info)
       (match info
         [(TcSpmdExprInfo _ class _)
@@ -32599,20 +32679,23 @@
             ResultTcUnit.Ok)])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)]))
 
-(define (tc-spmd-foreach-direct-index [spmd-env : TcSpmdEnv] [expr : AstExpr]) : ResultTcUnit
+(define (tc-spmd-foreach-direct-index
+  [expr-bases : i64]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-foreach-direct-index spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-foreach-direct-index expr-bases spmd-env inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-foreach-direct-index spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-foreach-direct-index expr-bases spmd-env inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-foreach-direct-index spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-foreach-direct-index expr-bases spmd-env inner))]
     [(AstExpr.Var name)
       (if (tc-spmd-masked-if-index-var? spmd-env name)
         ResultTcUnit.Ok
@@ -32621,50 +32704,67 @@
 
 (define (tc-spmd-foreach-index
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-foreach-index ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-foreach-index ctx expr-bases env spmd-env inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-foreach-index ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-foreach-index ctx expr-bases env spmd-env inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-foreach-index ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-foreach-index ctx expr-bases env spmd-env inner))]
     [(AstExpr.Binary op left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
         (match op
           [(AstBinOp.Add)
-            (match (tc-spmd-foreach-direct-index spmd-env left)
+            (match (tc-spmd-foreach-direct-index expr-bases spmd-env left)
               [(ResultTcUnit.Ok)
-                (tc-spmd-foreach-uniform-offset ctx env spmd-env right)]
+                (tc-spmd-foreach-uniform-offset
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  right)]
               [(ResultTcUnit.Err _)
-                (match (tc-spmd-foreach-direct-index spmd-env right)
+                (match (tc-spmd-foreach-direct-index expr-bases spmd-env right)
                   [(ResultTcUnit.Ok)
-                    (tc-spmd-foreach-uniform-offset ctx env spmd-env left)]
+                    (tc-spmd-foreach-uniform-offset
+                      ctx
+                      expr-bases
+                      env
+                      spmd-env
+                      left)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
           [(AstBinOp.Sub)
-            (match (tc-spmd-foreach-direct-index spmd-env left)
+            (match (tc-spmd-foreach-direct-index expr-bases spmd-env left)
               [(ResultTcUnit.Ok)
-                (tc-spmd-foreach-uniform-offset ctx env spmd-env right)]
+                (tc-spmd-foreach-uniform-offset
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  right)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [_ (tc-spmd-foreach-index-unsupported)]))]
-    [_ (tc-spmd-foreach-direct-index spmd-env expr)]))
+    [_ (tc-spmd-foreach-direct-index expr-bases spmd-env expr)]))
 
 (define (tc-spmd-masked-if-uniform-offset
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]) : ResultTcUnit
-  (match (tc-spmd-expr ctx env spmd-env expr)
+  (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
     [(ResultTcSpmdExprInfo.Ok info)
       (match info
         [(TcSpmdExprInfo _ class _)
@@ -32674,20 +32774,23 @@
             ResultTcUnit.Ok)])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)]))
 
-(define (tc-spmd-masked-if-direct-index [spmd-env : TcSpmdEnv] [expr : AstExpr]) : ResultTcUnit
+(define (tc-spmd-masked-if-direct-index
+  [expr-bases : i64]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-direct-index spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-direct-index expr-bases spmd-env inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-direct-index spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-direct-index expr-bases spmd-env inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-direct-index spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-direct-index expr-bases spmd-env inner))]
     [(AstExpr.Var name)
       (if (tc-spmd-masked-if-index-var? spmd-env name)
         ResultTcUnit.Ok
@@ -32699,45 +32802,64 @@
 
 (define (tc-spmd-masked-if-index
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-index ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-index ctx expr-bases env spmd-env inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-index ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-index ctx expr-bases env spmd-env inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-index ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-index ctx expr-bases env spmd-env inner))]
     [(AstExpr.Binary op left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
         (match op
           [(AstBinOp.Add)
-            (match (tc-spmd-masked-if-direct-index spmd-env left)
+            (match (tc-spmd-masked-if-direct-index expr-bases spmd-env left)
               [(ResultTcUnit.Ok)
-                (tc-spmd-masked-if-uniform-offset ctx env spmd-env right)]
+                (tc-spmd-masked-if-uniform-offset
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  right)]
               [(ResultTcUnit.Err _)
-                (match (tc-spmd-masked-if-direct-index spmd-env right)
+                (match (tc-spmd-masked-if-direct-index
+                  expr-bases
+                  spmd-env
+                  right)
                   [(ResultTcUnit.Ok)
-                    (tc-spmd-masked-if-uniform-offset ctx env spmd-env left)]
+                    (tc-spmd-masked-if-uniform-offset
+                      ctx
+                      expr-bases
+                      env
+                      spmd-env
+                      left)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
           [(AstBinOp.Sub)
-            (match (tc-spmd-masked-if-direct-index spmd-env left)
+            (match (tc-spmd-masked-if-direct-index expr-bases spmd-env left)
               [(ResultTcUnit.Ok)
-                (tc-spmd-masked-if-uniform-offset ctx env spmd-env right)]
+                (tc-spmd-masked-if-uniform-offset
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  right)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [_
             (tc-spmd-masked-if-unsupported
               "gather/scatter-like array indexes; use the foreach index plus a uniform offset")]))]
-    [_ (tc-spmd-masked-if-direct-index spmd-env expr)]))
+    [_ (tc-spmd-masked-if-direct-index expr-bases spmd-env expr)]))
 
 (define (tc-spmd-masked-if-lane-type-ok [ty : AstType]) : ResultTcUnit
   (if (tc-spmd-lane-type-supported? ty)
@@ -32749,13 +32871,15 @@
 
 (define (tc-spmd-masked-if-expr-list
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : AstExprList]) : ResultTcUnit
-  (tc-spmd-masked-if-expr-list-at ctx env spmd-env (& exprs) 0))
+  (tc-spmd-masked-if-expr-list-at ctx expr-bases env spmd-env (& exprs) 0))
 
 (define (tc-spmd-masked-if-expr-list-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : (& exprs AstExprList)]
@@ -32764,23 +32888,39 @@
     ResultTcUnit.Ok
     (match (tc-spmd-masked-if-expr
       ctx
+      expr-bases
       env
       spmd-env
-      (ast-node-get (ast-expr-list-get exprs index 0)))
+      (ast-expr-segment-bases-get expr-bases (ast-expr-list-get exprs index 0)))
       [(ResultTcUnit.Ok)
-        (tc-spmd-masked-if-expr-list-at ctx env spmd-env exprs (+ index 1))]
+        (tc-spmd-masked-if-expr-list-at
+          ctx
+          expr-bases
+          env
+          spmd-env
+          exprs
+          (+ index 1))]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-spmd-masked-if-let-bindings
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
   [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
-  (tc-spmd-masked-if-let-bindings-at ctx env spmd-env (& bindings) mark 0))
+  (tc-spmd-masked-if-let-bindings-at
+    ctx
+    expr-bases
+    env
+    spmd-env
+    (& bindings)
+    mark
+    0))
 
 (define (tc-spmd-masked-if-let-bindings-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : (& bindings AstLetBindingList)]
@@ -32791,10 +32931,10 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          (match (tc-spmd-masked-if-expr ctx env spmd-env init)
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env init)
             [(ResultTcUnit.Ok)
-              (match (tc-spmd-expr ctx env spmd-env init)
+              (match (tc-spmd-expr ctx expr-bases env spmd-env init)
                 [(ResultTcSpmdExprInfo.Ok info)
                   (match info
                     [(TcSpmdExprInfo init-ty init-class next-spmd-env)
@@ -32808,6 +32948,7 @@
                             [(AstMaybeType.No) init-ty])]
                         (tc-spmd-masked-if-let-bindings-at
                           ctx
+                          expr-bases
                           (tc-bind-id env name bound-ty)
                           (tc-spmd-env-bind-id
                             next-spmd-env
@@ -32824,43 +32965,46 @@
 
 (define (tc-spmd-masked-if-expr
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-expr ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-expr ctx expr-bases env spmd-env inner))]
     [(AstExpr.Literal _) ResultTcUnit.Ok]
     [(AstExpr.Var _) ResultTcUnit.Ok]
     [(AstExpr.TypeLiteral _) ResultTcUnit.Ok]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-expr ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-expr ctx expr-bases env spmd-env inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-expr ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-expr ctx expr-bases env spmd-env inner))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-masked-if-expr ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-masked-if-expr ctx expr-bases env spmd-env inner))]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
-        (match (tc-spmd-masked-if-expr ctx env spmd-env left)
-          [(ResultTcUnit.Ok) (tc-spmd-masked-if-expr ctx env spmd-env right)]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env left)
+          [(ResultTcUnit.Ok)
+            (tc-spmd-masked-if-expr ctx expr-bases env spmd-env right)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (tc-spmd-masked-if-let-bindings
               ctx
+              expr-bases
               env
               spmd-env
               bindings
@@ -32868,28 +33012,39 @@
               [(ResultTcSpmdLetState.Ok state)
                 (match state
                   [(TcSpmdLetState body-env body-spmd-env _)
-                    (tc-spmd-masked-if-expr ctx body-env body-spmd-env body)])]
+                    (tc-spmd-masked-if-expr
+                      ctx
+                      expr-bases
+                      body-env
+                      body-spmd-env
+                      body)])]
               [(ResultTcSpmdLetState.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.If cond-box then-box else-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-box)]
-        [else-branch : AstExpr (ast-node-get else-box)]
-        (match (tc-spmd-masked-if-expr ctx env spmd-env cond)
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr (ast-expr-segment-bases-get expr-bases then-box)]
+        [else-branch : AstExpr (ast-expr-segment-bases-get expr-bases else-box)]
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env cond)
           [(ResultTcUnit.Ok)
-            (match (tc-spmd-masked-if-expr ctx env spmd-env then-branch)
+            (match (tc-spmd-masked-if-expr
+              ctx
+              expr-bases
+              env
+              spmd-env
+              then-branch)
               [(ResultTcUnit.Ok)
-                (tc-spmd-masked-if-expr ctx env spmd-env else-branch)]
+                (tc-spmd-masked-if-expr ctx expr-bases env spmd-env else-branch)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstExpr.Begin exprs) (tc-spmd-masked-if-expr-list ctx env spmd-env exprs)]
+    [(AstExpr.Begin exprs)
+      (tc-spmd-masked-if-expr-list ctx expr-bases env spmd-env exprs)]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-spmd-masked-if-expr ctx env spmd-env array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env array)
           [(ResultTcUnit.Ok)
-            (match (tc-spmd-masked-if-index ctx env spmd-env index)
+            (match (tc-spmd-masked-if-index ctx expr-bases env spmd-env index)
               [(ResultTcUnit.Ok)
                 (match (tc-expr ctx env expr)
                   [(ResultTcType.Ok ty) (tc-spmd-masked-if-lane-type-ok ty)]
@@ -32898,14 +33053,19 @@
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-masked-if-expr ctx env spmd-env array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env array)
           [(ResultTcUnit.Ok)
-            (match (tc-spmd-masked-if-index ctx env spmd-env index)
+            (match (tc-spmd-masked-if-index ctx expr-bases env spmd-env index)
               [(ResultTcUnit.Ok)
-                (match (tc-spmd-masked-if-expr ctx env spmd-env value)
+                (match (tc-spmd-masked-if-expr
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  value)
                   [(ResultTcUnit.Ok)
                     (match (tc-expr ctx env value)
                       [(ResultTcType.Ok ty) (tc-spmd-masked-if-lane-type-ok ty)]
@@ -32918,11 +33078,12 @@
         "typecheck: array-take! is not supported in masked spmd control flow")]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-masked-if-expr ctx env spmd-env receiver)
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env receiver)
           [(ResultTcUnit.Ok)
-            (match (tc-spmd-masked-if-expr ctx env spmd-env value)
+            (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env value)
               [(ResultTcUnit.Ok)
                 (match (tc-expr ctx env value)
                   [(ResultTcType.Ok ty) (tc-spmd-masked-if-lane-type-ok ty)]
@@ -32931,22 +33092,22 @@
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
-        (tc-spmd-masked-if-call ctx env spmd-env func args expr))]
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
+        (tc-spmd-masked-if-call ctx expr-bases env spmd-env func args expr))]
     [(AstExpr.Syscall _)
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (tc-spmd-masked-if-expr ctx env spmd-env cond)
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env cond)
           [(ResultTcUnit.Ok)
-            (match (tc-spmd-expr ctx env spmd-env cond)
+            (match (tc-spmd-expr ctx expr-bases env spmd-env cond)
               [(ResultTcSpmdExprInfo.Ok cond-info)
                 (match cond-info
                   [(TcSpmdExprInfo _ cond-class cond-env)
                     (if (tc-spmd-varying? cond-class)
-                      (tc-spmd-masked-if-expr ctx env cond-env body)
+                      (tc-spmd-masked-if-expr ctx expr-bases env cond-env body)
                       (tc-spmd-masked-if-unsupported
                         "uniform while inside masked branches"))])]
               [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)])]
@@ -32956,9 +33117,10 @@
         [(AstMatch.Match scrutinee-box arms)
           (tc-spmd-masked-if-match
             ctx
+            expr-bases
             env
             spmd-env
-            (ast-node-get scrutinee-box)
+            (ast-expr-segment-bases-get expr-bases scrutinee-box)
             arms)])]
     [(AstExpr.Foreach _)
       (tc-spmd-masked-if-unsupported "nested foreach inside masked branches")]
@@ -33017,6 +33179,7 @@
 
 (define (tc-spmd-masked-if
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : AstType]
@@ -33024,9 +33187,14 @@
   [else-branch : AstExpr]) : ResultTcSpmdExprInfo
   (match (tc-spmd-masked-if-result-type-ok expr-ty)
     [(ResultTcUnit.Ok)
-      (match (tc-spmd-masked-if-expr ctx env spmd-env then-branch)
+      (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env then-branch)
         [(ResultTcUnit.Ok)
-          (match (tc-spmd-masked-if-expr ctx env spmd-env else-branch)
+          (match (tc-spmd-masked-if-expr
+            ctx
+            expr-bases
+            env
+            spmd-env
+            else-branch)
             [(ResultTcUnit.Ok)
               (match (tc-type-strip-region expr-ty)
                 [(AstType.Unit)
@@ -33038,14 +33206,16 @@
 
 (define (tc-spmd-let-bindings
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
   [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
-  (tc-spmd-let-bindings-at ctx env spmd-env (& bindings) mark 0))
+  (tc-spmd-let-bindings-at ctx expr-bases env spmd-env (& bindings) mark 0))
 
 (define (tc-spmd-let-bindings-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : (& bindings AstLetBindingList)]
@@ -33056,8 +33226,8 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          (match (tc-spmd-expr ctx env spmd-env init)
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (match (tc-spmd-expr ctx expr-bases env spmd-env init)
             [(ResultTcSpmdExprInfo.Ok info)
               (match info
                 [(TcSpmdExprInfo init-ty init-class next-spmd-env)
@@ -33071,6 +33241,7 @@
                         [(AstMaybeType.No) init-ty])]
                     (tc-spmd-let-bindings-at
                       ctx
+                      expr-bases
                       (tc-bind-id env name bound-ty)
                       (tc-spmd-env-bind-id
                         next-spmd-env
@@ -33086,13 +33257,15 @@
 
 (define (tc-spmd-expr-list
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : AstExprList]) : ResultTcSpmdExprListInfo
-  (tc-spmd-expr-list-at ctx env spmd-env (& exprs) 0))
+  (tc-spmd-expr-list-at ctx expr-bases env spmd-env (& exprs) 0))
 
 (define (tc-spmd-expr-list-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : (& exprs AstExprList)]
@@ -33101,13 +33274,17 @@
     (ResultTcSpmdExprListInfo.Ok
       (TcSpmdExprListInfo TcSpmdClass.Uniform spmd-env))
     (let
-      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
-      (match (tc-spmd-expr ctx env spmd-env expr)
+      [expr : AstExpr
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))]
+      (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
         [(ResultTcSpmdExprInfo.Ok info)
           (match info
             [(TcSpmdExprInfo _ class next-spmd-env)
               (match (tc-spmd-expr-list-at
                 ctx
+                expr-bases
                 env
                 next-spmd-env
                 exprs
@@ -33126,13 +33303,15 @@
 
 (define (tc-spmd-begin-list
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : AstExprList]) : ResultTcSpmdExprInfo
-  (tc-spmd-begin-list-at ctx env spmd-env (& exprs) 0))
+  (tc-spmd-begin-list-at ctx expr-bases env spmd-env (& exprs) 0))
 
 (define (tc-spmd-begin-list-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [exprs : (& exprs AstExprList)]
@@ -33141,14 +33320,23 @@
     (ResultTcSpmdExprInfo.Ok
       (TcSpmdExprInfo (AstType.Unit) TcSpmdClass.Uniform spmd-env))
     (let
-      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      [expr : AstExpr
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))]
       (if (= (+ index 1) (struct-get exprs len))
-        (tc-spmd-expr ctx env spmd-env expr)
-        (match (tc-spmd-expr ctx env spmd-env expr)
+        (tc-spmd-expr ctx expr-bases env spmd-env expr)
+        (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ _ next-spmd-env)
-                (tc-spmd-begin-list-at ctx env next-spmd-env exprs (+ index 1))])]
+                (tc-spmd-begin-list-at
+                  ctx
+                  expr-bases
+                  env
+                  next-spmd-env
+                  exprs
+                  (+ index 1))])]
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)])))))
 
@@ -33216,6 +33404,7 @@
 
 (define (tc-spmd-masked-if-match-arms
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [scrut-ty : AstType]
@@ -33223,6 +33412,7 @@
   [arms : AstMatchArmList]) : ResultTcUnit
   (tc-spmd-masked-if-match-arms-at
     ctx
+    expr-bases
     env
     spmd-env
     scrut-ty
@@ -33232,6 +33422,7 @@
 
 (define (tc-spmd-masked-if-match-arms-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [scrut-ty : AstType]
@@ -33243,7 +33434,7 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
           (match (tc-bind-match-pattern ctx env scrut-ty pattern)
             [(ResultTcEnv.Ok arm-env)
               (match (tc-spmd-match-bind-pattern-names
@@ -33252,10 +33443,16 @@
                 (tc-spmd-pattern-bound-names ctx scrut-ty pattern)
                 scrut-class)
                 [(ResultTcSpmdEnv.Ok arm-spmd-env)
-                  (match (tc-spmd-masked-if-expr ctx arm-env arm-spmd-env body)
+                  (match (tc-spmd-masked-if-expr
+                    ctx
+                    expr-bases
+                    arm-env
+                    arm-spmd-env
+                    body)
                     [(ResultTcUnit.Ok)
                       (tc-spmd-masked-if-match-arms-at
                         ctx
+                        expr-bases
                         env
                         spmd-env
                         scrut-ty
@@ -33268,18 +33465,20 @@
 
 (define (tc-spmd-masked-if-match
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]) : ResultTcUnit
-  (match (tc-spmd-masked-if-expr ctx env spmd-env scrutinee)
+  (match (tc-spmd-masked-if-expr ctx expr-bases env spmd-env scrutinee)
     [(ResultTcUnit.Ok)
-      (match (tc-spmd-expr ctx env spmd-env scrutinee)
+      (match (tc-spmd-expr ctx expr-bases env spmd-env scrutinee)
         [(ResultTcSpmdExprInfo.Ok scrut-info)
           (match scrut-info
             [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
               (tc-spmd-masked-if-match-arms
                 ctx
+                expr-bases
                 env
                 scrut-env
                 scrut-ty
@@ -33290,16 +33489,27 @@
 
 (define (tc-spmd-match-arms
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [scrut-ty : AstType]
   [scrut-class : TcSpmdClass]
   [arms : AstMatchArmList]
   [class : TcSpmdClass]) : ResultTcSpmdExprListInfo
-  (tc-spmd-match-arms-at ctx env spmd-env scrut-ty scrut-class (& arms) class 0))
+  (tc-spmd-match-arms-at
+    ctx
+    expr-bases
+    env
+    spmd-env
+    scrut-ty
+    scrut-class
+    (& arms)
+    class
+    0))
 
 (define (tc-spmd-match-arms-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [scrut-ty : AstType]
@@ -33312,7 +33522,7 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
           [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
           (match (tc-bind-match-pattern ctx env scrut-ty pattern)
             [(ResultTcEnv.Ok arm-env)
@@ -33322,12 +33532,13 @@
                 (tc-spmd-pattern-bound-names ctx scrut-ty pattern)
                 scrut-class)
                 [(ResultTcSpmdEnv.Ok arm-spmd-env)
-                  (match (tc-spmd-expr ctx arm-env arm-spmd-env body)
+                  (match (tc-spmd-expr ctx expr-bases arm-env arm-spmd-env body)
                     [(ResultTcSpmdExprInfo.Ok body-info)
                       (match body-info
                         [(TcSpmdExprInfo _ body-class body-env)
                           (match (tc-spmd-match-arms-at
                             ctx
+                            expr-bases
                             env
                             spmd-env
                             scrut-ty
@@ -33354,6 +33565,7 @@
 
 (define (tc-spmd-check-foreach-body-with-env
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [index-id : i64]
@@ -33374,7 +33586,7 @@
       (tc-spmd-inline-helper-stack-reset!)
       (set!
         result
-        (match (tc-spmd-expr ctx body-env body-spmd-env body)
+        (match (tc-spmd-expr ctx expr-bases body-env body-spmd-env body)
           [(ResultTcSpmdExprInfo.Ok _) ResultTcUnit.Ok]
           [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)]))
       (tc-spmd-inline-helper-stack-reset!)
@@ -33382,50 +33594,62 @@
 
 (define (tc-spmd-check-foreach-body
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [index-id : i64]
   [index-ty : AstType]
   [body : AstExpr]) : ResultTcUnit
   (tc-spmd-check-foreach-body-with-env
     ctx
+    expr-bases
     env
     (tc-spmd-env-from-type-env env)
     index-id
     index-ty
     body))
 
-(define (tc-spmd-scan-body-no-nested-list [exprs : AstExprList]) : ResultTcUnit
-  (tc-spmd-scan-body-no-nested-list-at (& exprs) 0))
+(define (tc-spmd-scan-body-no-nested-list
+  [expr-bases : i64]
+  [exprs : AstExprList]) : ResultTcUnit
+  (tc-spmd-scan-body-no-nested-list-at expr-bases (& exprs) 0))
 
 (define (tc-spmd-scan-body-no-nested-list-at
+  [expr-bases : i64]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : ResultTcUnit
   (if (>= index (struct-get exprs len))
     ResultTcUnit.Ok
     (match (tc-spmd-scan-body-no-nested-spmd
-      (ast-node-get (ast-expr-list-get exprs index 0)))
+      expr-bases
+      (ast-expr-segment-bases-get expr-bases (ast-expr-list-get exprs index 0)))
       [(ResultTcUnit.Ok)
-        (tc-spmd-scan-body-no-nested-list-at exprs (+ index 1))]
+        (tc-spmd-scan-body-no-nested-list-at expr-bases exprs (+ index 1))]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
-(define (tc-spmd-scan-body-no-nested-pair [left : AstExpr] [right : AstExpr]) : ResultTcUnit
-  (match (tc-spmd-scan-body-no-nested-spmd left)
-    [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-spmd right)]
+(define (tc-spmd-scan-body-no-nested-pair
+  [expr-bases : i64]
+  [left : AstExpr]
+  [right : AstExpr]) : ResultTcUnit
+  (match (tc-spmd-scan-body-no-nested-spmd expr-bases left)
+    [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-spmd expr-bases right)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-spmd-scan-body-no-nested-triple
+  [expr-bases : i64]
   [first : AstExpr]
   [second : AstExpr]
   [third : AstExpr]) : ResultTcUnit
-  (match (tc-spmd-scan-body-no-nested-pair first second)
-    [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-spmd third)]
+  (match (tc-spmd-scan-body-no-nested-pair expr-bases first second)
+    [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-spmd expr-bases third)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-spmd-scan-body-no-nested-let-bindings
+  [expr-bases : i64]
   [bindings : AstLetBindingList]) : ResultTcUnit
-  (tc-spmd-scan-body-no-nested-let-bindings-at (& bindings) 0))
+  (tc-spmd-scan-body-no-nested-let-bindings-at expr-bases (& bindings) 0))
 
 (define (tc-spmd-scan-body-no-nested-let-bindings-at
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [index : i64]) : ResultTcUnit
   (if (>= index (ast-let-binding-list-len bindings))
@@ -33433,17 +33657,22 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding _ _ init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          (match (tc-spmd-scan-body-no-nested-spmd init)
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (match (tc-spmd-scan-body-no-nested-spmd expr-bases init)
             [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-let-bindings-at bindings (+ index 1))]
+              (tc-spmd-scan-body-no-nested-let-bindings-at
+                expr-bases
+                bindings
+                (+ index 1))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-spmd-scan-body-no-nested-resource-bindings
+  [expr-bases : i64]
   [bindings : AstResourceBindingList]) : ResultTcUnit
-  (tc-spmd-scan-body-no-nested-resource-bindings-at (& bindings) 0))
+  (tc-spmd-scan-body-no-nested-resource-bindings-at expr-bases (& bindings) 0))
 
 (define (tc-spmd-scan-body-no-nested-resource-bindings-at
+  [expr-bases : i64]
   [bindings : (& bindings AstResourceBindingList)]
   [index : i64]) : ResultTcUnit
   (if (>= index (ast-resource-binding-list-len bindings))
@@ -33454,19 +33683,24 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
-          (match (tc-spmd-scan-body-no-nested-pair init cleanup)
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
+          (match (tc-spmd-scan-body-no-nested-pair expr-bases init cleanup)
             [(ResultTcUnit.Ok)
               (tc-spmd-scan-body-no-nested-resource-bindings-at
+                expr-bases
                 bindings
                 (+ index 1))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
-(define (tc-spmd-scan-body-no-nested-arms [arms : AstMatchArmList]) : ResultTcUnit
-  (tc-spmd-scan-body-no-nested-arms-at (& arms) 0))
+(define (tc-spmd-scan-body-no-nested-arms
+  [expr-bases : i64]
+  [arms : AstMatchArmList]) : ResultTcUnit
+  (tc-spmd-scan-body-no-nested-arms-at expr-bases (& arms) 0))
 
 (define (tc-spmd-scan-body-no-nested-arms-at
+  [expr-bases : i64]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : ResultTcUnit
   (if (>= index (struct-get arms len))
@@ -33474,92 +33708,125 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
-          (match (tc-spmd-scan-body-no-nested-spmd body)
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+          (match (tc-spmd-scan-body-no-nested-spmd expr-bases body)
             [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-arms-at arms (+ index 1))]
+              (tc-spmd-scan-body-no-nested-arms-at expr-bases arms (+ index 1))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
-(define (tc-spmd-scan-body-no-nested-spmd [expr : AstExpr]) : ResultTcUnit
+(define (tc-spmd-scan-body-no-nested-spmd [expr-bases : i64] [expr : AstExpr]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Binary _ left-box right-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get left-box)
-        (ast-node-get right-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases left-box)
+        (ast-expr-segment-bases-get expr-bases right-box))]
     [(AstExpr.Unary _ inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Call func-box args)
-      (match (tc-spmd-scan-body-no-nested-spmd (ast-node-get func-box))
-        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list args)]
+      (match (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases func-box))
+        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list expr-bases args)]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(AstExpr.If cond-box then-box else-box)
       (tc-spmd-scan-body-no-nested-triple
-        (ast-node-get cond-box)
-        (ast-node-get then-box)
-        (ast-node-get else-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases cond-box)
+        (ast-expr-segment-bases-get expr-bases then-box)
+        (ast-expr-segment-bases-get expr-bases else-box))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
-          (match (tc-spmd-scan-body-no-nested-let-bindings bindings)
+          (match (tc-spmd-scan-body-no-nested-let-bindings expr-bases bindings)
             [(ResultTcUnit.Ok)
-              (tc-spmd-scan-body-no-nested-spmd (ast-node-get body-box))]
+              (tc-spmd-scan-body-no-nested-spmd
+                expr-bases
+                (ast-expr-segment-bases-get expr-bases body-box))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda _ _ body-box)
-          (tc-spmd-scan-body-no-nested-spmd (ast-node-get body-box))])]
-    [(AstExpr.Tuple exprs) (tc-spmd-scan-body-no-nested-list exprs)]
+          (tc-spmd-scan-body-no-nested-spmd
+            expr-bases
+            (ast-expr-segment-bases-get expr-bases body-box))])]
+    [(AstExpr.Tuple exprs) (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
     [(AstExpr.TupleRef tuple-box index-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get tuple-box)
-        (ast-node-get index-box))]
-    [(AstExpr.Array exprs) (tc-spmd-scan-body-no-nested-list exprs)]
-    [(AstExpr.DynArray exprs) (tc-spmd-scan-body-no-nested-list exprs)]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases tuple-box)
+        (ast-expr-segment-bases-get expr-bases index-box))]
+    [(AstExpr.Array exprs) (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
+    [(AstExpr.DynArray exprs)
+      (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
     [(AstExpr.MakeArray _ len-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get len-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases len-box))]
     [(AstExpr.ArrayRef array-box index-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get array-box)
-        (ast-node-get index-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases array-box)
+        (ast-expr-segment-bases-get expr-bases index-box))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (tc-spmd-scan-body-no-nested-triple
-        (ast-node-get array-box)
-        (ast-node-get index-box)
-        (ast-node-get value-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases array-box)
+        (ast-expr-segment-bases-get expr-bases index-box)
+        (ast-expr-segment-bases-get expr-bases value-box))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (tc-spmd-scan-body-no-nested-triple
-        (ast-node-get array-box)
-        (ast-node-get live-box)
-        (ast-node-get index-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases array-box)
+        (ast-expr-segment-bases-get expr-bases live-box)
+        (ast-expr-segment-bases-get expr-bases index-box))]
     [(AstExpr.ArrayPush array-box value-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get array-box)
-        (ast-node-get value-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases array-box)
+        (ast-expr-segment-bases-get expr-bases value-box))]
     [(AstExpr.StringRef str-box index-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get str-box)
-        (ast-node-get index-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases str-box)
+        (ast-expr-segment-bases-get expr-bases index-box))]
     [(AstExpr.While cond-box body-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get cond-box)
-        (ast-node-get body-box))]
-    [(AstExpr.Begin exprs) (tc-spmd-scan-body-no-nested-list exprs)]
-    [(AstExpr.Unsafe exprs) (tc-spmd-scan-body-no-nested-list exprs)]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases cond-box)
+        (ast-expr-segment-bases-get expr-bases body-box))]
+    [(AstExpr.Begin exprs) (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
+    [(AstExpr.Unsafe exprs) (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
     [(AstExpr.Set _ value-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get value-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases value-box))]
     [(AstExpr.Ann inner-box _)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Cast inner-box _)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Borrow _ _ place-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get place-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases place-box))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
-          (match (tc-spmd-scan-body-no-nested-spmd (ast-node-get scrutinee-box))
-            [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-arms arms)]
+          (match (tc-spmd-scan-body-no-nested-spmd
+            expr-bases
+            (ast-expr-segment-bases-get expr-bases scrutinee-box))
+            [(ResultTcUnit.Ok)
+              (tc-spmd-scan-body-no-nested-arms expr-bases arms)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(AstExpr.Foreach _)
       (ResultTcUnit.Err
@@ -33572,12 +33839,14 @@
         "typecheck: nested spmd-scan inside spmd-scan is not supported")]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get value-box)
-        (ast-node-get lane-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases value-box)
+        (ast-expr-segment-bases-get expr-bases lane-box))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get value-box)
-        (ast-node-get lane-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases value-box)
+        (ast-expr-segment-bases-get expr-bases lane-box))]
     [(AstExpr.SpmdProgramIndex)
       (ResultTcUnit.Err
         "typecheck: program-index is not supported inside spmd-scan body")]
@@ -33585,99 +33854,153 @@
       (ResultTcUnit.Err
         "typecheck: program-count is not supported inside spmd-scan body")]
     [(AstExpr.StructGet receiver-box _)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get receiver-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases receiver-box))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get receiver-box)
-        (ast-node-get value-box))]
-    [(AstExpr.WithRegion _ body) (tc-spmd-scan-body-no-nested-list body)]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases receiver-box)
+        (ast-expr-segment-bases-get expr-bases value-box))]
+    [(AstExpr.WithRegion _ body)
+      (tc-spmd-scan-body-no-nested-list expr-bases body)]
     [(AstExpr.WithEscape scratch-box body)
-      (match (tc-spmd-scan-body-no-nested-spmd (ast-node-get scratch-box))
-        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list body)]
+      (match (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases scratch-box))
+        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list expr-bases body)]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(AstExpr.WithScratch body) (tc-spmd-scan-body-no-nested-list body)]
+    [(AstExpr.WithScratch body)
+      (tc-spmd-scan-body-no-nested-list expr-bases body)]
     [(AstExpr.InArena arena-box body)
-      (match (tc-spmd-scan-body-no-nested-spmd (ast-node-get arena-box))
-        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list body)]
+      (match (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases arena-box))
+        [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list expr-bases body)]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
-          (match (tc-spmd-scan-body-no-nested-resource-bindings bindings)
-            [(ResultTcUnit.Ok) (tc-spmd-scan-body-no-nested-list body)]
+          (match (tc-spmd-scan-body-no-nested-resource-bindings
+            expr-bases
+            bindings)
+            [(ResultTcUnit.Ok)
+              (tc-spmd-scan-body-no-nested-list expr-bases body)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(AstExpr.Box inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.BoxGet inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.BoxTake inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.BoxSet inner-box value-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get inner-box)
-        (ast-node-get value-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box)
+        (ast-expr-segment-bases-get expr-bases value-box))]
     [(AstExpr.Comptime inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Quote _) ResultTcUnit.Ok]
     [(AstExpr.Quasiquote _) ResultTcUnit.Ok]
     [(AstExpr.Unquote inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.UnquoteSplicing inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
-    [(AstExpr.BracketClause items) (tc-spmd-scan-body-no-nested-list items)]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
+    [(AstExpr.BracketClause items)
+      (tc-spmd-scan-body-no-nested-list expr-bases items)]
     [(AstExpr.Try inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Return inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.PtrNullCheck inner-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get inner-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.PtrRead ptr-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get ptr-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases ptr-box))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get ptr-box)
-        (ast-node-get value-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases ptr-box)
+        (ast-expr-segment-bases-get expr-bases value-box))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get ptr-box)
-        (ast-node-get offset-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases ptr-box)
+        (ast-expr-segment-bases-get expr-bases offset-box))]
     [(AstExpr.PtrCast ptr-box _)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get ptr-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases ptr-box))]
     [(AstExpr.PtrToInt ptr-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get ptr-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases ptr-box))]
     [(AstExpr.IntToPtr value-box _)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get value-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases value-box))]
     [(AstExpr.StringData str-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get str-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases str-box))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get ptr-box)
-        (ast-node-get len-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases ptr-box)
+        (ast-expr-segment-bases-get expr-bases len-box))]
     [(AstExpr.ArrayData array-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get array-box))]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases array-box))]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get leaf-box)
-        (ast-node-get subleaf-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases leaf-box)
+        (ast-expr-segment-bases-get expr-bases subleaf-box))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get leaf-box)
-        (ast-node-get subleaf-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases leaf-box)
+        (ast-expr-segment-bases-get expr-bases subleaf-box))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get leaf-box)
-        (ast-node-get subleaf-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases leaf-box)
+        (ast-expr-segment-bases-get expr-bases subleaf-box))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (tc-spmd-scan-body-no-nested-pair
-        (ast-node-get leaf-box)
-        (ast-node-get subleaf-box))]
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases leaf-box)
+        (ast-expr-segment-bases-get expr-bases subleaf-box))]
     [(AstExpr.Xgetbv index-box)
-      (tc-spmd-scan-body-no-nested-spmd (ast-node-get index-box))]
-    [(AstExpr.Syscall args) (tc-spmd-scan-body-no-nested-list args)]
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases index-box))]
+    [(AstExpr.Syscall args) (tc-spmd-scan-body-no-nested-list expr-bases args)]
     [_ ResultTcUnit.Ok]))
 
 (define (tc-spmd-check-scan-body
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [index-id : i64]
   [index-ty : AstType]
@@ -33705,13 +34028,13 @@
         TcSpmdClass.Varying
         TcSpmdScope.Local)]
     [result : ResultTcUnit ResultTcUnit.Ok]
-    (match (tc-spmd-scan-body-no-nested-spmd body)
+    (match (tc-spmd-scan-body-no-nested-spmd expr-bases body)
       [(ResultTcUnit.Ok)
         (begin
           (tc-spmd-inline-helper-stack-reset!)
           (set!
             result
-            (match (tc-spmd-expr ctx body-env body-spmd-env body)
+            (match (tc-spmd-expr ctx expr-bases body-env body-spmd-env body)
               [(ResultTcSpmdExprInfo.Ok _) ResultTcUnit.Ok]
               [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)]))
           (tc-spmd-inline-helper-stack-reset!)
@@ -33734,11 +34057,12 @@
 
 (define (tc-spmd-reduce-class-with-expected-or-actual
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]
   [expected : AstType]) : ResultTcSpmdExprInfo
-  (match (tc-spmd-reduce-class ctx env spmd-env expr)
+  (match (tc-spmd-reduce-class ctx expr-bases env spmd-env expr)
     [(ResultTcSpmdExprInfo.Ok info)
       (match info
         [(TcSpmdExprInfo _ class next-spmd-env)
@@ -33749,14 +34073,23 @@
 
 (define (tc-spmd-reduce-let-bindings
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
   [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
-  (tc-spmd-reduce-let-bindings-at ctx env spmd-env (& bindings) mark 0))
+  (tc-spmd-reduce-let-bindings-at
+    ctx
+    expr-bases
+    env
+    spmd-env
+    (& bindings)
+    mark
+    0))
 
 (define (tc-spmd-reduce-let-bindings-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : (& bindings AstLetBindingList)]
@@ -33767,8 +34100,8 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          (match (tc-spmd-reduce-class ctx env spmd-env init)
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (match (tc-spmd-reduce-class ctx expr-bases env spmd-env init)
             [(ResultTcSpmdExprInfo.Ok info)
               (match info
                 [(TcSpmdExprInfo init-ty init-class next-spmd-env)
@@ -33782,6 +34115,7 @@
                         [(AstMaybeType.No) init-ty])]
                     (tc-spmd-reduce-let-bindings-at
                       ctx
+                      expr-bases
                       (tc-bind-id env name bound-ty)
                       (tc-spmd-env-bind-id
                         next-spmd-env
@@ -33797,14 +34131,15 @@
 
 (define (tc-spmd-reduce-class
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]) : ResultTcSpmdExprInfo
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-reduce-class ctx env spmd-env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-reduce-class ctx expr-bases env spmd-env inner))]
     [(AstExpr.Literal _)
       (tc-spmd-reduce-class-finish ctx env spmd-env expr TcSpmdClass.Uniform)]
     [(AstExpr.SpmdProgramIndex)
@@ -33815,7 +34150,12 @@
       (if (tc-dotted-local-field-name-id? env name)
         (match (tc-dotted-local-field-expr-id env name)
           [(ResultTcExprId.Ok virtual-id)
-            (tc-spmd-reduce-class ctx env spmd-env (ast-node-get virtual-id))]
+            (tc-spmd-reduce-class
+              ctx
+              expr-bases
+              env
+              spmd-env
+              (ast-expr-segment-bases-get expr-bases virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
         (match (tc-spmd-env-lookup-id spmd-env name)
           [(TcSpmdLookup.Found _ class _ _)
@@ -33829,13 +34169,13 @@
               TcSpmdClass.Uniform)]))]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
-        (match (tc-spmd-reduce-class ctx env spmd-env left)
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env left)
           [(ResultTcSpmdExprInfo.Ok left-info)
             (match left-info
               [(TcSpmdExprInfo _ left-class left-env)
-                (match (tc-spmd-reduce-class ctx env left-env right)
+                (match (tc-spmd-reduce-class ctx expr-bases env left-env right)
                   [(ResultTcSpmdExprInfo.Ok right-info)
                     (match right-info
                       [(TcSpmdExprInfo _ right-class right-env)
@@ -33851,8 +34191,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-reduce-class ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -33861,8 +34201,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-reduce-class ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -33871,8 +34211,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-reduce-class ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -33883,9 +34223,10 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (tc-spmd-reduce-let-bindings
               ctx
+              expr-bases
               env
               spmd-env
               bindings
@@ -33895,6 +34236,7 @@
                   [(TcSpmdLetState body-env body-spmd-env mark)
                     (match (tc-spmd-reduce-class
                       ctx
+                      expr-bases
                       body-env
                       body-spmd-env
                       body)
@@ -33913,13 +34255,13 @@
                 (ResultTcSpmdExprInfo.Err message)]))])]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-spmd-reduce-class ctx env spmd-env array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env array)
           [(ResultTcSpmdExprInfo.Ok array-info)
             (match array-info
               [(TcSpmdExprInfo _ array-class array-env)
-                (match (tc-spmd-reduce-class ctx env array-env index)
+                (match (tc-spmd-reduce-class ctx expr-bases env array-env index)
                   [(ResultTcSpmdExprInfo.Ok index-info)
                     (match index-info
                       [(TcSpmdExprInfo _ index-class index-env)
@@ -33935,14 +34277,15 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-spmd-reduce-class ctx env spmd-env value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env value)
           [(ResultTcSpmdExprInfo.Ok value-info)
             (match value-info
               [(TcSpmdExprInfo _ value-class value-env)
                 (match (tc-spmd-reduce-class-with-expected-or-actual
                   ctx
+                  expr-bases
                   env
                   value-env
                   lane
@@ -33967,14 +34310,15 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-spmd-reduce-class ctx env spmd-env value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (match (tc-spmd-reduce-class ctx expr-bases env spmd-env value)
           [(ResultTcSpmdExprInfo.Ok value-info)
             (match value-info
               [(TcSpmdExprInfo _ value-class value-env)
                 (match (tc-spmd-reduce-class-with-expected-or-actual
                   ctx
+                  expr-bases
                   env
                   value-env
                   lane
@@ -34000,6 +34344,7 @@
 
 (define (tc-spmd-check-reduce-value-broadcasts
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [index-id : i64]
   [index-ty : AstType]
@@ -34014,31 +34359,36 @@
         TcSpmdClass.Varying
         TcSpmdScope.Local
         TcSpmdRole.ForeachIndex)]
-    (match (tc-spmd-reduce-class ctx value-env value-spmd-env value)
+    (match (tc-spmd-reduce-class ctx expr-bases value-env value-spmd-env value)
       [(ResultTcSpmdExprInfo.Ok _) ResultTcUnit.Ok]
       [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-spmd-expr
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]) : ResultTcSpmdExprInfo
   (match (tc-expr ctx env expr)
-    [(ResultTcType.Ok ty) (tc-spmd-expr-typed ctx env spmd-env expr ty)]
+    [(ResultTcType.Ok ty)
+      (tc-spmd-expr-typed ctx expr-bases env spmd-env expr ty)]
     [(ResultTcType.Err message) (ResultTcSpmdExprInfo.Err message)]))
 
 (define (tc-spmd-expr-with-expected-or-actual
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]
   [expected : AstType]) : ResultTcSpmdExprInfo
   (match (tc-expr-with-expected-or-actual ctx env expr expected)
-    [(ResultTcType.Ok ty) (tc-spmd-expr-typed ctx env spmd-env expr ty)]
+    [(ResultTcType.Ok ty)
+      (tc-spmd-expr-typed ctx expr-bases env spmd-env expr ty)]
     [(ResultTcType.Err message) (ResultTcSpmdExprInfo.Err message)]))
 
 (define (tc-spmd-array-value-expr
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [array-ty : AstType]
@@ -34047,6 +34397,7 @@
     [(AstType.Array elem-ty _)
       (tc-spmd-expr-with-expected-or-actual
         ctx
+        expr-bases
         env
         spmd-env
         value
@@ -34054,14 +34405,16 @@
     [(AstType.DynArray elem-ty)
       (tc-spmd-expr-with-expected-or-actual
         ctx
+        expr-bases
         env
         spmd-env
         value
         (ty-node-get elem-ty))]
-    [_ (tc-spmd-expr ctx env spmd-env value)]))
+    [_ (tc-spmd-expr ctx expr-bases env spmd-env value)]))
 
 (define (tc-spmd-expr-typed
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : AstExpr]
@@ -34069,8 +34422,8 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-expr-typed ctx env spmd-env inner expr-ty))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-expr-typed ctx expr-bases env spmd-env inner expr-ty))]
     [(AstExpr.Literal _) (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(AstExpr.SpmdProgramIndex)
       (tc-spmd-finish expr-ty TcSpmdClass.Varying spmd-env)]
@@ -34082,9 +34435,10 @@
           [(ResultTcExprId.Ok virtual-id)
             (tc-spmd-expr-typed
               ctx
+              expr-bases
               env
               spmd-env
-              (ast-node-get virtual-id)
+              (ast-expr-segment-bases-get expr-bases virtual-id)
               expr-ty)]
           [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
         (match (tc-spmd-env-lookup-id spmd-env name)
@@ -34097,8 +34451,8 @@
     [(AstExpr.Init _) (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34107,8 +34461,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34117,8 +34471,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34127,13 +34481,13 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
-        (match (tc-spmd-expr ctx env spmd-env left)
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env left)
           [(ResultTcSpmdExprInfo.Ok left-info)
             (match left-info
               [(TcSpmdExprInfo _ left-class left-env)
-                (match (tc-spmd-expr ctx env left-env right)
+                (match (tc-spmd-expr ctx expr-bases env left-env right)
                   [(ResultTcSpmdExprInfo.Ok right-info)
                     (match right-info
                       [(TcSpmdExprInfo _ right-class right-env)
@@ -34147,10 +34501,10 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
-        (tc-spmd-atomic-call ctx env spmd-env expr-ty func args))]
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
+        (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args))]
     [(AstExpr.BracketClause items)
-      (match (tc-spmd-expr-list ctx env spmd-env items)
+      (match (tc-spmd-expr-list ctx expr-bases env spmd-env items)
         [(ResultTcSpmdExprListInfo.Ok info)
           (match info
             [(TcSpmdExprListInfo class next-env)
@@ -34159,26 +34513,34 @@
           (ResultTcSpmdExprInfo.Err message)])]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
-        (match (tc-spmd-expr ctx env spmd-env cond)
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases else-branch-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env cond)
           [(ResultTcSpmdExprInfo.Ok cond-info)
             (match cond-info
               [(TcSpmdExprInfo _ cond-class cond-env)
                 (if (tc-spmd-varying? cond-class)
                   (tc-spmd-masked-if
                     ctx
+                    expr-bases
                     env
                     cond-env
                     expr-ty
                     then-branch
                     else-branch)
-                  (match (tc-spmd-expr ctx env cond-env then-branch)
+                  (match (tc-spmd-expr ctx expr-bases env cond-env then-branch)
                     [(ResultTcSpmdExprInfo.Ok then-info)
                       (match then-info
                         [(TcSpmdExprInfo _ then-class then-env)
-                          (match (tc-spmd-expr ctx env cond-env else-branch)
+                          (match (tc-spmd-expr
+                            ctx
+                            expr-bases
+                            env
+                            cond-env
+                            else-branch)
                             [(ResultTcSpmdExprInfo.Ok else-info)
                               (match else-info
                                 [(TcSpmdExprInfo _ else-class else-env)
@@ -34198,9 +34560,10 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (tc-spmd-let-bindings
               ctx
+              expr-bases
               env
               spmd-env
               bindings
@@ -34208,7 +34571,12 @@
               [(ResultTcSpmdLetState.Ok state)
                 (match state
                   [(TcSpmdLetState body-env body-spmd-env mark)
-                    (match (tc-spmd-expr ctx body-env body-spmd-env body)
+                    (match (tc-spmd-expr
+                      ctx
+                      expr-bases
+                      body-env
+                      body-spmd-env
+                      body)
                       [(ResultTcSpmdExprInfo.Ok body-info)
                         (match body-info
                           [(TcSpmdExprInfo _ body-class final-spmd-env)
@@ -34222,7 +34590,7 @@
                 (ResultTcSpmdExprInfo.Err message)]))])]
     [(AstExpr.Lambda _) (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(AstExpr.Tuple exprs)
-      (match (tc-spmd-expr-list ctx env spmd-env exprs)
+      (match (tc-spmd-expr-list ctx expr-bases env spmd-env exprs)
         [(ResultTcSpmdExprListInfo.Ok info)
           (match info
             [(TcSpmdExprListInfo class next-spmd-env)
@@ -34231,8 +34599,8 @@
           (ResultTcSpmdExprInfo.Err message)])]
     [(AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
-        (match (tc-spmd-expr ctx env spmd-env tuple)
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env tuple)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34240,7 +34608,7 @@
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Array exprs)
-      (match (tc-spmd-expr-list ctx env spmd-env exprs)
+      (match (tc-spmd-expr-list ctx expr-bases env spmd-env exprs)
         [(ResultTcSpmdExprListInfo.Ok info)
           (match info
             [(TcSpmdExprListInfo class next-spmd-env)
@@ -34248,7 +34616,7 @@
         [(ResultTcSpmdExprListInfo.Err message)
           (ResultTcSpmdExprInfo.Err message)])]
     [(AstExpr.DynArray exprs)
-      (match (tc-spmd-expr-list ctx env spmd-env exprs)
+      (match (tc-spmd-expr-list ctx expr-bases env spmd-env exprs)
         [(ResultTcSpmdExprListInfo.Ok info)
           (match info
             [(TcSpmdExprListInfo class next-spmd-env)
@@ -34257,8 +34625,8 @@
           (ResultTcSpmdExprInfo.Err message)])]
     [(AstExpr.MakeArray _ len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
-        (match (tc-spmd-expr ctx env spmd-env len)
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env len)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34267,13 +34635,13 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-spmd-expr ctx env spmd-env array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env array)
           [(ResultTcSpmdExprInfo.Ok array-info)
             (match array-info
               [(TcSpmdExprInfo _ array-class array-env)
-                (match (tc-spmd-expr ctx env array-env index)
+                (match (tc-spmd-expr ctx expr-bases env array-env index)
                   [(ResultTcSpmdExprInfo.Ok index-info)
                     (match index-info
                       [(TcSpmdExprInfo _ index-class index-env)
@@ -34288,23 +34656,29 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-expr ctx env spmd-env array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env array)
           [(ResultTcSpmdExprInfo.Ok array-info)
             (match array-info
               [(TcSpmdExprInfo array-ty array-class array-env)
-                (match (tc-spmd-expr ctx env array-env index)
+                (match (tc-spmd-expr ctx expr-bases env array-env index)
                   [(ResultTcSpmdExprInfo.Ok index-info)
                     (match index-info
                       [(TcSpmdExprInfo _ index-class index-env)
                         (match (if (tc-spmd-varying? index-class)
-                          (tc-spmd-foreach-index ctx env array-env index)
+                          (tc-spmd-foreach-index
+                            ctx
+                            expr-bases
+                            env
+                            array-env
+                            index)
                           ResultTcUnit.Ok)
                           [(ResultTcUnit.Ok)
                             (match (tc-spmd-array-value-expr
                               ctx
+                              expr-bases
                               env
                               index-env
                               array-ty
@@ -34370,13 +34744,14 @@
         "typecheck: array-take! is not supported in SPMD")]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-expr ctx env spmd-env receiver)
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env receiver)
           [(ResultTcSpmdExprInfo.Ok receiver-info)
             (match receiver-info
               [(TcSpmdExprInfo receiver-ty receiver-class receiver-env)
-                (match (tc-spmd-expr ctx env receiver-env value)
+                (match (tc-spmd-expr ctx expr-bases env receiver-env value)
                   [(ResultTcSpmdExprInfo.Ok value-info)
                     (match value-info
                       [(TcSpmdExprInfo _ value-class value-env)
@@ -34410,13 +34785,13 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-expr ctx env spmd-env array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env array)
           [(ResultTcSpmdExprInfo.Ok array-info)
             (match array-info
               [(TcSpmdExprInfo array-ty array-class array-env)
-                (match (tc-spmd-expr ctx env array-env value)
+                (match (tc-spmd-expr ctx expr-bases env array-env value)
                   [(ResultTcSpmdExprInfo.Ok value-info)
                     (match value-info
                       [(TcSpmdExprInfo _ value-class value-env)
@@ -34451,13 +34826,13 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.StringRef str-box index-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-spmd-expr ctx env spmd-env str)
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env str)
           [(ResultTcSpmdExprInfo.Ok str-info)
             (match str-info
               [(TcSpmdExprInfo _ str-class str-env)
-                (match (tc-spmd-expr ctx env str-env index)
+                (match (tc-spmd-expr ctx expr-bases env str-env index)
                   [(ResultTcSpmdExprInfo.Ok index-info)
                     (match index-info
                       [(TcSpmdExprInfo _ index-class index-env)
@@ -34471,23 +34846,30 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (tc-spmd-expr ctx env spmd-env cond)
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env cond)
           [(ResultTcSpmdExprInfo.Ok cond-info)
             (match cond-info
               [(TcSpmdExprInfo _ cond-class cond-env)
                 (if (tc-spmd-varying? cond-class)
-                  (match (tc-spmd-masked-if-expr ctx env spmd-env cond)
+                  (match (tc-spmd-masked-if-expr
+                    ctx
+                    expr-bases
+                    env
+                    spmd-env
+                    cond)
                     [(ResultTcUnit.Ok)
                       (match (tc-spmd-masked-if-expr
                         ctx
+                        expr-bases
                         (tc-enter-loop-target env)
                         cond-env
                         body)
                         [(ResultTcUnit.Ok)
                           (match (tc-spmd-expr
                             ctx
+                            expr-bases
                             (tc-enter-loop-target env)
                             cond-env
                             body)
@@ -34508,6 +34890,7 @@
                       (ResultTcSpmdExprInfo.Err message)])
                   (match (tc-spmd-expr
                     ctx
+                    expr-bases
                     (tc-enter-loop-target env)
                     cond-env
                     body)
@@ -34522,23 +34905,25 @@
                       (ResultTcSpmdExprInfo.Err message)]))])]
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
-    [(AstExpr.Begin exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
+    [(AstExpr.Begin exprs)
+      (tc-spmd-begin-list ctx expr-bases env spmd-env exprs)]
     [(AstExpr.Unsafe exprs)
-      (tc-spmd-begin-list ctx (tc-enter-unsafe env) spmd-env exprs)]
+      (tc-spmd-begin-list ctx expr-bases (tc-enter-unsafe env) spmd-env exprs)]
     [(AstExpr.Set name value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-set-expr-id env name value-box)
             [(ResultTcExprId.Ok virtual-id)
               (tc-spmd-expr-typed
                 ctx
+                expr-bases
                 env
                 spmd-env
-                (ast-node-get virtual-id)
+                (ast-expr-segment-bases-get expr-bases virtual-id)
                 expr-ty)]
             [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
-          (match (tc-spmd-expr ctx env spmd-env value)
+          (match (tc-spmd-expr ctx expr-bases env spmd-env value)
             [(ResultTcSpmdExprInfo.Ok value-info)
               (match value-info
                 [(TcSpmdExprInfo _ value-class value-env)
@@ -34560,8 +34945,9 @@
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
           (let
-            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-            (match (tc-spmd-expr ctx env spmd-env scrutinee)
+            [scrutinee : AstExpr
+              (ast-expr-segment-bases-get expr-bases scrutinee-box)]
+            (match (tc-spmd-expr ctx expr-bases env spmd-env scrutinee)
               [(ResultTcSpmdExprInfo.Ok scrut-info)
                 (match scrut-info
                   [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
@@ -34572,6 +34958,7 @@
                           [_ scrut-class])]
                       (match (tc-spmd-match-arms
                         ctx
+                        expr-bases
                         env
                         scrut-env
                         scrut-ty
@@ -34590,10 +34977,10 @@
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-spmd-expr ctx env spmd-env start)
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-spmd-expr ctx expr-bases env spmd-env start)
               [(ResultTcSpmdExprInfo.Ok start-info)
                 (match start-info
                   [(TcSpmdExprInfo _ start-class start-env)
@@ -34601,7 +34988,7 @@
                       start-class
                       "typecheck: foreach bounds must be uniform")
                       [(ResultTcUnit.Ok)
-                        (match (tc-spmd-expr ctx env start-env end)
+                        (match (tc-spmd-expr ctx expr-bases env start-env end)
                           [(ResultTcSpmdExprInfo.Ok end-info)
                             (match end-info
                               [(TcSpmdExprInfo _ end-class end-env)
@@ -34611,6 +34998,7 @@
                                   [(ResultTcUnit.Ok)
                                     (match (tc-spmd-check-foreach-body-with-env
                                       ctx
+                                      expr-bases
                                       env
                                       end-env
                                       index
@@ -34639,14 +35027,15 @@
         "typecheck: spmd-scan inside foreach is not supported")]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-spmd-expr ctx env spmd-env value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env value)
           [(ResultTcSpmdExprInfo.Ok value-info)
             (match value-info
               [(TcSpmdExprInfo _ value-class value-env)
                 (match (tc-spmd-expr-with-expected-or-actual
                   ctx
+                  expr-bases
                   env
                   value-env
                   lane
@@ -34667,14 +35056,15 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-spmd-expr ctx env spmd-env value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env value)
           [(ResultTcSpmdExprInfo.Ok value-info)
             (match value-info
               [(TcSpmdExprInfo _ value-class value-env)
                 (match (tc-spmd-expr-with-expected-or-actual
                   ctx
+                  expr-bases
                   env
                   value-env
                   lane
@@ -34694,8 +35084,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Borrow _ _ place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (tc-spmd-expr ctx env spmd-env place)
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env place)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34704,8 +35094,9 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.StructGet receiver-box _)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        (match (tc-spmd-expr ctx env spmd-env receiver)
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env receiver)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34714,8 +35105,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34724,8 +35115,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34734,8 +35125,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34744,13 +35135,13 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ inner-class inner-env)
-                (match (tc-spmd-expr ctx env inner-env value)
+                (match (tc-spmd-expr ctx expr-bases env inner-env value)
                   [(ResultTcSpmdExprInfo.Ok value-info)
                     (match value-info
                       [(TcSpmdExprInfo _ value-class next-spmd-env)
@@ -34763,7 +35154,12 @@
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.WithRegion region body)
-      (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
+      (tc-spmd-begin-list
+        ctx
+        expr-bases
+        (tc-push-region env region)
+        spmd-env
+        body)]
     [(AstExpr.WithEscape _ _)
       (ResultTcSpmdExprInfo.Err
         "typecheck: with-escape inside spmd is not supported")]
@@ -34778,8 +35174,8 @@
         "typecheck: resource with is not implemented yet")]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34810,8 +35206,8 @@
     [(AstExpr.PtrNull _) (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(AstExpr.PtrNullCheck inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env inner)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34820,8 +35216,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.PtrAddrOf place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (tc-spmd-expr ctx env spmd-env place)
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env place)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34830,8 +35226,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (match (tc-spmd-expr ctx env spmd-env ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34840,13 +35236,13 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-expr ctx env spmd-env ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
           [(ResultTcSpmdExprInfo.Ok ptr-info)
             (match ptr-info
               [(TcSpmdExprInfo _ ptr-class ptr-env)
-                (match (tc-spmd-expr ctx env ptr-env value)
+                (match (tc-spmd-expr ctx expr-bases env ptr-env value)
                   [(ResultTcSpmdExprInfo.Ok value-info)
                     (match value-info
                       [(TcSpmdExprInfo _ value-class value-env)
@@ -34860,13 +35256,13 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
-        (match (tc-spmd-expr ctx env spmd-env ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
           [(ResultTcSpmdExprInfo.Ok ptr-info)
             (match ptr-info
               [(TcSpmdExprInfo _ ptr-class ptr-env)
-                (match (tc-spmd-expr ctx env ptr-env offset)
+                (match (tc-spmd-expr ctx expr-bases env ptr-env offset)
                   [(ResultTcSpmdExprInfo.Ok offset-info)
                     (match offset-info
                       [(TcSpmdExprInfo _ offset-class offset-env)
@@ -34880,8 +35276,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.PtrCast ptr-box _)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (match (tc-spmd-expr ctx env spmd-env ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34890,8 +35286,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (match (tc-spmd-expr ctx env spmd-env ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34900,8 +35296,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.IntToPtr value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-spmd-expr ctx env spmd-env value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env value)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34910,8 +35306,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.StringData str-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        (match (tc-spmd-expr ctx env spmd-env str)
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env str)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34920,13 +35316,13 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
-        (match (tc-spmd-expr ctx env spmd-env ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env ptr)
           [(ResultTcSpmdExprInfo.Ok ptr-info)
             (match ptr-info
               [(TcSpmdExprInfo _ ptr-class ptr-env)
-                (match (tc-spmd-expr ctx env ptr-env len)
+                (match (tc-spmd-expr ctx expr-bases env ptr-env len)
                   [(ResultTcSpmdExprInfo.Ok len-info)
                     (match len-info
                       [(TcSpmdExprInfo _ len-class len-env)
@@ -34940,8 +35336,8 @@
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.ArrayData array-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        (match (tc-spmd-expr ctx env spmd-env array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env array)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34958,28 +35354,28 @@
       (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (tc-spmd-cpuid-like ctx expr-bases env spmd-env expr-ty leaf subleaf))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (tc-spmd-cpuid-like ctx expr-bases env spmd-env expr-ty leaf subleaf))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (tc-spmd-cpuid-like ctx expr-bases env spmd-env expr-ty leaf subleaf))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (tc-spmd-cpuid-like ctx expr-bases env spmd-env expr-ty leaf subleaf))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-spmd-expr ctx env spmd-env index)
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env index)
           [(ResultTcSpmdExprInfo.Ok info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
@@ -34987,7 +35383,7 @@
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.Syscall args)
-      (match (tc-spmd-expr-list ctx env spmd-env args)
+      (match (tc-spmd-expr-list ctx expr-bases env spmd-env args)
         [(ResultTcSpmdExprListInfo.Ok args-info)
           (match args-info
             [(TcSpmdExprListInfo args-class args-env)
@@ -39597,39 +39993,48 @@
           (ResultTcBorrowPlace.Err
             "typecheck: box-get borrow requires Box place")])]))
 
-(define (tc-borrow-place [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcBorrowPlace
+(define (tc-borrow-place
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcBorrowPlace
   (match (ast-expr-unspan expr)
     [(AstExpr.Var name)
       (if (tc-dotted-local-field-name-id? env name)
         (match (tc-dotted-local-field-expr-id env name)
           [(ResultTcExprId.Ok virtual-id)
-            (tc-borrow-place ctx env (ast-node-get virtual-id))]
+            (tc-borrow-place
+              ctx
+              expr-bases
+              env
+              (ast-expr-segment-bases-get expr-bases virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcBorrowPlace.Err message)])
         (match (tc-lookup-visible-id ctx env name)
           [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
           [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)]))]
     [(AstExpr.StructGet receiver-box field)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        (match (tc-borrow-place ctx env receiver)
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (match (tc-borrow-place ctx expr-bases env receiver)
           [(ResultTcBorrowPlace.Ok place)
             (tc-borrow-place-struct-field-id ctx place field)]
           [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
     [(AstExpr.TupleRef tuple-box index)
       (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
-        (match (tc-borrow-place ctx env tuple)
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        (match (tc-borrow-place ctx expr-bases env tuple)
           [(ResultTcBorrowPlace.Ok place)
             (tc-borrow-place-tuple-field ctx place index)]
           [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (match (tc-expr ctx env index)
           [(ResultTcType.Ok index-ty)
             (if (tc-integer-type? index-ty)
-              (match (tc-borrow-place ctx env array)
+              (match (tc-borrow-place ctx expr-bases env array)
                 [(ResultTcBorrowPlace.Ok place)
                   (tc-borrow-place-array-element ctx place)]
                 [(ResultTcBorrowPlace.Err message)
@@ -39638,8 +40043,8 @@
           [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)]))]
     [(AstExpr.BoxGet box-box)
       (let
-        [box-expr : AstExpr (ast-node-get box-box)]
-        (match (tc-borrow-place ctx env box-expr)
+        [box-expr : AstExpr (ast-expr-segment-bases-get expr-bases box-box)]
+        (match (tc-borrow-place ctx expr-bases env box-expr)
           [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
           [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
     [_ (ResultTcBorrowPlace.Err (tc-borrow-place-error-message))]))
@@ -39799,12 +40204,13 @@
 
 (define (tc-borrow-expr-with-policy
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [place-expr : AstExpr]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
-  (match (tc-borrow-place ctx env place-expr)
+  (match (tc-borrow-place ctx expr-bases env place-expr)
     [(ResultTcBorrowPlace.Ok place)
       (if (and mutable (not allow-mut-by-value-borrow))
         (match (tc-mut-borrow-non-call-place-ok ctx env place-expr)
@@ -39816,11 +40222,19 @@
 
 (define (tc-borrow-expr
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [place-expr : AstExpr]) : ResultTcType
-  (tc-borrow-expr-with-policy ctx env mutable lifetime place-expr false))
+  (tc-borrow-expr-with-policy
+    ctx
+    expr-bases
+    env
+    mutable
+    lifetime
+    place-expr
+    false))
 
 (define (tc-literal-pattern-compatible? [lit : AstLiteral] [scrut-ty : AstType]) : bool
   (let
@@ -42347,52 +42761,59 @@
 ;; reads remain valid. Uniformity of `start`/`end`/`init` is enforced by
 ;; scoping: they are
 ;; typed outside the lane context, so referencing the index is an unbound error.
-(define (tc-spmd-value-pure [expr : AstExpr]) : ResultTcUnit
-  (tc-spmd-value-pure-at expr false))
+(define (tc-spmd-value-pure [expr-bases : i64] [expr : AstExpr]) : ResultTcUnit
+  (tc-spmd-value-pure-at expr-bases expr false))
 
-(define (tc-spmd-value-pure-at [expr : AstExpr] [in-index : bool]) : ResultTcUnit
+(define (tc-spmd-value-pure-at
+  [expr-bases : i64]
+  [expr : AstExpr]
+  [in-index : bool]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-value-pure-at inner in-index))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-value-pure-at expr-bases inner in-index))]
     [(AstExpr.Literal _) ResultTcUnit.Ok]
     [(AstExpr.SpmdProgramIndex) ResultTcUnit.Ok]
     [(AstExpr.SpmdProgramCount) ResultTcUnit.Ok]
     [(AstExpr.Var _) ResultTcUnit.Ok]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
-        (match (tc-spmd-value-pure-at left in-index)
-          [(ResultTcUnit.Ok) (tc-spmd-value-pure-at right in-index)]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        (match (tc-spmd-value-pure-at expr-bases left in-index)
+          [(ResultTcUnit.Ok) (tc-spmd-value-pure-at expr-bases right in-index)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-value-pure-at inner in-index))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-value-pure-at expr-bases inner in-index))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-value-pure-at inner in-index))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-value-pure-at expr-bases inner in-index))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-spmd-value-pure-at inner in-index))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-spmd-value-pure-at expr-bases inner in-index))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-spmd-value-let-bindings-pure-at bindings in-index)
-              [(ResultTcUnit.Ok) (tc-spmd-value-pure-at body in-index)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-spmd-value-let-bindings-pure-at
+              expr-bases
+              bindings
+              in-index)
+              [(ResultTcUnit.Ok)
+                (tc-spmd-value-pure-at expr-bases body in-index)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-spmd-value-pure-at array false)
-          [(ResultTcUnit.Ok) (tc-spmd-value-pure-at index true)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-spmd-value-pure-at expr-bases array false)
+          [(ResultTcUnit.Ok) (tc-spmd-value-pure-at expr-bases index true)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.Set _ _)
       (ResultTcUnit.Err
@@ -42426,20 +42847,20 @@
         (ResultTcUnit.Err
           "spmd-broadcast is not allowed inside an array index in a spmd-reduce value expression (SPEC.md 5.15)")
         (let
-          [value : AstExpr (ast-node-get value-box)]
-          [lane : AstExpr (ast-node-get lane-box)]
-          (match (tc-spmd-value-pure-at value false)
-            [(ResultTcUnit.Ok) (tc-spmd-value-pure-at lane false)]
+          [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+          [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+          (match (tc-spmd-value-pure-at expr-bases value false)
+            [(ResultTcUnit.Ok) (tc-spmd-value-pure-at expr-bases lane false)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (if in-index
         (ResultTcUnit.Err
           "spmd-shuffle is not allowed inside an array index in a spmd-reduce value expression (SPEC.md 5.15)")
         (let
-          [value : AstExpr (ast-node-get value-box)]
-          [lane : AstExpr (ast-node-get lane-box)]
-          (match (tc-spmd-value-pure-at value false)
-            [(ResultTcUnit.Ok) (tc-spmd-value-pure-at lane false)]
+          [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+          [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+          (match (tc-spmd-value-pure-at expr-bases value false)
+            [(ResultTcUnit.Ok) (tc-spmd-value-pure-at expr-bases lane false)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))]
     [(AstExpr.If _ _ _)
       (ResultTcUnit.Err
@@ -42455,11 +42876,13 @@
         "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md 5.15)")]))
 
 (define (tc-spmd-value-let-bindings-pure-at
+  [expr-bases : i64]
   [bindings : AstLetBindingList]
   [in-index : bool]) : ResultTcUnit
-  (tc-spmd-value-let-bindings-pure-at-index (& bindings) in-index 0))
+  (tc-spmd-value-let-bindings-pure-at-index expr-bases (& bindings) in-index 0))
 
 (define (tc-spmd-value-let-bindings-pure-at-index
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [in-index : bool]
   [index : i64]) : ResultTcUnit
@@ -42468,10 +42891,11 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding _ _ init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          (match (tc-spmd-value-pure-at init in-index)
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (match (tc-spmd-value-pure-at expr-bases init in-index)
             [(ResultTcUnit.Ok)
               (tc-spmd-value-let-bindings-pure-at-index
+                expr-bases
                 bindings
                 in-index
                 (+ index 1))]
@@ -42513,6 +42937,7 @@
 
 (define (tc-spmd-reduce-init-value-type
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [value-env : TcTypeEnv]
   [op : AstReduceOp]
@@ -42521,7 +42946,7 @@
   (match (tc-expr ctx env init)
     [(ResultTcType.Ok init-ty)
       (if (tc-reduce-op-type-ok? op (tc-resolve-type ctx init-ty))
-        (match (tc-spmd-value-pure value)
+        (match (tc-spmd-value-pure expr-bases value)
           [(ResultTcUnit.Ok)
             (match (tc-expr-with-expected-or-actual ctx value-env value init-ty)
               [(ResultTcType.Ok value-ty)
@@ -42554,6 +42979,7 @@
 
 (define (tc-spmd-scan-init-value-type
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [value-env : TcTypeEnv]
   [op : AstReduceOp]
@@ -42570,7 +42996,7 @@
             resolved-prefix-ty
             "typecheck: spmd-scan prefix init type mismatch")
             [(ResultTcUnit.Ok)
-              (match (tc-spmd-value-pure value)
+              (match (tc-spmd-value-pure expr-bases value)
                 [(ResultTcUnit.Ok)
                   (match (tc-expr-with-expected-or-actual
                     ctx
@@ -44485,7 +44911,13 @@
     [(AstExpr.Borrow mutable lifetime place-box)
       (match (tc-normalize-dotted-local-field-node! env place-box)
         [(ResultTcUnit.Ok)
-          (tc-borrow-expr ctx env mutable lifetime (ast-node-get place-box))]
+          (tc-borrow-expr
+            ctx
+            (tc-context-expr-bases ctx)
+            env
+            mutable
+            lifetime
+            (ast-node-get place-box))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Unary op inner-box)
       (match (tc-expr-id ctx env inner-box)
@@ -44557,6 +44989,7 @@
                                   [(ResultTcUnit.Ok)
                                     (match (tc-spmd-check-foreach-body
                                       ctx
+                                      (tc-context-expr-bases ctx)
                                       env
                                       index
                                       resolved-index-ty
@@ -44602,6 +45035,7 @@
                               (tc-bind-id env index resolved-index-ty)]
                             (match (tc-spmd-reduce-init-value-type
                               ctx
+                              (tc-context-expr-bases ctx)
                               env
                               value-env
                               op
@@ -44610,6 +45044,7 @@
                               [(ResultTcType.Ok result-ty)
                                 (match (tc-spmd-check-reduce-value-broadcasts
                                   ctx
+                                  (tc-context-expr-bases ctx)
                                   env
                                   index
                                   resolved-index-ty
@@ -44669,6 +45104,7 @@
                               (tc-bind-id value-env prefix resolved-prefix-ty)]
                             (match (tc-spmd-scan-init-value-type
                               ctx
+                              (tc-context-expr-bases ctx)
                               env
                               value-env
                               op
@@ -44685,6 +45121,7 @@
                                       [(ResultTcUnit.Ok)
                                         (match (tc-spmd-check-scan-body
                                           ctx
+                                          (tc-context-expr-bases ctx)
                                           env
                                           index
                                           resolved-index-ty
@@ -48842,19 +49279,20 @@
 (define (tc-move-cleanup-owner-binding-label [name : String]) : String
   (str_cat.str-cat "cleanup owner `" name "` is bound for this with scope here"))
 
-(define (tc-move-origin-span [origin-id : i64]) : TcMaybeAstSourceSpan
+(define (tc-move-origin-span [expr-bases : i64] [origin-id : i64]) : TcMaybeAstSourceSpan
   (if (= origin-id (tc-moved-no-origin-id))
     TcMaybeAstSourceSpan.No
-    (tc-expr-maybe-span (ast-node-get origin-id))))
+    (tc-expr-maybe-span (ast-expr-segment-bases-get expr-bases origin-id))))
 
 (define (tc-move-rich-origin-message
+  [expr-bases : i64]
   [primary : AstExpr]
   [message : String]
   [origin-id : i64]
   [origin-label : String]) : String
   (match (tc-expr-maybe-span primary)
     [(TcMaybeAstSourceSpan.Some primary-span)
-      (match (tc-move-origin-span origin-id)
+      (match (tc-move-origin-span expr-bases origin-id)
         [(TcMaybeAstSourceSpan.Some origin-span)
           (tc-rich-error-one-secondary
             primary-span
@@ -48870,7 +49308,7 @@
             primary-span
             origin-label)])]
     [(TcMaybeAstSourceSpan.No)
-      (match (tc-move-origin-span origin-id)
+      (match (tc-move-origin-span expr-bases origin-id)
         [(TcMaybeAstSourceSpan.Some origin-span)
           (tc-rich-error-one-secondary
             origin-span
@@ -48881,6 +49319,7 @@
         [(TcMaybeAstSourceSpan.No) message])]))
 
 (define (tc-move-rich-conflict-message
+  [expr-bases : i64]
   [conflict : TcMoveConflict]
   [fallback-key : String]
   [primary : AstExpr]
@@ -48888,25 +49327,32 @@
   (match conflict
     [(TcMoveConflict.Some key origin-id)
       (tc-move-rich-origin-message
+        expr-bases
         primary
         message
         origin-id
         (tc-move-origin-label key))]
     [TcMoveConflict.No
       (tc-move-rich-origin-message
+        expr-bases
         primary
         message
         (tc-moved-no-origin-id)
         (tc-move-origin-label fallback-key))]))
 
-(define (tc-move-rich-loop-carried-message [name : String] [primary : AstExpr]) : String
+(define (tc-move-rich-loop-carried-message
+  [expr-bases : i64]
+  [name : String]
+  [primary : AstExpr]) : String
   (tc-move-rich-origin-message
+    expr-bases
     primary
     (tc-move-loop-carried-message name)
     (tc-moved-no-origin-id)
     (tc-move-loop-carried-origin-label name)))
 
 (define (tc-move-rich-cleanup-owner-exit-message
+  [expr-bases : i64]
   [conflict : TcMoveConflict]
   [name : String]
   [owner-origin-id : i64]
@@ -48918,9 +49364,9 @@
       [(TcMaybeAstSourceSpan.Some primary-span)
         (match conflict
           [(TcMoveConflict.Some key move-origin-id)
-            (match (tc-move-origin-span move-origin-id)
+            (match (tc-move-origin-span expr-bases move-origin-id)
               [(TcMaybeAstSourceSpan.Some move-span)
-                (match (tc-move-origin-span owner-origin-id)
+                (match (tc-move-origin-span expr-bases owner-origin-id)
                   [(TcMaybeAstSourceSpan.Some owner-span)
                     (tc-rich-error-two-secondaries
                       primary-span
@@ -48940,7 +49386,7 @@
                       primary-span
                       owner-label)])]
               [(TcMaybeAstSourceSpan.No)
-                (match (tc-move-origin-span owner-origin-id)
+                (match (tc-move-origin-span expr-bases owner-origin-id)
                   [(TcMaybeAstSourceSpan.Some owner-span)
                     (tc-rich-error-one-secondary
                       primary-span
@@ -48956,7 +49402,7 @@
                       primary-span
                       owner-label)])])]
           [TcMoveConflict.No
-            (match (tc-move-origin-span owner-origin-id)
+            (match (tc-move-origin-span expr-bases owner-origin-id)
               [(TcMaybeAstSourceSpan.Some owner-span)
                 (tc-rich-error-one-secondary
                   primary-span
@@ -48974,9 +49420,9 @@
       [(TcMaybeAstSourceSpan.No)
         (match conflict
           [(TcMoveConflict.Some key move-origin-id)
-            (match (tc-move-origin-span move-origin-id)
+            (match (tc-move-origin-span expr-bases move-origin-id)
               [(TcMaybeAstSourceSpan.Some move-span)
-                (match (tc-move-origin-span owner-origin-id)
+                (match (tc-move-origin-span expr-bases owner-origin-id)
                   [(TcMaybeAstSourceSpan.Some owner-span)
                     (tc-rich-error-two-secondaries
                       move-span
@@ -48996,7 +49442,7 @@
                       move-span
                       owner-label)])]
               [(TcMaybeAstSourceSpan.No)
-                (match (tc-move-origin-span owner-origin-id)
+                (match (tc-move-origin-span expr-bases owner-origin-id)
                   [(TcMaybeAstSourceSpan.Some owner-span)
                     (tc-rich-error-one-secondary
                       owner-span
@@ -49006,7 +49452,7 @@
                       owner-label)]
                   [(TcMaybeAstSourceSpan.No) message])])]
           [TcMoveConflict.No
-            (match (tc-move-origin-span owner-origin-id)
+            (match (tc-move-origin-span expr-bases owner-origin-id)
               [(TcMaybeAstSourceSpan.Some owner-span)
                 (tc-rich-error-one-secondary
                   owner-span
@@ -49017,26 +49463,37 @@
               [(TcMaybeAstSourceSpan.No) message])])])))
 
 (define (tc-move-rich-conflict-result
+  [expr-bases : i64]
   [conflict : TcMoveConflict]
   [fallback-key : String]
   [primary : AstExpr]
   [message : String]) : TcMoveResult
   (TcMoveResult.Err
-    (tc-move-rich-conflict-message conflict fallback-key primary message)))
+    (tc-move-rich-conflict-message
+      expr-bases
+      conflict
+      fallback-key
+      primary
+      message)))
 
 (define (tc-move-rich-use-conflict-result
+  [expr-bases : i64]
   [conflict : TcMoveConflict]
   [fallback-key : String]
   [primary : AstExpr]
   [name : String]) : TcMoveResult
   (tc-move-rich-conflict-result
+    expr-bases
     conflict
     fallback-key
     primary
     (tc-move-use-message name)))
 
-(define (tc-move-rich-loop-carried-result [name : String] [primary : AstExpr]) : TcMoveResult
-  (TcMoveResult.Err (tc-move-rich-loop-carried-message name primary)))
+(define (tc-move-rich-loop-carried-result
+  [expr-bases : i64]
+  [name : String]
+  [primary : AstExpr]) : TcMoveResult
+  (TcMoveResult.Err (tc-move-rich-loop-carried-message expr-bases name primary)))
 
 (define (tc-moved-path-conflict-at
   [facts : TcMovedPathFacts]
@@ -49280,57 +49737,57 @@
 
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
 ;; annotations, or none if the expression is not a whole-variable reference.
-(define (tc-move-bare-var [expr : AstExpr]) : TcMaybeMoveName
+(define (tc-move-bare-var [expr-bases : i64] [expr : AstExpr]) : TcMaybeMoveName
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-bare-var inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-bare-var expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-bare-var inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-bare-var expr-bases inner))]
     [(AstExpr.Var name) (TcMaybeMoveName.Some name (tc-env-key-name-text name))]
     [_ (TcMaybeMoveName.No)]))
 
 ;; The root local named by a projection chain. Keep its parser-owned ID through
 ;; recursive projection unwrapping; String path analysis renders only at its
 ;; compatibility boundary below.
-(define (tc-move-root-projection-var-id [expr : AstExpr]) : TcMaybeNameId
+(define (tc-move-root-projection-var-id [expr-bases : i64] [expr : AstExpr]) : TcMaybeNameId
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-root-projection-var-id inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-root-projection-var-id inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-root-projection-var-id inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
     [(AstExpr.StructGet inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-root-projection-var-id inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
     [(AstExpr.TupleRef inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-root-projection-var-id inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
     [(AstExpr.ArrayRef array-box _)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        (tc-move-root-projection-var-id array))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (tc-move-root-projection-var-id expr-bases array))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-root-projection-var-id inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-root-projection-var-id expr-bases inner))]
     [(AstExpr.Var name) (TcMaybeNameId.Some name)]
     [_ (TcMaybeNameId.No)]))
 
-(define (tc-move-root-projection-var [expr : AstExpr]) : TcMaybeString
-  (match (tc-move-root-projection-var-id expr)
+(define (tc-move-root-projection-var [expr-bases : i64] [expr : AstExpr]) : TcMaybeString
+  (match (tc-move-root-projection-var-id expr-bases expr)
     [(TcMaybeNameId.Some name-id)
       (TcMaybeString.Some (tc-hygiene-name-text-id name-id))]
     [(TcMaybeNameId.No) (TcMaybeString.No)]))
@@ -49344,20 +49801,20 @@
 (define (tc-move-aggregate-path-message) : String
   "typecheck: cannot move owner-consuming value out of aggregate path")
 
-(define (tc-move-aggregate-path-projection? [expr : AstExpr]) : bool
+(define (tc-move-aggregate-path-projection? [expr-bases : i64] [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-aggregate-path-projection? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-aggregate-path-projection? expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-aggregate-path-projection? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-aggregate-path-projection? expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-aggregate-path-projection? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-aggregate-path-projection? expr-bases inner))]
     [(AstExpr.StructGet _ _) true]
     [(AstExpr.TupleRef _ _) true]
     [(AstExpr.ArrayRef _ _) true]
@@ -49400,61 +49857,61 @@
     (struct-get base root)
     (tc-move-path-segments-append-array (struct-get base segments) index)))
 
-(define (tc-move-literal-index [expr : AstExpr]) : TcMoveMaybeIndex
+(define (tc-move-literal-index [expr-bases : i64] [expr : AstExpr]) : TcMoveMaybeIndex
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-literal-index inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-literal-index expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-literal-index inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-literal-index expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-literal-index inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-literal-index expr-bases inner))]
     [(AstExpr.Literal lit)
       (match lit
         [(AstLiteral.Int index _) (TcMoveMaybeIndex.Some index)]
         [_ (TcMoveMaybeIndex.No)])]
     [_ (TcMoveMaybeIndex.No)]))
 
-(define (tc-move-direct-root-base-path [expr : AstExpr]) : TcMaybeMovePath
+(define (tc-move-direct-root-base-path [expr-bases : i64] [expr : AstExpr]) : TcMaybeMovePath
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-direct-root-base-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-direct-root-base-path expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-direct-root-base-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-direct-root-base-path expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-direct-root-base-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-direct-root-base-path expr-bases inner))]
     [(AstExpr.StructGet inner-box field)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-move-direct-root-base-path inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-move-direct-root-base-path expr-bases inner)
           [(TcMaybeMovePath.Some base)
             (TcMaybeMovePath.Some (tc-move-path-append base field))]
           [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))]
     [(AstExpr.TupleRef inner-box index)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-move-direct-root-base-path inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-move-direct-root-base-path expr-bases inner)
           [(TcMaybeMovePath.Some base)
             (TcMaybeMovePath.Some (tc-move-tuple-index-path base index))]
           [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index-expr : AstExpr (ast-node-get index-box)]
-        (match (tc-move-direct-root-base-path array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index-expr : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-move-direct-root-base-path expr-bases array)
           [(TcMaybeMovePath.Some base)
-            (match (tc-move-literal-index index-expr)
+            (match (tc-move-literal-index expr-bases index-expr)
               [(TcMoveMaybeIndex.Some index)
                 (TcMaybeMovePath.Some (tc-move-array-index-path base index))]
               [(TcMoveMaybeIndex.No) (TcMaybeMovePath.No)])]
@@ -49463,96 +49920,103 @@
       (TcMaybeMovePath.Some (TcMovePath name (tc-move-path-segments-nil)))]
     [_ (TcMaybeMovePath.No)]))
 
-(define (tc-move-struct-field-path [expr : AstExpr]) : TcMaybeMovePath
+(define (tc-move-struct-field-path [expr-bases : i64] [expr : AstExpr]) : TcMaybeMovePath
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-struct-field-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-struct-field-path expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-struct-field-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-struct-field-path expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-struct-field-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-struct-field-path expr-bases inner))]
     [(AstExpr.StructGet inner-box field)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-move-direct-root-base-path inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-move-direct-root-base-path expr-bases inner)
           [(TcMaybeMovePath.Some base)
             (TcMaybeMovePath.Some (tc-move-path-append base field))]
           [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))]
     [_ (TcMaybeMovePath.No)]))
 
-(define (tc-move-tuple-element-path [expr : AstExpr]) : TcMaybeMovePath
+(define (tc-move-tuple-element-path [expr-bases : i64] [expr : AstExpr]) : TcMaybeMovePath
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-tuple-element-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-tuple-element-path expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-tuple-element-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-tuple-element-path expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-tuple-element-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-tuple-element-path expr-bases inner))]
     [(AstExpr.TupleRef inner-box index)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-move-direct-root-base-path inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-move-direct-root-base-path expr-bases inner)
           [(TcMaybeMovePath.Some base)
             (TcMaybeMovePath.Some (tc-move-tuple-index-path base index))]
           [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))]
     [_ (TcMaybeMovePath.No)]))
 
-(define (tc-move-array-element-path [expr : AstExpr]) : TcMaybeMovePath
+(define (tc-move-array-element-path [expr-bases : i64] [expr : AstExpr]) : TcMaybeMovePath
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-array-element-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-array-element-path expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-array-element-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-array-element-path expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-array-element-path inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-array-element-path expr-bases inner))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index-expr : AstExpr (ast-node-get index-box)]
-        (tc-move-array-set-path array index-expr))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index-expr : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-move-array-set-path expr-bases array index-expr))]
     [_ (TcMaybeMovePath.No)]))
 
-(define (tc-move-array-set-path [array : AstExpr] [index-expr : AstExpr]) : TcMaybeMovePath
-  (match (tc-move-direct-root-base-path array)
+(define (tc-move-array-set-path
+  [expr-bases : i64]
+  [array : AstExpr]
+  [index-expr : AstExpr]) : TcMaybeMovePath
+  (match (tc-move-direct-root-base-path expr-bases array)
     [(TcMaybeMovePath.Some base)
-      (match (tc-move-literal-index index-expr)
+      (match (tc-move-literal-index expr-bases index-expr)
         [(TcMoveMaybeIndex.Some index)
           (TcMaybeMovePath.Some (tc-move-array-index-path base index))]
         [(TcMoveMaybeIndex.No) (TcMaybeMovePath.No)])]
     [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))
 
-(define (tc-move-struct-set-path [receiver : AstExpr] [field-id : i64]) : TcMaybeMovePath
-  (match (tc-move-direct-root-base-path receiver)
+(define (tc-move-struct-set-path
+  [expr-bases : i64]
+  [receiver : AstExpr]
+  [field-id : i64]) : TcMaybeMovePath
+  (match (tc-move-direct-root-base-path expr-bases receiver)
     [(TcMaybeMovePath.Some base)
       (TcMaybeMovePath.Some (tc-move-path-append base field-id))]
     [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))
 
 (define (tc-move-reinitialize-array-set-path
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [array : AstExpr]
   [index : AstExpr]) : TcMovedSet
-  (match (tc-move-array-set-path array index)
+  (match (tc-move-array-set-path expr-bases array index)
     [(TcMaybeMovePath.Some path)
-      (match (tc-move-root-projection-var-id array)
+      (match (tc-move-root-projection-var-id expr-bases array)
         [(TcMaybeNameId.Some root-id)
           (if (tc-moved-contains? locals root-id)
             (tc-moved-remove-exact-path moved root-id path)
@@ -49561,13 +50025,14 @@
     [(TcMaybeMovePath.No) moved]))
 
 (define (tc-move-reinitialize-struct-set-path
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [receiver : AstExpr]
   [field-id : i64]) : TcMovedSet
-  (match (tc-move-struct-set-path receiver field-id)
+  (match (tc-move-struct-set-path expr-bases receiver field-id)
     [(TcMaybeMovePath.Some path)
-      (match (tc-move-root-projection-var-id receiver)
+      (match (tc-move-root-projection-var-id expr-bases receiver)
         [(TcMaybeNameId.Some root-id)
           (if (tc-moved-contains? locals root-id)
             (tc-moved-remove-exact-path moved root-id path)
@@ -49575,13 +50040,13 @@
         [(TcMaybeNameId.No) moved])]
     [(TcMaybeMovePath.No) moved]))
 
-(define (tc-move-projection-path [expr : AstExpr]) : TcMaybeMovePath
-  (match (tc-move-struct-field-path expr)
+(define (tc-move-projection-path [expr-bases : i64] [expr : AstExpr]) : TcMaybeMovePath
+  (match (tc-move-struct-field-path expr-bases expr)
     [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
     [(TcMaybeMovePath.No)
-      (match (tc-move-tuple-element-path expr)
+      (match (tc-move-tuple-element-path expr-bases expr)
         [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
-        [(TcMaybeMovePath.No) (tc-move-array-element-path expr)])]))
+        [(TcMaybeMovePath.No) (tc-move-array-element-path expr-bases expr)])]))
 
 (define (tc-moved-add-projection-path
   [moved : TcMovedSet]
@@ -49595,74 +50060,80 @@
       root-id
       origin-id)))
 
-(define (tc-move-box-projection? [expr : AstExpr]) : bool
+(define (tc-move-box-projection? [expr-bases : i64] [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-box-projection? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-box-projection? expr-bases inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-box-projection? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-box-projection? expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-box-projection? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-box-projection? expr-bases inner))]
     [(AstExpr.StructGet inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-box-projection? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-box-projection? expr-bases inner))]
     [(AstExpr.TupleRef inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-box-projection? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-box-projection? expr-bases inner))]
     [(AstExpr.ArrayRef array-box _)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        (tc-move-box-projection? array))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (tc-move-box-projection? expr-bases array))]
     [(AstExpr.BoxGet _) true]
     [_ false]))
 
 (define (tc-move-dynamic-array-element-projection?
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-dynamic-array-element-projection? ctx env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx expr-bases env inner))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-dynamic-array-element-projection? ctx env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx expr-bases env inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-dynamic-array-element-projection? ctx env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx expr-bases env inner))]
     [(AstExpr.StructGet inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-dynamic-array-element-projection? ctx env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx expr-bases env inner))]
     [(AstExpr.TupleRef inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-dynamic-array-element-projection? ctx env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx expr-bases env inner))]
     [(AstExpr.ArrayRef array-box _)
       (let
-        [array : AstExpr (ast-node-get array-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
         (match (tc-expr ctx env array)
           [(ResultTcType.Ok array-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
               [(AstType.DynArray _) true]
-              [_ (tc-move-dynamic-array-element-projection? ctx env array)])]
+              [_
+                (tc-move-dynamic-array-element-projection?
+                  ctx
+                  expr-bases
+                  env
+                  array)])]
           [(ResultTcType.Err _)
-            (tc-move-dynamic-array-element-projection? ctx env array)]))]
+            (tc-move-dynamic-array-element-projection? ctx expr-bases env array)]))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-dynamic-array-element-projection? ctx env inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-dynamic-array-element-projection? ctx expr-bases env inner))]
     [_ false]))
 
 (define (tc-move-binding-type
@@ -49703,23 +50174,25 @@
 
 (define (tc-move-after-consuming-projection
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr : AstExpr]) : TcMoveResult
-  (if (tc-move-dynamic-array-element-projection? ctx env expr)
+  (if (tc-move-dynamic-array-element-projection? ctx expr-bases env expr)
     (TcMoveResult.Err (tc-move-dynamic-array-element-message))
-    (if (tc-move-box-projection? expr)
+    (if (tc-move-box-projection? expr-bases expr)
       (TcMoveResult.Err (tc-move-box-projection-message))
-      (match (tc-move-projection-path expr)
+      (match (tc-move-projection-path expr-bases expr)
         [(TcMaybeMovePath.Some path)
-          (match (tc-move-root-projection-var-id expr)
+          (match (tc-move-root-projection-var-id expr-bases expr)
             [(TcMaybeNameId.Some root-id)
               (if (tc-moved-contains? locals root-id)
                 (match (tc-moved-path-conflict moved path)
                   [(TcMoveConflict.Some key origin-id)
                     (tc-move-rich-use-conflict-result
+                      expr-bases
                       (TcMoveConflict.Some key origin-id)
                       (tc-move-path-render path)
                       expr
@@ -49730,21 +50203,22 @@
                 (TcMoveResult.Ok moved))]
             [(TcMaybeNameId.No) (TcMoveResult.Ok moved)])]
         [(TcMaybeMovePath.No)
-          (if (tc-move-aggregate-path-projection? expr)
+          (if (tc-move-aggregate-path-projection? expr-bases expr)
             (TcMoveResult.Err (tc-move-aggregate-path-message))
-            (match (tc-move-root-projection-var-id expr)
+            (match (tc-move-root-projection-var-id expr-bases expr)
               [(TcMaybeNameId.Some root-id)
                 (let
                   [root : String (tc-env-key-name-text root-id)]
                   (if (tc-moved-contains? locals root-id)
                     (if (tc-moved-partial? moved root-id)
                       (tc-move-rich-use-conflict-result
+                        expr-bases
                         (tc-moved-root-conflict moved root-id)
                         root
                         expr
                         root)
                       (if (tc-moved-contains? loop-carried root-id)
-                        (tc-move-rich-loop-carried-result root expr)
+                        (tc-move-rich-loop-carried-result expr-bases root expr)
                         (TcMoveResult.Ok
                           (tc-moved-add-origin moved root-id expr))))
                     (TcMoveResult.Ok moved)))]
@@ -49752,6 +50226,7 @@
 
 (define (tc-move-after-bind-typed
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -49759,31 +50234,40 @@
   [init : AstExpr]
   [init-ty : AstType]) : TcMoveResult
   (if (tc-type-consuming-by-value-now? ctx init-ty)
-    (tc-move-after-consuming-projection ctx env locals loop-carried moved init)
+    (tc-move-after-consuming-projection
+      ctx
+      expr-bases
+      env
+      locals
+      loop-carried
+      moved
+      init)
     (TcMoveResult.Ok moved)))
 
 ;; Mark the source variable moved when an init/rhs is a bare move-only variable
 ;; that names a tracked local/parameter (not an enum constructor or global).
 (define (tc-move-after-bind
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [init : AstExpr]) : TcMoveResult
-  (match (tc-move-bare-var init)
+  (match (tc-move-bare-var expr-bases init)
     [(TcMaybeMoveName.Some v-id v)
       (if (and
         (tc-moved-contains? locals v-id)
         (tc-move-var-move-only-id? env v-id))
         (if (tc-moved-partial? moved v-id)
           (tc-move-rich-use-conflict-result
+            expr-bases
             (tc-moved-root-conflict moved v-id)
             v
             init
             v)
           (if (tc-moved-contains? loop-carried v-id)
-            (tc-move-rich-loop-carried-result v init)
+            (tc-move-rich-loop-carried-result expr-bases v init)
             (TcMoveResult.Ok (tc-moved-add-origin moved v-id init))))
         (TcMoveResult.Ok moved))]
     [(TcMaybeMoveName.No)
@@ -49794,6 +50278,7 @@
         [(ResultTcType.Ok init-ty)
           (tc-move-after-bind-typed
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -49804,26 +50289,28 @@
 
 (define (tc-move-after-bind-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [init-id : i64]) : TcMoveResult
   (let
-    [init : AstExpr (ast-node-get init-id)]
-    (match (tc-move-bare-var init)
+    [init : AstExpr (ast-expr-segment-bases-get expr-bases init-id)]
+    (match (tc-move-bare-var expr-bases init)
       [(TcMaybeMoveName.Some v-id v)
         (if (and
           (tc-moved-contains? locals v-id)
           (tc-move-var-move-only-id? env v-id))
           (if (tc-moved-partial? moved v-id)
             (tc-move-rich-use-conflict-result
+              expr-bases
               (tc-moved-root-conflict moved v-id)
               v
               init
               v)
             (if (tc-moved-contains? loop-carried v-id)
-              (tc-move-rich-loop-carried-result v init)
+              (tc-move-rich-loop-carried-result expr-bases v init)
               (TcMoveResult.Ok (tc-moved-add-origin moved v-id init))))
           (TcMoveResult.Ok moved))]
       [(TcMaybeMoveName.No)
@@ -49831,6 +50318,7 @@
           [(ResultTcType.Ok init-ty)
             (tc-move-after-bind-typed
               ctx
+              expr-bases
               env
               locals
               loop-carried
@@ -49841,6 +50329,7 @@
 
 (define (tc-move-after-bind-known-type-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -49848,25 +50337,27 @@
   [init-id : i64]
   [init-ty : AstType]) : TcMoveResult
   (let
-    [init : AstExpr (ast-node-get init-id)]
-    (match (tc-move-bare-var init)
+    [init : AstExpr (ast-expr-segment-bases-get expr-bases init-id)]
+    (match (tc-move-bare-var expr-bases init)
       [(TcMaybeMoveName.Some v-id v)
         (if (and
           (tc-moved-contains? locals v-id)
           (tc-move-var-move-only-id? env v-id))
           (if (tc-moved-partial? moved v-id)
             (tc-move-rich-use-conflict-result
+              expr-bases
               (tc-moved-root-conflict moved v-id)
               v
               init
               v)
             (if (tc-moved-contains? loop-carried v-id)
-              (tc-move-rich-loop-carried-result v init)
+              (tc-move-rich-loop-carried-result expr-bases v init)
               (TcMoveResult.Ok (tc-moved-add-origin moved v-id init))))
           (TcMoveResult.Ok moved))]
       [(TcMaybeMoveName.No)
         (tc-move-after-bind-typed
           ctx
+          expr-bases
           env
           locals
           loop-carried
@@ -49876,6 +50367,7 @@
 
 (define (tc-move-after-moving-value
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -49883,11 +50375,19 @@
   [expr : AstExpr]
   [move? : bool]) : TcMoveResult
   (if move?
-    (tc-move-after-consuming-projection ctx env locals loop-carried moved expr)
+    (tc-move-after-consuming-projection
+      ctx
+      expr-bases
+      env
+      locals
+      loop-carried
+      moved
+      expr)
     (TcMoveResult.Ok moved)))
 
 (define (tc-move-after-consuming-value
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -49896,6 +50396,7 @@
   [target-ty : AstType]) : TcMoveResult
   (tc-move-after-moving-value
     ctx
+    expr-bases
     env
     locals
     loop-carried
@@ -49905,6 +50406,7 @@
 
 (define (tc-move-after-move-only-value
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -49913,6 +50415,7 @@
   [target-ty : AstType]) : TcMoveResult
   (tc-move-after-moving-value
     ctx
+    expr-bases
     env
     locals
     loop-carried
@@ -49922,11 +50425,12 @@
 
 (define (tc-move-after-match-scrutinee
   [ctx : TcContext]
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [expr : AstExpr]
   [scrut-ty : AstType]) : TcMovedSet
-  (match (tc-move-bare-var expr)
+  (match (tc-move-bare-var expr-bases expr)
     [(TcMaybeMoveName.Some v-id _)
       (if (and
         (tc-moved-contains? locals v-id)
@@ -49936,6 +50440,7 @@
     [(TcMaybeMoveName.No) moved]))
 
 (define (tc-move-consume-local
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
@@ -49948,16 +50453,18 @@
         (tc-moved-contains? moved name-id)
         (tc-moved-partial? moved name-id))
         (tc-move-rich-use-conflict-result
+          expr-bases
           (tc-moved-root-conflict moved name-id)
           name
           origin
           name)
         (if (tc-moved-contains? loop-carried name-id)
-          (tc-move-rich-loop-carried-result name origin)
+          (tc-move-rich-loop-carried-result expr-bases name origin)
           (TcMoveResult.Ok (tc-moved-add-origin moved name-id origin))))
       (TcMoveResult.Ok moved))))
 
 (define (tc-move-invalidate-local
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
@@ -49970,15 +50477,17 @@
       [(tc-moved-contains? moved name-id) (TcMoveResult.Ok moved)]
       [(tc-moved-partial? moved name-id)
         (tc-move-rich-use-conflict-result
+          expr-bases
           (tc-moved-root-conflict moved name-id)
           name
           origin
           name)]
       [(tc-moved-contains? loop-carried name-id)
-        (tc-move-rich-loop-carried-result name origin)]
+        (tc-move-rich-loop-carried-result expr-bases name origin)]
       [else (TcMoveResult.Ok (tc-moved-add-origin moved name-id origin))])))
 
 (define (tc-move-mark-region-locals-scan
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -49993,6 +50502,7 @@
       [(TcTypeEnvMarkerStep.Done) (TcMoveResult.Ok moved)]
       [(TcTypeEnvMarkerStep.Cache rest-env)
         (tc-move-mark-region-locals-scan
+          expr-bases
           rest-env
           locals
           loop-carried
@@ -50006,6 +50516,7 @@
           [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
           [(tc-name-id-list-contains seen key)
             (tc-move-mark-region-locals-scan
+              expr-bases
               rest-env
               locals
               loop-carried
@@ -50016,6 +50527,7 @@
               origin)]
           [(not (tc-moved-contains? locals key))
             (tc-move-mark-region-locals-scan
+              expr-bases
               rest-env
               locals
               loop-carried
@@ -50026,6 +50538,7 @@
               origin)]
           [(tc-type-contains-region ty region)
             (match (tc-move-invalidate-local
+              expr-bases
               locals
               loop-carried
               moved
@@ -50033,6 +50546,7 @@
               origin)
               [(TcMoveResult.Ok moved2)
                 (tc-move-mark-region-locals-scan
+                  expr-bases
                   rest-env
                   locals
                   loop-carried
@@ -50044,6 +50558,7 @@
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [else
             (tc-move-mark-region-locals-scan
+              expr-bases
               rest-env
               locals
               loop-carried
@@ -50054,6 +50569,7 @@
               origin)])])))
 
 (define (tc-move-mark-region-locals
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50061,6 +50577,7 @@
   [region : i64]
   [origin : AstExpr]) : TcMoveResult
   (tc-move-mark-region-locals-scan
+    expr-bases
     env
     locals
     loop-carried
@@ -50071,6 +50588,7 @@
     origin))
 
 (define (tc-move-mark-owner-region-locals-scan
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50085,6 +50603,7 @@
       [(TcTypeEnvMarkerStep.Done) (TcMoveResult.Ok moved)]
       [(TcTypeEnvMarkerStep.Cache rest-env)
         (tc-move-mark-owner-region-locals-scan
+          expr-bases
           rest-env
           locals
           loop-carried
@@ -50098,6 +50617,7 @@
           [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
           [(tc-name-id-list-contains seen key)
             (tc-move-mark-owner-region-locals-scan
+              expr-bases
               rest-env
               locals
               loop-carried
@@ -50108,6 +50628,7 @@
               origin)]
           [(not (tc-moved-contains? locals key))
             (tc-move-mark-owner-region-locals-scan
+              expr-bases
               rest-env
               locals
               loop-carried
@@ -50118,6 +50639,7 @@
               origin)]
           [(tc-type-contains-arena-owner-region? ty owner)
             (match (tc-move-invalidate-local
+              expr-bases
               locals
               loop-carried
               moved
@@ -50125,6 +50647,7 @@
               origin)
               [(TcMoveResult.Ok moved2)
                 (tc-move-mark-owner-region-locals-scan
+                  expr-bases
                   rest-env
                   locals
                   loop-carried
@@ -50136,6 +50659,7 @@
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [else
             (tc-move-mark-owner-region-locals-scan
+              expr-bases
               rest-env
               locals
               loop-carried
@@ -50146,6 +50670,7 @@
               origin)])])))
 
 (define (tc-move-mark-owner-region-locals
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50153,6 +50678,7 @@
   [owner : i64]
   [origin : AstExpr]) : TcMoveResult
   (tc-move-mark-owner-region-locals-scan
+    expr-bases
     env
     locals
     loop-carried
@@ -50302,6 +50828,7 @@
 
 (define (tc-move-safe-arena-rewind-effect
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50312,7 +50839,7 @@
     (TcMoveResult.Ok moved)
     (let
       [phase-box : i64 (ast-expr-list-get (& args) 0 0)]
-      [phase-expr : AstExpr (ast-node-get phase-box)]
+      [phase-expr : AstExpr (ast-expr-segment-bases-get expr-bases phase-box)]
       [pid : i64 (tc-expr-var-name-id phase-expr)]
       (if (>= pid 0)
         (match (tc-arena-phase-token-region-active env pid)
@@ -50329,6 +50856,7 @@
                   (TcMoveResult.Ok moved))
                   [(TcMoveResult.Ok moved1)
                     (match (tc-move-consume-local
+                      expr-bases
                       locals
                       loop-carried
                       moved1
@@ -50336,6 +50864,7 @@
                       origin)
                       [(TcMoveResult.Ok moved2)
                         (tc-move-mark-region-locals
+                          expr-bases
                           env
                           locals
                           loop-carried
@@ -50346,6 +50875,7 @@
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMaybeNameId.No)
                 (match (tc-move-consume-local
+                  expr-bases
                   locals
                   loop-carried
                   moved
@@ -50353,6 +50883,7 @@
                   origin)
                   [(TcMoveResult.Ok moved2)
                     (tc-move-mark-region-locals
+                      expr-bases
                       env
                       locals
                       loop-carried
@@ -50365,6 +50896,7 @@
 
 (define (tc-move-safe-arena-destroy-effect
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50375,7 +50907,7 @@
     (TcMoveResult.Ok moved)
     (let
       [owner-box : i64 (ast-expr-list-get (& args) 0 0)]
-      [owner-expr : AstExpr (ast-node-get owner-box)]
+      [owner-expr : AstExpr (ast-expr-segment-bases-get expr-bases owner-box)]
       [oid : i64 (tc-expr-var-name-id owner-expr)]
       (if (>= oid 0)
         (if (or
@@ -50386,6 +50918,7 @@
             (TcMoveResult.Ok moved))
             [(TcMoveResult.Ok moved1)
               (match (tc-move-consume-local
+                expr-bases
                 locals
                 loop-carried
                 moved1
@@ -50393,6 +50926,7 @@
                 origin)
                 [(TcMoveResult.Ok moved2)
                   (tc-move-mark-owner-region-locals
+                    expr-bases
                     env
                     locals
                     loop-carried
@@ -50406,6 +50940,7 @@
 
 (define (tc-move-check-safe-arena-call-effects
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50431,6 +50966,7 @@
           [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
             (tc-move-safe-arena-rewind-effect
               ctx
+              expr-bases
               env
               locals
               loop-carried
@@ -50440,6 +50976,7 @@
           [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
             (tc-move-safe-arena-destroy-effect
               ctx
+              expr-bases
               env
               locals
               loop-carried
@@ -50451,6 +50988,7 @@
 
 (define (tc-move-check-lambda-owner-captures-scan
   [ctx : TcContext]
+  [expr-bases : i64]
   [root : TcTypeEnv]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -50467,6 +51005,7 @@
       [(TcTypeEnvMarkerStep.Cache rest-env)
         (tc-move-check-lambda-owner-captures-scan
           ctx
+          expr-bases
           root
           rest-env
           locals
@@ -50489,6 +51028,7 @@
                 (tc-cleanup-owner-marker-entry? key ty))
               (tc-move-check-lambda-owner-captures-scan
                 ctx
+                expr-bases
                 root
                 rest-env
                 locals
@@ -50501,6 +51041,7 @@
             [(tc-string-list-contains seen name)
               (tc-move-check-lambda-owner-captures-scan
                 ctx
+                expr-bases
                 root
                 rest-env
                 locals
@@ -50513,6 +51054,7 @@
             [(not (tc-moved-contains? locals key))
               (tc-move-check-lambda-owner-captures-scan
                 ctx
+                expr-bases
                 root
                 rest-env
                 locals
@@ -50525,6 +51067,7 @@
             [(not (tc-expr-uses-free-name? body name bound))
               (tc-move-check-lambda-owner-captures-scan
                 ctx
+                expr-bases
                 root
                 rest-env
                 locals
@@ -50542,14 +51085,16 @@
                       (tc-moved-contains? moved key)
                       (tc-moved-partial? moved key))
                       (tc-move-rich-use-conflict-result
+                        expr-bases
                         (tc-moved-root-conflict moved key)
                         name
                         body
                         name)
                       (if (tc-moved-contains? loop-carried key)
-                        (tc-move-rich-loop-carried-result name body)
+                        (tc-move-rich-loop-carried-result expr-bases name body)
                         (tc-move-check-lambda-owner-captures-scan
                           ctx
+                          expr-bases
                           root
                           rest-env
                           locals
@@ -50561,6 +51106,7 @@
                           body)))
                     (tc-move-check-lambda-owner-captures-scan
                       ctx
+                      expr-bases
                       root
                       rest-env
                       locals
@@ -50573,6 +51119,7 @@
                 [(ResultTcType.Err _)
                   (tc-move-check-lambda-owner-captures-scan
                     ctx
+                    expr-bases
                     root
                     rest-env
                     locals
@@ -50585,6 +51132,7 @@
 
 (define (tc-move-check-lambda-owner-captures
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50593,6 +51141,7 @@
   [body : AstExpr]) : TcMoveResult
   (tc-move-check-lambda-owner-captures-scan
     ctx
+    expr-bases
     env
     env
     locals
@@ -50605,6 +51154,7 @@
 
 (define (tc-move-check-exprs-with-types-no-auto
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50613,6 +51163,7 @@
   [types : AstTypeList]) : TcMoveResult
   (tc-move-check-exprs-with-types-no-auto-at
     ctx
+    expr-bases
     env
     locals
     loop-carried
@@ -50623,6 +51174,7 @@
 
 (define (tc-move-check-exprs-with-types-no-auto-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50638,13 +51190,21 @@
       (TcMoveResult.Err (tc-call-arity-invariant-message "move-check"))
       (let
         [head : i64 (ast-expr-list-get exprs index 0)]
-        [head-expr : AstExpr (ast-node-get head)]
+        [head-expr : AstExpr (ast-expr-segment-bases-get expr-bases head)]
         [raw-ty : AstType
           (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
-        (match (tc-move-check-expr-id ctx env locals loop-carried moved head)
+        (match (tc-move-check-expr-id
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          head)
           [(TcMoveResult.Ok moved1)
             (match (tc-move-after-consuming-value
               ctx
+              expr-bases
               env
               locals
               loop-carried
@@ -50654,6 +51214,7 @@
               [(TcMoveResult.Ok moved2)
                 (tc-move-check-exprs-with-types-no-auto-at
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -50666,6 +51227,7 @@
 
 (define (tc-move-check-exprs-with-types-auto
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50674,6 +51236,7 @@
   [types : AstTypeList]) : TcMoveResult
   (tc-move-check-exprs-with-types-auto-at
     ctx
+    expr-bases
     env
     locals
     loop-carried
@@ -50684,6 +51247,7 @@
 
 (define (tc-move-check-exprs-with-types-auto-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50699,7 +51263,7 @@
       (TcMoveResult.Err (tc-call-arity-invariant-message "move-check"))
       (let
         [head : i64 (ast-expr-list-get exprs index 0)]
-        [head-expr : AstExpr (ast-node-get head)]
+        [head-expr : AstExpr (ast-expr-segment-bases-get expr-bases head)]
         [raw-ty : AstType
           (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
         [ty : AstType
@@ -50718,6 +51282,7 @@
           [(ResultTcExpr.Ok effective-head)
             (match (tc-move-check-expr
               ctx
+              expr-bases
               env
               locals
               loop-carried
@@ -50726,6 +51291,7 @@
               [(TcMoveResult.Ok moved1)
                 (match (tc-move-after-consuming-value
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -50735,6 +51301,7 @@
                   [(TcMoveResult.Ok moved2)
                     (tc-move-check-exprs-with-types-auto-at
                       ctx
+                      expr-bases
                       env
                       locals
                       loop-carried
@@ -50748,6 +51315,7 @@
 
 (define (tc-move-check-exprs-with-types
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50757,6 +51325,7 @@
   (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
     (tc-move-check-exprs-with-types-auto
       ctx
+      expr-bases
       env
       locals
       loop-carried
@@ -50765,6 +51334,7 @@
       types)
     (tc-move-check-exprs-with-types-no-auto
       ctx
+      expr-bases
       env
       locals
       loop-carried
@@ -50774,6 +51344,7 @@
 
 (define (tc-move-check-thread-channel-send-message
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50790,6 +51361,7 @@
               [(ResultTcExpr.Ok message-expr)
                 (match (tc-move-after-move-only-value
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -50815,6 +51387,7 @@
 
 (define (tc-move-check-call-args-with-types
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -50825,6 +51398,7 @@
   [params : AstTypeList]) : TcMoveResult
   (match (tc-move-check-exprs-with-types
     ctx
+    expr-bases
     env
     locals
     loop-carried
@@ -50834,6 +51408,7 @@
     [(TcMoveResult.Ok moved-args)
       (match (tc-move-check-thread-channel-send-message
         ctx
+        expr-bases
         env
         locals
         loop-carried
@@ -50844,6 +51419,7 @@
         [(TcMoveResult.Ok moved-thread)
           (tc-move-check-safe-arena-call-effects
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -50925,11 +51501,12 @@
 
 (define (tc-borrow-call-info-id-raw
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [func-id : i64]
   [args : AstExprList]) : ResultTcBorrowCallInfo
   (let
-    [func : AstExpr (ast-node-get func-id)]
+    [func : AstExpr (ast-expr-segment-bases-get expr-bases func-id)]
     (match (tc-expr-id ctx env func-id)
       [(ResultTcType.Ok fn-ty)
         (tc-borrow-call-info-from-type ctx env func args fn-ty)]
@@ -50938,11 +51515,12 @@
 (define (tc-borrow-call-info-id-with-facts
   [site : String]
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [func-id : i64]
   [args : AstExprList]) : ResultTcBorrowCallInfo
   (let
-    [func : AstExpr (ast-node-get func-id)]
+    [func : AstExpr (ast-expr-segment-bases-get expr-bases func-id)]
     (match (tc-body-type-fact-lookup-profiled site func-id)
       [(TcBodyTypeFact.Hit fn-ty)
         (tc-borrow-call-info-from-type ctx env func args fn-ty)]
@@ -50952,10 +51530,11 @@
           (compiler-tc-reinfer-profile-borrow-call-info-id
             site
             ctx
+            expr-bases
             env
             func-id
             args)
-          (tc-borrow-call-info-id-raw ctx env func-id args))])))
+          (tc-borrow-call-info-id-raw ctx expr-bases env func-id args))])))
 
 (define (tc-move-call-param-types
   [ctx : TcContext]
@@ -50994,15 +51573,25 @@
 
 (define (tc-move-check-exprs
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [exprs : AstExprList]) : TcMoveResult
-  (tc-move-check-exprs-at ctx env locals loop-carried moved (& exprs) 0))
+  (tc-move-check-exprs-at
+    ctx
+    expr-bases
+    env
+    locals
+    loop-carried
+    moved
+    (& exprs)
+    0))
 
 (define (tc-move-check-exprs-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -51013,6 +51602,7 @@
     (TcMoveResult.Ok moved)
     (match (tc-move-check-expr-id
       ctx
+      expr-bases
       env
       locals
       loop-carried
@@ -51021,6 +51611,7 @@
       [(TcMoveResult.Ok moved1)
         (tc-move-check-exprs-at
           ctx
+          expr-bases
           env
           locals
           loop-carried
@@ -51031,6 +51622,7 @@
 
 (define (tc-move-check-let-bindings
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -51038,6 +51630,7 @@
   [bindings : AstLetBindingList]) : TcMoveBindings
   (tc-move-check-let-bindings-at
     ctx
+    expr-bases
     env
     locals
     loop-carried
@@ -51047,6 +51640,7 @@
 
 (define (tc-move-check-let-bindings-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -51058,9 +51652,10 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           (match (tc-move-check-expr-id
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -51077,6 +51672,7 @@
                     init-box)]
                 (match (tc-move-after-bind-known-type-id
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -51086,6 +51682,7 @@
                   [(TcMoveResult.Ok moved2)
                     (tc-move-check-let-bindings-at
                       ctx
+                      expr-bases
                       (tc-bind-c-abi-fnptr-if-needed-id
                         ctx
                         env
@@ -51102,6 +51699,7 @@
 
 (define (tc-move-check-resource-bindings
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -51109,6 +51707,7 @@
   [bindings : AstResourceBindingList]) : TcMoveResourceBindings
   (tc-move-check-resource-bindings-at
     ctx
+    expr-bases
     env
     locals
     loop-carried
@@ -51118,6 +51717,7 @@
 
 (define (tc-move-check-resource-bindings-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -51137,9 +51737,10 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init-box _ move-aware?)
         (let
-          [_init : AstExpr (ast-node-get init-box)]
+          [_init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           (match (tc-move-check-expr-id
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -51148,6 +51749,7 @@
             [(TcMoveResult.Ok moved1)
               (match (tc-move-after-bind-id
                 ctx
+                expr-bases
                 env
                 locals
                 loop-carried
@@ -51162,6 +51764,7 @@
                     [(ResultTcType.Ok init-ty)
                       (match (tc-move-check-resource-bindings-at
                         ctx
+                        expr-bases
                         (tc-bind-id
                           (tc-bind-id
                             env
@@ -51200,6 +51803,7 @@
             [(TcMoveResult.Err message) (TcMoveResourceBindings.Err message)]))])))
 
 (define (tc-move-check-cleanup-owner-exit
+  [expr-bases : i64]
   [moved : TcMovedSet]
   [roots : TcMoveCleanupOwners]
   [scope : AstExpr]
@@ -51212,6 +51816,7 @@
       (cond
         [(struct-get owner move-aware)
           (tc-move-check-cleanup-owner-exit
+            expr-bases
             (tc-moved-remove-root-state moved name-id)
             roots
             scope
@@ -51221,11 +51826,18 @@
             (tc-moved-partial? moved name-id))
           (TcMoveResult.Err
             (tc-move-rich-cleanup-owner-exit-message
+              expr-bases
               (tc-moved-root-conflict moved name-id)
               (tc-hygiene-name-text-id name-id)
               (struct-get owner owner-origin-id)
               scope))]
-        [else (tc-move-check-cleanup-owner-exit moved roots scope (+ index 1))]))))
+        [else
+          (tc-move-check-cleanup-owner-exit
+            expr-bases
+            moved
+            roots
+            scope
+            (+ index 1))]))))
 
 (define (tc-move-add-bound-names-at
   [locals : TcMovedSet]
@@ -51283,16 +51895,27 @@
 ;; a place moved on any arm is considered moved after the match.
 (define (tc-move-check-arms
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : TcMoveResult
-  (tc-move-check-arms-at ctx env locals loop-carried moved scrut-ty (& arms) 0))
+  (tc-move-check-arms-at
+    ctx
+    expr-bases
+    env
+    locals
+    loop-carried
+    moved
+    scrut-ty
+    (& arms)
+    0))
 
 (define (tc-move-check-arms-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -51305,13 +51928,14 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
           [bound : TcNameIdList
             (tc-move-pattern-bound-names ctx scrut-ty pattern)]
           (match (tc-bind-match-pattern ctx env scrut-ty pattern)
             [(ResultTcEnv.Ok arm-env)
               (match (tc-move-check-expr
                 ctx
+                expr-bases
                 arm-env
                 (tc-move-add-bound-names (tc-moved-clone locals) bound)
                 (tc-move-remove-bound-root-states
@@ -51327,6 +51951,7 @@
                         (tc-move-remove-bound-root-states arm-moved bound))]
                     (match (tc-move-check-arms-at
                       ctx
+                      expr-bases
                       env
                       (tc-moved-clone locals)
                       (tc-moved-clone loop-carried)
@@ -51343,15 +51968,24 @@
 
 (define (tc-move-check-expr-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr-id : i64]) : TcMoveResult
-  (tc-move-check-expr ctx env locals loop-carried moved (ast-node-get expr-id)))
+  (tc-move-check-expr
+    ctx
+    expr-bases
+    env
+    locals
+    loop-carried
+    moved
+    (ast-expr-segment-bases-get expr-bases expr-id)))
 
 (define (tc-move-check-ptr-addr-of-place
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -51364,6 +51998,7 @@
         [name-text : String (tc-hygiene-name-text-id name)]
         (if (tc-moved-contains? moved name)
           (tc-move-rich-use-conflict-result
+            expr-bases
             (tc-moved-conflict moved name)
             name-text
             origin
@@ -51371,9 +52006,11 @@
           (TcMoveResult.Ok moved)))]
     [(AstExpr.StructGet receiver-box _)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
         (tc-move-check-ptr-addr-of-place
           ctx
+          expr-bases
           env
           locals
           loop-carried
@@ -51382,10 +52019,11 @@
           origin))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (match (tc-move-check-ptr-addr-of-place
           ctx
+          expr-bases
           env
           locals
           loop-carried
@@ -51393,12 +52031,20 @@
           array
           origin)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 index)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              index)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
-    [_ (tc-move-check-expr ctx env locals loop-carried moved place)]))
+    [_ (tc-move-check-expr ctx expr-bases env locals loop-carried moved place)]))
 
 (define (tc-move-check-expr
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
@@ -51406,7 +52052,14 @@
   [expr : AstExpr]) : TcMoveResult
   (match expr
     [(AstExpr.Spanned inner-box _)
-      (tc-move-check-expr-id ctx env locals loop-carried moved inner-box)]
+      (tc-move-check-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        inner-box)]
     [(AstExpr.Literal _) (TcMoveResult.Ok moved)]
     [(AstExpr.Var name)
       (let
@@ -51416,6 +52069,7 @@
             [(ResultTcExprId.Ok virtual-id)
               (tc-move-check-expr-id
                 ctx
+                expr-bases
                 env
                 locals
                 loop-carried
@@ -51424,23 +52078,46 @@
             [(ResultTcExprId.Err message) (TcMoveResult.Err message)])
           (if (tc-moved-contains? moved name)
             (tc-move-rich-use-conflict-result
+              expr-bases
               (tc-moved-conflict moved name)
               name-text
               expr
               name-text)
             (TcMoveResult.Ok moved))))]
     [(AstExpr.Binary _ left-box right-box)
-      (match (tc-move-check-expr-id ctx env locals loop-carried moved left-box)
+      (match (tc-move-check-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        left-box)
         [(TcMoveResult.Ok moved1)
-          (tc-move-check-expr-id ctx env locals loop-carried moved1 right-box)]
+          (tc-move-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved1
+            right-box)]
         [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(AstExpr.Unary _ inner-box)
-      (tc-move-check-expr-id ctx env locals loop-carried moved inner-box)]
+      (tc-move-check-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        inner-box)]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
         (match (tc-move-check-expr-id
           ctx
+          expr-bases
           env
           locals
           loop-carried
@@ -51466,6 +52143,7 @@
                         [(ResultTcTypeList.Ok expanded-params)
                           (tc-move-check-call-args-with-types
                             ctx
+                            expr-bases
                             env
                             locals
                             loop-carried
@@ -51478,6 +52156,7 @@
                           (TcMoveResult.Err message)])
                       (tc-move-check-call-args-with-types
                         ctx
+                        expr-bases
                         env
                         locals
                         loop-carried
@@ -51489,6 +52168,7 @@
                   [(TcMaybeExternAbi.No)
                     (tc-move-check-call-args-with-types
                       ctx
+                      expr-bases
                       env
                       locals
                       loop-carried
@@ -51500,6 +52180,7 @@
               [(ResultTcTypeList.Err _)
                 (match (tc-move-check-exprs
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -51508,6 +52189,7 @@
                   [(TcMoveResult.Ok moved-args)
                     (tc-move-check-safe-arena-call-effects
                       ctx
+                      expr-bases
                       env
                       locals
                       loop-carried
@@ -51518,12 +52200,20 @@
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.BracketClause items)
-      (tc-move-check-exprs ctx env locals loop-carried moved items)]
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved items)]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
-      (match (tc-move-check-expr-id ctx env locals loop-carried moved cond-box)
+      (match (tc-move-check-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        cond-box)
         [(TcMoveResult.Ok movedc)
           (match (tc-move-check-expr-id
             ctx
+            expr-bases
             env
             (tc-moved-clone locals)
             (tc-moved-clone loop-carried)
@@ -51532,6 +52222,7 @@
             [(TcMoveResult.Ok movedt)
               (match (tc-move-check-expr-id
                 ctx
+                expr-bases
                 env
                 (tc-moved-clone locals)
                 (tc-moved-clone loop-carried)
@@ -51547,6 +52238,7 @@
         [(AstLet.Let bindings body-box)
           (match (tc-move-check-let-bindings
             ctx
+            expr-bases
             env
             (tc-moved-clone locals)
             (tc-moved-clone loop-carried)
@@ -51555,6 +52247,7 @@
             [(TcMoveBindings.Ok env2 moved2 locals2 loop-carried2)
               (tc-move-check-expr-id
                 ctx
+                expr-bases
                 env2
                 locals2
                 loop-carried2
@@ -51565,12 +52258,13 @@
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
             [lambda-locals : TcMovedSet
               (tc-move-params-locals params (tc-moved-clone locals))]
             (match (tc-move-check-expr-id
               ctx
+              expr-bases
               lambda-env
               lambda-locals
               (tc-moved-empty)
@@ -51579,6 +52273,7 @@
               [(TcMoveResult.Ok _)
                 (tc-move-check-lambda-owner-captures
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -51591,6 +52286,7 @@
         [(ResultTcTypeList.Ok types)
           (tc-move-check-exprs-with-types
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -51598,17 +52294,32 @@
             exprs
             types)]
         [(ResultTcTypeList.Err _)
-          (tc-move-check-exprs ctx env locals loop-carried moved exprs)])]
+          (tc-move-check-exprs
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs)])]
     [(AstExpr.TupleRef inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          inner)
           [(TcMoveResult.Ok moved1)
-            (match (tc-move-tuple-element-path expr)
+            (match (tc-move-tuple-element-path expr-bases expr)
               [(TcMaybeMovePath.Some path)
                 (match (tc-moved-path-exact-conflict moved1 path)
                   [(TcMoveConflict.Some key origin-id)
                     (tc-move-rich-use-conflict-result
+                      expr-bases
                       (TcMoveConflict.Some key origin-id)
                       (tc-move-path-render path)
                       expr
@@ -51621,6 +52332,7 @@
         [(ResultTcTypeList.Ok types)
           (tc-move-check-exprs-with-types
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -51628,7 +52340,14 @@
             exprs
             types)]
         [(ResultTcTypeList.Err _)
-          (tc-move-check-exprs ctx env locals loop-carried moved exprs)])]
+          (tc-move-check-exprs
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs)])]
     [(AstExpr.DynArray exprs)
       (match (tc-body-type-fact-expr-list-types
         "move.dyn_array_list"
@@ -51638,6 +52357,7 @@
         [(ResultTcTypeList.Ok types)
           (tc-move-check-exprs-with-types
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -51645,24 +52365,46 @@
             exprs
             types)]
         [(ResultTcTypeList.Err _)
-          (tc-move-check-exprs ctx env locals loop-carried moved exprs)])]
+          (tc-move-check-exprs
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs)])]
     [(AstExpr.MakeArray _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          array)
           [(TcMoveResult.Ok moved1)
-            (match (tc-move-check-expr ctx env locals loop-carried moved1 index)
+            (match (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              index)
               [(TcMoveResult.Ok moved2)
-                (match (tc-move-array-element-path expr)
+                (match (tc-move-array-element-path expr-bases expr)
                   [(TcMaybeMovePath.Some path)
                     (match (tc-moved-path-exact-conflict moved2 path)
                       [(TcMoveConflict.Some key origin-id)
                         (tc-move-rich-use-conflict-result
+                          expr-bases
                           (TcMoveConflict.Some key origin-id)
                           (tc-move-path-render path)
                           expr
@@ -51673,15 +52415,30 @@
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          array)
           [(TcMoveResult.Ok moved1)
-            (match (tc-move-check-expr ctx env locals loop-carried moved1 index)
+            (match (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              index)
               [(TcMoveResult.Ok moved2)
                 (match (tc-move-check-expr
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -51690,6 +52447,7 @@
                   [(TcMoveResult.Ok moved3)
                     (TcMoveResult.Ok
                       (tc-move-reinitialize-array-set-path
+                        expr-bases
                         locals
                         moved3
                         array
@@ -51704,6 +52462,7 @@
         (tc-body-early-exit-note!)
         (match (tc-move-check-expr-id
           ctx
+          expr-bases
           env
           locals
           loop-carried
@@ -51712,6 +52471,7 @@
           [(TcMoveResult.Ok moved1)
             (match (tc-move-check-expr-id
               ctx
+              expr-bases
               env
               locals
               loop-carried
@@ -51720,6 +52480,7 @@
               [(TcMoveResult.Ok moved2)
                 (tc-move-check-expr-id
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -51729,14 +52490,30 @@
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved receiver)
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          receiver)
           [(TcMoveResult.Ok moved1)
-            (match (tc-move-check-expr ctx env locals loop-carried moved1 value)
+            (match (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              value)
               [(TcMoveResult.Ok moved2)
                 (TcMoveResult.Ok
                   (tc-move-reinitialize-struct-set-path
+                    expr-bases
                     locals
                     moved2
                     receiver
@@ -51745,31 +52522,67 @@
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          array)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 value)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              value)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.StringRef str-box index-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved str)
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          str)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 index)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              index)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved cond)
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          cond)
           [(TcMoveResult.Ok movedc)
             (let
               [body-loop-carried : TcMovedSet
                 (tc-moved-union locals (tc-moved-clone loop-carried))]
               (match (tc-move-check-expr
                 ctx
+                expr-bases
                 env
                 (tc-moved-clone locals)
                 body-loop-carried
@@ -51779,25 +52592,27 @@
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.Begin exprs)
-      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved exprs)]
     [(AstExpr.Unsafe exprs)
-      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved exprs)]
     [(AstExpr.Set name rhs-box)
       (let
-        [_rhs : AstExpr (ast-node-get rhs-box)]
+        [_rhs : AstExpr (ast-expr-segment-bases-get expr-bases rhs-box)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-set-expr-id env name rhs-box)
             [(ResultTcExprId.Ok virtual-id)
               (tc-move-check-expr
                 ctx
+                expr-bases
                 env
                 locals
                 loop-carried
                 moved
-                (ast-node-get virtual-id))]
+                (ast-expr-segment-bases-get expr-bases virtual-id))]
             [(ResultTcExprId.Err message) (TcMoveResult.Err message)])
           (match (tc-move-check-expr-id
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -51806,6 +52621,7 @@
             [(TcMoveResult.Ok moved1)
               (match (tc-move-after-bind-id
                 ctx
+                expr-bases
                 env
                 locals
                 loop-carried
@@ -51817,22 +52633,29 @@
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.Borrow _ _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
-            [scrut : AstExpr (ast-node-get scrut-box)]
-            (match (tc-move-check-expr ctx env locals loop-carried moved scrut)
+            [scrut : AstExpr (ast-expr-segment-bases-get expr-bases scrut-box)]
+            (match (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              scrut)
               [(TcMoveResult.Ok moveds)
                 (match (tc-body-type-fact-expr-id
                   "move.match_scrutinee"
@@ -51842,11 +52665,13 @@
                   [(ResultTcType.Ok scrut-ty)
                     (tc-move-check-arms
                       ctx
+                      expr-bases
                       env
                       locals
                       loop-carried
                       (tc-move-after-match-scrutinee
                         ctx
+                        expr-bases
                         locals
                         moveds
                         scrut
@@ -51856,6 +52681,7 @@
                   [(ResultTcType.Err _)
                     (tc-move-check-arms
                       ctx
+                      expr-bases
                       env
                       locals
                       loop-carried
@@ -51867,13 +52693,21 @@
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-move-check-expr ctx env locals loop-carried moved start)
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              start)
               [(TcMoveResult.Ok moved1)
                 (match (tc-move-check-expr
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -51885,6 +52719,7 @@
                         (tc-moved-union locals (tc-moved-clone loop-carried))]
                       (match (tc-move-check-expr
                         ctx
+                        expr-bases
                         (tc-bind-id env index (tc-resolve-type ctx index-ty))
                         (tc-moved-add (tc-moved-clone locals) index)
                         (tc-moved-remove-root-state body-loop-carried index)
@@ -51898,17 +52733,45 @@
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ a-box b-box c-box d-box)
           (let
-            [a : AstExpr (ast-node-get a-box)]
-            [b : AstExpr (ast-node-get b-box)]
-            [c : AstExpr (ast-node-get c-box)]
-            [d : AstExpr (ast-node-get d-box)]
-            (match (tc-move-check-expr ctx env locals loop-carried moved a)
+            [a : AstExpr (ast-expr-segment-bases-get expr-bases a-box)]
+            [b : AstExpr (ast-expr-segment-bases-get expr-bases b-box)]
+            [c : AstExpr (ast-expr-segment-bases-get expr-bases c-box)]
+            [d : AstExpr (ast-expr-segment-bases-get expr-bases d-box)]
+            (match (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              a)
               [(TcMoveResult.Ok m1)
-                (match (tc-move-check-expr ctx env locals loop-carried m1 b)
+                (match (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  loop-carried
+                  m1
+                  b)
                   [(TcMoveResult.Ok m2)
-                    (match (tc-move-check-expr ctx env locals loop-carried m2 c)
+                    (match (tc-move-check-expr
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      loop-carried
+                      m2
+                      c)
                       [(TcMoveResult.Ok m3)
-                        (tc-move-check-expr ctx env locals loop-carried m3 d)]
+                        (tc-move-check-expr
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          loop-carried
+                          m3
+                          d)]
                       [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
@@ -51926,17 +52789,32 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-move-check-expr ctx env locals loop-carried moved start)
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              start)
               [(TcMoveResult.Ok m1)
-                (match (tc-move-check-expr ctx env locals loop-carried m1 end)
+                (match (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  loop-carried
+                  m1
+                  end)
                   [(TcMoveResult.Ok m2)
                     (match (tc-move-check-expr
                       ctx
+                      expr-bases
                       env
                       locals
                       loop-carried
@@ -51945,6 +52823,7 @@
                       [(TcMoveResult.Ok m3)
                         (match (tc-move-check-expr
                           ctx
+                          expr-bases
                           (tc-bind-id env index (tc-resolve-type ctx index-ty))
                           (tc-moved-add (tc-moved-clone locals) index)
                           loop-carried
@@ -51966,6 +52845,7 @@
                                   prefix)]
                               (match (tc-move-check-expr
                                 ctx
+                                expr-bases
                                 scan-env
                                 scan-locals
                                 loop-carried
@@ -51981,30 +52861,66 @@
               [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          value)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 lane)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              lane)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          value)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 lane)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              lane)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.StructGet inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          inner)
           [(TcMoveResult.Ok moved1)
-            (match (tc-move-struct-field-path expr)
+            (match (tc-move-struct-field-path expr-bases expr)
               [(TcMaybeMovePath.Some path)
                 (match (tc-moved-path-exact-conflict moved1 path)
                   [(TcMoveConflict.Some key origin-id)
                     (tc-move-rich-use-conflict-result
+                      expr-bases
                       (TcMoveConflict.Some key origin-id)
                       (tc-move-path-render path)
                       expr
@@ -52013,28 +52929,57 @@
               [(TcMaybeMovePath.No) (TcMoveResult.Ok moved1)])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.WithRegion _ exprs)
-      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved exprs)]
     [(AstExpr.WithEscape scratch-box exprs)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved scratch)
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          scratch)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-exprs ctx env locals loop-carried moved1 exprs)]
+            (tc-move-check-exprs
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              exprs)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.WithScratch exprs)
-      (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved exprs)]
     [(AstExpr.InArena arena-box exprs)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved arena)
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          arena)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-exprs ctx env locals loop-carried moved1 exprs)]
+            (tc-move-check-exprs
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              exprs)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings exprs)
           (match (tc-move-check-resource-bindings
             ctx
+            expr-bases
             env
             locals
             loop-carried
@@ -52048,32 +52993,46 @@
                 roots)
               (match (tc-move-check-exprs
                 ctx
+                expr-bases
                 body-env
                 body-locals
                 body-loop
                 moved1
                 exprs)
                 [(TcMoveResult.Ok moved2)
-                  (tc-move-check-cleanup-owner-exit moved2 roots expr 0)]
+                  (tc-move-check-cleanup-owner-exit
+                    expr-bases
+                    moved2
+                    roots
+                    expr
+                    0)]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [(TcMoveResourceBindings.Err message) (TcMoveResult.Err message)])])]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          inner)
           [(TcMoveResult.Ok moved1)
             (match (tc-expr ctx env inner)
               [(ResultTcType.Ok box-ty)
                 (tc-move-after-consuming-value
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -52084,12 +53043,20 @@
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.BoxSet box-box value-box)
       (let
-        [box-expr : AstExpr (ast-node-get box-box)]
-        [_value : AstExpr (ast-node-get value-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved box-expr)
+        [box-expr : AstExpr (ast-expr-segment-bases-get expr-bases box-box)]
+        [_value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          box-expr)
           [(TcMoveResult.Ok moved1)
             (match (tc-move-check-expr-id
               ctx
+              expr-bases
               env
               locals
               loop-carried
@@ -52098,6 +53065,7 @@
               [(TcMoveResult.Ok moved2)
                 (match (tc-move-after-bind-id
                   ctx
+                  expr-bases
                   env
                   locals
                   loop-carried
@@ -52111,14 +53079,21 @@
     [(AstExpr.Init _) (TcMoveResult.Ok moved)]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (begin
           ;; Compile-time code cannot cause a runtime early exit in the
           ;; containing function; mirror lower's existing RVO scanner.
           (tc-body-early-exit-suppress-push!)
           (let
             [result : TcMoveResult
-              (tc-move-check-expr ctx env locals loop-carried moved inner)]
+              (tc-move-check-expr
+                ctx
+                expr-bases
+                env
+                locals
+                loop-carried
+                moved
+                inner)]
             (begin
               (tc-body-early-exit-suppress-pop!)
               result))))]
@@ -52128,21 +53103,36 @@
     [(AstExpr.UnquoteSplicing _) (TcMoveResult.Ok moved)]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (begin
           (tc-body-early-exit-note!)
-          (tc-move-check-expr ctx env locals loop-carried moved inner)))]
+          (tc-move-check-expr
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            inner)))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (begin
           (tc-body-early-exit-note!)
-          (match (tc-move-check-expr ctx env locals loop-carried moved inner)
+          (match (tc-move-check-expr
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            inner)
             [(TcMoveResult.Ok moved1)
               (match (tc-current-return-type env)
                 [(ResultTcType.Ok return-ty)
                   (tc-move-after-consuming-value
                     ctx
+                    expr-bases
                     env
                     locals
                     loop-carried
@@ -52162,13 +53152,14 @@
     [(AstExpr.PtrNull _) (TcMoveResult.Ok moved)]
     [(AstExpr.PtrNullCheck inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.PtrAddrOf place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
         (tc-move-check-ptr-addr-of-place
           ctx
+          expr-bases
           env
           locals
           loop-carried
@@ -52177,52 +53168,94 @@
           expr))]
     [(AstExpr.PtrRead inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          ptr)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 value)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              value)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          ptr)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 offset)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              offset)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.PtrCast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.PtrToInt inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.IntToPtr inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.StringData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          ptr)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 len)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              len)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArrayData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(AstExpr.BinaryData _) (TcMoveResult.Ok moved)]
     [(AstExpr.SpmdProgramIndex) (TcMoveResult.Ok moved)]
     [(AstExpr.SpmdProgramCount) (TcMoveResult.Ok moved)]
@@ -52231,50 +53264,108 @@
     [(AstExpr.ProgramEnvp) (TcMoveResult.Ok moved)]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          leaf)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              subleaf)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          leaf)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              subleaf)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          leaf)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              subleaf)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (match (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          leaf)
           [(TcMoveResult.Ok moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              subleaf)]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved index))]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved index))]
     [(AstExpr.Syscall args)
-      (tc-move-check-exprs ctx env locals loop-carried moved args)]))
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved args)]))
 
 (define (tc-move-check-body
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : ResultTcUnit
   (match (tc-move-check-expr
     ctx
+    expr-bases
     env
     (tc-move-params-locals params (tc-moved-empty))
     (tc-moved-empty)
@@ -52285,11 +53376,13 @@
 
 (define (tc-move-check-body-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body-id : i64]) : ResultTcUnit
   (match (tc-move-check-expr-id
     ctx
+    expr-bases
     env
     (tc-move-params-locals params (tc-moved-empty))
     (tc-moved-empty)
@@ -52368,6 +53461,7 @@
     [TcMoveConflict.No TcBorrowConflictOrigin.No]))
 
 (define (tc-borrow-check-rich-conflict-message
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [conflict-path : TcMovePath]
   [conflict-kind : TcMovedPathKind]
@@ -52380,7 +53474,8 @@
         conflict-path
         conflict-kind)
         [(TcBorrowConflictOrigin.Some origin-id)
-          (match (tc-expr-maybe-span (ast-node-get origin-id))
+          (match (tc-expr-maybe-span
+            (ast-expr-segment-bases-get expr-bases origin-id))
             [(TcMaybeAstSourceSpan.Some origin-span)
               (tc-rich-error-one-secondary
                 primary-span
@@ -52410,7 +53505,8 @@
         conflict-path
         conflict-kind)
         [(TcBorrowConflictOrigin.Some origin-id)
-          (match (tc-expr-maybe-span (ast-node-get origin-id))
+          (match (tc-expr-maybe-span
+            (ast-expr-segment-bases-get expr-bases origin-id))
             [(TcMaybeAstSourceSpan.Some origin-span)
               (tc-rich-error-one-secondary
                 origin-span
@@ -52531,11 +53627,13 @@
     (TcMovedPathKind.BorrowTwoPhaseMut)))
 
 (define (tc-borrow-check-two-phase-mut-conflict-message
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : AstExpr]
   [message : String]) : String
   (tc-borrow-check-rich-conflict-message
+    expr-bases
     borrowed
     path
     (TcMovedPathKind.BorrowTwoPhaseMut)
@@ -52660,49 +53758,61 @@
 ;; markers. This preserves the actual source projection instead of collapsing
 ;; it to the lifetime root.
 (define (tc-borrow-check-result-expr-list-path
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [exprs : AstExprList]) : TcMaybeMovePath
   (if (ast-expr-list-empty? (& exprs))
     (TcMaybeMovePath.No)
     (tc-borrow-check-result-direct-borrow-path
+      expr-bases
       locals
-      (ast-node-get
+      (ast-expr-segment-bases-get
+        expr-bases
         (ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0)))))
 
 ;; Recover a direct place borrow from the value position of an expression.
 ;; Indirect call/aggregate results deliberately return No so their existing
 ;; lifetime-based propagation remains conservative.
 (define (tc-borrow-check-result-direct-borrow-path
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [expr : AstExpr]) : TcMaybeMovePath
   (match expr
     [(AstExpr.Spanned inner-box _)
       (tc-borrow-check-result-direct-borrow-path
+        expr-bases
         locals
-        (ast-node-get inner-box))]
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Borrow _ _ place-box)
-      (match (tc-borrow-check-place-path (ast-node-get place-box))
+      (match (tc-borrow-check-place-path
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases place-box))
         [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
         [(TcMaybeMovePath.No) (TcMaybeMovePath.No)])]
-    [(AstExpr.Begin exprs) (tc-borrow-check-result-expr-list-path locals exprs)]
+    [(AstExpr.Begin exprs)
+      (tc-borrow-check-result-expr-list-path expr-bases locals exprs)]
     [(AstExpr.Unsafe exprs)
-      (tc-borrow-check-result-expr-list-path locals exprs)]
+      (tc-borrow-check-result-expr-list-path expr-bases locals exprs)]
     [(AstExpr.Ann inner-box _)
       (tc-borrow-check-result-direct-borrow-path
+        expr-bases
         locals
-        (ast-node-get inner-box))]
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Cast inner-box _)
       (tc-borrow-check-result-direct-borrow-path
+        expr-bases
         locals
-        (ast-node-get inner-box))]
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Comptime inner-box)
       (tc-borrow-check-result-direct-borrow-path
+        expr-bases
         locals
-        (ast-node-get inner-box))]
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Try inner-box)
       (tc-borrow-check-result-direct-borrow-path
+        expr-bases
         locals
-        (ast-node-get inner-box))]
+        (ast-expr-segment-bases-get expr-bases inner-box))]
     [_ (TcMaybeMovePath.No)]))
 
 (define (tc-borrow-check-propagate-return-borrows-at
@@ -52764,6 +53874,7 @@
 
 (define (tc-borrow-check-propagate-return-borrows
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [outer-locals : TcMovedSet]
   [outer-borrowed : TcMovedSet]
@@ -52787,7 +53898,10 @@
           (tc-moved-paths inner-borrowed)
           0
           result-lifetimes
-          (tc-borrow-check-result-direct-borrow-path outer-locals result-expr)
+          (tc-borrow-check-result-direct-borrow-path
+            expr-bases
+            outer-locals
+            result-expr)
           (tc-moved-clone outer-borrowed))))))
 
 (define (tc-borrow-check-mark-new-return-borrows-at
@@ -52960,10 +54074,10 @@
       0
       borrowed)))
 
-(define (tc-borrow-check-place-path [expr : AstExpr]) : TcMaybeMovePath
-  (match (tc-move-root-projection-var-id expr)
+(define (tc-borrow-check-place-path [expr-bases : i64] [expr : AstExpr]) : TcMaybeMovePath
+  (match (tc-move-root-projection-var-id expr-bases expr)
     [(TcMaybeNameId.Some root-id)
-      (match (tc-move-direct-root-base-path expr)
+      (match (tc-move-direct-root-base-path expr-bases expr)
         [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
         [(TcMaybeMovePath.No)
           (TcMaybeMovePath.Some
@@ -53002,13 +54116,18 @@
     (ast-node-push origin)))
 
 (define (tc-borrow-check-add-two-phase-mut-place
+  [expr-bases : i64]
   [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : AstExpr]
   [origin : AstExpr]) : TcBorrowCheckResult
-  (match (tc-borrow-check-place-path place)
+  (match (tc-borrow-check-place-path expr-bases place)
     [(TcMaybeMovePath.Some path)
-      (match (tc-borrow-check-mutably-borrow-conflict borrowed path origin)
+      (match (tc-borrow-check-mutably-borrow-conflict
+        expr-bases
+        borrowed
+        path
+        origin)
         [(ResultTcUnit.Ok)
           (TcBorrowCheckResult.Ok
             (tc-borrow-check-add-two-phase-mut-borrow-path borrowed path origin))]
@@ -53016,12 +54135,14 @@
     [(TcMaybeMovePath.No) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-move-conflict
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : AstExpr]) : ResultTcUnit
   (if (tc-moved-path-conflict? borrowed path)
     (ResultTcUnit.Err
       (tc-borrow-check-rich-conflict-message
+        expr-bases
         borrowed
         path
         (TcMovedPathKind.BorrowShared)
@@ -53031,6 +54152,7 @@
       [(TcMoveConflict.Some _ _)
         (ResultTcUnit.Err
           (tc-borrow-check-two-phase-mut-conflict-message
+            expr-bases
             borrowed
             path
             primary
@@ -53038,12 +54160,14 @@
       [TcMoveConflict.No ResultTcUnit.Ok])))
 
 (define (tc-borrow-check-assign-conflict
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : AstExpr]) : ResultTcUnit
   (if (tc-moved-path-conflict? borrowed path)
     (ResultTcUnit.Err
       (tc-borrow-check-rich-conflict-message
+        expr-bases
         borrowed
         path
         (TcMovedPathKind.BorrowShared)
@@ -53053,6 +54177,7 @@
       [(TcMoveConflict.Some _ _)
         (ResultTcUnit.Err
           (tc-borrow-check-two-phase-mut-conflict-message
+            expr-bases
             borrowed
             path
             primary
@@ -53060,12 +54185,14 @@
       [TcMoveConflict.No ResultTcUnit.Ok])))
 
 (define (tc-borrow-check-mutably-borrow-conflict
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : AstExpr]) : ResultTcUnit
   (if (tc-moved-path-conflict? borrowed path)
     (ResultTcUnit.Err
       (tc-borrow-check-rich-conflict-message
+        expr-bases
         borrowed
         path
         (TcMovedPathKind.BorrowShared)
@@ -53075,6 +54202,7 @@
       [(TcMoveConflict.Some _ _)
         (ResultTcUnit.Err
           (tc-borrow-check-two-phase-mut-conflict-message
+            expr-bases
             borrowed
             path
             primary
@@ -53082,6 +54210,7 @@
       [TcMoveConflict.No ResultTcUnit.Ok])))
 
 (define (tc-borrow-check-immutably-borrow-conflict
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : AstExpr]) : ResultTcUnit
@@ -53093,6 +54222,7 @@
     [TcMoveConflict.No false])
     (ResultTcUnit.Err
       (tc-borrow-check-rich-conflict-message
+        expr-bases
         borrowed
         path
         (TcMovedPathKind.BorrowMut)
@@ -53101,6 +54231,7 @@
     ResultTcUnit.Ok))
 
 (define (tc-borrow-check-read-conflict
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : AstExpr]) : ResultTcUnit
@@ -53112,6 +54243,7 @@
     [TcMoveConflict.No false])
     (ResultTcUnit.Err
       (tc-borrow-check-rich-conflict-message
+        expr-bases
         borrowed
         path
         (TcMovedPathKind.BorrowMut)
@@ -53120,34 +54252,44 @@
     ResultTcUnit.Ok))
 
 (define (tc-borrow-check-place-read-conflict
+  [expr-bases : i64]
   [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : AstExpr]
   [primary : AstExpr]) : TcBorrowCheckResult
   (if (= (tc-moved-len borrowed) 0)
     (TcBorrowCheckResult.Ok borrowed)
-    (match (tc-borrow-check-place-path expr)
+    (match (tc-borrow-check-place-path expr-bases expr)
       [(TcMaybeMovePath.Some path)
-        (match (tc-borrow-check-read-conflict borrowed path primary)
+        (match (tc-borrow-check-read-conflict expr-bases borrowed path primary)
           [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
           [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
       [(TcMaybeMovePath.No) (TcBorrowCheckResult.Ok borrowed)])))
 
 (define (tc-borrow-check-add-place-with-mutability
+  [expr-bases : i64]
   [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [mutable : bool]
   [place : AstExpr]
   [origin : AstExpr]) : TcBorrowCheckResult
-  (match (tc-borrow-check-place-path place)
+  (match (tc-borrow-check-place-path expr-bases place)
     [(TcMaybeMovePath.Some path)
       (if mutable
-        (match (tc-borrow-check-mutably-borrow-conflict borrowed path origin)
+        (match (tc-borrow-check-mutably-borrow-conflict
+          expr-bases
+          borrowed
+          path
+          origin)
           [(ResultTcUnit.Ok)
             (TcBorrowCheckResult.Ok
               (tc-borrow-check-add-borrow-path borrowed path true origin))]
           [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
-        (match (tc-borrow-check-immutably-borrow-conflict borrowed path origin)
+        (match (tc-borrow-check-immutably-borrow-conflict
+          expr-bases
+          borrowed
+          path
+          origin)
           [(ResultTcUnit.Ok)
             (TcBorrowCheckResult.Ok
               (tc-borrow-check-add-borrow-path borrowed path false origin))]
@@ -53155,68 +54297,75 @@
     [(TcMaybeMovePath.No) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-after-consuming-place
+  [expr-bases : i64]
   [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : AstExpr]) : TcBorrowCheckResult
-  (match (tc-borrow-check-place-path expr)
+  (match (tc-borrow-check-place-path expr-bases expr)
     [(TcMaybeMovePath.Some path)
-      (match (tc-borrow-check-move-conflict borrowed path expr)
+      (match (tc-borrow-check-move-conflict expr-bases borrowed path expr)
         [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
         [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
     [(TcMaybeMovePath.No) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-after-consuming-value
   [ctx : TcContext]
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : AstExpr]
   [target-ty : AstType]) : TcBorrowCheckResult
   (if (tc-call-param-consuming-now? ctx target-ty)
-    (tc-borrow-check-after-consuming-place locals borrowed expr)
+    (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
     (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-after-move-only-value
   [ctx : TcContext]
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : AstExpr]
   [target-ty : AstType]) : TcBorrowCheckResult
   (if (tc-type-move-only? (tc-resolve-type ctx target-ty))
-    (tc-borrow-check-after-consuming-place locals borrowed expr)
+    (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
     (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-after-reading-value
   [ctx : TcContext]
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : AstExpr]
   [target-ty : AstType]) : TcBorrowCheckResult
   (if (tc-call-param-consuming-now? ctx target-ty)
     (TcBorrowCheckResult.Ok borrowed)
-    (tc-borrow-check-place-read-conflict locals borrowed expr expr)))
+    (tc-borrow-check-place-read-conflict expr-bases locals borrowed expr expr)))
 
 (define (tc-borrow-check-after-bind-typed
   [ctx : TcContext]
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [init : AstExpr]
   [init-ty : AstType]) : TcBorrowCheckResult
   (if (tc-type-consuming-by-value-now? ctx init-ty)
-    (tc-borrow-check-after-consuming-place locals borrowed init)
+    (tc-borrow-check-after-consuming-place expr-bases locals borrowed init)
     (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-after-bind
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [init : AstExpr]) : TcBorrowCheckResult
-  (match (tc-move-bare-var init)
+  (match (tc-move-bare-var expr-bases init)
     [(TcMaybeMoveName.Some name-id name)
       (if (and
         (tc-moved-contains? locals name-id)
         (tc-move-var-move-only-id? env name-id))
         (match (tc-borrow-check-move-conflict
+          expr-bases
           borrowed
           (TcMovePath name-id (tc-move-path-segments-nil))
           init)
@@ -53229,23 +54378,31 @@
         (compiler-tc-reinfer-profile-expr "borrow.bind_init" ctx env init)
         (tc-expr ctx env init))
         [(ResultTcType.Ok init-ty)
-          (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)]
+          (tc-borrow-check-after-bind-typed
+            ctx
+            expr-bases
+            locals
+            borrowed
+            init
+            init-ty)]
         [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])]))
 
 (define (tc-borrow-check-after-bind-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [init-id : i64]) : TcBorrowCheckResult
   (let
-    [init : AstExpr (ast-node-get init-id)]
-    (match (tc-move-bare-var init)
+    [init : AstExpr (ast-expr-segment-bases-get expr-bases init-id)]
+    (match (tc-move-bare-var expr-bases init)
       [(TcMaybeMoveName.Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
           (tc-move-var-move-only-id? env name-id))
           (match (tc-borrow-check-move-conflict
+            expr-bases
             borrowed
             (TcMovePath name-id (tc-move-path-segments-nil))
             init)
@@ -53255,7 +54412,13 @@
       [(TcMaybeMoveName.No)
         (match (tc-body-type-fact-expr-id "borrow.bind_init" ctx env init-id)
           [(ResultTcType.Ok init-ty)
-            (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)]
+            (tc-borrow-check-after-bind-typed
+              ctx
+              expr-bases
+              locals
+              borrowed
+              init
+              init-ty)]
           [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])])))
 
 (define (tc-borrow-check-call-constructor? [ctx : TcContext] [func : AstExpr]) : bool
@@ -53301,6 +54464,7 @@
 
 (define (tc-borrow-check-add-bound-returned-call-arg-borrow
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53310,8 +54474,8 @@
   (match (ast-expr-unspan arg)
     [(AstExpr.Borrow true _ place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (tc-borrow-check-place-path place)
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (match (tc-borrow-check-place-path expr-bases place)
           [(TcMaybeMovePath.Some path)
             (let
               [without-temporary
@@ -53331,6 +54495,7 @@
                     result-lifetimes)
                     [(TcMaybeNameId.Some _)
                       (match (tc-borrow-check-add-place-with-mutability
+                        expr-bases
                         locals
                         without-temporary
                         true
@@ -53350,6 +54515,7 @@
           [(TcMaybeMovePath.No)
             (tc-borrow-check-add-returned-call-arg-borrow
               ctx
+              expr-bases
               env
               locals
               borrowed
@@ -53358,25 +54524,28 @@
     [(AstExpr.Ann inner-box _)
       (tc-borrow-check-add-bound-returned-call-arg-borrow
         ctx
+        expr-bases
         env
         locals
         borrowed
         binding-id
-        (ast-node-get inner-box)
+        (ast-expr-segment-bases-get expr-bases inner-box)
         result-lifetimes)]
     [(AstExpr.Cast inner-box _)
       (tc-borrow-check-add-bound-returned-call-arg-borrow
         ctx
+        expr-bases
         env
         locals
         borrowed
         binding-id
-        (ast-node-get inner-box)
+        (ast-expr-segment-bases-get expr-bases inner-box)
         result-lifetimes)]
     [_ (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-add-bound-returned-call-borrows-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53388,15 +54557,17 @@
     (TcBorrowCheckResult.Ok borrowed)
     (match (tc-borrow-check-add-bound-returned-call-arg-borrow
       ctx
+      expr-bases
       env
       locals
       borrowed
       binding-id
-      (ast-node-get (ast-expr-list-get args index 0))
+      (ast-expr-segment-bases-get expr-bases (ast-expr-list-get args index 0))
       result-lifetimes)
       [(TcBorrowCheckResult.Ok borrowed1)
         (tc-borrow-check-add-bound-returned-call-borrows-at
           ctx
+          expr-bases
           env
           locals
           borrowed1
@@ -53408,6 +54579,7 @@
 
 (define (tc-borrow-check-add-bound-returned-call-borrows
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53416,6 +54588,7 @@
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (tc-borrow-check-add-bound-returned-call-borrows-at
     ctx
+    expr-bases
     env
     locals
     borrowed
@@ -53426,6 +54599,7 @@
 
 (define (tc-borrow-check-after-bind-known-type-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53433,13 +54607,14 @@
   [init-id : i64]
   [init-ty : AstType]) : TcBorrowCheckResult
   (let
-    [init : AstExpr (ast-node-get init-id)]
-    (match (tc-move-bare-var init)
+    [init : AstExpr (ast-expr-segment-bases-get expr-bases init-id)]
+    (match (tc-move-bare-var expr-bases init)
       [(TcMaybeMoveName.Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
           (tc-move-var-move-only-id? env name-id))
           (match (tc-borrow-check-move-conflict
+            expr-bases
             borrowed
             (TcMovePath name-id (tc-move-path-segments-nil))
             init)
@@ -53450,18 +54625,20 @@
         (match (ast-expr-unspan init)
           [(AstExpr.Call func-box args)
             (let
-              [func : AstExpr (ast-node-get func-box)]
+              [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
               (if (or
                 (tc-borrow-check-call-constructor? ctx func)
                 (not (tc-borrow-check-lending-result-type? ctx init-ty)))
                 (tc-borrow-check-after-bind-typed
                   ctx
+                  expr-bases
                   locals
                   borrowed
                   init
                   init-ty)
                 (match (tc-borrow-check-add-bound-returned-call-borrows
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed
@@ -53472,6 +54649,7 @@
                   [(TcBorrowCheckResult.Ok borrowed1)
                     (tc-borrow-check-after-bind-typed
                       ctx
+                      expr-bases
                       locals
                       borrowed1
                       init
@@ -53479,10 +54657,17 @@
                   [(TcBorrowCheckResult.Err message)
                     (TcBorrowCheckResult.Err message)])))]
           [_
-            (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)])])))
+            (tc-borrow-check-after-bind-typed
+              ctx
+              expr-bases
+              locals
+              borrowed
+              init
+              init-ty)])])))
 
 (define (tc-borrow-check-prune-value-temporaries-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [prior : TcMovedSet]
   [facts : TcMovedPathFacts]
@@ -53518,7 +54703,12 @@
                   env
                   value
                   lifetime)
-                (tc-borrow-check-expr-stores-lifetime? ctx env value lifetime))))
+                (tc-borrow-check-expr-stores-lifetime?
+                  ctx
+                  expr-bases
+                  env
+                  value
+                  lifetime))))
           false)]
       [out2 : TcMovedSet
         (if remove
@@ -53526,6 +54716,7 @@
           out)]
       (tc-borrow-check-prune-value-temporaries-at
         ctx
+        expr-bases
         env
         prior
         facts
@@ -53539,12 +54730,14 @@
 ;; protecting the assigned place.
 (define (tc-borrow-check-prune-value-temporaries
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [prior : TcMovedSet]
   [borrowed : TcMovedSet]
   [value : AstExpr]) : TcMovedSet
   (tc-borrow-check-prune-value-temporaries-at
     ctx
+    expr-bases
     env
     prior
     (tc-moved-paths borrowed)
@@ -53553,59 +54746,67 @@
     borrowed))
 
 (define (tc-borrow-check-assignment
+  [expr-bases : i64]
   [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [name-id : i64]
   [primary : AstExpr]) : ResultTcUnit
   (tc-borrow-check-assign-conflict
+    expr-bases
     borrowed
     (TcMovePath name-id (tc-move-path-segments-nil))
     primary))
 
 (define (tc-borrow-check-array-set-conflict
+  [expr-bases : i64]
   [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [array : AstExpr]
   [index : AstExpr]
   [primary : AstExpr]) : ResultTcUnit
-  (match (tc-move-root-projection-var-id array)
+  (match (tc-move-root-projection-var-id expr-bases array)
     [(TcMaybeNameId.Some root-id)
-      (match (tc-move-array-set-path array index)
+      (match (tc-move-array-set-path expr-bases array index)
         [(TcMaybeMovePath.Some path)
-          (tc-borrow-check-assign-conflict borrowed path primary)]
+          (tc-borrow-check-assign-conflict expr-bases borrowed path primary)]
         [(TcMaybeMovePath.No)
           (tc-borrow-check-assign-conflict
+            expr-bases
             borrowed
             (TcMovePath root-id (tc-move-path-segments-nil))
             primary)])]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
 (define (tc-borrow-check-struct-set-conflict
+  [expr-bases : i64]
   [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [receiver : AstExpr]
   [field-id : i64]
   [primary : AstExpr]) : ResultTcUnit
-  (match (tc-move-root-projection-var-id receiver)
+  (match (tc-move-root-projection-var-id expr-bases receiver)
     [(TcMaybeNameId.Some root-id)
-      (match (tc-move-struct-set-path receiver field-id)
+      (match (tc-move-struct-set-path expr-bases receiver field-id)
         [(TcMaybeMovePath.Some path)
-          (tc-borrow-check-assign-conflict borrowed path primary)]
+          (tc-borrow-check-assign-conflict expr-bases borrowed path primary)]
         [(TcMaybeMovePath.No)
           (tc-borrow-check-assign-conflict
+            expr-bases
             borrowed
             (TcMovePath root-id (tc-move-path-segments-nil))
             primary)])]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
 (define (tc-borrow-check-root-mutation-conflict
+  [expr-bases : i64]
   [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : AstExpr]
   [primary : AstExpr]) : ResultTcUnit
-  (match (tc-move-root-projection-var-id place)
+  (match (tc-move-root-projection-var-id expr-bases place)
     [(TcMaybeNameId.Some root-id)
       (tc-borrow-check-assign-conflict
+        expr-bases
         borrowed
         (TcMovePath root-id (tc-move-path-segments-nil))
         primary)]
@@ -53613,6 +54814,7 @@
 
 (define (tc-borrow-check-region-invalidation-scan
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53627,6 +54829,7 @@
       [(TcTypeEnvMarkerStep.Cache rest-env)
         (tc-borrow-check-region-invalidation-scan
           ctx
+          expr-bases
           rest-env
           locals
           borrowed
@@ -53640,6 +54843,7 @@
           [(tc-name-id-list-contains seen key)
             (tc-borrow-check-region-invalidation-scan
               ctx
+              expr-bases
               rest-env
               locals
               borrowed
@@ -53650,6 +54854,7 @@
           [(not (tc-moved-contains? locals key))
             (tc-borrow-check-region-invalidation-scan
               ctx
+              expr-bases
               rest-env
               locals
               borrowed
@@ -53659,12 +54864,14 @@
               primary)]
           [(tc-type-contains-region ty region)
             (match (tc-borrow-check-assign-conflict
+              expr-bases
               borrowed
               (TcMovePath key (tc-move-path-segments-nil))
               primary)
               [(ResultTcUnit.Ok)
                 (tc-borrow-check-region-invalidation-scan
                   ctx
+                  expr-bases
                   rest-env
                   locals
                   borrowed
@@ -53676,6 +54883,7 @@
           [else
             (tc-borrow-check-region-invalidation-scan
               ctx
+              expr-bases
               rest-env
               locals
               borrowed
@@ -53686,6 +54894,7 @@
 
 (define (tc-borrow-check-owner-invalidation-scan
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53700,6 +54909,7 @@
       [(TcTypeEnvMarkerStep.Cache rest-env)
         (tc-borrow-check-owner-invalidation-scan
           ctx
+          expr-bases
           rest-env
           locals
           borrowed
@@ -53713,6 +54923,7 @@
           [(tc-name-id-list-contains seen key)
             (tc-borrow-check-owner-invalidation-scan
               ctx
+              expr-bases
               rest-env
               locals
               borrowed
@@ -53723,6 +54934,7 @@
           [(not (tc-moved-contains? locals key))
             (tc-borrow-check-owner-invalidation-scan
               ctx
+              expr-bases
               rest-env
               locals
               borrowed
@@ -53732,12 +54944,14 @@
               primary)]
           [(tc-type-contains-arena-owner-region? ty owner)
             (match (tc-borrow-check-assign-conflict
+              expr-bases
               borrowed
               (TcMovePath key (tc-move-path-segments-nil))
               primary)
               [(ResultTcUnit.Ok)
                 (tc-borrow-check-owner-invalidation-scan
                   ctx
+                  expr-bases
                   rest-env
                   locals
                   borrowed
@@ -53749,6 +54963,7 @@
           [else
             (tc-borrow-check-owner-invalidation-scan
               ctx
+              expr-bases
               rest-env
               locals
               borrowed
@@ -53759,6 +54974,7 @@
 
 (define (tc-borrow-check-safe-arena-rewind-effect
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53768,10 +54984,11 @@
     (TcBorrowCheckResult.Ok borrowed)
     (let
       [phase-box : i64 (ast-expr-list-get (& args) 0 0)]
-      [phase-expr : AstExpr (ast-node-get phase-box)]
+      [phase-expr : AstExpr (ast-expr-segment-bases-get expr-bases phase-box)]
       [pid : i64 (tc-expr-var-name-id phase-expr)]
       (if (>= pid 0)
         (match (tc-borrow-check-assign-conflict
+          expr-bases
           borrowed
           (TcMovePath pid (tc-move-path-segments-nil))
           primary)
@@ -53780,6 +54997,7 @@
               [(TcMaybeNameId.Some region)
                 (tc-borrow-check-region-invalidation-scan
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed
@@ -53793,6 +55011,7 @@
 
 (define (tc-borrow-check-safe-arena-destroy-effect
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53802,19 +55021,21 @@
     (TcBorrowCheckResult.Ok borrowed)
     (let
       [owner-box : i64 (ast-expr-list-get (& args) 0 0)]
-      [owner-expr : AstExpr (ast-node-get owner-box)]
+      [owner-expr : AstExpr (ast-expr-segment-bases-get expr-bases owner-box)]
       [oid : i64 (tc-expr-var-name-id owner-expr)]
       (if (>= oid 0)
         (if (or
           (tc-ordinary-arena-owner-active-id? env oid)
           (tc-atomic-arena-owner-active-id? env oid))
           (match (tc-borrow-check-assign-conflict
+            expr-bases
             borrowed
             (TcMovePath oid (tc-move-path-segments-nil))
             primary)
             [(ResultTcUnit.Ok)
               (tc-borrow-check-owner-invalidation-scan
                 ctx
+                expr-bases
                 env
                 locals
                 borrowed
@@ -53828,6 +55049,7 @@
 
 (define (tc-borrow-check-safe-arena-call-effects
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53852,6 +55074,7 @@
           [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
             (tc-borrow-check-safe-arena-rewind-effect
               ctx
+              expr-bases
               env
               locals
               borrowed
@@ -53860,6 +55083,7 @@
           [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
             (tc-borrow-check-safe-arena-destroy-effect
               ctx
+              expr-bases
               env
               locals
               borrowed
@@ -53910,19 +55134,27 @@
     [else false]))
 
 (define (tc-borrow-check-first-call-arg-root-mutation
+  [expr-bases : i64]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [args : AstExprList]) : TcBorrowCheckResult
   (if (ast-expr-list-empty? (& args))
     (TcBorrowCheckResult.Ok borrowed)
     (let
-      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-      (match (tc-borrow-check-root-mutation-conflict locals borrowed arg arg)
+      [arg : AstExpr
+        (ast-expr-segment-bases-get expr-bases (ast-expr-list-get (& args) 0 0))]
+      (match (tc-borrow-check-root-mutation-conflict
+        expr-bases
+        locals
+        borrowed
+        arg
+        arg)
         [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
         [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)]))))
 
 (define (tc-borrow-check-after-call-effects
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -53932,6 +55164,7 @@
   [return-lifetimes : TcBorrowCallReturnLifetimes]) : TcBorrowCheckResult
   (match (tc-borrow-check-safe-arena-call-effects
     ctx
+    expr-bases
     env
     locals
     borrowed
@@ -53945,12 +55178,14 @@
           (>= nid 0)
           (tc-hashmap-mutating-call-name? (tc-hygiene-name-text-id nid)))
           (match (tc-borrow-check-first-call-arg-root-mutation
+            expr-bases
             locals
             borrowed0
             args)
             [(TcBorrowCheckResult.Ok _)
               (tc-borrow-check-after-returning-call
                 ctx
+                expr-bases
                 env
                 locals
                 borrowed0
@@ -53961,6 +55196,7 @@
               (TcBorrowCheckResult.Err message)])
           (tc-borrow-check-after-returning-call
             ctx
+            expr-bases
             env
             locals
             borrowed0
@@ -54034,6 +55270,7 @@
 
 (define (tc-borrow-check-effective-arg-with-type
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54042,10 +55279,11 @@
   (let
     [want : AstType
       (ast-type-strip-consuming-param-with-pools (tc-context-pools ctx) ty)]
-    (match (tc-borrow-check-expr ctx env locals borrowed arg)
+    (match (tc-borrow-check-expr ctx expr-bases env locals borrowed arg)
       [(TcBorrowCheckResult.Ok borrowed1)
         (match (tc-borrow-check-after-consuming-value
           ctx
+          expr-bases
           locals
           borrowed1
           arg
@@ -54055,6 +55293,7 @@
               (TcBorrowCheckResult.Ok borrowed2)
               (tc-borrow-check-after-reading-value
                 ctx
+                expr-bases
                 locals
                 borrowed2
                 arg
@@ -54064,6 +55303,7 @@
 
 (define (tc-borrow-check-arg-with-type
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54084,6 +55324,7 @@
       [(ResultTcExpr.Ok effective)
         (tc-borrow-check-effective-arg-with-type
           ctx
+          expr-bases
           env
           locals
           borrowed
@@ -54094,6 +55335,7 @@
 
 (define (tc-borrow-check-exprs-with-types
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54101,6 +55343,7 @@
   [types : AstTypeList]) : TcBorrowCheckResult
   (tc-borrow-check-exprs-with-types-at
     ctx
+    expr-bases
     env
     locals
     borrowed
@@ -54110,6 +55353,7 @@
 
 (define (tc-borrow-check-exprs-with-types-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54123,11 +55367,15 @@
     (if (>= index (ast-type-list-len types))
       (TcBorrowCheckResult.Err (tc-call-arity-invariant-message "borrow-check"))
       (let
-        [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+        [head-expr : AstExpr
+          (ast-expr-segment-bases-get
+            expr-bases
+            (ast-expr-list-get exprs index 0))]
         [ty : AstType
           (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
         (match (tc-borrow-check-arg-with-type
           ctx
+          expr-bases
           env
           locals
           borrowed
@@ -54136,6 +55384,7 @@
           [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-exprs-with-types-at
               ctx
+              expr-bases
               env
               locals
               borrowed1
@@ -54145,6 +55394,7 @@
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows-loop
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [facts : TcMovedPathFacts]
   [index : i64]
@@ -54161,6 +55411,7 @@
               [(TcMoveConflict.Some _ _)
                 (TcBorrowCheckResult.Err
                   (tc-borrow-check-rich-conflict-message
+                    expr-bases
                     borrowed
                     path
                     (TcMovedPathKind.BorrowShared)
@@ -54169,21 +55420,25 @@
                       (tc-move-path-render path))))]
               [TcMoveConflict.No
                 (tc-borrow-check-activate-two-phase-mut-borrows-loop
+                  expr-bases
                   borrowed
                   facts
                   (+ index 1)
                   primary)]))]
         [_
           (tc-borrow-check-activate-two-phase-mut-borrows-loop
+            expr-bases
             borrowed
             facts
             (+ index 1)
             primary)]))))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [primary : AstExpr]) : TcBorrowCheckResult
   (tc-borrow-check-activate-two-phase-mut-borrows-loop
+    expr-bases
     borrowed
     (tc-moved-paths borrowed)
     0
@@ -54191,18 +55446,25 @@
 
 (define (tc-borrow-check-reserve-two-phase-mut-call-arg
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [borrow-expr : AstExpr]
   [place : AstExpr]) : TcBorrowCheckResult
-  (match (tc-borrow-check-place-read-conflict locals borrowed place borrow-expr)
+  (match (tc-borrow-check-place-read-conflict
+    expr-bases
+    locals
+    borrowed
+    place
+    borrow-expr)
     [(TcBorrowCheckResult.Ok borrowed0)
-      (match (tc-borrow-check-expr ctx env locals borrowed0 place)
+      (match (tc-borrow-check-expr ctx expr-bases env locals borrowed0 place)
         [(TcBorrowCheckResult.Ok borrowed1)
-          (match (tc-borrow-place ctx env place)
+          (match (tc-borrow-place ctx expr-bases env place)
             [(ResultTcBorrowPlace.Ok _)
               (tc-borrow-check-add-two-phase-mut-place
+                expr-bases
                 locals
                 borrowed1
                 place
@@ -54214,6 +55476,7 @@
 
 (define (tc-borrow-check-call-args-two-phase-with-types
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54223,6 +55486,7 @@
   [types : AstTypeList]) : TcBorrowCheckResult
   (tc-borrow-check-call-args-two-phase-with-types-at
     ctx
+    expr-bases
     env
     locals
     borrowed
@@ -54234,6 +55498,7 @@
 
 (define (tc-borrow-check-call-args-two-phase-with-types-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54248,7 +55513,10 @@
       (return
         (if (>= index (ast-type-list-len types))
           (if reserved
-            (tc-borrow-check-activate-two-phase-mut-borrows borrowed call-expr)
+            (tc-borrow-check-activate-two-phase-mut-borrows
+              expr-bases
+              borrowed
+              call-expr)
             (TcBorrowCheckResult.Ok borrowed))
           (TcBorrowCheckResult.Err
             (tc-call-arity-invariant-message "borrow-check")))))
@@ -54258,7 +55526,10 @@
         (TcBorrowCheckResult.Err
           (tc-call-arity-invariant-message "borrow-check"))))
     (let
-      [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      [head-expr : AstExpr
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))]
       [raw-ty : AstType
         (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
       [ty : AstType
@@ -54279,9 +55550,11 @@
             [(AstExpr.Borrow mutable _ place-box)
               (if (and mutable (tc-call-mutable-ref-formal? ctx ty))
                 (let
-                  [place : AstExpr (ast-node-get place-box)]
+                  [place : AstExpr
+                    (ast-expr-segment-bases-get expr-bases place-box)]
                   (match (tc-borrow-check-reserve-two-phase-mut-call-arg
                     ctx
+                    expr-bases
                     env
                     locals
                     borrowed
@@ -54290,6 +55563,7 @@
                     [(TcBorrowCheckResult.Ok borrowed1)
                       (tc-borrow-check-call-args-two-phase-with-types-at
                         ctx
+                        expr-bases
                         env
                         locals
                         borrowed1
@@ -54302,6 +55576,7 @@
                       (TcBorrowCheckResult.Err message)]))
                 (match (tc-borrow-check-effective-arg-with-type
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed
@@ -54310,6 +55585,7 @@
                   [(TcBorrowCheckResult.Ok borrowed1)
                     (tc-borrow-check-call-args-two-phase-with-types-at
                       ctx
+                      expr-bases
                       env
                       locals
                       borrowed1
@@ -54323,6 +55599,7 @@
             [_
               (match (tc-borrow-check-effective-arg-with-type
                 ctx
+                expr-bases
                 env
                 locals
                 borrowed
@@ -54331,6 +55608,7 @@
                 [(TcBorrowCheckResult.Ok borrowed1)
                   (tc-borrow-check-call-args-two-phase-with-types-at
                     ctx
+                    expr-bases
                     env
                     locals
                     borrowed1
@@ -54351,6 +55629,7 @@
 
 (define (tc-borrow-check-add-call-arg-auto-borrow
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54371,8 +55650,10 @@
         (match (ast-expr-unspan effective)
           [(AstExpr.Borrow mutable _ place-box)
             (let
-              [place : AstExpr (ast-node-get place-box)]
+              [place : AstExpr
+                (ast-expr-segment-bases-get expr-bases place-box)]
               (tc-borrow-check-add-place-with-mutability
+                expr-bases
                 locals
                 borrowed
                 mutable
@@ -54384,6 +55665,7 @@
 
 (define (tc-borrow-check-auto-borrowed-call-args
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54391,6 +55673,7 @@
   [types : AstTypeList]) : TcBorrowCheckResult
   (tc-borrow-check-auto-borrowed-call-args-at
     ctx
+    expr-bases
     env
     locals
     borrowed
@@ -54400,6 +55683,7 @@
 
 (define (tc-borrow-check-auto-borrowed-call-args-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54413,11 +55697,15 @@
     (if (>= index (ast-type-list-len types))
       (TcBorrowCheckResult.Err (tc-call-arity-invariant-message "borrow-check"))
       (let
-        [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+        [head-expr : AstExpr
+          (ast-expr-segment-bases-get
+            expr-bases
+            (ast-expr-list-get args index 0))]
         [ty : AstType
           (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
         (match (tc-borrow-check-add-call-arg-auto-borrow
           ctx
+          expr-bases
           env
           locals
           borrowed
@@ -54426,6 +55714,7 @@
           [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-auto-borrowed-call-args-at
               ctx
+              expr-bases
               env
               locals
               borrowed1
@@ -54436,6 +55725,7 @@
 
 (define (tc-borrow-check-thread-channel-send-message
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54451,6 +55741,7 @@
               [(ResultTcExpr.Ok message-expr)
                 (tc-borrow-check-after-move-only-value
                   ctx
+                  expr-bases
                   locals
                   borrowed
                   message-expr
@@ -54482,6 +55773,7 @@
 
 (define (tc-borrow-check-call-args-with-types
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54493,6 +55785,7 @@
   (if (tc-borrow-check-string-helper-intrinsic-call? ctx env func)
     (match (tc-borrow-check-read-exprs
       ctx
+      expr-bases
       env
       locals
       (tc-moved-clone borrowed)
@@ -54500,6 +55793,7 @@
       [(TcBorrowCheckResult.Ok _)
         (tc-borrow-check-after-call-effects
           ctx
+          expr-bases
           env
           locals
           borrowed
@@ -54513,6 +55807,7 @@
       [validation-result : TcBorrowCheckResult
         (tc-borrow-check-call-args-two-phase-with-types
           ctx
+          expr-bases
           env
           locals
           validation-borrowed
@@ -54525,6 +55820,7 @@
           (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
             (match (tc-borrow-check-auto-borrowed-call-args
               ctx
+              expr-bases
               env
               locals
               borrowed
@@ -54533,6 +55829,7 @@
               [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-thread-channel-send-message
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed2
@@ -54542,6 +55839,7 @@
                   [(TcBorrowCheckResult.Ok borrowed3)
                     (tc-borrow-check-after-call-effects
                       ctx
+                      expr-bases
                       env
                       locals
                       borrowed3
@@ -54555,6 +55853,7 @@
                 (TcBorrowCheckResult.Err message)])
             (match (tc-borrow-check-thread-channel-send-message
               ctx
+              expr-bases
               env
               locals
               borrowed
@@ -54564,6 +55863,7 @@
               [(TcBorrowCheckResult.Ok borrowed2)
                 (tc-borrow-check-after-call-effects
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed2
@@ -54577,6 +55877,7 @@
 
 (define (tc-borrow-check-exprs-retry-after-prune
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54592,10 +55893,11 @@
         (tc-borrow-check-prune-before-exprs ctx env borrowed protected exprs)]
       (if (= (tc-moved-len borrowed0) (tc-moved-len borrowed))
         (TcBorrowCheckResult.Err message)
-        (match (tc-borrow-check-expr ctx env locals borrowed0 head)
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed0 head)
           [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-exprs-with-protected
               ctx
+              expr-bases
               env
               locals
               borrowed1
@@ -54606,6 +55908,7 @@
 
 (define (tc-borrow-check-exprs-with-protected
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54613,6 +55916,7 @@
   [exprs : AstExprList]) : TcBorrowCheckResult
   (tc-borrow-check-exprs-with-protected-at
     ctx
+    expr-bases
     env
     locals
     borrowed
@@ -54622,6 +55926,7 @@
 
 (define (tc-borrow-check-exprs-with-protected-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54632,10 +55937,11 @@
     (TcBorrowCheckResult.Ok borrowed)
     (let
       [head : i64 (ast-expr-list-get exprs index 0)]
-      (match (tc-borrow-check-expr-id ctx env locals borrowed head)
+      (match (tc-borrow-check-expr-id ctx expr-bases env locals borrowed head)
         [(TcBorrowCheckResult.Ok borrowed1)
           (tc-borrow-check-exprs-with-protected-at
             ctx
+            expr-bases
             env
             locals
             borrowed1
@@ -54644,11 +55950,12 @@
             (+ index 1))]
         [(TcBorrowCheckResult.Err message)
           (let
-            [head-expr : AstExpr (ast-node-get head)]
+            [head-expr : AstExpr (ast-expr-segment-bases-get expr-bases head)]
             [rest : AstExprList (ast-expr-list-tail-from-ref exprs (+ index 1))]
             [current : AstExprList (ast-expr-list-tail-from-ref exprs index)]
             (tc-borrow-check-exprs-retry-after-prune
               ctx
+              expr-bases
               env
               locals
               borrowed
@@ -54660,14 +55967,23 @@
 
 (define (tc-borrow-check-exprs
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [exprs : AstExprList]) : TcBorrowCheckResult
-  (tc-borrow-check-exprs-with-protected ctx env locals borrowed borrowed exprs))
+  (tc-borrow-check-exprs-with-protected
+    ctx
+    expr-bases
+    env
+    locals
+    borrowed
+    borrowed
+    exprs))
 
 (define (tc-borrow-check-expr-with-protected-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54675,14 +55991,16 @@
   [expr-id : i64]) : TcBorrowCheckResult
   (tc-borrow-check-expr-with-protected
     ctx
+    expr-bases
     env
     locals
     borrowed
     protected
-    (ast-node-get expr-id)))
+    (ast-expr-segment-bases-get expr-bases expr-id)))
 
 (define (tc-borrow-check-expr-with-protected
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -54692,6 +56010,7 @@
     [(AstExpr.Spanned inner-box _)
       (tc-borrow-check-expr-with-protected-id
         ctx
+        expr-bases
         env
         locals
         borrowed
@@ -54700,6 +56019,7 @@
     [(AstExpr.Begin exprs)
       (tc-borrow-check-exprs-with-protected
         ctx
+        expr-bases
         env
         locals
         borrowed
@@ -54708,12 +56028,13 @@
     [(AstExpr.Unsafe exprs)
       (tc-borrow-check-exprs-with-protected
         ctx
+        expr-bases
         env
         locals
         borrowed
         protected
         exprs)]
-    [_ (tc-borrow-check-expr ctx env locals borrowed expr)]))
+    [_ (tc-borrow-check-expr ctx expr-bases env locals borrowed expr)]))
 
 (define (tc-borrow-check-expr-type-contains-lifetime?
   [ctx : TcContext]
@@ -54727,13 +56048,21 @@
 
 (define (tc-borrow-check-expr-list-stores-lifetime?
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [exprs : AstExprList]
   [lifetime : i64]) : bool
-  (tc-borrow-check-expr-list-stores-lifetime-at? ctx env (& exprs) 0 lifetime))
+  (tc-borrow-check-expr-list-stores-lifetime-at?
+    ctx
+    expr-bases
+    env
+    (& exprs)
+    0
+    lifetime))
 
 (define (tc-borrow-check-expr-list-stores-lifetime-at?
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [exprs : (& exprs AstExprList)]
   [index : i64]
@@ -54742,12 +56071,14 @@
     false
     (if (tc-borrow-check-expr-stores-lifetime?
       ctx
+      expr-bases
       env
-      (ast-node-get (ast-expr-list-get exprs index 0))
+      (ast-expr-segment-bases-get expr-bases (ast-expr-list-get exprs index 0))
       lifetime)
       true
       (tc-borrow-check-expr-list-stores-lifetime-at?
         ctx
+        expr-bases
         env
         exprs
         (+ index 1)
@@ -54755,11 +56086,13 @@
 
 (define (tc-borrow-check-let-bindings-store-lifetime?
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bindings : AstLetBindingList]
   [lifetime : i64]) : bool
   (tc-borrow-check-let-bindings-store-lifetime-at?
     ctx
+    expr-bases
     env
     (& bindings)
     lifetime
@@ -54767,6 +56100,7 @@
 
 (define (tc-borrow-check-let-bindings-store-lifetime-at?
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bindings : (& bindings AstLetBindingList)]
   [lifetime : i64]
@@ -54777,12 +56111,14 @@
       [(AstLetBinding.Binding _ _ init-box)
         (if (tc-borrow-check-expr-stores-lifetime?
           ctx
+          expr-bases
           env
-          (ast-node-get init-box)
+          (ast-expr-segment-bases-get expr-bases init-box)
           lifetime)
           true
           (tc-borrow-check-let-bindings-store-lifetime-at?
             ctx
+            expr-bases
             env
             bindings
             lifetime
@@ -54790,13 +56126,21 @@
 
 (define (tc-borrow-check-match-arms-store-lifetime?
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [arms : AstMatchArmList]
   [lifetime : i64]) : bool
-  (tc-borrow-check-match-arms-store-lifetime-at? ctx env (& arms) lifetime 0))
+  (tc-borrow-check-match-arms-store-lifetime-at?
+    ctx
+    expr-bases
+    env
+    (& arms)
+    lifetime
+    0))
 
 (define (tc-borrow-check-match-arms-store-lifetime-at?
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [arms : (& arms AstMatchArmList)]
   [lifetime : i64]
@@ -54807,12 +56151,14 @@
       [(AstMatchArm.Arm _ body-box)
         (if (tc-borrow-check-expr-stores-lifetime?
           ctx
+          expr-bases
           env
-          (ast-node-get body-box)
+          (ast-expr-segment-bases-get expr-bases body-box)
           lifetime)
           true
           (tc-borrow-check-match-arms-store-lifetime-at?
             ctx
+            expr-bases
             env
             arms
             lifetime
@@ -54820,6 +56166,7 @@
 
 (define (tc-borrow-check-expr-stores-lifetime?
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : AstExpr]
   [lifetime : i64]) : bool
@@ -54827,41 +56174,57 @@
     [(AstExpr.Spanned inner-box _)
       (tc-borrow-check-expr-stores-lifetime?
         ctx
+        expr-bases
         env
-        (ast-node-get inner-box)
+        (ast-expr-segment-bases-get expr-bases inner-box)
         lifetime)]
     [(AstExpr.Ann inner-box _)
       (tc-borrow-check-expr-stores-lifetime?
         ctx
+        expr-bases
         env
-        (ast-node-get inner-box)
+        (ast-expr-segment-bases-get expr-bases inner-box)
         lifetime)]
     [(AstExpr.Cast inner-box _)
       (tc-borrow-check-expr-stores-lifetime?
         ctx
+        expr-bases
         env
-        (ast-node-get inner-box)
+        (ast-expr-segment-bases-get expr-bases inner-box)
         lifetime)]
     [(AstExpr.Begin exprs)
-      (tc-borrow-check-expr-list-stores-lifetime? ctx env exprs lifetime)]
+      (tc-borrow-check-expr-list-stores-lifetime?
+        ctx
+        expr-bases
+        env
+        exprs
+        lifetime)]
     [(AstExpr.Unsafe exprs)
-      (tc-borrow-check-expr-list-stores-lifetime? ctx env exprs lifetime)]
+      (tc-borrow-check-expr-list-stores-lifetime?
+        ctx
+        expr-bases
+        env
+        exprs
+        lifetime)]
     [(AstExpr.If cond-box then-box else-box)
       (or
         (tc-borrow-check-expr-stores-lifetime?
           ctx
+          expr-bases
           env
-          (ast-node-get cond-box)
+          (ast-expr-segment-bases-get expr-bases cond-box)
           lifetime)
         (tc-borrow-check-expr-stores-lifetime?
           ctx
+          expr-bases
           env
-          (ast-node-get then-box)
+          (ast-expr-segment-bases-get expr-bases then-box)
           lifetime)
         (tc-borrow-check-expr-stores-lifetime?
           ctx
+          expr-bases
           env
-          (ast-node-get else-box)
+          (ast-expr-segment-bases-get expr-bases else-box)
           lifetime))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
@@ -54869,13 +56232,15 @@
           (or
             (tc-borrow-check-let-bindings-store-lifetime?
               ctx
+              expr-bases
               env
               bindings
               lifetime)
             (tc-borrow-check-expr-stores-lifetime?
               ctx
+              expr-bases
               env
-              (ast-node-get body-box)
+              (ast-expr-segment-bases-get expr-bases body-box)
               lifetime))])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
@@ -54883,18 +56248,25 @@
           (or
             (tc-borrow-check-expr-stores-lifetime?
               ctx
+              expr-bases
               env
-              (ast-node-get scrut-box)
+              (ast-expr-segment-bases-get expr-bases scrut-box)
               lifetime)
-            (tc-borrow-check-match-arms-store-lifetime? ctx env arms lifetime))])]
+            (tc-borrow-check-match-arms-store-lifetime?
+              ctx
+              expr-bases
+              env
+              arms
+              lifetime))])]
     [(AstExpr.Set name rhs-box)
       (if (tc-dotted-local-field-name-id? env name)
         (match (tc-dotted-local-field-set-expr-id env name rhs-box)
           [(ResultTcExprId.Ok virtual-id)
             (tc-borrow-check-expr-stores-lifetime?
               ctx
+              expr-bases
               env
-              (ast-node-get virtual-id)
+              (ast-expr-segment-bases-get expr-bases virtual-id)
               lifetime)]
           [(ResultTcExprId.Err _) false])
         (match (tc-lookup-id env name)
@@ -54905,31 +56277,31 @@
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
         env
-        (ast-node-get array-box)
+        (ast-expr-segment-bases-get expr-bases array-box)
         lifetime)]
     [(AstExpr.ArrayTake array-box _ _)
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
         env
-        (ast-node-get array-box)
+        (ast-expr-segment-bases-get expr-bases array-box)
         lifetime)]
     [(AstExpr.ArrayPush array-box _)
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
         env
-        (ast-node-get array-box)
+        (ast-expr-segment-bases-get expr-bases array-box)
         lifetime)]
     [(AstExpr.StructSet receiver-box _ _)
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
         env
-        (ast-node-get receiver-box)
+        (ast-expr-segment-bases-get expr-bases receiver-box)
         lifetime)]
     [(AstExpr.BoxSet box-box _)
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
         env
-        (ast-node-get box-box)
+        (ast-expr-segment-bases-get expr-bases box-box)
         lifetime)]
     [_ false]))
 
@@ -54984,6 +56356,7 @@
 
 (define (tc-borrow-check-loop-protect-stored-facts-loop
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : AstExpr]
   [facts : TcMovedPathFacts]
@@ -55002,7 +56375,12 @@
           out
           (let
             [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
-            (if (tc-borrow-check-expr-stores-lifetime? ctx env expr lifetime)
+            (if (tc-borrow-check-expr-stores-lifetime?
+              ctx
+              expr-bases
+              env
+              expr
+              lifetime)
               (tc-moved-add-path-fact
                 out
                 path
@@ -55011,6 +56389,7 @@
               out)))]
       (tc-borrow-check-loop-protect-stored-facts-loop
         ctx
+        expr-bases
         env
         expr
         facts
@@ -55019,12 +56398,14 @@
 
 (define (tc-borrow-check-loop-protect-stored-facts
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : AstExpr]
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]) : TcMovedSet
   (tc-borrow-check-loop-protect-stored-facts-loop
     ctx
+    expr-bases
     env
     expr
     (tc-moved-paths borrowed)
@@ -55047,6 +56428,7 @@
 
 (define (tc-borrow-check-exprs-loop-retry-after-prune
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -55065,6 +56447,7 @@
         (TcBorrowCheckResult.Err message)
         (match (tc-borrow-check-expr-loop
           ctx
+          expr-bases
           env
           loop-env
           locals
@@ -55076,6 +56459,7 @@
               [protected1 : TcMovedSet
                 (tc-borrow-check-loop-protect-stored-facts
                   ctx
+                  expr-bases
                   env
                   head
                   borrowed1
@@ -55087,6 +56471,7 @@
                     protected))]
               (tc-borrow-check-exprs-loop
                 ctx
+                expr-bases
                 env
                 loop-env
                 locals
@@ -55098,6 +56483,7 @@
 
 (define (tc-borrow-check-exprs-loop
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -55106,6 +56492,7 @@
   [exprs : AstExprList]) : TcBorrowCheckResult
   (tc-borrow-check-exprs-loop-at
     ctx
+    expr-bases
     env
     loop-env
     locals
@@ -55116,6 +56503,7 @@
 
 (define (tc-borrow-check-exprs-loop-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -55126,9 +56514,13 @@
   (if (>= index (struct-get exprs len))
     (TcBorrowCheckResult.Ok borrowed)
     (let
-      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
+      [head : AstExpr
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))]
       (match (tc-borrow-check-expr-loop
         ctx
+        expr-bases
         env
         loop-env
         locals
@@ -55140,6 +56532,7 @@
             [protected1 : TcMovedSet
               (tc-borrow-check-loop-protect-stored-facts
                 ctx
+                expr-bases
                 env
                 head
                 borrowed1
@@ -55151,6 +56544,7 @@
                   protected))]
             (tc-borrow-check-exprs-loop-at
               ctx
+              expr-bases
               env
               loop-env
               locals
@@ -55164,6 +56558,7 @@
             [current : AstExprList (ast-expr-list-tail-from-ref exprs index)]
             (tc-borrow-check-exprs-loop-retry-after-prune
               ctx
+              expr-bases
               env
               loop-env
               locals
@@ -55176,6 +56571,7 @@
 
 (define (tc-borrow-check-arms-loop-join
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -55185,6 +56581,7 @@
   [joined : TcMovedSet]) : TcBorrowCheckResult
   (tc-borrow-check-arms-loop-join-at
     ctx
+    expr-bases
     env
     loop-env
     locals
@@ -55196,6 +56593,7 @@
 
 (define (tc-borrow-check-arms-loop-join-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -55209,11 +56607,12 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
           (match (tc-bind-match-pattern ctx env scrut-ty pattern)
             [(ResultTcEnv.Ok arm-env)
               (match (tc-borrow-check-expr-loop
                 ctx
+                expr-bases
                 arm-env
                 loop-env
                 (tc-borrow-check-pattern-locals
@@ -55235,6 +56634,7 @@
                           pattern))]
                     (tc-borrow-check-arms-loop-join-at
                       ctx
+                      expr-bases
                       env
                       loop-env
                       locals
@@ -55249,6 +56649,7 @@
 
 (define (tc-borrow-check-arms-loop
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -55257,6 +56658,7 @@
   [arms : AstMatchArmList]) : TcBorrowCheckResult
   (tc-borrow-check-arms-loop-join
     ctx
+    expr-bases
     env
     loop-env
     locals
@@ -55267,6 +56669,7 @@
 
 (define (tc-borrow-check-expr-loop
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
@@ -55276,9 +56679,10 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-borrow-check-expr-loop
           ctx
+          expr-bases
           env
           loop-env
           locals
@@ -55288,6 +56692,7 @@
     [(AstExpr.Begin exprs)
       (tc-borrow-check-exprs-loop
         ctx
+        expr-bases
         env
         loop-env
         locals
@@ -55297,6 +56702,7 @@
     [(AstExpr.Unsafe exprs)
       (tc-borrow-check-exprs-loop
         ctx
+        expr-bases
         env
         loop-env
         locals
@@ -55305,13 +56711,16 @@
         exprs)]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed cond)
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases else-branch-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed cond)
           [(TcBorrowCheckResult.Ok borrowedc)
             (match (tc-borrow-check-expr-loop
               ctx
+              expr-bases
               env
               loop-env
               (tc-moved-clone locals)
@@ -55321,6 +56730,7 @@
               [(TcBorrowCheckResult.Ok borrowedt)
                 (match (tc-borrow-check-expr-loop
                   ctx
+                  expr-bases
                   env
                   loop-env
                   (tc-moved-clone locals)
@@ -55339,9 +56749,10 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (tc-borrow-check-let-bindings
               ctx
+              expr-bases
               env
               (tc-moved-clone locals)
               (tc-moved-clone borrowed)
@@ -55349,6 +56760,7 @@
               [(TcBorrowCheckBindings.Ok env2 locals2 borrowed2)
                 (match (tc-borrow-check-expr-loop
                   ctx
+                  expr-bases
                   env2
                   loop-env
                   locals2
@@ -55370,8 +56782,14 @@
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
-            [scrut : AstExpr (ast-node-get scrut-box)]
-            (match (tc-borrow-check-expr ctx env locals borrowed scrut)
+            [scrut : AstExpr (ast-expr-segment-bases-get expr-bases scrut-box)]
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              scrut)
               [(TcBorrowCheckResult.Ok borroweds)
                 (match (tc-body-type-fact-expr-id
                   "borrow.match_scrutinee"
@@ -55381,6 +56799,7 @@
                   [(ResultTcType.Ok scrut-ty)
                     (tc-borrow-check-arms-loop
                       ctx
+                      expr-bases
                       env
                       loop-env
                       locals
@@ -55390,18 +56809,20 @@
                   [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
-    [_ (tc-borrow-check-expr ctx env locals borrowed expr)]))
+    [_ (tc-borrow-check-expr ctx expr-bases env locals borrowed expr)]))
 
 (define (tc-borrow-check-read-exprs
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [exprs : AstExprList]) : TcBorrowCheckResult
-  (tc-borrow-check-read-exprs-at ctx env locals borrowed (& exprs) 0))
+  (tc-borrow-check-read-exprs-at ctx expr-bases env locals borrowed (& exprs) 0))
 
 (define (tc-borrow-check-read-exprs-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55410,18 +56831,23 @@
   (if (>= index (struct-get exprs len))
     (TcBorrowCheckResult.Ok borrowed)
     (let
-      [head : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
-      (match (tc-borrow-check-expr ctx env locals borrowed head)
+      [head : AstExpr
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))]
+      (match (tc-borrow-check-expr ctx expr-bases env locals borrowed head)
         [(TcBorrowCheckResult.Ok borrowed1)
           (if (= (tc-moved-len borrowed1) 0)
             (tc-borrow-check-read-exprs-at
               ctx
+              expr-bases
               env
               locals
               borrowed1
               exprs
               (+ index 1))
             (match (tc-borrow-check-place-read-conflict
+              expr-bases
               locals
               borrowed1
               head
@@ -55429,6 +56855,7 @@
               [(TcBorrowCheckResult.Ok borrowed2)
                 (tc-borrow-check-read-exprs-at
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed2
@@ -55440,6 +56867,7 @@
 
 (define (tc-borrow-check-add-returned-call-arg-borrow
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55456,8 +56884,10 @@
         (match (ast-expr-unspan arg)
           [(AstExpr.Borrow mutable _ place-box)
             (let
-              [place : AstExpr (ast-node-get place-box)]
+              [place : AstExpr
+                (ast-expr-segment-bases-get expr-bases place-box)]
               (tc-borrow-check-add-place-with-mutability
+                expr-bases
                 locals
                 borrowed
                 mutable
@@ -55465,9 +56895,11 @@
                 arg))]
           [(AstExpr.Ann inner-box _)
             (let
-              [inner : AstExpr (ast-node-get inner-box)]
+              [inner : AstExpr
+                (ast-expr-segment-bases-get expr-bases inner-box)]
               (tc-borrow-check-add-returned-call-arg-borrow
                 ctx
+                expr-bases
                 env
                 locals
                 borrowed
@@ -55475,9 +56907,11 @@
                 result-lifetimes))]
           [(AstExpr.Cast inner-box _)
             (let
-              [inner : AstExpr (ast-node-get inner-box)]
+              [inner : AstExpr
+                (ast-expr-segment-bases-get expr-bases inner-box)]
               (tc-borrow-check-add-returned-call-arg-borrow
                 ctx
+                expr-bases
                 env
                 locals
                 borrowed
@@ -55489,6 +56923,7 @@
 
 (define (tc-borrow-check-add-returned-call-borrows
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55496,6 +56931,7 @@
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (tc-borrow-check-add-returned-call-borrows-at
     ctx
+    expr-bases
     env
     locals
     borrowed
@@ -55505,6 +56941,7 @@
 
 (define (tc-borrow-check-add-returned-call-borrows-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55514,9 +56951,11 @@
   (if (>= index (struct-get args len))
     (TcBorrowCheckResult.Ok borrowed)
     (let
-      [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      [arg : AstExpr
+        (ast-expr-segment-bases-get expr-bases (ast-expr-list-get args index 0))]
       (match (tc-borrow-check-add-returned-call-arg-borrow
         ctx
+        expr-bases
         env
         locals
         borrowed
@@ -55525,6 +56964,7 @@
         [(TcBorrowCheckResult.Ok borrowed1)
           (tc-borrow-check-add-returned-call-borrows-at
             ctx
+            expr-bases
             env
             locals
             borrowed1
@@ -55535,6 +56975,7 @@
 
 (define (tc-borrow-check-after-returning-call-lifetimes
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55544,6 +56985,7 @@
     (TcBorrowCheckResult.Ok borrowed)
     (tc-borrow-check-add-returned-call-borrows
       ctx
+      expr-bases
       env
       locals
       borrowed
@@ -55552,6 +56994,7 @@
 
 (define (tc-borrow-check-after-returning-call
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55562,6 +57005,7 @@
     [(TcBorrowCallReturnLifetimes.Known result-lifetimes)
       (tc-borrow-check-after-returning-call-lifetimes
         ctx
+        expr-bases
         env
         locals
         borrowed
@@ -55579,6 +57023,7 @@
         [(ResultTcType.Ok result-ty)
           (tc-borrow-check-after-returning-call-lifetimes
             ctx
+            expr-bases
             env
             locals
             borrowed
@@ -55589,14 +57034,23 @@
 
 (define (tc-borrow-check-let-bindings
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [bindings : AstLetBindingList]) : TcBorrowCheckBindings
-  (tc-borrow-check-let-bindings-at ctx env locals borrowed (& bindings) 0))
+  (tc-borrow-check-let-bindings-at
+    ctx
+    expr-bases
+    env
+    locals
+    borrowed
+    (& bindings)
+    0))
 
 (define (tc-borrow-check-let-bindings-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55607,8 +57061,14 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (match (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            init-box)
             [(TcBorrowCheckResult.Ok borrowed1)
               (let
                 [binding-ty : AstType
@@ -55620,6 +57080,7 @@
                     init-box)]
                 (match (tc-borrow-check-after-bind-known-type-id
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed1
@@ -55640,6 +57101,7 @@
                           init)]
                       (tc-borrow-check-let-bindings-at
                         ctx
+                        expr-bases
                         (tc-bind-c-abi-fnptr-if-needed-id
                           ctx
                           env
@@ -55657,14 +57119,23 @@
 
 (define (tc-borrow-check-resource-bindings
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [bindings : AstResourceBindingList]) : TcBorrowCheckResourceBindings
-  (tc-borrow-check-resource-bindings-at ctx env locals borrowed (& bindings) 0))
+  (tc-borrow-check-resource-bindings-at
+    ctx
+    expr-bases
+    env
+    locals
+    borrowed
+    (& bindings)
+    0))
 
 (define (tc-borrow-check-resource-bindings-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55678,11 +57149,18 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init-box _ _)
         (let
-          [_init : AstExpr (ast-node-get init-box)]
-          (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
+          [_init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (match (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            init-box)
             [(TcBorrowCheckResult.Ok borrowed1)
               (match (tc-borrow-check-after-bind-id
                 ctx
+                expr-bases
                 env
                 locals
                 borrowed1
@@ -55696,6 +57174,7 @@
                     [(ResultTcType.Ok init-ty)
                       (tc-borrow-check-resource-bindings-at
                         ctx
+                        expr-bases
                         (tc-bind-id
                           (tc-bind-id
                             env
@@ -55716,6 +57195,7 @@
 
 (define (tc-borrow-check-arms-join
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55724,6 +57204,7 @@
   [joined : TcMovedSet]) : TcBorrowCheckResult
   (tc-borrow-check-arms-join-at
     ctx
+    expr-bases
     env
     locals
     borrowed
@@ -55734,6 +57215,7 @@
 
 (define (tc-borrow-check-arms-join-at
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
@@ -55749,6 +57231,7 @@
           [(ResultTcEnv.Ok arm-env)
             (match (tc-borrow-check-expr-id
               ctx
+              expr-bases
               arm-env
               (tc-borrow-check-pattern-locals
                 ctx
@@ -55765,6 +57248,7 @@
                       (tc-borrow-check-pattern-bound-names ctx scrut-ty pattern))]
                   (tc-borrow-check-arms-join-at
                     ctx
+                    expr-bases
                     env
                     locals
                     borrowed
@@ -55778,53 +57262,95 @@
 
 (define (tc-borrow-check-arms
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : TcBorrowCheckResult
-  (tc-borrow-check-arms-join ctx env locals borrowed scrut-ty arms borrowed))
+  (tc-borrow-check-arms-join
+    ctx
+    expr-bases
+    env
+    locals
+    borrowed
+    scrut-ty
+    arms
+    borrowed))
 
 (define (tc-borrow-check-expr-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr-id : i64]) : TcBorrowCheckResult
-  (tc-borrow-check-expr ctx env locals borrowed (ast-node-get expr-id)))
+  (tc-borrow-check-expr
+    ctx
+    expr-bases
+    env
+    locals
+    borrowed
+    (ast-expr-segment-bases-get expr-bases expr-id)))
 
 (define (tc-borrow-check-expr
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : AstExpr]) : TcBorrowCheckResult
   (match expr
     [(AstExpr.Spanned inner-box _)
-      (tc-borrow-check-expr-id ctx env locals borrowed inner-box)]
+      (tc-borrow-check-expr-id ctx expr-bases env locals borrowed inner-box)]
     [(AstExpr.Literal _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Var name)
       (if (tc-dotted-local-field-name-id? env name)
         (match (tc-dotted-local-field-expr-id env name)
           [(ResultTcExprId.Ok virtual-id)
-            (tc-borrow-check-expr-id ctx env locals borrowed virtual-id)]
+            (tc-borrow-check-expr-id
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              virtual-id)]
           [(ResultTcExprId.Err message) (TcBorrowCheckResult.Err message)])
         (TcBorrowCheckResult.Ok borrowed))]
     [(AstExpr.Binary _ left-box right-box)
-      (match (tc-borrow-check-expr-id ctx env locals borrowed left-box)
+      (match (tc-borrow-check-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        borrowed
+        left-box)
         [(TcBorrowCheckResult.Ok borrowed1)
-          (tc-borrow-check-expr-id ctx env locals borrowed1 right-box)]
+          (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed1
+            right-box)]
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
     [(AstExpr.Unary _ inner-box)
-      (tc-borrow-check-expr-id ctx env locals borrowed inner-box)]
+      (tc-borrow-check-expr-id ctx expr-bases env locals borrowed inner-box)]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
-        (match (tc-borrow-check-expr-id ctx env locals borrowed func-box)
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
+        (match (tc-borrow-check-expr-id
+          ctx
+          expr-bases
+          env
+          locals
+          borrowed
+          func-box)
           [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-call-info-id-with-facts
               "borrow.call_func"
               ctx
+              expr-bases
               env
               func-box
               args)
@@ -55842,6 +57368,7 @@
                         [(ResultTcTypeList.Ok expanded-params)
                           (tc-borrow-check-call-args-with-types
                             ctx
+                            expr-bases
                             env
                             locals
                             borrowed1
@@ -55854,6 +57381,7 @@
                           (TcBorrowCheckResult.Err message)])
                       (tc-borrow-check-call-args-with-types
                         ctx
+                        expr-bases
                         env
                         locals
                         borrowed1
@@ -55865,6 +57393,7 @@
                   [(TcMaybeExternAbi.No)
                     (tc-borrow-check-call-args-with-types
                       ctx
+                      expr-bases
                       env
                       locals
                       borrowed1
@@ -55876,6 +57405,7 @@
               [(ResultTcBorrowCallInfo.Err _)
                 (match (tc-borrow-check-read-exprs
                   ctx
+                  expr-bases
                   env
                   locals
                   (tc-moved-clone borrowed1)
@@ -55883,6 +57413,7 @@
                   [(TcBorrowCheckResult.Ok _)
                     (tc-borrow-check-after-call-effects
                       ctx
+                      expr-bases
                       env
                       locals
                       borrowed1
@@ -55894,12 +57425,19 @@
                     (TcBorrowCheckResult.Err message)])])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.BracketClause items)
-      (tc-borrow-check-exprs ctx env locals borrowed items)]
+      (tc-borrow-check-exprs ctx expr-bases env locals borrowed items)]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
-      (match (tc-borrow-check-expr-id ctx env locals borrowed cond-box)
+      (match (tc-borrow-check-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        borrowed
+        cond-box)
         [(TcBorrowCheckResult.Ok borrowedc)
           (match (tc-borrow-check-expr-id
             ctx
+            expr-bases
             env
             (tc-moved-clone locals)
             (tc-moved-clone borrowedc)
@@ -55907,6 +57445,7 @@
             [(TcBorrowCheckResult.Ok borrowedt)
               (match (tc-borrow-check-expr-id
                 ctx
+                expr-bases
                 env
                 (tc-moved-clone locals)
                 (tc-moved-clone borrowedc)
@@ -55923,6 +57462,7 @@
         [(AstLet.Let bindings body-box)
           (match (tc-borrow-check-let-bindings
             ctx
+            expr-bases
             env
             (tc-moved-clone locals)
             (tc-moved-clone borrowed)
@@ -55930,6 +57470,7 @@
             [(TcBorrowCheckBindings.Ok env2 locals2 borrowed2)
               (match (tc-borrow-check-expr-with-protected-id
                 ctx
+                expr-bases
                 env2
                 locals2
                 borrowed2
@@ -55947,12 +57488,13 @@
                         (TcBorrowCheckResult.Ok
                           (tc-borrow-check-propagate-return-borrows
                             ctx
+                            expr-bases
                             env2
                             locals
                             borrowed
                             body-borrowed
                             result-ty
-                            (ast-node-get body-box)))]
+                            (ast-expr-segment-bases-get expr-bases body-box)))]
                       [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))]
                 [(TcBorrowCheckResult.Err message)
                   (TcBorrowCheckResult.Err message)])]
@@ -55963,6 +57505,7 @@
         [(AstLambda.Lambda params _ body-box)
           (match (tc-borrow-check-expr-id
             ctx
+            expr-bases
             (tc-bind-params ctx env params)
             (tc-move-params-locals params (tc-moved-clone locals))
             (tc-moved-empty)
@@ -55977,15 +57520,27 @@
         env
         exprs)
         [(ResultTcTypeList.Ok types)
-          (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
+          (tc-borrow-check-exprs-with-types
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            exprs
+            types)]
         [(ResultTcTypeList.Err _)
-          (tc-borrow-check-exprs ctx env locals borrowed exprs)])]
+          (tc-borrow-check-exprs ctx expr-bases env locals borrowed exprs)])]
     [(AstExpr.TupleRef inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed inner)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-place-read-conflict locals borrowed1 expr expr)]
+            (tc-borrow-check-place-read-conflict
+              expr-bases
+              locals
+              borrowed1
+              expr
+              expr)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.Array exprs)
       (match (tc-body-type-fact-expr-list-types
@@ -55994,9 +57549,16 @@
         env
         exprs)
         [(ResultTcTypeList.Ok types)
-          (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
+          (tc-borrow-check-exprs-with-types
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            exprs
+            types)]
         [(ResultTcTypeList.Err _)
-          (tc-borrow-check-exprs ctx env locals borrowed exprs)])]
+          (tc-borrow-check-exprs ctx expr-bases env locals borrowed exprs)])]
     [(AstExpr.DynArray exprs)
       (match (tc-body-type-fact-expr-list-types
         "borrow.dyn_array_list"
@@ -56004,36 +57566,61 @@
         env
         exprs)
         [(ResultTcTypeList.Ok types)
-          (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
+          (tc-borrow-check-exprs-with-types
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            exprs
+            types)]
         [(ResultTcTypeList.Err _)
-          (tc-borrow-check-exprs ctx env locals borrowed exprs)])]
+          (tc-borrow-check-exprs ctx expr-bases env locals borrowed exprs)])]
     [(AstExpr.MakeArray _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed array)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-borrow-check-expr ctx env locals borrowed1 index)
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed1
+              index)
               [(TcBorrowCheckResult.Ok borrowed2)
-                (tc-borrow-check-place-read-conflict locals borrowed2 expr expr)]
+                (tc-borrow-check-place-read-conflict
+                  expr-bases
+                  locals
+                  borrowed2
+                  expr
+                  expr)]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [_value : AstExpr (ast-node-get value-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [_value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed array)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-borrow-check-expr ctx env locals borrowed1 index)
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed1
+              index)
               [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-expr-id
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed2
@@ -56041,12 +57628,14 @@
                   [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-after-bind-id
                       ctx
+                      expr-bases
                       env
                       locals
                       borrowed3
                       value-box)
                       [(TcBorrowCheckResult.Ok borrowed4)
                         (match (tc-borrow-check-array-set-conflict
+                          expr-bases
                           locals
                           borrowed4
                           array
@@ -56064,16 +57653,29 @@
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [live : AstExpr (ast-node-get live-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed array)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-borrow-check-expr ctx env locals borrowed1 live)
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed1
+              live)
               [(TcBorrowCheckResult.Ok borrowed2)
-                (match (tc-borrow-check-expr ctx env locals borrowed2 index)
+                (match (tc-borrow-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  borrowed2
+                  index)
                   [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-array-set-conflict
+                      expr-bases
                       locals
                       borrowed3
                       live
@@ -56081,6 +57683,7 @@
                       expr)
                       [(ResultTcUnit.Ok)
                         (match (tc-borrow-check-array-set-conflict
+                          expr-bases
                           locals
                           borrowed3
                           array
@@ -56098,20 +57701,35 @@
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [_value : AstExpr (ast-node-get value-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed receiver)
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [_value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-borrow-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          borrowed
+          receiver)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
+            (match (tc-borrow-check-expr-id
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed1
+              value-box)
               [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-after-bind-id
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed2
                   value-box)
                   [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-struct-set-conflict
+                      expr-bases
                       locals
                       borrowed3
                       receiver
@@ -56127,20 +57745,28 @@
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [_value : AstExpr (ast-node-get value-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed array)
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [_value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed array)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
+            (match (tc-borrow-check-expr-id
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed1
+              value-box)
               [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-after-bind-id
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed2
                   value-box)
                   [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-root-mutation-conflict
+                      expr-bases
                       locals
                       borrowed3
                       array
@@ -56155,24 +57781,36 @@
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.StringRef str-box index-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed str)
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed str)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-borrow-check-expr ctx env locals borrowed1 index)
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed1
+              index)
               [(TcBorrowCheckResult.Ok borrowed2)
-                (tc-borrow-check-place-read-conflict locals borrowed2 expr expr)]
+                (tc-borrow-check-place-read-conflict
+                  expr-bases
+                  locals
+                  borrowed2
+                  expr
+                  expr)]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed cond)
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed cond)
           [(TcBorrowCheckResult.Ok borrowedc)
             (match (tc-borrow-check-expr-loop
               ctx
+              expr-bases
               env
               env
               (tc-moved-clone locals)
@@ -56190,26 +57828,34 @@
                 (TcBorrowCheckResult.Err message)])]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.Begin exprs)
-      (tc-borrow-check-exprs ctx env locals borrowed exprs)]
+      (tc-borrow-check-exprs ctx expr-bases env locals borrowed exprs)]
     [(AstExpr.Unsafe exprs)
-      (tc-borrow-check-exprs ctx env locals borrowed exprs)]
+      (tc-borrow-check-exprs ctx expr-bases env locals borrowed exprs)]
     [(AstExpr.Set name rhs-box)
       (let
-        [rhs : AstExpr (ast-node-get rhs-box)]
+        [rhs : AstExpr (ast-expr-segment-bases-get expr-bases rhs-box)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-set-expr-id env name rhs-box)
             [(ResultTcExprId.Ok virtual-id)
               (tc-borrow-check-expr
                 ctx
+                expr-bases
                 env
                 locals
                 borrowed
-                (ast-node-get virtual-id))]
+                (ast-expr-segment-bases-get expr-bases virtual-id))]
             [(ResultTcExprId.Err message) (TcBorrowCheckResult.Err message)])
-          (match (tc-borrow-check-expr-id ctx env locals borrowed rhs-box)
+          (match (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            rhs-box)
             [(TcBorrowCheckResult.Ok borrowed1)
               (match (tc-borrow-check-after-bind-id
                 ctx
+                expr-bases
                 env
                 locals
                 borrowed1
@@ -56219,11 +57865,13 @@
                     [borrowed3 : TcMovedSet
                       (tc-borrow-check-prune-value-temporaries
                         ctx
+                        expr-bases
                         env
                         borrowed
                         borrowed2
                         rhs)]
                     (match (tc-borrow-check-assignment
+                      expr-bases
                       locals
                       borrowed3
                       name
@@ -56237,21 +57885,22 @@
               (TcBorrowCheckResult.Err message)])))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.Borrow mutable _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (if (= (tc-moved-len borrowed) 0)
-          (match (tc-borrow-check-expr ctx env locals borrowed inner)
+          (match (tc-borrow-check-expr ctx expr-bases env locals borrowed inner)
             [(TcBorrowCheckResult.Ok borrowed1)
-              (match (tc-borrow-place ctx env inner)
+              (match (tc-borrow-place ctx expr-bases env inner)
                 [(ResultTcBorrowPlace.Ok _)
                   (tc-borrow-check-add-place-with-mutability
+                    expr-bases
                     locals
                     borrowed1
                     mutable
@@ -56262,16 +57911,24 @@
             [(TcBorrowCheckResult.Err message)
               (TcBorrowCheckResult.Err message)])
           (match (tc-borrow-check-place-read-conflict
+            expr-bases
             locals
             borrowed
             inner
             expr)
             [(TcBorrowCheckResult.Ok borrowed0)
-              (match (tc-borrow-check-expr ctx env locals borrowed0 inner)
+              (match (tc-borrow-check-expr
+                ctx
+                expr-bases
+                env
+                locals
+                borrowed0
+                inner)
                 [(TcBorrowCheckResult.Ok borrowed1)
-                  (match (tc-borrow-place ctx env inner)
+                  (match (tc-borrow-place ctx expr-bases env inner)
                     [(ResultTcBorrowPlace.Ok _)
                       (tc-borrow-check-add-place-with-mutability
+                        expr-bases
                         locals
                         borrowed1
                         mutable
@@ -56287,8 +57944,14 @@
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
-            [scrut : AstExpr (ast-node-get scrut-box)]
-            (match (tc-borrow-check-expr ctx env locals borrowed scrut)
+            [scrut : AstExpr (ast-expr-segment-bases-get expr-bases scrut-box)]
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              scrut)
               [(TcBorrowCheckResult.Ok borroweds)
                 (match (tc-body-type-fact-expr-id
                   "borrow.match_scrutinee"
@@ -56298,6 +57961,7 @@
                   [(ResultTcType.Ok scrut-ty)
                     (tc-borrow-check-arms
                       ctx
+                      expr-bases
                       env
                       locals
                       borroweds
@@ -56310,12 +57974,24 @@
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-borrow-check-expr ctx env locals borrowed start)
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              start)
               [(TcBorrowCheckResult.Ok borrowed1)
-                (match (tc-borrow-check-expr ctx env locals borrowed1 end)
+                (match (tc-borrow-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  borrowed1
+                  end)
                   [(TcBorrowCheckResult.Ok borrowed2)
                     (let
                       [body-env : TcTypeEnv
@@ -56328,6 +58004,7 @@
                           index)]
                       (match (tc-borrow-check-expr-loop
                         ctx
+                        expr-bases
                         body-env
                         env
                         body-locals
@@ -56353,17 +58030,35 @@
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ a-box b-box c-box d-box)
           (let
-            [a : AstExpr (ast-node-get a-box)]
-            [b : AstExpr (ast-node-get b-box)]
-            [c : AstExpr (ast-node-get c-box)]
-            [d : AstExpr (ast-node-get d-box)]
-            (match (tc-borrow-check-expr ctx env locals borrowed a)
+            [a : AstExpr (ast-expr-segment-bases-get expr-bases a-box)]
+            [b : AstExpr (ast-expr-segment-bases-get expr-bases b-box)]
+            [c : AstExpr (ast-expr-segment-bases-get expr-bases c-box)]
+            [d : AstExpr (ast-expr-segment-bases-get expr-bases d-box)]
+            (match (tc-borrow-check-expr ctx expr-bases env locals borrowed a)
               [(TcBorrowCheckResult.Ok borrowed1)
-                (match (tc-borrow-check-expr ctx env locals borrowed1 b)
+                (match (tc-borrow-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  borrowed1
+                  b)
                   [(TcBorrowCheckResult.Ok borrowed2)
-                    (match (tc-borrow-check-expr ctx env locals borrowed2 c)
+                    (match (tc-borrow-check-expr
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      borrowed2
+                      c)
                       [(TcBorrowCheckResult.Ok borrowed3)
-                        (tc-borrow-check-expr ctx env locals borrowed3 d)]
+                        (tc-borrow-check-expr
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          borrowed3
+                          d)]
                       [(TcBorrowCheckResult.Err message)
                         (TcBorrowCheckResult.Err message)])]
                   [(TcBorrowCheckResult.Err message)
@@ -56384,11 +58079,11 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             [value-env : TcTypeEnv
               (tc-bind-id env index (tc-resolve-type ctx index-ty))]
             [body-env : TcTypeEnv
@@ -56397,14 +58092,33 @@
               (tc-moved-add (tc-moved-clone locals) index)]
             [body-locals : TcMovedSet
               (tc-moved-add (tc-moved-clone value-locals) prefix)]
-            (match (tc-borrow-check-expr ctx env locals borrowed start)
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              start)
               [(TcBorrowCheckResult.Ok borrowed1)
-                (match (tc-borrow-check-expr ctx env locals borrowed1 end)
+                (match (tc-borrow-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  borrowed1
+                  end)
                   [(TcBorrowCheckResult.Ok borrowed2)
-                    (match (tc-borrow-check-expr ctx env locals borrowed2 init)
+                    (match (tc-borrow-check-expr
+                      ctx
+                      expr-bases
+                      env
+                      locals
+                      borrowed2
+                      init)
                       [(TcBorrowCheckResult.Ok borrowed3)
                         (match (tc-borrow-check-expr-loop
                           ctx
+                          expr-bases
                           value-env
                           env
                           value-locals
@@ -56425,6 +58139,7 @@
                                   prefix)]
                               (match (tc-borrow-check-expr-loop
                                 ctx
+                                expr-bases
                                 body-env
                                 env
                                 body-locals
@@ -56454,30 +58169,36 @@
                 (TcBorrowCheckResult.Err message)]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed value)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 lane)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 lane)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed value)
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed value)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 lane)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 lane)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.StructGet inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed inner)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-place-read-conflict locals borrowed1 expr expr)]
+            (tc-borrow-check-place-read-conflict
+              expr-bases
+              locals
+              borrowed1
+              expr
+              expr)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.WithRegion _ exprs)
       (match (tc-borrow-check-exprs
         ctx
+        expr-bases
         env
         locals
         (tc-moved-clone borrowed)
@@ -56486,11 +58207,12 @@
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
     [(AstExpr.WithEscape scratch-box exprs)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed scratch)
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed scratch)
           [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-exprs
               ctx
+              expr-bases
               env
               locals
               (tc-moved-clone borrowed1)
@@ -56502,6 +58224,7 @@
     [(AstExpr.WithScratch exprs)
       (match (tc-borrow-check-exprs
         ctx
+        expr-bases
         env
         locals
         (tc-moved-clone borrowed)
@@ -56510,11 +58233,12 @@
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
     [(AstExpr.InArena arena-box exprs)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed arena)
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed arena)
           [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-exprs
               ctx
+              expr-bases
               env
               locals
               (tc-moved-clone borrowed1)
@@ -56528,6 +58252,7 @@
         [(AstWithResource.WithResource bindings exprs)
           (match (tc-borrow-check-resource-bindings
             ctx
+            expr-bases
             env
             locals
             (tc-moved-clone borrowed)
@@ -56538,6 +58263,7 @@
                 body-borrowed)
               (match (tc-borrow-check-exprs-with-protected
                 ctx
+                expr-bases
                 body-env
                 body-locals
                 body-borrowed
@@ -56550,24 +58276,30 @@
               (TcBorrowCheckResult.Err message)])])]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed inner)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-place-read-conflict locals borrowed1 expr expr)]
+            (tc-borrow-check-place-read-conflict
+              expr-bases
+              locals
+              borrowed1
+              expr
+              expr)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed inner)
           [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-expr ctx env inner)
               [(ResultTcType.Ok box-ty)
                 (tc-borrow-check-after-consuming-value
                   ctx
+                  expr-bases
                   locals
                   borrowed1
                   inner
@@ -56576,23 +58308,39 @@
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.BoxSet box-box value-box)
       (let
-        [box-expr : AstExpr (ast-node-get box-box)]
-        [_value : AstExpr (ast-node-get value-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed box-expr)
+        [box-expr : AstExpr (ast-expr-segment-bases-get expr-bases box-box)]
+        [_value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-borrow-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          borrowed
+          box-expr)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
+            (match (tc-borrow-check-expr-id
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed1
+              value-box)
               [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-after-bind-id
                   ctx
+                  expr-bases
                   env
                   locals
                   borrowed2
                   value-box)
                   [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-root-mutation-conflict
+                      expr-bases
                       locals
                       borrowed3
-                      (ast-node-get (ast-expr-box-get box-box))
+                      (ast-expr-segment-bases-get
+                        expr-bases
+                        (ast-expr-box-get box-box))
                       box-expr)
                       [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed3)]
                       [(ResultTcUnit.Err message)
@@ -56606,25 +58354,26 @@
     [(AstExpr.Init _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.Quote _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Quasiquote _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Unquote _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.UnquoteSplicing _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed inner)
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed inner)
           [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-current-return-type env)
               [(ResultTcType.Ok return-ty)
                 (tc-borrow-check-after-consuming-value
                   ctx
+                  expr-bases
                   locals
                   borrowed1
                   inner
@@ -56636,60 +58385,60 @@
     [(AstExpr.PtrNull _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.PtrNullCheck inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.PtrAddrOf place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-borrow-check-expr ctx env locals borrowed place))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed place))]
     [(AstExpr.PtrRead inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed ptr)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 value)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 value)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed ptr)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 offset)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 offset)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.PtrCast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.PtrToInt inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.IntToPtr inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.StringData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed ptr)
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed ptr)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 len)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 len)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.ArrayData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(AstExpr.BinaryData _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.SpmdProgramIndex) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.SpmdProgramCount) (TcBorrowCheckResult.Ok borrowed)]
@@ -56698,50 +58447,52 @@
     [(AstExpr.ProgramEnvp) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed leaf)
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed leaf)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 subleaf)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed leaf)
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed leaf)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 subleaf)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed leaf)
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed leaf)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 subleaf)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed leaf)
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (match (tc-borrow-check-expr ctx expr-bases env locals borrowed leaf)
           [(TcBorrowCheckResult.Ok borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
+            (tc-borrow-check-expr ctx expr-bases env locals borrowed1 subleaf)]
           [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-borrow-check-expr ctx env locals borrowed index))]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed index))]
     [(AstExpr.Syscall args)
-      (tc-borrow-check-read-exprs ctx env locals borrowed args)]))
+      (tc-borrow-check-read-exprs ctx expr-bases env locals borrowed args)]))
 
 (define (tc-borrow-check-body
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : ResultTcUnit
   (match (tc-borrow-check-expr-with-protected
     ctx
+    expr-bases
     env
     (tc-move-params-locals params (tc-moved-empty))
     (tc-moved-empty)
@@ -57379,21 +59130,24 @@
 
 (define (tc-borrow-check-body-id-with-ret
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [ret : AstType]
   [body-id : i64]) : ResultTcUnit
   (if (tc-borrow-check-body-irrelevant? ctx params ret body-id)
     ResultTcUnit.Ok
-    (tc-borrow-check-body-id ctx env params body-id)))
+    (tc-borrow-check-body-id ctx expr-bases env params body-id)))
 
 (define (tc-borrow-check-body-id
   [ctx : TcContext]
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body-id : i64]) : ResultTcUnit
   (match (tc-borrow-check-expr-with-protected-id
     ctx
+    expr-bases
     env
     (tc-move-params-locals params (tc-moved-empty))
     (tc-moved-empty)
@@ -74573,6 +76327,7 @@
                     [(ResultTcUnit.Ok)
                       (match (tc-move-check-body-id
                         ctx
+                        (tc-context-expr-bases ctx)
                         env
                         registered-params
                         body-box)
@@ -74581,6 +76336,7 @@
                             [result : ResultTcUnit
                               (tc-borrow-check-body-id-with-ret
                                 ctx
+                                (tc-context-expr-bases ctx)
                                 env
                                 registered-params
                                 ret

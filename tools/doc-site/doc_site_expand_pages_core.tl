@@ -714,31 +714,12 @@
                 (doc-site-expand-insert-before-main-close html sections))))
           (io.panic (str_cat.str-cat "doc-site-expand: missing page: " path "")))))))
 
+;; Only modules with generated-module sections need post-processing, so this
+;; walks that set instead of restating the site's stdlib module list. The site
+;; module list has exactly one definition, in doc_site_core.tl, derived from the
+;; `stdlib/` directory.
 (define (doc-site-expand-pages [site-dir : String]) : i64
   (begin
-    (doc-site-expand-page site-dir "stdlib/arena.tl" "stdlib-arena.html")
-    (doc-site-expand-page site-dir "stdlib/cpu.tl" "stdlib-cpu.html")
-    (doc-site-expand-page site-dir "stdlib/env.tl" "stdlib-env.html")
-    (doc-site-expand-page site-dir "stdlib/ffi.tl" "stdlib-ffi.html")
-    (doc-site-expand-page site-dir "stdlib/fs.tl" "stdlib-fs.html")
-    (doc-site-expand-page site-dir "stdlib/hash.tl" "stdlib-hash.html")
-    (doc-site-expand-page site-dir "stdlib/hashmap.tl" "stdlib-hashmap.html")
-    (doc-site-expand-page site-dir "stdlib/io.tl" "stdlib-io.html")
-    (doc-site-expand-page
-      site-dir
-      "stdlib/byte_buf_core.tl"
-      "stdlib-byte-buf-core.html")
-    (doc-site-expand-page site-dir "stdlib/json.tl" "stdlib-json.html")
-    (doc-site-expand-page site-dir "stdlib/msvc.tl" "stdlib-msvc.html")
-    (doc-site-expand-page site-dir "stdlib/process.tl" "stdlib-process.html")
-    (doc-site-expand-page site-dir "stdlib/queue.tl" "stdlib-queue.html")
-    (doc-site-expand-page site-dir "stdlib/random.tl" "stdlib-random.html")
-    (doc-site-expand-page site-dir "stdlib/string.tl" "stdlib-string.html")
-    (doc-site-expand-page site-dir "stdlib/test.tl" "stdlib-test.html")
-    (doc-site-expand-page site-dir "stdlib/text_buf.tl" "stdlib-text-buf.html")
-    (doc-site-expand-page
-      site-dir
-      "stdlib/text_buf_borrowed.tl"
-      "stdlib-text-buf-borrowed.html")
     (doc-site-expand-page site-dir "stdlib/vector.tl" "stdlib-vector.html")
+    (doc-site-expand-page site-dir "stdlib/queue.tl" "stdlib-queue.html")
     0))

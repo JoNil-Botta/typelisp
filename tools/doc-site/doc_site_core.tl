@@ -8,8 +8,11 @@
 (import stdlib.string)
 (import stdlib.str_cat)
 (import stdlib.vector)
+(import stdlib.sort)
 (import doc_site_doc_bridge as doc_bridge)
 (import doc_md)
+(import (vector.vector String) as doc_site_names)
+(import (sort.vec String) as doc_site_name_sort)
 
 (defenum DocSiteModule
   (Module String String))
@@ -32,8 +35,16 @@
 
 (define doc-site-status-ok : i64
   0)
-(define doc-site-stdlib-manifest-size : i64
-  19)
+(define doc-site-stdlib-dir : String
+  "stdlib")
+(define doc-site-stdlib-source-prefix : String
+  "stdlib/")
+(define doc-site-stdlib-page-prefix : String
+  "stdlib-")
+(define doc-site-module-suffix : String
+  ".tl")
+(define doc-site-page-suffix : String
+  ".html")
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
 (define doc-site-repo-tree-root : String
@@ -177,72 +188,90 @@
           (doc-site-section-list-ref sections 2)
           "Third")))))
 
+;; The published stdlib module set is derived from the checked-in `stdlib/`
+;; directory, so a newly added module reaches the site without editing a list.
+;; There are no exclusions: every top-level `stdlib/*.tl` module is documented
+;; (scripts/verify-stdlib-docs.sh already requires `;#`/`;:` docs on all of
+;; them), including internal twins such as `byte_buf_core` whose declarations
+;; are part of the published surface.
+(define (doc-site-module-file? [name : String]) : bool
+  (let
+    [n : i64 (string.string-length name)]
+    (if (< n 4)
+      false
+      (string.eq (string.substring name (- n 3) 3) doc-site-module-suffix))))
+
+(define (doc-site-module-stem [name : String]) : String
+  (string.substring name 0 (- (string.string-length name) 3)))
+
+(define (doc-site-module-source-path [name : String]) : String
+  (str_cat.str-cat doc-site-stdlib-source-prefix name))
+
+;; `_` becomes `-` so stdlib/byte_buf_core.tl publishes as
+;; stdlib-byte-buf-core.html. Module file names never contain `-`, so the
+;; mapping stays injective across the directory.
+(define (doc-site-module-page-name [stem : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string.string-length stem)]
+    [out : String doc-site-stdlib-page-prefix]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (if (= (string.string-ref stem i) '_')
+                "-"
+                (string.substring stem i 1))))
+          (set! i (+ i 1))))
+      (str_cat.str-cat out doc-site-page-suffix))))
+
+(define (doc-site-stdlib-module-names) : doc_site_names.Vec
+  (let
+    [dir : String doc-site-stdlib-dir]
+    (match (fs.try-read-dir (& dir))
+      [(fs.OkIoStringVector entries)
+        (let
+          [names : doc_site_names.Vec (doc_site_names.new)]
+          [i : i64 0]
+          [n : i64 (fs.string-vector-len (& entries))]
+          (begin
+            (while (< i n)
+              (let
+                [name : String (fs.string-vector-get (& entries) i "")]
+                (begin
+                  (if (doc-site-module-file? name)
+                    (doc_site_names.push (&mut names) name)
+                    unit)
+                  (set! i (+ i 1)))))
+            ;; Host directory order is not stable; sort so the sidebar, index,
+            ;; and page set are reproducible across machines.
+            (doc_site_name_sort.sort! (&mut names) sort.string-less?)
+            names))]
+      [(fs.ErrIoStringVector _)
+        (io.panic
+          (str_cat.str-cat "doc-site: could not read module directory: " dir))])))
+
 (define (doc-site-stdlib-modules) : doc_site_modules.Vec
   (let
-    [modules : doc_site_modules.Vec
-      (doc_site_modules.with-capacity doc-site-stdlib-manifest-size)]
+    [names : doc_site_names.Vec (doc-site-stdlib-module-names)]
+    [count : i64 (doc_site_names.len (& names))]
+    [modules : doc_site_modules.Vec (doc_site_modules.with-capacity count)]
+    [i : i64 0]
     (begin
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/arena.tl" "stdlib-arena.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/cpu.tl" "stdlib-cpu.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/env.tl" "stdlib-env.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/ffi.tl" "stdlib-ffi.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/fs.tl" "stdlib-fs.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/hash.tl" "stdlib-hash.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/hashmap.tl" "stdlib-hashmap.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/io.tl" "stdlib-io.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module
-          "stdlib/byte_buf_core.tl"
-          "stdlib-byte-buf-core.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/json.tl" "stdlib-json.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/msvc.tl" "stdlib-msvc.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/process.tl" "stdlib-process.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/queue.tl" "stdlib-queue.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/random.tl" "stdlib-random.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/string.tl" "stdlib-string.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/test.tl" "stdlib-test.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/text_buf.tl" "stdlib-text-buf.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module
-          "stdlib/text_buf_borrowed.tl"
-          "stdlib-text-buf-borrowed.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/vector.tl" "stdlib-vector.html"))
+      (while (< i count)
+        (let
+          [name : String (doc_site_names.get (& names) i "")]
+          [stem : String (doc-site-module-stem name)]
+          (begin
+            (doc_site_modules.push
+              (&mut modules)
+              (DocSiteModule.Module
+                (doc-site-module-source-path name)
+                (doc-site-module-page-name stem)))
+            (set! i (+ i 1)))))
       modules)))
 
 (define (doc-site-language-guides) : doc_site_guides.Vec
@@ -329,15 +358,15 @@
             (set! i (+ i 1)))))
       duplicate)))
 
-(define (doc-site-expected-manifest-size? [modules : doc_site_modules.Vec]) : bool
-  (= (doc-site-module-list-count modules) doc-site-stdlib-manifest-size))
+(define (doc-site-manifest-populated? [modules : doc_site_modules.Vec]) : bool
+  (> (doc-site-module-list-count modules) 0))
 
 (define (doc-site-panic-unit [message : String]) : unit
   (io.panic message))
 
 (define (doc-site-validate-stdlib-manifest [modules : doc_site_modules.Vec]) : unit
-  (if (not (doc-site-expected-manifest-size? modules))
-    (doc-site-panic-unit "doc-site: missing stdlib manifest entry")
+  (if (not (doc-site-manifest-populated? modules))
+    (doc-site-panic-unit "doc-site: no stdlib modules discovered")
     (if (doc-site-output-list-has-duplicate? modules)
       (doc-site-panic-unit "doc-site: duplicate output path in stdlib manifest")
       unit)))
@@ -413,6 +442,48 @@
               unit)
             (set! i (+ i 1)))))
       output)))
+
+(define (doc-site-modules-strictly-sorted? [modules : doc_site_modules.Vec]) : bool
+  (let
+    [i : i64 1]
+    [n : i64 (doc-site-module-list-count modules)]
+    [ok : bool true]
+    (begin
+      (while (and ok (< i n))
+        (let
+          [prev : String
+            (doc-site-module-source (doc-site-module-list-ref modules (- i 1)))]
+          [cur : String
+            (doc-site-module-source (doc-site-module-list-ref modules i))]
+          (begin
+            (if (sort.string-less? prev cur)
+              unit
+              (set! ok false))
+            (set! i (+ i 1)))))
+      ok)))
+
+(define (doc-site-modules-contain-source?
+  [modules : doc_site_modules.Vec]
+  [source : String]) : bool
+  (>
+    (string.string-length (doc-site-module-output-for-source source modules))
+    0))
+
+;; Directory-derived manifest self-check: populated, deduplicated, stably
+;; ordered, and reaching the modules README names as the blessed stdlib APIs.
+;; Reads `stdlib/`, so the smoke driver must run from the repository root.
+(define (doc-site-derived-modules-sorted-and-complete?) : bool
+  (let
+    [modules : doc_site_modules.Vec (doc-site-stdlib-modules)]
+    (and
+      (doc-site-manifest-populated? modules)
+      (not (doc-site-output-list-has-duplicate? modules))
+      (doc-site-modules-strictly-sorted? modules)
+      (doc-site-modules-contain-source? modules "stdlib/io.tl")
+      (doc-site-modules-contain-source? modules "stdlib/str_cat.tl")
+      (doc-site-modules-contain-source? modules "stdlib/byte_buf.tl")
+      (doc-site-modules-contain-source? modules "stdlib/thread.tl")
+      (doc-site-modules-contain-source? modules "stdlib/sync.tl"))))
 
 (define (doc-site-section-output-for-source
   [target : String]
@@ -1431,6 +1502,36 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
               modules)))
         "doc-site: duplicate output detection missing")
       (doc-site-require
-        (not (doc-site-expected-manifest-size? (doc-site-module-list-empty)))
-        "doc-site: missing manifest detection missing")
+        (not (doc-site-manifest-populated? (doc-site-module-list-empty)))
+        "doc-site: empty manifest detection missing")
+      (doc-site-require
+        (doc-site-module-file? "byte_buf_core.tl")
+        "doc-site: module file detection missing")
+      (doc-site-require
+        (not (doc-site-module-file? "README.md"))
+        "doc-site: non-module file was treated as a module")
+      (doc-site-require
+        (not (doc-site-module-file? ".tl"))
+        "doc-site: extension-only name was treated as a module")
+      (doc-site-require
+        (string.eq
+          (doc-site-module-stem "text_buf_borrowed.tl")
+          "text_buf_borrowed")
+        "doc-site: module stem mismatch")
+      (doc-site-require
+        (string.eq
+          (doc-site-module-source-path "byte_buf_core.tl")
+          "stdlib/byte_buf_core.tl")
+        "doc-site: module source path mismatch")
+      (doc-site-require
+        (string.eq
+          (doc-site-module-page-name "byte_buf_core")
+          "stdlib-byte-buf-core.html")
+        "doc-site: derived module page name mismatch")
+      (doc-site-require
+        (string.eq (doc-site-module-page-name "io") "stdlib-io.html")
+        "doc-site: derived simple module page name mismatch")
+      (doc-site-require
+        (doc-site-derived-modules-sorted-and-complete?)
+        "doc-site: derived stdlib module list is unsorted or incomplete")
       42)))

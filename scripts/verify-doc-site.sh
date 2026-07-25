@@ -7,9 +7,11 @@ set -eu
 # Builds the static stdlib/API and language-reference HTML site via
 # tools/doc-site/doc_site.tl, runs the
 # in-memory smoke driver, and validates the on-disk output contract: required
-# pages/assets exist, every local link resolves, every in-page/cross-page anchor
-# target exists, and pages reference the stylesheet. Escaping and manifest-count
-# behavior is asserted authoritatively by tools/doc-site/doc_site_smoke.tl.
+# pages/assets exist, every top-level stdlib/*.tl module has exactly one
+# published page, every local link resolves, every in-page/cross-page anchor
+# target exists, and pages reference the stylesheet. Escaping and manifest
+# derivation behavior is asserted authoritatively by
+# tools/doc-site/doc_site_smoke.tl.
 #
 # It drives the published/staged selfhost
 # compiler. CI runs it on pull requests and default-branch pushes WITHOUT
@@ -290,8 +292,24 @@ grep -q 'href="#tl-push"' "$SITE/stdlib-vector.html" \
 hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)
 [ -z "$hidden_payload" ] || fail "docs-site output contains scratch artifact: $(basename "$hidden_payload")"
 
-stdlib_pages=$(find "$SITE" -maxdepth 1 -type f -name 'stdlib-*.html' | wc -l)
+stdlib_pages=$(find "$SITE" -maxdepth 1 -type f -name 'stdlib-*.html' | wc -l | tr -d '[:space:]')
 [ "$stdlib_pages" -ge 1 ] || fail "no stdlib-*.html module pages were generated"
+
+# Completeness. The site's module list is derived from the stdlib/ directory
+# (tools/doc-site/doc_site_core.tl), with no exclusions; this gate is what keeps
+# a newly added stdlib module from silently missing the published site, and
+# keeps stale pages for deleted modules out of it.
+stdlib_modules=$(find stdlib -maxdepth 1 -type f -name '*.tl' | sort)
+[ -n "$stdlib_modules" ] || fail "no stdlib modules found under stdlib/"
+stdlib_module_count=0
+for module in $stdlib_modules; do
+    stdlib_module_count=$((stdlib_module_count + 1))
+    module_page="stdlib-$(basename "$module" .tl | tr '_' '-').html"
+    [ -f "$SITE/$module_page" ] \
+        || fail "$module has no published docs-site page ($module_page)"
+done
+[ "$stdlib_pages" -eq "$stdlib_module_count" ] \
+    || fail "site published $stdlib_pages stdlib page(s) for $stdlib_module_count stdlib module(s)"
 
 # Validate every local link and anchor across all generated pages.
 pages=$(find "$SITE" -maxdepth 1 -type f -name '*.html')

@@ -864,7 +864,28 @@ fi
 # payloads. On Windows it is the allocation boundary that small new modules
 # (such as the clone declaration-macro handoff) previously crossed. The macro
 # walk now starts in the compact destination and grows fixed-size node segments;
-# typecheck starts in a fresh segmented destination. Keep both the logical
+# typecheck starts in a fresh segmented destination.
+#
+# The macro-expand expr pin crossed the 41 -> 42 segment step and has been
+# failing on main since #5712. It is re-pinned here from a measured clean
+# add5984b9 + converged stage2: used nodes 2693353, so the pool rounds up to
+# 2752512 slots across 42 segments of 65536, and 110100480 payload bytes at
+# 40 bytes per node. Attribution, holding the profile binary fixed and varying
+# only the compiled tree: 1e7ef1d90 used 2679678 nodes (41 segments, 7298 under
+# the old pin), #5712 used 2689228 (42 segments, 2252 over), and #5717 added
+# 4093 more. Nothing regressed -- both grew the compiler's own source graph, and
+# a segmented pool sized from that graph is expected to step.
+#
+# Why it reached main red: CI runs on `pull_request` only, so it verifies a head
+# merged into the base as of that event and never re-verifies main afterwards.
+# #5712 was green against an older base; the merged tree was never compiled.
+# Exact-value pins turn that skew into a break that blames whichever innocent
+# PR next opens against main -- #5759 hit it having changed only help strings.
+# Post-bump headroom is 59159 nodes, about 2%, so this recurs. See the
+# follow-up issue for making segment pins ceilings with an explicit headroom
+# assertion instead of equalities.
+#
+# Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
 # copy-on-grow storage is visible.
 if [ "$NL_HOST_OS" = windows ]; then
@@ -887,7 +908,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \
-        2686976 \
+        2752512 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
@@ -914,13 +935,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.segments" \
-        41 \
+        42 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.segment_bytes" \
-        107479040 \
+        110100480 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \

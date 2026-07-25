@@ -769,6 +769,126 @@
               1
               0)]
           [_ -3]))]
+    ;; operand-expr-type-kind-eq: the same probe over an Expr operand's
+    ;; produced type, so `(match (type-kind (comptime.expr-type v)) ...)`
+    ;; dispatches without materializing the type on the value stack. An
+    ;; untyped Expr operand is a malformed request here; the value-position
+    ;; expr-type op reports the interpreted diagnostic instead.
+    [(= operation tlci-host-callback-op-operand-expr-type-kind-eq)
+      (if (or
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-operand-count)
+        (<= arg-b 0)
+        (< _arg-c 0))
+        -3
+        (match (array-ref compiler-comptime-host-operands arg-a)
+          [(CompilerCtfeValue.Expr _ ty)
+            (let
+              [pools : AstNodePoolContext
+                (array-ref compiler-comptime-host-pools 0)]
+              [actual-ty : AstType
+                (ctfe-captured-expr-type-inner-with-pools pools ty)]
+              (if (ctfe-untyped-expr-type? actual-ty)
+                -3
+                (if (string.eq
+                  (ctfe-type-kind-with-reflections-and-pools
+                    pools
+                    (array-ref compiler-comptime-host-reflections 0)
+                    (ctfe-reflect-resolve-type-with-pools
+                      pools
+                      (array-ref compiler-comptime-host-reflections 0)
+                      actual-ty))
+                  (unsafe
+                    (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
+                  1
+                  0)))]
+          [_ -3]))]
+    ;; operand-type-key-eq: the canonical type-key of a type operand against
+    ;; caller bytes, the `(match (type-key T) ...)` dispatch.
+    [(= operation tlci-host-callback-op-operand-type-key-eq)
+      (if (or
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-operand-count)
+        (<= arg-b 0)
+        (< _arg-c 0))
+        -3
+        (match (array-ref compiler-comptime-host-operands arg-a)
+          [(CompilerCtfeValue.Type ty)
+            (if (string.eq
+              (ctfe-type-key-with-reflections-and-pools
+                (array-ref compiler-comptime-host-pools 0)
+                (array-ref compiler-comptime-host-reflections 0)
+                ty)
+              (unsafe
+                (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
+              1
+              0)]
+          [_ -3]))]
+    ;; expr-type: pop an Expr value and push its resolved produced type, the
+    ;; same mapping `ctfe-eval-expr-type-call` uses -- including its
+    ;; "expr-type requires a typechecked Expr" diagnostic.
+    [(= operation tlci-host-callback-op-expr-type)
+      (if (< compiler-comptime-host-stack-len 1)
+        tlci-host-callback-status-bad-request
+        (match (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))
+          [(CompilerCtfeValue.Expr _ ty)
+            (let
+              [pools : AstNodePoolContext
+                (array-ref compiler-comptime-host-pools 0)]
+              [actual-ty : AstType
+                (ctfe-captured-expr-type-inner-with-pools pools ty)]
+              (if (ctfe-untyped-expr-type? actual-ty)
+                (begin
+                  (array-set!
+                    compiler-comptime-host-diagnostic
+                    0
+                    "expr-type requires a typechecked Expr")
+                  tlci-host-callback-status-diagnostic)
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 1))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.Type
+                      (ctfe-reflect-resolve-type-with-pools
+                        pools
+                        (array-ref compiler-comptime-host-reflections 0)
+                        actual-ty))))))]
+          [_ tlci-host-callback-status-bad-request]))]
+    ;; expr-cast: pop the type value then the operand expression and push the
+    ;; cast node the parser produces for `(cast e : T)`. The producer emits the
+    ;; operand template first and the type second.
+    [(= operation tlci-host-callback-op-expr-cast)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [type-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [value-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [value-node : i64 (compiler-comptime-host-value-node value-value)]
+          (if (< value-node 0)
+            tlci-host-callback-status-bad-request
+            (match type-value
+              [(CompilerCtfeValue.Type ty)
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 2))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.Expr
+                      (ast-expr-cast-with-pools
+                        (array-ref compiler-comptime-host-pools 0)
+                        value-node
+                        ty)
+                      (AstType.Expr))))]
+              [_ tlci-host-callback-status-bad-request]))))]
     [(= operation tlci-host-callback-op-expr-bool-literal)
       (compiler-comptime-host-push!
         (CompilerCtfeValue.Expr
@@ -2110,6 +2230,9 @@
           (when
             (and
               (not (= operation tlci-host-callback-op-operand-type-kind-eq))
+              (not
+                (= operation tlci-host-callback-op-operand-expr-type-kind-eq))
+              (not (= operation tlci-host-callback-op-operand-type-key-eq))
               (not (= operation tlci-host-callback-op-expr-list-length))
               (not (= operation tlci-host-callback-op-string-eq))
               (not (= operation tlci-host-callback-op-array-length))

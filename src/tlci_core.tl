@@ -728,6 +728,22 @@
 (define tlci-host-callback-op-expr-float-literal : i64
   232)
 
+;; Computed-scrutinee probes and cast templates (refs #5604). The two probes
+;; share operand-type-kind-eq's shape -- operand index in `a`, caller bytes in
+;; `b`/`c`, 1/0 as data and a negative malformed-request sentinel -- so they
+;; bypass the status latch the same way: operand-expr-type-kind-eq compares
+;; the type-kind of an Expr operand's produced type, and operand-type-key-eq
+;; compares a type operand's canonical key. expr-cast pops the type value then
+;; the operand expression and pushes the cast node the parser produces. All
+;; are additive ABI v1 ops -- the embedded image and its consumer are always
+;; the same source-bound binary.
+(define tlci-host-callback-op-operand-expr-type-kind-eq : i64
+  233)
+(define tlci-host-callback-op-operand-type-key-eq : i64
+  234)
+(define tlci-host-callback-op-expr-cast : i64
+  235)
+
 ;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe pops
 ;; an expression list and pushes the `(unsafe ...)` node; expr-ptr-read,
 ;; expr-ptr-to-int, and expr-string-data each pop one expression;

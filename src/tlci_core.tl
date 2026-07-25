@@ -727,6 +727,32 @@
   231)
 (define tlci-host-callback-op-expr-float-literal : i64
   232)
+
+;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe pops
+;; an expression list and pushes the `(unsafe ...)` node; expr-ptr-read,
+;; expr-ptr-to-int, and expr-string-data each pop one expression;
+;; expr-ptr-write, expr-ptr-offset, and expr-string-from-bytes pop the second
+;; then the first operand; expr-array-data pops one. `ptr-cast` is deliberately
+;; absent: `AstType.Ptr` carries a type-pool node id, so its type template needs
+;; pools threaded through embedded-native-template-type-ops, which is tracked
+;; with the remainder of #5605. These complete the template subset the
+;; `stdlib.text_buf_family` generators need. Additive ABI v1 ops.
+(define tlci-host-callback-op-expr-unsafe : i64
+  236)
+(define tlci-host-callback-op-expr-ptr-read : i64
+  237)
+(define tlci-host-callback-op-expr-ptr-to-int : i64
+  238)
+(define tlci-host-callback-op-expr-string-data : i64
+  239)
+(define tlci-host-callback-op-expr-ptr-write : i64
+  240)
+(define tlci-host-callback-op-expr-ptr-offset : i64
+  241)
+(define tlci-host-callback-op-expr-string-from-bytes : i64
+  243)
+(define tlci-host-callback-op-expr-array-data : i64
+  244)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

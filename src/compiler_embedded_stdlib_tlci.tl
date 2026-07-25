@@ -530,13 +530,62 @@
                 (cond
                   [(= kind 0) (ast-expr-return-with-pools pools inner-node)]
                   [(= kind 1) (ast-expr-box-with-pools pools inner-node)]
-                  [else (ast-expr-box-get-with-pools pools inner-node)])
+                  [(= kind 2) (ast-expr-box-get-with-pools pools inner-node)]
+                  [(= kind 3) (ast-expr-ptr-read-with-pools pools inner-node)]
+                  [(= kind 4) (ast-expr-ptr-to-int-with-pools pools inner-node)]
+                  [(= kind 5)
+                    (ast-expr-string-data-with-pools pools inner-node)]
+                  [else (ast-expr-array-data-with-pools pools inner-node)])
                 (AstType.Expr)))))))))
 
 ;; The compiler-owned callback invoke installed into the tlci host callback
 ;; table. TypeLisp's native convention passes scalar arguments in the SysV
 ;; integer registers, so this function is directly callable from the mapped
 ;; image on Linux; the Windows adapter is tracked with the dispatch slice.
+;; Pop the second then the first operand expression and push the two-operand
+;; raw-pointer/data node the parser produces: kind 0 is `(ptr-write! p v)`,
+;; kind 1 is `(ptr-offset p n)`, and kind 2 is `(string-from-bytes d n)`.
+;; Refs #5605.
+(define (compiler-comptime-host-ptr-binary-step! [kind : i64]) : i64
+  (if (< compiler-comptime-host-stack-len 2)
+    tlci-host-callback-status-bad-request
+    (let
+      [second-value : CompilerCtfeValue
+        (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))]
+      [first-value : CompilerCtfeValue
+        (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 2))]
+      [second-node : i64 (compiler-comptime-host-value-node second-value)]
+      [first-node : i64 (compiler-comptime-host-value-node first-value)]
+      (if (or (< second-node 0) (< first-node 0))
+        tlci-host-callback-status-bad-request
+        (let
+          [pools : AstNodePoolContext
+            (array-ref compiler-comptime-host-pools 0)]
+          (begin
+            (set!
+              compiler-comptime-host-stack-len
+              (- compiler-comptime-host-stack-len 2))
+            (compiler-comptime-host-push!
+              (CompilerCtfeValue.Expr
+                (cond
+                  [(= kind 0)
+                    (ast-expr-ptr-write-with-pools pools first-node second-node)]
+                  [(= kind 1)
+                    (ast-expr-ptr-offset-with-pools
+                      pools
+                      first-node
+                      second-node)]
+                  [else
+                    (ast-expr-string-from-bytes-with-pools
+                      pools
+                      first-node
+                      second-node)])
+                (AstType.Expr)))))))))
+
 (define (compiler-comptime-host-invoke-step
   [session : i64]
   [operation : i64]
@@ -1445,6 +1494,41 @@
       (compiler-comptime-host-unary-node-step! 1)]
     [(= operation tlci-host-callback-op-expr-box-get)
       (compiler-comptime-host-unary-node-step! 2)]
+    ;; Raw-pointer and `unsafe` template nodes (refs #5605).
+    [(= operation tlci-host-callback-op-expr-ptr-read)
+      (compiler-comptime-host-unary-node-step! 3)]
+    [(= operation tlci-host-callback-op-expr-ptr-to-int)
+      (compiler-comptime-host-unary-node-step! 4)]
+    [(= operation tlci-host-callback-op-expr-string-data)
+      (compiler-comptime-host-unary-node-step! 5)]
+    [(= operation tlci-host-callback-op-expr-array-data)
+      (compiler-comptime-host-unary-node-step! 6)]
+    [(= operation tlci-host-callback-op-expr-string-from-bytes)
+      (compiler-comptime-host-ptr-binary-step! 2)]
+    [(= operation tlci-host-callback-op-expr-ptr-write)
+      (compiler-comptime-host-ptr-binary-step! 0)]
+    [(= operation tlci-host-callback-op-expr-ptr-offset)
+      (compiler-comptime-host-ptr-binary-step! 1)]
+    ;; expr-unsafe pops an expression list and pushes the `(unsafe ...)` node
+    ;; the parser produces, matching expr-begin's shape.
+    [(= operation tlci-host-callback-op-expr-unsafe)
+      (if (< compiler-comptime-host-stack-len 1)
+        tlci-host-callback-status-bad-request
+        (match (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))
+          [(CompilerCtfeValue.ExprList items)
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-push!
+                (CompilerCtfeValue.Expr
+                  (ast-node-pool-context-expr-push
+                    (array-ref compiler-comptime-host-pools 0)
+                    (AstExpr.Unsafe items))
+                  (AstType.Expr))))]
+          [_ tlci-host-callback-status-bad-request]))]
     ;; expr-float-literal: push a float literal node carrying the caller bytes
     ;; verbatim, the same source text the interpreted quote preserves.
     [(= operation tlci-host-callback-op-expr-float-literal)

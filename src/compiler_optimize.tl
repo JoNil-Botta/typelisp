@@ -51107,10 +51107,10 @@
         "|function="
         function
         "|label="
-        label
+        (compiler-ir-label-text label)
         (string.concat5
           "|latch="
-          latch
+          (compiler-ir-label-text latch)
           "|allocs="
           (string.int->string allocs)
           (string.concat5

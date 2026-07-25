@@ -9415,6 +9415,16 @@
     (reg_label_i64_map.with-capacity
       (compiler-reg-bits-map-capacity (compiler-reg-label-list-count labels)))))
 
+(define (compiler-reg-label-list-contains?
+  [labels : CompilerRegLabelList]
+  [want : i64]) : bool
+  (match labels
+    [(CompilerRegLabelList.Nil) false]
+    [(CompilerRegLabelList.Cons head rest)
+      (if (= head want)
+        true
+        (compiler-reg-label-list-contains? (box-get rest) want))]))
+
 (define (compiler-reg-label-list-count [labels : CompilerRegLabelList]) : i64
   (match labels
     [(CompilerRegLabelList.Nil) 0]
@@ -24047,8 +24057,8 @@
   [_assignments : CompilerRegAssignmentList]
   [_types : CompilerRegVarTypeList]
   [_instr : CompilerIrInstr]
-  [_phi-targets : CompilerRegStringList]
-  [_phi-xmm-targets : CompilerRegStringList]
+  [_phi-targets : CompilerRegLabelList]
+  [_phi-xmm-targets : CompilerRegLabelList]
   [_binop-return : bool]) : i64
   (cfg
     scratch-vreg
@@ -24092,18 +24102,18 @@
       [(CompilerIrInstr.Pack _ _ _) 2]
       [(CompilerIrInstr.Word _ _ _ _) 1]
       [(CompilerIrInstr.Jump target)
-        (if (compiler-reg-string-list-contains? _phi-targets target)
-          (if (compiler-reg-string-list-contains? _phi-xmm-targets target)
+        (if (compiler-reg-label-list-contains? _phi-targets target)
+          (if (compiler-reg-label-list-contains? _phi-xmm-targets target)
             3
             2)
           0)]
       [(CompilerIrInstr.Branch condition true-label false-label)
         (if (or
-          (compiler-reg-string-list-contains? _phi-targets true-label)
-          (compiler-reg-string-list-contains? _phi-targets false-label))
+          (compiler-reg-label-list-contains? _phi-targets true-label)
+          (compiler-reg-label-list-contains? _phi-targets false-label))
           (if (or
-            (compiler-reg-string-list-contains? _phi-xmm-targets true-label)
-            (compiler-reg-string-list-contains? _phi-xmm-targets false-label))
+            (compiler-reg-label-list-contains? _phi-xmm-targets true-label)
+            (compiler-reg-label-list-contains? _phi-xmm-targets false-label))
             4
             3)
           (if (compiler-reg-scratch-value-direct? _assignments condition)
@@ -24290,8 +24300,8 @@
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
   [instrs : CompilerIrInstrSeq]
-  [phi-targets : CompilerRegStringList]
-  [phi-xmm-targets : CompilerRegStringList]
+  [phi-targets : CompilerRegLabelList]
+  [phi-xmm-targets : CompilerRegLabelList]
   [count : i64]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -24321,8 +24331,8 @@
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
   [blocks : CompilerIrBlockList]
-  [phi-targets : CompilerRegStringList]
-  [phi-xmm-targets : CompilerRegStringList]
+  [phi-targets : CompilerRegLabelList]
+  [phi-xmm-targets : CompilerRegLabelList]
   [count : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) count]
@@ -26066,8 +26076,8 @@
   [assignments : CompilerRegAssignmentList]
   [var-types : CompilerRegVarTypeList]
   [instrs : CompilerIrInstrSeq]
-  [phi-targets : CompilerRegStringList]
-  [phi-xmm-targets : CompilerRegStringList]
+  [phi-targets : CompilerRegLabelList]
+  [phi-xmm-targets : CompilerRegLabelList]
   [instruction-start : i64]
   [item-start : i64]
   [scratch-base : i64]
@@ -26144,8 +26154,8 @@
   [assignments : CompilerRegAssignmentList]
   [var-types : CompilerRegVarTypeList]
   [blocks : CompilerIrBlockList]
-  [phi-targets : CompilerRegStringList]
-  [phi-xmm-targets : CompilerRegStringList]
+  [phi-targets : CompilerRegLabelList]
+  [phi-xmm-targets : CompilerRegLabelList]
   [instruction-start : i64]
   [item-start : i64]
   [scratch-base : i64]
@@ -27035,9 +27045,9 @@
     (match _func
       [(CompilerIrFunction.Function _ _ _ _ blocks)
         (let
-          [phi-targets : CompilerRegStringList
+          [phi-targets : CompilerRegLabelList
             (compiler-reg-scratch-phi-targets-blocks blocks)]
-          [phi-xmm-targets : CompilerRegStringList
+          [phi-xmm-targets : CompilerRegLabelList
             (compiler-reg-scratch-phi-xmm-targets-blocks blocks)]
           [scratch-count : i64
             (compiler-reg-scratch-vreg-count-blocks

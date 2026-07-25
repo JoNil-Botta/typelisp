@@ -8771,11 +8771,14 @@
           (!= label-id block-id)
           (opt-dom-info-dominates-id? doms label-id block-id))))))
 
+;; `remaining` starts as the block list `index` was built from, so the walk
+;; position is the block id.
 (define (opt-cfg-dominance-frontier-blocks
   [remaining : CompilerIrBlockList]
   [index : OptCfgIndex]
   [doms : OptDomInfo]
-  [label-id : i64]) : OptLabelSet
+  [label-id : i64]
+  [block-id : i64]) : OptLabelSet
   (match remaining
     [(CompilerIrBlockList.Nil) (OptLabelSet.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -8787,23 +8790,20 @@
                 (box-get rest)
                 index
                 doms
-                label-id)]
-            (match (opt-cfg-index-id index block-label)
-              [(option_i64.Some block-id)
-                (if (opt-cfg-dominance-frontier-block?
-                  index
-                  doms
-                  label-id
-                  block-id)
-                  (opt-label-add tail block-label)
-                  tail)]
-              [(option_i64.None) tail]))])]
+                label-id
+                (+ block-id 1))]
+            (if (and
+              (< block-id (opt-cfg-index-block-count index))
+              (opt-cfg-dominance-frontier-block? index doms label-id block-id))
+              (opt-label-add tail block-label)
+              tail))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-dominance-frontier-blocks
         (compiler-ir-block-seq-to-list seq)
         index
         doms
-        label-id)]))
+        label-id
+        block-id)]))
 
 (define (opt-cfg-dominance-frontier-with-context
   [blocks : CompilerIrBlockList]
@@ -8819,7 +8819,8 @@
       blocks
       index
       (struct-get context doms)
-      label-id)))
+      label-id
+      0)))
 
 (define (opt-cfg-dominance-frontier
   [blocks : CompilerIrBlockList]
@@ -13686,29 +13687,29 @@
     (array-ref members id)
     false))
 
+;; `blocks` is the list `index` was built from, so the walk position is the
+;; block id. `opt-loop-body-member-array-contains-id?` range-checks it, which is
+;; what the old missing-label arm did.
 (define (opt-loop-body-blocks-from
-  [index : OptCfgIndex]
   [members : (Array bool)]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]
+  [block-id : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block label _)
+        [(CompilerIrBlock.Block _ _)
           (let
             [tail : CompilerIrBlockList
-              (opt-loop-body-blocks-from index members (box-get rest))]
-            (match (opt-cfg-index-id index label)
-              [(option_i64.Some id)
-                (if (opt-loop-body-member-array-contains-id? members id)
-                  (compiler-ir-block-cons block tail)
-                  tail)]
-              [(option_i64.None) tail]))])]
+              (opt-loop-body-blocks-from members (box-get rest) (+ block-id 1))]
+            (if (opt-loop-body-member-array-contains-id? members block-id)
+              (compiler-ir-block-cons block tail)
+              tail))])]
     [(CompilerIrBlockList.Array seq)
       (opt-loop-body-blocks-from
-        index
         members
-        (compiler-ir-block-seq-to-list seq))]))
+        (compiler-ir-block-seq-to-list seq)
+        block-id)]))
 
 (define (opt-loop-body-build
   [blocks : CompilerIrBlockList]
@@ -13720,10 +13721,7 @@
     (begin
       (opt-cfg-fill-bool! members (array-length members) false)
       (opt-loop-body-fill-members! index members labels)
-      (OptLoopBody
-        labels
-        members
-        (opt-loop-body-blocks-from index members blocks)))))
+      (OptLoopBody labels members (opt-loop-body-blocks-from members blocks 0)))))
 
 (define (opt-loop-body-labels [body : OptLoopBody]) : OptLabelSet
   (struct-get body labels))
@@ -13744,27 +13742,27 @@
 
 (define (opt-loop-body-current-blocks-from
   [body : OptLoopBody]
-  [index : OptCfgIndex]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]
+  [block-id : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block label _)
+        [(CompilerIrBlock.Block _ _)
           (let
             [tail : CompilerIrBlockList
-              (opt-loop-body-current-blocks-from body index (box-get rest))]
-            (match (opt-cfg-index-id index label)
-              [(option_i64.Some id)
-                (if (opt-loop-body-contains-id? body id)
-                  (compiler-ir-block-cons block tail)
-                  tail)]
-              [(option_i64.None) tail]))])]
+              (opt-loop-body-current-blocks-from
+                body
+                (box-get rest)
+                (+ block-id 1))]
+            (if (opt-loop-body-contains-id? body block-id)
+              (compiler-ir-block-cons block tail)
+              tail))])]
     [(CompilerIrBlockList.Array seq)
       (opt-loop-body-current-blocks-from
         body
-        index
-        (compiler-ir-block-seq-to-list seq))]))
+        (compiler-ir-block-seq-to-list seq)
+        block-id)]))
 
 (define (opt-natural-loop-header [loop : OptNaturalLoop]) : String
   (match loop
@@ -13789,13 +13787,9 @@
   (opt-loop-body-contains-id? (opt-natural-loop-body-info loop) id))
 
 (define (opt-natural-loop-current-body-blocks
-  [index : OptCfgIndex]
   [loop : OptNaturalLoop]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-loop-body-current-blocks-from
-    (opt-natural-loop-body-info loop)
-    index
-    blocks))
+  (opt-loop-body-current-blocks-from (opt-natural-loop-body-info loop) blocks 0))
 
 (define (opt-natural-loop-preheader [loop : OptNaturalLoop]) : OptLoopPreheader
   (match loop
@@ -14057,12 +14051,17 @@
               next)]
           [(option_i64.None) next]))]))
 
+;; `remaining` starts as the very block list `doms`'s index was built from, and
+;; `opt-cfg-index-build` numbers blocks in this walk order, so `source-id` is the
+;; walk position. The range guard replaces the old missing-label arm: an id past
+;; the indexed block count is exactly the case a label lookup would have missed.
 (define (opt-cfg-natural-loop-blocks
   [all-blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [doms : OptDomInfo]) : OptNaturalLoopList
+  [doms : OptDomInfo]
+  [source-id : i64]) : OptNaturalLoopList
   (match remaining
     [(CompilerIrBlockList.Nil) (OptNaturalLoopList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -14075,37 +14074,33 @@
                 (box-get rest)
                 pred-map
                 reachable
-                doms)]
-            ;; Resolving the id first and then reading the index's reachable
-            ;; array replaces a linear scan of the reachable label set with one
-            ;; lookup. The order swap is safe: a label in the set necessarily
-            ;; has an id, so the None arm can only be reached in cases the scan
-            ;; would have rejected anyway.
-            (match (opt-cfg-index-id (struct-get doms index) label)
-              [(option_i64.Some source-id)
-                (if (array-ref
-                  (struct-get (struct-get doms index) reachable)
-                  source-id)
-                  (opt-cfg-natural-loop-successors
-                    all-blocks
-                    pred-map
-                    reachable
-                    doms
-                    source-id
-                    label
-                    (opt-cfg-block-successors-with-next
-                      block
-                      (opt-cfg-entry-label (box-get rest)))
-                    tail)
-                  tail)]
-              [(option_i64.None) tail]))])]
+                doms
+                (+ source-id 1))]
+            [reachable-ids : (Array bool)
+              (struct-get (struct-get doms index) reachable)]
+            (if (and
+              (< source-id (array-length reachable-ids))
+              (array-ref reachable-ids source-id))
+              (opt-cfg-natural-loop-successors
+                all-blocks
+                pred-map
+                reachable
+                doms
+                source-id
+                label
+                (opt-cfg-block-successors-with-next
+                  block
+                  (opt-cfg-entry-label (box-get rest)))
+                tail)
+              tail))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-natural-loop-blocks
         all-blocks
         (compiler-ir-block-seq-to-list seq)
         pred-map
         reachable
-        doms)]))
+        doms
+        source-id)]))
 
 ;; Allocation-free natural-loop scan for Array block lists: walks the block
 ;; seq directly and reads each block's successor row from the context's CSR
@@ -14177,29 +14172,24 @@
       [(CompilerIrBlock.Block label _)
         (let
           [index : OptCfgIndex (struct-get context index)]
+          ;; `blocks` is this seq, and the index numbers its blocks in seq
+          ;; order, so the seq position is the block id.
           [next-acc : OptNaturalLoopList
-            (match (opt-cfg-index-id index label)
-              [(option_i64.Some source-id)
-                (if (and
-                  (>= source-id 0)
-                  (< source-id (array-length (struct-get index reachable))))
-                  (opt-cfg-natural-loop-edges-csr
-                    all-blocks
-                    index
-                    pred-map
-                    reachable
-                    doms
-                    source-id
-                    label
-                    (array-ref
-                      (struct-get (struct-get index succs) offsets)
-                      source-id)
-                    (array-ref
-                      (struct-get (struct-get index succs) offsets)
-                      (+ source-id 1))
-                    acc)
-                  acc)]
-              [(option_i64.None) acc])]
+            (if (< pos (array-length (struct-get index reachable)))
+              (opt-cfg-natural-loop-edges-csr
+                all-blocks
+                index
+                pred-map
+                reachable
+                doms
+                pos
+                label
+                (array-ref (struct-get (struct-get index succs) offsets) pos)
+                (array-ref
+                  (struct-get (struct-get index succs) offsets)
+                  (+ pos 1))
+                acc)
+              acc)]
           (opt-cfg-natural-loop-block-seq-csr
             all-blocks
             seq
@@ -14230,7 +14220,8 @@
         blocks
         (struct-get context pred-map)
         (struct-get context reachable)
-        (struct-get context doms))]))
+        (struct-get context doms)
+        0)]))
 
 (define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
   (opt-cfg-natural-loops-with-context blocks (opt-cfg-context-build blocks)))
@@ -17552,7 +17543,6 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-licm-apply-loop
-  [index : OptCfgIndex]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
@@ -17563,7 +17553,7 @@
     [(OptLoopPreheader.Some preheader)
       (let
         [body-blocks : CompilerIrBlockList
-          (opt-natural-loop-current-body-blocks index loop blocks)]
+          (opt-natural-loop-current-body-blocks loop blocks)]
         [map-capacity : i64 (opt-licm-body-map-capacity body-blocks)]
         [loop-defs : opt_i64_i64_map.Map
           (opt-licm-collect-defs-blocks
@@ -17663,7 +17653,6 @@
     [(OptLoopPreheader.No) (OptLicmLoopApplyResult.Result blocks false)]))
 
 (define (opt-licm-apply-loops
-  [index : OptCfgIndex]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
@@ -17674,7 +17663,6 @@
     [(OptNaturalLoopList.Nil) (OptLicmLoopApplyResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-licm-apply-loop
-        index
         sources
         types
         provenance
@@ -17683,7 +17671,6 @@
         loop)
         [(OptLicmLoopApplyResult.Result loop-blocks loop-changed)
           (match (opt-licm-apply-loops
-            index
             sources
             types
             provenance
@@ -17696,21 +17683,13 @@
                 (or loop-changed rest-changed))])])]))
 
 (define (opt-licm-blocks-with-context-and-direct-call-clean
-  [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : OptLicmLoopApplyResult
-  (opt-licm-apply-loops
-    (struct-get context index)
-    sources
-    types
-    provenance
-    direct-call-clean
-    loops
-    blocks))
+  (opt-licm-apply-loops sources types provenance direct-call-clean loops blocks))
 
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [context : OptCfgContext]
@@ -17744,7 +17723,6 @@
                       types
                       blocks)]
                   (match (opt-licm-blocks-with-context-and-direct-call-clean
-                    context
                     sources
                     types
                     provenance
@@ -19387,7 +19365,7 @@
       (let
         [body : OptLoopBody (opt-natural-loop-body-info loop)]
         [body-blocks : CompilerIrBlockList
-          (opt-natural-loop-current-body-blocks index loop blocks)]
+          (opt-natural-loop-current-body-blocks loop blocks)]
         (if (opt-induction-loop-blocked? body-blocks)
           (OptInductionApplyResult.Result blocks frame false)
           (match (opt-induction-find-fact body-blocks loop preheader)
@@ -27572,13 +27550,12 @@
 
 (define (opt-loop-bce-induction-fact-for-var
   [blocks : CompilerIrBlockList]
-  [index : OptCfgIndex]
   [loop : OptNaturalLoop]
   [preheader : String]
   [var : i64]) : OptMaybeInductionFact
   (let
     [body-blocks : CompilerIrBlockList
-      (opt-natural-loop-current-body-blocks index loop blocks)]
+      (opt-natural-loop-current-body-blocks loop blocks)]
     (match (opt-cfg-find-block body-blocks (opt-natural-loop-header loop))
       [(OptMaybeBlock.Some block)
         (match block
@@ -27614,7 +27591,6 @@
 (define (opt-loop-bce-canonical-iv-proof?
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
-  [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [sources : opt_i64_i64_map.Map]
   [header-label : String]
@@ -27638,7 +27614,6 @@
               [(OptLoopPreheader.Some preheader)
                 (match (opt-loop-bce-induction-fact-for-var
                   blocks
-                  index
                   loop
                   preheader
                   iv-var)
@@ -27655,7 +27630,6 @@
   [facts : OptRangeFacts]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
-  [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [sources : opt_i64_i64_map.Map]
   [header-label : String]
@@ -27666,7 +27640,6 @@
   (if (opt-loop-bce-canonical-iv-proof?
     blocks
     doms
-    index
     loops
     sources
     header-label
@@ -27686,7 +27659,6 @@
   [facts : OptRangeFacts]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
-  [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [sources : opt_i64_i64_map.Map]
   [header-label : String]
@@ -27700,7 +27672,6 @@
         facts
         blocks
         doms
-        index
         loops
         sources
         header-label
@@ -27713,7 +27684,6 @@
         facts
         blocks
         doms
-        index
         loops
         sources
         header-label
@@ -27726,7 +27696,6 @@
         facts
         blocks
         doms
-        index
         loops
         sources
         header-label
@@ -27739,7 +27708,6 @@
         facts
         blocks
         doms
-        index
         loops
         sources
         header-label
@@ -27795,7 +27763,6 @@
                 false-ranges
                 blocks
                 doms
-                index
                 loops
                 sources
                 block-label
@@ -51373,7 +51340,7 @@
         [latch : String (opt-natural-loop-latch loop)]
         [body : OptLabelSet (opt-natural-loop-body loop)]
         [body-blocks : CompilerIrBlockList
-          (opt-natural-loop-current-body-blocks index loop blocks)]
+          (opt-natural-loop-current-body-blocks loop blocks)]
         [state : OptScratchScopeState
           (opt-scratch-scope-state-blocks body-blocks)]
         (and

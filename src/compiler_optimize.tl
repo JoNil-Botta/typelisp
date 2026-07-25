@@ -7454,6 +7454,12 @@
   (offsets (Array i64))
   (edges (Array i64)))
 
+;; `targets-known` is one of the optimizer verifier's two structural CFG checks.
+;; It falls out of the build for free: `opt-cfg-index-label-set-to-ids` drops
+;; successor labels it cannot resolve, so an unknown target is a short CSR row.
+;; The other check needs no field -- see `opt-cfg-index-labels-unique?`. Together
+;; they replace rebuilding a label map and rehashing every label and every
+;; successor edge, once per verified function (refs #5718).
 (defstruct OptCfgIndex
   (ids opt_string_i64_map.Map)
   (labels (Array String))
@@ -7462,7 +7468,8 @@
   (reachable (Array bool))
   (reach-count i64)
   (rpo (Array i64))
-  (rpo-num (Array i64)))
+  (rpo-num (Array i64))
+  (targets-known bool))
 
 (defstruct OptPredMap
   (index OptCfgIndex))
@@ -7608,40 +7615,50 @@
           source-id
           (box-get rest)))]))
 
+;; Returns whether every successor label resolved. `opt-cfg-index-label-set-to-ids`
+;; drops the ones that miss, so a short row is exactly an unknown target -- the
+;; question `opt-cfg-successor-targets-known?` answered by rebuilding the label
+;; map and reprobing it.
 (define (opt-cfg-index-fill-row-seq!
   [blocks : CompilerIrBlockSeq]
   [ids : opt_string_i64_map.Map]
   [succ-rows : (Array OptI64List)]
   [pred-rows : (Array OptI64List)]
-  [base : i64]) : unit
+  [base : i64]) : bool
   (let
     [index : i64 0]
     [count : i64 (compiler-ir-block-seq-count blocks)]
-    (while (< index count)
-      (let
-        [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
-        [next-label : String
-          (if (< (+ index 1) count)
-            (match (compiler-ir-block-seq-ref blocks (+ index 1))
-              [(CompilerIrBlock.Block label _) label])
-            "")]
-        [succs : OptLabelSet
-          (opt-cfg-block-successors-with-next block next-label)]
-        [row : i64 (+ base index)]
-        [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
-        (begin
-          (array-set! succ-rows row succ-ids)
-          (opt-cfg-index-add-pred-edges-from-ids! pred-rows row succ-ids)
-          (set! index (+ index 1)))))))
+    [known : bool true]
+    (begin
+      (while (< index count)
+        (let
+          [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
+          [next-label : String
+            (if (< (+ index 1) count)
+              (match (compiler-ir-block-seq-ref blocks (+ index 1))
+                [(CompilerIrBlock.Block label _) label])
+              "")]
+          [succs : OptLabelSet
+            (opt-cfg-block-successors-with-next block next-label)]
+          [row : i64 (+ base index)]
+          [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
+          (begin
+            (array-set! succ-rows row succ-ids)
+            (opt-cfg-index-add-pred-edges-from-ids! pred-rows row succ-ids)
+            (unless
+              (= (opt-label-count succs) (opt-i64-list-count succ-ids))
+              (set! known false))
+            (set! index (+ index 1)))))
+      known)))
 
 (define (opt-cfg-index-fill-rows!
   [blocks : CompilerIrBlockList]
   [ids : opt_string_i64_map.Map]
   [succ-rows : (Array OptI64List)]
   [pred-rows : (Array OptI64List)]
-  [index : i64]) : unit
+  [index : i64]) : bool
   (match blocks
-    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Nil) true]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ _)
@@ -7651,15 +7668,21 @@
                 block
                 (opt-cfg-entry-label (box-get rest)))]
             [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
+            [known : bool
+              (= (opt-label-count succs) (opt-i64-list-count succ-ids))]
             (begin
               (array-set! succ-rows index succ-ids)
               (opt-cfg-index-add-pred-edges-from-ids! pred-rows index succ-ids)
-              (opt-cfg-index-fill-rows!
-                (box-get rest)
-                ids
-                succ-rows
-                pred-rows
-                (+ index 1))))])]
+              ;; The recursion comes first: `and` short-circuits, and the rest of
+              ;; the rows still have to be filled.
+              (and
+                (opt-cfg-index-fill-rows!
+                  (box-get rest)
+                  ids
+                  succ-rows
+                  pred-rows
+                  (+ index 1))
+                known)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-index-fill-row-seq! seq ids succ-rows pred-rows index)]))
 
@@ -7800,10 +7823,13 @@
     [rpo : (Array i64) (array.make-array i64 count)]
     [rpo-num : (Array i64) (array.make-array i64 count)]
     [reach-count : i64 0]
+    [targets-known : bool true]
     (begin
       (opt-cfg-i64-list-array-fill-empty! succ-rows count)
       (opt-cfg-i64-list-array-fill-empty! pred-rows count)
-      (opt-cfg-index-fill-rows! blocks ids succ-rows pred-rows 0)
+      (set!
+        targets-known
+        (opt-cfg-index-fill-rows! blocks ids succ-rows pred-rows 0))
       (opt-cfg-fill-bool! reachable count false)
       (opt-cfg-fill-i64! postorder count (- 0 1))
       (opt-cfg-fill-i64! rpo count (- 0 1))
@@ -7827,10 +7853,18 @@
             reachable
             reach-count
             rpo
-            rpo-num))))))
+            rpo-num
+            targets-known))))))
 
 (define (opt-cfg-index-block-count [index : OptCfgIndex]) : i64
   (array-length (struct-get index labels)))
+
+;; `opt-cfg-index-fill-labels!` inserts one entry per block and a repeated label
+;; overwrites rather than adds, so a short id map is exactly a duplicate label.
+(define (opt-cfg-index-labels-unique? [index : OptCfgIndex]) : bool
+  (=
+    (opt_string_i64_map.len (& (struct-get index ids)))
+    (opt-cfg-index-block-count index)))
 
 (define (opt-cfg-index-label [index : OptCfgIndex] [id : i64]) : String
   (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
@@ -9794,19 +9828,29 @@
               [(ResultCompilerOptimizeVerify.Err message)
                 (ResultCompilerOptimizeVerify.Err message)]))])]))
 
+;; The structural CFG contract, read off the context's index rather than
+;; recomputed. `context` must be valid for the function's blocks, which is the
+;; standing pairing invariant for every `*-with-context` entry point.
+(define (opt-verify-structure [context : OptCfgContext]) : ResultCompilerOptimizeVerify
+  (let
+    [index : OptCfgIndex (struct-get context index)]
+    (cond
+      [(not (opt-cfg-index-labels-unique? index))
+        (ResultCompilerOptimizeVerify.Err
+          "optimizer verify: duplicate block label")]
+      [(not (struct-get index targets-known))
+        (ResultCompilerOptimizeVerify.Err
+          "optimizer verify: unknown successor label")]
+      [else (ResultCompilerOptimizeVerify.Ok)])))
+
 (define (opt-verify-function-with-context
   [func : CompilerIrFunction]
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (cond
-        [(not (opt-cfg-block-labels-unique? blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: duplicate block label")]
-        [(not (opt-cfg-successor-targets-known? blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: unknown successor label")]
-        [else (opt-verify-function-body-with-context func context)])]))
+  (match (opt-verify-structure context)
+    [(ResultCompilerOptimizeVerify.Ok)
+      (opt-verify-function-body-with-context func context)]
+    [(ResultCompilerOptimizeVerify.Err message)
+      (ResultCompilerOptimizeVerify.Err message)]))
 
 ;; Pipeline-level verification consolidation: the opt2 pipeline verifies the
 ;; SSA function once per iteration before the loop-pass cluster and threads
@@ -9827,36 +9871,23 @@
 (define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (cond
-        [(not (opt-cfg-block-labels-unique? blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: duplicate block label")]
-        [(not (opt-cfg-successor-targets-known? blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: unknown successor label")]
-        [else
-          (opt-verify-function-body-with-context
-            func
-            (opt-cfg-context-build blocks))])]))
+      (opt-verify-function-with-context func (opt-cfg-context-build blocks))]))
 
 (define (opt-verify-final-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
   (match func
     [(CompilerIrFunction.Function _ params _ vars blocks)
-      (cond
-        [(not (opt-cfg-block-labels-unique? blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: duplicate block label")]
-        [(not (opt-cfg-successor-targets-known? blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: unknown successor label")]
-        ;; Final backend IR is not required to be SSA. Apply dominance/use
-        ;; checks when it is SSA-shaped; otherwise the structural CFG checks
-        ;; above are the valid final-IR contract.
-        [(opt-verify-single-defs? params vars blocks)
-          (opt-verify-final-function-body-with-context
-            func
-            (opt-cfg-context-build blocks))]
-        [else (ResultCompilerOptimizeVerify.Ok)])]))
+      (let
+        [context : OptCfgContext (opt-cfg-context-build blocks)]
+        (match (opt-verify-structure context)
+          [(ResultCompilerOptimizeVerify.Ok)
+            ;; Final backend IR is not required to be SSA. Apply dominance/use
+            ;; checks when it is SSA-shaped; otherwise the structural CFG checks
+            ;; are the valid final-IR contract.
+            (if (opt-verify-single-defs? params vars blocks)
+              (opt-verify-final-function-body-with-context func context)
+              (ResultCompilerOptimizeVerify.Ok))]
+          [(ResultCompilerOptimizeVerify.Err message)
+            (ResultCompilerOptimizeVerify.Err message)]))]))
 
 (define (opt-verify-function-list [functions : CompilerIrFunctionList]) : ResultCompilerOptimizeVerify
   (match (compiler-ir-function-list-force-cons functions)
@@ -45987,13 +46018,17 @@
     (opt_string_i64_map.with-capacity 64)))
 
 (define (opt-inline-structure-ok? [blocks : CompilerIrBlockList]) : bool
-  (begin
-    (unless (opt-cfg-block-labels-unique? blocks) (return false))
-    (unless (opt-inline-bounds-labels-unique? blocks) (return false))
-    (unless (opt-cfg-successor-targets-known? blocks) (return false))
-    (let
-      [pred-map : OptPredMap (OptPredMap (opt-cfg-index-build blocks))]
-      (opt-verify-ok? (opt-verify-phi-predecessors-blocks pred-map blocks)))))
+  (let
+    ;; The index this already builds for the phi check answers the two label
+    ;; scans as well, so build it up front instead of walking the blocks twice
+    ;; more first.
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    (begin
+      (unless (opt-cfg-index-labels-unique? index) (return false))
+      (unless (opt-inline-bounds-labels-unique? blocks) (return false))
+      (unless (struct-get index targets-known) (return false))
+      (opt-verify-ok?
+        (opt-verify-phi-predecessors-blocks (OptPredMap index) blocks)))))
 
 ;; Inlining retains rewritten IR in the program arena, but its structural
 ;; verifier builds only temporary CFG indexes and predecessor maps. Reuse one

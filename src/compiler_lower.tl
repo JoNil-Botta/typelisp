@@ -153,22 +153,23 @@
 (define lower-rvo-early-return-functions : lower_i64_i64_map.Map
   (lower_i64_i64_map.with-capacity 8))
 
-;; Contiguous id set: `slots[0, len)` holds the members oldest first, so the old
+(import (vector.vector i64 core) as lower_id_vec)
+(import (vector.vector AstExpr core) as lower_spmd_value_vec)
+
+;; Contiguous id set: `items[0, len)` holds the members oldest first, so the old
 ;; head-first cons walk is the descending index walk. `lower-id-set-insert` is
-;; persistent and copies into a right-sized array, because callers keep both a
+;; persistent and copies into a right-sized vector, because callers keep both a
 ;; set and an extension of it live at the same time. Only the reach worklist,
 ;; which threads one state linearly, uses the in-place push/pop pair.
 (defstruct LowerIdSet
-  (slots (Array i64))
-  (len i64))
+  (items lower_id_vec.Vec))
 
-;; Parallel key/value arrays in cons order (oldest first). Lookup scans from the
-;; tail so the most recent binding still shadows, and both `cons` and `remove`
-;; build fresh arrays so every substitution value stays independent.
+;; Parallel key/value vectors in cons order (oldest first). Lookup scans from
+;; the tail so the most recent binding still shadows, and both `cons` and
+;; `remove` build fresh vectors so every substitution value stays independent.
 (defstruct LowerSpmdInlineSubst
-  (names (Array i64))
-  (values (Array AstExpr))
-  (len i64))
+  (names lower_id_vec.Vec)
+  (values lower_spmd_value_vec.Vec))
 
 ;; Function reachability is ID-native. `all-functions` maps the canonical
 ;; logical ID to a dense slot, `reachable` is slot-keyed, and the worklist/body
@@ -5246,17 +5247,19 @@
             module-id))])))
 
 (define (lower-id-set-empty) : LowerIdSet
-  (LowerIdSet (make-array i64 0) 0))
+  (LowerIdSet (lower_id_vec.with-capacity 0)))
 
 (define (lower-id-set-contains? [items : LowerIdSet] [name : i64]) : bool
   (let
-    [index : i64 (struct-get items len)]
+    [index : i64 (lower_id_vec.len (& (struct-get items items)))]
     [found : bool false]
     (begin
       (while (and (not found) (> index 0))
         (begin
           (set! index (- index 1))
-          (if (= (array-ref (struct-get items slots) index) name)
+          (if (=
+            (array-ref (lower_id_vec.slots (& (struct-get items items))) index)
+            name)
             (set! found true)
             unit)))
       found)))
@@ -5265,29 +5268,28 @@
   (if (lower-id-set-contains? items name)
     items
     (let
-      [len : i64 (struct-get items len)]
-      [slots : (Array i64) (make-array i64 (+ len 1))]
+      [len : i64 (lower_id_vec.len (& (struct-get items items)))]
+      [out : lower_id_vec.Vec (lower_id_vec.with-capacity (+ len 1))]
       [index : i64 0]
       (begin
         (while (< index len)
           (begin
-            (array-set! slots index (array-ref (struct-get items slots) index))
+            (lower_id_vec.push
+              (&mut out)
+              (array-ref
+                (lower_id_vec.slots (& (struct-get items items)))
+                index))
             (set! index (+ index 1))))
-        (array-set! slots len name)
-        (LowerIdSet slots (+ len 1))))))
+        (lower_id_vec.push (&mut out) name)
+        (LowerIdSet out)))))
 
 ;; Stack push for the reach worklist only: that state is threaded linearly, so
-;; the backing array is reused instead of copied. Popping just shrinks `len`,
-;; which is why the spare tail slot is overwritten in place when it exists.
+;; the backing vector is appended to in place instead of copied. Popping just
+;; rebuilds the set over the same backing array with a shorter length.
 (define (lower-id-set-push [items : LowerIdSet] [name : i64]) : LowerIdSet
-  (let
-    [slots : (Array i64) (struct-get items slots)]
-    [len : i64 (struct-get items len)]
-    (begin
-      (if (< len (array-length slots))
-        (array-set! slots len name)
-        (array-push! slots name))
-      (LowerIdSet slots (+ len 1)))))
+  (begin
+    (lower_id_vec.push (&mut (struct-get items items)) name)
+    items))
 
 (define (lower-spmd-inline-empty-helper-stack) : LowerIdSet
   (lower-id-set-empty))
@@ -5338,69 +5340,88 @@
         (macro-hygiene-global-source-name-id-or source-name-id source-name-id)))))
 
 (define (lower-spmd-inline-subst-empty) : LowerSpmdInlineSubst
-  (LowerSpmdInlineSubst (make-array i64 0) (make-array AstExpr 0) 0))
+  (LowerSpmdInlineSubst
+    (lower_id_vec.with-capacity 0)
+    (lower_spmd_value_vec.with-capacity 0)))
 
 (define (lower-spmd-inline-subst-lookup
   [subs : LowerSpmdInlineSubst]
   [name : i64]) : LowerMaybeAstExpr
   (let
-    [index : i64 (struct-get subs len)]
+    [index : i64 (lower_id_vec.len (& (struct-get subs names)))]
     [found : i64 -1]
     (begin
       (while (> index 0)
         (begin
           (set! index (- index 1))
-          (if (= (array-ref (struct-get subs names) index) name)
+          (if (=
+            (array-ref (lower_id_vec.slots (& (struct-get subs names))) index)
+            name)
             (begin
               (set! found index)
               (set! index 0))
             unit)))
       (if (< found 0)
         (LowerMaybeAstExpr.No)
-        (LowerMaybeAstExpr.Some (array-ref (struct-get subs values) found))))))
+        (LowerMaybeAstExpr.Some
+          (array-ref
+            (lower_spmd_value_vec.slots (& (struct-get subs values)))
+            found))))))
 
 (define (lower-spmd-inline-subst-remove
   [subs : LowerSpmdInlineSubst]
   [name : i64]) : LowerSpmdInlineSubst
   (let
-    [len : i64 (struct-get subs len)]
-    [names : (Array i64) (make-array i64 len)]
-    [values : (Array AstExpr) (make-array AstExpr len)]
+    [len : i64 (lower_id_vec.len (& (struct-get subs names)))]
+    [names : lower_id_vec.Vec (lower_id_vec.with-capacity len)]
+    [values : lower_spmd_value_vec.Vec (lower_spmd_value_vec.with-capacity len)]
     [index : i64 0]
-    [kept : i64 0]
     (begin
       (while (< index len)
         (begin
-          (if (= (array-ref (struct-get subs names) index) name)
+          (if (=
+            (array-ref (lower_id_vec.slots (& (struct-get subs names))) index)
+            name)
             unit
             (begin
-              (array-set! names kept (array-ref (struct-get subs names) index))
-              (array-set!
-                values
-                kept
-                (array-ref (struct-get subs values) index))
-              (set! kept (+ kept 1))))
+              (lower_id_vec.push
+                (&mut names)
+                (array-ref
+                  (lower_id_vec.slots (& (struct-get subs names)))
+                  index))
+              (lower_spmd_value_vec.push
+                (&mut values)
+                (array-ref
+                  (lower_spmd_value_vec.slots (& (struct-get subs values)))
+                  index))))
           (set! index (+ index 1))))
-      (LowerSpmdInlineSubst names values kept))))
+      (LowerSpmdInlineSubst names values))))
 
 (define (lower-spmd-inline-subst-cons
   [name : i64]
   [value : AstExpr]
   [rest : LowerSpmdInlineSubst]) : LowerSpmdInlineSubst
   (let
-    [len : i64 (struct-get rest len)]
-    [names : (Array i64) (make-array i64 (+ len 1))]
-    [values : (Array AstExpr) (make-array AstExpr (+ len 1))]
+    [len : i64 (lower_id_vec.len (& (struct-get rest names)))]
+    [names : lower_id_vec.Vec (lower_id_vec.with-capacity (+ len 1))]
+    [values : lower_spmd_value_vec.Vec
+      (lower_spmd_value_vec.with-capacity (+ len 1))]
     [index : i64 0]
     (begin
       (while (< index len)
         (begin
-          (array-set! names index (array-ref (struct-get rest names) index))
-          (array-set! values index (array-ref (struct-get rest values) index))
+          (lower_id_vec.push
+            (&mut names)
+            (array-ref (lower_id_vec.slots (& (struct-get rest names))) index))
+          (lower_spmd_value_vec.push
+            (&mut values)
+            (array-ref
+              (lower_spmd_value_vec.slots (& (struct-get rest values)))
+              index))
           (set! index (+ index 1))))
-      (array-set! names len name)
-      (array-set! values len value)
-      (LowerSpmdInlineSubst names values (+ len 1)))))
+      (lower_id_vec.push (&mut names) name)
+      (lower_spmd_value_vec.push (&mut values) value)
+      (LowerSpmdInlineSubst names values))))
 
 (define (lower-spmd-inline-helper-from-decl
   [ctx : TcContext]
@@ -5661,7 +5682,7 @@
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
           [init : AstExpr (lower-context-expr-get ctx init-box)]
-          [renamed : bool (> (struct-get subst len) 0)]
+          [renamed : bool (> (lower_id_vec.len (& (struct-get subst names))) 0)]
           [bind-id : i64
             (if renamed
               (lower-spmd-inline-fresh-local-id name)
@@ -8550,15 +8571,21 @@
   (match state
     [(LowerReachState.State reachable worklist)
       (let
-        [top : i64 (- (struct-get worklist len) 1)]
+        [top : i64 (- (lower_id_vec.len (& (struct-get worklist items))) 1)]
         (if (< top 0)
           state
           (let
-            [name : i64 (array-ref (struct-get worklist slots) top)]
+            [name : i64
+              (array-ref
+                (lower_id_vec.slots (& (struct-get worklist items)))
+                top)]
             [popped : LowerReachState
               (LowerReachState.State
                 reachable
-                (LowerIdSet (struct-get worklist slots) top))]
+                (LowerIdSet
+                  (lower_id_vec.Vec
+                    (struct-get (struct-get worklist items) slots)
+                    top)))]
             (match (lower-function-body-index-find body-index name)
               [(LowerMaybeFunctionBody.Some body body-names body-path-owner-id)
                 (begin
@@ -35410,14 +35437,14 @@
   [lanes : i64]) : lower_i64_i64_map.Map
   (let
     [out : lower_i64_i64_map.Map (lower-masked-vector-empty-lane-locals)]
-    [index : i64 (struct-get items len)]
+    [index : i64 (lower_id_vec.len (& (struct-get items items)))]
     (begin
       (while (> index 0)
         (begin
           (set! index (- index 1))
           (lower_i64_i64_map.insert-ref!
             (&mut out)
-            (array-ref (struct-get items slots) index)
+            (array-ref (lower_id_vec.slots (& (struct-get items items))) index)
             lanes)))
       out)))
 

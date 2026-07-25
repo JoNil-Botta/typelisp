@@ -12830,6 +12830,42 @@
               (CompilerIrInstrList.Nil)))
           (CompilerIrBlockList.Nil))))))
 
+;: `opt-cfg-index-build` numbers blocks in block-list walk order, so for a walk
+;: over the list the index was built from, the position *is* the id. Several
+;: optimizer passes now rely on that instead of hashing the label to recover it
+;: (refs #5718), and nothing else pins it: every other test here obtains an id
+;: through `opt-cfg-index-id` and then uses it consistently, so renumbering the
+;: index -- by reverse postorder, say, to make the dominator tables denser --
+;: would leave those green while silently pointing the walk-position readers at
+;: a different block. This asserts the numbering itself.
+(define (opt-cfg-index-walk-order-ids-ok?
+  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [position : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label _)
+          (and
+            (match (opt-cfg-index-id index label)
+              [(option_i64.Some id) (= id position)]
+              [(option_i64.None) false])
+            (opt-cfg-index-walk-order-ids-ok?
+              (box-get rest)
+              index
+              (+ position 1)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-cfg-index-walk-order-ids-ok?
+        (compiler-ir-block-seq-to-list seq)
+        index
+        position)]))
+
+(define (opt-cfg-index-numbering-ok?) : bool
+  (let
+    [blocks : CompilerIrBlockList (opt-cfg-switch-blocks)]
+    (opt-cfg-index-walk-order-ids-ok? blocks (opt-cfg-index-build blocks) 0)))
+
 (define (opt-cfg-switch-successors-ok?) : bool
   (let
     [successors : OptLabelSet
@@ -19708,6 +19744,7 @@
       (unless (= (opt-count-branches-blocks trap-blocks) 1) (return 14))
       (unless (opt-cfg-fallthrough-prune-ok? fallthrough-blocks) (return 15))
       (unless (opt-cfg-switch-successors-ok?) (return 16))
+      (unless (opt-cfg-index-numbering-ok?) (return 40))
       (unless bool-branch-changed (return 17))
       (unless
         (not (opt-block-list-has-label? bool-branch-blocks "merge"))

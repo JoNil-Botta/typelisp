@@ -938,6 +938,121 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; The comptime string scanner: `comptime.expr-string?` (256) guards a String
+;; session local that `expr-string-value` (246) binds, `string-length` (252)
+;; measures, `string-ref` (253) indexes through a `char` cast, `string-slice`
+;; (254) cuts and `expr-string-from-value` (255) turns back into a literal.
+;; The two arms differ only in which byte the operand starts with, so an
+;; off-by-one in any of those reads still commits a result -- the assertions
+;; compare the exact literal each arm must produce. Refs #5701.
+(define (producer-test-dispatch-scan?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]
+  [literal : String]
+  [expected-callee : String]
+  [expected-int : i64]
+  [expected-text : String]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [operand : i64
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Literal (AstLiteral.String (ci.intern literal))))]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (array-set! operands 0 (CompilerCtfeValue.Expr operand (AstType.Expr)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= (struct-get dispatch status) tlci-host-callback-status-ok)
+                (compiler-comptime-host-result-ready?)
+                (match (compiler-comptime-host-result-value)
+                  [(CompilerCtfeValue.Expr node _)
+                    (match (ast-node-pool-context-expr-get pools node)
+                      [(AstExpr.Call callee args)
+                        (and
+                          (match (ast-node-pool-context-expr-get pools callee)
+                            [(AstExpr.Var name)
+                              (= name (producer-test-name-id expected-callee))]
+                            [_ false])
+                          (= (ast-expr-list-len (& args)) 1)
+                          (producer-test-scan-argument-ok?
+                            pools
+                            (ast-expr-list-get (& args) 0 0)
+                            expected-int
+                            expected-text))]
+                      [_ false])]
+                  [_ false]))])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
+(define (producer-test-scan-argument-ok?
+  [pools : AstNodePoolContext]
+  [node : i64]
+  [expected-int : i64]
+  [expected-text : String]) : bool
+  (match (ast-node-pool-context-expr-get pools node)
+    [(AstExpr.Literal (AstLiteral.Int value _))
+      (and (>= expected-int 0) (= value expected-int))]
+    [(AstExpr.Literal (AstLiteral.String sid))
+      (and (< expected-int 0) (string.eq (intern-str sid) expected-text))]
+    [_ false]))
+
+;; The scanner's guard arm: a non-literal operand must reach the session
+;; diagnostic rather than commit a silently empty template. Refs #5701.
+(define (producer-test-dispatch-diagnostic?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]
+  [argument : String]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (array-set! operands 0 (producer-test-expr-operand argument))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (=
+                  (struct-get dispatch status)
+                  tlci-host-callback-status-diagnostic)
+                (not (compiler-comptime-host-result-ready?)))])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
 (define (producer-test-dispatch-shape?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]
@@ -1347,7 +1462,7 @@
   (let
     [source : String
       "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.If c t e) c] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n(defmacro (catlike [args : String ...]) : String (match (comptime.expr-list-length args) [0 `\"\"] [1 (comptime.expr-list-nth args 0)] [2 `(concat2 ,(comptime.expr-list-nth args 0) ,(comptime.expr-list-nth args 1))] [n `(concat-all (pack (__args ,@args) ,(comptime.expr-int n)))]))\n(defmacro (pushlike [carrier : Expr] [piece : Expr]) : Expr (match carrier [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)] [_ carrier]))\n(defmacro (finishlike [carrier : Expr]) : Expr (match carrier [(comptime.Expr.Call _ pieces) `(joined ,@pieces)] [_ `\"\"]))\n(defmacro (kindfull [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [\"f64\" `(kind-f64 ,value)]))\n(defmacro (kindly [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [other (comptime.comptime-error \"kindly: unsupported\")]))
-(defmacro (kindwild [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ `(kind-other ,value)]))\n(defmacro (places [value : Expr]) : Expr `(match ,value [(Some inner) (begin (set! (struct-get inner len) 1.5) (box-get (box inner)))] [_ (return ,value)]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n(defmacro (kindof [value : Expr]) : Expr (match (type-kind (comptime.expr-type value)) [\"f64\" `(f64-op ,value)] [_ `(other ,value)]))\n(defmacro (keyof [T : type] [value : Expr]) : Expr (match (type-key T) [\"i64\" `(i64-op (cast ,value : i64))] [_ `(other ,value)]))\n(defmacro (rawptr [value : Expr]) : Expr `(unsafe (ptr-write! (ptr-offset (string-data ,value) 1) (ptr-read (ptr-offset (array-data ,value) 2))) (string-from-bytes (string-data ,value) (ptr->int (string-data ,value)))))\n(defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))\n(defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))\n(defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))\n"]
+(defmacro (kindwild [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ `(kind-other ,value)]))\n(defmacro (places [value : Expr]) : Expr `(match ,value [(Some inner) (begin (set! (struct-get inner len) 1.5) (box-get (box inner)))] [_ (return ,value)]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n(defmacro (kindof [value : Expr]) : Expr (match (type-kind (comptime.expr-type value)) [\"f64\" `(f64-op ,value)] [_ `(other ,value)]))\n(defmacro (keyof [T : type] [value : Expr]) : Expr (match (type-key T) [\"i64\" `(i64-op (cast ,value : i64))] [_ `(other ,value)]))\n(defmacro (rawptr [value : Expr]) : Expr `(unsafe (ptr-write! (ptr-offset (string-data ,value) 1) (ptr-read (ptr-offset (array-data ,value) 2))) (string-from-bytes (string-data ,value) (ptr->int (string-data ,value)))))\n(defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))\n(defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))\n(defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))\n(defmacro (scan [text : Expr]) : Expr (if (comptime.expr-string? text) (let [s : String (comptime.expr-string-value text)] [n : i64 (string.string-length s)] (if (= (cast (string.string-ref s 0) : i64) 123) `(brace ,(comptime.expr-int n)) `(plain ,(comptime.expr-string (comptime.string-slice s 1 (- n 1)))))) (comptime.comptime-error \"scan: expects a string literal\")))\n"]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -1382,13 +1497,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 26)
-                              (= (struct-get captures len) 26)
+                              (= (array-length name-array) 27)
+                              (= (struct-get captures len) 27)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                25)
+                                26)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-partial-count
@@ -1470,6 +1585,24 @@
                               (producer-test-dispatch-typeof?
                                 (& loaded)
                                 "package.macros/typeof")
+                              (producer-test-dispatch-scan?
+                                (& loaded)
+                                "package.macros/scan"
+                                "{ab"
+                                "brace"
+                                3
+                                "")
+                              (producer-test-dispatch-scan?
+                                (& loaded)
+                                "package.macros/scan"
+                                "xyz"
+                                "plain"
+                                -1
+                                "yz")
+                              (producer-test-dispatch-diagnostic?
+                                (& loaded)
+                                "package.macros/scan"
+                                "value")
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/qqvar"

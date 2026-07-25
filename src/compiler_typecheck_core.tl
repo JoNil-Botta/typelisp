@@ -66705,15 +66705,31 @@
                             (begin
                               (compiler-comptime-host-session-close!)
                               MacroNativeStdlibTlciResult.No)]
+                          ;; A transformer that called `comptime-error` left
+                          ;; its own message in the session diagnostic slot;
+                          ;; that message is the author's, and reporting the
+                          ;; raw status instead would make a macro's own
+                          ;; rejection unreadable and route-dependent. The
+                          ;; generic status text stays for statuses with no
+                          ;; recorded message (bad request, panic). Refs #5701.
                           [else
-                            (begin
-                              (compiler-comptime-host-session-close!)
-                              (MacroNativeStdlibTlciResult.Err
-                                (ctfe-diagnostic-at-expr
-                                  call-expr
+                            (let
+                              [recorded : String
+                                (compiler-comptime-host-diagnostic-text)]
+                              [message : String
+                                (if (and
+                                  (=
+                                    status
+                                    tlci-host-callback-status-diagnostic)
+                                  (> (string.string-length recorded) 0))
+                                  recorded
                                   (tlci-loader-macro-status-diagnostic
                                     identity
-                                    status))))]))]))))))))))
+                                    status))]
+                              (begin
+                                (compiler-comptime-host-session-close!)
+                                (MacroNativeStdlibTlciResult.Err
+                                  (ctfe-diagnostic-at-expr call-expr message))))]))]))))))))))
 
 (cfg
   (not embedded-stdlib-tlci)

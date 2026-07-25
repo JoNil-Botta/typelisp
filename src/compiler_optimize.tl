@@ -24275,7 +24275,7 @@
 ;; have been unified into shared vars first. Facts flow down the dominator
 ;; tree as an immutable list, so sibling subtrees are isolated by construction.
 (defenum OptBoundsDomWalk
-  (Walk CompilerIrInstrList OptBoundsFacts))
+  (Walk CompilerIrInstrList OptBoundsFacts OptDomCmpFacts))
 
 ;; GVN rewrites a dominated duplicate expression (e.g. the per-access
 ;; `Cast(i -> U64)` index) into `Mov dst2 = dst1`, and block-local copy
@@ -25073,7 +25073,7 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : OptBoundsDomWalk
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OptBoundsDomWalk.Walk (CompilerIrInstrList.Nil) facts)
+    (OptBoundsDomWalk.Walk (CompilerIrInstrList.Nil) facts cmp-facts)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (match instr
@@ -25113,28 +25113,58 @@
                 instrs
                 (+ index 1))
               (let
-                [next-facts : OptBoundsFacts
-                  (if (and
+                [stable? : bool
+                  (and
                     (opt-gvn-value-stable? sources cidx)
-                    (opt-gvn-value-stable? sources clen))
+                    (opt-gvn-value-stable? sources clen))]
+                [next-facts : OptBoundsFacts
+                  (if stable?
                     (opt-bounds-add facts cidx clen)
                     facts)]
+                ;; A passed bounds check is an unsigned `idx < len` whose
+                ;; length operand is a runtime container length, so len is
+                ;; always < 2^63: the continuation also proves
+                ;; 0 <= idx < len in the SIGNED domain. Record both lt
+                ;; spellings so the dominating-comparison fold kills a later
+                ;; redundant signed test (`le idx len`, `gt len idx`, ...) --
+                ;; e.g. a loop-versioning guard condition that repeats what a
+                ;; dominating access already checked.
+                [next-cmp-facts : OptDomCmpFacts
+                  (if stable?
+                    (OptDomCmpFacts.Cons
+                      (OptDomCmpFact.Fact
+                        (CompilerIrBinOp.Lt)
+                        cidx
+                        clen
+                        (AstType.I64)
+                        true)
+                      (box
+                        (OptDomCmpFacts.Cons
+                          (OptDomCmpFact.Fact
+                            (CompilerIrBinOp.Lt)
+                            clen
+                            cidx
+                            (AstType.I64)
+                            false)
+                          (box cmp-facts))))
+                    cmp-facts)]
                 (match (opt-bounds-dom-instrs-from
                   defs
                   phi-defs
                   terms
                   cfg-index
                   block-label
-                  cmp-facts
+                  next-cmp-facts
                   next-facts
                   sources
                   copies
                   instrs
                   (+ index 1))
-                  [(OptBoundsDomWalk.Walk tail out-facts)
+                  [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
                     (OptBoundsDomWalk.Walk
                       (compiler-ir-instr-cons instr tail)
-                      out-facts)]))))]
+                      out-facts
+                      out-cmp-facts)]))))]
         [_
           (match (opt-bounds-dom-instrs-from
             defs
@@ -25148,12 +25178,13 @@
             copies
             instrs
             (+ index 1))
-            [(OptBoundsDomWalk.Walk tail out-facts)
+            [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
               (OptBoundsDomWalk.Walk
                 (compiler-ir-instr-cons
                   (opt-bounds-dom-fold-compare cmp-facts copies instr)
                   tail)
-                out-facts)])]))))
+                out-facts
+                out-cmp-facts)])]))))
 
 ;; Replace a comparison a dominating branch already decided with its constant.
 ;; The move keeps the destination and bool type, so every consumer -- branch,
@@ -25217,7 +25248,7 @@
                   copies
                   instrs
                   0)
-                  [(OptBoundsDomWalk.Walk rewritten out-facts)
+                  [(OptBoundsDomWalk.Walk rewritten out-facts out-cmp-facts)
                     (begin
                       (array-set!
                         out
@@ -25232,7 +25263,7 @@
                         terms
                         sources
                         copies
-                        cmp-facts
+                        out-cmp-facts
                         out-facts
                         blocks
                         out
@@ -31037,6 +31068,27 @@
             [_ (OptUnrollMaybeShape.No)])]
         [_ (OptUnrollMaybeShape.No)]))))
 
+;; Fill-like store loops: StorePtr admitted only when the body has no Load
+;; at all, so the x4 clones hold scalar state only (no load->store chains,
+;; no container-pointer pressure). Probe/rehash loops have loads and stay
+;; excluded by the main whitelist; fills (zeroing, byte stores, recurrence
+;; stores) have none.
+(define (opt-unroll-body-fill-instr-ok? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Load _ _ _) false]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [_ (opt-unroll-body-instr-ok? instr)]))
+
+(define (opt-unroll-body-fill-ok?
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    true
+    (and
+      (opt-unroll-body-fill-instr-ok? (array-ref slots index))
+      (opt-unroll-body-fill-ok? slots (+ index 1) last))))
+
 (define (opt-unroll-shape-scan
   [blocks : CompilerIrBlockList]
   [label : String]
@@ -31051,7 +31103,10 @@
       (< (- last phi-count) 2)
       (> (- last phi-count) 16)
       (not (opt-unroll-no-phi-from? instrs phi-count))
-      (not (opt-unroll-body-ok? (struct-get instrs slots) phi-count last))
+      (not
+        (or
+          (opt-unroll-body-ok? (struct-get instrs slots) phi-count last)
+          (opt-unroll-body-fill-ok? (struct-get instrs slots) phi-count last)))
       ;; the c-def is dropped from the clones, so the final branch must be c's
       ;; only use inside B.
       (opt-used-contains
@@ -35270,6 +35325,881 @@
         fast-blocks
         remap)]))
 
+;; --- fast-exit check specialization -------------------------------------------
+;;
+;; A versioned loop's exit block is shared: the edge that skips the loop, the
+;; slow checked loop, and the fast check-free clone all arrive there, so a
+;; BoundsCheck in it must stay for the arrivals that prove nothing (the skip
+;; edge's value is entirely unchecked). On the fast arrivals the exit value
+;; of a bounded header phi is provably in range: it stays within
+;; [seed, scan] on every executed iteration, the +1 counter exits exactly at
+;; its bound, a strict BoundsCheck(bound, len) dominating the preheader gives
+;; bound < len, and the guard's seed >= 0 condition gives value >= 0. When
+;; every fast-latch input of the checked phi is such a bounded value, give
+;; the fast arrivals their own copy of the exit block without the check;
+;; every other arrival keeps the original checked block.
+;; Fast-clone labels of the shape's body labels.
+(define (opt-bce-mb-fast-labels-from [labels : OptLabelSet] [acc : OptLabelSet]) : OptLabelSet
+  (match labels
+    [(OptLabelSet.Nil) acc]
+    [(OptLabelSet.Cons label rest)
+      (opt-bce-mb-fast-labels-from
+        (box-get rest)
+        (opt-label-add acc (string.append label "__bce_fast")))]))
+
+;; Is `var` defined by a Phi instruction in this block's instruction seq?
+(define (opt-bce-mb-block-phi-var?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst _ _)
+        (if (= dst var)
+          true
+          (opt-bce-mb-block-phi-var? instrs (+ index 1) var))]
+      [_ (opt-bce-mb-block-phi-var? instrs (+ index 1) var)])))
+
+;; Is `var` the dst of a Cast in this block whose source is a phi defined here?
+(define (opt-bce-mb-block-cast-of-phi?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Cast dst src _ _)
+        (match src
+          [(CompilerIrValue.Var v)
+            (if (and (= dst var) (opt-bce-mb-block-phi-var? instrs 0 v))
+              true
+              (opt-bce-mb-block-cast-of-phi? instrs (+ index 1) var))]
+          [_ (opt-bce-mb-block-cast-of-phi? instrs (+ index 1) var)])]
+      [_ (opt-bce-mb-block-cast-of-phi? instrs (+ index 1) var)])))
+
+;; The phi var feeding `var`, when `var` is a phi of this block or a cast of
+;; one; -1 otherwise.
+(define (opt-bce-mb-phi-src-of [instrs : CompilerIrInstrSeq] [var : i64]) : i64
+  (if (opt-bce-mb-block-phi-var? instrs 0 var)
+    var
+    (let
+      [walk : i64 0]
+      [found : i64 -1]
+      (begin
+        (while (< walk (compiler-ir-instr-seq-count instrs))
+          (begin
+            (match (compiler-ir-instr-seq-ref instrs walk)
+              [(CompilerIrInstr.Cast dst src _ _)
+                (match src
+                  [(CompilerIrValue.Var v)
+                    (if (and (= dst var) (opt-bce-mb-block-phi-var? instrs 0 v))
+                      (set! found v)
+                      unit)]
+                  [_ unit])]
+              [_ unit])
+            (set! walk (+ walk 1))))
+        found))))
+
+(defenum OptBceMbExitCheck
+  (No)
+  (Some i64 i64 CompilerIrValue))
+
+;; The first BoundsCheck in this block whose index is a phi defined here (or
+;; a cast of one): (check position, phi var, length).
+(define (opt-bce-mb-find-exit-check [instrs : CompilerIrInstrSeq] [index : i64]) : OptBceMbExitCheck
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptBceMbExitCheck.No)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BoundsCheck idx len _)
+        (match idx
+          [(CompilerIrValue.Var v)
+            (let
+              [phi-var : i64 (opt-bce-mb-phi-src-of instrs v)]
+              (if (>= phi-var 0)
+                (OptBceMbExitCheck.Some index phi-var len)
+                (opt-bce-mb-find-exit-check instrs (+ index 1))))]
+          [_ (opt-bce-mb-find-exit-check instrs (+ index 1))])]
+      [_ (opt-bce-mb-find-exit-check instrs (+ index 1))])))
+
+;; Canonical spelling of a value for cross-block comparison: vars resolved
+;; through the block list's single-def Mov chains, and through same-width
+;; int-to-int casts (a bit-preserving reinterpret, as in the bounds_dom
+;; canonicalization).
+(define (opt-bce-mb-canon-value
+  [blocks : CompilerIrBlockList]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(CompilerIrValue.Var v)
+      (let
+        [resolved : i64 (opt-bce-mb-resolve blocks v 16)]
+        (match (opt-bce-mb-find-def blocks resolved)
+          [(OptBceMbMaybeInstr.No) (CompilerIrValue.Var resolved)]
+          [(OptBceMbMaybeInstr.Some instr)
+            (match instr
+              [(CompilerIrInstr.Cast _ src from-ty to-ty)
+                (if (and
+                  (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+                  (match src
+                    [(CompilerIrValue.Var _) true]
+                    [_ false]))
+                  (opt-bce-mb-canon-value blocks src)
+                  (CompilerIrValue.Var resolved))]
+              [_ (CompilerIrValue.Var resolved)])]))]
+    [_ value]))
+
+;; The bounded header phi of the loop: a header phi, not the counter, whose
+;; loop-entry input (from the preheader, or from the guard after the rewrite
+;; has spliced it in) is the counter's seed. -1 when none matches.
+(define (opt-bce-mb-find-bounded-phi-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [blocks : CompilerIrBlockList]
+  [preheader : String]
+  [guard-label : String]
+  [cseed : CompilerIrValue]
+  [iphi : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    -1
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst inputs _)
+        (if (and
+          (not (= dst iphi))
+          (let
+            [walk : CompilerIrPhiInputList inputs]
+            [hit : bool false]
+            (while (not hit)
+              (match (compiler-ir-phi-input-list-force-cons walk)
+                [(CompilerIrPhiInputList.Nil) (set! hit true)]
+                [(CompilerIrPhiInputList.Array seq)
+                  (begin
+                    (set! walk (compiler-ir-phi-input-seq-to-list seq))
+                    unit)]
+                [(CompilerIrPhiInputList.Cons value label rest)
+                  (if (and
+                    (or
+                      (string.eq label preheader)
+                      (string.eq label guard-label))
+                    (opt-value-eq (opt-bce-mb-canon-value blocks value) cseed))
+                    (set! hit true)
+                    (set! walk (box-get rest)))]))
+            hit))
+          dst
+          (opt-bce-mb-find-bounded-phi-instrs
+            instrs
+            (+ index 1)
+            blocks
+            preheader
+            guard-label
+            cseed
+            iphi))]
+      [_
+        (opt-bce-mb-find-bounded-phi-instrs
+          instrs
+          (+ index 1)
+          blocks
+          preheader
+          guard-label
+          cseed
+          iphi)])))
+
+(define (opt-bce-mb-find-bounded-phi
+  [body-blocks : CompilerIrBlockList]
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [preheader : String]
+  [guard-label : String]
+  [cseed : CompilerIrValue]
+  [iphi : i64]) : i64
+  (match body-blocks
+    [(CompilerIrBlockList.Nil) -1]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (if (string.eq label header)
+            (opt-bce-mb-find-bounded-phi-instrs
+              instrs
+              0
+              blocks
+              preheader
+              guard-label
+              cseed
+              iphi)
+            (opt-bce-mb-find-bounded-phi
+              (box-get rest)
+              blocks
+              header
+              preheader
+              guard-label
+              cseed
+              iphi))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-find-bounded-phi
+        (compiler-ir-block-seq-to-list seq)
+        blocks
+        header
+        preheader
+        guard-label
+        cseed
+        iphi)]))
+
+;; Every fast-latch input of the phi is a bounded value in the fast clone
+;; (stays within [seed, scan] each executed iteration). Counts fast and
+;; non-fast inputs; the split needs at least one of each.
+(define (opt-bce-mb-exit-phi-inputs-scan
+  [inputs : CompilerIrPhiInputList]
+  [fast-labels : OptLabelSet]
+  [fast-blocks : CompilerIrBlockList]
+  [fast-bounded : i64]
+  [fast-seen : i64]
+  [other-seen : i64]
+  [provable : bool]) : i64
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil)
+      (if (and provable (> fast-seen 0) (> other-seen 0))
+        1
+        0)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-exit-phi-inputs-scan
+        (compiler-ir-phi-input-seq-to-list seq)
+        fast-labels
+        fast-blocks
+        fast-bounded
+        fast-seen
+        other-seen
+        provable)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-label-contains fast-labels label)
+        (opt-bce-mb-exit-phi-inputs-scan
+          (box-get rest)
+          fast-labels
+          fast-blocks
+          fast-bounded
+          (+ fast-seen 1)
+          other-seen
+          (and
+            provable
+            (>= fast-bounded 0)
+            (opt-bce-mb-bounded-value? fast-blocks fast-bounded value 16)))
+        (opt-bce-mb-exit-phi-inputs-scan
+          (box-get rest)
+          fast-labels
+          fast-blocks
+          fast-bounded
+          fast-seen
+          (+ other-seen 1)
+          provable))]))
+
+;; The phi inputs that belong to the fast latch edges (kept in the copy).
+(define (opt-bce-mb-exit-seed-nonnegative?
+  [guard-instrs : CompilerIrInstrList]
+  [blocks : CompilerIrBlockList]
+  [seed : CompilerIrValue]
+  [iphi : i64]) : bool
+  (match seed
+    [(CompilerIrValue.I64 value) (>= value 0)]
+    [_
+      (let
+        [cseed : CompilerIrValue (opt-bce-mb-canon-value blocks seed)]
+        (match guard-instrs
+          [(CompilerIrInstrList.Nil) false]
+          [(CompilerIrInstrList.Cons instr rest)
+            (match instr
+              [(CompilerIrInstr.BinOp _ op lhs rhs _)
+                (if (and
+                  (or
+                    (opt-binop-eq op (CompilerIrBinOp.Ge))
+                    (opt-binop-eq op (CompilerIrBinOp.Gt)))
+                  (let
+                    [clhs : CompilerIrValue (opt-bce-mb-canon-value blocks lhs)]
+                    (or
+                      (opt-value-eq clhs cseed)
+                      (opt-value-eq clhs (CompilerIrValue.Var iphi))))
+                  (match rhs
+                    [(CompilerIrValue.I64 v)
+                      (if (opt-binop-eq op (CompilerIrBinOp.Ge))
+                        (>= v 0)
+                        (>= v -1))]
+                    [_ false]))
+                  true
+                  (opt-bce-mb-exit-seed-nonnegative?
+                    (box-get rest)
+                    blocks
+                    cseed
+                    iphi))]
+              [_
+                (opt-bce-mb-exit-seed-nonnegative?
+                  (box-get rest)
+                  blocks
+                  cseed
+                  iphi)])]))]))
+
+;; Does any instruction in this block's terminator mention `label`?
+(define (opt-bce-mb-block-targets?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [label : String]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Branch _ true-label false-label)
+        (or
+          (string.eq true-label label)
+          (string.eq false-label label)
+          (opt-bce-mb-block-targets? instrs (+ index 1) label))]
+      [(CompilerIrInstr.Jump target)
+        (or
+          (string.eq target label)
+          (opt-bce-mb-block-targets? instrs (+ index 1) label))]
+      [_ (opt-bce-mb-block-targets? instrs (+ index 1) label)])))
+
+;; Labels of blocks whose terminator mentions `label`.
+(define (opt-bce-mb-preds-from
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block block-label instrs)
+          (if (opt-bce-mb-block-targets? instrs 0 label)
+            (opt-bce-mb-preds-from
+              (box-get rest)
+              label
+              (opt-label-add acc block-label))
+            (opt-bce-mb-preds-from (box-get rest) label acc))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-preds-from (compiler-ir-block-seq-to-list seq) label acc)]))
+
+;; A strict BoundsCheck(bound, len) in this block?
+(define (opt-bce-mb-block-has-strict-check?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [blocks : CompilerIrBlockList]
+  [bound : CompilerIrValue]
+  [len : CompilerIrValue]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BoundsCheck idx ilen _)
+        (if (and
+          (opt-value-eq
+            (opt-bce-mb-canon-value blocks idx)
+            (opt-bce-mb-canon-value blocks bound))
+          (opt-value-eq
+            (opt-bce-mb-canon-value blocks ilen)
+            (opt-bce-mb-canon-value blocks len)))
+          true
+          (opt-bce-mb-block-has-strict-check?
+            instrs
+            (+ index 1)
+            blocks
+            bound
+            len))]
+      [_
+        (opt-bce-mb-block-has-strict-check? instrs (+ index 1) blocks bound len)])))
+
+;; Walk the single-predecessor chain backward from `label`; a block on the
+;; chain dominates it. True when a strict BoundsCheck(bound, len) appears.
+(define (opt-bce-mb-strict-check-chain?
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [bound : CompilerIrValue]
+  [len : CompilerIrValue]
+  [fuel : i64]) : bool
+  (if (<= fuel 0)
+    false
+    (let
+      [instrs : CompilerIrInstrSeq (opt-bce-mb-find-block-seq blocks label)]
+      (if (compiler-ir-instr-seq-empty? instrs)
+        false
+        (if (opt-bce-mb-block-has-strict-check? instrs 0 blocks bound len)
+          true
+          (let
+            [preds : OptLabelSet
+              (opt-bce-mb-preds-from blocks label (OptLabelSet.Nil))]
+            (if (= (opt-label-count preds) 1)
+              (match preds
+                [(OptLabelSet.Cons pred _)
+                  (opt-bce-mb-strict-check-chain?
+                    blocks
+                    pred
+                    bound
+                    len
+                    (- fuel 1))]
+                [_ false])
+              false)))))))
+
+;; Retarget every fast-clone block's terminators from the shared exit to the
+;; new fast exit.
+(define (opt-bce-mb-block-phi-inputs
+  [instrs : CompilerIrInstrSeq]
+  [phi-var : i64]) : CompilerIrPhiInputList
+  (let
+    [walk : i64 0]
+    [found : CompilerIrPhiInputList (CompilerIrPhiInputList.Nil)]
+    (begin
+      (while (< walk (compiler-ir-instr-seq-count instrs))
+        (begin
+          (match (compiler-ir-instr-seq-ref instrs walk)
+            [(CompilerIrInstr.Phi dst inputs _)
+              (if (= dst phi-var)
+                (set! found inputs)
+                unit)]
+            [_ unit])
+          (set! walk (+ walk 1))))
+      found)))
+
+(define (opt-bce-mb-find-block-seq
+  [blocks : CompilerIrBlockList]
+  [label : String]) : CompilerIrInstrSeq
+  (match blocks
+    [(CompilerIrBlockList.Nil)
+      (compiler-ir-instr-seq-from-list (CompilerIrInstrList.Nil))]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block block-label instrs)
+          (if (string.eq block-label label)
+            instrs
+            (opt-bce-mb-find-block-seq (box-get rest) label))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-find-block-seq (compiler-ir-block-seq-to-list seq) label)]))
+
+;; Top-level drive: find the first outside block whose checked exit phi is
+;; provably in range on every fast arrival and split it. `blocks` is the
+;; walk tail; `all-blocks` is the full rewritten function for
+;; canonicalization, predecessor scans, and the strict-check chain.
+(defenum OptBceMbExitSplit
+  (No)
+  (Some String i64 i64 CompilerIrValue OptLabelSet))
+
+;; Find the first outside block whose checked exit phi is provably in range
+;; on every fast arrival. `blocks` is the walk tail; `all-blocks` is the
+;; full rewritten function for canonicalization, predecessor scans, and the
+;; strict-check chain.
+(define (opt-bce-mb-find-exit-split
+  [blocks : CompilerIrBlockList]
+  [all-blocks : CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [fast-blocks : CompilerIrBlockList]
+  [fast-bounded : i64]
+  [guard-instrs : CompilerIrInstrList]) : OptBceMbExitSplit
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptBceMbExitSplit.No)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [body-labels : OptLabelSet (struct-get shape body-labels)]
+            (if (or
+              (opt-label-contains body-labels label)
+              (string.eq label (struct-get shape header))
+              (string.eq label (struct-get shape preheader))
+              (string.eq
+                label
+                (string.append (struct-get shape header) "__bce_guard"))
+              (opt-label-contains
+                (opt-bce-mb-fast-labels-from body-labels (OptLabelSet.Nil))
+                label))
+              (opt-bce-mb-find-exit-split
+                (box-get rest)
+                all-blocks
+                shape
+                fast-blocks
+                fast-bounded
+                guard-instrs)
+              (match (opt-bce-mb-find-exit-check instrs 0)
+                [(OptBceMbExitCheck.No)
+                  (opt-bce-mb-find-exit-split
+                    (box-get rest)
+                    all-blocks
+                    shape
+                    fast-blocks
+                    fast-bounded
+                    guard-instrs)]
+                [(OptBceMbExitCheck.Some check-pos phi-var len)
+                  (let
+                    [fast-labels : OptLabelSet
+                      (opt-bce-mb-fast-labels-from
+                        body-labels
+                        (OptLabelSet.Nil))]
+                    [inputs : CompilerIrPhiInputList
+                      (opt-bce-mb-block-phi-inputs instrs phi-var)]
+                    (if (and
+                      (=
+                        (opt-bce-mb-exit-phi-inputs-scan
+                          inputs
+                          fast-labels
+                          fast-blocks
+                          fast-bounded
+                          0
+                          0
+                          true)
+                        1)
+                      (opt-bce-mb-exit-seed-nonnegative?
+                        guard-instrs
+                        all-blocks
+                        (struct-get shape seed)
+                        (struct-get shape iphi))
+                      (opt-bce-mb-strict-check-chain?
+                        all-blocks
+                        (struct-get shape preheader)
+                        (struct-get shape bound)
+                        len
+                        16))
+                      (OptBceMbExitSplit.Some
+                        label
+                        check-pos
+                        phi-var
+                        len
+                        fast-labels)
+                      (opt-bce-mb-find-exit-split
+                        (box-get rest)
+                        all-blocks
+                        shape
+                        fast-blocks
+                        fast-bounded
+                        guard-instrs)))])))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-find-exit-split
+        (compiler-ir-block-seq-to-list seq)
+        all-blocks
+        shape
+        fast-blocks
+        fast-bounded
+        guard-instrs)]))
+
+;; Split the first qualifying exit block over the whole rewritten function.
+;; Walk the block list and rewrite the exit block via the sink; the
+;; caller-provided check blocks land immediately before it.
+(define (opt-bce-mb-sink-exit-block-list
+  [blocks : CompilerIrBlockList]
+  [exit-label : String]
+  [check-pos : i64]
+  [phi-var : i64]
+  [fast-labels : OptLabelSet]
+  [check-blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (if (string.eq label exit-label)
+            (opt-bce-mb-blocks-cons-onto
+              check-blocks
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  label
+                  (opt-bce-mb-sink-exit-instrs
+                    instrs
+                    0
+                    check-pos
+                    phi-var
+                    fast-labels
+                    exit-label))
+                (box-get rest)))
+            (compiler-ir-block-cons
+              block
+              (opt-bce-mb-sink-exit-block-list
+                (box-get rest)
+                exit-label
+                check-pos
+                phi-var
+                fast-labels
+                check-blocks)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-sink-exit-block-list
+        (compiler-ir-block-seq-to-list seq)
+        exit-label
+        check-pos
+        phi-var
+        fast-labels
+        check-blocks)]))
+
+;; The exit block's instructions minus the check (and its now-unused
+;; cast): every other instruction is preserved as-is.
+(define (opt-bce-mb-sink-exit-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [check-pos : i64]
+  [phi-var : i64]
+  [fast-labels : OptLabelSet]
+  [exit-label : String]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (if (= index check-pos)
+      (opt-bce-mb-sink-exit-instrs
+        instrs
+        (+ index 1)
+        check-pos
+        phi-var
+        fast-labels
+        exit-label)
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.Phi dst inputs ty)
+          (if (= dst phi-var)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                dst
+                (opt-bce-mb-sink-phi-relabel-inputs
+                  inputs
+                  fast-labels
+                  exit-label)
+                ty)
+              (opt-bce-mb-sink-exit-instrs
+                instrs
+                (+ index 1)
+                check-pos
+                phi-var
+                fast-labels
+                exit-label))
+            (compiler-ir-instr-cons
+              (compiler-ir-instr-seq-ref instrs index)
+              (opt-bce-mb-sink-exit-instrs
+                instrs
+                (+ index 1)
+                check-pos
+                phi-var
+                fast-labels
+                exit-label)))]
+        [(CompilerIrInstr.Cast dst src _ _)
+          (match src
+            [(CompilerIrValue.Var v)
+              (if (= v phi-var)
+                (opt-bce-mb-sink-exit-instrs
+                  instrs
+                  (+ index 1)
+                  check-pos
+                  phi-var
+                  fast-labels
+                  exit-label)
+                (compiler-ir-instr-cons
+                  (compiler-ir-instr-seq-ref instrs index)
+                  (opt-bce-mb-sink-exit-instrs
+                    instrs
+                    (+ index 1)
+                    check-pos
+                    phi-var
+                    fast-labels
+                    exit-label)))]
+            [_
+              (compiler-ir-instr-cons
+                (compiler-ir-instr-seq-ref instrs index)
+                (opt-bce-mb-sink-exit-instrs
+                  instrs
+                  (+ index 1)
+                  check-pos
+                  phi-var
+                  fast-labels
+                  exit-label))])]
+        [_
+          (compiler-ir-instr-cons
+            (compiler-ir-instr-seq-ref instrs index)
+            (opt-bce-mb-sink-exit-instrs
+              instrs
+              (+ index 1)
+              check-pos
+              phi-var
+              fast-labels
+              exit-label))]))))
+
+;; Rewrite the exit phi's moved inputs to name their new check-block edges.
+(define (opt-bce-mb-sink-phi-relabel-inputs
+  [inputs : CompilerIrPhiInputList]
+  [fast-labels : OptLabelSet]
+  [exit-label : String]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-sink-phi-relabel-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        fast-labels
+        exit-label)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-cons
+        value
+        (if (opt-label-contains fast-labels label)
+          label
+          (str_cat.str-cat exit-label "__xchk_" label))
+        (opt-bce-mb-sink-phi-relabel-inputs
+          (box-get rest)
+          fast-labels
+          exit-label))]))
+
+;; Retarget the terminators that land on the exit to the input's new check
+;; block, walking every non-fast predecessor.
+(define (opt-bce-mb-sink-retarget-all
+  [blocks : CompilerIrBlockList]
+  [inputs : CompilerIrPhiInputList]
+  [fast-labels : OptLabelSet]
+  [exit-label : String]) : CompilerIrBlockList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) blocks]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-sink-retarget-all
+        blocks
+        (compiler-ir-phi-input-seq-to-list seq)
+        fast-labels
+        exit-label)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-label-contains fast-labels label)
+        (opt-bce-mb-sink-retarget-all
+          blocks
+          (box-get rest)
+          fast-labels
+          exit-label)
+        (opt-bce-mb-sink-retarget-all
+          (opt-bce-mb-sink-retarget-preds
+            blocks
+            exit-label
+            (str_cat.str-cat exit-label "__xchk_" label)
+            label)
+          (box-get rest)
+          fast-labels
+          exit-label))]))
+
+;; The predecessor-block rewrite for the sink: retarget every terminator
+;; that lands on `from-label` to `to-label`, but only in the block named
+;; `pred-label`.
+(define (opt-bce-mb-sink-retarget-preds
+  [blocks : CompilerIrBlockList]
+  [from-label : String]
+  [to-label : String]
+  [pred-label : String]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (if (string.eq label pred-label)
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                label
+                (opt-unroll-retarget-instrs instrs 0 from-label to-label))
+              (opt-bce-mb-sink-retarget-preds
+                (box-get rest)
+                from-label
+                to-label
+                pred-label))
+            (compiler-ir-block-cons
+              block
+              (opt-bce-mb-sink-retarget-preds
+                (box-get rest)
+                from-label
+                to-label
+                pred-label)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-sink-retarget-preds
+        (compiler-ir-block-seq-to-list seq)
+        from-label
+        to-label
+        pred-label)]))
+
+;; Build the tiny check blocks for the non-fast phi inputs and retarget the
+;; predecessor edges. Each input gets: cast input to u64, check, jump exit.
+(define (opt-bce-mb-sink-check-blocks-from
+  [inputs : CompilerIrPhiInputList]
+  [fast-labels : OptLabelSet]
+  [exit-label : String]
+  [len : CompilerIrValue]
+  [blocks : CompilerIrBlockList]
+  [cell : (Array i64)]) : CompilerIrBlockList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) blocks]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-sink-check-blocks-from
+        (compiler-ir-phi-input-seq-to-list seq)
+        fast-labels
+        exit-label
+        len
+        blocks
+        cell)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-label-contains fast-labels label)
+        (opt-bce-mb-sink-check-blocks-from
+          (box-get rest)
+          fast-labels
+          exit-label
+          len
+          blocks
+          cell)
+        (let
+          [check-label : String (str_cat.str-cat exit-label "__xchk_" label)]
+          [cast-var : i64 (opt-bce-version-alloc-var cell)]
+          [ok-label : String (str_cat.str-cat check-label ".0")]
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              check-label
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Cast
+                  cast-var
+                  value
+                  (AstType.I64)
+                  (AstType.U64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BoundsCheck
+                    (CompilerIrValue.Var cast-var)
+                    len
+                    ok-label)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump exit-label)
+                    (CompilerIrInstrList.Nil)))))
+            (opt-bce-mb-sink-check-blocks-from
+              (box-get rest)
+              fast-labels
+              exit-label
+              len
+              blocks
+              cell))))]))
+
+;; Sink the check out of a qualifying exit block: the fast arrivals are
+;; provably in range, so the check moves to fresh per-input check blocks on
+;; the non-fast edges only. The check blocks' length operand must dominate
+;; them, so it is the canonical (entry-defined) spelling, not the exit
+;; block's local cast.
+(define (opt-bce-mb-split-exit-checks
+  [blocks : CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [fast-blocks : CompilerIrBlockList]
+  [fast-bounded : i64]
+  [guard-instrs : CompilerIrInstrList]
+  [cell : (Array i64)]) : CompilerIrBlockList
+  (match (opt-bce-mb-find-exit-split
+    blocks
+    blocks
+    shape
+    fast-blocks
+    fast-bounded
+    guard-instrs)
+    [(OptBceMbExitSplit.No) blocks]
+    [(OptBceMbExitSplit.Some label check-pos phi-var len fast-labels)
+      (let
+        [inputs : CompilerIrPhiInputList
+          (opt-bce-mb-block-phi-inputs
+            (opt-bce-mb-find-block-seq blocks label)
+            phi-var)]
+        [clen : CompilerIrValue (opt-bce-mb-canon-value blocks len)]
+        ;; The check blocks land immediately before the exit block: behind
+        ;; every predecessor edge, never before the function entry.
+        [sunk : CompilerIrBlockList
+          (opt-bce-mb-sink-exit-block-list
+            blocks
+            label
+            check-pos
+            phi-var
+            fast-labels
+            (opt-bce-mb-sink-check-blocks-from
+              inputs
+              fast-labels
+              label
+              clen
+              (CompilerIrBlockList.Nil)
+              cell))]
+        [step : CompilerIrBlockList
+          (opt-bce-mb-sink-retarget-all sunk inputs fast-labels label)]
+        step)]))
+
 (define (opt-bce-mb-apply
   [blocks : CompilerIrBlockList]
   [shape : OptBceMbShape]
@@ -35320,12 +36250,34 @@
                         (struct-get shape header))
                       (CompilerIrInstrList.Nil))))]
               (OptUnrollResult.Result
-                (opt-bce-mb-rewrite-blocks
-                  blocks
-                  shape
-                  guard-block
-                  fast-blocks
-                  remap)
+                (let
+                  [rewritten-blocks : CompilerIrBlockList
+                    (opt-bce-mb-rewrite-blocks
+                      blocks
+                      shape
+                      guard-block
+                      fast-blocks
+                      remap)]
+                  [bounded : i64
+                    (opt-bce-mb-find-bounded-phi
+                      (struct-get shape body-blocks)
+                      rewritten-blocks
+                      (struct-get shape header)
+                      (struct-get shape preheader)
+                      (string.append (struct-get shape header) "__bce_guard")
+                      (opt-bce-mb-canon-value blocks (struct-get shape seed))
+                      (struct-get shape iphi))]
+                  (opt-bce-mb-split-exit-checks
+                    rewritten-blocks
+                    shape
+                    fast-blocks
+                    (if (< bounded 0)
+                      -1
+                      (match (array-ref remap bounded)
+                        [(CompilerIrValue.Var fast-bounded-id) fast-bounded-id]
+                        [_ -1]))
+                    guard-instrs
+                    cell))
                 (array-ref cell 0)
                 true))])))))
 

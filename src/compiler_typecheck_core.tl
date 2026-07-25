@@ -3548,6 +3548,7 @@
   (define (compiler-tc-reinfer-profile-borrow-call-info-id
     [site : String]
     [ctx : TcContext]
+    [expr-bases : i64]
     [env : TcTypeEnv]
     [func-id : i64]
     [args : AstExprList]) : ResultTcBorrowCallInfo
@@ -3556,7 +3557,7 @@
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
       [result : ResultTcBorrowCallInfo
-        (tc-borrow-call-info-id-raw ctx env func-id args)]
+        (tc-borrow-call-info-id-raw ctx expr-bases env func-id args)]
       (begin
         (compiler-tc-reinfer-profile-record
           site
@@ -51109,6 +51110,7 @@
           (compiler-tc-reinfer-profile-borrow-call-info-id
             site
             ctx
+            expr-bases
             env
             func-id
             args)

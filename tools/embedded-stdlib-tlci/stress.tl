@@ -115,6 +115,13 @@
         2)
       "\n")))
 
+;: Both canaries intact. Extracted so each tier's guard chain stays a flat
+;: `cond` rather than a nested if-ladder.
+(define (stress-canaries-ok? [canaries : (Array i64)]) : bool
+  (and
+    (= (array-ref canaries 0) stress-canary-a)
+    (= (array-ref canaries 1) stress-canary-b)))
+
 ;: Confirm the chosen identity really is a registration shell before the loop:
 ;: a shell commits no result and reports ok for an ordinary dispatch.
 (define (stress-tier1-shell-ok? [loaded : (& loaded TlciLoadedImage)]) : bool
@@ -168,25 +175,24 @@
             [(ResultTlciMacroDispatch.Ok dispatch)
               (let
                 [status : i64 (struct-get dispatch status)]
-                (if (not (= status tlci-host-callback-status-ok))
+                (cond
                   ;; This is #5460's signature: a shell reporting anything but
                   ;; ok means its `count` argument did not survive the bridge.
-                  (begin
-                    (stress-progress-write!
-                      progress-path
-                      1
-                      i
-                      status
-                      (array-ref canaries 0)
-                      (array-ref canaries 1))
-                    (set! outcome stress-status-bad-status))
-                  (if (compiler-comptime-host-result-ready?)
-                    (set! outcome stress-status-unexpected-result)
-                    (if (or
-                      (not (= (array-ref canaries 0) stress-canary-a))
-                      (not (= (array-ref canaries 1) stress-canary-b)))
-                      (set! outcome stress-status-canary-clobbered)
-                      unit))))])
+                  [(not (= status tlci-host-callback-status-ok))
+                    (begin
+                      (stress-progress-write!
+                        progress-path
+                        1
+                        i
+                        status
+                        (array-ref canaries 0)
+                        (array-ref canaries 1))
+                      (set! outcome stress-status-bad-status))]
+                  [(compiler-comptime-host-result-ready?)
+                    (set! outcome stress-status-unexpected-result)]
+                  [(not (stress-canaries-ok? canaries))
+                    (set! outcome stress-status-canary-clobbered)]
+                  [else unit]))])
           (when (not (= outcome stress-status-ok)) (array-set! failed-at 0 i))
           (set! i (+ i 1))))
       (stress-progress-write!
@@ -280,26 +286,27 @@
               [(ResultTlciMacroDispatch.Err _)
                 (set! outcome stress-status-dispatch-error)]
               [(ResultTlciMacroDispatch.Ok dispatch)
-                (if (not
-                  (= (struct-get dispatch status) tlci-host-callback-status-ok))
-                  (begin
-                    (stress-progress-write!
-                      progress-path
-                      3
-                      i
-                      (struct-get dispatch status)
-                      (array-ref canaries 0)
-                      (array-ref canaries 1))
-                    (set! outcome stress-status-tier3-status))
-                  (if (not (compiler-comptime-host-result-ready?))
-                    (set! outcome stress-status-tier3-no-result)
-                    (if (not (stress-tier3-result-ok? pools operand-node))
-                      (set! outcome stress-status-tier3-shape)
-                      (if (or
-                        (not (= (array-ref canaries 0) stress-canary-a))
-                        (not (= (array-ref canaries 1) stress-canary-b)))
-                        (set! outcome stress-status-canary-clobbered)
-                        unit))))])
+                (cond
+                  [(not
+                      (=
+                        (struct-get dispatch status)
+                        tlci-host-callback-status-ok))
+                    (begin
+                      (stress-progress-write!
+                        progress-path
+                        3
+                        i
+                        (struct-get dispatch status)
+                        (array-ref canaries 0)
+                        (array-ref canaries 1))
+                      (set! outcome stress-status-tier3-status))]
+                  [(not (compiler-comptime-host-result-ready?))
+                    (set! outcome stress-status-tier3-no-result)]
+                  [(not (stress-tier3-result-ok? pools operand-node))
+                    (set! outcome stress-status-tier3-shape)]
+                  [(not (stress-canaries-ok? canaries))
+                    (set! outcome stress-status-canary-clobbered)]
+                  [else unit])])
             (compiler-comptime-host-session-close!)
             (when (not (= outcome stress-status-ok)) (array-set! failed-at 0 i))
             (set! i (+ i 1)))))

@@ -1885,6 +1885,61 @@
                             "0"
                             "0")
                           (+ inner-opened 1))))))]
+              ;; `(comptime.expr-type p)`: the checked type of an Expr
+              ;; operand. Op 125 pops the Expr and pushes its type, so the
+              ;; operand push is the whole argument. Refs #5626.
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-type")
+                    (string.eq head "expr-type"))
+                  (= argc 1))
+                (let
+                  [param : i64
+                    (embedded-native-var-param-index
+                      params
+                      (ast-expr-list-get (& args) 0 0))]
+                  (if (< param 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        180
+                        (string.int->string param)
+                        "0"
+                        "0")
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        125
+                        "0"
+                        "0"
+                        "0")
+                      2)))]
+              ;; `(comptime.expr-string-value p)`: the literal text of a
+              ;; string-literal Expr operand, as a comptime String value.
+              ;; Refs #5626.
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-string-value")
+                    (string.eq head "expr-string-value"))
+                  (= argc 1))
+                (let
+                  [param : i64
+                    (embedded-native-var-param-index
+                      params
+                      (ast-expr-list-get (& args) 0 0))]
+                  (if (< param 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        246
+                        (string.int->string param)
+                        "0"
+                        "0")
+                      1)))]
               [(and
                   (or
                     (string.eq head "comptime.type-key")

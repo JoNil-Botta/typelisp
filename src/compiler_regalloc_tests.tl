@@ -9,9 +9,24 @@
 (import "compiler_liveness.tl")
 (import stdlib.array)
 (import stdlib.hashmap)
+(import stdlib.vector)
 (import (hashmap.hashmap String i64) as reg_string_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
+(import (vector.vector CompilerRegActive core) as reg_active_vec)
+(import (vector.vector CompilerRegCallRegion core) as reg_call_region_vec)
+(import (vector.vector CompilerRegEdgeCopy core) as reg_edge_copy_vec)
 (cfg test (import stdlib.test))
+
+(cfg
+  test
+  (define (compiler-reg-call-split-one-region
+    [regs : (Array String)]
+    [region : CompilerRegCallRegion]) : CompilerRegCallSplit
+    (let
+      [regions : reg_call_region_vec.Vec (reg_call_region_vec.new)]
+      (begin
+        (reg_call_region_vec.push (&mut regions) region)
+        (CompilerRegCallSplit (compiler-live-set-empty) regs regions)))))
 
 (define (compiler-reg-liveness-census-reset!) : unit
   (cfg
@@ -3446,15 +3461,16 @@
 (cfg
   test
   (define (compiler-reg-edge-copy-list-has?
-    [copies : CompilerRegEdgeCopySeq]
+    [copies : reg_edge_copy_vec.Vec]
     [from-label : String]
     [to-label : String]
     [src : i64]
     [dst : i64]
     [want-pred-end : bool]) : bool
     (let
-      [slots : (Array CompilerRegEdgeCopy) (struct-get copies slots)]
-      [count : i64 (struct-get copies len)]
+      [slots : (& copies (Array CompilerRegEdgeCopy))
+        (reg_edge_copy_vec.slots (& copies))]
+      [count : i64 (reg_edge_copy_vec.len (& copies))]
       [index : i64 0]
       [found : bool false]
       (begin
@@ -4349,7 +4365,7 @@
       (match (compiler-reg-assign-fixed-candidates
         candidates
         regs
-        (compiler-reg-active-seq-empty)
+        (reg_active_vec.new)
         assignments
         (array.make-array i64 0)
         index)
@@ -4688,12 +4704,9 @@
               (CompilerRegLocation.Register "%r12"))]
           [empty-split : CompilerRegCallSplit (compiler-reg-call-split-empty)]
           [shadow-split : CompilerRegCallSplit
-            (CompilerRegCallSplit
-              (compiler-live-set-empty)
+            (compiler-reg-call-split-one-region
               shadow-regs
-              (compiler-reg-call-region-seq-push
-                (compiler-reg-call-region-seq-empty)
-                (CompilerRegCallRegion 1 0 10 0 0)))]
+              (CompilerRegCallRegion 1 0 10 0 0))]
           [phi-excluded : CompilerLiveI64Set
             (compiler-reg-group-pair-excluded-instr
               (compiler-live-set-empty)

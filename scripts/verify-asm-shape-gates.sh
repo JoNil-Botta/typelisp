@@ -262,6 +262,21 @@ check_cmp_fold_load() {
     assert_not_contains "$_body" 'call tl_oob_abort' cmp-fold-load
 }
 
+check_const_global_mask_unroll() {
+    _asm=$(compile_gate         const_global_mask_unroll         tests/integration/const_global_mask_unroll.tl)
+    _global=$(function_body "$_asm" _tl_const_global_mask_unroll_mask_sum)
+    _literal=$(function_body "$_asm" _tl_const_global_mask_unroll_mask_sum_literal)
+    # #5238: an immutable global mask must reach the same BCE-versioned x16
+    # unrolled fast path as the literal spelling. Without the early
+    # constant-global operand rewrite the global-mask loop emits __bce_fast but
+    # no __unroll_body, because the two-iteration fixpoint cap is spent
+    # creating the fast clone. The literal twin is the control: asserting both
+    # turns a regression into an asymmetry instead of a silently slower binary.
+    assert_contains "$_global" '__bce_fast__unroll_body' const-global-mask-unroll
+    assert_contains "$_global" '__bce_fast__unroll_guard' const-global-mask-unroll
+    assert_contains "$_literal" '__bce_fast__unroll_body' const-global-mask-unroll
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -364,15 +379,28 @@ check_frame_slot_repacking() {
     _windows_asm=$(compile_gate frame_slot_repacking_windows tests/integration/early_return.tl windows-x86_64)
     _linux_body=$(function_body "$_linux_asm" _tl_early_return_choose)
     _windows_body=$(function_body "$_windows_asm" _tl_early_return_choose)
-    assert_regex_count_eq "$_linux_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 frame-slot-repacking-linux
-    assert_regex_count_eq "$_windows_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 frame-slot-repacking-windows
-    _linux_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_linux_body")
-    _windows_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_windows_body")
-    if [ "$_linux_frame" -gt 24 ] || [ "$_windows_frame" -gt 24 ]; then
-        fail "frame-slot-repacking expected frames <= 24 bytes, got linux=$_linux_frame windows=$_windows_frame"
+    # The gate protects two properties: the repacked frame stays small, and the
+    # two targets agree on it. A function that ends up needing no frame at all
+    # satisfies both, so zero allocations is accepted as long as BOTH targets
+    # reach it -- one target dropping the frame while the other keeps it is
+    # exactly the layout drift this gate exists to catch.
+    _linux_subs=$(count_regex "$_linux_body" '^[[:space:]]+subq \$[0-9]+, %rsp$')
+    _windows_subs=$(count_regex "$_windows_body" '^[[:space:]]+subq \$[0-9]+, %rsp$')
+    if [ "$_linux_subs" -ne "$_windows_subs" ]; then
+        fail "frame-slot-repacking target drift: linux has $_linux_subs stack allocation(s), windows has $_windows_subs"
     fi
-    if [ "$_linux_frame" -ne "$_windows_frame" ]; then
-        fail "frame-slot-repacking target layout drift: linux=$_linux_frame windows=$_windows_frame"
+    if [ "$_linux_subs" -gt 1 ]; then
+        fail "frame-slot-repacking expected at most one stack allocation, got $_linux_subs"
+    fi
+    if [ "$_linux_subs" -eq 1 ]; then
+        _linux_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_linux_body")
+        _windows_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_windows_body")
+        if [ "$_linux_frame" -gt 24 ] || [ "$_windows_frame" -gt 24 ]; then
+            fail "frame-slot-repacking expected frames <= 24 bytes, got linux=$_linux_frame windows=$_windows_frame"
+        fi
+        if [ "$_linux_frame" -ne "$_windows_frame" ]; then
+            fail "frame-slot-repacking target layout drift: linux=$_linux_frame windows=$_windows_frame"
+        fi
     fi
 }
 
@@ -413,6 +441,7 @@ check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
 check_const_index_bounds
+check_const_global_mask_unroll
 check_rbp_sixth_csr
 check_win64_rbp_eighth_csr
 check_licm_desc_hoist

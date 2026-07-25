@@ -1868,6 +1868,17 @@
           [_ tlci-host-callback-status-bad-request]))]
     ;; The `comptime.Expr.Int` half: a data probe plus a value read that the
     ;; generated entry only issues inside the probe's matching arm. Refs #5602.
+    ;; Literal text out of a string-literal Expr operand, mirroring
+    ;; `ctfe-source-string-value`: the pushed value carries the intern id the
+    ;; text entered CTFE with, not a fresh one. Refs #5626.
+    [(= operation tlci-host-callback-op-operand-expr-string-value)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        tlci-host-callback-status-bad-request
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Literal (AstLiteral.String string-id))
+            (compiler-comptime-host-push!
+              (CompilerCtfeValue.String (intern-str string-id) string-id))]
+          [_ tlci-host-callback-status-bad-request]))]
     [(= operation tlci-host-callback-op-operand-expr-int?)
       (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
         -3

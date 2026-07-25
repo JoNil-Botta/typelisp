@@ -1414,7 +1414,11 @@
                           "0")
                         (set! opened (+ opened 2))
                         (set! index (+ index 1)))))]
-                [_ (set! ok false)])]
+                [_
+                  (begin
+                    (embedded-native-fallback-reason-note!
+                      "template-splice:non-variable")
+                    (set! ok false))])]
             [_
               (let
                 [item-opened : i64
@@ -1517,7 +1521,11 @@
                             (string.int->string (string.string-length pat-name))
                             (string.int->string (struct-get (& pat-args) len)))
                           (+ pat-arg-opened 1))))]
-                  [_ -1])]
+                  [_
+                    (begin
+                      (embedded-native-fallback-reason-note!
+                        "template-match-arm:unsupported-pattern")
+                      -1)])]
               (if (< pat-opened 0)
                 (set! ok false)
                 (let
@@ -1608,7 +1616,10 @@
               (string.int->string (string.string-length name))
               (string.int->string (struct-get (& args) len)))
             (+ arg-opened 1))))]
-    [_ -1]))
+    [_
+      (begin
+        (embedded-native-fallback-reason-note! "template-pattern:unsupported")
+        -1)]))
 
 (define (embedded-native-pattern-list-ops
   [args : (& args AstPatternList)]
@@ -1688,7 +1699,9 @@
       (let
         [ordinal : i64 (embedded-native-scalar-type-ordinal ty)]
         (if (< ordinal 0)
-          -1
+          (begin
+            (embedded-native-fallback-reason-note! "template-type:non-scalar")
+            -1)
           (begin
             (embedded-native-template-push!
               ops
@@ -1743,7 +1756,11 @@
                             (string.int->string (string.string-length name))
                             "0")
                           (+ type-opened 1))))]
-                  [_ -1])]
+                  [_
+                    (begin
+                      (embedded-native-fallback-reason-note!
+                        "template-let-binding:unsupported")
+                      -1)])]
               (if (< binding-opened 0)
                 -1
                 (begin
@@ -1933,6 +1950,61 @@
                             "0"
                             "0")
                           (+ inner-opened 1))))))]
+              ;; `(comptime.expr-type p)`: the checked type of an Expr
+              ;; operand. Op 125 pops the Expr and pushes its type, so the
+              ;; operand push is the whole argument. Refs #5626.
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-type")
+                    (string.eq head "expr-type"))
+                  (= argc 1))
+                (let
+                  [param : i64
+                    (embedded-native-var-param-index
+                      params
+                      (ast-expr-list-get (& args) 0 0))]
+                  (if (< param 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        180
+                        (string.int->string param)
+                        "0"
+                        "0")
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        125
+                        "0"
+                        "0"
+                        "0")
+                      2)))]
+              ;; `(comptime.expr-string-value p)`: the literal text of a
+              ;; string-literal Expr operand, as a comptime String value.
+              ;; Refs #5626.
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-string-value")
+                    (string.eq head "expr-string-value"))
+                  (= argc 1))
+                (let
+                  [param : i64
+                    (embedded-native-var-param-index
+                      params
+                      (ast-expr-list-get (& args) 0 0))]
+                  (if (< param 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        246
+                        (string.int->string param)
+                        "0"
+                        "0")
+                      1)))]
               [(and
                   (or
                     (string.eq head "comptime.type-key")
@@ -3137,7 +3209,7 @@
 "
               (embedded-native-arm-block-with-final
                 (embedded-native-single-op-ops
-                  246
+                  248
                   (string.int->string param)
                   "0"
                   "0")

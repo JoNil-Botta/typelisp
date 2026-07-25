@@ -1662,6 +1662,59 @@
             (compiler-comptime-host-push!
               (CompilerCtfeValue.ExprList call-args))]
           [_ tlci-host-callback-status-bad-request]))]
+    ;; The `comptime.Expr.Int` half: a data probe plus a value read that the
+    ;; generated entry only issues inside the probe's matching arm. Refs #5602.
+    [(= operation tlci-host-callback-op-operand-expr-int?)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        -3
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Literal (AstLiteral.Int _ _)) 1]
+          [_ 0]))]
+    [(= operation tlci-host-callback-op-operand-expr-int-value)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        0
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Literal (AstLiteral.Int value _)) value]
+          [_ 0]))]
+    ;; Local-slot twins of ops 155/156: a destructured `ExprList` payload lives
+    ;; in a session local, and the fold bodies index it there. Refs #5602.
+    [(= operation tlci-host-callback-op-local-expr-list-length)
+      (if (or
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-locals-cap)
+        (not (array-ref compiler-comptime-host-locals-live arg-a)))
+        -3
+        (match (compiler-comptime-host-value-expr-list
+          (array-ref compiler-comptime-host-locals arg-a))
+          [(CompilerCtfeMaybeExprList.Some items) (ctfe-expr-list-length items)]
+          [(CompilerCtfeMaybeExprList.None) -3]))]
+    [(= operation tlci-host-callback-op-local-expr-list-nth)
+      (if (or
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-locals-cap)
+        (not (array-ref compiler-comptime-host-locals-live arg-a)))
+        tlci-host-callback-status-bad-request
+        (let
+          [value : CompilerCtfeValue
+            (array-ref compiler-comptime-host-locals arg-a)]
+          (match (compiler-comptime-host-value-expr-list value)
+            [(CompilerCtfeMaybeExprList.Some items)
+              (if (or (< arg-b 0) (>= arg-b (ctfe-expr-list-length items)))
+                tlci-host-callback-status-bad-request
+                (let
+                  [node : i64 (ctfe-expr-list-nth items arg-b)]
+                  (match value
+                    [(CompilerCtfeValue.CapturedExprList _ pools)
+                      (compiler-comptime-host-push!
+                        (CompilerCtfeValue.CapturedExpr
+                          node
+                          (ctfe-untyped-expr-type)
+                          pools))]
+                    [_
+                      (compiler-comptime-host-push!
+                        (CompilerCtfeValue.Expr node (ctfe-untyped-expr-type)))])))]
+            [(CompilerCtfeMaybeExprList.None)
+              tlci-host-callback-status-bad-request])))]
     [(= operation tlci-host-callback-op-expr-int-from-data)
       (compiler-comptime-host-push!
         (CompilerCtfeValue.Expr
@@ -1978,6 +2031,9 @@
               (not (= operation tlci-host-callback-op-array-length))
               (not (= operation tlci-host-callback-op-array-dynamic?))
               (not (= operation tlci-host-callback-op-operand-expr-call?))
+              (not (= operation tlci-host-callback-op-operand-expr-int?))
+              (not (= operation tlci-host-callback-op-operand-expr-int-value))
+              (not (= operation tlci-host-callback-op-local-expr-list-length))
               (not (= status tlci-host-callback-status-ok)))
             (set! compiler-comptime-host-session-status status))
           status)))))

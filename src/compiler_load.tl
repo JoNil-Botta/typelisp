@@ -249,12 +249,12 @@
     AstDeclModuleList
     sym_i64_env.SymI64Env))
 
-(defenum CompilerLoadInternIdList
-  (CompilerLoadInternIdNil)
-  (CompilerLoadInternIdCons i64 (Box CompilerLoadInternIdList)))
+(defstruct CompilerLoadInternIdSeq
+  (slots (Array i64))
+  (len i64))
 
 (defstruct CompilerLoadPreludeCacheKey
-  (root-ids CompilerLoadInternIdList)
+  (root-ids CompilerLoadInternIdSeq)
   (cfgs sym_i64_env.SymI64Env))
 
 (defenum CompilerLoadPreludeCacheSlot
@@ -1372,37 +1372,43 @@
   (compiler-load-session-state-runtime-prelude-cache-ensure!
     compiler-load-active-session-state))
 
-(define (compiler-load-intern-id-list-equal?
-  [left : CompilerLoadInternIdList]
-  [right : CompilerLoadInternIdList]) : bool
-  (match left
-    [(CompilerLoadInternIdNil)
-      (match right
-        [(CompilerLoadInternIdNil) true]
-        [(CompilerLoadInternIdCons _ _) false])]
-    [(CompilerLoadInternIdCons left-id left-rest)
-      (match right
-        [(CompilerLoadInternIdNil) false]
-        [(CompilerLoadInternIdCons right-id right-rest)
-          (and
-            (= left-id right-id)
-            (compiler-load-intern-id-list-equal?
-              (box-get left-rest)
-              (box-get right-rest)))])]))
+(define (compiler-load-intern-id-seq-equal?
+  [left : CompilerLoadInternIdSeq]
+  [right : CompilerLoadInternIdSeq]) : bool
+  (let
+    [count : i64 (struct-get left len)]
+    [same : bool (= count (struct-get right len))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index count))
+        (begin
+          (set!
+            same
+            (=
+              (array-ref (struct-get left slots) index)
+              (array-ref (struct-get right slots) index)))
+          (set! index (+ index 1))))
+      same)))
 
-(define (compiler-load-intern-id-list-copy [ids : CompilerLoadInternIdList]) : CompilerLoadInternIdList
-  (match ids
-    [(CompilerLoadInternIdNil) (CompilerLoadInternIdNil)]
-    [(CompilerLoadInternIdCons id rest)
-      (CompilerLoadInternIdCons
-        id
-        (box (compiler-load-intern-id-list-copy (box-get rest))))]))
+;; The copy runs under whichever arena the caller made current, so the cached
+;; key's ids land in the same long-lived arena the cons spine used to.
+(define (compiler-load-intern-id-seq-copy [ids : CompilerLoadInternIdSeq]) : CompilerLoadInternIdSeq
+  (let
+    [count : i64 (struct-get ids len)]
+    [slots : (Array i64) (array.make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! slots index (array-ref (struct-get ids slots) index))
+          (set! index (+ index 1))))
+      (CompilerLoadInternIdSeq slots count))))
 
 (define (compiler-load-prelude-cache-key-equal?
   [left : CompilerLoadPreludeCacheKey]
   [right : CompilerLoadPreludeCacheKey]) : bool
   (and
-    (compiler-load-intern-id-list-equal?
+    (compiler-load-intern-id-seq-equal?
       (struct-get left root-ids)
       (struct-get right root-ids))
     (compiler-load-cfg-key-equal?
@@ -1412,7 +1418,7 @@
 (define (compiler-load-prelude-cache-key-copy
   [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheKey
   (CompilerLoadPreludeCacheKey
-    (compiler-load-intern-id-list-copy (struct-get key root-ids))
+    (compiler-load-intern-id-seq-copy (struct-get key root-ids))
     (compiler-load-cfg-key-copy (struct-get key cfgs))))
 
 (define (compiler-load-session-state-runtime-prelude-cache-lookup-from
@@ -1571,16 +1577,24 @@
 (define (compiler-load-root-cache-ids-from
   [roots : svec.Vec]
   [index : i64]
-  [count : i64]) : CompilerLoadInternIdList
-  (if (>= index count)
-    (CompilerLoadInternIdNil)
-    (let
-      [root : String
-        (compiler-load-normalize-path (svec.get (& roots) index ""))]
-      [root-id : i64 (compiler-load-source-path-id root)]
-      (CompilerLoadInternIdCons
-        root-id
-        (box (compiler-load-root-cache-ids-from roots (+ index 1) count))))))
+  [count : i64]) : CompilerLoadInternIdSeq
+  (let
+    [len : i64
+      (if (< index count)
+        (- count index)
+        0)]
+    [slots : (Array i64) (array.make-array i64 len)]
+    [cursor : i64 0]
+    (begin
+      (while (< cursor len)
+        (let
+          [root : String
+            (compiler-load-normalize-path
+              (svec.get (& roots) (+ index cursor) ""))]
+          (begin
+            (array-set! slots cursor (compiler-load-source-path-id root))
+            (set! cursor (+ cursor 1)))))
+      (CompilerLoadInternIdSeq slots len))))
 
 (define (compiler-load-session-state-runtime-prelude-cache-key
   [state : CompilerLoadSessionState]
@@ -1588,7 +1602,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadPreludeCacheKey
   (let
     [effective-roots : svec.Vec (compiler-load-roots-with-env stdlib-roots)]
-    [root-ids : CompilerLoadInternIdList
+    [root-ids : CompilerLoadInternIdSeq
       (compiler-load-root-cache-ids-from
         effective-roots
         0
@@ -15760,7 +15774,9 @@
     [_admit : bool
       (compiler-load-session-state-program-admission-record state-a program-key)]
     [prelude-key : CompilerLoadPreludeCacheKey
-      (CompilerLoadPreludeCacheKey (CompilerLoadInternIdNil) cfgs)]
+      (CompilerLoadPreludeCacheKey
+        (CompilerLoadInternIdSeq (array.make-array i64 0) 0)
+        cfgs)]
     [_store-prelude : unit
       (compiler-load-session-state-runtime-prelude-cache-store
         state-a

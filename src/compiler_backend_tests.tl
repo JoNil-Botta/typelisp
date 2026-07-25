@@ -26161,6 +26161,13 @@
       [types : (Array AstType) (array.make-array AstType 2)]
       [assignments : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make 2)]
+      [registers : (Array String)
+        (compiler-reg-scratch-register-array (CompilerRegTargetAbi.Linux))]
+      [occupancy : CompilerRegGreedyOccupancy
+        (compiler-reg-greedy-occupancy-make
+          assignments
+          registers
+          (array-length registers))]
       [ref-counts : (Array i64) (array.make-array i64 2)]
       [fixed-rcx : CompilerRegScratchConstraint
         (CompilerRegScratchConstraint
@@ -26219,8 +26226,11 @@
           items
           0
           assignments
+          occupancy
           (CompilerRegIntervalIndex starts ends segments)
           ref-counts
+          registers
+          (array-length registers)
           2)
         (let
           [partial? : bool
@@ -26249,6 +26259,13 @@
       [types : (Array AstType) (array.make-array AstType 5)]
       [assignments : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make 5)]
+      [registers : (Array String)
+        (compiler-reg-scratch-register-array (CompilerRegTargetAbi.Linux))]
+      [occupancy : CompilerRegGreedyOccupancy
+        (compiler-reg-greedy-occupancy-make
+          assignments
+          registers
+          (array-length registers))]
       [ref-counts : (Array i64) (array.make-array i64 5)]
       [gp-fixed-rcx : CompilerRegScratchConstraint
         (CompilerRegScratchConstraint
@@ -26369,8 +26386,11 @@
           items
           0
           assignments
+          occupancy
           (CompilerRegIntervalIndex starts ends segments)
           ref-counts
+          registers
+          (array-length registers)
           5)
         (and
           (string.eq (struct-get (array-ref items 0) register) "%rcx")

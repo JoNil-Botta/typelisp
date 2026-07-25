@@ -26216,10 +26216,29 @@
         [(CompilerRegStringList.Cons reg rest)
           (compiler-reg-string-cons reg (box-get rest))]))))
 
-;; Scratch-vreg planning runs after greedy allocation and can select from a
-;; constraint-specific GP or XMM pool, so its candidates are not necessarily in
-;; the greedy pool's occupancy index. This bounded fallback retains the prior
-;; table scan for that post-pass only; the allocator hot loop uses occupancy.
+(define (compiler-reg-scratch-register-array [abi : CompilerRegTargetAbi]) : (Array
+    String)
+  (let
+    ;; XMM0/XMM1 are fixed ABI scratch homes but deliberately absent from the
+    ;; allocatable XMM pool. Include them in this post-pass inverse index so
+    ;; fixed and ordinary scratch constraints share the same O(words) lookup.
+    [registers : CompilerRegStringList
+      (compiler-reg-string-list-append
+        (compiler-reg-greedy-integer-pool-for-abi (CompilerRegTargetAbi.Linux))
+        (compiler-reg-string-cons
+          "%xmm0"
+          (compiler-reg-string-cons
+            "%xmm1"
+            (compiler-reg-xmm-registers-for-abi abi))))]
+    [out : (Array String)
+      (array.make-array String (compiler-reg-string-list-count registers))]
+    (begin
+      (compiler-reg-greedy-string-list-to-array registers out 0)
+      out)))
+
+;; Every production scratch constraint maps into the combined GP/XMM occupancy
+;; above. Keep the full assignment-table scan as a fail-closed fallback for an
+;; unrecognized future register spelling rather than silently treating it free.
 (define (compiler-reg-scratch-register-free-from?
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
@@ -26249,8 +26268,11 @@
 
 (define (compiler-reg-scratch-pick-register
   [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
+  [reg-arr : (Array String)]
+  [rcount : i64]
   [var : i64]
   [vars : i64]
   [candidates : CompilerRegStringList]
@@ -26258,24 +26280,36 @@
   (match candidates
     [(CompilerRegStringList.Nil) ""]
     [(CompilerRegStringList.Cons reg rest)
-      (if (and
-        (not (compiler-reg-string-list-contains? excluded reg))
-        (compiler-reg-scratch-register-free-from?
-          assignments
-          interval-index
-          var
+      (let
+        [reg-index : i64 (compiler-reg-greedy-pool-index reg-arr rcount reg)]
+        (if (and
+          (not (compiler-reg-string-list-contains? excluded reg))
+          (if (>= reg-index 0)
+            (compiler-reg-greedy-reg-free?
+              occupancy
+              interval-index
+              ref-counts
+              var
+              reg-index)
+            (compiler-reg-scratch-register-free-from?
+              assignments
+              interval-index
+              var
+              reg
+              0
+              vars)))
           reg
-          0
-          vars))
-        reg
-        (compiler-reg-scratch-pick-register
-          assignments
-          interval-index
-          ref-counts
-          var
-          vars
-          (box-get rest)
-          excluded))]))
+          (compiler-reg-scratch-pick-register
+            assignments
+            occupancy
+            interval-index
+            ref-counts
+            reg-arr
+            rcount
+            var
+            vars
+            (box-get rest)
+            excluded)))]))
 
 (define (compiler-reg-scratch-return-fixed-role?
   [role : CompilerRegScratchRole]) : bool
@@ -26289,8 +26323,11 @@
   [items : (Array CompilerRegScratchAssignment)]
   [index : i64]
   [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
+  [reg-arr : (Array String)]
+  [rcount : i64]
   [vars : i64]) : unit
   (if (>= index (array-length items))
     unit
@@ -26311,8 +26348,11 @@
           (struct-get constraint fixed)
           (compiler-reg-scratch-pick-register
             assignments
+            occupancy
             interval-index
             ref-counts
+            reg-arr
+            rcount
             (struct-get requirement var)
             vars
             (compiler-reg-scratch-constraint-pool abi constraint)
@@ -26325,6 +26365,12 @@
               assignments
               (struct-get requirement var)
               (CompilerRegLocation.Register reg))
+            (compiler-reg-greedy-occupancy-record-location!
+              occupancy
+              reg-arr
+              rcount
+              (struct-get requirement var)
+              (CompilerRegLocation.Register reg))
             (array-set!
               items
               index
@@ -26334,8 +26380,11 @@
           items
           (+ index 1)
           assignments
+          occupancy
           interval-index
           ref-counts
+          reg-arr
+          rcount
           vars)))))
 
 (define (compiler-reg-scratch-clear-group-from!
@@ -26382,33 +26431,60 @@
           unit)
         (compiler-reg-scratch-clear-incomplete-groups! items (+ index 1))))))
 
+(define (compiler-reg-scratch-callee-saved-register?
+  [abi : CompilerRegTargetAbi]
+  [reg : String]) : bool
+  (or
+    (compiler-reg-string-list-contains?
+      (compiler-reg-sysv-integer-registers)
+      reg)
+    (string.eq reg "%rbp")
+    (match abi
+      [(CompilerRegTargetAbi.Linux) false]
+      [(CompilerRegTargetAbi.Windows)
+        (or
+          (string.eq reg "%rsi")
+          (string.eq reg "%rdi")
+          (compiler-reg-string-list-contains?
+            (compiler-reg-xmm-callee-registers-for-abi abi)
+            reg))])))
+
 (define (compiler-reg-scratch-compact-assignments-from
+  [abi : CompilerRegTargetAbi]
   [items : (Array CompilerRegScratchAssignment)]
   [index : i64]
   [success : i64]
   [vars : i64]
+  [seen : CompilerRegStringList]
   [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
   (if (>= index (array-length items))
     assignments
     (let
       [item : CompilerRegScratchAssignment (array-ref items index)]
       [reg : String (struct-get item register)]
-      (if (string.eq reg "")
+      (if (or
+        (string.eq reg "")
+        (not (compiler-reg-scratch-callee-saved-register? abi reg))
+        (compiler-reg-string-list-contains? seen reg))
         (compiler-reg-scratch-compact-assignments-from
+          abi
           items
           (+ index 1)
           success
           vars
+          seen
           assignments)
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             (+ vars success)
             (CompilerRegLocation.Register reg))
           (compiler-reg-scratch-compact-assignments-from
+            abi
             items
             (+ index 1)
             (+ success 1)
             vars
+            (compiler-reg-string-cons reg seen)
             assignments))))))
 
 (define (compiler-reg-plan-with-scratch-vreg-result
@@ -26541,6 +26617,15 @@
                           (compiler-reg-assignment-table-from-list
                             (compiler-reg-plan-assignments plan)
                             out-vars)]
+                        [scratch-registers : (Array String)
+                          (compiler-reg-scratch-register-array _abi)]
+                        [scratch-register-count : i64
+                          (array-length scratch-registers)]
+                        [scratch-occupancy : CompilerRegGreedyOccupancy
+                          (compiler-reg-greedy-occupancy-make
+                            assignments
+                            scratch-registers
+                            scratch-register-count)]
                         [scratch-ref-counts : (Array i64)
                           (array.make-array i64 out-vars)]
                         (begin
@@ -26554,8 +26639,11 @@
                             items
                             0
                             assignments
+                            scratch-occupancy
                             interval-index
                             scratch-ref-counts
+                            scratch-registers
+                            scratch-register-count
                             out-vars)
                           (compiler-reg-scratch-clear-incomplete-groups!
                             items
@@ -26571,17 +26659,20 @@
                                   split-plan)
                                 (CompilerRegPlan.Plan
                                   ;; Scratch requirements are not IR values and
-                                  ;; never need stack slots. Publish only their
-                                  ;; successful register homes, densely after
-                                  ;; the real vars, so callee-save accounting
-                                  ;; sees them without exposing failed/sparse
-                                  ;; synthetic ids to frame coloring.
+                                  ;; never need stack slots. Publish each
+                                  ;; successful callee-saved home only once,
+                                  ;; densely after the real vars, so prologue
+                                  ;; accounting sees it without making
+                                  ;; caller-saved temporaries inflate every
+                                  ;; var-sized backend table.
                                   (compiler-reg-assignment-list-merge
                                     (compiler-reg-scratch-compact-assignments-from
+                                      _abi
                                       items
                                       0
                                       0
                                       _vars
+                                      CompilerRegStringList.Nil
                                       CompilerRegAssignmentList.Nil)
                                     base-assignments)
                                   ineligible
@@ -27889,25 +27980,25 @@
     (let
       [func : CompilerIrFunction (compiler-reg-switch-scratch-test-function)]
       [plan : CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
-      [out : CompilerRegPlan
-        (compiler-reg-plan-with-scratch-vregs
-          (CompilerRegTargetAbi.Linux)
-          func
-          plan
-          1)]
-      [assignments : CompilerRegAssignmentList
-        (compiler-reg-plan-assignments out)]
-      [index-reg : String
-        (compiler-reg-assignment-primary-register assignments 1)]
-      [table-reg : String
-        (compiler-reg-assignment-primary-register assignments 2)]
-      (and
-        (= (compiler-reg-plan-var-count out 1) 3)
-        (not (string.eq index-reg ""))
-        (not (string.eq table-reg ""))
-        (not (string.eq index-reg table-reg))
-        (not (string.eq index-reg "%r9"))
-        (not (string.eq table-reg "%r9"))))
+      (match (compiler-reg-plan-with-scratch-vreg-result
+        (CompilerRegTargetAbi.Linux)
+        func
+        plan
+        1)
+        [(CompilerRegScratchPlanResult.Result out scratch-plan)
+          (let
+            [index-reg : String
+              (compiler-reg-scratch-plan-register scratch-plan 0 0)]
+            [table-reg : String
+              (compiler-reg-scratch-plan-register scratch-plan 0 1)]
+            (and
+              (= (compiler-reg-plan-var-count out 1) 1)
+              (= (compiler-reg-scratch-plan-count scratch-plan) 2)
+              (not (string.eq index-reg ""))
+              (not (string.eq table-reg ""))
+              (not (string.eq index-reg table-reg))
+              (not (string.eq index-reg "%r9"))
+              (not (string.eq table-reg "%r9"))))]))
     true))
 
 (define (compiler-reg-bounds-scratch-test-blocks) : CompilerIrBlockList
@@ -27936,25 +28027,25 @@
     (let
       [func : CompilerIrFunction (compiler-reg-bounds-scratch-test-function)]
       [plan : CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
-      [out : CompilerRegPlan
-        (compiler-reg-plan-with-scratch-vregs
-          (CompilerRegTargetAbi.Linux)
-          func
-          plan
-          1)]
-      [assignments : CompilerRegAssignmentList
-        (compiler-reg-plan-assignments out)]
-      [length-reg : String
-        (compiler-reg-assignment-primary-register assignments 1)]
-      [index-reg : String
-        (compiler-reg-assignment-primary-register assignments 2)]
-      (and
-        (= (compiler-reg-plan-var-count out 1) 3)
-        (not (string.eq length-reg ""))
-        (not (string.eq index-reg ""))
-        (not (string.eq length-reg index-reg))
-        (not (string.eq length-reg "%r9"))
-        (not (string.eq index-reg "%r9"))))
+      (match (compiler-reg-plan-with-scratch-vreg-result
+        (CompilerRegTargetAbi.Linux)
+        func
+        plan
+        1)
+        [(CompilerRegScratchPlanResult.Result out scratch-plan)
+          (let
+            [length-reg : String
+              (compiler-reg-scratch-plan-register scratch-plan 0 0)]
+            [index-reg : String
+              (compiler-reg-scratch-plan-register scratch-plan 0 1)]
+            (and
+              (= (compiler-reg-plan-var-count out 1) 1)
+              (= (compiler-reg-scratch-plan-count scratch-plan) 2)
+              (not (string.eq length-reg ""))
+              (not (string.eq index-reg ""))
+              (not (string.eq length-reg index-reg))
+              (not (string.eq length-reg "%r9"))
+              (not (string.eq index-reg "%r9"))))]))
     true))
 
 (define (compiler-reg-memory-scratch-test-plan) : CompilerRegPlan
@@ -28194,14 +28285,31 @@
       (compiler-reg-interval-index-build intervals 1)]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-make 1)]
+    [linux-registers : (Array String)
+      (compiler-reg-scratch-register-array (CompilerRegTargetAbi.Linux))]
+    [windows-registers : (Array String)
+      (compiler-reg-scratch-register-array (CompilerRegTargetAbi.Windows))]
+    [linux-occupancy : CompilerRegGreedyOccupancy
+      (compiler-reg-greedy-occupancy-make
+        assignments
+        linux-registers
+        (array-length linux-registers))]
+    [windows-occupancy : CompilerRegGreedyOccupancy
+      (compiler-reg-greedy-occupancy-make
+        assignments
+        windows-registers
+        (array-length windows-registers))]
     [excluded : CompilerRegStringList
       (compiler-reg-string-cons "%rax" CompilerRegStringList.Nil)]
     (and
       (string.eq
         (compiler-reg-scratch-pick-register
           assignments
+          linux-occupancy
           index
           (array.make-array i64 0)
+          linux-registers
+          (array-length linux-registers)
           0
           1
           (compiler-reg-scratch-default-pool
@@ -28212,8 +28320,11 @@
       (string.eq
         (compiler-reg-scratch-pick-register
           assignments
+          windows-occupancy
           index
           (array.make-array i64 0)
+          windows-registers
+          (array-length windows-registers)
           0
           1
           (compiler-reg-scratch-default-pool
@@ -28225,8 +28336,11 @@
       (string.eq
         (compiler-reg-scratch-pick-register
           assignments
+          windows-occupancy
           index
           (array.make-array i64 0)
+          windows-registers
+          (array-length windows-registers)
           0
           1
           (compiler-reg-scratch-default-pool
@@ -28234,6 +28348,36 @@
             (CompilerRegScratchClass.Xmm))
           CompilerRegStringList.Nil)
         "%xmm2"))))
+
+(define (compiler-reg-scratch-callee-saved-registers-ok?) : bool
+  (and
+    (compiler-reg-scratch-callee-saved-register?
+      (CompilerRegTargetAbi.Linux)
+      "%r12")
+    (compiler-reg-scratch-callee-saved-register?
+      (CompilerRegTargetAbi.Linux)
+      "%rbp")
+    (not
+      (compiler-reg-scratch-callee-saved-register?
+        (CompilerRegTargetAbi.Linux)
+        "%rsi"))
+    (not
+      (compiler-reg-scratch-callee-saved-register?
+        (CompilerRegTargetAbi.Linux)
+        "%xmm6"))
+    (compiler-reg-scratch-callee-saved-register?
+      (CompilerRegTargetAbi.Windows)
+      "%rsi")
+    (compiler-reg-scratch-callee-saved-register?
+      (CompilerRegTargetAbi.Windows)
+      "%rdi")
+    (compiler-reg-scratch-callee-saved-register?
+      (CompilerRegTargetAbi.Windows)
+      "%xmm6")
+    (not
+      (compiler-reg-scratch-callee-saved-register?
+        (CompilerRegTargetAbi.Windows)
+        "%xmm5"))))
 
 (define (compiler-reg-early-scratch-never-spills-ok?) : bool
   (let
@@ -32208,6 +32352,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-scratch-default-pool-target-invariant-ok?"
       (compiler-reg-scratch-default-pool-target-invariant-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-scratch-callee-saved-registers-ok?"
+      (compiler-reg-scratch-callee-saved-registers-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-early-scratch-never-spills-ok?"
       (compiler-reg-early-scratch-never-spills-ok?))

@@ -2,7 +2,7 @@
   "exit": 0,
   "stderr_exact": "",
   "stdout_contains": [
-    "\"code\":\"E0200\""
+    "\"code\":\"E0206\""
   ],
   "message_checks": [
     {"raw_contains": "\"diagnostics\":[]"}

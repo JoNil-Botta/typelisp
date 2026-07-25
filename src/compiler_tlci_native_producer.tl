@@ -1198,6 +1198,22 @@
         241
         ops
         ops-count)]
+    ;; `(ptr-cast p : T)`: the pointer expression then the type template, the
+    ;; same operand order expr-make-array uses. Refs #5605.
+    [(AstExpr.PtrCast ptr-node cast-type)
+      (let
+        [ptr-opened : i64
+          (embedded-native-template-ops params ptr-node ops ops-count)]
+        (if (< ptr-opened 0)
+          -1
+          (let
+            [type-opened : i64
+              (embedded-native-template-type-ops cast-type ops ops-count)]
+            (if (< type-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push! ops ops-count 242 "0" "0" "0")
+                (+ ptr-opened type-opened 1))))))]
     [(AstExpr.ArrayData inner-node)
       (embedded-native-template-unary-node-ops
         params
@@ -1678,11 +1694,74 @@
 ;; Emit the type-template ops for one binding annotation: plain `Var` names
 ;; and scalar types. Other shapes keep the fallback shell. Returns the opened
 ;; op-let count or -1 outside the subset.
+;; The element/inner type template followed by a one-immediate wrapper op.
+(define (embedded-native-template-type-wrap-ops
+  [elem-id : i64]
+  [op : i64]
+  [immediate : String]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (let
+    [elem-opened : i64
+      (embedded-native-template-type-ops (ty-node-get elem-id) ops ops-count)]
+    (if (< elem-opened 0)
+      -1
+      (begin
+        (embedded-native-template-push! ops ops-count op immediate "0" "0")
+        (+ elem-opened 1)))))
+
+;; `(& r T)` / `(&mut r T)`: the inner template, then the wrapper carrying the
+;; mutability flag and the lifetime name.
+(define (embedded-native-template-type-ref-ops
+  [inner-id : i64]
+  [region-id : i64]
+  [mutable : i64]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (let
+    [region : String (intern-str region-id)]
+    [inner-opened : i64
+      (embedded-native-template-type-ops (ty-node-get inner-id) ops ops-count)]
+    (if (< inner-opened 0)
+      -1
+      (begin
+        (embedded-native-template-push!
+          ops
+          ops-count
+          253
+          (string.int->string mutable)
+          (embedded-native-name-arg region)
+          (string.int->string (string.string-length region)))
+        (+ inner-opened 1)))))
+
 (define (embedded-native-template-type-ops
   [ty : AstType]
   [ops : (Array String)]
   [ops-count : (Array i64)]) : i64
   (match ty
+    ;; Composite annotations: the element/inner type is a *type-pool node id*,
+    ;; read back through the global `ty-node-get` (the type-side twin of
+    ;; `ast-node-get`), so no pool context has to be threaded here. Each arm
+    ;; emits its element template then the wrapper op. Refs #5605.
+    [(AstType.Ptr elem-id)
+      (embedded-native-template-type-wrap-ops elem-id 249 "0" ops ops-count)]
+    [(AstType.MutPtr elem-id)
+      (embedded-native-template-type-wrap-ops elem-id 249 "1" ops ops-count)]
+    [(AstType.Box elem-id)
+      (embedded-native-template-type-wrap-ops elem-id 250 "0" ops ops-count)]
+    [(AstType.DynArray elem-id)
+      (embedded-native-template-type-wrap-ops elem-id 251 "0" ops ops-count)]
+    [(AstType.Array elem-id count)
+      (embedded-native-template-type-wrap-ops
+        elem-id
+        252
+        (string.int->string count)
+        ops
+        ops-count)]
+    [(AstType.Ref region-id inner-id)
+      (embedded-native-template-type-ref-ops inner-id region-id 0 ops ops-count)]
+    [(AstType.MutRef region-id inner-id)
+      (embedded-native-template-type-ref-ops inner-id region-id 1 ops ops-count)]
     [(AstType.Var type-name-id)
       (let
         [type-name : String (intern-str type-name-id)]

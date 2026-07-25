@@ -748,10 +748,8 @@
 ;; an expression list and pushes the `(unsafe ...)` node; expr-ptr-read,
 ;; expr-ptr-to-int, and expr-string-data each pop one expression;
 ;; expr-ptr-write, expr-ptr-offset, and expr-string-from-bytes pop the second
-;; then the first operand; expr-array-data pops one. `ptr-cast` is deliberately
-;; absent: `AstType.Ptr` carries a type-pool node id, so its type template needs
-;; pools threaded through embedded-native-template-type-ops, which is tracked
-;; with the remainder of #5605. These complete the template subset the
+;; then the first operand; expr-array-data pops one. expr-ptr-cast pops the type
+;; value then the pointer expression. These complete the template subset the
 ;; `stdlib.text_buf_family` generators need. Additive ABI v1 ops.
 (define tlci-host-callback-op-expr-unsafe : i64
   236)
@@ -769,6 +767,12 @@
   243)
 (define tlci-host-callback-op-expr-array-data : i64
   244)
+
+;; expr-ptr-cast pops the type value then the pointer expression, the order
+;; expr-make-array uses. Held back from #5703 because the type walker could not
+;; render `(Ptr T)`; ops 247-251 fix that, so it lands here. Refs #5605.
+(define tlci-host-callback-op-expr-ptr-cast : i64
+  242)
 
 ;; The literal text of a string-literal `Expr` operand, pushed as the comptime
 ;; String value the interpreted `comptime.expr-string-value` yields -- the same
@@ -797,6 +801,27 @@
 ;; Refs #5700.
 (define tlci-host-callback-op-value-i64 : i64
   247)
+
+;; Composite type templates (refs #5605). `embedded-native-template-type-ops`
+;; rendered only `AstType.Var` and scalars, which is what actually kept the
+;; `stdlib.text_buf_family` generators and `stdlib.vector_slice/slice` on the
+;; interpreted route -- their annotations are `(Array String)`, `(Ptr u8)`,
+;; `(MutPtr i64)`, `(& text str)` and `(&mut buf TextBuf)`, not any missing
+;; expression node kind. Each op pops the element/inner type value and pushes
+;; the wrapper, so a nested annotation builds bottom-up like an expression
+;; template does. Numbered above the #5700 pair that took 247/248. type-ptr and type-ref select mutability with immediate `a`;
+;; type-array takes its element count in `a`; type-ref takes the lifetime name
+;; in `b`/`c`. Additive ABI v1 ops.
+(define tlci-host-callback-op-type-ptr : i64
+  249)
+(define tlci-host-callback-op-type-box : i64
+  250)
+(define tlci-host-callback-op-type-dyn-array : i64
+  251)
+(define tlci-host-callback-op-type-array : i64
+  252)
+(define tlci-host-callback-op-type-ref : i64
+  253)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

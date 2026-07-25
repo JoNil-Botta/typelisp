@@ -20,5 +20,5 @@
 # concurrently and an exact expectation would collide on every merge -- but the
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
-native-entries-min 58
+native-entries-min 60
 interpreted-arms-max 0

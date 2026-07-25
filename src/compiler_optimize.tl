@@ -49406,38 +49406,36 @@
         ty)]
     [_ instr]))
 
-(define (opt-const-divisor-rewrite-seq-from
+;; One rewritten instruction per input instruction, so write straight into a
+;; sized target sequence. The cons-and-reverse form this replaces allocated two
+;; cells per instruction and then rebuilt the array it started from.
+(define (opt-const-divisor-rewrite-seq
   [const-divisors : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [count : i64]
-  [out-rev : CompilerIrInstrList]) : CompilerIrInstrList
-  (if (>= index count)
-    (compiler-ir-instr-list-reverse-onto out-rev CompilerIrInstrList.Nil)
-    (opt-const-divisor-rewrite-seq-from
-      const-divisors
-      instrs
-      (+ index 1)
-      count
-      (compiler-ir-instr-cons
-        (opt-const-divisor-rewrite-instr
-          const-divisors
-          (compiler-ir-instr-seq-ref instrs index))
-        out-rev))))
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-const-divisor-rewrite-instr
+              const-divisors
+              (compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq slots count))))
 
 (define (opt-const-divisor-rewrite-block
   [const-divisors : opt_i64_i64_map.Map]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block
+      (CompilerIrBlock.Block
         label
-        (opt-const-divisor-rewrite-seq-from
-          const-divisors
-          instrs
-          0
-          (compiler-ir-instr-seq-count instrs)
-          CompilerIrInstrList.Nil))]))
+        (opt-const-divisor-rewrite-seq const-divisors instrs))]))
 
 (define (opt-const-divisor-rewrite-blocks
   [const-divisors : opt_i64_i64_map.Map]
@@ -53728,7 +53726,7 @@
   (Some OptLoadCseState))
 
 (defenum OptLoadGvnBlockRewrite
-  (Rewrite OptLoadCseState CompilerIrInstrList))
+  (Rewrite OptLoadCseState CompilerIrInstrSeq))
 
 (define (opt-load-cse-state-with-caps-and-facts
   [table-cap : i64]
@@ -54156,34 +54154,38 @@
             empty-state))]
       [(option_i64.None) empty-state])))
 
-(define (opt-load-gvn-instr-seq-from
+;; Same shape as the const-divisor rewrite: one instruction out per instruction
+;; in, so the CSE state threads through an indexed walk that fills a sized target
+;; sequence instead of consing a reversed list and reversing it back.
+(define (opt-load-gvn-instr-seq
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [out-rev : CompilerIrInstrList]) : OptLoadGvnBlockRewrite
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OptLoadGvnBlockRewrite.Rewrite
-      state
-      (compiler-ir-instr-list-reverse-onto out-rev CompilerIrInstrList.Nil))
-    (match (opt-load-cse-dispatch
-      hs
-      true
-      sources
-      call-memory
-      state
-      (compiler-ir-instr-seq-ref instrs index))
-      [(OptLoadCseResult.Result next-state new-instr)
-        (opt-load-gvn-instr-seq-from
-          hs
-          next-state
-          sources
-          call-memory
-          instrs
-          (+ index 1)
-          (compiler-ir-instr-cons new-instr out-rev))])))
+  [instrs : CompilerIrInstrSeq]) : OptLoadGvnBlockRewrite
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    [current : OptLoadCseState state]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            current
+            (match (opt-load-cse-dispatch
+              hs
+              true
+              sources
+              call-memory
+              current
+              (compiler-ir-instr-seq-ref instrs index))
+              [(OptLoadCseResult.Result next-state new-instr)
+                (begin
+                  (array-set! slots index new-instr)
+                  next-state)]))
+          (set! index (+ index 1))))
+      (OptLoadGvnBlockRewrite.Rewrite current (CompilerIrInstrSeq slots count)))))
 
 (define (opt-load-gvn-rewrite-block
   [hs : OptLoadHeaderSet]
@@ -54193,14 +54195,7 @@
   [block : CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(CompilerIrBlock.Block _ instrs)
-      (opt-load-gvn-instr-seq-from
-        hs
-        entry-state
-        sources
-        call-memory
-        instrs
-        0
-        CompilerIrInstrList.Nil)]))
+      (opt-load-gvn-instr-seq hs entry-state sources call-memory instrs)]))
 
 (define (opt-load-gvn-process-id
   [context : OptCfgContext]
@@ -54243,7 +54238,7 @@
                     out
                     id
                     (OptGvnBlockResult.SomeBlock
-                      (compiler-ir-block block-label instrs)))
+                      (CompilerIrBlock.Block block-label instrs)))
                   (array-set!
                     exit-states
                     id

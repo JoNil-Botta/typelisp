@@ -70,18 +70,22 @@
 (defenum CompilerRegVarType
   (Type i64 AstType))
 
+;; The per-function var-type view is a pair of var-id-indexed arrays. The `Array`
+;; arm below lets it BE a var-type list, so the whole-function view costs one
+;; struct rather than one cons cell per live variable, and every lookup through
+;; it is an index rather than a walk of the ascending-id list.
+(defstruct CompilerRegVarTypes
+  (present (Array i64))
+  (items (Array AstType)))
+
 (defenum CompilerRegVarTypeList
   (Nil)
-  (Cons CompilerRegVarType (Box CompilerRegVarTypeList)))
+  (Cons CompilerRegVarType (Box CompilerRegVarTypeList))
+  (Array CompilerRegVarTypes))
 
 (defenum CompilerRegMaybeType
   (No)
   (Some AstType))
-
-(defstruct CompilerRegVarTypes
-  (entries CompilerRegVarTypeList)
-  (present (Array i64))
-  (items (Array AstType)))
 
 (defstruct CompilerRegAssignmentIndex
   (present (Array i64))
@@ -1024,6 +1028,11 @@
   [var : i64]
   [ty : AstType]) : CompilerRegVarTypeList
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-var-type-insert
+        (compiler-reg-var-type-seq-to-list seq)
+        var
+        ty)]
     [(CompilerRegVarTypeList.Nil)
       (compiler-reg-var-type-cons
         (CompilerRegVarType.Type var ty)
@@ -1047,6 +1056,7 @@
   [types : CompilerRegVarTypeList]
   [var : i64]) : CompilerRegMaybeType
   (match types
+    [(CompilerRegVarTypeList.Array seq) (compiler-reg-var-types-lookup seq var)]
     [(CompilerRegVarTypeList.Nil) CompilerRegMaybeType.No]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -1058,7 +1068,7 @@
               (compiler-reg-var-type-lookup (box-get rest) var)))])]))
 
 (define (compiler-reg-var-types-list [types : CompilerRegVarTypes]) : CompilerRegVarTypeList
-  (struct-get types entries))
+  (CompilerRegVarTypeList.Array types))
 
 (define (compiler-reg-var-types-lookup
   [types : CompilerRegVarTypes]
@@ -1216,6 +1226,15 @@
           (CompilerRegVarType.Type index (array-ref types index))
           acc)))))
 
+;; Materialize the ascending-id cons form of an array view, for the arms that
+;; still walk entries rather than index them.
+(define (compiler-reg-var-type-seq-to-list [types : CompilerRegVarTypes]) : CompilerRegVarTypeList
+  (compiler-reg-var-type-arrays-to-list
+    (struct-get types present)
+    (struct-get types items)
+    (- (array-length (struct-get types present)) 1)
+    CompilerRegVarTypeList.Nil))
+
 (define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypes
   (match func
     [(CompilerIrFunction.Function _ params _ vars blocks)
@@ -1226,14 +1245,7 @@
           (compiler-reg-fill-i64-array present 0)
           (compiler-reg-param-types-array! params present types)
           (compiler-reg-block-list-types-array! blocks present types)
-          (CompilerRegVarTypes
-            (compiler-reg-var-type-arrays-to-list
-              present
-              types
-              (- vars 1)
-              CompilerRegVarTypeList.Nil)
-            present
-            types)))]))
+          (CompilerRegVarTypes present types)))]))
 
 (define (compiler-reg-move-list-contains?
   [moves : CompilerRegMoveList]
@@ -3825,6 +3837,11 @@
   [set : CompilerLiveI64Set]
   [handles-ok? : bool]) : CompilerLiveI64Set
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-ineligible-non-scalars
+        (compiler-reg-var-type-seq-to-list seq)
+        set
+        handles-ok?)]
     [(CompilerRegVarTypeList.Nil) set]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -15245,12 +15262,36 @@
       (compiler-reg-type-register-group-has-sse? ty)]
     [(CompilerRegMaybeType.No) false]))
 
+;; Array-view form of the seed below: same ascending-id visit order, indexed
+;; instead of walked.
+(define (compiler-reg-group-vars-from-types-seq
+  [types : CompilerRegVarTypes]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (let
+    [present : (Array i64) (struct-get types present)]
+    [items : (Array AstType) (struct-get types items)]
+    [count : i64 (array-length present)]
+    [index : i64 0]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref present index) 0)
+            unit
+            (if (compiler-reg-type-register-group? (array-ref items index))
+              (set! out (compiler-live-set-insert out index))
+              unit))
+          (set! index (+ index 1))))
+      out)))
+
 ;; Seed every var whose TYPE is a 2-word register-group (the type-based group
 ;; vars the structural Pack/Word scan misses).
 (define (compiler-reg-group-vars-from-types
   [types : CompilerRegVarTypeList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-group-vars-from-types-seq seq set)]
     [(CompilerRegVarTypeList.Nil) set]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -20023,10 +20064,7 @@
 ;; An empty var-type view, for callers that must bind one on a path where the
 ;; scalar plan is not taken and no types are needed.
 (define (compiler-reg-var-types-empty) : CompilerRegVarTypes
-  (CompilerRegVarTypes
-    CompilerRegVarTypeList.Nil
-    (array.make-array i64 0)
-    (array.make-array AstType 0)))
+  (CompilerRegVarTypes (array.make-array i64 0) (array.make-array AstType 0)))
 
 (define (compiler-reg-plan-function-scalar-cold-for-abi
   [abi : CompilerRegTargetAbi]
@@ -20541,6 +20579,8 @@
   [types : CompilerRegVarTypeList]
   [flags : (Array bool)]) : unit
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-color-flags (compiler-reg-var-type-seq-to-list seq) flags)]
     [(CompilerRegVarTypeList.Nil) unit]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -20580,6 +20620,8 @@
   [types : CompilerRegVarTypeList]
   [tys : (Array AstType)]) : unit
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-color-var-tys (compiler-reg-var-type-seq-to-list seq) tys)]
     [(CompilerRegVarTypeList.Nil) unit]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -21987,6 +22029,12 @@
   [items : (Array AstType)]
   [types : CompilerRegVarTypeList]) : unit
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-color-scatter-types
+        remap
+        present
+        items
+        (compiler-reg-var-type-seq-to-list seq))]
     [(CompilerRegVarTypeList.Nil) unit]
     [(CompilerRegVarTypeList.Cons item rest)
       (begin
@@ -22009,11 +22057,7 @@
     (begin
       (compiler-reg-fill-i64-array present 0)
       (compiler-reg-color-scatter-types remap present items types)
-      (compiler-reg-var-type-arrays-to-list
-        present
-        items
-        (- vars 1)
-        CompilerRegVarTypeList.Nil))))
+      (CompilerRegVarTypeList.Array (CompilerRegVarTypes present items)))))
 
 ;; Spilled scalars are dropped: the id remap re-homes them, so emission's
 ;; formula-slot fallback covers the new id and a stale Spill offset keyed by
@@ -23145,6 +23189,10 @@
   [extra : CompilerRegVarTypeList]
   [base : CompilerRegVarTypeList]) : CompilerRegVarTypeList
   (match extra
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-var-type-list-merge
+        (compiler-reg-var-type-seq-to-list seq)
+        base)]
     [(CompilerRegVarTypeList.Nil) base]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -23211,6 +23259,20 @@
   [types : CompilerRegVarTypeList]
   [best : i64]) : i64
   (match types
+    ;; The cons walk keeps the highest id it sees; on the array view that is the
+    ;; last present slot, so scan down from the top instead of over every entry.
+    [(CompilerRegVarTypeList.Array seq)
+      (let
+        [present : (Array i64) (struct-get seq present)]
+        [index : i64 (- (array-length present) 1)]
+        (begin
+          (while (if (< index 0)
+            false
+            (= (array-ref present index) 0))
+            (set! index (- index 1)))
+          (if (>= index best)
+            (+ index 1)
+            best)))]
     [(CompilerRegVarTypeList.Nil) best]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -24098,6 +24160,11 @@
   [present : (Array i64)]
   [items : (Array AstType)]) : unit
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-types-from-list-fill!
+        (compiler-reg-var-type-seq-to-list seq)
+        present
+        items)]
     [(CompilerRegVarTypeList.Nil) unit]
     [(CompilerRegVarTypeList.Cons item rest)
       (begin
@@ -24115,14 +24182,7 @@
     (begin
       (compiler-reg-fill-i64-array present 0)
       (compiler-reg-types-from-list-fill! types present items)
-      (CompilerRegVarTypes
-        (compiler-reg-var-type-arrays-to-list
-          present
-          items
-          (- vars 1)
-          CompilerRegVarTypeList.Nil)
-        present
-        items))))
+      (CompilerRegVarTypes present items))))
 
 ;; Generic constrained scratch-plan construction.  These builders attach the
 ;; deterministic instruction/ordinal identity, interval, and physical-home policy.
@@ -26291,14 +26351,7 @@
                 scratch-excluded)
               (CompilerRegEarlyScratchModel
                 (CompilerRegIntervalIndex starts ends segments)
-                (CompilerRegVarTypes
-                  (compiler-reg-var-type-arrays-to-list
-                    present
-                    types
-                    (- out-vars 1)
-                    CompilerRegVarTypeList.Nil)
-                  present
-                  types)
+                (CompilerRegVarTypes present types)
                 assignments
                 scratch-weights
                 scratch-excluded
@@ -26807,14 +26860,7 @@
                         types)
                       (let
                         [type-info : CompilerRegVarTypes
-                          (CompilerRegVarTypes
-                            (compiler-reg-var-type-arrays-to-list
-                              present
-                              types
-                              (- out-vars 1)
-                              CompilerRegVarTypeList.Nil)
-                            present
-                            types)]
+                          (CompilerRegVarTypes present types)]
                         [interval-index : CompilerRegIntervalIndex
                           (CompilerRegIntervalIndex starts ends segments)]
                         [intervals : CompilerRegIntervalList
@@ -34779,14 +34825,7 @@
           (array-set! present index 1)
           (array-set! types index (compiler-reg-i64-ty))
           (set! index (+ index 1))))
-      (CompilerRegVarTypes
-        (compiler-reg-var-type-arrays-to-list
-          present
-          types
-          (- vars 1)
-          CompilerRegVarTypeList.Nil)
-        present
-        types))))
+      (CompilerRegVarTypes present types))))
 
 (define (compiler-reg-coalesce-test-flat-index) : CompilerRegIntervalIndex
   (compiler-reg-interval-index-build

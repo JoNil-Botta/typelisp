@@ -5,6 +5,12 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-build-provenance.sh"
+
+# The source hash below goes through `git hash-object`, which needs a resolvable
+# repository; check up front rather than dying partway through the build.
+build_provenance_require_repository "$0"
+
 if [ "$#" -ne 3 ]; then
     echo "usage: $0 <typelisp-compiler> <output.tlci> <linux|windows>" >&2
     exit 2

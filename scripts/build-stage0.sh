@@ -43,6 +43,7 @@ esac
 native_link_detect_host
 configure_toolchain
 . "$ROOT/scripts/lib-bootstrap-ctfe.sh"
+. "$ROOT/scripts/lib-build-provenance.sh"
 
 WORKDIR="$ROOT/target/build-stage0"
 rm -rf "$WORKDIR"
@@ -71,7 +72,7 @@ COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
 VERSION_STDOUT="$WORKDIR/version.stdout"
 VERSION_STDERR="$WORKDIR/version.stderr"
-BUILD_GIT_HASH=$(git rev-parse --verify HEAD)
+BUILD_GIT_HASH=$(build_provenance_hash "$0")
 BUILD_GIT_HASH_FILE="$WORKDIR/git-hash.txt"
 BUILD_DATE=$(date -u +%Y-%m-%d)
 BUILD_DATE_FILE="$WORKDIR/build-date.txt"

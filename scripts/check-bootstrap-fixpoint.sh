@@ -34,6 +34,7 @@ cd "$ROOT"
 native_link_detect_host
 . "$ROOT/scripts/lib-bootstrap-ctfe.sh"
 . "$ROOT/scripts/lib-bootstrap-fixpoint-control.sh"
+. "$ROOT/scripts/lib-build-provenance.sh"
 
 if [ "$#" -gt 1 ]; then
     echo "usage: $0 [typelisp-binary]" >&2
@@ -168,7 +169,7 @@ configure_toolchain
 # Every converged compiler and the frontend surfaces it produces must name the
 # exact checked-in compiler revision.  Keep this input outside the disposable
 # fixpoint directory because the source include is rooted at src/../target.
-BUILD_IDENTITY=$(git rev-parse --verify HEAD)
+BUILD_IDENTITY=$(build_provenance_hash "$0")
 mkdir -p "$ROOT/target/build-stage0"
 printf '%s' "$BUILD_IDENTITY" > "$ROOT/target/build-stage0/git-hash.txt"
 

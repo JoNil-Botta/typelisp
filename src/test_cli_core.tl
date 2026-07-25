@@ -2212,27 +2212,54 @@
             1)]))
     0))
 
-(defenum TltestCfgNameList
-  (Nil)
-  (Cons String i64 (Box TltestCfgNameList)))
+(defstruct TltestCfgNames
+  (slots (Array String))
+  (values (Array i64))
+  (len i64))
 
-(define (tltest-cfg-name-list-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNameList
+(define (tltest-cfg-env-count [cfgs : sym_i64_env.SymI64Env]) : i64
   (match cfgs
-    [(sym_i64_env.SymI64Nil) (TltestCfgNameList.Nil)]
-    [(sym_i64_env.SymI64Bind key value rest)
-      (TltestCfgNameList.Cons
-        (compiler-cfg-name key)
-        value
-        (box (tltest-cfg-name-list-from-env (box-get rest))))]))
+    [(sym_i64_env.SymI64Nil) 0]
+    [(sym_i64_env.SymI64Bind _ _ rest)
+      (+ 1 (tltest-cfg-env-count (box-get rest)))]))
 
-(define (tltest-cfg-name-list-to-env [names : TltestCfgNameList]) : sym_i64_env.SymI64Env
-  (match names
-    [(TltestCfgNameList.Nil) (sym_i64_env.sym-i64-empty)]
-    [(TltestCfgNameList.Cons name value rest)
-      (compiler-cfg-bind
-        (tltest-cfg-name-list-to-env (box-get rest))
-        name
-        value)]))
+(define (tltest-cfg-names-fill!
+  [cfgs : sym_i64_env.SymI64Env]
+  [slots : (Array String)]
+  [values : (Array i64)]
+  [index : i64]) : unit
+  (match cfgs
+    [(sym_i64_env.SymI64Nil) unit]
+    [(sym_i64_env.SymI64Bind key value rest)
+      (begin
+        (array-set! slots index (compiler-cfg-name key))
+        (array-set! values index value)
+        (tltest-cfg-names-fill! (box-get rest) slots values (+ index 1)))]))
+
+(define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
+  (let
+    [count : i64 (tltest-cfg-env-count cfgs)]
+    [slots : (Array String) (make-array String count)]
+    [values : (Array i64) (make-array i64 count)]
+    (begin
+      (tltest-cfg-names-fill! cfgs slots values 0)
+      (TltestCfgNames slots values count))))
+
+(define (tltest-cfg-names-to-env [names : TltestCfgNames]) : sym_i64_env.SymI64Env
+  (let
+    [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    [index : i64 (struct-get names len)]
+    (begin
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (set!
+            env
+            (compiler-cfg-bind
+              env
+              (array-ref (struct-get names slots) index)
+              (array-ref (struct-get names values) index)))))
+      env)))
 
 (define (tltest-inline-typecheck-package-sources-from
   [sources : cli_svec.Vec]
@@ -2247,7 +2274,7 @@
     [count : i64 (cli_svec.len (& sources))]
     [cursor : i64 index]
     [status : i64 0]
-    [cfg-names : TltestCfgNameList (tltest-cfg-name-list-from-env cfgs)]
+    [cfg-names : TltestCfgNames (tltest-cfg-names-from-env cfgs)]
     (begin
       (while (and (= status 0) (< cursor count))
         (let
@@ -2273,7 +2300,7 @@
                         manifest-dir
                         package-owner
                         deps
-                        (tltest-cfg-name-list-to-env cfg-names)
+                        (tltest-cfg-names-to-env cfg-names)
                         cache-scope-prefix))))
                 ;; The reset inside `with-scratch` installs a scratch-owned
                 ;; active-session wrapper. Restore it in the enclosing arena

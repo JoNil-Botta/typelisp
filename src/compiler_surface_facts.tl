@@ -31,9 +31,58 @@
   (ok (Array bool))
   (message (Array String)))
 
-(defenum SurfaceCloneObservationList
-  (Nil)
-  (Cons i64 i64 i64 (Box SurfaceCloneObservationList)))
+(defstruct SurfaceCloneObservation
+  (decl-key i64)
+  (root-key i64)
+  (call-index i64))
+
+(defstruct SurfaceCloneObservationSeq
+  (slots (Array SurfaceCloneObservation))
+  (len i64))
+
+(define (surface-clone-observation-seq-empty) : SurfaceCloneObservationSeq
+  (SurfaceCloneObservationSeq (make-array SurfaceCloneObservation 0) 0))
+
+(define (surface-clone-observation-copy-range!
+  [dst : (&mut dst (Array SurfaceCloneObservation))]
+  [src : (& src (Array SurfaceCloneObservation))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (surface-clone-observation-seq-grow!
+  [seq : (&mut seq SurfaceCloneObservationSeq)]) : unit
+  (let
+    [count : i64 (struct-get seq len)]
+    [bigger : (Array SurfaceCloneObservation)
+      (make-array
+        SurfaceCloneObservation
+        (if (< count 1)
+          16
+          (* count 2)))]
+    (begin
+      (surface-clone-observation-copy-range!
+        (&mut bigger)
+        (& (struct-get seq slots))
+        count)
+      (set! (struct-get seq slots) bigger))))
+
+(define (surface-clone-observation-seq-push!
+  [seq : (&mut seq SurfaceCloneObservationSeq)]
+  [observation : SurfaceCloneObservation]) : unit
+  (begin
+    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+      unit
+      (surface-clone-observation-seq-grow! seq))
+    (let
+      [index : i64 (struct-get seq len)]
+      (begin
+        (array-set! (struct-get seq slots) index observation)
+        (set! (struct-get seq len) (+ index 1))))))
 
 (define surface-typecheck-facts-magic : i64
   6073461667468337970)
@@ -82,10 +131,8 @@
   0)
 (define surface-typecheck-facts-recording-decl-key : i64
   -1)
-(define surface-typecheck-facts-recording-observations : SurfaceCloneObservationList
-  (SurfaceCloneObservationList.Nil))
-(define surface-typecheck-facts-recording-count : i64
-  0)
+(define surface-typecheck-facts-recording-observations : SurfaceCloneObservationSeq
+  (surface-clone-observation-seq-empty))
 (define surface-typecheck-facts-recording-next-call : i64
   0)
 (define surface-typecheck-facts-recording-current-call : i64
@@ -97,8 +144,7 @@
     (set! surface-typecheck-facts-recording-decl-key -1)
     (set!
       surface-typecheck-facts-recording-observations
-      (SurfaceCloneObservationList.Nil))
-    (set! surface-typecheck-facts-recording-count 0)
+      (surface-clone-observation-seq-empty))
     (set! surface-typecheck-facts-recording-next-call 0)
     (set! surface-typecheck-facts-recording-current-call -1)
     (set! surface-typecheck-facts-recording-active true)))
@@ -130,16 +176,12 @@
       (begin
         (unsafe
           (arena.tl_arena_set surface-typecheck-facts-recording-arena))
-        (set!
-          surface-typecheck-facts-recording-observations
-          (SurfaceCloneObservationList.Cons
+        (surface-clone-observation-seq-push!
+          (&mut surface-typecheck-facts-recording-observations)
+          (SurfaceCloneObservation
             surface-typecheck-facts-recording-decl-key
             root-key
-            surface-typecheck-facts-recording-current-call
-            (box surface-typecheck-facts-recording-observations)))
-        (set!
-          surface-typecheck-facts-recording-count
-          (+ surface-typecheck-facts-recording-count 1))
+            surface-typecheck-facts-recording-current-call))
         (set! surface-typecheck-facts-recording-arena (arena.tl_arena_current))
         (unsafe
           (arena.tl_arena_set previous-arena))))
@@ -152,33 +194,29 @@
   [summary-functions : i64]
   [summary-externs : i64]) : SurfaceTypecheckFacts
   (let
-    [count : i64 surface-typecheck-facts-recording-count]
+    [count : i64
+      (struct-get surface-typecheck-facts-recording-observations len)]
     [decl-keys : (Array i64) (make-array i64 count)]
     [root-keys : (Array i64) (make-array i64 count)]
     [call-indices : (Array i64) (make-array i64 count)]
     [index : i64 0]
-    [cur : SurfaceCloneObservationList
-      surface-typecheck-facts-recording-observations]
+    [slots : (Array SurfaceCloneObservation)
+      (struct-get surface-typecheck-facts-recording-observations slots)]
     (begin
       (while (< index count)
-        (match cur
-          [(SurfaceCloneObservationList.Nil) (set! index count)]
-          [(SurfaceCloneObservationList.Cons decl-key root-key call-index rest)
-            (let
-              [output-index : i64 (- count (+ index 1))]
-              (begin
-                (array-set! decl-keys output-index decl-key)
-                (array-set! root-keys output-index root-key)
-                (array-set! call-indices output-index call-index)
-                (set! cur (box-get rest))
-                (set! index (+ index 1))))]))
+        (let
+          [observation : SurfaceCloneObservation (array-ref slots index)]
+          (begin
+            (array-set! decl-keys index (struct-get observation decl-key))
+            (array-set! root-keys index (struct-get observation root-key))
+            (array-set! call-indices index (struct-get observation call-index))
+            (set! index (+ index 1)))))
       (set! surface-typecheck-facts-recording-active false)
       (set! surface-typecheck-facts-recording-arena 0)
       (set! surface-typecheck-facts-recording-decl-key -1)
       (set!
         surface-typecheck-facts-recording-observations
-        (SurfaceCloneObservationList.Nil))
-      (set! surface-typecheck-facts-recording-count 0)
+        (surface-clone-observation-seq-empty))
       (set! surface-typecheck-facts-recording-next-call 0)
       (set! surface-typecheck-facts-recording-current-call -1)
       (SurfaceTypecheckFacts
@@ -198,8 +236,7 @@
     (set! surface-typecheck-facts-recording-decl-key -1)
     (set!
       surface-typecheck-facts-recording-observations
-      (SurfaceCloneObservationList.Nil))
-    (set! surface-typecheck-facts-recording-count 0)
+      (surface-clone-observation-seq-empty))
     (set! surface-typecheck-facts-recording-next-call 0)
     (set! surface-typecheck-facts-recording-current-call -1)))
 

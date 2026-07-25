@@ -169,12 +169,12 @@
   (Ok BuildResolvedPkgDeps)
   (Err String))
 
-;; This remains a recursive list intentionally: it is a DFS call stack used
-;; only for cycle diagnostics, where push/pop follows recursion depth rather
-;; than append-heavy builder behavior.
-(defenum BuildPackagePathList
-  (Nil)
-  (Cons String (Box BuildPackagePathList)))
+;; DFS call stack used only for cycle diagnostics. Pushes follow recursion
+;; depth and siblings keep the shallower stack alive, so each descent
+;; right-sizes a fresh array rather than sharing one growable buffer.
+(defstruct BuildPackagePathSeq
+  (slots (Array String))
+  (len i64))
 
 (defstruct BuildPackageWorkerConfig
   (manifest-path String)
@@ -2308,22 +2308,44 @@
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (compiler-load-normalize-path manifest-path))
 
-(define (build-package-path-list-render [paths : BuildPackagePathList]) : String
-  (match paths
-    [(BuildPackagePathList.Nil) ""]
-    [(BuildPackagePathList.Cons path rest)
-      (let
-        [tail : String (build-package-path-list-render (box-get rest))]
-        (if (= (string.string-length tail) 0)
-          path
-          (str_cat.str-cat tail " -> " path)))]))
+(define (build-package-path-seq-push
+  [paths : BuildPackagePathSeq]
+  [path : String]) : BuildPackagePathSeq
+  (let
+    [count : i64 (struct-get paths len)]
+    [slots : (Array String) (make-array String (+ count 1))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! slots index (array-ref (struct-get paths slots) index))
+          (set! index (+ index 1))))
+      (array-set! slots count path)
+      (BuildPackagePathSeq slots (+ count 1)))))
+
+(define (build-package-path-seq-render [paths : BuildPackagePathSeq]) : String
+  (let
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index (struct-get paths len))
+        (let
+          [path : String (array-ref (struct-get paths slots) index)]
+          (begin
+            (set!
+              out
+              (if (= index 0)
+                path
+                (str_cat.str-cat out " -> " path)))
+            (set! index (+ index 1)))))
+      out)))
 
 (define (build-package-cycle-message
-  [stack : BuildPackagePathList]
+  [stack : BuildPackagePathSeq]
   [manifest-path : String]) : String
   (str_cat.str-cat
     "build: dependency cycle: "
-    (build-package-path-list-render stack)
+    (build-package-path-seq-render stack)
     " -> "
     manifest-path))
 
@@ -2447,7 +2469,7 @@
 (define (build-package-graph-add-node
   [node : BuildPackageGraphNode]
   [state : BuildPackageGraphState]
-  [stack : BuildPackagePathList]
+  [stack : BuildPackagePathSeq]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
   (let
     [manifest-path : String (struct-get node manifest-path)]
@@ -2466,8 +2488,8 @@
               build-package-visit-visiting)]
           [manifest : CompilerPkgManifest (struct-get node manifest)]
           [manifest-dir : String (compiler-load-dirname manifest-path)]
-          [next-stack : BuildPackagePathList
-            (BuildPackagePathList.Cons manifest-path (box stack))]
+          [next-stack : BuildPackagePathSeq
+            (build-package-path-seq-push stack manifest-path)]
           (match (build-package-graph-add-deps
             manifest-dir
             (compiler-pkg-deps-list (struct-get manifest deps))
@@ -2489,7 +2511,7 @@
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
   [state : BuildPackageGraphState]
-  [stack : BuildPackagePathList]
+  [stack : BuildPackagePathSeq]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
   (match deps
     [(CompilerPkgDepNil) (ResultBuildPackageGraphState.Ok state)]
@@ -2523,8 +2545,10 @@
           root-path
           build-package-visit-visiting)
         (build-package-graph-node-vec-new))]
-    [stack : BuildPackagePathList
-      (BuildPackagePathList.Cons root-path (box BuildPackagePathList.Nil))]
+    [stack : BuildPackagePathSeq
+      (build-package-path-seq-push
+        (BuildPackagePathSeq (make-array String 0) 0)
+        root-path)]
     (match (build-package-graph-add-deps
       root-dir
       (compiler-pkg-deps-list (struct-get manifest deps))

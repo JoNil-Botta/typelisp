@@ -50,10 +50,11 @@
   (short String)
   (arity ArgsOptionArity))
 
-;: Immutable sequence of option specs in a contiguous backing array.
+(import (vector.vector ArgsOptionSpec core) as option_spec_vec)
+
+;: Immutable sequence of option specs in a generated append-only vector.
 (defstruct ArgsOptionSpecList
-  (slots (Array ArgsOptionSpec))
-  (len i64))
+  (items option_spec_vec.Vec))
 
 ;: One parsed option occurrence in input order. Boolean flags set `has-value`
 ;: false and store the empty string as `value`.
@@ -62,11 +63,13 @@
   (value String)
   (has-value bool))
 
-;: Immutable sequence of parsed option occurrences in a contiguous backing
-;: array. `len` is the live prefix; the array may hold builder slack.
+(import (vector.vector ArgsOption core) as option_vec)
+
+;: Immutable sequence of parsed option occurrences in a generated append-only
+;: vector. The vector's live prefix is the occurrence sequence; its backing
+;: array may hold builder slack.
 (defstruct ArgsOptionList
-  (slots (Array ArgsOption))
-  (len i64))
+  (items option_vec.Vec))
 
 ;: Parsed argv result: ordered option occurrences and ordered positionals.
 (defstruct ArgsParsed
@@ -107,24 +110,26 @@
 
 ;: Return an empty option spec list.
 (define (option-spec-empty) : ArgsOptionSpecList
-  (ArgsOptionSpecList (array.make-array ArgsOptionSpec 0) 0))
+  (ArgsOptionSpecList (option_spec_vec.new)))
 
-;: Prepend `spec` to `rest`, copying `rest` into a right-sized array.
+;: Prepend `spec` to `rest`, copying `rest` into a right-sized vector so a spec
+;: list that stays live can be extended more than once.
 (define (option-spec-cons [spec : ArgsOptionSpec] [rest : ArgsOptionSpecList]) : ArgsOptionSpecList
   (let
-    [len : i64 (struct-get rest len)]
-    [slots : (Array ArgsOptionSpec) (array.make-array ArgsOptionSpec (+ len 1))]
+    [len : i64 (option_spec_vec.len (& (struct-get rest items)))]
+    [out : option_spec_vec.Vec (option_spec_vec.with-capacity (+ len 1))]
     [index : i64 0]
     (begin
-      (array-set! slots 0 spec)
+      (option_spec_vec.push (&mut out) spec)
       (while (< index len)
         (begin
-          (array-set!
-            slots
-            (+ index 1)
-            (array-ref (struct-get rest slots) index))
+          (option_spec_vec.push
+            (&mut out)
+            (array-ref
+              (option_spec_vec.slots (& (struct-get rest items)))
+              index))
           (set! index (+ index 1))))
-      (ArgsOptionSpecList slots (+ len 1)))))
+      (ArgsOptionSpecList out))))
 
 ;: Construct a boolean flag spec.
 (define (flag-option [name : String] [long : String] [short : String]) : ArgsOptionSpec
@@ -168,56 +173,33 @@
     (string.eq (option-spec-short spec) name)
     false))
 
-;: Copy `count` occurrences from `src` into `dst` starting at `offset`.
-(define (option-list-copy!
-  [dst : (&mut dst (Array ArgsOption))]
-  [src : (& src (Array ArgsOption))]
-  [offset : i64]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (array-set! dst (+ index offset) (array-ref src index))
-        (set! index (+ index 1))))))
-
 ;: Return an empty parsed option list.
 (define (option-list-empty) : ArgsOptionList
-  (ArgsOptionList (array.make-array ArgsOption 0) 0))
+  (ArgsOptionList (option_vec.new)))
 
 ;: Prepend one parsed option occurrence, copying `rest` into a right-sized
-;: array.
+;: vector so an option list that stays live can be extended more than once.
 (define (option-list-cons [option : ArgsOption] [rest : ArgsOptionList]) : ArgsOptionList
   (let
-    [len : i64 (struct-get rest len)]
-    [slots : (Array ArgsOption) (array.make-array ArgsOption (+ len 1))]
+    [len : i64 (option_vec.len (& (struct-get rest items)))]
+    [out : option_vec.Vec (option_vec.with-capacity (+ len 1))]
+    [index : i64 0]
     (begin
-      (array-set! slots 0 option)
-      (option-list-copy! (&mut slots) (& (struct-get rest slots)) 1 len)
-      (ArgsOptionList slots (+ len 1)))))
+      (option_vec.push (&mut out) option)
+      (while (< index len)
+        (begin
+          (option_vec.push
+            (&mut out)
+            (array-ref (option_vec.slots (& (struct-get rest items))) index))
+          (set! index (+ index 1))))
+      (ArgsOptionList out))))
 
 ;: Append one parsed option occurrence, doubling the backing array when the
 ;: live prefix has filled it.
 (define (option-list-push [items : ArgsOptionList] [option : ArgsOption]) : ArgsOptionList
-  (let
-    [len : i64 (struct-get items len)]
-    [slots : (Array ArgsOption) (struct-get items slots)]
-    [capacity : i64 (array-length slots)]
-    (begin
-      (if (< len capacity)
-        unit
-        (let
-          [bigger : (Array ArgsOption)
-            (array.make-array
-              ArgsOption
-              (if (< capacity 1)
-                4
-                (* capacity 2)))]
-          (begin
-            (option-list-copy! (&mut bigger) (& slots) 0 len)
-            (set! slots bigger))))
-      (array-set! slots len option)
-      (ArgsOptionList slots (+ len 1)))))
+  (begin
+    (option_vec.push (&mut (struct-get items items)) option)
+    items))
 
 ;: Return a parsed option occurrence's canonical name.
 (define (option-name [option : ArgsOption]) : String
@@ -237,10 +219,11 @@
     [index : i64 0]
     [count : i64 0]
     (begin
-      (while (< index (struct-get items len))
+      (while (< index (option_vec.len (& (struct-get items items))))
         (begin
           (if (string.eq
-            (option-name (array-ref (struct-get items slots) index))
+            (option-name
+              (array-ref (option_vec.slots (& (struct-get items items))) index))
             name)
             (set! count (+ count 1))
             unit)
@@ -261,9 +244,10 @@
     [index : i64 0]
     [result : String fallback]
     (begin
-      (while (< index (struct-get items len))
+      (while (< index (option_vec.len (& (struct-get items items))))
         (let
-          [head : ArgsOption (array-ref (struct-get items slots) index)]
+          [head : ArgsOption
+            (array-ref (option_vec.slots (& (struct-get items items))) index)]
           (begin
             (if (if (string.eq (option-name head) name)
               (option-has-value? head)
@@ -358,10 +342,11 @@
   [name : String]
   [long? : bool]
   [index : i64]) : ArgsMaybeOptionSpec
-  (if (>= index (struct-get specs len))
+  (if (>= index (option_spec_vec.len (& (struct-get specs items))))
     (ArgsNoOptionSpec)
     (let
-      [spec : ArgsOptionSpec (array-ref (struct-get specs slots) index)]
+      [spec : ArgsOptionSpec
+        (array-ref (option_spec_vec.slots (& (struct-get specs items))) index)]
       (if (if long?
         (option-spec-matches-long? spec name)
         (option-spec-matches-short? spec name))

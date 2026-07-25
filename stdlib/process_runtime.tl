@@ -22,12 +22,13 @@
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.env)
+(import stdlib.vector)
+(import (vector.vector String) as arg_vec)
 
 ;: Private runtime argv sequence. `tl` converts the public process model to
 ;: this no-cycle representation before invoking the OS runtime.
 (defstruct ProcessRuntimeStringList
-  (slots (Array String))
-  (len i64))
+  (items arg_vec.Vec))
 
 ;: Private runtime optional string value.
 (defstruct ProcessRuntimeMaybeString
@@ -39,10 +40,11 @@
   (name String)
   (value String))
 
+(import (vector.vector ProcessRuntimeEnvEntry core) as env_entry_vec)
+
 ;: Private runtime environment override sequence.
 (defstruct ProcessRuntimeEnvList
-  (slots (Array ProcessRuntimeEnvEntry))
-  (len i64))
+  (items env_entry_vec.Vec))
 
 ;: Private optional string view.
 (defstruct ProcessRuntimeMaybeStringInfo
@@ -106,50 +108,48 @@
 
 ;: Return an empty runtime argv list.
 (define (args-empty) : ProcessRuntimeStringList
-  (ProcessRuntimeStringList (array.make-array String 0) 0))
+  (ProcessRuntimeStringList (arg_vec.new)))
 
-;: Prepend an owned argv string, copying `rest` into a right-sized array.
+;: Prepend an owned argv string, copying `rest` into a right-sized vector so an
+;: argv list that stays live can be extended more than once.
 (define (args-cons [value : String] [rest : ProcessRuntimeStringList]) : ProcessRuntimeStringList
   (let
-    [len : i64 (struct-get rest len)]
-    [slots : (Array String) (array.make-array String (+ len 1))]
+    [len : i64 (arg_vec.len (& (struct-get rest items)))]
+    [out : arg_vec.Vec (arg_vec.with-capacity (+ len 1))]
     [index : i64 0]
     (begin
-      (array-set! slots 0 value)
+      (arg_vec.push (&mut out) value)
       (while (< index len)
         (begin
-          (array-set!
-            slots
-            (+ index 1)
-            (array-ref (struct-get rest slots) index))
+          (arg_vec.push
+            (&mut out)
+            (array-ref (arg_vec.slots (& (struct-get rest items))) index))
           (set! index (+ index 1))))
-      (ProcessRuntimeStringList slots (+ len 1)))))
+      (ProcessRuntimeStringList out))))
 
 ;: Return an empty runtime environment override list.
 (define (env-empty) : ProcessRuntimeEnvList
-  (ProcessRuntimeEnvList (array.make-array ProcessRuntimeEnvEntry 0) 0))
+  (ProcessRuntimeEnvList (env_entry_vec.new)))
 
 ;: Prepend an owned environment override, copying `rest` into a right-sized
-;: array.
+;: vector so an override list that stays live can be extended more than once.
 (define (env-cons
   [name : String]
   [value : String]
   [rest : ProcessRuntimeEnvList]) : ProcessRuntimeEnvList
   (let
-    [len : i64 (struct-get rest len)]
-    [slots : (Array ProcessRuntimeEnvEntry)
-      (array.make-array ProcessRuntimeEnvEntry (+ len 1))]
+    [len : i64 (env_entry_vec.len (& (struct-get rest items)))]
+    [out : env_entry_vec.Vec (env_entry_vec.with-capacity (+ len 1))]
     [index : i64 0]
     (begin
-      (array-set! slots 0 (ProcessRuntimeEnvEntry name value))
+      (env_entry_vec.push (&mut out) (ProcessRuntimeEnvEntry name value))
       (while (< index len)
         (begin
-          (array-set!
-            slots
-            (+ index 1)
-            (array-ref (struct-get rest slots) index))
+          (env_entry_vec.push
+            (&mut out)
+            (array-ref (env_entry_vec.slots (& (struct-get rest items))) index))
           (set! index (+ index 1))))
-      (ProcessRuntimeEnvList slots (+ len 1)))))
+      (ProcessRuntimeEnvList out))))
 
 ;: Return a missing runtime optional string.
 (define (no-string) : ProcessRuntimeMaybeString
@@ -174,7 +174,7 @@
 
 ;: Return the number of runtime argv entries.
 (define (args-count [args : ProcessRuntimeStringList]) : i64
-  (struct-get args len))
+  (arg_vec.len (& (struct-get args items))))
 
 ;: Return a destructured optional string.
 (define (maybe-string-info [value : ProcessRuntimeMaybeString]) : ProcessRuntimeMaybeStringInfo
@@ -601,14 +601,14 @@
 ;: resulting array can be scanned repeatedly without further moves.
 (define (build-override-cstrings [env : ProcessRuntimeEnvList]) : (Array u64)
   (let
-    [count : i64 (struct-get env len)]
+    [count : i64 (env_entry_vec.len (& (struct-get env items)))]
     [ov : (Array u64) (array.make-array u64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
           [entry : ProcessRuntimeEnvEntry
-            (array-ref (struct-get env slots) index)]
+            (array-ref (env_entry_vec.slots (& (struct-get env items))) index)]
           (begin
             (array-set!
               ov
@@ -722,7 +722,8 @@
       (array-set! arr 0 (cast exec-addr : u64))
       (while (< index argc)
         (let
-          [text : String (array-ref (struct-get argv slots) index)]
+          [text : String
+            (array-ref (arg_vec.slots (& (struct-get argv items))) index)]
           (begin
             (array-set!
               arr
@@ -1523,9 +1524,10 @@
       (stdlib.process_runtime.command-argv command)]
     [index : i64 0]
     (begin
-      (while (< index (struct-get argv len))
+      (while (< index (arg_vec.len (& (struct-get argv items))))
         (let
-          [text : String (array-ref (struct-get argv slots) index)]
+          [text : String
+            (array-ref (arg_vec.slots (& (struct-get argv items))) index)]
           (begin
             (text_buf.append! line " ")
             (text_buf.append! line (stdlib.process_runtime.quote-arg text))

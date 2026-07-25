@@ -101,10 +101,9 @@
   windows
   (extern (windows-get-current-thread-id) : u32 (:symbol "GetCurrentThreadId")))
 
-;: Linear sequence of non-negative weights in a contiguous backing array.
+;: Linear sequence of non-negative weights in a generated append-only vector.
 (defstruct RandomWeightList
-  (slots (Array i64))
-  (len i64))
+  (items i64v.Vec))
 
 ;: Recoverable weighted-index result.
 (defenum RandomWeightedIndexResult
@@ -174,26 +173,28 @@
 
 ;: Return an empty weight list.
 (define (weight-list-empty) : RandomWeightList
-  (RandomWeightList (array.make-array i64 0) 0))
+  (RandomWeightList (i64v.new)))
 
-;: Prepend `weight` to a weight list, copying `rest` into a right-sized array.
+;: Prepend `weight` to a weight list, copying `rest` into a right-sized vector
+;: so a weight list that stays live can be extended more than once.
 (define (weight-list-cons [weight : i64] [rest : RandomWeightList]) : RandomWeightList
   (let
-    [len : i64 (struct-get rest len)]
-    [slots : (Array i64) (array.make-array i64 (+ len 1))]
-    [source : (Array i64) (struct-get rest slots)]
+    [len : i64 (i64v.len (& (struct-get rest items)))]
+    [out : i64v.Vec (i64v.with-capacity (+ len 1))]
     [index : i64 0]
     (begin
-      (array-set! slots 0 weight)
+      (i64v.push (&mut out) weight)
       (while (< index len)
         (begin
-          (array-set! slots (+ index 1) (array-ref source index))
+          (i64v.push
+            (&mut out)
+            (array-ref (i64v.slots (& (struct-get rest items))) index))
           (set! index (+ index 1))))
-      (RandomWeightList slots (+ len 1)))))
+      (RandomWeightList out))))
 
 ;: Return true when a weight list has no entries.
 (define (weight-list-empty? [weights : RandomWeightList]) : bool
-  (= (struct-get weights len) 0))
+  (= (i64v.len (& (struct-get weights items))) 0))
 
 ;: Accumulate and validate non-negative array weights in the prefix
 ;: `[0, count)`.
@@ -282,8 +283,8 @@
 ;: Return the total weight, rejecting empty lists and negative weights.
 (define (weight-list-total [weights : RandomWeightList]) : RandomWeightTotalResult
   (weight-array-total-prefix
-    (& (struct-get weights slots))
-    (struct-get weights len)
+    (i64v.slots (& (struct-get weights items)))
+    (i64v.len (& (struct-get weights items)))
     "random: weight list must not be empty"))
 
 ;: Choose an index from `weights`, skipping zero weights.
@@ -293,8 +294,8 @@
 (define (weighted-index [state : RandomState] [weights : RandomWeightList]) : RandomWeightedIndexResult
   (weighted-index-array-prefix
     state
-    (& (struct-get weights slots))
-    (struct-get weights len)
+    (i64v.slots (& (struct-get weights items)))
+    (i64v.len (& (struct-get weights items)))
     "random: weight list must not be empty"))
 
 ;: Return the shared system-seed failure result.

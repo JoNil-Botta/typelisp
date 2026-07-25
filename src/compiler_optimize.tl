@@ -2041,19 +2041,11 @@
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-dce-instrs-from set instrs -2))
 
-(define (opt-used-array-fill [items : (Array i64)] [index : i64] [value : i64]) : unit
-  (if (>= index (array-length items))
-    unit
-    (begin
-      (array-set! items index value)
-      (opt-used-array-fill items (+ index 1) value))))
-
+;; `make-array` already returns zeroed memory, so a fresh use-count array needs
+;; no initialising pass. The `opt-used-array-fill` helper existed only to run
+;; that pass and had no other caller, so it goes with it.
 (define (opt-used-array-new [count : i64]) : (Array i64)
-  (let
-    [items : (Array i64) (array.make-array i64 count)]
-    (begin
-      (opt-used-array-fill items 0 0)
-      items)))
+  (array.make-array i64 count))
 
 ;; Use counts (not booleans): `add` bumps the count, `contains` reports any live
 ;; use, and `dec` drops a single use when DCE deletes an instruction. Counting
@@ -7714,6 +7706,11 @@
       (opt-cfg-csr-fill-rows! rows count offsets edges 0 0)
       (OptCfgCsr offsets edges))))
 
+;; Only for arrays being *re*-initialised. `make-array` already hands back
+;; zeroed memory -- `tl_array_zero` either fills the allocation or skips the
+;; fill precisely when the arena is virgin and therefore already zero -- so
+;; clearing a freshly allocated array to `false` repeats work the allocator has
+;; already done, with a scalar loop instead of `rep stosq`.
 (define (opt-cfg-fill-bool!
   [values : (Array bool)]
   [count : i64]
@@ -9030,11 +9027,9 @@
     false
     (let
       [set : (Array bool) (array.make-array bool vars)]
-      (begin
-        (opt-cfg-fill-bool! set vars false)
-        (and
-          (opt-verify-param-def-set params set)
-          (opt-verify-block-def-set blocks set))))))
+      (and
+        (opt-verify-param-def-set params set)
+        (opt-verify-block-def-set blocks set)))))
 
 (define (opt-var-defs-from-params
   [params : CompilerIrParamList]
@@ -10261,12 +10256,7 @@
     [(OptSsaFacts.Facts _ _ types) (opt-ssa-any-candidate-types? facts types)]))
 
 (define (opt-ssa-label-members-new [index : OptCfgIndex]) : (Array bool)
-  (let
-    [members : (Array bool)
-      (array.make-array bool (opt-cfg-index-block-count index))]
-    (begin
-      (opt-cfg-fill-bool! members (array-length members) false)
-      members)))
+  (array.make-array bool (opt-cfg-index-block-count index)))
 
 (define (opt-ssa-label-member? [members : (Array bool)] [id : i64]) : bool
   (if (and (>= id 0) (< id (array-length members)))
@@ -13763,7 +13753,6 @@
     [members : (Array bool)
       (array.make-array bool (opt-cfg-index-block-count index))]
     (begin
-      (opt-cfg-fill-bool! members (array-length members) false)
       (opt-loop-body-fill-members! index members labels)
       (OptLoopBody labels members (opt-loop-body-blocks-from members blocks 0)))))
 
@@ -14022,7 +14011,6 @@
     [index : OptCfgIndex (struct-get pred-map index)]
     [marks : (Array bool)
       (array.make-array bool (opt-cfg-index-block-count index))]
-    [_clear-marks : unit (opt-cfg-fill-bool! marks (array-length marks) false)]
     [_seed-header : unit (opt-natural-loop-mark-label! index marks header)]
     [_seed-latch : unit (opt-natural-loop-mark-label! index marks latch)]
     ;; #M-E: a self-loop (latch == header) has body {header}. Seeding the
@@ -21878,8 +21866,6 @@
     [executable-count : i64
       (opt-cfg-index-block-count (struct-get context index))]
     [executable-flags : (Array bool) (array.make-array bool executable-count)]
-    [_clear-executable : unit
-      (opt-cfg-fill-bool! executable-flags executable-count false)]
     [_entry : unit
       (match (opt-cfg-index-id
         (struct-get context index)
@@ -21909,8 +21895,6 @@
     [executable-count : i64
       (opt-cfg-index-block-count (struct-get context index))]
     [executable-flags : (Array bool) (array.make-array bool executable-count)]
-    [_clear-executable : unit
-      (opt-cfg-fill-bool! executable-flags executable-count false)]
     [_entry : unit
       (match (opt-cfg-index-id
         (struct-get context index)
@@ -49459,38 +49443,36 @@
         ty)]
     [_ instr]))
 
-(define (opt-const-divisor-rewrite-seq-from
+;; One rewritten instruction per input instruction, so write straight into a
+;; sized target sequence. The cons-and-reverse form this replaces allocated two
+;; cells per instruction and then rebuilt the array it started from.
+(define (opt-const-divisor-rewrite-seq
   [const-divisors : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [count : i64]
-  [out-rev : CompilerIrInstrList]) : CompilerIrInstrList
-  (if (>= index count)
-    (compiler-ir-instr-list-reverse-onto out-rev CompilerIrInstrList.Nil)
-    (opt-const-divisor-rewrite-seq-from
-      const-divisors
-      instrs
-      (+ index 1)
-      count
-      (compiler-ir-instr-cons
-        (opt-const-divisor-rewrite-instr
-          const-divisors
-          (compiler-ir-instr-seq-ref instrs index))
-        out-rev))))
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (opt-const-divisor-rewrite-instr
+              const-divisors
+              (compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq slots count))))
 
 (define (opt-const-divisor-rewrite-block
   [const-divisors : opt_i64_i64_map.Map]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block
+      (CompilerIrBlock.Block
         label
-        (opt-const-divisor-rewrite-seq-from
-          const-divisors
-          instrs
-          0
-          (compiler-ir-instr-seq-count instrs)
-          CompilerIrInstrList.Nil))]))
+        (opt-const-divisor-rewrite-seq const-divisors instrs))]))
 
 (define (opt-const-divisor-rewrite-blocks
   [const-divisors : opt_i64_i64_map.Map]
@@ -53781,7 +53763,7 @@
   (Some OptLoadCseState))
 
 (defenum OptLoadGvnBlockRewrite
-  (Rewrite OptLoadCseState CompilerIrInstrList))
+  (Rewrite OptLoadCseState CompilerIrInstrSeq))
 
 (define (opt-load-cse-state-with-caps-and-facts
   [table-cap : i64]
@@ -54209,34 +54191,38 @@
             empty-state))]
       [(option_i64.None) empty-state])))
 
-(define (opt-load-gvn-instr-seq-from
+;; Same shape as the const-divisor rewrite: one instruction out per instruction
+;; in, so the CSE state threads through an indexed walk that fills a sized target
+;; sequence instead of consing a reversed list and reversing it back.
+(define (opt-load-gvn-instr-seq
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [out-rev : CompilerIrInstrList]) : OptLoadGvnBlockRewrite
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OptLoadGvnBlockRewrite.Rewrite
-      state
-      (compiler-ir-instr-list-reverse-onto out-rev CompilerIrInstrList.Nil))
-    (match (opt-load-cse-dispatch
-      hs
-      true
-      sources
-      call-memory
-      state
-      (compiler-ir-instr-seq-ref instrs index))
-      [(OptLoadCseResult.Result next-state new-instr)
-        (opt-load-gvn-instr-seq-from
-          hs
-          next-state
-          sources
-          call-memory
-          instrs
-          (+ index 1)
-          (compiler-ir-instr-cons new-instr out-rev))])))
+  [instrs : CompilerIrInstrSeq]) : OptLoadGvnBlockRewrite
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    [current : OptLoadCseState state]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            current
+            (match (opt-load-cse-dispatch
+              hs
+              true
+              sources
+              call-memory
+              current
+              (compiler-ir-instr-seq-ref instrs index))
+              [(OptLoadCseResult.Result next-state new-instr)
+                (begin
+                  (array-set! slots index new-instr)
+                  next-state)]))
+          (set! index (+ index 1))))
+      (OptLoadGvnBlockRewrite.Rewrite current (CompilerIrInstrSeq slots count)))))
 
 (define (opt-load-gvn-rewrite-block
   [hs : OptLoadHeaderSet]
@@ -54246,14 +54232,7 @@
   [block : CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(CompilerIrBlock.Block _ instrs)
-      (opt-load-gvn-instr-seq-from
-        hs
-        entry-state
-        sources
-        call-memory
-        instrs
-        0
-        CompilerIrInstrList.Nil)]))
+      (opt-load-gvn-instr-seq hs entry-state sources call-memory instrs)]))
 
 (define (opt-load-gvn-process-id
   [context : OptCfgContext]
@@ -54296,7 +54275,7 @@
                     out
                     id
                     (OptGvnBlockResult.SomeBlock
-                      (compiler-ir-block block-label instrs)))
+                      (CompilerIrBlock.Block block-label instrs)))
                   (array-set!
                     exit-states
                     id

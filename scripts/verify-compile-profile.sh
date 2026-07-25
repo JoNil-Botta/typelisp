@@ -864,7 +864,28 @@ fi
 # payloads. On Windows it is the allocation boundary that small new modules
 # (such as the clone declaration-macro handoff) previously crossed. The macro
 # walk now starts in the compact destination and grows fixed-size node segments;
-# typecheck starts in a fresh segmented destination. Keep both the logical
+# typecheck starts in a fresh segmented destination.
+#
+# The macro-expand expr pin crossed the 41 -> 42 segment step and has been
+# failing on main since #5712. It is re-pinned here from a measured clean
+# add5984b9 + converged stage2: used nodes 2693353, so the pool rounds up to
+# 2752512 slots across 42 segments of 65536, and 110100480 payload bytes at
+# 40 bytes per node. Attribution, holding the profile binary fixed and varying
+# only the compiled tree: 1e7ef1d90 used 2679678 nodes (41 segments, 7298 under
+# the old pin), #5712 used 2689228 (42 segments, 2252 over), and #5717 added
+# 4093 more. Nothing regressed -- both grew the compiler's own source graph, and
+# a segmented pool sized from that graph is expected to step.
+#
+# Why it reached main red: CI runs on `pull_request` only, so it verifies a head
+# merged into the base as of that event and never re-verifies main afterwards.
+# #5712 was green against an older base; the merged tree was never compiled.
+# Exact-value pins turn that skew into a break that blames whichever innocent
+# PR next opens against main -- #5759 hit it having changed only help strings.
+# Post-bump headroom is 59159 nodes, about 2%, so this recurs. See the
+# follow-up issue for making segment pins ceilings with an explicit headroom
+# assertion instead of equalities.
+#
+# Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
 # copy-on-grow storage is visible.
 if [ "$NL_HOST_OS" = windows ]; then
@@ -887,7 +908,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \
-        2686976 \
+        2752512 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
@@ -914,13 +935,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.segments" \
-        41 \
+        42 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.segment_bytes" \
-        107479040 \
+        110100480 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
@@ -1478,6 +1499,153 @@ if ! cmp -s "$STDLIB_TLCI_WILD_EMBEDDED_ASM"     "$STDLIB_TLCI_WILD_MODIFIED_ASM
     diff -u "$STDLIB_TLCI_WILD_EMBEDDED_ASM"         "$STDLIB_TLCI_WILD_MODIFIED_ASM" >&2 || true
     fail "native and interpreted wildcard arms produced different assembly"
 fi
+
+# #5701: `stdlib.io/format-from` is a comptime string scanner -- it walks the
+# template one byte at a time and re-invokes itself at the next offset. An
+# off-by-one in any index, a dropped escape byte, or a wrong positional
+# argument still compiles and still runs, producing a subtly wrong string, so
+# the differential is the contract. None of the fixtures above formats
+# anything.
+echo "[compile-profile] verify tlci format-scanner route differential"
+STDLIB_TLCI_FMT_SOURCE="$ROOT/tests/integration/tlci_native_format_scanner.tl"
+STDLIB_TLCI_FMT_EMBEDDED_ASM="$STDLIB_TLCI_DIR/format-embedded.s"
+STDLIB_TLCI_FMT_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/format-embedded.stdout"
+STDLIB_TLCI_FMT_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/format-embedded.stderr"
+STDLIB_TLCI_FMT_MODIFIED_ASM="$STDLIB_TLCI_DIR/format-modified.s"
+STDLIB_TLCI_FMT_MODIFIED_STDOUT="$STDLIB_TLCI_DIR/format-modified.stdout"
+STDLIB_TLCI_FMT_MODIFIED_STDERR="$STDLIB_TLCI_DIR/format-modified.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$STDLIB_TLCI_FMT_SOURCE" \
+        -o "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
+    2> "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
+        "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"
+    fail "embedded tlci format-scanner fixture compile failed"
+fi
+if ! (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" compile "$STDLIB_TLCI_FMT_SOURCE" \
+        -o "$STDLIB_TLCI_FMT_MODIFIED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib
+) > "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
+    2> "$STDLIB_TLCI_FMT_MODIFIED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
+        "$STDLIB_TLCI_FMT_MODIFIED_STDERR"
+    fail "comment-modified-root tlci format-scanner fixture compile failed"
+fi
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_dispatches" \
+    1 \
+    "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_FMT_MODIFIED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
+    "$STDLIB_TLCI_FMT_MODIFIED_STDERR"
+# The scanner itself has to run, not just its wrapper, so a fixture edit
+# cannot silently stop covering the recursive walk.
+assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.io/format-with arity="
+assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.io/format-from arity="
+if ! cmp -s "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
+    "$STDLIB_TLCI_FMT_MODIFIED_ASM"; then
+    diff -u "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
+        "$STDLIB_TLCI_FMT_MODIFIED_ASM" >&2 || true
+    fail "native and interpreted format scanners produced different assembly"
+fi
+
+# The scanner's three rejection paths are reported by the macro itself, so a
+# native arm that mis-detects them fails differently -- or not at all -- from
+# the interpreted one. Compare the rendered diagnostics, not just the exit
+# status.
+echo "[compile-profile] verify tlci format-scanner diagnostic differential"
+FMT_DIAG_DIR="$STDLIB_TLCI_DIR/format-diagnostics"
+rm -rf "$FMT_DIAG_DIR"
+mkdir -p "$FMT_DIAG_DIR"
+cat > "$FMT_DIAG_DIR/unmatched-open.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define (main) : i64
+  (begin (io.print-string (format.format "a{")) 0))
+FIXTURE
+cat > "$FMT_DIAG_DIR/too-few-arguments.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define one : i64 1)
+(define (main) : i64
+  (begin (io.print-string (format.format "{} {}" one)) 0))
+FIXTURE
+cat > "$FMT_DIAG_DIR/too-many-arguments.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define one : i64 1)
+(define two : i64 2)
+(define (main) : i64
+  (begin (io.print-string (format.format "{}" one two)) 0))
+FIXTURE
+cat > "$FMT_DIAG_DIR/unmatched-close.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define (main) : i64
+  (begin (io.print-string (format.format "a}b")) 0))
+FIXTURE
+cat > "$FMT_DIAG_DIR/non-literal-template.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define template : String "{}")
+(define (main) : i64
+  (begin (io.print-string (format.format template 1)) 0))
+FIXTURE
+# The profiled compiler writes its counters to stderr too, and those legitimately
+# differ by route (catalog hits, native dispatches). Compare only the rendered
+# diagnostic.
+format_diagnostic_text() {
+    grep -v 'compile-profile' "$1" > "$2"
+}
+for FMT_DIAG_CASE in unmatched-open too-few-arguments too-many-arguments \
+    unmatched-close non-literal-template; do
+    FMT_DIAG_SOURCE="$FMT_DIAG_DIR/$FMT_DIAG_CASE.tl"
+    FMT_DIAG_EMBEDDED="$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stderr"
+    FMT_DIAG_MODIFIED="$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.stderr"
+    if (
+        cd "$STDLIB_TLCI_DIR"
+        "$PROFILE_BIN" check "$FMT_DIAG_SOURCE"
+    ) > "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stdout" \
+        2> "$FMT_DIAG_EMBEDDED"; then
+        fail "embedded route accepted rejected format case $FMT_DIAG_CASE"
+    fi
+    if (
+        cd "$STDLIB_TLCI_MODIFIED_DIR"
+        "$PROFILE_BIN" check "$FMT_DIAG_SOURCE" \
+            --stdlib-root stdlib
+    ) > "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.stdout" \
+        2> "$FMT_DIAG_MODIFIED"; then
+        fail "interpreted route accepted rejected format case $FMT_DIAG_CASE"
+    fi
+    format_diagnostic_text "$FMT_DIAG_EMBEDDED" \
+        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"
+    format_diagnostic_text "$FMT_DIAG_MODIFIED" \
+        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text"
+    if ! grep -q 'format: ' "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"; then
+        show_failure_logs "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stdout" \
+            "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"
+        fail "embedded route reported no format diagnostic for $FMT_DIAG_CASE"
+    fi
+    if ! cmp -s "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text" \
+        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text"; then
+        diff -u "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text" \
+            "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text" >&2 || true
+        fail "format scanner diagnostics differ by route for $FMT_DIAG_CASE"
+    fi
+done
 fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"

@@ -70,18 +70,22 @@
 (defenum CompilerRegVarType
   (Type i64 AstType))
 
+;; The per-function var-type view is a pair of var-id-indexed arrays. The `Array`
+;; arm below lets it BE a var-type list, so the whole-function view costs one
+;; struct rather than one cons cell per live variable, and every lookup through
+;; it is an index rather than a walk of the ascending-id list.
+(defstruct CompilerRegVarTypes
+  (present (Array i64))
+  (items (Array AstType)))
+
 (defenum CompilerRegVarTypeList
   (Nil)
-  (Cons CompilerRegVarType (Box CompilerRegVarTypeList)))
+  (Cons CompilerRegVarType (Box CompilerRegVarTypeList))
+  (Array CompilerRegVarTypes))
 
 (defenum CompilerRegMaybeType
   (No)
   (Some AstType))
-
-(defstruct CompilerRegVarTypes
-  (entries CompilerRegVarTypeList)
-  (present (Array i64))
-  (items (Array AstType)))
 
 (defstruct CompilerRegAssignmentIndex
   (present (Array i64))
@@ -1024,6 +1028,11 @@
   [var : i64]
   [ty : AstType]) : CompilerRegVarTypeList
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-var-type-insert
+        (compiler-reg-var-type-seq-to-list seq)
+        var
+        ty)]
     [(CompilerRegVarTypeList.Nil)
       (compiler-reg-var-type-cons
         (CompilerRegVarType.Type var ty)
@@ -1047,6 +1056,7 @@
   [types : CompilerRegVarTypeList]
   [var : i64]) : CompilerRegMaybeType
   (match types
+    [(CompilerRegVarTypeList.Array seq) (compiler-reg-var-types-lookup seq var)]
     [(CompilerRegVarTypeList.Nil) CompilerRegMaybeType.No]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -1058,7 +1068,7 @@
               (compiler-reg-var-type-lookup (box-get rest) var)))])]))
 
 (define (compiler-reg-var-types-list [types : CompilerRegVarTypes]) : CompilerRegVarTypeList
-  (struct-get types entries))
+  (CompilerRegVarTypeList.Array types))
 
 (define (compiler-reg-var-types-lookup
   [types : CompilerRegVarTypes]
@@ -1216,6 +1226,15 @@
           (CompilerRegVarType.Type index (array-ref types index))
           acc)))))
 
+;; Materialize the ascending-id cons form of an array view, for the arms that
+;; still walk entries rather than index them.
+(define (compiler-reg-var-type-seq-to-list [types : CompilerRegVarTypes]) : CompilerRegVarTypeList
+  (compiler-reg-var-type-arrays-to-list
+    (struct-get types present)
+    (struct-get types items)
+    (- (array-length (struct-get types present)) 1)
+    CompilerRegVarTypeList.Nil))
+
 (define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypes
   (match func
     [(CompilerIrFunction.Function _ params _ vars blocks)
@@ -1226,14 +1245,7 @@
           (compiler-reg-fill-i64-array present 0)
           (compiler-reg-param-types-array! params present types)
           (compiler-reg-block-list-types-array! blocks present types)
-          (CompilerRegVarTypes
-            (compiler-reg-var-type-arrays-to-list
-              present
-              types
-              (- vars 1)
-              CompilerRegVarTypeList.Nil)
-            present
-            types)))]))
+          (CompilerRegVarTypes present types)))]))
 
 (define (compiler-reg-move-list-contains?
   [moves : CompilerRegMoveList]
@@ -2417,15 +2429,24 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-extend-segment-set-word-bits!
-          starts
-          ends
-          segments
-          segment-starts
-          segment-ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; Empty words are the common case in a sparse live set, and
+        ;; `compiler-reg-extend-segment-set-word-bits!` does nothing for them --
+        ;; it tests `bits` against zero before anything else. Testing here
+        ;; instead skips setting up an eight-argument call per empty word;
+        ;; behaviour is unchanged because the callee was already a no-op.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-extend-segment-set-word-bits!
+              starts
+              ends
+              segments
+              segment-starts
+              segment-ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 ;; Note a live point into the per-var SEGMENTS only, WITHOUT
@@ -2473,13 +2494,20 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-segment-note-set-word-bits!
-          segments
-          segment-starts
-          segment-ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; Same as `compiler-reg-extend-segment-set-words!`: the callee returns
+        ;; immediately for an empty word, so testing here skips the call setup
+        ;; for the common case without changing what happens.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-segment-note-set-word-bits!
+              segments
+              segment-starts
+              segment-ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-extend-segment-instr!
@@ -2545,12 +2573,18 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-extend-set-word-bits
-          starts
-          ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; `compiler-reg-extend-set-word-bits` returns immediately for an empty
+        ;; word, so testing here skips the call setup for the common case.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-extend-set-word-bits
+              starts
+              ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-extend-set-word-bits
@@ -3803,6 +3837,11 @@
   [set : CompilerLiveI64Set]
   [handles-ok? : bool]) : CompilerLiveI64Set
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-ineligible-non-scalars
+        (compiler-reg-var-type-seq-to-list seq)
+        set
+        handles-ok?)]
     [(CompilerRegVarTypeList.Nil) set]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -7996,25 +8035,52 @@
         kind)
         [(CompilerRegCallScan.Scan _ set) set])]))
 
+;; "Does any set bit of `bits` land strictly inside (start, end) once offset by
+;; `var-base`?" The bit positions satisfying `start < var-base + i < end` form a
+;; contiguous run, so the whole question is one mask test instead of a walk over
+;; the set bits.
+;;
+;; The mask is clamped to positions 0..31 because `compiler-reg-low-bit-index32`
+;; only ever reported indices in that range: it masks its argument to
+;; `0xffffffff` and answers 31 when the low word is empty. A word carrying bits
+;; above position 31 therefore tested index 31 in the original loop, which is
+;; reproduced here by folding that case into bit 31 of the effective word rather
+;; than assuming callers never pass one.
+(define (compiler-reg-call-word-range-mask [low-bit : i64] [high-bit : i64]) : i64
+  (shl (- (shl 1 (+ (- high-bit low-bit) 1)) 1) low-bit))
+
 (define (compiler-reg-call-word-in-range?
   [bits : i64]
   [var-base : i64]
   [start : i64]
   [end : i64]) : bool
-  (if (= bits 0)
-    false
-    (let
-      [i : i64 (compiler-reg-low-bit-index32 bits)]
-      [c : i64 (+ var-base i)]
-      (if (if (< start c)
-        (< c end)
-        false)
-        true
-        (compiler-reg-call-word-in-range?
-          (bit-and bits (- bits 1))
-          var-base
-          start
-          end)))))
+  (let
+    [low : i64 (bit-and bits 0xffffffff)]
+    [effective : i64
+      (if (= bits low)
+        low
+        (bit-or low 0x80000000))]
+    (if (= effective 0)
+      false
+      (let
+        [lo : i64 (- (+ start 1) var-base)]
+        [hi : i64 (- (- end 1) var-base)]
+        [low-bit : i64
+          (if (< lo 0)
+            0
+            lo)]
+        [high-bit : i64
+          (if (> hi 31)
+            31
+            hi)]
+        (if (> low-bit high-bit)
+          false
+          (not
+            (=
+              (bit-and
+                effective
+                (compiler-reg-call-word-range-mask low-bit high-bit))
+              0)))))))
 
 (cfg
   (any regalloc-census test)
@@ -8044,8 +8110,9 @@
   [set : CompilerLiveI64Set]
   [start : i64]
   [end : i64]
-  [word-index : i64]) : bool
-  (if (>= word-index (compiler-live-set-word-count set))
+  [word-index : i64]
+  [last-word : i64]) : bool
+  (if (> word-index last-word)
     false
     (if (compiler-reg-call-word-in-range?
       (compiler-live-set-word-at-bounded set word-index)
@@ -8053,13 +8120,48 @@
       start
       end)
       true
-      (compiler-reg-call-set-in-range-words? set start end (+ word-index 1)))))
+      (compiler-reg-call-set-in-range-words?
+        set
+        start
+        end
+        (+ word-index 1)
+        last-word))))
 
+;; Only the words holding positions inside `(start, end)` can answer yes, so the
+;; scan starts and stops at those words instead of walking the whole set. Word
+;; `w` holds global positions `w * word-bits .. w * word-bits + word-bits - 1`,
+;; and the positions of interest are `start + 1 .. end - 1`, which gives the
+;; bounds directly. Words outside that span contain no position the predicate
+;; could accept, so skipping them cannot change the answer.
 (define (compiler-reg-call-set-in-range?
   [set : CompilerLiveI64Set]
   [start : i64]
   [end : i64]) : bool
-  (compiler-reg-call-set-in-range-words? set start end 0))
+  (let
+    [bits : i64 (compiler-live-set-word-bits)]
+    [last-pos : i64 (- end 1)]
+    [first-pos : i64
+      (if (< (+ start 1) 0)
+        0
+        (+ start 1))]
+    (if (> first-pos last-pos)
+      false
+      (let
+        [count : i64 (compiler-live-set-word-count set)]
+        [first-word : i64 (/ first-pos bits)]
+        [raw-last-word : i64 (/ last-pos bits)]
+        [last-word : i64
+          (if (>= raw-last-word count)
+            (- count 1)
+            raw-last-word)]
+        (if (> first-word last-word)
+          false
+          (compiler-reg-call-set-in-range-words?
+            set
+            start
+            end
+            first-word
+            last-word))))))
 
 (define (compiler-reg-clobber-word-in-range-inclusive-start?
   [bits : i64]
@@ -8384,11 +8486,18 @@
   (if (>= word-index (compiler-live-set-word-count set))
     unit
     (begin
-      (compiler-reg-ref-counts-add-word-weighted!
-        counts
-        (compiler-live-set-word-at-bounded set word-index)
-        (* word-index (compiler-live-set-word-bits))
-        weight)
+      ;; `compiler-reg-ref-counts-add-word-weighted!` returns immediately for an
+      ;; empty word, so testing here skips the call for the common case in a
+      ;; sparse live set without changing what happens.
+      (let
+        [bits : i64 (compiler-live-set-word-at-bounded set word-index)]
+        (if (= bits 0)
+          unit
+          (compiler-reg-ref-counts-add-word-weighted!
+            counts
+            bits
+            (* word-index (compiler-live-set-word-bits))
+            weight)))
       (compiler-reg-ref-counts-add-set-words-weighted!
         counts
         set
@@ -15153,12 +15262,36 @@
       (compiler-reg-type-register-group-has-sse? ty)]
     [(CompilerRegMaybeType.No) false]))
 
+;; Array-view form of the seed below: same ascending-id visit order, indexed
+;; instead of walked.
+(define (compiler-reg-group-vars-from-types-seq
+  [types : CompilerRegVarTypes]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (let
+    [present : (Array i64) (struct-get types present)]
+    [items : (Array AstType) (struct-get types items)]
+    [count : i64 (array-length present)]
+    [index : i64 0]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref present index) 0)
+            unit
+            (if (compiler-reg-type-register-group? (array-ref items index))
+              (set! out (compiler-live-set-insert out index))
+              unit))
+          (set! index (+ index 1))))
+      out)))
+
 ;; Seed every var whose TYPE is a 2-word register-group (the type-based group
 ;; vars the structural Pack/Word scan misses).
 (define (compiler-reg-group-vars-from-types
   [types : CompilerRegVarTypeList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-group-vars-from-types-seq seq set)]
     [(CompilerRegVarTypeList.Nil) set]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -17335,18 +17468,21 @@
 ;; positions on Win64. Record only preferences that exist in the allocator's XMM
 ;; pool (currently XMM2+); XMM0/XMM1 remain unavailable until the backend scratch
 ;; migration tracked by #4919 lands.
+;; `is-float` is supplied by the caller. Every caller already needs the same
+;; classification to advance the argument-bank indices, and recomputing it here
+;; walked the sorted var-type list a second time for the same value.
 (define (compiler-reg-float-arg-pref-value!
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegStringList]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]
+  [is-float : bool]
   [float-idx : i64]
   [position : i64]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match value
     [(CompilerIrValue.Var v)
-      (if (compiler-reg-call-arg-float? value types)
+      (if is-float
         (let
           [abi-idx : i64
             (if (compiler-abi-arg-banks-independent? abi)
@@ -17393,7 +17529,7 @@
           abi
           pool
           value
-          types
+          is-float
           float-idx
           position
           prefs
@@ -17426,7 +17562,7 @@
         abi
         pool
         a
-        types
+        (compiler-reg-call-arg-float? a types)
         0
         position
         prefs
@@ -17439,7 +17575,7 @@
             abi
             pool
             a
-            types
+            a-float
             0
             position
             prefs
@@ -17448,7 +17584,7 @@
             abi
             pool
             b
-            types
+            (compiler-reg-call-arg-float? b types)
             (if a-float
               1
               0)
@@ -17602,17 +17738,18 @@
 ;; register-homed float call arg must already be in its ABI destination. A greedy
 ;; fallback register, XMM0/XMM1 target, stack target, or conflicting preference
 ;; therefore becomes unassigned and is materialised from its normal stack home.
+;; Same as the pref variant: the caller has already classified this argument.
 (define (compiler-reg-float-arg-demote-value!
   [abi : CompilerRegTargetAbi]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]
+  [is-float : bool]
   [float-idx : i64]
   [position : i64]
   [parents : (Array i64)]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match value
     [(CompilerIrValue.Var v)
-      (if (compiler-reg-call-arg-float? value types)
+      (if is-float
         (let
           [abi-idx : i64
             (if (compiler-abi-arg-banks-independent? abi)
@@ -17653,7 +17790,7 @@
         (compiler-reg-float-arg-demote-value!
           abi
           value
-          types
+          is-float
           float-idx
           position
           parents
@@ -17683,7 +17820,7 @@
       (compiler-reg-float-arg-demote-value!
         abi
         a
-        types
+        (compiler-reg-call-arg-float? a types)
         0
         position
         parents
@@ -17695,7 +17832,7 @@
           (compiler-reg-float-arg-demote-value!
             abi
             a
-            types
+            a-float
             0
             position
             parents
@@ -17703,7 +17840,7 @@
           (compiler-reg-float-arg-demote-value!
             abi
             b
-            types
+            (compiler-reg-call-arg-float? b types)
             (if a-float
               1
               0)
@@ -19927,10 +20064,7 @@
 ;; An empty var-type view, for callers that must bind one on a path where the
 ;; scalar plan is not taken and no types are needed.
 (define (compiler-reg-var-types-empty) : CompilerRegVarTypes
-  (CompilerRegVarTypes
-    CompilerRegVarTypeList.Nil
-    (array.make-array i64 0)
-    (array.make-array AstType 0)))
+  (CompilerRegVarTypes (array.make-array i64 0) (array.make-array AstType 0)))
 
 (define (compiler-reg-plan-function-scalar-cold-for-abi
   [abi : CompilerRegTargetAbi]
@@ -20445,6 +20579,8 @@
   [types : CompilerRegVarTypeList]
   [flags : (Array bool)]) : unit
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-color-flags (compiler-reg-var-type-seq-to-list seq) flags)]
     [(CompilerRegVarTypeList.Nil) unit]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -20484,6 +20620,8 @@
   [types : CompilerRegVarTypeList]
   [tys : (Array AstType)]) : unit
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-color-var-tys (compiler-reg-var-type-seq-to-list seq) tys)]
     [(CompilerRegVarTypeList.Nil) unit]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -21891,6 +22029,12 @@
   [items : (Array AstType)]
   [types : CompilerRegVarTypeList]) : unit
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-color-scatter-types
+        remap
+        present
+        items
+        (compiler-reg-var-type-seq-to-list seq))]
     [(CompilerRegVarTypeList.Nil) unit]
     [(CompilerRegVarTypeList.Cons item rest)
       (begin
@@ -21913,11 +22057,7 @@
     (begin
       (compiler-reg-fill-i64-array present 0)
       (compiler-reg-color-scatter-types remap present items types)
-      (compiler-reg-var-type-arrays-to-list
-        present
-        items
-        (- vars 1)
-        CompilerRegVarTypeList.Nil))))
+      (CompilerRegVarTypeList.Array (CompilerRegVarTypes present items)))))
 
 ;; Spilled scalars are dropped: the id remap re-homes them, so emission's
 ;; formula-slot fallback covers the new id and a stale Spill offset keyed by
@@ -23049,6 +23189,10 @@
   [extra : CompilerRegVarTypeList]
   [base : CompilerRegVarTypeList]) : CompilerRegVarTypeList
   (match extra
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-var-type-list-merge
+        (compiler-reg-var-type-seq-to-list seq)
+        base)]
     [(CompilerRegVarTypeList.Nil) base]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -23115,6 +23259,20 @@
   [types : CompilerRegVarTypeList]
   [best : i64]) : i64
   (match types
+    ;; The cons walk keeps the highest id it sees; on the array view that is the
+    ;; last present slot, so scan down from the top instead of over every entry.
+    [(CompilerRegVarTypeList.Array seq)
+      (let
+        [present : (Array i64) (struct-get seq present)]
+        [index : i64 (- (array-length present) 1)]
+        (begin
+          (while (if (< index 0)
+            false
+            (= (array-ref present index) 0))
+            (set! index (- index 1)))
+          (if (>= index best)
+            (+ index 1)
+            best)))]
     [(CompilerRegVarTypeList.Nil) best]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
@@ -24002,6 +24160,11 @@
   [present : (Array i64)]
   [items : (Array AstType)]) : unit
   (match types
+    [(CompilerRegVarTypeList.Array seq)
+      (compiler-reg-types-from-list-fill!
+        (compiler-reg-var-type-seq-to-list seq)
+        present
+        items)]
     [(CompilerRegVarTypeList.Nil) unit]
     [(CompilerRegVarTypeList.Cons item rest)
       (begin
@@ -24019,14 +24182,7 @@
     (begin
       (compiler-reg-fill-i64-array present 0)
       (compiler-reg-types-from-list-fill! types present items)
-      (CompilerRegVarTypes
-        (compiler-reg-var-type-arrays-to-list
-          present
-          items
-          (- vars 1)
-          CompilerRegVarTypeList.Nil)
-        present
-        items))))
+      (CompilerRegVarTypes present items))))
 
 ;; Generic constrained scratch-plan construction.  These builders attach the
 ;; deterministic instruction/ordinal identity, interval, and physical-home policy.
@@ -26195,14 +26351,7 @@
                 scratch-excluded)
               (CompilerRegEarlyScratchModel
                 (CompilerRegIntervalIndex starts ends segments)
-                (CompilerRegVarTypes
-                  (compiler-reg-var-type-arrays-to-list
-                    present
-                    types
-                    (- out-vars 1)
-                    CompilerRegVarTypeList.Nil)
-                  present
-                  types)
+                (CompilerRegVarTypes present types)
                 assignments
                 scratch-weights
                 scratch-excluded
@@ -26711,14 +26860,7 @@
                         types)
                       (let
                         [type-info : CompilerRegVarTypes
-                          (CompilerRegVarTypes
-                            (compiler-reg-var-type-arrays-to-list
-                              present
-                              types
-                              (- out-vars 1)
-                              CompilerRegVarTypeList.Nil)
-                            present
-                            types)]
+                          (CompilerRegVarTypes present types)]
                         [interval-index : CompilerRegIntervalIndex
                           (CompilerRegIntervalIndex starts ends segments)]
                         [intervals : CompilerRegIntervalList
@@ -34683,14 +34825,7 @@
           (array-set! present index 1)
           (array-set! types index (compiler-reg-i64-ty))
           (set! index (+ index 1))))
-      (CompilerRegVarTypes
-        (compiler-reg-var-type-arrays-to-list
-          present
-          types
-          (- vars 1)
-          CompilerRegVarTypeList.Nil)
-        present
-        types))))
+      (CompilerRegVarTypes present types))))
 
 (define (compiler-reg-coalesce-test-flat-index) : CompilerRegIntervalIndex
   (compiler-reg-interval-index-build

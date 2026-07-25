@@ -151,13 +151,19 @@ fi
 
 # #5528: sustained-dispatch stress over the real mapped image. #5460 saw
 # corruption after ~13.5k catalog calls, while the loader verifier above makes
-# three dispatches -- four orders of magnitude below the failure scale. Tier 1
-# crosses the raw call bridge with no host callback; tier 3 adds real host
-# callbacks, AST commits, and a host-session open/close cycle per iteration.
-# Both run above the observed threshold and on both hosts regardless of the
+# three dispatches -- four orders of magnitude below the failure scale.
+#
+# The three tiers exist so a failure names a layer instead of a symptom. Tier 1
+# crosses the raw call bridge with no host callback. Tier 2 adds real host
+# callbacks over one session and one set of operands built before the loop, and
+# audits the count, operand, cookie and stack state the callbacks read after
+# every dispatch -- the argument integrity #5460's status-1 sentinel actually
+# implicates. Tier 3 runs the same entry but captures pools and pushes a fresh
+# operand each iteration, so it adds the session/pool cycling on top. All three
+# run above the observed threshold and on both hosts regardless of the
 # production route gate, which Windows still disables for #5460.
 STRESS_ITERATIONS=${TYPELISP_TLCI_STRESS_ITERATIONS:-25000}
-for STRESS_TIER in 1 3; do
+for STRESS_TIER in 1 2 3; do
     STRESS_PROGRESS="$WORKDIR/stress-tier$STRESS_TIER.txt"
     echo "[embedded-stdlib-tlci] stress tier $STRESS_TIER"         "($STRESS_ITERATIONS iterations)"
     set +e

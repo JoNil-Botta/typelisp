@@ -9800,6 +9800,25 @@
             (+ (size-of (type (Array Pair 2)))
               (align-of (type (Array Pair 2))))))))))"
       76)
+    ;; An enum is inline storage — an 8-byte tag plus max-aligned payload — so
+    ;; `size-of` on the enum type must agree with what `offset-of` reports for a
+    ;; struct field of that type. The enum arms used to answer with the tag
+    ;; width alone, so `Wide` measured 8 against the 48 bytes it actually
+    ;; occupies, and a fixed array of enums scaled that error by its length.
+    (compiler-lower-comptime-fold-ok?
+      "(defenum Narrow (N i64))
+(defenum Wide (W i64 i64 i64 i64 i64))
+(defstruct HoldsWide
+  (w Wide)
+  (tail i64))
+(define (main) : i64
+  (comptime
+    (+ (size-of (type Wide))
+      (+ (size-of (type Narrow))
+        (+ (align-of (type Wide))
+          (+ (offset-of (type HoldsWide) tail)
+            (size-of (type (Array Narrow 2)))))))))"
+      152)
     (compiler-lower-error-ok?
       "(define (main) : i64 (size-of (type i64)))"
       "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))

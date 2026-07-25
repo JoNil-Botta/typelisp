@@ -3710,8 +3710,23 @@
         pools
         layouts
         (ast-node-pool-context-type-get pools inner))]
-    [(AstType.Enum _) 8]
-    [(AstType.EnumArgs _ _) 8]
+    ;; An enum occupies its 8-byte tag plus max-aligned payload storage inline,
+    ;; exactly like a struct occupies its fields, so its size comes from the
+    ;; recorded layout rather than from the tag width. Returning the tag width
+    ;; here reported 8 for every enum while `offset-of` on a struct field of the
+    ;; same type reported the real inline size.
+    [(AstType.Enum name)
+      (match (ctfe-layout-info-lookup-name-id layouts name)
+        [(CtfeMaybeLayoutInfo.Some info)
+          (match info
+            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
+        [(CtfeMaybeLayoutInfo.None) -1])]
+    [(AstType.EnumArgs name _)
+      (match (ctfe-layout-info-lookup-name-id layouts name)
+        [(CtfeMaybeLayoutInfo.Some info)
+          (match info
+            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
+        [(CtfeMaybeLayoutInfo.None) -1])]
     [(AstType.Struct name)
       (match (ctfe-layout-info-lookup-name-id layouts name)
         [(CtfeMaybeLayoutInfo.Some info)

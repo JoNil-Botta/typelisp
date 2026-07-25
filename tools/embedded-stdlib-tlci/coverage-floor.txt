@@ -21,4 +21,4 @@
 # verify script prints the numbers to paste here, and re-ratcheting is part of
 # each family's acceptance criteria.
 native-entries-min 53
-interpreted-arms-max 2
+interpreted-arms-max 0

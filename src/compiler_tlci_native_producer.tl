@@ -2502,6 +2502,18 @@
                   "\n"
                   rest
                   ")))\n")))]
+          ;; A wildcard arm ends the chain: nothing after it is reachable, so
+          ;; its body compiles as the final alternative instead of handing the
+          ;; scrutinee back to the interpreter. This is the whole of the
+          ;; `partial-entries` gap -- `stdlib.eq/inline-eq` raises a
+          ;; comptime-error here and `stdlib.hash/hash` generates its module for
+          ;; every type except `unit`. Refs #5658.
+          [(AstPattern.Wildcard)
+            (let
+              [arm-code : String (embedded-native-body-code params body-node)]
+              (if (string.eq arm-code "")
+                embedded-native-interpreted-arm-code
+                arm-code))]
           [_ embedded-native-interpreted-arm-code])])))
 
 (define (embedded-native-match-body

@@ -12,7 +12,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (compiler-ir-label "main")
         (compiler-ir-param-cons
           (CompilerIrParam.Param "index" (AstType.I64) 0)
           (compiler-ir-param-cons
@@ -22,17 +22,17 @@
         4
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BoundsCheck
                 (CompilerIrValue.Var 0)
                 (CompilerIrValue.Var 1)
-                "bounds_ok.0")
+                (compiler-ir-label "bounds_ok.0"))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BoundsCheck
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.Var 1)
-                  "bounds_ok.1")
+                  (compiler-ir-label "bounds_ok.1"))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))

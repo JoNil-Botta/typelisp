@@ -2438,20 +2438,39 @@
           (ast-node-pool-compat-context-sync-installed!)
           id)])))
 
-(define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
+;; Raw expression-node read keyed by the pool's segment-bases pointer rather
+;; than a pool value, mirroring `ast-type-segment-bases-get` on the type side.
+;; Addressing is `ast-node-get`'s without its process-global load, so a
+;; read-only walk that hoists the pointer once pays less per node than the
+;; installed-pool fast path (13 instructions against 14 at opt2) instead of the
+;; 30 a per-node `AstNodePoolContext` read costs.
+(define (ast-expr-segment-bases-get [segment-bases : i64] [id : i64]) : AstExpr
   (let
-    [pool-cell : (Array AstExprNodePoolState) (struct-get pools expr-pool)]
-    [pool : AstExprNodePoolState
-      (unsafe
-        (ptr-read (array-data pool-cell)))]
     [biased-base : i64
       (unsafe
-        (ptr-read
-          (ptr-offset
-            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
-            (shr id 16))))]
+        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
     (unsafe
       (ptr-read (int->ptr (+ biased-base (* id 40)) : (Ptr AstExpr))))))
+
+;; Segment-bases pointer of the context's live expr-pool cell. A grow appends to
+;; this table in place and never moves it, and a push rewrites the cell without
+;; changing the pointer, so a walk may cache it across reads; only installing a
+;; different pool context invalidates it.
+(define (ast-node-pool-context-expr-segment-bases [pools : AstNodePoolContext]) : i64
+  (struct-get
+    (unsafe
+      (ptr-read (array-data (struct-get pools expr-pool))))
+    segment-bases))
+
+;; Segment-bases pointer of the process-global (installed) expression pool, the
+;; one `ast-node-get` reads.
+(define (ast-node-pool-active-expr-segment-bases) : i64
+  ast-node-pool-segment-bases)
+
+(define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
+  (ast-expr-segment-bases-get
+    (ast-node-pool-context-expr-segment-bases pools)
+    id))
 
 (define (ast-node-pool-context-expr-set!
   [pools : AstNodePoolContext]

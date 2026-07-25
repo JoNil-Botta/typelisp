@@ -1991,23 +1991,23 @@
 (define (doc-test-dep-list-path?
   [path : String]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : bool
-  (match deps
-    [(CompilerPkgDepNil) false]
-    [(CompilerPkgDepCons dep rest)
-      (let
-        [rest : CompilerPkgDepList (box-get rest)]
-        [dep-path : String (struct-get dep path)]
-        [dep-root : String
-          (compiler-load-normalize-path
-            (if (compiler-load-absolute-path? dep-path)
-              dep-path
-              (compiler-load-join-root-path manifest-dir dep-path)))]
-        (if (and
-          (not (compiler-load-github-dependency-path? dep-path))
-          (doc-test-path-under-root? path dep-root))
-          true
-          (doc-test-dep-list-path? path manifest-dir rest)))]))
+  [deps : CompilerPkgDepList]
+  [index : i64]) : bool
+  (if (>= index (compiler-pkg-dep-list-count deps))
+    false
+    (let
+      [dep : CompilerPkgDep (compiler-pkg-dep-list-at deps index)]
+      [dep-path : String (struct-get dep path)]
+      [dep-root : String
+        (compiler-load-normalize-path
+          (if (compiler-load-absolute-path? dep-path)
+            dep-path
+            (compiler-load-join-root-path manifest-dir dep-path)))]
+      (if (and
+        (not (compiler-load-github-dependency-path? dep-path))
+        (doc-test-path-under-root? path dep-root))
+        true
+        (doc-test-dep-list-path? path manifest-dir deps (+ index 1))))))
 
 (define (doc-test-typecheck-package-path-list-with-roots-from
   [paths : AstDeclPathList]
@@ -2053,7 +2053,8 @@
               (doc-test-dep-list-path?
                 rooted
                 manifest-dir
-                (compiler-pkg-deps-list deps)))
+                (compiler-pkg-deps-list deps)
+                0))
             manifest-local)]
         (if (and package-local (not (string.eq rooted last-path)))
           (let

@@ -13012,10 +13012,7 @@
     [entry : String (compiler-load-join-root-path app-src "main.tl")]
     [dep : String (compiler-load-join-root-path math-src "add.tl")]
     [deps : CompilerPkgDeps
-      (compiler-pkg-deps-from-list
-        (CompilerPkgDepCons
-          (CompilerPkgDep "math" "../math")
-          (box CompilerPkgDepNil)))]
+      (compiler-pkg-deps-cons "math" "../math" (compiler-pkg-deps-empty))]
     (begin
       (compiler-load-test-mkdir base)
       (compiler-load-test-mkdir app-root)
@@ -13542,10 +13539,10 @@
   (alias String)
   (path String))
 
-;: Alias->path dependency list from a parsed manifest.
-(defenum CompilerPkgDepList
-  (CompilerPkgDepNil)
-  (CompilerPkgDepCons CompilerPkgDep (Box CompilerPkgDepList)))
+;: Alias->path dependency list from a parsed manifest, in manifest order.
+(defstruct CompilerPkgDepList
+  (slots (Array CompilerPkgDep))
+  (len i64))
 
 ;: Package dependencies preserve manifest order for deterministic builds while
 ;: indexing aliases for duplicate detection and `pkg:<alias>/...` resolution.
@@ -13616,13 +13613,56 @@
 
 ;: Count the dependencies in a parsed list.
 (define (compiler-pkg-dep-list-count [deps : CompilerPkgDepList]) : i64
-  (match deps
-    [(CompilerPkgDepNil) 0]
-    [(CompilerPkgDepCons _ rest)
-      (+ 1 (compiler-pkg-dep-list-count (box-get rest)))]))
+  (struct-get deps len))
+
+(define (compiler-pkg-dep-list-at [deps : CompilerPkgDepList] [index : i64]) : CompilerPkgDep
+  (array-ref (struct-get deps slots) index))
+
+(define (compiler-pkg-dep-list-empty) : CompilerPkgDepList
+  (CompilerPkgDepList (array.make-array CompilerPkgDep 0) 0))
+
+(define (compiler-pkg-dep-list-copy-into
+  [dst : (Array CompilerPkgDep)]
+  [src : CompilerPkgDepList]
+  [dst-offset : i64]) : unit
+  (let
+    [n : i64 (struct-get src len)]
+    [index : i64 0]
+    (while (< index n)
+      (begin
+        (array-set!
+          dst
+          (+ dst-offset index)
+          (array-ref (struct-get src slots) index))
+        (set! index (+ index 1))))))
+
+;: Append `dep`. Every push right-sizes a fresh array, so callers that keep
+;: extending the same list from several branches never share a buffer.
+(define (compiler-pkg-dep-list-push
+  [deps : CompilerPkgDepList]
+  [dep : CompilerPkgDep]) : CompilerPkgDepList
+  (let
+    [n : i64 (compiler-pkg-dep-list-count deps)]
+    [slots : (Array CompilerPkgDep) (array.make-array CompilerPkgDep (+ n 1))]
+    (begin
+      (compiler-pkg-dep-list-copy-into slots deps 0)
+      (array-set! slots n dep)
+      (CompilerPkgDepList slots (+ n 1)))))
+
+;: Prepend `dep`, right-sizing a fresh array like `compiler-pkg-dep-list-push`.
+(define (compiler-pkg-dep-list-cons
+  [dep : CompilerPkgDep]
+  [deps : CompilerPkgDepList]) : CompilerPkgDepList
+  (let
+    [n : i64 (compiler-pkg-dep-list-count deps)]
+    [slots : (Array CompilerPkgDep) (array.make-array CompilerPkgDep (+ n 1))]
+    (begin
+      (array-set! slots 0 dep)
+      (compiler-pkg-dep-list-copy-into slots deps 1)
+      (CompilerPkgDepList slots (+ n 1)))))
 
 (define (compiler-pkg-deps-empty) : CompilerPkgDeps
-  (CompilerPkgDeps CompilerPkgDepNil))
+  (CompilerPkgDeps (compiler-pkg-dep-list-empty)))
 
 (define (compiler-pkg-deps-list [deps : CompilerPkgDeps]) : CompilerPkgDepList
   (struct-get deps ordered))
@@ -13634,36 +13674,28 @@
   [deps : CompilerPkgDeps]
   [target-alias : String]) : bool
   (let
-    [cursor : CompilerPkgDepList (compiler-pkg-deps-list deps)]
+    [ordered : CompilerPkgDepList (compiler-pkg-deps-list deps)]
+    [index : i64 0]
     (begin
-      (while true
-        (match cursor
-          [(CompilerPkgDepNil) (return false)]
-          [(CompilerPkgDepCons dep rest)
-            (if (string.eq (struct-get dep alias) target-alias)
-              (return true)
-              (set! cursor (box-get rest)))]))
+      (while (< index (compiler-pkg-dep-list-count ordered))
+        (let
+          [dep : CompilerPkgDep (compiler-pkg-dep-list-at ordered index)]
+          (if (string.eq (struct-get dep alias) target-alias)
+            (return true)
+            (set! index (+ index 1)))))
       false)))
 
 (define (compiler-pkg-deps-cons
   [alias : String]
   [path : String]
   [tail : CompilerPkgDeps]) : CompilerPkgDeps
-  (let
-    [ordered : CompilerPkgDepList
-      (CompilerPkgDepCons
-        (CompilerPkgDep alias path)
-        (box (compiler-pkg-deps-list tail)))]
-    (CompilerPkgDeps ordered)))
+  (CompilerPkgDeps
+    (compiler-pkg-dep-list-cons
+      (CompilerPkgDep alias path)
+      (compiler-pkg-deps-list tail))))
 
 (define (compiler-pkg-deps-from-list [deps : CompilerPkgDepList]) : CompilerPkgDeps
-  (match deps
-    [(CompilerPkgDepNil) (compiler-pkg-deps-empty)]
-    [(CompilerPkgDepCons dep rest)
-      (compiler-pkg-deps-cons
-        (struct-get dep alias)
-        (struct-get dep path)
-        (compiler-pkg-deps-from-list (box-get rest)))]))
+  (CompilerPkgDeps deps))
 
 (define (compiler-load-package-name-char? [c : char]) : bool
   (let
@@ -14758,24 +14790,19 @@
   [first-alias : String]
   [second-alias : String]
   [third-alias : String]) : bool
-  (match (compiler-pkg-deps-list deps)
-    [(CompilerPkgDepCons first rest1)
-      (and
-        (string.eq (struct-get first alias) first-alias)
-        (match (box-get rest1)
-          [(CompilerPkgDepCons second rest2)
-            (and
-              (string.eq (struct-get second alias) second-alias)
-              (match (box-get rest2)
-                [(CompilerPkgDepCons third rest3)
-                  (and
-                    (string.eq (struct-get third alias) third-alias)
-                    (match (box-get rest3)
-                      [(CompilerPkgDepNil) true]
-                      [(CompilerPkgDepCons _ _) false]))]
-                [(CompilerPkgDepNil) false]))]
-          [(CompilerPkgDepNil) false]))]
-    [(CompilerPkgDepNil) false]))
+  (let
+    [ordered : CompilerPkgDepList (compiler-pkg-deps-list deps)]
+    (and
+      (= (compiler-pkg-dep-list-count ordered) 3)
+      (string.eq
+        (struct-get (compiler-pkg-dep-list-at ordered 0) alias)
+        first-alias)
+      (string.eq
+        (struct-get (compiler-pkg-dep-list-at ordered 1) alias)
+        second-alias)
+      (string.eq
+        (struct-get (compiler-pkg-dep-list-at ordered 2) alias)
+        third-alias))))
 
 (define (compiler-load-manifest-github-deps-ok?) : bool
   (match (compiler-load-parse-manifest
@@ -15242,15 +15269,15 @@
   [deps : CompilerPkgDeps]
   [target-alias : String]) : CompilerLoadMaybePath
   (let
-    [cursor : CompilerPkgDepList (compiler-pkg-deps-list deps)]
+    [ordered : CompilerPkgDepList (compiler-pkg-deps-list deps)]
+    [index : i64 0]
     (begin
-      (while true
-        (match cursor
-          [(CompilerPkgDepNil) (return (CompilerLoadNoPath))]
-          [(CompilerPkgDepCons dep rest)
-            (if (string.eq (struct-get dep alias) target-alias)
-              (return (CompilerLoadSomePath (struct-get dep path)))
-              (set! cursor (box-get rest)))]))
+      (while (< index (compiler-pkg-dep-list-count ordered))
+        (let
+          [dep : CompilerPkgDep (compiler-pkg-dep-list-at ordered index)]
+          (if (string.eq (struct-get dep alias) target-alias)
+            (return (CompilerLoadSomePath (struct-get dep path)))
+            (set! index (+ index 1)))))
       (CompilerLoadNoPath))))
 
 ;: Resolve `pkg:<alias>/<rest>` against `deps`, relative to `manifest-dir`.
@@ -15367,18 +15394,16 @@
 
 ;: Self-test fixture: local deps plus one GitHub dep that needs fetch support.
 (define (compiler-load-pkg-resolve-deps) : CompilerPkgDeps
-  (compiler-pkg-deps-from-list
-    (CompilerPkgDepCons
-      (CompilerPkgDep "math" "../math")
-      (box
-        (CompilerPkgDepCons
-          (CompilerPkgDep "util" "vendor/util")
-          (box
-            (CompilerPkgDepCons
-              (CompilerPkgDep
-                "remote"
-                "https://github.com/owner/repo.git#rev=abc")
-              (box CompilerPkgDepNil))))))))
+  (compiler-pkg-deps-cons
+    "math"
+    "../math"
+    (compiler-pkg-deps-cons
+      "util"
+      "vendor/util"
+      (compiler-pkg-deps-cons
+        "remote"
+        "https://github.com/owner/repo.git#rev=abc"
+        (compiler-pkg-deps-empty)))))
 
 ;: True when resolving `import-path` yields exactly `expected`.
 (define (compiler-load-pkg-resolves? [import-path : String] [expected : String]) : bool
@@ -15456,16 +15481,13 @@
             (string.eq path "target/cl_vec_root_payload.tl")]
           [(CompilerLoadNoPath) false])))))
 
-(define (compiler-load-boxed-pkg-dep-list-ok?) : bool
+(define (compiler-load-pkg-dep-list-ok?) : bool
   (let
     [deps : CompilerPkgDeps
-      (compiler-pkg-deps-from-list
-        (CompilerPkgDepCons
-          (CompilerPkgDep "alpha" "dep-alpha")
-          (box
-            (CompilerPkgDepCons
-              (CompilerPkgDep "beta" "dep-beta")
-              (box CompilerPkgDepNil)))))]
+      (compiler-pkg-deps-cons
+        "alpha"
+        "dep-alpha"
+        (compiler-pkg-deps-cons "beta" "dep-beta" (compiler-pkg-deps-empty)))]
     (and
       (= (compiler-pkg-deps-count deps) 2)
       (compiler-pkg-deps-alias-seen? deps "beta")
@@ -16309,6 +16331,6 @@
       (compiler-load-string-vec-roots-ok?)
       (return (io.panic "compiler-load: string vec roots smoke mismatch")))
     (unless
-      (compiler-load-boxed-pkg-dep-list-ok?)
-      (return (io.panic "compiler-load: boxed pkg-dep-list smoke mismatch")))
+      (compiler-load-pkg-dep-list-ok?)
+      (return (io.panic "compiler-load: pkg-dep-list smoke mismatch")))
     42))

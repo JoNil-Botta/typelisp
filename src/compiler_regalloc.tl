@@ -17420,18 +17420,22 @@
 ;; positions on Win64. Record only preferences that exist in the allocator's XMM
 ;; pool (currently XMM2+); XMM0/XMM1 remain unavailable until the backend scratch
 ;; migration tracked by #4919 lands.
+;; `is-float` is supplied by the caller. Every caller already needs the same
+;; classification to advance the argument-bank indices, and recomputing it here
+;; walked the sorted var-type list a second time for the same value.
 (define (compiler-reg-float-arg-pref-value!
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegStringList]
   [value : CompilerIrValue]
   [types : CompilerRegVarTypeList]
+  [is-float : bool]
   [float-idx : i64]
   [position : i64]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match value
     [(CompilerIrValue.Var v)
-      (if (compiler-reg-call-arg-float? value types)
+      (if is-float
         (let
           [abi-idx : i64
             (if (compiler-abi-arg-banks-independent? abi)
@@ -17479,6 +17483,7 @@
           pool
           value
           types
+          is-float
           float-idx
           position
           prefs
@@ -17512,6 +17517,7 @@
         pool
         a
         types
+        (compiler-reg-call-arg-float? a types)
         0
         position
         prefs
@@ -17525,6 +17531,7 @@
             pool
             a
             types
+            a-float
             0
             position
             prefs
@@ -17534,6 +17541,7 @@
             pool
             b
             types
+            (compiler-reg-call-arg-float? b types)
             (if a-float
               1
               0)
@@ -17687,17 +17695,19 @@
 ;; register-homed float call arg must already be in its ABI destination. A greedy
 ;; fallback register, XMM0/XMM1 target, stack target, or conflicting preference
 ;; therefore becomes unassigned and is materialised from its normal stack home.
+;; Same as the pref variant: the caller has already classified this argument.
 (define (compiler-reg-float-arg-demote-value!
   [abi : CompilerRegTargetAbi]
   [value : CompilerIrValue]
   [types : CompilerRegVarTypeList]
+  [is-float : bool]
   [float-idx : i64]
   [position : i64]
   [parents : (Array i64)]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match value
     [(CompilerIrValue.Var v)
-      (if (compiler-reg-call-arg-float? value types)
+      (if is-float
         (let
           [abi-idx : i64
             (if (compiler-abi-arg-banks-independent? abi)
@@ -17739,6 +17749,7 @@
           abi
           value
           types
+          is-float
           float-idx
           position
           parents
@@ -17769,6 +17780,7 @@
         abi
         a
         types
+        (compiler-reg-call-arg-float? a types)
         0
         position
         parents
@@ -17781,6 +17793,7 @@
             abi
             a
             types
+            a-float
             0
             position
             parents
@@ -17789,6 +17802,7 @@
             abi
             b
             types
+            (compiler-reg-call-arg-float? b types)
             (if a-float
               1
               0)

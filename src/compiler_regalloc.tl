@@ -8106,6 +8106,93 @@
           (+ 1 rest)
           rest)))))
 
+(cfg
+  test
+  (define (compiler-reg-call-word-range-case [index : i64]) : i64
+    (if (= index 0)
+      0
+      (if (= index 1)
+        1
+        (if (= index 2)
+          2
+          (if (= index 3)
+            0x80000000
+            (if (= index 4)
+              0xffffffff
+              (if (= index 5)
+                0x100000000
+                (if (= index 6)
+                  0x100000001
+                  (if (= index 7)
+                    0x300000000
+                    0x80000001))))))))))
+
+(cfg
+  test
+  (define (compiler-reg-call-word-range-base [index : i64]) : i64
+    (if (= index 0)
+      0
+      (if (= index 1)
+        1
+        (if (= index 2)
+          25
+          31)))))
+
+;; Differential oracle for the mask rewrite of `compiler-reg-call-word-in-range?`.
+;; `compiler-reg-call-word-count-in-range` still has the original shape -- walk
+;; the set bits through `compiler-reg-low-bit-index32` and range-test each one --
+;; so "any bit in range" must equal "the walk counted more than zero" for every
+;; input. A disagreement is a miscompile in interference testing, not a slow
+;; compile.
+;;
+;; The bases reach 31 and the ranges pass 40 on purpose: that is the only way to
+;; exercise the edge case the rewrite folds in, where a word carrying bits above
+;; position 31 reports position 31 because `compiler-reg-low-bit-index32` masks
+;; to `0xffffffff` and answers 31 for an empty low word.
+(cfg
+  test
+  (define (compiler-reg-call-word-in-range-matches-walk?) : bool
+    (let
+      [ok : bool true]
+      [case-index : i64 0]
+      (begin
+        (while (< case-index 9)
+          (let
+            [bits : i64 (compiler-reg-call-word-range-case case-index)]
+            [base-index : i64 0]
+            (begin
+              (while (< base-index 4)
+                (let
+                  [base : i64 (compiler-reg-call-word-range-base base-index)]
+                  [start : i64 -2]
+                  (begin
+                    (while (< start 34)
+                      (let
+                        [end : i64 start]
+                        (begin
+                          (while (< end 42)
+                            (begin
+                              (if (=
+                                (compiler-reg-call-word-in-range?
+                                  bits
+                                  base
+                                  start
+                                  end)
+                                (>
+                                  (compiler-reg-call-word-count-in-range
+                                    bits
+                                    base
+                                    start
+                                    end)
+                                  0))
+                                unit
+                                (set! ok false))
+                              (set! end (+ end 1))))
+                          (set! start (+ start 1)))))
+                    (set! base-index (+ base-index 1)))))
+              (set! case-index (+ case-index 1)))))
+        ok))))
+
 (define (compiler-reg-call-set-in-range-words?
   [set : CompilerLiveI64Set]
   [start : i64]
@@ -36900,6 +36987,14 @@
     (compiler-regalloc-scalar-self-test?)
     (compiler-regalloc-storage-self-test?)
     42))
+
+(cfg
+  test
+  (test
+    regalloc-call-word-in-range-matches-walk
+    (test.assert-true
+      (compiler-reg-call-word-in-range-matches-walk?)
+      "mask range test agrees with the bit walk it replaced, high bits included")))
 
 (cfg
   test

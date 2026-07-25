@@ -3260,9 +3260,7 @@
   [liveness : CompilerFunctionLiveness]
   [label : i64]) : CompilerLiveI64Set
   (match (compiler-live-function-find-block liveness label)
-    [(CompilerLiveMaybeBlock.Some lb)
-      (match lb
-        [(CompilerLiveBlock.Block _ _ _ _ live-out _ _) live-out])]
+    [(CompilerLiveMaybeBlock.Some lb) (struct-get lb live-out)]
     [(CompilerLiveMaybeBlock.No) (compiler-live-set-empty)]))
 
 (define (compiler-reg-phi-inputs-any-live-out?
@@ -3546,8 +3544,7 @@
   (compiler-reg-set-words->row! set row base 0))
 
 (define (compiler-reg-live-block-succs [block : CompilerLiveBlock]) : CompilerLiveLabelSet
-  (match block
-    [(CompilerLiveBlock.Block _ _ _ _ _ succs _) succs]))
+  (struct-get block successors))
 
 (define (compiler-reg-bits-build-rows-from-array!
   [blocks : (Array CompilerLiveBlock)]
@@ -3558,19 +3555,28 @@
   [index : i64]) : reg_label_i64_map.Map
   (if (>= index (array-length blocks))
     idmap
-    (match (array-ref blocks index)
-      [(CompilerLiveBlock.Block label uses defs _ _ _ _)
-        (begin
-          (compiler-reg-set->row! uses use-rows (* index words))
-          (compiler-reg-set->row! defs def-rows (* index words))
-          (reg_label_i64_map.insert-ref! (&mut idmap) label index)
-          (compiler-reg-bits-build-rows-from-array!
-            blocks
-            idmap
-            use-rows
-            def-rows
-            words
-            (+ index 1)))])))
+    (let
+      [block : CompilerLiveBlock (array-ref blocks index)]
+      (begin
+        (compiler-reg-set->row!
+          (struct-get block uses)
+          use-rows
+          (* index words))
+        (compiler-reg-set->row!
+          (struct-get block defs)
+          def-rows
+          (* index words))
+        (reg_label_i64_map.insert-ref!
+          (&mut idmap)
+          (struct-get block label)
+          index)
+        (compiler-reg-bits-build-rows-from-array!
+          blocks
+          idmap
+          use-rows
+          def-rows
+          words
+          (+ index 1))))))
 
 (define (compiler-reg-bits-clear-row!
   [row : (Array i64)]
@@ -5110,40 +5116,42 @@
       ;; Mask registers have no ABI-nonvolatile subset and remain ineligible
       ;; across calls. Float/vector call constraints are applied by their greedy
       ;; allocators instead: SysV forces a spill, while Win64 admits XMM6-XMM15.
-      (match (compiler-reg-function-vector-mask-defs func)
-        [(CompilerLiveUseDef.Def vector-set mask-set)
-          (let
-            [call-points : CompilerLiveI64Set (compiler-reg-call-points func)]
-            ;; Only hidden helper parameters must escape the structural
-            ;; non-scalar block so their incoming private registers get homes.
-            ;; SpmdCall operands/results can use their ordinary vector spill
-            ;; homes; admitting them to fixed-register allocation here would
-            ;; also reclassify synthetic/scalar IR fixtures as SIMD values.
-            [private-param-vars : CompilerLiveI64Set
-              (match (compiler-reg-spmd-private-param-defs
+      (let
+        [vector-mask-defs : CompilerLiveUseDef
+          (compiler-reg-function-vector-mask-defs func)]
+        [private-param-defs : CompilerLiveUseDef
+          (compiler-reg-spmd-private-param-defs
+            params
+            (compiler-live-set-empty)
+            (compiler-live-set-empty))]
+        [call-points : CompilerLiveI64Set (compiler-reg-call-points func)]
+        ;; Only hidden helper parameters must escape the structural
+        ;; non-scalar block so their incoming private registers get homes.
+        ;; SpmdCall operands/results can use their ordinary vector spill
+        ;; homes; admitting them to fixed-register allocation here would
+        ;; also reclassify synthetic/scalar IR fixtures as SIMD values.
+        [private-param-vars : CompilerLiveI64Set
+          (compiler-live-set-union
+            (struct-get private-param-defs uses)
+            (struct-get private-param-defs defs))]
+        [base-ineligible : CompilerLiveI64Set
+          (compiler-live-set-minus
+            (compiler-reg-ineligible-memory
+              blocks
+              (compiler-reg-ineligible-params
                 params
-                (compiler-live-set-empty)
-                (compiler-live-set-empty))
-                [(CompilerLiveUseDef.Def private-vectors private-masks)
-                  (compiler-live-set-union private-vectors private-masks)])]
-            [base-ineligible : CompilerLiveI64Set
-              (compiler-live-set-minus
-                (compiler-reg-ineligible-memory
+                (compiler-reg-call-arg-vars-blocks
                   blocks
-                  (compiler-reg-ineligible-params
-                    params
-                    (compiler-reg-call-arg-vars-blocks
-                      blocks
-                      (compiler-reg-ineligible-non-scalars
-                        types
-                        (compiler-live-set-empty)
-                        false))))
-                private-param-vars)]
-            (compiler-reg-mark-spanning-in-set
-              intervals
-              mask-set
-              call-points
-              base-ineligible))])]))
+                  (compiler-reg-ineligible-non-scalars
+                    types
+                    (compiler-live-set-empty)
+                    false))))
+            private-param-vars)]
+        (compiler-reg-mark-spanning-in-set
+          intervals
+          (struct-get vector-mask-defs defs)
+          call-points
+          base-ineligible))]))
 
 (define (compiler-reg-interval-before?
   [left : CompilerRegInterval]
@@ -5296,7 +5304,7 @@
   [vector-set : CompilerLiveI64Set]
   [mask-set : CompilerLiveI64Set]) : CompilerLiveUseDef
   (match (compiler-ir-param-list-force-cons params)
-    [(CompilerIrParamList.Nil) (CompilerLiveUseDef.Def vector-set mask-set)]
+    [(CompilerIrParamList.Nil) (CompilerLiveUseDef vector-set mask-set)]
     [(CompilerIrParamList.Array seq)
       (compiler-reg-spmd-private-param-defs
         (compiler-ir-param-seq-to-list seq)
@@ -5334,26 +5342,27 @@
             out-mask
             (compiler-reg-mask-defs-instr (array-ref slots index) out-mask))
           (set! index (+ index 1))))
-      (CompilerLiveUseDef.Def out-vector out-mask))))
+      (CompilerLiveUseDef out-vector out-mask))))
 
 (define (compiler-reg-vector-mask-defs-blocks
   [blocks : CompilerIrBlockList]
   [vector-set : CompilerLiveI64Set]
   [mask-set : CompilerLiveI64Set]) : CompilerLiveUseDef
   (match blocks
-    [(CompilerIrBlockList.Nil) (CompilerLiveUseDef.Def vector-set mask-set)]
+    [(CompilerIrBlockList.Nil) (CompilerLiveUseDef vector-set mask-set)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
-          (match (compiler-reg-vector-mask-defs-instr-seq
-            instrs
-            vector-set
-            mask-set)
-            [(CompilerLiveUseDef.Def next-vector next-mask)
-              (compiler-reg-vector-mask-defs-blocks
-                (box-get rest)
-                next-vector
-                next-mask)])])]
+          (let
+            [defs : CompilerLiveUseDef
+              (compiler-reg-vector-mask-defs-instr-seq
+                instrs
+                vector-set
+                mask-set)]
+            (compiler-reg-vector-mask-defs-blocks
+              (box-get rest)
+              (struct-get defs uses)
+              (struct-get defs defs)))])]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -5365,26 +5374,31 @@
             (begin
               (match (compiler-ir-block-seq-ref seq i)
                 [(CompilerIrBlock.Block _ instrs)
-                  (match (compiler-reg-vector-mask-defs-instr-seq
-                    instrs
-                    out-vector
-                    out-mask)
-                    [(CompilerLiveUseDef.Def next-vector next-mask)
-                      (begin
-                        (set! out-vector next-vector)
-                        (set! out-mask next-mask))])])
+                  (let
+                    [defs : CompilerLiveUseDef
+                      (compiler-reg-vector-mask-defs-instr-seq
+                        instrs
+                        out-vector
+                        out-mask)]
+                    (begin
+                      (set! out-vector (struct-get defs uses))
+                      (set! out-mask (struct-get defs defs))))])
               (set! i (+ i 1))))
-          (CompilerLiveUseDef.Def out-vector out-mask)))]))
+          (CompilerLiveUseDef out-vector out-mask)))]))
 
 (define (compiler-reg-function-vector-mask-defs [func : CompilerIrFunction]) : CompilerLiveUseDef
   (match func
     [(CompilerIrFunction.Function _ params _ _ blocks)
-      (match (compiler-reg-spmd-private-param-defs
-        params
-        (compiler-live-set-empty)
-        (compiler-live-set-empty))
-        [(CompilerLiveUseDef.Def vector-set mask-set)
-          (compiler-reg-vector-mask-defs-blocks blocks vector-set mask-set)])]))
+      (let
+        [defs : CompilerLiveUseDef
+          (compiler-reg-spmd-private-param-defs
+            params
+            (compiler-live-set-empty)
+            (compiler-live-set-empty))]
+        (compiler-reg-vector-mask-defs-blocks
+          blocks
+          (struct-get defs uses)
+          (struct-get defs defs)))]))
 
 (define (compiler-reg-special-candidates
   [intervals : CompilerRegIntervalList]
@@ -9263,8 +9277,7 @@
     [(reg_label_i64_map.LookupMissing) false]))
 
 (define (compiler-reg-edge-copy-live-block-label [block : CompilerLiveBlock]) : i64
-  (match block
-    [(CompilerLiveBlock.Block label _ _ _ _ _ _) label]))
+  (struct-get block label))
 
 (define (compiler-reg-edge-copy-increment-pred!
   [liveness : CompilerFunctionLiveness]
@@ -19802,12 +19815,8 @@
           coalesce
           scalar-assignments)
         unit)]
-    [vector-vars : CompilerLiveI64Set
-      (match vector-mask-defs
-        [(CompilerLiveUseDef.Def vars _) vars])]
-    [mask-vars : CompilerLiveI64Set
-      (match vector-mask-defs
-        [(CompilerLiveUseDef.Def _ vars) vars])]
+    [vector-vars : CompilerLiveI64Set (struct-get vector-mask-defs uses)]
+    [mask-vars : CompilerLiveI64Set (struct-get vector-mask-defs defs)]
     ;; Scalar-only functions (no vector or mask IR values) have no special
     ;; candidates at all: the select-false preference walk, both special-candidate
     ;; interval filters, the vector greedy, and the mask fixed-candidate pass all

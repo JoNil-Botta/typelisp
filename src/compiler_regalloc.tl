@@ -8469,11 +8469,18 @@
   (if (>= word-index (compiler-live-set-word-count set))
     unit
     (begin
-      (compiler-reg-ref-counts-add-word-weighted!
-        counts
-        (compiler-live-set-word-at-bounded set word-index)
-        (* word-index (compiler-live-set-word-bits))
-        weight)
+      ;; `compiler-reg-ref-counts-add-word-weighted!` returns immediately for an
+      ;; empty word, so testing here skips the call for the common case in a
+      ;; sparse live set without changing what happens.
+      (let
+        [bits : i64 (compiler-live-set-word-at-bounded set word-index)]
+        (if (= bits 0)
+          unit
+          (compiler-reg-ref-counts-add-word-weighted!
+            counts
+            bits
+            (* word-index (compiler-live-set-word-bits))
+            weight)))
       (compiler-reg-ref-counts-add-set-words-weighted!
         counts
         set

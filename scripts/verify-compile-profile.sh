@@ -293,6 +293,122 @@ assert_profile_live_counter_eq_in() {
     fi
 }
 
+# Read one live counter out of profile output, or the literal string "absent" so
+# a renamed or dropped counter fails closed instead of comparing against 0.
+profile_live_counter_in() {
+    awk -F'|' -v phase="$2" '
+        $1 == "compile-profile" && $2 == phase { value = ($5 + 0); found = 1 }
+        END { if (found) print value; else print "absent" }
+    ' "$1"
+}
+
+# Assert one selfhost pool boundary from its segment count alone.
+#
+# Since #5541 the AST pools are reclaimable segmented storage with fixed-size
+# segments, so `capacity` and `segment_bytes` are exact multiples of `segments`:
+# pinning the segment count pins all three, one constant moves when the
+# compiler's own sources grow a step, and no mismatch can leave the three views
+# inconsistent with each other.
+#
+# On failure report the whole family with expected against actual. All three
+# move together, and a message naming only the counter that happened to be
+# compared first sends the author round a discover-by-failing loop (#5764).
+assert_selfhost_pool_family() {
+    _spf_file=$1
+    _spf_pool=$2
+    _spf_point=$3
+    _spf_segments=$4
+    _spf_segment_nodes=$5
+    _spf_node_bytes=$6
+    _spf_stdout=$7
+    _spf_stderr=$8
+
+    _spf_capacity=$((_spf_segments * _spf_segment_nodes))
+    _spf_segment_bytes=$((_spf_capacity * _spf_node_bytes))
+    _spf_prefix="lower.$_spf_pool.$_spf_point"
+    _spf_expected="segments:$_spf_segments capacity:$_spf_capacity segment_bytes:$_spf_segment_bytes"
+    _spf_bad=
+
+    for _spf_pair in $_spf_expected; do
+        _spf_metric=${_spf_pair%%:*}
+        _spf_want=${_spf_pair#*:}
+        _spf_got=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.$_spf_metric")
+        if [ "$_spf_got" != "$_spf_want" ]; then
+            _spf_bad="$_spf_bad $_spf_metric"
+        fi
+    done
+
+    [ -n "$_spf_bad" ] || return 0
+
+    show_failure_logs "$_spf_stdout" "$_spf_stderr"
+    echo "selfhost pool boundary $_spf_prefix does not match its pin" >&2
+    echo "  mismatched:$_spf_bad" >&2
+    printf '  %-14s %14s %14s\n' metric expected actual >&2
+    for _spf_pair in $_spf_expected; do
+        _spf_metric=${_spf_pair%%:*}
+        printf '  %-14s %14s %14s\n' \
+            "$_spf_metric" \
+            "${_spf_pair#*:}" \
+            "$(profile_live_counter_in "$_spf_file" "$_spf_prefix.$_spf_metric")" >&2
+    done
+    _spf_len=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.len")
+    _spf_actual_segments=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.segments")
+    echo "  used nodes $_spf_len; capacity is that rounded up to whole segments of $_spf_segment_nodes" >&2
+    echo "  to refresh: set this boundary's segment count to $_spf_actual_segments" >&2
+    echo "  capacity = segments * $_spf_segment_nodes, segment_bytes = capacity * $_spf_node_bytes" >&2
+    echo "  this probe is Windows-gated, so a Linux run cannot regenerate these values" >&2
+    fail "selfhost pool boundary $_spf_prefix does not match its pin"
+}
+
+# The pool-family checker is the only thing between an allocation regression and
+# a green run, and on Linux the probe it guards never executes, so exercise it
+# against synthetic profile output on every host. A grep-shaped gate that
+# silently matched nothing would otherwise read as "clean".
+selfhost_pool_family_self_test() {
+    _spst_dir="$WORKDIR/pool-family-self-test"
+    rm -rf "$_spst_dir"
+    mkdir -p "$_spst_dir"
+    _spst_ok="$_spst_dir/consistent.txt"
+    _spst_grown="$_spst_dir/one-segment-more.txt"
+    _spst_empty="$_spst_dir/no-counters.txt"
+
+    # 7 segments of 1024 nodes at 24 bytes, internally consistent.
+    {
+        echo "compile-profile|lower.ast_type_pool.self_test.len|0|0|6900|0"
+        echo "compile-profile|lower.ast_type_pool.self_test.segments|0|0|7|0"
+        echo "compile-profile|lower.ast_type_pool.self_test.capacity|0|0|7168|0"
+        echo "compile-profile|lower.ast_type_pool.self_test.segment_bytes|0|0|172032|0"
+    } > "$_spst_ok"
+    # The same pin with one more segment actually allocated: the regression the
+    # exact pins exist to catch.
+    sed -e 's/|7|0$/|8|0/' -e 's/|7168|0$/|8192|0/' -e 's/|172032|0$/|196608|0/' \
+        "$_spst_ok" > "$_spst_grown"
+    : > "$_spst_empty"
+
+    if ! (assert_selfhost_pool_family "$_spst_ok" ast_type_pool self_test 7 1024 24 \
+        "$_spst_ok" "$_spst_ok") >/dev/null 2>&1; then
+        fail "pool family self-test rejected consistent counters"
+    fi
+    if (assert_selfhost_pool_family "$_spst_grown" ast_type_pool self_test 7 1024 24 \
+        "$_spst_grown" "$_spst_grown") >/dev/null 2>&1; then
+        fail "pool family self-test accepted a pool that grew a segment"
+    fi
+    if (assert_selfhost_pool_family "$_spst_empty" ast_type_pool self_test 7 1024 24 \
+        "$_spst_empty" "$_spst_empty") >/dev/null 2>&1; then
+        fail "pool family self-test accepted missing counters"
+    fi
+    # The report must name every member, not only the one that mismatched.
+    _spst_report=$( (assert_selfhost_pool_family "$_spst_grown" ast_type_pool self_test 7 1024 24 \
+        "$_spst_empty" "$_spst_empty") 2>&1 || true)
+    for _spst_metric in segments capacity segment_bytes; do
+        case "$_spst_report" in
+            *"$_spst_metric"*) ;;
+            *) fail "pool family failure report omitted $_spst_metric" ;;
+        esac
+    done
+    echo "[compile-profile] pool family self-tests passed"
+}
+
 assert_profile_live_counter_at_least_in() {
     _file=$1
     _phase=$2
@@ -347,6 +463,11 @@ assert_lower_row() {
         "$OPT_STDOUT" \
         "$OPT_STDERR"
 }
+
+# Runs on every host, ahead of the expensive builds: the selfhost pool probe it
+# guards is Windows-gated, so this is the only coverage the checker gets on
+# Linux, and a broken checker there would land silently.
+selfhost_pool_family_self_test
 
 echo "[compile-profile] build embedded stdlib tlci input"
 scripts/build-embedded-stdlib-tlci.sh \
@@ -866,24 +987,27 @@ fi
 # walk now starts in the compact destination and grows fixed-size node segments;
 # typecheck starts in a fresh segmented destination.
 #
-# The macro-expand expr pin crossed the 41 -> 42 segment step and has been
-# failing on main since #5712. It is re-pinned here from a measured clean
-# add5984b9 + converged stage2: used nodes 2693353, so the pool rounds up to
-# 2752512 slots across 42 segments of 65536, and 110100480 payload bytes at
-# 40 bytes per node. Attribution, holding the profile binary fixed and varying
-# only the compiled tree: 1e7ef1d90 used 2679678 nodes (41 segments, 7298 under
-# the old pin), #5712 used 2689228 (42 segments, 2252 over), and #5717 added
-# 4093 more. Nothing regressed -- both grew the compiler's own source graph, and
-# a segmented pool sized from that graph is expected to step.
+# The macro-expand expr boundary crossed the 41 -> 42 segment step and had been
+# failing on main since #5712, which is what #5766 tracked. Attribution, holding
+# the profile binary fixed and varying only the compiled tree: 1e7ef1d90 used
+# 2679678 nodes (41 segments), #5712 used 2689228 (42 segments, 2252 over the
+# old pin), and #5717 added 4093 more. Nothing regressed -- both grew the
+# compiler's own source graph, and a segmented pool sized from that graph is
+# expected to step.
 #
-# Why it reached main red: CI runs on `pull_request` only, so it verifies a head
-# merged into the base as of that event and never re-verifies main afterwards.
-# #5712 was green against an older base; the merged tree was never compiled.
-# Exact-value pins turn that skew into a break that blames whichever innocent
-# PR next opens against main -- #5759 hit it having changed only help strings.
-# Post-bump headroom is 59159 nodes, about 2%, so this recurs. See the
-# follow-up issue for making segment pins ceilings with an explicit headroom
-# assertion instead of equalities.
+# Why a step reaches main red rather than being caught: CI runs on
+# `pull_request` only, so it verifies a head merged into the base as of that
+# event and never re-verifies main afterwards (#5770). A PR is green against an
+# older base and the merged tree is never compiled, so the break surfaces on
+# whichever unrelated PR next opens -- #5759 hit it having changed only CLI help
+# strings. Each boundary now moves as one constant with a report that names the
+# whole family, so the next step costs a one-number edit instead of the
+# archaeology that took (#5764).
+#
+# Current headroom, used against capacity, on a measured clean add5984b9:
+# expr macro_expand 2693353/2752512, expr typecheck 1610018/1638400,
+# type macro_expand 20013/20480, type typecheck 5887/6144. All four sit within
+# a few percent of their next step, so expect these to move.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -905,57 +1029,27 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_expr_pool.macro_expand.capacity" \
-        2752512 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_expr_pool.typecheck.capacity" \
-        1638400 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    # The ordinary scalar `for` macro retains each source binding's produced
-    # type for expr-type inspection, so its macro-walk type footprint is part
-    # of the intentional exact selfhost allocation boundary.
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_type_pool.macro_expand.capacity" \
-        20480 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_type_pool.typecheck.capacity" \
-        6144 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_expr_pool.macro_expand.segments" \
-        42 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_expr_pool.macro_expand.segment_bytes" \
-        110100480 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_type_pool.typecheck.segments" \
-        6 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_type_pool.typecheck.segment_bytes" \
-        147456 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
+    # One constant per boundary: the segment count. capacity and segment_bytes
+    # are derived, so a source-size step is a one-number edit and the three
+    # views cannot drift apart. Expr nodes are 40 bytes in segments of 65536;
+    # type nodes are 24 bytes in segments of 1024.
+    #
+    # The type-pool macro_expand boundary is load-bearing beyond sizing: the
+    # ordinary scalar `for` macro retains each source binding's produced type
+    # for expr-type inspection, so its macro-walk type footprint is part of the
+    # intentional exact selfhost allocation boundary.
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 40 \
+        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 25 65536 40 \
+        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 20 1024 24 \
+        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 6 1024 24 \
+        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;
     # the exact selfhost segment invariants above catch sizing regressions.

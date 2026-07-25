@@ -262,6 +262,21 @@ check_cmp_fold_load() {
     assert_not_contains "$_body" 'call tl_oob_abort' cmp-fold-load
 }
 
+check_const_global_mask_unroll() {
+    _asm=$(compile_gate         const_global_mask_unroll         tests/integration/const_global_mask_unroll.tl)
+    _global=$(function_body "$_asm" _tl_const_global_mask_unroll_mask_sum)
+    _literal=$(function_body "$_asm" _tl_const_global_mask_unroll_mask_sum_literal)
+    # #5238: an immutable global mask must reach the same BCE-versioned x16
+    # unrolled fast path as the literal spelling. Without the early
+    # constant-global operand rewrite the global-mask loop emits __bce_fast but
+    # no __unroll_body, because the two-iteration fixpoint cap is spent
+    # creating the fast clone. The literal twin is the control: asserting both
+    # turns a regression into an asymmetry instead of a silently slower binary.
+    assert_contains "$_global" '__bce_fast__unroll_body' const-global-mask-unroll
+    assert_contains "$_global" '__bce_fast__unroll_guard' const-global-mask-unroll
+    assert_contains "$_literal" '__bce_fast__unroll_body' const-global-mask-unroll
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -413,6 +428,7 @@ check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
 check_const_index_bounds
+check_const_global_mask_unroll
 check_rbp_sixth_csr
 check_win64_rbp_eighth_csr
 check_licm_desc_hoist

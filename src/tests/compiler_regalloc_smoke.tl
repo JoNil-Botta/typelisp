@@ -1,6 +1,7 @@
 ;; compiler_regalloc_smoke.tl - Runnable smoke for compiler_regalloc.tl.
 (import "../compiler_liveness.tl")
 (import "../compiler_regalloc.tl")
+(import "../compiler_regalloc_tests.tl")
 (import compiler_intern as ci)
 (import stdlib.string)
 

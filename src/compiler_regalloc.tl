@@ -2482,13 +2482,20 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-segment-note-set-word-bits!
-          segments
-          segment-starts
-          segment-ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; Same as `compiler-reg-extend-segment-set-words!`: the callee returns
+        ;; immediately for an empty word, so testing here skips the call setup
+        ;; for the common case without changing what happens.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-segment-note-set-word-bits!
+              segments
+              segment-starts
+              segment-ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-extend-segment-instr!

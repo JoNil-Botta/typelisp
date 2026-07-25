@@ -178,6 +178,13 @@ run_gate \
     "CI timing budget self-tests" \
     scripts/check-ci-timing-budgets.sh \
     --self-test
+# A verify-*/check-* script that nothing invokes fails nothing. Two ISPC
+# correctness gates survived that way for months (#5690); this sweep makes the
+# next one a red CI run instead of silent dead weight.
+run_gate \
+    "gate reachability" \
+    scripts/check-gate-reachability.sh \
+    --self-test
 run_gate \
     "SPMD AVX-512 instruction harness self-tests" \
     scripts/measure-spmd-avx512-instructions.sh \
@@ -428,7 +435,9 @@ run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-sp
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD package calls" scripts/verify-spmd-package-calls.sh
 run_with_compiler "$STAGE2_BIN" "ISPC perfbench loads corpus contract" scripts/verify-ispc-perfbench-loads.sh
 run_with_compiler "$STAGE2_BIN" "ISPC perfbench stores corpus contract" scripts/verify-ispc-perfbench-stores.sh
+run_with_compiler "$STAGE2_BIN" "ISPC perfbench gathers corpus contract" scripts/verify-ispc-perfbench-gathers.sh
 run_with_compiler "$STAGE2_BIN" "ISPC Mandelbrot corpus contract" scripts/verify-ispc-mandelbrot.sh
+run_with_compiler "$STAGE2_BIN" "ISPC point-transform corpus contract" scripts/verify-ispc-point-transform.sh
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 compile-profile verifier" scripts/verify-compile-profile.sh

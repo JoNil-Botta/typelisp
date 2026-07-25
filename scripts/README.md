@@ -31,6 +31,16 @@ rg -n 'scripts/[^ ]+\.(sh|ps1)' .github/workflows scripts/ci-verify.sh
 rg -n 'scripts/<script-name>' .
 ```
 
+`check-gate-reachability.sh` enforces that mapping. It walks the same
+references transitively from the workflow files and requires every top-level
+`check-*` and `verify-*` script to be reached, so a new gate cannot land
+unreferenced the way the two ISPC correctness gates did (#5690). Documentation
+is never a root: a gate mentioned only by this README still counts as dead.
+A gate that is intentionally not wired goes in `optional-gate-allowlist.tsv`
+with a reason, and the entry is rejected once the gate becomes reachable.
+Optional local tools should use a `benchmark-`, `measure-`, or `analyze-` name
+instead, which the sweep does not require to be reachable.
+
 ## Core development loop
 
 | Purpose | Entry point |
@@ -45,6 +55,8 @@ rg -n 'scripts/<script-name>' .
 | Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh`, `verify-native-link-windows.sh` |
 | Check codegen shape and parity | `verify-asm-shape-gates.sh`, `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
 | Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-package-calls.sh`, `verify-spmd-broadcast.sh`, `verify-spmd-lane-identity.sh` |
+| Check ISPC corpus contracts | `verify-ispc-perfbench-loads.sh`, `verify-ispc-perfbench-stores.sh`, `verify-ispc-perfbench-gathers.sh`, `verify-ispc-mandelbrot.sh`, `verify-ispc-point-transform.sh` |
+| Check gate wiring | `check-gate-reachability.sh`, `check-cli-gate-coverage.sh` |
 | Check docs and stdlib | `verify-doc-site.sh`, `verify-doc-tests.sh`, `verify-stdlib.sh`, `verify-stdlib-selfhost.sh`, `verify-stdlib-docs.sh` |
 | Check performance policy | `check-instruction-counts.sh`, `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `bench.sh`, `run-optimization-benchmarks.sh` |
 

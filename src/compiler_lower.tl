@@ -47958,7 +47958,7 @@
       (tc-bind-return-type
         (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
         ret-ty)]
-    (match (lower-avx512-masked-expr
+    (match (lower-avx512-masked-expr-expected
       ctx
       state
       env
@@ -47972,7 +47972,8 @@
           source-param-count))
       (CompilerIrValue.Var 0)
       lanes
-      body)
+      body
+      ret-ty)
       [(ResultLowerExpr.Ok lowered)
         (match lowered
           [(LowerExpr.Expr body-state value _)
@@ -49061,15 +49062,77 @@
           lanes
           inner
           expected-ty))]
-    [(AstExpr.Literal lit)
-      (ResultLowerExpr.Ok
-        (lower-emit-splat
+    [(AstExpr.Ann inner-box _)
+      (let
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-avx512-masked-expr-expected
+          ctx
           state
-          (lower-literal-value-with-type
-            lit
-            (tc-type-without-regions expected-ty))
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
           lanes
-          (tc-type-without-regions expected-ty)))]
+          inner
+          expected-ty))]
+    [(AstExpr.Cast inner-box cast-ty)
+      (let
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        [resolved-cast : AstType
+          (tc-type-without-regions (tc-resolve-type ctx cast-ty))]
+        [resolved-expected : AstType
+          (tc-type-without-regions (tc-resolve-type ctx expected-ty))]
+        (match (lower-simple-vector-map-casted-literal
+          ctx
+          (lower-state-mode state)
+          resolved-cast
+          resolved-expected
+          inner)
+          [(LowerMaybeVectorMapValue.Some plan)
+            (match plan
+              [(LowerVectorMapValue.Uniform value)
+                (ResultLowerExpr.Ok
+                  (lower-emit-splat state value lanes resolved-expected))]
+              [_
+                (lower-avx512-masked-expr
+                  ctx
+                  state
+                  env
+                  type-env
+                  lane-locals
+                  index
+                  index-var
+                  active-mask
+                  lanes
+                  expr)])]
+          [(LowerMaybeVectorMapValue.No)
+            (lower-avx512-masked-expr
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              expr)]))]
+    [(AstExpr.Literal lit)
+      (match lit
+        [(AstLiteral.Bool value)
+          (ResultLowerExpr.Ok
+            (lower-avx512-masked-bool-literal state active-mask lanes value))]
+        [_
+          (ResultLowerExpr.Ok
+            (lower-emit-splat
+              state
+              (lower-literal-value-with-type
+                lit
+                (tc-type-without-regions expected-ty))
+              lanes
+              (tc-type-without-regions expected-ty)))])]
     [(AstExpr.If cond-box then-box else-box)
       (let
         [cond : AstExpr (lower-context-expr-get ctx cond-box)]

@@ -8,7 +8,16 @@ RECENT=${CI_TIMING_TREND_RECENT:-3}
 BASELINE=${CI_TIMING_TREND_BASELINE:-20}
 FACTOR=${CI_TIMING_TREND_FACTOR:-1.5}
 RUN_LIMIT=${CI_TIMING_TREND_RUN_LIMIT:-100}
-DENYLIST=${CI_TIMING_TREND_DENYLIST:-stage2 opt1/opt2 build-invariance}
+# Gates whose cost is already governed by an explicit cap in
+# scripts/check-ci-timing-budgets.sh. This analyzer has no notion of an accepted
+# cost -- it compares medians -- so a gate we have investigated and accepted
+# would be re-flagged on every report, and the next reader would repeat the
+# bisect. A cap says the same thing in a form that can also fail, so the two
+# mechanisms are exclusive: a gate belongs to exactly one of them, and adding a
+# name here means adding a cap there (#5660, #5778).
+DEFAULT_DENYLIST='stage2 opt1/opt2 build-invariance
+stage2 CLI host-action smoke'
+DENYLIST=${CI_TIMING_TREND_DENYLIST:-$DEFAULT_DENYLIST}
 ISSUE_TITLE="CI timing sustained regression alert"
 MARKER="<!-- typelisp-ci-timing-trends-v1 -->"
 HEADER='head_sha	run_id	run_url	created_at	gate	case_or_chunk	phase	elapsed_ms	exit	host'
@@ -303,8 +312,15 @@ self_test() {
             "$i" "$i" "$i" "$created" "$b" >> "$fixture"
         printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tgate-a\tall\tgate\t100\t0\twindows\n' \
             "$i" "$i" "$i" "$created" >> "$fixture"
-        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tstage2 opt1/opt2 build-invariance\tall\tgate\t9999\t0\tlinux\n' \
-            "$i" "$i" "$i" "$created" >> "$fixture"
+        # Both denylisted gates are given a breaching shape -- newest three at
+        # 16x the baseline -- so the assertions below prove suppression rather
+        # than merely the absence of a signal. A flat series would pass even if
+        # the denylist stopped working.
+        if [ "$i" -le 3 ]; then denied=1600; else denied=100; fi
+        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tstage2 opt1/opt2 build-invariance\tall\tgate\t%d\t0\tlinux\n' \
+            "$i" "$i" "$i" "$created" "$denied" >> "$fixture"
+        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tstage2 CLI host-action smoke\tall\tgate\t%d\t0\tlinux\n' \
+            "$i" "$i" "$i" "$created" "$denied" >> "$fixture"
         i=$((i + 1))
     done
     # Older duplicate rerun and irrelevant/nonzero/detail rows must not affect results.
@@ -324,6 +340,14 @@ self_test() {
     grep -F '| linux | gate-a | 100 ms | 160 ms | 1.600x |' "$work/report-a.md" >/dev/null
     ! grep -F '| linux | gate-b |' "$work/report-a.md" >/dev/null
     ! grep -F 'build-invariance' "$work/report-a.md" >/dev/null
+    ! grep -F 'host-action smoke' "$work/report-a.md" >/dev/null
+    # Same rows, denylist emptied: both must alert, which is what makes the two
+    # assertions above evidence that the denylist is doing the suppressing.
+    CI_TIMING_TREND_DENYLIST=none "$0" --offline "$fixture" "$work/no-denylist.md"
+    grep -F '| linux | stage2 opt1/opt2 build-invariance |' \
+        "$work/no-denylist.md" >/dev/null
+    grep -F '| linux | stage2 CLI host-action smoke |' \
+        "$work/no-denylist.md" >/dev/null
     grep -F '| linux | gate-short | 1 | 23 |' "$work/report-a.md" >/dev/null
     grep -F '| windows | gate-a |' "$work/report-a.md" >/dev/null && {
         echo "[ci-timing-trend] host separation self-test unexpectedly alerted" >&2; return 1;

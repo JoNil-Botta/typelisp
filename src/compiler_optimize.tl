@@ -24695,6 +24695,257 @@
       [(OptDomCmpLookup.Some value) value]
       [(OptDomCmpLookup.No) false])))
 
+;; --- loop-carried counter in range -------------------------------------------
+;;
+;; A rotated loop puts its per-iteration test at the LATCH, after the body, so no
+;; single comparison dominating the body proves `i < n`. The invariant is still
+;; there, just spread across the incoming edges: the preheader enters with the
+;; seed and the trip-count test, the latch enters having just tested the stepped
+;; value. Proving it therefore means discharging each phi input on its own edge:
+;;
+;;   i = phi [0, preheader], [i + 1, latch]
+;;     preheader edge: a dominating fact gives `0 < n`
+;;     latch edge:     the latch's own branch tested `i + 1 < n` and took the
+;;                     edge into this block on the true side
+;;
+;; With `i >= 0` implied by a nonnegative seed and positive steps, the unsigned
+;; `bounds_check` is then dead.
+;; Terminator branch per block id, so a phi input's source label can be resolved
+;; back to the test that guarded its edge.
+(define (opt-bounds-dom-terms-fill!
+  [terms : (Array OptBoolBranchDef)]
+  [index : OptCfgIndex]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block label instrs)
+            (let
+              [count : i64 (compiler-ir-instr-seq-count instrs)]
+              (if (< count 1)
+                unit
+                (match (opt-cfg-index-id index label)
+                  [(option_i64.None) unit]
+                  [(option_i64.Some id)
+                    (if (and (>= id 0) (< id (array-length terms)))
+                      (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                        [(CompilerIrInstr.Branch cond true-label false-label)
+                          (array-set!
+                            terms
+                            id
+                            (OptBoolBranchDef.Some
+                              (CompilerIrInstr.Branch
+                                cond
+                                true-label
+                                false-label)
+                              label))]
+                        [_ unit])
+                      unit)])))])
+        (opt-bounds-dom-terms-fill! terms index (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bounds-dom-terms-fill!
+        terms
+        index
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bounds-dom-terms
+  [index : OptCfgIndex]
+  [blocks : CompilerIrBlockList]) : (Array OptBoolBranchDef)
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [terms : (Array OptBoolBranchDef) (array.make-array OptBoolBranchDef count)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! terms i (OptBoolBranchDef.No))
+          (set! i (+ i 1))))
+      (opt-bounds-dom-terms-fill! terms index blocks)
+      terms)))
+
+;; Does the branch ending `from-label` test exactly `stepped < len` and enter
+;; `to-label` on the side that makes the test true? Both edges landing on
+;; `to-label` proves nothing, so that is rejected.
+(define (opt-bounds-dom-edge-tests-lt?
+  [index : OptCfgIndex]
+  [terms : (Array OptBoolBranchDef)]
+  [defs : (Array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [from-label : String]
+  [to-label : String]
+  [stepped : CompilerIrValue]
+  [len : CompilerIrValue]) : bool
+  (match (opt-cfg-index-id index from-label)
+    [(option_i64.None) false]
+    [(option_i64.Some id)
+      (if (or (< id 0) (>= id (array-length terms)))
+        false
+        (match (array-ref terms id)
+          [(OptBoolBranchDef.No) false]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(CompilerIrInstr.Branch cond true-label false-label)
+                (and
+                  (string.eq true-label to-label)
+                  (not (string.eq false-label to-label))
+                  (match cond
+                    [(CompilerIrValue.Var var)
+                      (match (opt-bool-branch-def defs var)
+                        [(OptBoolBranchDef.No) false]
+                        [(OptBoolBranchDef.Some cond-instr _)
+                          (match cond-instr
+                            [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+                              (and
+                                (opt-binop-eq op (CompilerIrBinOp.Lt))
+                                (opt-integer-type? ty)
+                                (opt-value-eq
+                                  (opt-bounds-dom-resolve copies lhs)
+                                  stepped)
+                                (opt-value-eq
+                                  (opt-bounds-dom-resolve copies rhs)
+                                  len))]
+                            [_ false])])]
+                    [_ false]))]
+              [_ false])]))]))
+
+;; One phi input, discharged on its own edge: a literal seed needs a dominating
+;; `seed < len`; anything else must be `self + k` for a positive literal k whose
+;; edge was guarded by `self + k < len`.
+(define (opt-bounds-dom-counter-input-ok?
+  [index : OptCfgIndex]
+  [terms : (Array OptBoolBranchDef)]
+  [defs : (Array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [block-label : String]
+  [self : i64]
+  [len : CompilerIrValue]
+  [value : CompilerIrValue]
+  [from-label : String]) : bool
+  (match value
+    [(CompilerIrValue.I64 seed)
+      (and
+        (>= seed 0)
+        (match (opt-dom-cmp-lookup
+          cmp-facts
+          (CompilerIrBinOp.Lt)
+          (CompilerIrValue.I64 seed)
+          len
+          (AstType.I64))
+          [(OptDomCmpLookup.Some decided) decided]
+          [(OptDomCmpLookup.No) false]))]
+    [(CompilerIrValue.Var var)
+      (and
+        (match (opt-bool-branch-def defs var)
+          [(OptBoolBranchDef.No) false]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+                (and
+                  (opt-binop-eq op (CompilerIrBinOp.Add))
+                  (opt-integer-type? ty)
+                  (match (opt-bounds-dom-resolve copies lhs)
+                    [(CompilerIrValue.Var base) (= base self)]
+                    [_ false])
+                  (match rhs
+                    [(CompilerIrValue.I64 step) (> step 0)]
+                    [_ false]))]
+              [_ false])])
+        (opt-bounds-dom-edge-tests-lt?
+          index
+          terms
+          defs
+          copies
+          from-label
+          block-label
+          value
+          len))]
+    [_ false]))
+
+(define (opt-bounds-dom-counter-inputs-ok?
+  [index : OptCfgIndex]
+  [terms : (Array OptBoolBranchDef)]
+  [defs : (Array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [block-label : String]
+  [self : i64]
+  [len : CompilerIrValue]
+  [inputs : CompilerIrPhiInputList]) : bool
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) false]
+    [(CompilerIrPhiInputList.Cons value from-label rest)
+      (and
+        (opt-bounds-dom-counter-input-ok?
+          index
+          terms
+          defs
+          copies
+          cmp-facts
+          block-label
+          self
+          len
+          (opt-bounds-dom-resolve copies value)
+          from-label)
+        (match (box-get rest)
+          [(CompilerIrPhiInputList.Nil) true]
+          [_
+            (opt-bounds-dom-counter-inputs-ok?
+              index
+              terms
+              defs
+              copies
+              cmp-facts
+              block-label
+              self
+              len
+              (box-get rest))]))]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bounds-dom-counter-inputs-ok?
+        index
+        terms
+        defs
+        copies
+        cmp-facts
+        block-label
+        self
+        len
+        (compiler-ir-phi-input-seq-to-list seq))]))
+
+(define (opt-bounds-dom-counter-in-range?
+  [index : OptCfgIndex]
+  [terms : (Array OptBoolBranchDef)]
+  [defs : (Array OptBoolBranchDef)]
+  [phi-defs : (Array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [block-label : String]
+  [idx : CompilerIrValue]
+  [len : CompilerIrValue]) : bool
+  (match idx
+    [(CompilerIrValue.Var var)
+      (match (opt-bool-branch-def phi-defs var)
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(CompilerIrInstr.Phi dst inputs ty)
+              (and
+                (opt-integer-type? ty)
+                (opt-bounds-dom-counter-inputs-ok?
+                  index
+                  terms
+                  defs
+                  copies
+                  cmp-facts
+                  block-label
+                  dst
+                  len
+                  inputs))]
+            [_ false])])]
+    [_ false]))
+
 ;; `bit-and X m` lands in [0, m] for every nonnegative m: bit-and only clears
 ;; bits, so the result cannot exceed m, and a nonnegative m has a clear sign bit
 ;; so the result cannot go negative. With `m = len - 1` that puts the index in
@@ -24828,6 +25079,9 @@
 (define (opt-bounds-dom-instrs-from
   [defs : (Array OptBoolBranchDef)]
   [phi-defs : (Array OptBoolBranchDef)]
+  [terms : (Array OptBoolBranchDef)]
+  [cfg-index : OptCfgIndex]
+  [block-label : String]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [sources : opt_i64_i64_map.Map]
@@ -24851,10 +25105,23 @@
                 copies
                 cmp-facts
                 cidx
-                clen))
+                clen)
+              (opt-bounds-dom-counter-in-range?
+                cfg-index
+                terms
+                defs
+                phi-defs
+                copies
+                cmp-facts
+                block-label
+                (opt-bounds-dom-strip-int-cast phi-defs copies cidx)
+                (opt-bounds-dom-strip-int-cast phi-defs copies clen)))
               (opt-bounds-dom-instrs-from
                 defs
                 phi-defs
+                terms
+                cfg-index
+                block-label
                 cmp-facts
                 facts
                 sources
@@ -24871,6 +25138,9 @@
                 (match (opt-bounds-dom-instrs-from
                   defs
                   phi-defs
+                  terms
+                  cfg-index
+                  block-label
                   cmp-facts
                   next-facts
                   sources
@@ -24885,6 +25155,9 @@
           (match (opt-bounds-dom-instrs-from
             defs
             phi-defs
+            terms
+            cfg-index
+            block-label
             cmp-facts
             facts
             sources
@@ -24929,6 +25202,7 @@
   [children : OptCfgCsr]
   [defs : (Array OptBoolBranchDef)]
   [phi-defs : (Array OptBoolBranchDef)]
+  [terms : (Array OptBoolBranchDef)]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
@@ -24950,6 +25224,9 @@
                 (match (opt-bounds-dom-instrs-from
                   defs
                   phi-defs
+                  terms
+                  index
+                  label
                   cmp-facts
                   facts
                   sources
@@ -24968,6 +25245,7 @@
                         children
                         defs
                         phi-defs
+                        terms
                         sources
                         copies
                         cmp-facts
@@ -25062,6 +25340,7 @@
   [children : OptCfgCsr]
   [defs : (Array OptBoolBranchDef)]
   [phi-defs : (Array OptBoolBranchDef)]
+  [terms : (Array OptBoolBranchDef)]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
@@ -25086,6 +25365,7 @@
               children
               defs
               phi-defs
+              terms
               sources
               copies
               (opt-bounds-dom-child-cmp-facts
@@ -25126,6 +25406,7 @@
     [children : OptCfgCsr (opt-gvn-dom-children doms)]
     [defs : (Array OptBoolBranchDef) (opt-bool-branch-defs frame blocks)]
     [phi-defs : (Array OptBoolBranchDef) (opt-bounds-dom-phi-defs frame blocks)]
+    [terms : (Array OptBoolBranchDef) (opt-bounds-dom-terms index blocks)]
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
       (opt-gvn-block-results-fill-empty! out 0)
@@ -25139,6 +25420,7 @@
               children
               defs
               phi-defs
+              terms
               sources
               copies
               (OptDomCmpFacts.Nil)

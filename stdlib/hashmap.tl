@@ -610,26 +610,35 @@
             [mask : i64 (- cap 1)]
             (begin
               (if (>= cap 1)
-                (while (< scan old-capacity)
-                  (begin
-                    (match (array-ref (struct-get map slots) scan)
-                      [(GeneratedHashmapSlot.Occupied key value hash)
-                        (let
-                          [index : i64 (bit-and hash mask)]
-                          (begin
-                            (while (match (array-ref fresh index)
-                              [GeneratedHashmapSlot.Empty false]
-                              [_ true])
-                              (set! index (bit-and (+ index 1) mask)))
-                            (array-set!
-                              fresh
-                              index
-                              (GeneratedHashmapSlot.Occupied
-                                ,key-copy
-                                ,value-copy
-                                hash))))]
-                      [_ unit])
-                    (set! scan (+ scan 1))))
+                ;; Bind the old slot array once and take the scan bound off that
+                ;; binding, so the loop guard and the bounds check on
+                ;; `array-ref old-slots scan` compare against the SAME value.
+                ;; Read off the map separately they are two loads of one field,
+                ;; and nothing can relate the guard to the check.
+                (let
+                  [old-slots : (& map (Array GeneratedHashmapSlot))
+                    (& (struct-get map slots))]
+                  [old-count : i64 (array_ops.length old-slots)]
+                  (while (< scan old-count)
+                    (begin
+                      (match (array-ref old-slots scan)
+                        [(GeneratedHashmapSlot.Occupied key value hash)
+                          (let
+                            [index : i64 (bit-and hash mask)]
+                            (begin
+                              (while (match (array-ref fresh index)
+                                [GeneratedHashmapSlot.Empty false]
+                                [_ true])
+                                (set! index (bit-and (+ index 1) mask)))
+                              (array-set!
+                                fresh
+                                index
+                                (GeneratedHashmapSlot.Occupied
+                                  ,key-copy
+                                  ,value-copy
+                                  hash))))]
+                        [_ unit])
+                      (set! scan (+ scan 1)))))
                 unit)
               (set! (struct-get map slots) fresh)
               (set! (struct-get map deleted) 0))))

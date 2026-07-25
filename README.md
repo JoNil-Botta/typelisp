@@ -112,6 +112,20 @@ Hello, TypeLisp!
 factorial(5) = 120
 ```
 
+New to the language? The [getting-started
+guide](https://jonil-botta.github.io/typelisp/getting-started.html) walks from
+`hello.tl` through move semantics, borrowing, scoped arenas, recursive data with
+`(Box T)`, and comptime-generated collections. Every example in it is compiled by
+`typelisp doc --test` in CI, so it cannot drift from the language.
+
+### Editor support
+
+[`tools/vs-code-extension`](tools/vs-code-extension) packages a VS Code
+extension with syntax highlighting and the stdio language server -- diagnostics,
+go-to-definition, hover, completion, inlay hints, and formatting. It downloads
+its own compiler, so a one-command `.vsix` install is the whole setup; see
+[its README](tools/vs-code-extension/README.md).
+
 To start a package instead, run `$tl new hello-app`, then
 `$tl run --manifest-path hello-app/typelisp.pkg`. The generated binary prints
 `Hello, TypeLisp!`; `$tl test --manifest-path hello-app/typelisp.pkg` runs its

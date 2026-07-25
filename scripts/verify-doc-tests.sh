@@ -49,7 +49,10 @@ DISCOVERED="$WORKDIR/discovered.txt"
 : > "$CANDIDATES"
 : > "$DISCOVERED"
 
-for root in stdlib src examples tests; do
+# `docs` carries the getting-started guide, whose whole value is that every
+# example in it compiles; leaving it out of this sweep would let it rot exactly
+# the way #5672 set out to prevent.
+for root in stdlib src examples tests docs; do
     if [ -d "$root" ]; then
         find "$root" \
             -type f \

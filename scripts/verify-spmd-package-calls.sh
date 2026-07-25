@@ -108,3 +108,6 @@ fi
 verify_mode avx512 "$AVX512_EXECUTE"
 grep -E '(%zmm|%k[0-7])' "$CONSUMER_ASM" >/dev/null \
     || fail "avx512 consumer assembly has no vector/opmask operands"
+if grep -E 'vpbroadcastd .*%ymm' "$PRODUCER_ASM" >/dev/null; then
+    fail "avx512 uniform i64 package helper used a dword/ymm splat"
+fi

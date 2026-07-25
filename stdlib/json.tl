@@ -29,92 +29,62 @@
   (JsonBool bool)
   (JsonNumber String)
   (JsonString String)
-  (JsonArray (Box JsonSeq))
-  (JsonObject (Box JsonMemberSeq)))
+  (JsonArray (Box jvec.Vec))
+  (JsonObject (Box jmvec.Vec)))
 
 ;: Strategy value wrapper used by `stdlib.serialize`.
 (defenum Value
   (JsonValue Json))
 
-;: Immutable contiguous JSON array elements in source order.
-(defstruct JsonSeq
-  (slots (Array Json))
-  (len i64))
-
-;: One JSON object member stored in a member sequence or builder vector.
+;: One JSON object member stored in a member sequence.
 (defstruct JsonMember
   (key String)
   (value Json))
 
-;: Immutable contiguous JSON object members in source order.
-(defstruct JsonMemberSeq
-  (slots (Array JsonMember))
-  (len i64))
-
+;; JSON array elements and object members are the generated `stdlib.vector`
+;; family over `Json` and `JsonMember`. The parser appends into these vectors
+;; and the public sequence model is the same vector, so parsing hands its
+;; builder straight to the value model in source order. The `cons` helpers below
+;; keep the persistent semantics the `stdlib.serialize` hooks rely on by copying
+;; into a fresh right-sized vector instead of appending to a shared one.
 (import (vector.vector Json core) as jvec)
 (import (vector.vector JsonMember core) as jmvec)
 
 ;: Return the empty JSON array element sequence.
-(define (list-empty) : JsonSeq
-  (JsonSeq (make-array Json 0) 0))
+(define (list-empty) : jvec.Vec
+  (jvec.new))
 
-;: Return `items` with `head` prepended, copied into a right-sized array.
-(define (list-cons [head : Json] [items : JsonSeq]) : JsonSeq
-  (let
-    [n : i64 (struct-get items len)]
-    [slots : (Array Json) (make-array Json (+ n 1))]
-    [i : i64 0]
-    (begin
-      (array-set! slots 0 head)
-      (while (< i n)
-        (begin
-          (array-set! slots (+ i 1) (array-ref (struct-get items slots) i))
-          (set! i (+ i 1))))
-      (JsonSeq slots (+ n 1)))))
-
-;: Return the empty JSON object member sequence.
-(define (member-list-empty) : JsonMemberSeq
-  (JsonMemberSeq (make-array JsonMember 0) 0))
-
-;: Return `items` with `key`/`value` prepended into a right-sized array.
-(define (member-cons [key : String] [value : Json] [items : JsonMemberSeq]) : JsonMemberSeq
-  (let
-    [n : i64 (struct-get items len)]
-    [slots : (Array JsonMember) (make-array JsonMember (+ n 1))]
-    [i : i64 0]
-    (begin
-      (array-set! slots 0 (JsonMember key value))
-      (while (< i n)
-        (begin
-          (array-set! slots (+ i 1) (array-ref (struct-get items slots) i))
-          (set! i (+ i 1))))
-      (JsonMemberSeq slots (+ n 1)))))
-
-;: Convert an internal JSON element builder into the public sequence model.
-(define (vec-to-list [items : jvec.Vec]) : JsonSeq
+;: Return `items` with `head` prepended, copied into a right-sized vector.
+(define (list-cons [head : Json] [items : jvec.Vec]) : jvec.Vec
   (let
     [n : i64 (jvec.len (& items))]
-    [slots : (Array Json) (make-array Json n)]
+    [out : jvec.Vec (jvec.with-capacity (+ n 1))]
     [i : i64 0]
     (begin
+      (jvec.push (&mut out) head)
       (while (< i n)
         (begin
-          (array-set! slots i (jvec.get (& items) i JsonNull))
+          (jvec.push (&mut out) (array-ref (jvec.slots (& items)) i))
           (set! i (+ i 1))))
-      (JsonSeq slots n))))
+      out)))
 
-;: Convert an internal JSON member builder into the public sequence model.
-(define (member-vec-to-list [items : jmvec.Vec]) : JsonMemberSeq
+;: Return the empty JSON object member sequence.
+(define (member-list-empty) : jmvec.Vec
+  (jmvec.new))
+
+;: Return `items` with `key`/`value` prepended into a right-sized vector.
+(define (member-cons [key : String] [value : Json] [items : jmvec.Vec]) : jmvec.Vec
   (let
     [n : i64 (jmvec.len (& items))]
-    [slots : (Array JsonMember) (make-array JsonMember n)]
+    [out : jmvec.Vec (jmvec.with-capacity (+ n 1))]
     [i : i64 0]
     (begin
+      (jmvec.push (&mut out) (JsonMember key value))
       (while (< i n)
         (begin
-          (array-set! slots i (jmvec.get (& items) i (JsonMember "" JsonNull)))
+          (jmvec.push (&mut out) (array-ref (jmvec.slots (& items)) i))
           (set! i (+ i 1))))
-      (JsonMemberSeq slots n))))
+      out)))
 
 ;: Recoverable top-level parse result.
 (defenum JsonParseResult
@@ -285,97 +255,95 @@
           ok)))))
 
 ;: Return `items` in reverse order.
-(define (list-reverse [items : JsonSeq]) : JsonSeq
+(define (list-reverse [items : jvec.Vec]) : jvec.Vec
   (let
-    [n : i64 (struct-get items len)]
-    [slots : (Array Json) (make-array Json n)]
+    [n : i64 (jvec.len (& items))]
+    [out : jvec.Vec (jvec.with-capacity n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            slots
-            i
-            (array-ref (struct-get items slots) (- (- n 1) i)))
+          (jvec.push
+            (&mut out)
+            (array-ref (jvec.slots (& items)) (- (- n 1) i)))
           (set! i (+ i 1))))
-      (JsonSeq slots n))))
+      out)))
 
 ;: Return object `items` in reverse order.
-(define (member-list-reverse [items : JsonMemberSeq]) : JsonMemberSeq
+(define (member-list-reverse [items : jmvec.Vec]) : jmvec.Vec
   (let
-    [n : i64 (struct-get items len)]
-    [slots : (Array JsonMember) (make-array JsonMember n)]
+    [n : i64 (jmvec.len (& items))]
+    [out : jmvec.Vec (jmvec.with-capacity n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set!
-            slots
-            i
-            (array-ref (struct-get items slots) (- (- n 1) i)))
+          (jmvec.push
+            (&mut out)
+            (array-ref (jmvec.slots (& items)) (- (- n 1) i)))
           (set! i (+ i 1))))
-      (JsonMemberSeq slots n))))
+      out)))
 
 ;: Return the number of elements in a JSON array sequence.
-(define (list-count [items : JsonSeq]) : i64
-  (struct-get items len))
+(define (list-count [items : jvec.Vec]) : i64
+  (jvec.len (& items)))
 
 ;: Look up an array element by zero-based index.
-(define (list-get-index [items : JsonSeq] [index : i64]) : JsonLookup
-  (if (or (< index 0) (>= index (struct-get items len)))
+(define (list-get-index [items : jvec.Vec] [index : i64]) : JsonLookup
+  (if (or (< index 0) (>= index (jvec.len (& items))))
     JsonMissing
-    (JsonFound (array-ref (struct-get items slots) index))))
+    (JsonFound (array-ref (jvec.slots (& items)) index))))
 
 ;: Return `items` without its first element.
-(define (list-rest [items : JsonSeq]) : JsonSeq
+(define (list-rest [items : jvec.Vec]) : jvec.Vec
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 (jvec.len (& items))]
     [count : i64
       (if (< n 1)
         0
         (- n 1))]
-    [slots : (Array Json) (make-array Json count)]
+    [out : jvec.Vec (jvec.with-capacity count)]
     [i : i64 0]
     (begin
       (while (< i count)
         (begin
-          (array-set! slots i (array-ref (struct-get items slots) (+ i 1)))
+          (jvec.push (&mut out) (array-ref (jvec.slots (& items)) (+ i 1)))
           (set! i (+ i 1))))
-      (JsonSeq slots count))))
+      out)))
 
 ;: Return the elements of `left` followed by the elements of `right`.
-(define (list-concat [left : JsonSeq] [right : JsonSeq]) : JsonSeq
+(define (list-concat [left : jvec.Vec] [right : jvec.Vec]) : jvec.Vec
   (let
-    [ln : i64 (struct-get left len)]
-    [rn : i64 (struct-get right len)]
-    [slots : (Array Json) (make-array Json (+ ln rn))]
+    [ln : i64 (jvec.len (& left))]
+    [rn : i64 (jvec.len (& right))]
+    [out : jvec.Vec (jvec.with-capacity (+ ln rn))]
     [i : i64 0]
     (begin
       (while (< i ln)
         (begin
-          (array-set! slots i (array-ref (struct-get left slots) i))
+          (jvec.push (&mut out) (array-ref (jvec.slots (& left)) i))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i rn)
         (begin
-          (array-set! slots (+ ln i) (array-ref (struct-get right slots) i))
+          (jvec.push (&mut out) (array-ref (jvec.slots (& right)) i))
           (set! i (+ i 1))))
-      (JsonSeq slots (+ ln rn)))))
+      out)))
 
 ;: Return the number of key/value entries in a JSON object member sequence.
-(define (member-list-count [items : JsonMemberSeq]) : i64
-  (struct-get items len))
+(define (member-list-count [items : jmvec.Vec]) : i64
+  (jmvec.len (& items)))
 
 ;: Look up borrowed `key` in an object member sequence.
-(define (member-list-get [items : JsonMemberSeq] [key : (& key str)]) : JsonLookup
+(define (member-list-get [items : jmvec.Vec] [key : (& key str)]) : JsonLookup
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 (jmvec.len (& items))]
     [i : i64 0]
     [found : JsonLookup JsonMissing]
     (begin
       (while (< i n)
         (let
-          [member : JsonMember (array-ref (struct-get items slots) i)]
+          [member : JsonMember (array-ref (jmvec.slots (& items)) i)]
           [item-key : String (struct-get member key)]
           (if (string.eq (& item-key) key)
             (begin
@@ -404,15 +372,15 @@
           same)))))
 
 ;: Look up owned `key` in an object member sequence without unsafe helpers.
-(define (member-list-get-owned [items : JsonMemberSeq] [key : String]) : JsonLookup
+(define (member-list-get-owned [items : jmvec.Vec] [key : String]) : JsonLookup
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 (jmvec.len (& items))]
     [i : i64 0]
     [found : JsonLookup JsonMissing]
     (begin
       (while (< i n)
         (let
-          [member : JsonMember (array-ref (struct-get items slots) i)]
+          [member : JsonMember (array-ref (jmvec.slots (& items)) i)]
           (if (stdlib.json.string-eq-safe? (struct-get member key) key)
             (begin
               (set! found (JsonFound (struct-get member value)))
@@ -536,9 +504,9 @@
       (text_buf.render out))))
 
 ;: Append serialized array elements to `buf`.
-(define (stringify-list-into [items : JsonSeq] [buf : text_buf.TextBuf]) : text_buf.TextBuf
+(define (stringify-list-into [items : jvec.Vec] [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 (jvec.len (& items))]
     [i : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
@@ -551,28 +519,26 @@
             out
             (text_buf.append
               out
-              (stdlib.json.stringify (array-ref (struct-get items slots) i))))
+              (stdlib.json.stringify (array-ref (jvec.slots (& items)) i))))
           (set! i (+ i 1))))
       out)))
 
 ;: Serialize array `items` without the surrounding brackets.
 ;:
 ;: The returned comma-separated string is allocated in the active arena.
-(define (stringify-list [items : JsonSeq]) : String
+(define (stringify-list [items : jvec.Vec]) : String
   (text_buf.render (stdlib.json.stringify-list-into items (text_buf.empty))))
 
 ;: Append serialized object members to `buf`.
-(define (stringify-members-into
-  [items : JsonMemberSeq]
-  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+(define (stringify-members-into [items : jmvec.Vec] [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 (jmvec.len (& items))]
     [i : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
       (while (< i n)
         (let
-          [member : JsonMember (array-ref (struct-get items slots) i)]
+          [member : JsonMember (array-ref (jmvec.slots (& items)) i)]
           [text : String (struct-get member key)]
           (begin
             (if (> i 0)
@@ -593,7 +559,7 @@
 ;: Serialize object `items` without the surrounding braces.
 ;:
 ;: The returned comma-separated member string is allocated in the active arena.
-(define (stringify-members [items : JsonMemberSeq]) : String
+(define (stringify-members [items : jmvec.Vec]) : String
   (text_buf.render (stdlib.json.stringify-members-into items (text_buf.empty))))
 
 ;: Serialize a JSON value to canonical compact JSON text.
@@ -1248,14 +1214,14 @@
         [_ (return (,err-ctor "json: expected string"))])]))
 
 ;: `stdlib.serialize` hook for beginning an object field list.
-(defmacro (object-empty) : JsonMemberSeq
+(defmacro (object-empty) : jmvec.Vec
   `(stdlib.json.member-list-empty))
 
 ;: `stdlib.serialize` hook for adding one encoded object field.
 (defmacro (object-field
   [name : comptime.Expr]
   [value : comptime.Expr]
-  [rest : comptime.Expr]) : JsonMemberSeq
+  [rest : comptime.Expr]) : jmvec.Vec
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (stdlib.json.member-cons ,name __json_value ,rest)]))
@@ -1287,14 +1253,14 @@
         [(stdlib.json.JsonMissing) (return (,err-ctor "json: missing field"))])]))
 
 ;: `stdlib.serialize` hook for beginning a sequence element list.
-(defmacro (sequence-empty) : JsonSeq
+(defmacro (sequence-empty) : jvec.Vec
   `(stdlib.json.list-empty))
 
 ;: `stdlib.serialize` hook for adding one encoded sequence element.
 (defmacro (sequence-element
   [_index : comptime.Expr]
   [value : comptime.Expr]
-  [rest : comptime.Expr]) : JsonSeq
+  [rest : comptime.Expr]) : jvec.Vec
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (stdlib.json.list-cons __json_value ,rest)]))
@@ -1349,8 +1315,8 @@
 
 ;: Parse a JSON array starting at `pos`, including the opening bracket.
 ;:
-;: Parser elements are accumulated in a vector builder, then converted once to
-;: the public list model in source order.
+;: Parser elements are appended in source order to the same generated vector the
+;: public list model uses, so no conversion step is needed.
 (define (parse-array [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (stdlib.json.skip-ws text (+ pos 1))]
@@ -1385,13 +1351,13 @@
               (set! ok false)
               (set! message err))]))
       (if ok
-        (OkJsonParseValue (JsonArray (box (stdlib.json.vec-to-list items))) i)
+        (OkJsonParseValue (JsonArray (box items)) i)
         (ErrJsonParseValue message)))))
 
 ;: Parse a JSON object starting at `pos`, including the opening brace.
 ;:
-;: Parser members are accumulated in a vector builder, then converted once to
-;: the public list model in source order.
+;: Parser members are appended in source order to the same generated vector the
+;: public member model uses, so no conversion step is needed.
 (define (parse-object [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (stdlib.json.skip-ws text (+ pos 1))]
@@ -1438,9 +1404,7 @@
               (set! ok false)
               (set! message err))]))
       (if ok
-        (OkJsonParseValue
-          (JsonObject (box (stdlib.json.member-vec-to-list members)))
-          i)
+        (OkJsonParseValue (JsonObject (box members)) i)
         (ErrJsonParseValue message)))))
 
 ;: Parse one JSON value from `text` at `pos`, after skipping whitespace.
@@ -1558,11 +1522,11 @@
     [(JsonFound _) (io.panic message)]))
 
 ;: Build a JSON array for inline tests.
-(define (stdlib-inline-test-array [items : JsonSeq]) : Json
+(define (stdlib-inline-test-array [items : jvec.Vec]) : Json
   (JsonArray (box items)))
 
 ;: Build a JSON object for inline tests.
-(define (stdlib-inline-test-object [members : JsonMemberSeq]) : Json
+(define (stdlib-inline-test-object [members : jmvec.Vec]) : Json
   (JsonObject (box members)))
 
 ;: Assert a successful parsed string and next position.
@@ -1765,9 +1729,7 @@
   (stdlib.json.string-prefix-at? (& text) (& prefix) start))
 
 ;: Borrowing wrapper for `member-list-get` inline tests.
-(define (stdlib-inline-test-member-list-get
-  [items : JsonMemberSeq]
-  [key : String]) : JsonLookup
+(define (stdlib-inline-test-member-list-get [items : jmvec.Vec] [key : String]) : JsonLookup
   (stdlib.json.member-list-get items (& key)))
 
 ;: Borrowing wrapper for `object-get` inline tests.
@@ -1989,9 +1951,9 @@
           (begin
             (jvec.push (&mut items) (JsonNumber "1"))
             (jvec.push (&mut items) (JsonNumber "2"))
-            (stdlib.json.vec-to-list items))))
+            items)))
       "1,2"
-      "stdlib.json.vec-to-list")
+      "stdlib.json element vector push order")
     (stdlib.json.stdlib-inline-test-assert-i64-eq
       (stdlib.json.member-list-count
         (stdlib.json.member-cons
@@ -2042,10 +2004,10 @@
           (begin
             (jmvec.push (&mut members) (JsonMember "dup" (JsonNumber "1")))
             (jmvec.push (&mut members) (JsonMember "dup" (JsonNumber "2")))
-            (stdlib.json.member-vec-to-list members)))
+            members))
         "dup")
       "1"
-      "stdlib.json.member-vec-to-list duplicate first")
+      "stdlib.json member vector duplicate first")
     (stdlib.json.stdlib-inline-test-assert-found-number
       (stdlib.json.stdlib-inline-test-object-get
         (stdlib.json.stdlib-inline-test-object

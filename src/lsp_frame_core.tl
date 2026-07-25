@@ -10,6 +10,8 @@
 (import stdlib.json)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)
+(import (vector.vector json.Json core) as lsp_json_vec)
+(import (vector.vector json.JsonMember core) as lsp_json_member_vec)
 (import lex as lexer)
 (import read as reader)
 (import compiler_builtin_ids as cbi)
@@ -154,7 +156,7 @@
   (Err String json.Json))
 
 (defenum LspBatchRunResult
-  (Ok String json.JsonSeq)
+  (Ok String lsp_json_vec.Vec)
   (Err String i64 String json.Json))
 
 (defenum LspFunctionList
@@ -162,7 +164,7 @@
   (Err String))
 
 (defenum LspPathParam
-  (Ok json.JsonSeq)
+  (Ok lsp_json_vec.Vec)
   (Err String))
 
 (defenum LspPathLookup
@@ -506,19 +508,19 @@
 (define (lsp-json-member
   [k : String]
   [v : json.Json]
-  [rest : json.JsonMemberSeq]) : json.JsonMemberSeq
+  [rest : lsp_json_member_vec.Vec]) : lsp_json_member_vec.Vec
   (json.member-cons k v rest))
 
-(define (lsp-json-object [members : json.JsonMemberSeq]) : json.Json
+(define (lsp-json-object [members : lsp_json_member_vec.Vec]) : json.Json
   (json.JsonObject (box members)))
 
-(define (lsp-json-list-cons [value : json.Json] [rest : json.JsonSeq]) : json.JsonSeq
+(define (lsp-json-list-cons [value : json.Json] [rest : lsp_json_vec.Vec]) : lsp_json_vec.Vec
   (json.list-cons value rest))
 
-(define (lsp-json-array [items : json.JsonSeq]) : json.Json
+(define (lsp-json-array [items : lsp_json_vec.Vec]) : json.Json
   (json.JsonArray (box items)))
 
-(define (lsp-json-rpc-member [rest : json.JsonMemberSeq]) : json.JsonMemberSeq
+(define (lsp-json-rpc-member [rest : lsp_json_member_vec.Vec]) : lsp_json_member_vec.Vec
   (lsp-json-member "jsonrpc" (json.JsonString "2.0") rest))
 
 (define (lsp-json-object1 [k : String] [v : json.Json]) : json.Json
@@ -1211,7 +1213,7 @@
 
 (define (lsp-diagnostic-related-information-list
   [fallback-path : String]
-  [labels : CompilerDiagnosticLabelList]) : json.JsonSeq
+  [labels : CompilerDiagnosticLabelList]) : lsp_json_vec.Vec
   (match labels
     [(CompilerDiagnosticLabelNil) (json.list-empty)]
     [(CompilerDiagnosticLabelCons entry rest)
@@ -1219,10 +1221,12 @@
         (lsp-diagnostic-related-information fallback-path entry)
         (lsp-diagnostic-related-information-list fallback-path (box-get rest)))]))
 
-(define (lsp-diagnostic-message-tail [message : String]) : json.JsonMemberSeq
+(define (lsp-diagnostic-message-tail [message : String]) : lsp_json_member_vec.Vec
   (lsp-json-member "message" (json.JsonString message) (json.member-list-empty)))
 
-(define (lsp-diagnostic-code-tail [code : String] [tail : json.JsonMemberSeq]) : json.JsonMemberSeq
+(define (lsp-diagnostic-code-tail
+  [code : String]
+  [tail : lsp_json_member_vec.Vec]) : lsp_json_member_vec.Vec
   (if (string.eq code "")
     tail
     (lsp-json-member "code" (json.JsonString code) tail)))
@@ -1230,7 +1234,7 @@
 (define (lsp-diagnostic-with-range-tail
   [range : json.Json]
   [code : String]
-  [tail : json.JsonMemberSeq]) : json.Json
+  [tail : lsp_json_member_vec.Vec]) : json.Json
   (lsp-json-object
     (lsp-json-member
       "range"
@@ -1395,7 +1399,9 @@
       root-uri
       (lsp-resolved-path-to-file-uri diag-path))))
 
-(define (lsp-publish-diagnostics [uri : String] [diagnostics : json.JsonSeq]) : unit
+(define (lsp-publish-diagnostics
+  [uri : String]
+  [diagnostics : lsp_json_vec.Vec]) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
@@ -1487,7 +1493,7 @@
   [text : String]
   [findings : LintFindings]
   [i : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : lsp_json_vec.Vec]) : lsp_json_vec.Vec
   (if (>= i (lint-findings-count findings))
     acc
     (let
@@ -1503,7 +1509,7 @@
 (define (lsp-lint-diagnostics
   [path : String]
   [text : String]
-  [stdlib-roots : lsp_svec.Vec]) : json.JsonSeq
+  [stdlib-roots : lsp_svec.Vec]) : lsp_json_vec.Vec
   (lsp-lint-findings-to-json
     text
     (selfhost-lint-source-with-roots path text stdlib-roots)
@@ -1528,7 +1534,7 @@
           (LspAnalyzeResult uri (LspCheckCacheErr message))))]
     [(LspValidationResult.Valid)
       (let
-        [lint-diags : json.JsonSeq
+        [lint-diags : lsp_json_vec.Vec
           (lsp-lint-diagnostics path text stdlib-roots)]
         (match (compiler-check-source-with-roots path text stdlib-roots)
           [(ResultCompilerCheck.Ok _)
@@ -2768,7 +2774,7 @@
   [labels : lsp_svec.Vec]
   [kind : i64]
   [idx : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : lsp_json_vec.Vec]) : lsp_json_vec.Vec
   (if (>= idx (lsp_svec.len (& labels)))
     acc
     (lsp-completion-items-from
@@ -2825,7 +2831,7 @@
 (define (lsp-completion-respond [id : json.Json] [docs : lsp_document_vec.Vec]) : unit
   (let
     [names : lsp_svec.Vec (lsp-collect-def-names-all docs 0 (lsp_svec.new))]
-    [items : json.JsonSeq
+    [items : lsp_json_vec.Vec
       (lsp-completion-items-from
         names
         3
@@ -2903,11 +2909,11 @@
     "paddingRight"
     (json.JsonBool true)))
 
-(define (lsp-inlay-build [text : String] [start-line : i64] [end-line : i64]) : json.JsonSeq
+(define (lsp-inlay-build [text : String] [start-line : i64] [end-line : i64]) : lsp_json_vec.Vec
   (let
     [size : i64 (tc-inlay-hints-size)]
     [i : i64 0]
-    [acc : json.JsonSeq (json.list-empty)]
+    [acc : lsp_json_vec.Vec (json.list-empty)]
     (begin
       (while (< i size)
         (let
@@ -2948,7 +2954,8 @@
             [(ResultCompilerCheck.Ok _) unit]
             [(ResultCompilerCheck.Err _) unit])
           (let
-            [hints : json.JsonSeq (lsp-inlay-build text start-line end-line)]
+            [hints : lsp_json_vec.Vec
+              (lsp-inlay-build text start-line end-line)]
             (begin
               (tc-inlay-hints-disable!)
               (lsp-write-response id (lsp-json-array hints))))))]
@@ -4044,11 +4051,11 @@
 (define (lsp-document-links
   [text : String]
   [path : String]
-  [stdlib-roots : lsp_svec.Vec]) : json.JsonSeq
+  [stdlib-roots : lsp_svec.Vec]) : lsp_json_vec.Vec
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
-    [acc : json.JsonSeq (json.list-empty)]
+    [acc : lsp_json_vec.Vec (json.list-empty)]
     (begin
       (while (< i n)
         (let
@@ -4308,7 +4315,7 @@
               scanned)))))))
 
 ;; Helper: build a json.Json array of names from the canonical declaration vector.
-(define (lsp-decls-to-name-list [decls : lsp_decl_vec.Vec] [idx : i64]) : json.JsonSeq
+(define (lsp-decls-to-name-list [decls : lsp_decl_vec.Vec] [idx : i64]) : lsp_json_vec.Vec
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.list-empty)
     (let
@@ -4320,7 +4327,7 @@
         (lsp-decls-to-name-list decls (+ idx 1))))))
 
 ;; Helper: build json.Json array of all declarations with metadata
-(define (lsp-decls-to-json-list [decls : lsp_decl_vec.Vec] [idx : i64]) : json.JsonSeq
+(define (lsp-decls-to-json-list [decls : lsp_decl_vec.Vec] [idx : i64]) : lsp_json_vec.Vec
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.list-empty)
     (let
@@ -4368,7 +4375,7 @@
 
 (define (lsp-decls-to-document-symbol-list
   [decls : lsp_decl_vec.Vec]
-  [idx : i64]) : json.JsonSeq
+  [idx : i64]) : lsp_json_vec.Vec
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.list-empty)
     (let
@@ -4396,7 +4403,7 @@
 
 (define (lsp-decls-to-position-map-members
   [decls : lsp_decl_vec.Vec]
-  [idx : i64]) : json.JsonMemberSeq
+  [idx : i64]) : lsp_json_member_vec.Vec
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.member-list-empty)
     (let
@@ -4470,13 +4477,13 @@
   [exact-name : String]
   [contains-filter : String]
   [prefix : String]
-  [kind : String]) : json.JsonSeq
+  [kind : String]) : lsp_json_vec.Vec
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.list-empty)
     (let
       [entry : LspDeclEntry
         (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
-      [rest : json.JsonSeq
+      [rest : lsp_json_vec.Vec
         (lsp-decls-to-find-list
           decls
           (+ idx 1)
@@ -4529,7 +4536,7 @@
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
-        [items : json.JsonSeq (lsp-decls-to-name-list decls 0)]
+        [items : lsp_json_vec.Vec (lsp-decls-to-name-list decls 0)]
         (begin
           (lsp-write-response id (lsp-json-array items))
           (LspHandleResult.Continue docs)))]
@@ -4546,7 +4553,7 @@
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
-        [items : json.JsonSeq (lsp-decls-to-json-list decls 0)]
+        [items : lsp_json_vec.Vec (lsp-decls-to-json-list decls 0)]
         (begin
           (lsp-write-response id (lsp-json-array items))
           (LspHandleResult.Continue docs)))]
@@ -4575,7 +4582,7 @@
               (lsp-json-string-field-default params "pattern" "")))]
         [prefix : String (lsp-json-string-field-default params "prefix" "")]
         [kind : String (lsp-json-string-field-default params "kind" "")]
-        [items : json.JsonSeq
+        [items : lsp_json_vec.Vec
           (lsp-decls-to-find-list
             decls
             0
@@ -4950,7 +4957,7 @@
 (define (lsp-decls-to-name-list-capped
   [decls : lsp_decl_vec.Vec]
   [idx : i64]
-  [remaining : i64]) : json.JsonSeq
+  [remaining : i64]) : lsp_json_vec.Vec
   (if (or (>= idx (lsp_decl_vec.len (& decls))) (<= remaining 0))
     (json.list-empty)
     (let
@@ -4989,14 +4996,14 @@
 (define (lsp-decls-to-similar-name-list
   [decls : lsp_decl_vec.Vec]
   [idx : i64]
-  [needle : String]) : json.JsonSeq
+  [needle : String]) : lsp_json_vec.Vec
   (if (>= idx (lsp_decl_vec.len (& decls)))
     (json.list-empty)
     (let
       [entry : LspDeclEntry
         (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       [name : String (struct-get entry name)]
-      [rest : json.JsonSeq
+      [rest : lsp_json_vec.Vec
         (lsp-decls-to-similar-name-list decls (+ idx 1) needle)]
       (if (lsp-decl-name-similar? needle name)
         (lsp-json-list-cons (json.JsonString name) rest)
@@ -5712,7 +5719,7 @@
   [name : String]
   [i : i64]
   [n : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
+  [acc : lsp_json_vec.Vec]) : lsp_json_vec.Vec
   (if (>= i n)
     acc
     (let
@@ -5779,13 +5786,13 @@
 
 ;; Source-ordered exact-token highlights. The scanner shares the lexical skip
 ;; rules used by definition/document-symbol discovery.
-(define (lsp-document-highlights-in-text [text : String] [name : String]) : json.JsonSeq
+(define (lsp-document-highlights-in-text [text : String] [name : String]) : lsp_json_vec.Vec
   (let
     [n : i64 (string.string-length text)]
     [name-len : i64 (string.string-length name)]
     [i : i64 0]
     [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
-    [acc : json.JsonSeq (json.list-empty)]
+    [acc : lsp_json_vec.Vec (json.list-empty)]
     (begin
       (while (< i n)
         (let
@@ -6118,11 +6125,11 @@
 ;; Start-ordered folding ranges. The result vector is already in start order,
 ;; so a reverse walk cons'd onto an accumulator emits forward order without
 ;; recursion over the document.
-(define (lsp-folding-ranges-in-text [text : String]) : json.JsonSeq
+(define (lsp-folding-ranges-in-text [text : String]) : lsp_json_vec.Vec
   (let
     [folds : LspFoldRanges (lsp-fold-ranges-scan text)]
     [i : i64 (- (lsp-fold-ranges-len (& folds)) 1)]
-    [acc : json.JsonSeq (json.list-empty)]
+    [acc : lsp_json_vec.Vec (json.list-empty)]
     (begin
       (while (>= i 0)
         (let
@@ -6175,7 +6182,7 @@
             (lsp-write-error id -32600 "Missing name or position parameter")
             (LspHandleResult.Continue docs))
           (let
-            [refs : json.JsonSeq
+            [refs : lsp_json_vec.Vec
               (lsp-find-references-in-text
                 text
                 name
@@ -6250,7 +6257,7 @@
                             (let
                               [n : i64 (fs.string-vector-len (& entries))]
                               [i : i64 0]
-                              [results : json.JsonSeq (json.list-empty)]
+                              [results : lsp_json_vec.Vec (json.list-empty)]
                               (begin
                                 (while (< i n)
                                   (let
@@ -8263,10 +8270,12 @@
     [(json.JsonFound _) true]
     [(json.JsonMissing) false]))
 
-(define (lsp-json-list-append [left : json.JsonSeq] [right : json.JsonSeq]) : json.JsonSeq
+(define (lsp-json-list-append
+  [left : lsp_json_vec.Vec]
+  [right : lsp_json_vec.Vec]) : lsp_json_vec.Vec
   (json.list-concat left right))
 
-(define (lsp-json-list-all-strings? [items : json.JsonSeq]) : bool
+(define (lsp-json-list-all-strings? [items : lsp_json_vec.Vec]) : bool
   (let
     [n : i64 (json.list-count items)]
     [i : i64 0]
@@ -8289,7 +8298,7 @@
         (match value
           [(json.JsonArray items)
             (let
-              [path-items : json.JsonSeq (box-get items)]
+              [path-items : lsp_json_vec.Vec (box-get items)]
               (if (= (json.list-count path-items) 0)
                 (LspPathParam.Err "path must not be empty")
                 (if (lsp-json-list-all-strings? path-items)
@@ -8298,7 +8307,7 @@
           [_ (LspPathParam.Err "path must be an array")])]
       [(json.JsonMissing) (LspPathParam.Err "Missing path parameter")])))
 
-(define (lsp-json-path-single-name [path : json.JsonSeq]) : String
+(define (lsp-json-path-single-name [path : lsp_json_vec.Vec]) : String
   (if (= (json.list-count path) 1)
     (match (json.list-get-index path 0)
       [(json.JsonFound first)
@@ -8435,7 +8444,7 @@
   [start : i64]
   [end : i64]
   [depth : i64]
-  [max-depth : i64]) : json.JsonSeq
+  [max-depth : i64]) : lsp_json_vec.Vec
   (let
     [n : i64 (string.string-length text)]
     [limit : i64
@@ -8443,7 +8452,7 @@
         n
         end)]
     [i : i64 (+ start 1)]
-    [acc : json.JsonSeq (json.list-empty)]
+    [acc : lsp_json_vec.Vec (json.list-empty)]
     (begin
       (while (and (< i limit) (<= depth max-depth))
         (let
@@ -8461,7 +8470,7 @@
                     limit
                     child-end0)]
                 [name : String ""]
-                [child-items : json.JsonSeq (json.list-empty)]
+                [child-items : lsp_json_vec.Vec (json.list-empty)]
                 (if (<= child-end i)
                   (set! i limit)
                   (begin
@@ -8526,7 +8535,7 @@
 
 (define (lsp-lookup-form-path-tail
   [text : String]
-  [path : json.JsonSeq]
+  [path : lsp_json_vec.Vec]
   [start : i64]
   [end : i64]) : LspPathLookup
   (match (json.list-get-index path 0)
@@ -8554,7 +8563,7 @@
 (define (lsp-lookup-form-path
   [text : String]
   [decls : lsp_decl_vec.Vec]
-  [path : json.JsonSeq]) : LspPathLookup
+  [path : lsp_json_vec.Vec]) : LspPathLookup
   (match (json.list-get-index path 0)
     [(json.JsonMissing) (LspPathLookup.Err "path must not be empty")]
     [(json.JsonFound first)
@@ -8585,7 +8594,7 @@
 
 (define (lsp-replace-form-by-path-with-decls
   [text : String]
-  [path : json.JsonSeq]
+  [path : lsp_json_vec.Vec]
   [new-text : String]
   [decls : lsp_decl_vec.Vec]) : LspEditResult
   (if (not (lsp-text-is-valid-forms new-text))
@@ -8606,7 +8615,7 @@
 
 (define (lsp-replace-body-by-path-with-decls
   [text : String]
-  [path : json.JsonSeq]
+  [path : lsp_json_vec.Vec]
   [new-body : String]
   [decls : lsp_decl_vec.Vec]) : LspEditResult
   (let
@@ -9456,7 +9465,7 @@
       (LspBatchOpResult.Err "Missing method parameter" json.JsonNull)]))
 
 (define (lsp-batch-run-operations
-  [ops : json.JsonSeq]
+  [ops : lsp_json_vec.Vec]
   [index : i64]
   [text : String]) : LspBatchRunResult
   (match (json.list-get-index ops 0)
@@ -9477,7 +9486,7 @@
         [(LspBatchOpResult.Err message context)
           (LspBatchRunResult.Err message index text context)])]))
 
-(define (lsp-batch-success-json [text : String] [results : json.JsonSeq]) : json.Json
+(define (lsp-batch-success-json [text : String] [results : lsp_json_vec.Vec]) : json.Json
   (lsp-json-object4
     "success"
     (json.JsonBool true)
@@ -9528,7 +9537,7 @@
   [diagnostic-uri : String]
   [edited-text : String]
   [formatted : String]
-  [results : json.JsonSeq]) : LspHandleResult
+  [results : lsp_json_vec.Vec]) : LspHandleResult
   (match (lsp-validate-edited-document formatted)
     [(LspEditResult.Ok _)
       (match (lsp-tl-save-doc docs uri path diagnostic-uri formatted)
@@ -9715,17 +9724,17 @@
         (string.eq replaced "(define (foo) : i64 1)\n(define (bar) : i64 4)")]
       [(LspEditResult.Err _) false])))
 
-(define (lsp-test-path1 [a : String]) : json.JsonSeq
+(define (lsp-test-path1 [a : String]) : lsp_json_vec.Vec
   (lsp-json-list-cons (json.JsonString a) (json.list-empty)))
 
-(define (lsp-test-path3 [a : String] [b : String] [c : String]) : json.JsonSeq
+(define (lsp-test-path3 [a : String] [b : String] [c : String]) : lsp_json_vec.Vec
   (lsp-json-list-cons
     (json.JsonString a)
     (lsp-json-list-cons
       (json.JsonString b)
       (lsp-json-list-cons (json.JsonString c) (json.list-empty)))))
 
-(define (lsp-test-path4 [a : String] [b : String] [c : String] [d : String]) : json.JsonSeq
+(define (lsp-test-path4 [a : String] [b : String] [c : String] [d : String]) : lsp_json_vec.Vec
   (lsp-json-list-cons
     (json.JsonString a)
     (lsp-json-list-cons
@@ -9745,7 +9754,7 @@
   (let
     [text : String (lsp-nested-path-test-text)]
     [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
-    [path : json.JsonSeq (lsp-test-path4 "foo" "let" "match" "Ok")]
+    [path : lsp_json_vec.Vec (lsp-test-path4 "foo" "let" "match" "Ok")]
     [needle : String "(Ok value)"]
     (match (lsp-lookup-form-path text decls path)
       [(LspPathLookup.Found start end name)
@@ -9758,7 +9767,7 @@
   (let
     [text : String (lsp-nested-path-test-text)]
     [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
-    [path : json.JsonSeq (lsp-test-path3 "foo" "let" "match")]
+    [path : lsp_json_vec.Vec (lsp-test-path3 "foo" "let" "match")]
     [new-text : String "(+ x 1)"]
     [old-match : String "(match x"]
     (match (lsp-replace-form-by-path-with-decls text path new-text decls)
@@ -9772,7 +9781,7 @@
   (let
     [text : String (lsp-nested-path-test-text)]
     [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
-    [path : json.JsonSeq (lsp-test-path1 "foo")]
+    [path : lsp_json_vec.Vec (lsp-test-path1 "foo")]
     [new-body : String "(+ x 2)"]
     [old-match : String "(match x"]
     (match (lsp-replace-body-by-path-with-decls text path new-body decls)

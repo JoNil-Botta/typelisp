@@ -2,6 +2,9 @@
 (import stdlib.serialize)
 (import stdlib.array)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector json.Json core) as json_vec)
+(import (vector.vector json.JsonMember core) as json_member_vec)
 (import serialize_enum_fixture as enum_fixture)
 
 (defstruct Address
@@ -33,10 +36,10 @@
 (define (serialize-json-member
   [key : String]
   [value : json.Json]
-  [rest : json.JsonMemberSeq]) : json.JsonMemberSeq
+  [rest : json_member_vec.Vec]) : json_member_vec.Vec
   (json.member-cons key value rest))
 
-(define (serialize-json-item [value : json.Json] [rest : json.JsonSeq]) : json.JsonSeq
+(define (serialize-json-item [value : json.Json] [rest : json_vec.Vec]) : json_vec.Vec
   (json.list-cons value rest))
 
 (define (serialize-json-empty-array) : json.Json

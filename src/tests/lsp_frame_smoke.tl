@@ -7,6 +7,7 @@
 (import stdlib.text_buf)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)
+(import (vector.vector json.Json core) as lsp_json_vec)
 (import "../lsp_frame_core.tl")
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector LspDocument core) as lsp_document_vec)
@@ -230,7 +231,7 @@
         (tc-inlay-hint-record! 1 (+ typed-off 1) "i64")
         (tc-inlay-hint-record! 1 (+ next-off 1) "i64")
         (let
-          [hints : json.JsonSeq (lsp-inlay-build src 0 0)]
+          [hints : lsp_json_vec.Vec (lsp-inlay-build src 0 0)]
           [rendered : String (json.stringify (lsp-json-array hints))]
           [type-label : String "\": i64\""]
           [total-pos : String "\"character\":33"]
@@ -329,7 +330,7 @@
   (let
     [src : String
       "(define (foo [x : i64]) : i64 x) (define (bar) : i64 (foo 1))"]
-    [refs : json.JsonSeq
+    [refs : lsp_json_vec.Vec
       (lsp-find-references-in-text
         src
         "foo"
@@ -632,7 +633,7 @@
           (set! i (+ i 1))))
       (text_buf.render buf))))
 
-(define (lsp-fold-first-json [ranges : json.JsonSeq]) : String
+(define (lsp-fold-first-json [ranges : lsp_json_vec.Vec]) : String
   (match (json.list-get-index ranges 0)
     [(json.JsonFound value) (json.stringify value)]
     [(json.JsonMissing) ""]))
@@ -643,9 +644,9 @@
 (define (lsp-folding-range-scale-smoke-ok?) : bool
   (let
     [depth : i64 2000]
-    [nested : json.JsonSeq
+    [nested : lsp_json_vec.Vec
       (lsp-folding-ranges-in-text (lsp-fold-nested-source depth))]
-    [wide : json.JsonSeq
+    [wide : lsp_json_vec.Vec
       (lsp-folding-ranges-in-text (lsp-fold-wide-source depth))]
     [outermost : String
       "{\"startLine\":0,\"startCharacter\":1,\"endLine\":3999,\"endCharacter\":0}"]

@@ -1,5 +1,6 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
 (import stdlib.string)
+(import stdlib.vector)
 
 (defenum CompilerObjectSectionKind
   (Text)
@@ -46,9 +47,10 @@
   (SymbolAddress String)
   (SymbolRva32 String))
 
+(import (vector.vector CompilerObjectDataRecord core) as data_record_vec)
+
 (defstruct CompilerObjectDataRecordList
-  (slots (Array CompilerObjectDataRecord))
-  (len i64))
+  (items data_record_vec.Vec))
 
 (defenum CompilerObjectX64Instr
   (Label String)
@@ -73,9 +75,10 @@
   (Bytes String)
   (Raw String))
 
+(import (vector.vector CompilerObjectX64Instr core) as x64_instr_vec)
+
 (defstruct CompilerObjectX64InstrList
-  (slots (Array CompilerObjectX64Instr))
-  (len i64))
+  (items x64_instr_vec.Vec))
 
 (defenum CompilerObjectSymbol
   (Symbol
@@ -84,9 +87,10 @@
     CompilerObjectSymbolKind
     CompilerObjectMaybeSection))
 
+(import (vector.vector CompilerObjectSymbol core) as symbol_vec)
+
 (defstruct CompilerObjectSymbolList
-  (slots (Array CompilerObjectSymbol))
-  (len i64))
+  (items symbol_vec.Vec))
 
 (defenum CompilerObjectRelocation
   (Relocation
@@ -95,9 +99,10 @@
     CompilerObjectRelocationKind
     String))
 
+(import (vector.vector CompilerObjectRelocation core) as relocation_vec)
+
 (defstruct CompilerObjectRelocationList
-  (slots (Array CompilerObjectRelocation))
-  (len i64))
+  (items relocation_vec.Vec))
 
 (defenum CompilerObjectSection
   (Section
@@ -105,9 +110,10 @@
     CompilerObjectDataRecordList
     CompilerObjectX64InstrList))
 
+(import (vector.vector CompilerObjectSection core) as section_vec)
+
 (defstruct CompilerObjectSectionList
-  (slots (Array CompilerObjectSection))
-  (len i64))
+  (items section_vec.Vec))
 
 (defstruct CompilerObjectImage
   (sections CompilerObjectSectionList)
@@ -115,311 +121,115 @@
   (relocations CompilerObjectRelocationList))
 
 (defstruct CompilerObjectDataRecordBuilder
-  (slots (Array CompilerObjectDataRecord))
-  (count i64))
+  (items data_record_vec.Vec))
 
 (defstruct CompilerObjectX64InstrBuilder
-  (slots (Array CompilerObjectX64Instr))
-  (count i64))
+  (items x64_instr_vec.Vec))
 
 (defstruct CompilerObjectSymbolBuilder
-  (slots (Array CompilerObjectSymbol))
-  (count i64))
+  (items symbol_vec.Vec))
 
 (defstruct CompilerObjectRelocationBuilder
-  (slots (Array CompilerObjectRelocation))
-  (count i64))
+  (items relocation_vec.Vec))
 
 (defstruct CompilerObjectSectionBuilder
-  (slots (Array CompilerObjectSection))
-  (count i64))
-
-(define (compiler-object-builder-capacity [capacity : i64]) : i64
-  (if (< capacity 1)
-    1
-    capacity))
+  (items section_vec.Vec))
 
 (define (compiler-object-data-record-builder-with-capacity [capacity : i64]) : CompilerObjectDataRecordBuilder
-  (CompilerObjectDataRecordBuilder
-    (make-array
-      CompilerObjectDataRecord
-      (compiler-object-builder-capacity capacity))
-    0))
+  (CompilerObjectDataRecordBuilder (data_record_vec.with-capacity capacity)))
 
 (define (compiler-object-data-record-builder-new) : CompilerObjectDataRecordBuilder
   (compiler-object-data-record-builder-with-capacity 16))
 
 (define (compiler-object-instr-builder-with-capacity [capacity : i64]) : CompilerObjectX64InstrBuilder
-  (CompilerObjectX64InstrBuilder
-    (make-array
-      CompilerObjectX64Instr
-      (compiler-object-builder-capacity capacity))
-    0))
+  (CompilerObjectX64InstrBuilder (x64_instr_vec.with-capacity capacity)))
 
 (define (compiler-object-instr-builder-new) : CompilerObjectX64InstrBuilder
   (compiler-object-instr-builder-with-capacity 16))
 
 (define (compiler-object-symbol-builder-with-capacity [capacity : i64]) : CompilerObjectSymbolBuilder
-  (CompilerObjectSymbolBuilder
-    (make-array
-      CompilerObjectSymbol
-      (compiler-object-builder-capacity capacity))
-    0))
+  (CompilerObjectSymbolBuilder (symbol_vec.with-capacity capacity)))
 
 (define (compiler-object-symbol-builder-new) : CompilerObjectSymbolBuilder
   (compiler-object-symbol-builder-with-capacity 16))
 
 (define (compiler-object-relocation-builder-with-capacity [capacity : i64]) : CompilerObjectRelocationBuilder
-  (CompilerObjectRelocationBuilder
-    (make-array
-      CompilerObjectRelocation
-      (compiler-object-builder-capacity capacity))
-    0))
+  (CompilerObjectRelocationBuilder (relocation_vec.with-capacity capacity)))
 
 (define (compiler-object-relocation-builder-new) : CompilerObjectRelocationBuilder
   (compiler-object-relocation-builder-with-capacity 16))
 
 (define (compiler-object-section-builder-with-capacity [capacity : i64]) : CompilerObjectSectionBuilder
-  (CompilerObjectSectionBuilder
-    (make-array
-      CompilerObjectSection
-      (compiler-object-builder-capacity capacity))
-    0))
+  (CompilerObjectSectionBuilder (section_vec.with-capacity capacity)))
 
 (define (compiler-object-section-builder-new) : CompilerObjectSectionBuilder
   (compiler-object-section-builder-with-capacity 8))
 
-(define (compiler-object-data-record-builder-copy-range!
-  [dst : (Array CompilerObjectDataRecord)]
-  [src : (Array CompilerObjectDataRecord)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (array-set! dst index (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-object-instr-builder-copy-range!
-  [dst : (Array CompilerObjectX64Instr)]
-  [src : (Array CompilerObjectX64Instr)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (array-set! dst index (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-object-symbol-builder-copy-range!
-  [dst : (Array CompilerObjectSymbol)]
-  [src : (Array CompilerObjectSymbol)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (array-set! dst index (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-object-relocation-builder-copy-range!
-  [dst : (Array CompilerObjectRelocation)]
-  [src : (Array CompilerObjectRelocation)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (array-set! dst index (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-object-section-builder-copy-range!
-  [dst : (Array CompilerObjectSection)]
-  [src : (Array CompilerObjectSection)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (array-set! dst index (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (compiler-object-data-record-builder-grow
-  [builder : CompilerObjectDataRecordBuilder]) : CompilerObjectDataRecordBuilder
-  (let
-    [count : i64 (struct-get builder count)]
-    [slots : (Array CompilerObjectDataRecord) (struct-get builder slots)]
-    [bigger : (Array CompilerObjectDataRecord)
-      (make-array CompilerObjectDataRecord (* (array-length slots) 2))]
-    (begin
-      (compiler-object-data-record-builder-copy-range! bigger slots count)
-      (CompilerObjectDataRecordBuilder bigger count))))
-
-(define (compiler-object-instr-builder-grow
-  [builder : CompilerObjectX64InstrBuilder]) : CompilerObjectX64InstrBuilder
-  (let
-    [count : i64 (struct-get builder count)]
-    [slots : (Array CompilerObjectX64Instr) (struct-get builder slots)]
-    [bigger : (Array CompilerObjectX64Instr)
-      (make-array CompilerObjectX64Instr (* (array-length slots) 2))]
-    (begin
-      (compiler-object-instr-builder-copy-range! bigger slots count)
-      (CompilerObjectX64InstrBuilder bigger count))))
-
-(define (compiler-object-symbol-builder-grow
-  [builder : CompilerObjectSymbolBuilder]) : CompilerObjectSymbolBuilder
-  (let
-    [count : i64 (struct-get builder count)]
-    [slots : (Array CompilerObjectSymbol) (struct-get builder slots)]
-    [bigger : (Array CompilerObjectSymbol)
-      (make-array CompilerObjectSymbol (* (array-length slots) 2))]
-    (begin
-      (compiler-object-symbol-builder-copy-range! bigger slots count)
-      (CompilerObjectSymbolBuilder bigger count))))
-
-(define (compiler-object-relocation-builder-grow
-  [builder : CompilerObjectRelocationBuilder]) : CompilerObjectRelocationBuilder
-  (let
-    [count : i64 (struct-get builder count)]
-    [slots : (Array CompilerObjectRelocation) (struct-get builder slots)]
-    [bigger : (Array CompilerObjectRelocation)
-      (make-array CompilerObjectRelocation (* (array-length slots) 2))]
-    (begin
-      (compiler-object-relocation-builder-copy-range! bigger slots count)
-      (CompilerObjectRelocationBuilder bigger count))))
-
-(define (compiler-object-section-builder-grow
-  [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionBuilder
-  (let
-    [count : i64 (struct-get builder count)]
-    [slots : (Array CompilerObjectSection) (struct-get builder slots)]
-    [bigger : (Array CompilerObjectSection)
-      (make-array CompilerObjectSection (* (array-length slots) 2))]
-    (begin
-      (compiler-object-section-builder-copy-range! bigger slots count)
-      (CompilerObjectSectionBuilder bigger count))))
-
 (define (compiler-object-data-record-builder-push
   [builder : CompilerObjectDataRecordBuilder]
   [record : CompilerObjectDataRecord]) : CompilerObjectDataRecordBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
-    (let
-      [slots : (Array CompilerObjectDataRecord) (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
-      (begin
-        (array-set! slots count record)
-        (CompilerObjectDataRecordBuilder slots (+ count 1))))
-    (compiler-object-data-record-builder-push
-      (compiler-object-data-record-builder-grow builder)
-      record)))
+  (begin
+    (data_record_vec.push (&mut (struct-get builder items)) record)
+    builder))
 
 (define (compiler-object-instr-builder-push
   [builder : CompilerObjectX64InstrBuilder]
   [instr : CompilerObjectX64Instr]) : CompilerObjectX64InstrBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
-    (let
-      [slots : (Array CompilerObjectX64Instr) (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
-      (begin
-        (array-set! slots count instr)
-        (CompilerObjectX64InstrBuilder slots (+ count 1))))
-    (compiler-object-instr-builder-push
-      (compiler-object-instr-builder-grow builder)
-      instr)))
+  (begin
+    (x64_instr_vec.push (&mut (struct-get builder items)) instr)
+    builder))
 
 (define (compiler-object-symbol-builder-push
   [builder : CompilerObjectSymbolBuilder]
   [symbol : CompilerObjectSymbol]) : CompilerObjectSymbolBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
-    (let
-      [slots : (Array CompilerObjectSymbol) (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
-      (begin
-        (array-set! slots count symbol)
-        (CompilerObjectSymbolBuilder slots (+ count 1))))
-    (compiler-object-symbol-builder-push
-      (compiler-object-symbol-builder-grow builder)
-      symbol)))
+  (begin
+    (symbol_vec.push (&mut (struct-get builder items)) symbol)
+    builder))
 
 (define (compiler-object-relocation-builder-push
   [builder : CompilerObjectRelocationBuilder]
   [reloc : CompilerObjectRelocation]) : CompilerObjectRelocationBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
-    (let
-      [slots : (Array CompilerObjectRelocation) (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
-      (begin
-        (array-set! slots count reloc)
-        (CompilerObjectRelocationBuilder slots (+ count 1))))
-    (compiler-object-relocation-builder-push
-      (compiler-object-relocation-builder-grow builder)
-      reloc)))
+  (begin
+    (relocation_vec.push (&mut (struct-get builder items)) reloc)
+    builder))
 
 (define (compiler-object-section-builder-push
   [builder : CompilerObjectSectionBuilder]
   [section : CompilerObjectSection]) : CompilerObjectSectionBuilder
-  (if (< (struct-get builder count) (array-length (struct-get builder slots)))
-    (let
-      [slots : (Array CompilerObjectSection) (struct-get builder slots)]
-      [count : i64 (struct-get builder count)]
-      (begin
-        (array-set! slots count section)
-        (CompilerObjectSectionBuilder slots (+ count 1))))
-    (compiler-object-section-builder-push
-      (compiler-object-section-builder-grow builder)
-      section)))
+  (begin
+    (section_vec.push (&mut (struct-get builder items)) section)
+    builder))
 
 (define (compiler-object-data-record-builder-finish
   [builder : CompilerObjectDataRecordBuilder]) : CompilerObjectDataRecordList
-  (CompilerObjectDataRecordList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectDataRecordList (struct-get builder items)))
 
 (define (compiler-object-instr-builder-finish
   [builder : CompilerObjectX64InstrBuilder]) : CompilerObjectX64InstrList
-  (CompilerObjectX64InstrList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectX64InstrList (struct-get builder items)))
 
 (define (compiler-object-symbol-builder-finish
   [builder : CompilerObjectSymbolBuilder]) : CompilerObjectSymbolList
-  (CompilerObjectSymbolList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectSymbolList (struct-get builder items)))
 
 (define (compiler-object-relocation-builder-finish
   [builder : CompilerObjectRelocationBuilder]) : CompilerObjectRelocationList
-  (CompilerObjectRelocationList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectRelocationList (struct-get builder items)))
 
 (define (compiler-object-section-builder-finish
   [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionList
-  (CompilerObjectSectionList
-    (struct-get builder slots)
-    (struct-get builder count)))
+  (CompilerObjectSectionList (struct-get builder items)))
 
 (define (compiler-object-symbol-builder-contains?
   [builder : CompilerObjectSymbolBuilder]
   [name : String]
   [binding : CompilerObjectSymbolBinding]
   [kind : CompilerObjectSymbolKind]) : bool
-  (let
-    [count : i64 (struct-get builder count)]
-    [slots : (Array CompilerObjectSymbol) (struct-get builder slots)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (match (array-ref slots index)
-          [(CompilerObjectSymbol.Symbol found-name found-binding found-kind _)
-            (if (and
-              (string.eq found-name name)
-              (compiler-object-symbol-binding-eq? found-binding binding)
-              (compiler-object-symbol-kind-eq? found-kind kind))
-              (set! found true)
-              (set! index (+ index 1)))]))
-      found)))
+  (compiler-object-symbol-list-contains?
+    (compiler-object-symbol-builder-finish builder)
+    name
+    binding
+    kind))
 
 (define (compiler-object-section-kind-eq?
   [a : CompilerObjectSectionKind]
@@ -526,47 +336,47 @@
         [_ false])]))
 
 (define (compiler-object-symbol-list-count [symbols : CompilerObjectSymbolList]) : i64
-  (struct-get symbols len))
+  (symbol_vec.len (& (struct-get symbols items))))
 
 (define (compiler-object-symbol-list-ref
   [symbols : CompilerObjectSymbolList]
   [index : i64]) : CompilerObjectSymbol
-  (array-ref (struct-get symbols slots) index))
+  (array-ref (symbol_vec.slots (& (struct-get symbols items))) index))
 
 (define (compiler-object-relocation-list-count
   [relocs : CompilerObjectRelocationList]) : i64
-  (struct-get relocs len))
+  (relocation_vec.len (& (struct-get relocs items))))
 
 (define (compiler-object-relocation-list-ref
   [relocs : CompilerObjectRelocationList]
   [index : i64]) : CompilerObjectRelocation
-  (array-ref (struct-get relocs slots) index))
+  (array-ref (relocation_vec.slots (& (struct-get relocs items))) index))
 
 (define (compiler-object-data-record-list-count
   [records : CompilerObjectDataRecordList]) : i64
-  (struct-get records len))
+  (data_record_vec.len (& (struct-get records items))))
 
 (define (compiler-object-data-record-list-ref
   [records : CompilerObjectDataRecordList]
   [index : i64]) : CompilerObjectDataRecord
-  (array-ref (struct-get records slots) index))
+  (array-ref (data_record_vec.slots (& (struct-get records items))) index))
 
 (define (compiler-object-instr-list-count [instrs : CompilerObjectX64InstrList]) : i64
-  (struct-get instrs len))
+  (x64_instr_vec.len (& (struct-get instrs items))))
 
 (define (compiler-object-instr-list-ref
   [instrs : CompilerObjectX64InstrList]
   [index : i64]) : CompilerObjectX64Instr
-  (array-ref (struct-get instrs slots) index))
+  (array-ref (x64_instr_vec.slots (& (struct-get instrs items))) index))
 
 (define (compiler-object-section-list-count
   [sections : CompilerObjectSectionList]) : i64
-  (struct-get sections len))
+  (section_vec.len (& (struct-get sections items))))
 
 (define (compiler-object-section-list-ref
   [sections : CompilerObjectSectionList]
   [index : i64]) : CompilerObjectSection
-  (array-ref (struct-get sections slots) index))
+  (array-ref (section_vec.slots (& (struct-get sections items))) index))
 
 (define (compiler-object-image-dense? [_image : CompilerObjectImage]) : bool
   true)
@@ -580,8 +390,8 @@
     [result : CompilerObjectSection
       (CompilerObjectSection.Section
         kind
-        (CompilerObjectDataRecordList (make-array CompilerObjectDataRecord 0) 0)
-        (CompilerObjectX64InstrList (make-array CompilerObjectX64Instr 0) 0))]
+        (CompilerObjectDataRecordList (data_record_vec.new))
+        (CompilerObjectX64InstrList (x64_instr_vec.new)))]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))

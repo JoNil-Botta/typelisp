@@ -2417,15 +2417,24 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-extend-segment-set-word-bits!
-          starts
-          ends
-          segments
-          segment-starts
-          segment-ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; Empty words are the common case in a sparse live set, and
+        ;; `compiler-reg-extend-segment-set-word-bits!` does nothing for them --
+        ;; it tests `bits` against zero before anything else. Testing here
+        ;; instead skips setting up an eight-argument call per empty word;
+        ;; behaviour is unchanged because the callee was already a no-op.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-extend-segment-set-word-bits!
+              starts
+              ends
+              segments
+              segment-starts
+              segment-ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 ;; Note a live point into the per-var SEGMENTS only, WITHOUT
@@ -2473,13 +2482,20 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-segment-note-set-word-bits!
-          segments
-          segment-starts
-          segment-ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; Same as `compiler-reg-extend-segment-set-words!`: the callee returns
+        ;; immediately for an empty word, so testing here skips the call setup
+        ;; for the common case without changing what happens.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-segment-note-set-word-bits!
+              segments
+              segment-starts
+              segment-ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-extend-segment-instr!
@@ -2545,12 +2561,18 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-extend-set-word-bits
-          starts
-          ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; `compiler-reg-extend-set-word-bits` returns immediately for an empty
+        ;; word, so testing here skips the call setup for the common case.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-extend-set-word-bits
+              starts
+              ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-extend-set-word-bits
@@ -7996,25 +8018,52 @@
         kind)
         [(CompilerRegCallScan.Scan _ set) set])]))
 
+;; "Does any set bit of `bits` land strictly inside (start, end) once offset by
+;; `var-base`?" The bit positions satisfying `start < var-base + i < end` form a
+;; contiguous run, so the whole question is one mask test instead of a walk over
+;; the set bits.
+;;
+;; The mask is clamped to positions 0..31 because `compiler-reg-low-bit-index32`
+;; only ever reported indices in that range: it masks its argument to
+;; `0xffffffff` and answers 31 when the low word is empty. A word carrying bits
+;; above position 31 therefore tested index 31 in the original loop, which is
+;; reproduced here by folding that case into bit 31 of the effective word rather
+;; than assuming callers never pass one.
+(define (compiler-reg-call-word-range-mask [low-bit : i64] [high-bit : i64]) : i64
+  (shl (- (shl 1 (+ (- high-bit low-bit) 1)) 1) low-bit))
+
 (define (compiler-reg-call-word-in-range?
   [bits : i64]
   [var-base : i64]
   [start : i64]
   [end : i64]) : bool
-  (if (= bits 0)
-    false
-    (let
-      [i : i64 (compiler-reg-low-bit-index32 bits)]
-      [c : i64 (+ var-base i)]
-      (if (if (< start c)
-        (< c end)
-        false)
-        true
-        (compiler-reg-call-word-in-range?
-          (bit-and bits (- bits 1))
-          var-base
-          start
-          end)))))
+  (let
+    [low : i64 (bit-and bits 0xffffffff)]
+    [effective : i64
+      (if (= bits low)
+        low
+        (bit-or low 0x80000000))]
+    (if (= effective 0)
+      false
+      (let
+        [lo : i64 (- (+ start 1) var-base)]
+        [hi : i64 (- (- end 1) var-base)]
+        [low-bit : i64
+          (if (< lo 0)
+            0
+            lo)]
+        [high-bit : i64
+          (if (> hi 31)
+            31
+            hi)]
+        (if (> low-bit high-bit)
+          false
+          (not
+            (=
+              (bit-and
+                effective
+                (compiler-reg-call-word-range-mask low-bit high-bit))
+              0)))))))
 
 (cfg
   (any regalloc-census test)
@@ -8044,8 +8093,9 @@
   [set : CompilerLiveI64Set]
   [start : i64]
   [end : i64]
-  [word-index : i64]) : bool
-  (if (>= word-index (compiler-live-set-word-count set))
+  [word-index : i64]
+  [last-word : i64]) : bool
+  (if (> word-index last-word)
     false
     (if (compiler-reg-call-word-in-range?
       (compiler-live-set-word-at-bounded set word-index)
@@ -8053,13 +8103,48 @@
       start
       end)
       true
-      (compiler-reg-call-set-in-range-words? set start end (+ word-index 1)))))
+      (compiler-reg-call-set-in-range-words?
+        set
+        start
+        end
+        (+ word-index 1)
+        last-word))))
 
+;; Only the words holding positions inside `(start, end)` can answer yes, so the
+;; scan starts and stops at those words instead of walking the whole set. Word
+;; `w` holds global positions `w * word-bits .. w * word-bits + word-bits - 1`,
+;; and the positions of interest are `start + 1 .. end - 1`, which gives the
+;; bounds directly. Words outside that span contain no position the predicate
+;; could accept, so skipping them cannot change the answer.
 (define (compiler-reg-call-set-in-range?
   [set : CompilerLiveI64Set]
   [start : i64]
   [end : i64]) : bool
-  (compiler-reg-call-set-in-range-words? set start end 0))
+  (let
+    [bits : i64 (compiler-live-set-word-bits)]
+    [last-pos : i64 (- end 1)]
+    [first-pos : i64
+      (if (< (+ start 1) 0)
+        0
+        (+ start 1))]
+    (if (> first-pos last-pos)
+      false
+      (let
+        [count : i64 (compiler-live-set-word-count set)]
+        [first-word : i64 (/ first-pos bits)]
+        [raw-last-word : i64 (/ last-pos bits)]
+        [last-word : i64
+          (if (>= raw-last-word count)
+            (- count 1)
+            raw-last-word)]
+        (if (> first-word last-word)
+          false
+          (compiler-reg-call-set-in-range-words?
+            set
+            start
+            end
+            first-word
+            last-word))))))
 
 (define (compiler-reg-clobber-word-in-range-inclusive-start?
   [bits : i64]
@@ -8384,11 +8469,18 @@
   (if (>= word-index (compiler-live-set-word-count set))
     unit
     (begin
-      (compiler-reg-ref-counts-add-word-weighted!
-        counts
-        (compiler-live-set-word-at-bounded set word-index)
-        (* word-index (compiler-live-set-word-bits))
-        weight)
+      ;; `compiler-reg-ref-counts-add-word-weighted!` returns immediately for an
+      ;; empty word, so testing here skips the call for the common case in a
+      ;; sparse live set without changing what happens.
+      (let
+        [bits : i64 (compiler-live-set-word-at-bounded set word-index)]
+        (if (= bits 0)
+          unit
+          (compiler-reg-ref-counts-add-word-weighted!
+            counts
+            bits
+            (* word-index (compiler-live-set-word-bits))
+            weight)))
       (compiler-reg-ref-counts-add-set-words-weighted!
         counts
         set
@@ -17335,18 +17427,21 @@
 ;; positions on Win64. Record only preferences that exist in the allocator's XMM
 ;; pool (currently XMM2+); XMM0/XMM1 remain unavailable until the backend scratch
 ;; migration tracked by #4919 lands.
+;; `is-float` is supplied by the caller. Every caller already needs the same
+;; classification to advance the argument-bank indices, and recomputing it here
+;; walked the sorted var-type list a second time for the same value.
 (define (compiler-reg-float-arg-pref-value!
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegStringList]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]
+  [is-float : bool]
   [float-idx : i64]
   [position : i64]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match value
     [(CompilerIrValue.Var v)
-      (if (compiler-reg-call-arg-float? value types)
+      (if is-float
         (let
           [abi-idx : i64
             (if (compiler-abi-arg-banks-independent? abi)
@@ -17393,7 +17488,7 @@
           abi
           pool
           value
-          types
+          is-float
           float-idx
           position
           prefs
@@ -17426,7 +17521,7 @@
         abi
         pool
         a
-        types
+        (compiler-reg-call-arg-float? a types)
         0
         position
         prefs
@@ -17439,7 +17534,7 @@
             abi
             pool
             a
-            types
+            a-float
             0
             position
             prefs
@@ -17448,7 +17543,7 @@
             abi
             pool
             b
-            types
+            (compiler-reg-call-arg-float? b types)
             (if a-float
               1
               0)
@@ -17602,17 +17697,18 @@
 ;; register-homed float call arg must already be in its ABI destination. A greedy
 ;; fallback register, XMM0/XMM1 target, stack target, or conflicting preference
 ;; therefore becomes unassigned and is materialised from its normal stack home.
+;; Same as the pref variant: the caller has already classified this argument.
 (define (compiler-reg-float-arg-demote-value!
   [abi : CompilerRegTargetAbi]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]
+  [is-float : bool]
   [float-idx : i64]
   [position : i64]
   [parents : (Array i64)]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match value
     [(CompilerIrValue.Var v)
-      (if (compiler-reg-call-arg-float? value types)
+      (if is-float
         (let
           [abi-idx : i64
             (if (compiler-abi-arg-banks-independent? abi)
@@ -17653,7 +17749,7 @@
         (compiler-reg-float-arg-demote-value!
           abi
           value
-          types
+          is-float
           float-idx
           position
           parents
@@ -17683,7 +17779,7 @@
       (compiler-reg-float-arg-demote-value!
         abi
         a
-        types
+        (compiler-reg-call-arg-float? a types)
         0
         position
         parents
@@ -17695,7 +17791,7 @@
           (compiler-reg-float-arg-demote-value!
             abi
             a
-            types
+            a-float
             0
             position
             parents
@@ -17703,7 +17799,7 @@
           (compiler-reg-float-arg-demote-value!
             abi
             b
-            types
+            (compiler-reg-call-arg-float? b types)
             (if a-float
               1
               0)

@@ -2041,19 +2041,11 @@
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-dce-instrs-from set instrs -2))
 
-(define (opt-used-array-fill [items : (Array i64)] [index : i64] [value : i64]) : unit
-  (if (>= index (array-length items))
-    unit
-    (begin
-      (array-set! items index value)
-      (opt-used-array-fill items (+ index 1) value))))
-
+;; `make-array` already returns zeroed memory, so a fresh use-count array needs
+;; no initialising pass. The `opt-used-array-fill` helper existed only to run
+;; that pass and had no other caller, so it goes with it.
 (define (opt-used-array-new [count : i64]) : (Array i64)
-  (let
-    [items : (Array i64) (array.make-array i64 count)]
-    (begin
-      (opt-used-array-fill items 0 0)
-      items)))
+  (array.make-array i64 count))
 
 ;; Use counts (not booleans): `add` bumps the count, `contains` reports any live
 ;; use, and `dec` drops a single use when DCE deletes an instruction. Counting
@@ -7691,6 +7683,11 @@
       (opt-cfg-csr-fill-rows! rows count offsets edges 0 0)
       (OptCfgCsr offsets edges))))
 
+;; Only for arrays being *re*-initialised. `make-array` already hands back
+;; zeroed memory -- `tl_array_zero` either fills the allocation or skips the
+;; fill precisely when the arena is virgin and therefore already zero -- so
+;; clearing a freshly allocated array to `false` repeats work the allocator has
+;; already done, with a scalar loop instead of `rep stosq`.
 (define (opt-cfg-fill-bool!
   [values : (Array bool)]
   [count : i64]
@@ -8990,11 +8987,9 @@
     false
     (let
       [set : (Array bool) (array.make-array bool vars)]
-      (begin
-        (opt-cfg-fill-bool! set vars false)
-        (and
-          (opt-verify-param-def-set params set)
-          (opt-verify-block-def-set blocks set))))))
+      (and
+        (opt-verify-param-def-set params set)
+        (opt-verify-block-def-set blocks set)))))
 
 (define (opt-var-defs-from-params
   [params : CompilerIrParamList]
@@ -10204,12 +10199,7 @@
     [(OptSsaFacts.Facts _ _ types) (opt-ssa-any-candidate-types? facts types)]))
 
 (define (opt-ssa-label-members-new [index : OptCfgIndex]) : (Array bool)
-  (let
-    [members : (Array bool)
-      (array.make-array bool (opt-cfg-index-block-count index))]
-    (begin
-      (opt-cfg-fill-bool! members (array-length members) false)
-      members)))
+  (array.make-array bool (opt-cfg-index-block-count index)))
 
 (define (opt-ssa-label-member? [members : (Array bool)] [id : i64]) : bool
   (if (and (>= id 0) (< id (array-length members)))
@@ -13693,7 +13683,6 @@
     [members : (Array bool)
       (array.make-array bool (opt-cfg-index-block-count index))]
     (begin
-      (opt-cfg-fill-bool! members (array-length members) false)
       (opt-loop-body-fill-members! index members labels)
       (OptLoopBody
         labels
@@ -13959,7 +13948,6 @@
     [index : OptCfgIndex (struct-get pred-map index)]
     [marks : (Array bool)
       (array.make-array bool (opt-cfg-index-block-count index))]
-    [_clear-marks : unit (opt-cfg-fill-bool! marks (array-length marks) false)]
     [_seed-header : unit (opt-natural-loop-mark-label! index marks header)]
     [_seed-latch : unit (opt-natural-loop-mark-label! index marks latch)]
     ;; #M-E: a self-loop (latch == header) has body {header}. Seeding the
@@ -21831,8 +21819,6 @@
     [executable-count : i64
       (opt-cfg-index-block-count (struct-get context index))]
     [executable-flags : (Array bool) (array.make-array bool executable-count)]
-    [_clear-executable : unit
-      (opt-cfg-fill-bool! executable-flags executable-count false)]
     [_entry : unit
       (match (opt-cfg-index-id
         (struct-get context index)
@@ -21862,8 +21848,6 @@
     [executable-count : i64
       (opt-cfg-index-block-count (struct-get context index))]
     [executable-flags : (Array bool) (array.make-array bool executable-count)]
-    [_clear-executable : unit
-      (opt-cfg-fill-bool! executable-flags executable-count false)]
     [_entry : unit
       (match (opt-cfg-index-id
         (struct-get context index)

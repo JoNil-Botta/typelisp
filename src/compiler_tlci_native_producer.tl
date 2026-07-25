@@ -3167,90 +3167,112 @@
   [index : i64]
   [param : i64]) : String
   (if (>= index (struct-get arms len))
-    "  0\n"
+    "  0
+"
     (match (array-ref (struct-get arms slots) index)
       [(AstMatchArm.Arm pattern body-node)
         (match pattern
           [(AstPattern.Variant name-id args-box)
             (let
-              [variant : String (embedded-native-expr-variant-name name-id)]
               [pat-args : AstPatternList (box-get args-box)]
-              (if (and
-                (string.eq variant "Var")
-                (= (struct-get (& pat-args) len) 1))
-                (embedded-native-var-value-arm-code
-                  params
-                  (& pat-args)
-                  body-node
-                  param
-                  (embedded-native-value-match-arms
-                    params
-                    arms
-                    (+ index 1)
-                    param))
-                (if (and
-                  (string.eq variant "Int")
-                  (= (struct-get (& pat-args) len) 1))
-                  (embedded-native-int-value-arm-code
-                    params
-                    (& pat-args)
-                    body-node
-                    param
-                    (embedded-native-value-match-arms
-                      params
-                      arms
-                      (+ index 1)
-                      param))
-                  (if (or
-                    (not (string.eq variant "Call"))
-                    (not (= (struct-get (& pat-args) len) 2)))
-                    ""
-                    (let
-                      [name : String (embedded-native-temp-name!)]
-                      [saved : i64 (array-ref embedded-native-local-len 0)]
-                      [bind-code : String
-                        (embedded-native-value-match-bind (& pat-args) 0 param)]
-                      [arm-code : String
-                        (if (string.eq bind-code "\x01")
-                          ""
-                          (embedded-native-body-code params body-node))]
-                      [bound : i64
-                        (embedded-native-pattern-binder-count (& pat-args) 0)]
-                      (begin
-                        (array-set! embedded-native-local-len 0 saved)
-                        (let
-                          [rest : String
-                            (embedded-native-value-match-arms
-                              params
-                              arms
-                              (+ index 1)
-                              param)]
-                          (if (or (string.eq arm-code "") (string.eq rest ""))
-                            ""
-                            (str-cat
-                              "  (let ["
-                              name
-                              " : i64 (comptime-host-invoke host session 222 "
-                              (string.int->string param)
-                              " 0 0)]\n"
-                              "  (if (< "
-                              name
-                              " 0)\n  "
-                              (string.int->string
-                                tlci-host-callback-status-bad-request)
-                              "\n  (if (= "
-                              name
-                              " 1)\n"
-                              bind-code
-                              arm-code
-                              (embedded-native-closing-parens (* 2 bound))
-                              "\n"
-                              rest
-                              ")))\n")))))))))]
+              (embedded-native-value-match-variant-arm
+                params
+                arms
+                index
+                param
+                (embedded-native-expr-variant-name name-id)
+                (& pat-args)
+                body-node))]
           [(AstPattern.Wildcard) (embedded-native-body-code params body-node)]
           [_ ""])])))
 
-;: How many payload patterns bind a name (each opens one let/if pair).
+;; One variant-pattern arm of an operand value match. Split out of
+;; `embedded-native-value-match-arms` so the three destructuring shapes form a
+;; flat guard ladder rather than a nested if chain.
+(define (embedded-native-value-match-variant-arm
+  [params : (& params AstMacroParamList)]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [param : i64]
+  [variant : String]
+  [pat-args : (& pat-args AstPatternList)]
+  [body-node : i64]) : String
+  (cond
+    [(and (string.eq variant "Var") (= (struct-get pat-args len) 1))
+      (embedded-native-var-value-arm-code
+        params
+        pat-args
+        body-node
+        param
+        (embedded-native-value-match-arms params arms (+ index 1) param))]
+    [(and (string.eq variant "Int") (= (struct-get pat-args len) 1))
+      (embedded-native-int-value-arm-code
+        params
+        pat-args
+        body-node
+        param
+        (embedded-native-value-match-arms params arms (+ index 1) param))]
+    [(and (string.eq variant "Call") (= (struct-get pat-args len) 2))
+      (embedded-native-call-value-arm-code
+        params
+        arms
+        index
+        param
+        pat-args
+        body-node)]
+    [else ""]))
+
+;; The `(comptime.Expr.Call callee args)` arm: probe the operand's shape, bind
+;; both payloads into session slots, then chain the remaining arms.
+(define (embedded-native-call-value-arm-code
+  [params : (& params AstMacroParamList)]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [param : i64]
+  [pat-args : (& pat-args AstPatternList)]
+  [body-node : i64]) : String
+  (let
+    [name : String (embedded-native-temp-name!)]
+    [saved : i64 (array-ref embedded-native-local-len 0)]
+    [bind-code : String (embedded-native-value-match-bind pat-args 0 param)]
+    [arm-code : String
+      (if (string.eq bind-code "")
+        ""
+        (embedded-native-body-code params body-node))]
+    [bound : i64 (embedded-native-pattern-binder-count pat-args 0)]
+    (begin
+      (array-set! embedded-native-local-len 0 saved)
+      (let
+        [rest : String
+          (embedded-native-value-match-arms params arms (+ index 1) param)]
+        (if (or (string.eq arm-code "") (string.eq rest ""))
+          ""
+          (str-cat
+            "  (let ["
+            name
+            " : i64 (comptime-host-invoke host session 222 "
+            (string.int->string param)
+            " 0 0)]
+"
+            "  (if (< "
+            name
+            " 0)
+  "
+            (string.int->string tlci-host-callback-status-bad-request)
+            "
+  (if (= "
+            name
+            " 1)
+"
+            bind-code
+            arm-code
+            (embedded-native-closing-parens (* 2 bound))
+            "
+"
+            rest
+            ")))
+"))))))
+
 (define (embedded-native-pattern-binder-count
   [pat-args : (& pat-args AstPatternList)]
   [index : i64]) : i64

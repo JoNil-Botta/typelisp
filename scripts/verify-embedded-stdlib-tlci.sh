@@ -6,6 +6,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-build-provenance.sh"
+
 if [ "$#" -ne 0 ]; then
     echo "usage: scripts/verify-embedded-stdlib-tlci.sh" >&2
     exit 2
@@ -124,7 +126,7 @@ while IFS= read -r suffix; do
 done < "$MANIFEST"
 printf '\n;; embedded stdlib tlci source binding probe\n' \
     >> "$MUTATED_ROOT/array.tl"
-BUILD_HASH=$(git rev-parse --verify HEAD)
+BUILD_HASH=$(build_provenance_hash "$0")
 MUTATED_SOURCE_HASH=$(
     while IFS= read -r module_path; do
         source_path="$MUTATED_ROOT/$module_path"

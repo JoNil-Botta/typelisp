@@ -166,6 +166,10 @@ run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh -
 # verification uses the branch-built compiler because compression is part of
 # the new loader surface.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
+# The stage0, fixpoint, and embedded-image builds all stamp the HEAD commit into
+# their output. CI only ever runs the success path, so the diagnostic for a
+# checkout git cannot resolve has no other coverage.
+run_gate "build provenance helper self-tests" scripts/verify-build-provenance.sh
 # The tlci host callback ops are additive ABI constants dispatched by number
 # through a `cond`; nothing in the type system rejects two constants sharing a
 # value, and branches adding ops in different regions of the file merge without

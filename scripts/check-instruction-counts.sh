@@ -337,6 +337,36 @@ self_test_case() {
     fi
 }
 
+# A refresh that writes nothing must not report success. `--update-baseline` is
+# a required pre-PR step whose whole job is to rewrite rows, and a tolerated
+# row never refreshes on its own, so a no-op refresh that still prints
+# "baseline updated" is how baseline drift accumulates against an author who
+# ran the step and saw it pass. Every measured row must reach the file.
+# Refs #5697, #5641.
+count_baseline_rows() {
+    if [ ! -f "$1" ]; then
+        printf '0\n'
+        return 0
+    fi
+    awk -F '\t' 'NF >= 2 && $1 != "name" { count++ } END { print count + 0 }' "$1"
+}
+
+assert_baseline_refreshed() {
+    _abr_baseline=$1
+    _abr_current=$2
+    _abr_want=$(count_baseline_rows "$_abr_current")
+    _abr_got=$(count_baseline_rows "$_abr_baseline")
+    if [ "$_abr_want" -eq 0 ]; then
+        echo "[ir-check] measured no rows; nothing was refreshed into $_abr_baseline" >&2
+        exit 1
+    fi
+    if [ "$_abr_got" -lt "$_abr_want" ]; then
+        echo "[ir-check] baseline refresh wrote $_abr_got rows, measured $_abr_want" >&2
+        echo "[ir-check] refusing to report success for an unwritten baseline" >&2
+        exit 1
+    fi
+}
+
 self_test() {
     SELF_TEST_DIR=${TMPDIR:-/tmp}/ir-check-self-test.$$
     mkdir -p "$SELF_TEST_DIR"
@@ -369,6 +399,29 @@ self_test() {
     # Fail-closed shapes are unchanged.
     self_test_case missing-row "$SELF_TEST_DIR/missing-row.tsv" \
         "missing-current" 1 no || _st_status=1
+
+    # The refresh guard: a baseline that was not actually rewritten must not
+    # report success, which is the failure shape #5697 is about.
+    printf 'self_compile/compile_cli_opt1\t1\n' \
+        > "$SELF_TEST_DIR/refresh-current.tsv"
+    printf 'name\tir_count\nself_compile/compile_cli_opt1\t1\n' \
+        > "$SELF_TEST_DIR/refresh-written.tsv"
+    : > "$SELF_TEST_DIR/refresh-empty.tsv"
+    if (assert_baseline_refreshed "$SELF_TEST_DIR/refresh-empty.tsv" \
+        "$SELF_TEST_DIR/refresh-current.tsv") >/dev/null 2>&1; then
+        echo "self-test refresh-empty: an unwritten baseline reported success" >&2
+        _st_status=1
+    fi
+    if (assert_baseline_refreshed "$SELF_TEST_DIR/refresh-written.tsv" \
+        "$SELF_TEST_DIR/refresh-empty.tsv") >/dev/null 2>&1; then
+        echo "self-test refresh-nothing: an empty measurement reported success" >&2
+        _st_status=1
+    fi
+    if ! (assert_baseline_refreshed "$SELF_TEST_DIR/refresh-written.tsv" \
+        "$SELF_TEST_DIR/refresh-current.tsv") >/dev/null 2>&1; then
+        echo "self-test refresh-written: a written baseline was rejected" >&2
+        _st_status=1
+    fi
 
     rm -rf "$SELF_TEST_DIR"
     if [ "$_st_status" -ne 0 ]; then
@@ -557,6 +610,7 @@ if [ "$UPDATE_BASELINE" -eq 1 ]; then
             cat "$CURRENT"
         } > "$BASELINE"
     fi
+    assert_baseline_refreshed "$BASELINE" "$CURRENT"
     echo "[ir-check] baseline updated: $BASELINE"
     cat "$BASELINE"
     exit 0

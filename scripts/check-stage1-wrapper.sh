@@ -506,6 +506,18 @@ EOF
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset="
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset=0 bytes=0"
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"
+    # This case is why the gate costs what it does, and the cost is inherent
+    # (#5660). It compiles, links, and runs the producer smoke verifier, whose
+    # imports pull in the native producer, the tlci loader, the embedded stdlib
+    # image and CTFE -- so building it is building a large slice of the
+    # compiler. Bisected: the gate ran ~7.0s before #5589 and ~13.1s after, on a
+    # host where this one invocation measures 6.1-6.2s. Optimization level is not
+    # the lever; 6.2s at --opt-level 0, 6.2s at 1, 6.6s at 2, because the cost is
+    # front-end. Package builds themselves did not regress (131ms vs 133ms for a
+    # three-macro package before and after #5589), so this is a gate cost, not a
+    # user-facing one. Do not "fix" it by deleting the case: it is the only
+    # end-to-end proof that a package's emitted .tlci dispatches its macros
+    # natively, and it caught a real producer bug in #5712.
     # cli-gate-case stage1-wrapper-package-tlci-native-verify wrapper run_capture
     run_capture package-tlci-native-verify \
         "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \

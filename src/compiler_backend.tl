@@ -25104,10 +25104,7 @@
           mask))]))
 
 (define (compiler-backend-empty-reg-var-types) : CompilerRegVarTypes
-  (CompilerRegVarTypes
-    CompilerRegVarTypeList.Nil
-    (array.make-array i64 0)
-    (array.make-array AstType 0)))
+  (CompilerRegVarTypes (array.make-array i64 0) (array.make-array AstType 0)))
 
 (define (compiler-backend-collect-group-counts-instr-seq
   [map : backend_string_i64_map.Map]
@@ -53626,7 +53623,7 @@
             [groups : CompilerLiveI64Set
               (compiler-reg-function-group-vars
                 (CompilerIrFunction.Function name params ret-ty vars blocks)
-                (struct-get types entries))]
+                (compiler-reg-var-types-list types))]
             [_group-enable : unit
               (begin
                 (compiler-backend-current-slot-vars-set! vars)
@@ -53697,7 +53694,7 @@
           [groups : CompilerLiveI64Set
             (compiler-reg-function-group-vars
               (CompilerIrFunction.Function name params ret-ty vars blocks)
-              (struct-get types entries))]
+              (compiler-reg-var-types-list types))]
           [_group-enable : unit
             (begin
               (compiler-backend-current-slot-vars-set! vars)

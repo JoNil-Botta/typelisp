@@ -293,6 +293,122 @@ assert_profile_live_counter_eq_in() {
     fi
 }
 
+# Read one live counter out of profile output, or the literal string "absent" so
+# a renamed or dropped counter fails closed instead of comparing against 0.
+profile_live_counter_in() {
+    awk -F'|' -v phase="$2" '
+        $1 == "compile-profile" && $2 == phase { value = ($5 + 0); found = 1 }
+        END { if (found) print value; else print "absent" }
+    ' "$1"
+}
+
+# Assert one selfhost pool boundary from its segment count alone.
+#
+# Since #5541 the AST pools are reclaimable segmented storage with fixed-size
+# segments, so `capacity` and `segment_bytes` are exact multiples of `segments`:
+# pinning the segment count pins all three, one constant moves when the
+# compiler's own sources grow a step, and no mismatch can leave the three views
+# inconsistent with each other.
+#
+# On failure report the whole family with expected against actual. All three
+# move together, and a message naming only the counter that happened to be
+# compared first sends the author round a discover-by-failing loop (#5764).
+assert_selfhost_pool_family() {
+    _spf_file=$1
+    _spf_pool=$2
+    _spf_point=$3
+    _spf_segments=$4
+    _spf_segment_nodes=$5
+    _spf_node_bytes=$6
+    _spf_stdout=$7
+    _spf_stderr=$8
+
+    _spf_capacity=$((_spf_segments * _spf_segment_nodes))
+    _spf_segment_bytes=$((_spf_capacity * _spf_node_bytes))
+    _spf_prefix="lower.$_spf_pool.$_spf_point"
+    _spf_expected="segments:$_spf_segments capacity:$_spf_capacity segment_bytes:$_spf_segment_bytes"
+    _spf_bad=
+
+    for _spf_pair in $_spf_expected; do
+        _spf_metric=${_spf_pair%%:*}
+        _spf_want=${_spf_pair#*:}
+        _spf_got=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.$_spf_metric")
+        if [ "$_spf_got" != "$_spf_want" ]; then
+            _spf_bad="$_spf_bad $_spf_metric"
+        fi
+    done
+
+    [ -n "$_spf_bad" ] || return 0
+
+    show_failure_logs "$_spf_stdout" "$_spf_stderr"
+    echo "selfhost pool boundary $_spf_prefix does not match its pin" >&2
+    echo "  mismatched:$_spf_bad" >&2
+    printf '  %-14s %14s %14s\n' metric expected actual >&2
+    for _spf_pair in $_spf_expected; do
+        _spf_metric=${_spf_pair%%:*}
+        printf '  %-14s %14s %14s\n' \
+            "$_spf_metric" \
+            "${_spf_pair#*:}" \
+            "$(profile_live_counter_in "$_spf_file" "$_spf_prefix.$_spf_metric")" >&2
+    done
+    _spf_len=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.len")
+    _spf_actual_segments=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.segments")
+    echo "  used nodes $_spf_len; capacity is that rounded up to whole segments of $_spf_segment_nodes" >&2
+    echo "  to refresh: set this boundary's segment count to $_spf_actual_segments" >&2
+    echo "  capacity = segments * $_spf_segment_nodes, segment_bytes = capacity * $_spf_node_bytes" >&2
+    echo "  this probe is Windows-gated, so a Linux run cannot regenerate these values" >&2
+    fail "selfhost pool boundary $_spf_prefix does not match its pin"
+}
+
+# The pool-family checker is the only thing between an allocation regression and
+# a green run, and on Linux the probe it guards never executes, so exercise it
+# against synthetic profile output on every host. A grep-shaped gate that
+# silently matched nothing would otherwise read as "clean".
+selfhost_pool_family_self_test() {
+    _spst_dir="$WORKDIR/pool-family-self-test"
+    rm -rf "$_spst_dir"
+    mkdir -p "$_spst_dir"
+    _spst_ok="$_spst_dir/consistent.txt"
+    _spst_grown="$_spst_dir/one-segment-more.txt"
+    _spst_empty="$_spst_dir/no-counters.txt"
+
+    # 7 segments of 1024 nodes at 24 bytes, internally consistent.
+    {
+        echo "compile-profile|lower.ast_type_pool.self_test.len|0|0|6900|0"
+        echo "compile-profile|lower.ast_type_pool.self_test.segments|0|0|7|0"
+        echo "compile-profile|lower.ast_type_pool.self_test.capacity|0|0|7168|0"
+        echo "compile-profile|lower.ast_type_pool.self_test.segment_bytes|0|0|172032|0"
+    } > "$_spst_ok"
+    # The same pin with one more segment actually allocated: the regression the
+    # exact pins exist to catch.
+    sed -e 's/|7|0$/|8|0/' -e 's/|7168|0$/|8192|0/' -e 's/|172032|0$/|196608|0/' \
+        "$_spst_ok" > "$_spst_grown"
+    : > "$_spst_empty"
+
+    if ! (assert_selfhost_pool_family "$_spst_ok" ast_type_pool self_test 7 1024 24 \
+        "$_spst_ok" "$_spst_ok") >/dev/null 2>&1; then
+        fail "pool family self-test rejected consistent counters"
+    fi
+    if (assert_selfhost_pool_family "$_spst_grown" ast_type_pool self_test 7 1024 24 \
+        "$_spst_grown" "$_spst_grown") >/dev/null 2>&1; then
+        fail "pool family self-test accepted a pool that grew a segment"
+    fi
+    if (assert_selfhost_pool_family "$_spst_empty" ast_type_pool self_test 7 1024 24 \
+        "$_spst_empty" "$_spst_empty") >/dev/null 2>&1; then
+        fail "pool family self-test accepted missing counters"
+    fi
+    # The report must name every member, not only the one that mismatched.
+    _spst_report=$( (assert_selfhost_pool_family "$_spst_grown" ast_type_pool self_test 7 1024 24 \
+        "$_spst_empty" "$_spst_empty") 2>&1 || true)
+    for _spst_metric in segments capacity segment_bytes; do
+        case "$_spst_report" in
+            *"$_spst_metric"*) ;;
+            *) fail "pool family failure report omitted $_spst_metric" ;;
+        esac
+    done
+    echo "[compile-profile] pool family self-tests passed"
+}
+
 assert_profile_live_counter_at_least_in() {
     _file=$1
     _phase=$2
@@ -347,6 +463,11 @@ assert_lower_row() {
         "$OPT_STDOUT" \
         "$OPT_STDERR"
 }
+
+# Runs on every host, ahead of the expensive builds: the selfhost pool probe it
+# guards is Windows-gated, so this is the only coverage the checker gets on
+# Linux, and a broken checker there would land silently.
+selfhost_pool_family_self_test
 
 echo "[compile-profile] build embedded stdlib tlci input"
 scripts/build-embedded-stdlib-tlci.sh \
@@ -864,7 +985,33 @@ fi
 # payloads. On Windows it is the allocation boundary that small new modules
 # (such as the clone declaration-macro handoff) previously crossed. The macro
 # walk now starts in the compact destination and grows fixed-size node segments;
-# typecheck starts in a fresh segmented destination. Keep both the logical
+# typecheck starts in a fresh segmented destination.
+#
+# The macro-expand expr boundary crossed the 41 -> 42 segment step and had been
+# failing on main since #5712, which is what #5766 tracked. Attribution, holding
+# the profile binary fixed and varying only the compiled tree: 1e7ef1d90 used
+# 2679678 nodes (41 segments), #5712 used 2689228 (42 segments, 2252 over the
+# old pin), and #5717 added 4093 more. Nothing regressed -- both grew the
+# compiler's own source graph, and a segmented pool sized from that graph is
+# expected to step.
+#
+# Why a step reaches main red rather than being caught: CI runs on
+# `pull_request` only, so it verifies a head merged into the base as of that
+# event and never re-verifies main afterwards (#5770). A PR is green against an
+# older base and the merged tree is never compiled, so the break surfaces on
+# whichever unrelated PR next opens -- #5759 hit it having changed only CLI help
+# strings. Each boundary now moves as one constant with a report that names the
+# whole family, so the next step costs a one-number edit instead of the
+# archaeology that took (#5764).
+#
+# Current headroom, used against capacity, measured on a clean 739968657:
+# expr macro_expand 2697530/2752512, expr typecheck 1611601/1638400,
+# type macro_expand 20018/20480, type typecheck 5887/6144. All four sit within a
+# few percent of their next step, so expect these to move. #5701 landed while
+# this was in review and consumed 4177 of the expr macro_expand headroom without
+# crossing, which is the normal case this shape is meant to make cheap.
+#
+# Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
 # copy-on-grow storage is visible.
 if [ "$NL_HOST_OS" = windows ]; then
@@ -884,57 +1031,27 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_expr_pool.macro_expand.capacity" \
-        2686976 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_expr_pool.typecheck.capacity" \
-        1638400 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    # The ordinary scalar `for` macro retains each source binding's produced
-    # type for expr-type inspection, so its macro-walk type footprint is part
-    # of the intentional exact selfhost allocation boundary.
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_type_pool.macro_expand.capacity" \
-        20480 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_type_pool.typecheck.capacity" \
-        6144 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_expr_pool.macro_expand.segments" \
-        41 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_expr_pool.macro_expand.segment_bytes" \
-        107479040 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_type_pool.typecheck.segments" \
-        6 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "lower.ast_type_pool.typecheck.segment_bytes" \
-        147456 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
+    # One constant per boundary: the segment count. capacity and segment_bytes
+    # are derived, so a source-size step is a one-number edit and the three
+    # views cannot drift apart. Expr nodes are 40 bytes in segments of 65536;
+    # type nodes are 24 bytes in segments of 1024.
+    #
+    # The type-pool macro_expand boundary is load-bearing beyond sizing: the
+    # ordinary scalar `for` macro retains each source binding's produced type
+    # for expr-type inspection, so its macro-walk type footprint is part of the
+    # intentional exact selfhost allocation boundary.
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 40 \
+        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 25 65536 40 \
+        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 20 1024 24 \
+        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+    assert_selfhost_pool_family \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 6 1024 24 \
+        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;
     # the exact selfhost segment invariants above catch sizing regressions.
@@ -1478,6 +1595,153 @@ if ! cmp -s "$STDLIB_TLCI_WILD_EMBEDDED_ASM"     "$STDLIB_TLCI_WILD_MODIFIED_ASM
     diff -u "$STDLIB_TLCI_WILD_EMBEDDED_ASM"         "$STDLIB_TLCI_WILD_MODIFIED_ASM" >&2 || true
     fail "native and interpreted wildcard arms produced different assembly"
 fi
+
+# #5701: `stdlib.io/format-from` is a comptime string scanner -- it walks the
+# template one byte at a time and re-invokes itself at the next offset. An
+# off-by-one in any index, a dropped escape byte, or a wrong positional
+# argument still compiles and still runs, producing a subtly wrong string, so
+# the differential is the contract. None of the fixtures above formats
+# anything.
+echo "[compile-profile] verify tlci format-scanner route differential"
+STDLIB_TLCI_FMT_SOURCE="$ROOT/tests/integration/tlci_native_format_scanner.tl"
+STDLIB_TLCI_FMT_EMBEDDED_ASM="$STDLIB_TLCI_DIR/format-embedded.s"
+STDLIB_TLCI_FMT_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/format-embedded.stdout"
+STDLIB_TLCI_FMT_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/format-embedded.stderr"
+STDLIB_TLCI_FMT_MODIFIED_ASM="$STDLIB_TLCI_DIR/format-modified.s"
+STDLIB_TLCI_FMT_MODIFIED_STDOUT="$STDLIB_TLCI_DIR/format-modified.stdout"
+STDLIB_TLCI_FMT_MODIFIED_STDERR="$STDLIB_TLCI_DIR/format-modified.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$STDLIB_TLCI_FMT_SOURCE" \
+        -o "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
+    2> "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
+        "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"
+    fail "embedded tlci format-scanner fixture compile failed"
+fi
+if ! (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" compile "$STDLIB_TLCI_FMT_SOURCE" \
+        -o "$STDLIB_TLCI_FMT_MODIFIED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib
+) > "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
+    2> "$STDLIB_TLCI_FMT_MODIFIED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
+        "$STDLIB_TLCI_FMT_MODIFIED_STDERR"
+    fail "comment-modified-root tlci format-scanner fixture compile failed"
+fi
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_dispatches" \
+    1 \
+    "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_FMT_MODIFIED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
+    "$STDLIB_TLCI_FMT_MODIFIED_STDERR"
+# The scanner itself has to run, not just its wrapper, so a fixture edit
+# cannot silently stop covering the recursive walk.
+assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.io/format-with arity="
+assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.io/format-from arity="
+if ! cmp -s "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
+    "$STDLIB_TLCI_FMT_MODIFIED_ASM"; then
+    diff -u "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
+        "$STDLIB_TLCI_FMT_MODIFIED_ASM" >&2 || true
+    fail "native and interpreted format scanners produced different assembly"
+fi
+
+# The scanner's three rejection paths are reported by the macro itself, so a
+# native arm that mis-detects them fails differently -- or not at all -- from
+# the interpreted one. Compare the rendered diagnostics, not just the exit
+# status.
+echo "[compile-profile] verify tlci format-scanner diagnostic differential"
+FMT_DIAG_DIR="$STDLIB_TLCI_DIR/format-diagnostics"
+rm -rf "$FMT_DIAG_DIR"
+mkdir -p "$FMT_DIAG_DIR"
+cat > "$FMT_DIAG_DIR/unmatched-open.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define (main) : i64
+  (begin (io.print-string (format.format "a{")) 0))
+FIXTURE
+cat > "$FMT_DIAG_DIR/too-few-arguments.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define one : i64 1)
+(define (main) : i64
+  (begin (io.print-string (format.format "{} {}" one)) 0))
+FIXTURE
+cat > "$FMT_DIAG_DIR/too-many-arguments.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define one : i64 1)
+(define two : i64 2)
+(define (main) : i64
+  (begin (io.print-string (format.format "{}" one two)) 0))
+FIXTURE
+cat > "$FMT_DIAG_DIR/unmatched-close.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define (main) : i64
+  (begin (io.print-string (format.format "a}b")) 0))
+FIXTURE
+cat > "$FMT_DIAG_DIR/non-literal-template.tl" <<'FIXTURE'
+(import stdlib.format)
+(import stdlib.io)
+(define template : String "{}")
+(define (main) : i64
+  (begin (io.print-string (format.format template 1)) 0))
+FIXTURE
+# The profiled compiler writes its counters to stderr too, and those legitimately
+# differ by route (catalog hits, native dispatches). Compare only the rendered
+# diagnostic.
+format_diagnostic_text() {
+    grep -v 'compile-profile' "$1" > "$2"
+}
+for FMT_DIAG_CASE in unmatched-open too-few-arguments too-many-arguments \
+    unmatched-close non-literal-template; do
+    FMT_DIAG_SOURCE="$FMT_DIAG_DIR/$FMT_DIAG_CASE.tl"
+    FMT_DIAG_EMBEDDED="$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stderr"
+    FMT_DIAG_MODIFIED="$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.stderr"
+    if (
+        cd "$STDLIB_TLCI_DIR"
+        "$PROFILE_BIN" check "$FMT_DIAG_SOURCE"
+    ) > "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stdout" \
+        2> "$FMT_DIAG_EMBEDDED"; then
+        fail "embedded route accepted rejected format case $FMT_DIAG_CASE"
+    fi
+    if (
+        cd "$STDLIB_TLCI_MODIFIED_DIR"
+        "$PROFILE_BIN" check "$FMT_DIAG_SOURCE" \
+            --stdlib-root stdlib
+    ) > "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.stdout" \
+        2> "$FMT_DIAG_MODIFIED"; then
+        fail "interpreted route accepted rejected format case $FMT_DIAG_CASE"
+    fi
+    format_diagnostic_text "$FMT_DIAG_EMBEDDED" \
+        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"
+    format_diagnostic_text "$FMT_DIAG_MODIFIED" \
+        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text"
+    if ! grep -q 'format: ' "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"; then
+        show_failure_logs "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stdout" \
+            "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"
+        fail "embedded route reported no format diagnostic for $FMT_DIAG_CASE"
+    fi
+    if ! cmp -s "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text" \
+        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text"; then
+        diff -u "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text" \
+            "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text" >&2 || true
+        fail "format scanner diagnostics differ by route for $FMT_DIAG_CASE"
+    fi
+done
 fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"

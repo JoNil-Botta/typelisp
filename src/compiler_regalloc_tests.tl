@@ -7,13 +7,10 @@
 (import "compiler_regalloc.tl")
 (import "compiler_abi.tl")
 (import "compiler_liveness.tl")
-(import stdlib.io)
 (import stdlib.array)
-(import stdlib.string)
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as reg_string_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
-(import compiler_parallel_move as pmove)
 (cfg test (import stdlib.test))
 
 (define (compiler-reg-liveness-census-reset!) : unit

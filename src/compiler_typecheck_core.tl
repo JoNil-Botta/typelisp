@@ -1635,9 +1635,17 @@
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
+;; Every typecheck error becomes a diagnostic through here, so this is where the
+;; per-kind code is decided (refs #5668). The kind is not available at the raise
+;; site -- errors travel as `ResultTcType.Err <String>` -- so the code is derived
+;; from the canonical message; see the registry in `compiler_diagnostic.tl`. A
+;; kind that is not classified yet keeps `E0200`.
 (define (tc-canonical-diagnostic [diag : CompilerDiagnostic]) : CompilerDiagnostic
   (compiler-diagnostic-with-category
-    (compiler-diagnostic-with-code diag (compiler-diagnostic-code-typecheck))
+    (compiler-diagnostic-with-code
+      diag
+      (compiler-diagnostic-code-for-typecheck-message
+        (compiler-diagnostic-message diag)))
     "typecheck"))
 
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic

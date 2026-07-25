@@ -736,7 +736,7 @@ lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","method":"textDocument/didClose",
 # cli-gate-case stage1-wrapper-lsp-diagnostics wrapper run_stdin_capture
 run_stdin_capture lsp-diagnostics "$LSP_DIAG" "$COMPILER" lsp
 assert_empty "$WORKDIR/lsp-diagnostics.stderr"
-assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"code":"E0200"'
+assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"code":"E0206"'
 assert_contains "$WORKDIR/lsp-diagnostics.stdout" "typecheck: return type mismatch"
 assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"diagnostics":[]'
 

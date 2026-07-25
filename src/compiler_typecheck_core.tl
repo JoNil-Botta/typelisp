@@ -662,9 +662,13 @@
   (No)
   (Some AstExternAbi))
 
-(defenum TcStringList
-  (Nil)
-  (Cons String (Box TcStringList)))
+;; Scoped name environments (`bound`, `seen`, purity `chain`, cleanup owners).
+;; Sibling subtrees extend the same live parent, so `tc-string-list-cons` copies
+;; into a right-sized buffer instead of appending to a vector a sibling branch
+;; still holds. Entry 0 is the most recent binding, so lookups stay head-first
+;; and shadowing resolves to it.
+(defstruct TcStringList
+  (items svec.Vec))
 
 (defenum TcNameIdList
   (Nil)
@@ -676,9 +680,10 @@
   (target-id i64)
   (summary-backed bool))
 
+(import (vector.vector TcLazyImportStub core) as tc_lazy_import_stub_vec)
+
 (defstruct TcLazyImportStubList
-  (slots (Array TcLazyImportStub))
-  (len i64))
+  (items tc_lazy_import_stub_vec.Vec))
 
 (defenum TcThreadTransferClass
   (Transferable)
@@ -727,14 +732,16 @@
   (module-id i64)
   (env TcTypeEnv))
 
-;; Value semantics matter here: every insert publishes a fresh right-sized array
-;; so a caller still holding the shorter cache never observes a later branch's
-;; entry (tc-check-decls-with-paths-in-module-env deliberately re-resolves from
-;; the pre-insert cache to obtain a second owned env). Inserts only happen on a
-;; miss, so the copy is bounded by the distinct module count, not program size.
+(import (vector.vector TcModuleLocalEnvEntry core) as tc_module_env_entry_vec)
+
+;; Value semantics matter here: every insert publishes a fresh right-sized
+;; vector so a caller still holding the shorter cache never observes a later
+;; branch's entry (tc-check-decls-with-paths-in-module-env deliberately
+;; re-resolves from the pre-insert cache to obtain a second owned env). Inserts
+;; only happen on a miss, so the copy is bounded by the distinct module count,
+;; not program size.
 (defstruct TcModuleLocalEnvCache
-  (slots (Array TcModuleLocalEnvEntry))
-  (len i64))
+  (items tc_module_env_entry_vec.Vec))
 
 (defenum ResultTcModuleLocalEnv
   (Ok TcTypeEnv TcModuleLocalEnvCache)
@@ -8355,7 +8362,15 @@
   TcTypeEnv.Nil)
 
 (define (tc-empty-module-local-env-cache) : TcModuleLocalEnvCache
-  (TcModuleLocalEnvCache (array.make-array TcModuleLocalEnvEntry 0) 0))
+  (TcModuleLocalEnvCache (tc_module_env_entry_vec.new)))
+
+(define (tc-module-local-env-cache-len [cache : TcModuleLocalEnvCache]) : i64
+  (tc_module_env_entry_vec.len (& (struct-get cache items))))
+
+(define (tc-module-local-env-cache-ref
+  [cache : TcModuleLocalEnvCache]
+  [index : i64]) : TcModuleLocalEnvEntry
+  (array-ref (tc_module_env_entry_vec.slots (& (struct-get cache items))) index))
 
 (define tc-hygiene-active-top-env : TcTypeEnv
   (tc-empty-type-env))
@@ -9344,102 +9359,142 @@
   (BoxName i64)
   (ArrayName i64))
 
+(import (vector.vector TcStdlibTypeSpec core) as tc_stdlib_type_spec_vec)
+
 ;; The expected-surface spec tables are fixed, tiny (at most twelve entries) and
-;; rebuilt once per stdlib surface check, so they are dense arrays and the
+;; rebuilt once per stdlib surface check, so they are generated vectors and the
 ;; `-cons` spellings prepend by copy rather than chaining cells.
 (defstruct TcStdlibTypeSpecList
-  (slots (Array TcStdlibTypeSpec))
-  (len i64))
+  (items tc_stdlib_type_spec_vec.Vec))
 
 (defenum TcStdlibFieldSpec
   (Spec i64 TcStdlibTypeSpec))
 
+(import (vector.vector TcStdlibFieldSpec core) as tc_stdlib_field_spec_vec)
+
 (defstruct TcStdlibFieldSpecList
-  (slots (Array TcStdlibFieldSpec))
-  (len i64))
+  (items tc_stdlib_field_spec_vec.Vec))
 
 (defenum TcStdlibVariantSpec
   (Spec i64 TcStdlibTypeSpecList))
 
+(import (vector.vector TcStdlibVariantSpec core) as tc_stdlib_variant_spec_vec)
+
 (defstruct TcStdlibVariantSpecList
-  (slots (Array TcStdlibVariantSpec))
-  (len i64))
+  (items tc_stdlib_variant_spec_vec.Vec))
+
+(define (tc-stdlib-type-spec-list-len [specs : TcStdlibTypeSpecList]) : i64
+  (tc_stdlib_type_spec_vec.len (& (struct-get specs items))))
+
+(define (tc-stdlib-type-spec-list-ref
+  [specs : TcStdlibTypeSpecList]
+  [index : i64]) : TcStdlibTypeSpec
+  (array-ref (tc_stdlib_type_spec_vec.slots (& (struct-get specs items))) index))
+
+(define (tc-stdlib-field-spec-list-len [specs : TcStdlibFieldSpecList]) : i64
+  (tc_stdlib_field_spec_vec.len (& (struct-get specs items))))
+
+(define (tc-stdlib-field-spec-list-ref
+  [specs : TcStdlibFieldSpecList]
+  [index : i64]) : TcStdlibFieldSpec
+  (array-ref
+    (tc_stdlib_field_spec_vec.slots (& (struct-get specs items)))
+    index))
+
+(define (tc-stdlib-variant-spec-list-len [specs : TcStdlibVariantSpecList]) : i64
+  (tc_stdlib_variant_spec_vec.len (& (struct-get specs items))))
+
+(define (tc-stdlib-variant-spec-list-ref
+  [specs : TcStdlibVariantSpecList]
+  [index : i64]) : TcStdlibVariantSpec
+  (array-ref
+    (tc_stdlib_variant_spec_vec.slots (& (struct-get specs items)))
+    index))
 
 (define (tc-stdlib-type-spec-list0) : TcStdlibTypeSpecList
-  (TcStdlibTypeSpecList (array.make-array TcStdlibTypeSpec 0) 0))
+  (TcStdlibTypeSpecList (tc_stdlib_type_spec_vec.with-capacity 1)))
 
 (define (tc-stdlib-type-spec-list1 [a : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
-    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 1)]
+    [items : tc_stdlib_type_spec_vec.Vec
+      (tc_stdlib_type_spec_vec.with-capacity 1)]
     (begin
-      (array-set! slots 0 a)
-      (TcStdlibTypeSpecList slots 1))))
+      (tc_stdlib_type_spec_vec.push (&mut items) a)
+      (TcStdlibTypeSpecList items))))
 
 (define (tc-stdlib-type-spec-list2
   [a : TcStdlibTypeSpec]
   [b : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
-    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 2)]
+    [items : tc_stdlib_type_spec_vec.Vec
+      (tc_stdlib_type_spec_vec.with-capacity 2)]
     (begin
-      (array-set! slots 0 a)
-      (array-set! slots 1 b)
-      (TcStdlibTypeSpecList slots 2))))
+      (tc_stdlib_type_spec_vec.push (&mut items) a)
+      (tc_stdlib_type_spec_vec.push (&mut items) b)
+      (TcStdlibTypeSpecList items))))
 
 (define (tc-stdlib-type-spec-list3
   [a : TcStdlibTypeSpec]
   [b : TcStdlibTypeSpec]
   [c : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
-    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 3)]
+    [items : tc_stdlib_type_spec_vec.Vec
+      (tc_stdlib_type_spec_vec.with-capacity 3)]
     (begin
-      (array-set! slots 0 a)
-      (array-set! slots 1 b)
-      (array-set! slots 2 c)
-      (TcStdlibTypeSpecList slots 3))))
+      (tc_stdlib_type_spec_vec.push (&mut items) a)
+      (tc_stdlib_type_spec_vec.push (&mut items) b)
+      (tc_stdlib_type_spec_vec.push (&mut items) c)
+      (TcStdlibTypeSpecList items))))
 
 (define (tc-stdlib-field-spec-nil) : TcStdlibFieldSpecList
-  (TcStdlibFieldSpecList (array.make-array TcStdlibFieldSpec 0) 0))
+  (TcStdlibFieldSpecList (tc_stdlib_field_spec_vec.with-capacity 1)))
 
 (define (tc-stdlib-field-spec-cons
   [name : i64]
   [ty : TcStdlibTypeSpec]
   [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
   (let
-    [n : i64 (struct-get rest len)]
-    [src : (Array TcStdlibFieldSpec) (struct-get rest slots)]
-    [slots : (Array TcStdlibFieldSpec)
-      (array.make-array TcStdlibFieldSpec (+ n 1))]
+    [n : i64 (tc-stdlib-field-spec-list-len rest)]
+    [items : tc_stdlib_field_spec_vec.Vec
+      (tc_stdlib_field_spec_vec.with-capacity (+ n 1))]
     [i : i64 0]
     (begin
       (cfg compile-profile (tc-lp-note 8))
-      (array-set! slots 0 (TcStdlibFieldSpec.Spec name ty))
+      (tc_stdlib_field_spec_vec.push
+        (&mut items)
+        (TcStdlibFieldSpec.Spec name ty))
       (while (< i n)
         (begin
-          (array-set! slots (+ i 1) (array-ref src i))
+          (tc_stdlib_field_spec_vec.push
+            (&mut items)
+            (tc-stdlib-field-spec-list-ref rest i))
           (set! i (+ i 1))))
-      (TcStdlibFieldSpecList slots (+ n 1)))))
+      (TcStdlibFieldSpecList items))))
 
 (define (tc-stdlib-variant-spec-nil) : TcStdlibVariantSpecList
-  (TcStdlibVariantSpecList (array.make-array TcStdlibVariantSpec 0) 0))
+  (TcStdlibVariantSpecList (tc_stdlib_variant_spec_vec.with-capacity 1)))
 
 (define (tc-stdlib-variant-spec-cons
   [name : i64]
   [payloads : TcStdlibTypeSpecList]
   [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
   (let
-    [n : i64 (struct-get rest len)]
-    [src : (Array TcStdlibVariantSpec) (struct-get rest slots)]
-    [slots : (Array TcStdlibVariantSpec)
-      (array.make-array TcStdlibVariantSpec (+ n 1))]
+    [n : i64 (tc-stdlib-variant-spec-list-len rest)]
+    [items : tc_stdlib_variant_spec_vec.Vec
+      (tc_stdlib_variant_spec_vec.with-capacity (+ n 1))]
     [i : i64 0]
     (begin
       (cfg compile-profile (tc-lp-note 10))
-      (array-set! slots 0 (TcStdlibVariantSpec.Spec name payloads))
+      (tc_stdlib_variant_spec_vec.push
+        (&mut items)
+        (TcStdlibVariantSpec.Spec name payloads))
       (while (< i n)
         (begin
-          (array-set! slots (+ i 1) (array-ref src i))
+          (tc_stdlib_variant_spec_vec.push
+            (&mut items)
+            (tc-stdlib-variant-spec-list-ref rest i))
           (set! i (+ i 1))))
-      (TcStdlibVariantSpecList slots (+ n 1)))))
+      (TcStdlibVariantSpecList items))))
 
 (define (tc-stdlib-well-known-mismatch [type-name : String] [detail : String]) : ResultTcUnit
   (ResultTcUnit.Err
@@ -9663,11 +9718,11 @@
   [fields : AstFieldDefList]
   [specs : TcStdlibFieldSpecList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get (& specs) len))
+  (if (>= index (tc-stdlib-field-spec-list-len specs))
     (if (>= index (struct-get (& fields) len))
       ResultTcUnit.Ok
       (tc-stdlib-well-known-mismatch type-name "unexpected extra field"))
-    (match (array-ref (struct-get specs slots) index)
+    (match (tc-stdlib-field-spec-list-ref specs index)
       [(TcStdlibFieldSpec.Spec expected-name expected-ty)
         (let
           [expected-name-text : String (intern-str expected-name)]
@@ -9714,7 +9769,7 @@
   [actual : AstTypeList]
   [expected : TcStdlibTypeSpecList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get (& expected) len))
+  (if (>= index (tc-stdlib-type-spec-list-len expected))
     (if (>= index (ast-type-list-len (& actual)))
       ResultTcUnit.Ok
       (tc-stdlib-well-known-mismatch
@@ -9729,7 +9784,7 @@
           (ast-type-list-get (& actual) index (ast-type-id-fallback))]
         [actual-ty : AstType (tc-context-type-get ctx actual-id)]
         [expected-ty : TcStdlibTypeSpec
-          (array-ref (struct-get expected slots) index)]
+          (tc-stdlib-type-spec-list-ref expected index)]
         (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
           (tc-stdlib-check-payload-specs
             ctx
@@ -9752,11 +9807,11 @@
   [variants : AstVariantDefList]
   [specs : TcStdlibVariantSpecList]
   [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get (& specs) len))
+  (if (>= index (tc-stdlib-variant-spec-list-len specs))
     (if (>= index (struct-get (& variants) len))
       ResultTcUnit.Ok
       (tc-stdlib-well-known-mismatch type-name "unexpected extra variant"))
-    (match (array-ref (struct-get specs slots) index)
+    (match (tc-stdlib-variant-spec-list-ref specs index)
       [(TcStdlibVariantSpec.Spec expected-name expected-payloads)
         (let
           [expected-name-text : String (intern-str expected-name)]
@@ -11675,24 +11730,59 @@
 (define (tc-push-region [env : TcTypeEnv] [region : i64]) : TcTypeEnv
   (tc-push-region-id env region))
 
+(define (tc-string-list-nil) : TcStringList
+  (TcStringList (svec.new)))
+
+(define (tc-string-list-len [names : TcStringList]) : i64
+  (svec.len (& (struct-get names items))))
+
+(define (tc-string-list-ref [names : TcStringList] [index : i64]) : String
+  (array-ref (svec.slots (& (struct-get names items))) index))
+
+(define (tc-string-list-cons [names : TcStringList] [name : String]) : TcStringList
+  (let
+    [count : i64 (tc-string-list-len names)]
+    [items : svec.Vec (svec.with-capacity (+ count 1))]
+    [at : i64 0]
+    (begin
+      (svec.push (&mut items) name)
+      (while (< at count)
+        (begin
+          (svec.push (&mut items) (tc-string-list-ref names at))
+          (set! at (+ at 1))))
+      (TcStringList items))))
+
+(define (tc-string-list-contains-at
+  [items : TcStringList]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index (tc-string-list-len items))
+    false
+    (if (string.eq (tc-string-list-ref items index) name)
+      true
+      (tc-string-list-contains-at items name (+ index 1)))))
+
 (define (tc-string-list-contains [items : TcStringList] [name : String]) : bool
-  (match items
-    [(TcStringList.Nil) false]
-    [(TcStringList.Cons item rest)
-      (if (string.eq item name)
-        true
-        (tc-string-list-contains (box-get rest) name))]))
+  (tc-string-list-contains-at items name 0))
 
 (define (tc-string-list-add [items : TcStringList] [name : String]) : TcStringList
   (if (tc-string-list-contains items name)
     items
-    (TcStringList.Cons name (box items))))
+    (tc-string-list-cons items name)))
+
+(define (tc-string-list-add-all-at
+  [items : TcStringList]
+  [names : TcStringList]
+  [index : i64]) : TcStringList
+  (if (>= index (tc-string-list-len names))
+    items
+    (tc-string-list-add-all-at
+      (tc-string-list-add items (tc-string-list-ref names index))
+      names
+      (+ index 1))))
 
 (define (tc-string-list-add-all [items : TcStringList] [names : TcStringList]) : TcStringList
-  (match names
-    [(TcStringList.Nil) items]
-    [(TcStringList.Cons name rest)
-      (tc-string-list-add-all (tc-string-list-add items name) (box-get rest))]))
+  (tc-string-list-add-all-at items names 0))
 
 (define (tc-name-id-list-contains [items : TcNameIdList] [name : i64]) : bool
   (match items
@@ -12091,11 +12181,11 @@
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
-    [(TcTypeEnv.Nil) TcStringList.Nil]
+    [(TcTypeEnv.Nil) (tc-string-list-nil)]
     [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-active-cleanup-owners-scan root (box-get rest))
-        TcStringList.Nil)]
+        (tc-string-list-nil))]
     [(TcTypeEnv.Bind key ty rest)
       (let
         [owners : TcStringList
@@ -12119,32 +12209,44 @@
         (tc-active-cleanup-owners-scan env (box-get rest))]
       [_ (tc-active-cleanup-owners-scan env env)])))
 
+(define (tc-string-list-eq-at
+  [a : TcStringList]
+  [b : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (tc-string-list-len a))
+    (= (tc-string-list-len b) 0)
+    (and
+      (tc-string-list-contains b (tc-string-list-ref a index))
+      (tc-string-list-eq-at a b (+ index 1)))))
+
 (define (tc-string-list-eq [a : TcStringList] [b : TcStringList]) : bool
-  (match a
-    [(TcStringList.Nil)
-      (match b
-        [(TcStringList.Nil) true]
-        [_ false])]
-    [(TcStringList.Cons item rest)
-      (and
-        (tc-string-list-contains b item)
-        (tc-string-list-eq (box-get rest) b))]))
+  (tc-string-list-eq-at a b 0))
+
+(define (tc-string-list-overlaps-at?
+  [a : TcStringList]
+  [b : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (tc-string-list-len a))
+    false
+    (if (tc-string-list-contains b (tc-string-list-ref a index))
+      true
+      (tc-string-list-overlaps-at? a b (+ index 1)))))
 
 (define (tc-string-list-overlaps? [a : TcStringList] [b : TcStringList]) : bool
-  (match a
-    [(TcStringList.Nil) false]
-    [(TcStringList.Cons item rest)
-      (if (tc-string-list-contains b item)
-        true
-        (tc-string-list-overlaps? (box-get rest) b))]))
+  (tc-string-list-overlaps-at? a b 0))
+
+(define (tc-string-list-all-in-at?
+  [items : TcStringList]
+  [allowed : TcStringList]
+  [index : i64]) : bool
+  (if (>= index (tc-string-list-len items))
+    true
+    (and
+      (tc-string-list-contains allowed (tc-string-list-ref items index))
+      (tc-string-list-all-in-at? items allowed (+ index 1)))))
 
 (define (tc-string-list-all-in? [items : TcStringList] [allowed : TcStringList]) : bool
-  (match items
-    [(TcStringList.Nil) true]
-    [(TcStringList.Cons item rest)
-      (and
-        (tc-string-list-contains allowed item)
-        (tc-string-list-all-in? (box-get rest) allowed))]))
+  (tc-string-list-all-in-at? items allowed 0))
 
 (define (tc-lifetime-list-count [items : AstLifetimeList]) : i64
   (ast-lifetime-list-len (& items)))
@@ -15133,7 +15235,15 @@
           handle)))))
 
 (define (tc-lazy-import-stub-list-empty) : TcLazyImportStubList
-  (TcLazyImportStubList (array.make-array TcLazyImportStub 0) 0))
+  (TcLazyImportStubList (tc_lazy_import_stub_vec.new)))
+
+(define (tc-lazy-import-stub-list-len [stubs : TcLazyImportStubList]) : i64
+  (tc_lazy_import_stub_vec.len (& (struct-get stubs items))))
+
+(define (tc-lazy-import-stub-list-ref
+  [stubs : TcLazyImportStubList]
+  [index : i64]) : TcLazyImportStub
+  (array-ref (tc_lazy_import_stub_vec.slots (& (struct-get stubs items))) index))
 
 (define tc-lazy-import-stubs : TcLazyImportStubList
   (tc-lazy-import-stub-list-empty))
@@ -15313,10 +15423,10 @@
   [importer-module-id : i64]
   [alias-id : i64]
   [index : i64]) : TcMaybeNameId
-  (if (>= index (struct-get (& stubs) len))
+  (if (>= index (tc-lazy-import-stub-list-len stubs))
     (TcMaybeNameId.No)
     (let
-      [stub : TcLazyImportStub (array-ref (struct-get stubs slots) index)]
+      [stub : TcLazyImportStub (tc-lazy-import-stub-list-ref stubs index)]
       [target-module-id : i64 (struct-get stub target-id)]
       (if (and
         (= (struct-get stub module-id) importer-module-id)
@@ -17768,7 +17878,7 @@
       ctx
       (tc-nominal-name-id-display qualified-id)
       qualified-id
-      TcStringList.Nil)))
+      (tc-string-list-nil))))
 
 (define (tc-source-default-struct-layout-finite-ok
   [ctx : TcContext]
@@ -23790,10 +23900,11 @@
   [cache : TcModuleLocalEnvCache]
   [module-id : i64]
   [index : i64]) : TcMaybeTypeEnv
-  (if (>= index (struct-get (& cache) len))
+  (if (>= index (tc-module-local-env-cache-len cache))
     (TcMaybeTypeEnv.No)
     (let
-      [entry : TcModuleLocalEnvEntry (array-ref (struct-get cache slots) index)]
+      [entry : TcModuleLocalEnvEntry
+        (tc-module-local-env-cache-ref cache index)]
       (if (= (struct-get entry module-id) module-id)
         (TcMaybeTypeEnv.Some (struct-get entry env))
         (tc-module-local-env-cache-lookup-at cache module-id (+ index 1))))))
@@ -23808,18 +23919,21 @@
   [module-id : i64]
   [env : TcTypeEnv]) : TcModuleLocalEnvCache
   (let
-    [n : i64 (struct-get cache len)]
-    [src : (Array TcModuleLocalEnvEntry) (struct-get cache slots)]
-    [slots : (Array TcModuleLocalEnvEntry)
-      (array.make-array TcModuleLocalEnvEntry (+ n 1))]
+    [n : i64 (tc-module-local-env-cache-len cache)]
+    [items : tc_module_env_entry_vec.Vec
+      (tc_module_env_entry_vec.with-capacity (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (array-ref src i))
+          (tc_module_env_entry_vec.push
+            (&mut items)
+            (tc-module-local-env-cache-ref cache i))
           (set! i (+ i 1))))
-      (array-set! slots n (TcModuleLocalEnvEntry module-id env))
-      (TcModuleLocalEnvCache slots (+ n 1)))))
+      (tc_module_env_entry_vec.push
+        (&mut items)
+        (TcModuleLocalEnvEntry module-id env))
+      (TcModuleLocalEnvCache items))))
 
 (define (tc-module-local-env-cached-id
   [ctx : TcContext]
@@ -28204,13 +28318,18 @@
   (tc-thread-transfer-type-class-with-stack ctx env ty stack owner-proof))
 
 (define (tc-thread-transfer-classify-type [ctx : TcContext] [ty : AstType]) : TcThreadTransferClass
-  (tc-thread-transfer-type-class ctx (tc-empty-env) ty TcStringList.Nil false))
+  (tc-thread-transfer-type-class
+    ctx
+    (tc-empty-env)
+    ty
+    (tc-string-list-nil)
+    false))
 
 (define (tc-thread-transfer-classify-type-in-env
   [ctx : TcContext]
   [env : TcTypeEnv]
   [ty : AstType]) : TcThreadTransferClass
-  (tc-thread-transfer-type-class ctx env ty TcStringList.Nil false))
+  (tc-thread-transfer-type-class ctx env ty (tc-string-list-nil) false))
 
 (define (tc-region-list-atomic-arena-owners
   [env : TcTypeEnv]
@@ -31096,7 +31215,7 @@
     rest
     body
     name
-    TcStringList.Nil)
+    (tc-string-list-nil))
     ResultTcUnit.Ok
     (ResultTcUnit.Err (tc-reference-closure-escape-message))))
 
@@ -31109,7 +31228,7 @@
     bindings
     body
     name
-    TcStringList.Nil
+    (tc-string-list-nil)
     index)
     ResultTcUnit.Ok
     (ResultTcUnit.Err (tc-reference-closure-escape-message))))
@@ -34733,7 +34852,7 @@
           (tc-string-list-add bound (tc-env-key-name-text name)))])))
 
 (define (tc-param-bound-names [params : AstParamList]) : TcStringList
-  (tc-param-list-add-bound-names params TcStringList.Nil))
+  (tc-param-list-add-bound-names params (tc-string-list-nil)))
 
 (define (tc-pattern-add-bound-names
   [pattern : AstPattern]
@@ -36067,7 +36186,7 @@
   (tc-expr-result-uses-cleanup-owner?
     expr
     (tc-active-cleanup-owners env)
-    TcStringList.Nil))
+    (tc-string-list-nil)))
 
 (define (tc-expr-list-any-result-uses-active-cleanup-owner?
   [env : TcTypeEnv]
@@ -36075,7 +36194,7 @@
   (tc-expr-list-any-result-uses-cleanup-owner?
     exprs
     (tc-active-cleanup-owners env)
-    TcStringList.Nil))
+    (tc-string-list-nil)))
 
 (define (tc-ensure-cleanup-resource-not-let-bound
   [ctx : TcContext]
@@ -36997,15 +37116,21 @@
               "typecheck: unknown enum "
               (tc-nominal-name-id-display enum-name-id)))))]))
 
+(define (tc-inline-aggregate-cycle-stack-render-at
+  [stack : TcStringList]
+  [index : i64]) : String
+  (if (>= index (tc-string-list-len stack))
+    ""
+    (let
+      [head : String (tc-string-list-ref stack index)]
+      [tail : String
+        (tc-inline-aggregate-cycle-stack-render-at stack (+ index 1))]
+      (if (string.eq tail "")
+        head
+        (str_cat.str-cat tail " -> " head)))))
+
 (define (tc-inline-aggregate-cycle-stack-render [stack : TcStringList]) : String
-  (match stack
-    [(TcStringList.Nil) ""]
-    [(TcStringList.Cons head rest)
-      (let
-        [tail : String (tc-inline-aggregate-cycle-stack-render (box-get rest))]
-        (if (string.eq tail "")
-          head
-          (str_cat.str-cat tail " -> " head)))]))
+  (tc-inline-aggregate-cycle-stack-render-at stack 0))
 
 (define (tc-inline-aggregate-cycle-path [stack : TcStringList] [name : String]) : String
   (let
@@ -37128,7 +37253,7 @@
               (tc-inline-aggregate-variants-finite-ok
                 ctx
                 variants
-                (TcStringList.Cons name (box stack)))]
+                (tc-string-list-cons stack name))]
             [(ResultAstVariantDefList.Err message) (ResultTcUnit.Err message)])
           (if (=
             (compiler-symbol-handle-kind handle)
@@ -37140,7 +37265,7 @@
                     (tc-inline-aggregate-fields-finite-ok
                       ctx
                       fields
-                      (TcStringList.Cons name (box stack)))])]
+                      (tc-string-list-cons stack name))])]
               [(ResultTcStructDecl.Err message) (ResultTcUnit.Err message)])
             (ResultTcUnit.Err
               (string.append "typecheck: unknown aggregate " name))))
@@ -37149,7 +37274,7 @@
             (tc-inline-aggregate-variants-finite-ok
               (tc-inline-aggregate-context-for-name-id ctx name-id)
               variants
-              (TcStringList.Cons name (box stack)))]
+              (tc-string-list-cons stack name))]
           [(ResultAstVariantDefList.Err _)
             (ResultTcUnit.Err
               (string.append "typecheck: unknown aggregate " name))])))))
@@ -37198,7 +37323,7 @@
   [ctx : TcContext]
   [name : String]
   [name-id : i64]) : ResultTcUnit
-  (tc-inline-aggregate-nominal-finite-ok ctx name name-id TcStringList.Nil))
+  (tc-inline-aggregate-nominal-finite-ok ctx name name-id (tc-string-list-nil)))
 
 (define (tc-inline-aggregate-layout-info [size : i64] [align : i64]) : TcLayoutInfo
   (TcLayoutInfo size align))
@@ -37374,7 +37499,7 @@
               fields
               0
               0
-              (TcStringList.Cons struct-name (box stack)))
+              (tc-string-list-cons stack struct-name))
               [(ResultTcInlineFieldsLayout.Ok layout)
                 (match layout
                   [(TcInlineFieldsLayout.Fields size align fields-layout)
@@ -37479,7 +37604,7 @@
           variants
           8
           8
-          (TcStringList.Cons enum-name (box stack)))]
+          (tc-string-list-cons stack enum-name))]
       [(ResultAstVariantDefList.Err message)
         (ResultTcInlineAggregateLayout.Err message)])))
 
@@ -37815,14 +37940,14 @@
         stack)]))
 
 (define (tc-inline-aggregate-type-layout [ctx : TcContext] [ty : AstType]) : ResultTcLayoutInfo
-  (tc-inline-aggregate-type-layout-with-stack ctx ty TcStringList.Nil))
+  (tc-inline-aggregate-type-layout-with-stack ctx ty (tc-string-list-nil)))
 
 (define (tc-inline-aggregate-layout-for-id [ctx : TcContext] [name-id : i64]) : ResultTcInlineAggregateLayout
   (tc-inline-aggregate-layout-for-with-stack
     ctx
     (tc-nominal-name-id-display name-id)
     name-id
-    TcStringList.Nil))
+    (tc-string-list-nil)))
 
 ;; Compile-time cache: memoize the inline-aggregate SIZE. tc-inline-aggregate-
 ;; layout-for re-walks the whole layout on every lower-type-size query, which is
@@ -37882,7 +38007,7 @@
           ctx
           (tc-nominal-name-id-display name-id)
           name-id
-          TcStringList.Nil)
+          (tc-string-list-nil))
           [(ResultTcInlineAggregateLayout.Ok layout)
             (tc-inline-aggregate-layout-size layout)]
           [(ResultTcInlineAggregateLayout.Err _) fallback])
@@ -37894,7 +38019,7 @@
               ctx
               (tc-nominal-name-id-display name-id)
               name-id
-              TcStringList.Nil)
+              (tc-string-list-nil))
               [(ResultTcInlineAggregateLayout.Ok layout)
                 (let
                   [size : i64 (tc-inline-aggregate-layout-size layout)]
@@ -37936,7 +38061,7 @@
           ctx
           (tc-nominal-name-id-display name-id)
           name-id
-          TcStringList.Nil)
+          (tc-string-list-nil))
           [(ResultTcInlineAggregateLayout.Ok layout)
             (tc-inline-aggregate-layout-align layout)]
           [(ResultTcInlineAggregateLayout.Err _) fallback])
@@ -37948,7 +38073,7 @@
               ctx
               (tc-nominal-name-id-display name-id)
               name-id
-              TcStringList.Nil)
+              (tc-string-list-nil))
               [(ResultTcInlineAggregateLayout.Ok layout)
                 (let
                   [align : i64 (tc-inline-aggregate-layout-align layout)]
@@ -37994,7 +38119,7 @@
     ctx
     (tc-nominal-name-id-display name-id)
     name-id
-    TcStringList.Nil)
+    (tc-string-list-nil))
     [(ResultTcInlineAggregateLayout.Ok layout)
       (if (tc-inline-aggregate-layout-register-resident? layout)
         (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
@@ -38016,7 +38141,7 @@
               ctx
               (tc-nominal-name-id-display name-id)
               name-id
-              TcStringList.Nil)
+              (tc-string-list-nil))
               [(ResultTcInlineAggregateLayout.Ok layout)
                 (let
                   [words : i64
@@ -38277,7 +38402,7 @@
     ctx
     struct-name
     struct-name-id
-    TcStringList.Nil))
+    (tc-string-list-nil)))
 
 (define (tc-ctfe-inline-layout-fields-into
   [fields : TcInlineFieldLayoutList]
@@ -43326,8 +43451,10 @@
         [(ResultTcType.Ok body-ty)
           (if (tc-expr-list-result-uses-cleanup-owner?
             body
-            (tc-resource-binding-list-add-bound-names bindings TcStringList.Nil)
-            TcStringList.Nil)
+            (tc-resource-binding-list-add-bound-names
+              bindings
+              (tc-string-list-nil))
+            (tc-string-list-nil))
             (ResultTcType.Err
               "typecheck: cleanup-required resource would escape with scope")
             (ResultTcType.Ok body-ty))]
@@ -43346,8 +43473,10 @@
         [(ResultTcType.Ok body-ty)
           (if (tc-expr-list-result-uses-cleanup-owner?
             body
-            (tc-resource-binding-list-add-bound-names bindings TcStringList.Nil)
-            TcStringList.Nil)
+            (tc-resource-binding-list-add-bound-names
+              bindings
+              (tc-string-list-nil))
+            (tc-string-list-nil))
             (ResultTcType.Err
               "typecheck: cleanup-required resource would escape with scope")
             (ResultTcType.Ok body-ty))]
@@ -44642,7 +44771,7 @@
         ctx
         (tc-nominal-name-id-display name)
         name
-        TcStringList.Nil)
+        (tc-string-list-nil))
         [(ResultTcInlineAggregateLayout.Ok layout)
           (match layout
             [(TcInlineAggregateLayout.Enum _ _ _) true]
@@ -44653,7 +44782,7 @@
         ctx
         (tc-nominal-name-id-display name)
         name
-        TcStringList.Nil)
+        (tc-string-list-nil))
         [(ResultTcInlineAggregateLayout.Ok layout)
           (match layout
             [(TcInlineAggregateLayout.Enum _ _ _) true]
@@ -44874,17 +45003,22 @@
         [_ (ResultTcUnit.Err "typecheck: macro body must return Expr")]))))
 
 (define (tc-comptime-purity-chain-push [chain : TcStringList] [name : String]) : TcStringList
-  (TcStringList.Cons name (box chain)))
+  (tc-string-list-cons chain name))
+
+(define (tc-comptime-purity-chain-render-at
+  [chain : TcStringList]
+  [index : i64]) : String
+  (if (>= index (tc-string-list-len chain))
+    ""
+    (let
+      [head : String (tc-string-list-ref chain index)]
+      [tail : String (tc-comptime-purity-chain-render-at chain (+ index 1))]
+      (if (string.eq tail "")
+        head
+        (str_cat.str-cat tail " -> " head)))))
 
 (define (tc-comptime-purity-chain-render [chain : TcStringList]) : String
-  (match chain
-    [(TcStringList.Nil) ""]
-    [(TcStringList.Cons head rest)
-      (let
-        [tail : String (tc-comptime-purity-chain-render (box-get rest))]
-        (if (string.eq tail "")
-          head
-          (str_cat.str-cat tail " -> " head)))]))
+  (tc-comptime-purity-chain-render-at chain 0))
 
 (define (tc-comptime-purity-chain-path [chain : TcStringList] [name : String]) : String
   (let
@@ -44984,7 +45118,7 @@
           (tc-string-list-add bound (tc-env-key-name-text name)))])))
 
 (define (tc-macro-param-bound-names [params : AstMacroParamList]) : TcStringList
-  (tc-macro-param-list-add-bound-names params TcStringList.Nil))
+  (tc-macro-param-list-add-bound-names params (tc-string-list-nil)))
 
 (define (tc-comptime-purity-expr
   [ctx : TcContext]
@@ -46183,7 +46317,7 @@
     [(AstDecl.Def decl-meta _ _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
-        (tc-comptime-purity-expr ctx env TcStringList.Nil chain seen expr))]
+        (tc-comptime-purity-expr ctx env (tc-string-list-nil) chain seen expr))]
     [(AstDecl.DefFn decl-meta _ params _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
@@ -46226,8 +46360,10 @@
     ctx
     env
     (tc-macro-param-bound-names params)
-    (tc-comptime-purity-chain-push TcStringList.Nil (tc-env-key-name-text name))
-    (tc-string-list-add TcStringList.Nil (tc-env-key-name-text name))
+    (tc-comptime-purity-chain-push
+      (tc-string-list-nil)
+      (tc-env-key-name-text name))
+    (tc-string-list-add (tc-string-list-nil) (tc-env-key-name-text name))
     body))
 
 ;; The ordinary comptime-purity walk already models executable macro syntax,
@@ -46398,20 +46534,23 @@
 (define (tc-macro-abstract-bound-alias-at?
   [items : TcStringList]
   [name : String]
-  [marker : String]) : bool
-  (match items
-    [(TcStringList.Nil) false]
-    [(TcStringList.Cons item rest)
+  [marker : String]
+  [index : i64]) : bool
+  (if (>= index (tc-string-list-len items))
+    false
+    (let
+      [item : String (tc-string-list-ref items index)]
       (cond
         [(string.eq item marker) true]
         [(string.eq item name) false]
-        [else (tc-macro-abstract-bound-alias-at? (box-get rest) name marker)])]))
+        [else (tc-macro-abstract-bound-alias-at? items name marker (+ index 1))]))))
 
 (define (tc-macro-abstract-bound-alias? [bound : TcStringList] [name : String]) : bool
   (tc-macro-abstract-bound-alias-at?
     bound
     name
-    (tc-macro-abstract-alias-marker name)))
+    (tc-macro-abstract-alias-marker name)
+    0))
 
 (define (tc-macro-abstract-param-var? [expr : AstExpr] [bound : TcStringList]) : bool
   (match (ast-expr-unspan expr)
@@ -46433,15 +46572,15 @@
   (let
     [next-bound : TcStringList
       (if (and tc-macro-abstract-active (not template?))
-        (TcStringList.Cons (tc-env-key-name-text name-id) (box bound))
+        (tc-string-list-cons bound (tc-env-key-name-text name-id))
         (tc-comptime-purity-template-bound template? bound name-id))]
     (if (and
       tc-macro-abstract-active
       (not template?)
       (tc-macro-abstract-param-var? init bound))
-      (TcStringList.Cons
-        (tc-macro-abstract-alias-marker (tc-env-key-name-text name-id))
-        (box next-bound))
+      (tc-string-list-cons
+        next-bound
+        (tc-macro-abstract-alias-marker (tc-env-key-name-text name-id)))
       next-bound)))
 
 (define (tc-macro-abstract-kind-bit [kind : String]) : i64
@@ -46759,11 +46898,11 @@
           (tc-comptime-purity-expr
             ctx
             env
-            TcStringList.Nil
+            (tc-string-list-nil)
             (tc-comptime-purity-chain-push
-              TcStringList.Nil
+              (tc-string-list-nil)
               (string.copy (& macro-name)))
-            (tc-string-list-add TcStringList.Nil macro-name)
+            (tc-string-list-add (tc-string-list-nil) macro-name)
             body)]
         (begin
           (tc-macro-abstract-state-restore! saved)
@@ -47637,8 +47776,8 @@
   (tc-comptime-purity-decl
     ctx
     env
-    (tc-comptime-purity-chain-push TcStringList.Nil "comptime-decl")
-    TcStringList.Nil
+    (tc-comptime-purity-chain-push (tc-string-list-nil) "comptime-decl")
+    (tc-string-list-nil)
     template))
 
 (define (tc-check-defmacro
@@ -47731,9 +47870,56 @@
   (kind TcMovedPathKind)
   (origin i64))
 
-(defenum TcMovedPathFacts
-  (Nil)
-  (Cons TcMovedPathFact (Box TcMovedPathFacts)))
+(import (vector.vector TcMovedPathFact core) as tc_moved_path_fact_vec)
+
+;; Move/borrow facts live at one program point, but branch merges, pruning, and
+;; loop protection all keep older snapshots alive while a newer state is built.
+;; Every mutation therefore publishes a fresh right-sized vector instead of
+;; appending to one a live snapshot still holds. Entry 0 is the most recently
+;; added fact, so head-first scans still report the newest conflict first.
+(defstruct TcMovedPathFacts
+  (items tc_moved_path_fact_vec.Vec))
+
+(define (tc-moved-path-facts-nil) : TcMovedPathFacts
+  (TcMovedPathFacts (tc_moved_path_fact_vec.new)))
+
+(define (tc-moved-path-facts-ref [facts : TcMovedPathFacts] [index : i64]) : TcMovedPathFact
+  (array-ref (tc_moved_path_fact_vec.slots (& (struct-get facts items))) index))
+
+(define (tc-moved-path-facts-cons
+  [fact : TcMovedPathFact]
+  [rest : TcMovedPathFacts]) : TcMovedPathFacts
+  (let
+    [count : i64 (tc-moved-path-facts-len rest)]
+    [items : tc_moved_path_fact_vec.Vec
+      (tc_moved_path_fact_vec.with-capacity (+ count 1))]
+    [at : i64 0]
+    (begin
+      (tc_moved_path_fact_vec.push (&mut items) fact)
+      (while (< at count)
+        (begin
+          (tc_moved_path_fact_vec.push
+            (&mut items)
+            (tc-moved-path-facts-ref rest at))
+          (set! at (+ at 1))))
+      (TcMovedPathFacts items))))
+
+(define (tc-moved-path-facts-without [facts : TcMovedPathFacts] [skip : i64]) : TcMovedPathFacts
+  (let
+    [count : i64 (tc-moved-path-facts-len facts)]
+    [items : tc_moved_path_fact_vec.Vec
+      (tc_moved_path_fact_vec.with-capacity count)]
+    [at : i64 0]
+    (begin
+      (while (< at count)
+        (begin
+          (if (= at skip)
+            unit
+            (tc_moved_path_fact_vec.push
+              (&mut items)
+              (tc-moved-path-facts-ref facts at)))
+          (set! at (+ at 1))))
+      (TcMovedPathFacts items))))
 
 (defenum TcMovedPathFactsRemove
   (Missing)
@@ -47765,14 +47951,38 @@
   (owner-origin-id i64)
   (move-aware bool))
 
+(import (vector.vector TcMoveCleanupOwner core) as tc_move_cleanup_owner_vec)
+
 ;; One slot per resource binding, filled in binding order as the checked
 ;; recursion unwinds, so the exit scan walks the same order the cons chain did.
+;; `-new` fills the whole run of slots up front because `-set` writes them out
+;; of order as the recursion unwinds.
 (defstruct TcMoveCleanupOwners
-  (slots (Array TcMoveCleanupOwner))
-  (len i64))
+  (items tc_move_cleanup_owner_vec.Vec))
 
 (define (tc-move-cleanup-owners-new [count : i64]) : TcMoveCleanupOwners
-  (TcMoveCleanupOwners (array.make-array TcMoveCleanupOwner count) count))
+  (let
+    [items : tc_move_cleanup_owner_vec.Vec
+      (tc_move_cleanup_owner_vec.with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (tc_move_cleanup_owner_vec.push
+            (&mut items)
+            (TcMoveCleanupOwner 0 0 false))
+          (set! index (+ index 1))))
+      (TcMoveCleanupOwners items))))
+
+(define (tc-move-cleanup-owners-len [owners : TcMoveCleanupOwners]) : i64
+  (tc_move_cleanup_owner_vec.len (& (struct-get owners items))))
+
+(define (tc-move-cleanup-owners-ref
+  [owners : TcMoveCleanupOwners]
+  [index : i64]) : TcMoveCleanupOwner
+  (array-ref
+    (tc_move_cleanup_owner_vec.slots (& (struct-get owners items)))
+    index))
 
 (define (tc-move-cleanup-owners-set
   [owners : TcMoveCleanupOwners]
@@ -47780,15 +47990,12 @@
   [name-id : i64]
   [owner-origin-id : i64]
   [move-aware : bool]) : TcMoveCleanupOwners
-  (let
-    [slots : (Array TcMoveCleanupOwner) (struct-get owners slots)]
-    [len : i64 (struct-get owners len)]
-    (begin
-      (array-set!
-        slots
-        index
-        (TcMoveCleanupOwner name-id owner-origin-id move-aware))
-      (TcMoveCleanupOwners slots len))))
+  (begin
+    (tc_move_cleanup_owner_vec.set
+      (&mut (struct-get owners items))
+      index
+      (TcMoveCleanupOwner name-id owner-origin-id move-aware))
+    owners))
 
 (defenum TcMoveResourceBindings
   (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet TcMoveCleanupOwners)
@@ -47817,7 +48024,7 @@
   (TcMovedSet
     (tc_i64_i64_map.with-capacity 8)
     (tc_i64_i64_map.with-capacity 4)
-    TcMovedPathFacts.Nil
+    (tc-moved-path-facts-nil)
     (TcMovedExactPathIndex
       (tc_i64_i64_map.with-capacity 8)
       (make-array TcMovedPathFact 8)
@@ -47838,10 +48045,7 @@
   (struct-get set exact-path-index))
 
 (define (tc-moved-path-facts-len [facts : TcMovedPathFacts]) : i64
-  (match facts
-    [(TcMovedPathFacts.Nil) 0]
-    [(TcMovedPathFacts.Cons _ rest)
-      (+ 1 (tc-moved-path-facts-len (box-get rest)))]))
+  (tc_moved_path_fact_vec.len (& (struct-get facts items))))
 
 (define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
   (struct-get set hidden-atomic-users))
@@ -48241,15 +48445,24 @@
         (struct-get ready next)
         (+ slot 1)))))
 
+;; Insert from the tail forward so the head-most fact lands at the front of its
+;; hash chain and `find` still reports the most recent fact for a path.
 (define (tc-moved-exact-path-index-from-facts-at
   [facts : TcMovedPathFacts]
   [index : TcMovedExactPathIndex]) : TcMovedExactPathIndex
-  (match facts
-    [(TcMovedPathFacts.Nil) index]
-    [(TcMovedPathFacts.Cons fact rest)
-      (tc-moved-exact-path-index-insert-new
-        (tc-moved-exact-path-index-from-facts-at (box-get rest) index)
-        fact)]))
+  (let
+    [out : TcMovedExactPathIndex index]
+    [at : i64 (- (tc-moved-path-facts-len facts) 1)]
+    (begin
+      (while (>= at 0)
+        (begin
+          (set!
+            out
+            (tc-moved-exact-path-index-insert-new
+              out
+              (tc-moved-path-facts-ref facts at)))
+          (set! at (- at 1))))
+      out)))
 
 (define (tc-moved-exact-path-index-from-facts [facts : TcMovedPathFacts]) : TcMovedExactPathIndex
   (tc-moved-exact-path-index-from-facts-at
@@ -48306,35 +48519,36 @@
         (TcMoveConflict.Some (tc-hygiene-name-text-id name-id) origin-id)]
       [(tc_i64_i64_map.LookupMissing) TcMoveConflict.No])))
 
+(define (tc-moved-path-facts-find-exact
+  [facts : TcMovedPathFacts]
+  [path : TcMovePath]
+  [kind : TcMovedPathKind]
+  [index : i64]) : i64
+  (if (>= index (tc-moved-path-facts-len facts))
+    -1
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
+      (if (and
+        (tc-move-path-eq? (struct-get fact path) path)
+        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
+        index
+        (tc-moved-path-facts-find-exact facts path kind (+ index 1))))))
+
 (define (tc-moved-path-facts-remove-exact
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMovedPathFactsRemove
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcMovedPathFactsRemove.Missing)]
-    [(TcMovedPathFacts.Cons fact rest)
-      (if (and
-        (tc-move-path-eq? (struct-get fact path) path)
-        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
-        (TcMovedPathFactsRemove.Removed (box-get rest))
-        (match (tc-moved-path-facts-remove-exact (box-get rest) path kind)
-          [(TcMovedPathFactsRemove.Missing) (TcMovedPathFactsRemove.Missing)]
-          [(TcMovedPathFactsRemove.Removed tail)
-            (TcMovedPathFactsRemove.Removed
-              (TcMovedPathFacts.Cons fact (box tail)))]))]))
+  (let
+    [found : i64 (tc-moved-path-facts-find-exact facts path kind 0)]
+    (if (< found 0)
+      (TcMovedPathFactsRemove.Missing)
+      (TcMovedPathFactsRemove.Removed (tc-moved-path-facts-without facts found)))))
 
 (define (tc-moved-path-facts-contains-exact-kind?
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
-      (if (and
-        (tc-move-path-eq? (struct-get fact path) path)
-        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
-        true
-        (tc-moved-path-facts-contains-exact-kind? (box-get rest) path kind))]))
+  (>= (tc-moved-path-facts-find-exact facts path kind 0) 0))
 
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
@@ -48353,7 +48567,7 @@
         (TcMovedSet
           (tc-moved-roots set)
           (tc-moved-partials set)
-          (TcMovedPathFacts.Cons fact (box (tc-moved-paths set)))
+          (tc-moved-path-facts-cons fact (tc-moved-paths set))
           next-index
           (tc-moved-hidden-atomic-users set))))))
 
@@ -48611,41 +48825,45 @@
 
 (define (tc-moved-path-conflict-at
   [facts : TcMovedPathFacts]
-  [path : TcMovePath]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  [path : TcMovePath]
+  [index : i64]) : TcMoveConflict
+  (if (>= index (tc-moved-path-facts-len facts))
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (if (and
         (tc-moved-base-path-kind? (struct-get fact kind))
         (tc-move-path-conflicts? (struct-get fact path) path))
         (TcMoveConflict.Some
           (tc-move-path-render (struct-get fact path))
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-conflict-at (box-get rest) path))]))
+        (tc-moved-path-conflict-at facts path (+ index 1))))))
 
 (define (tc-moved-path-conflict-kind-at
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
-  [kind : TcMovedPathKind]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  [kind : TcMovedPathKind]
+  [index : i64]) : TcMoveConflict
+  (if (>= index (tc-moved-path-facts-len facts))
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (if (and
         (tc-moved-path-kind-eq? (struct-get fact kind) kind)
         (tc-move-path-conflicts? (struct-get fact path) path))
         (TcMoveConflict.Some
           (tc-move-path-render (struct-get fact path))
           (tc-moved-path-fact-origin fact))
-        (tc-moved-path-conflict-kind-at (box-get rest) path kind))]))
+        (tc-moved-path-conflict-kind-at facts path kind (+ index 1))))))
 
 (define (tc-moved-path-conflict-kind
   [set : TcMovedSet]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMoveConflict
-  (tc-moved-path-conflict-kind-at (tc-moved-paths set) path kind))
+  (tc-moved-path-conflict-kind-at (tc-moved-paths set) path kind 0))
 
 (define (tc-moved-path-conflict [set : TcMovedSet] [path : TcMovePath]) : TcMoveConflict
-  (tc-moved-path-conflict-at (tc-moved-paths set) path))
+  (tc-moved-path-conflict-at (tc-moved-paths set) path 0))
 
 (define (tc-moved-path-conflict? [set : TcMovedSet] [path : TcMovePath]) : bool
   (match (tc-moved-path-conflict set path)
@@ -48655,15 +48873,21 @@
 (define (tc-moved-path-facts-remove-root
   [facts : TcMovedPathFacts]
   [root-id : i64]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-root (box-get rest) root-id)]
-        (if (= (tc-move-path-root-id (struct-get fact path)) root-id)
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (let
+    [count : i64 (tc-moved-path-facts-len facts)]
+    [items : tc_moved_path_fact_vec.Vec
+      (tc_moved_path_fact_vec.with-capacity count)]
+    [at : i64 0]
+    (begin
+      (while (< at count)
+        (let
+          [fact : TcMovedPathFact (tc-moved-path-facts-ref facts at)]
+          (begin
+            (if (= (tc-move-path-root-id (struct-get fact path)) root-id)
+              unit
+              (tc_moved_path_fact_vec.push (&mut items) fact))
+            (set! at (+ at 1)))))
+      (TcMovedPathFacts items))))
 
 (define (tc-moved-remove-root-state [set : TcMovedSet] [name-id : i64]) : TcMovedSet
   (let
@@ -48678,27 +48902,33 @@
       (tc-moved-exact-path-index-from-facts facts)
       (tc-moved-hidden-atomic-users without-root))))
 
-(define (tc-moved-any-root-path-at? [facts : TcMovedPathFacts] [root-id : i64]) : bool
-  (match facts
-    [(TcMovedPathFacts.Nil) false]
-    [(TcMovedPathFacts.Cons fact rest)
+(define (tc-moved-any-root-path-at?
+  [facts : TcMovedPathFacts]
+  [root-id : i64]
+  [index : i64]) : bool
+  (if (>= index (tc-moved-path-facts-len facts))
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (if (and
         (match (struct-get fact kind)
           [(TcMovedPathKind.Move) true]
           [_ false])
         (= (tc-move-path-root-id (struct-get fact path)) root-id))
         true
-        (tc-moved-any-root-path-at? (box-get rest) root-id))]))
+        (tc-moved-any-root-path-at? facts root-id (+ index 1))))))
 
 (define (tc-moved-any-root-path? [set : TcMovedSet] [root-id : i64]) : bool
-  (tc-moved-any-root-path-at? (tc-moved-paths set) root-id))
+  (tc-moved-any-root-path-at? (tc-moved-paths set) root-id 0))
 
 (define (tc-moved-root-path-conflict-loop
   [facts : TcMovedPathFacts]
-  [root-id : i64]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
+  [root-id : i64]
+  [index : i64]) : TcMoveConflict
+  (if (>= index (tc-moved-path-facts-len facts))
+    TcMoveConflict.No
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (if (and
         (match (struct-get fact kind)
           [(TcMovedPathKind.Move) true]
@@ -48707,10 +48937,10 @@
         (TcMoveConflict.Some
           (tc-move-path-render (struct-get fact path))
           (tc-moved-path-fact-origin fact))
-        (tc-moved-root-path-conflict-loop (box-get rest) root-id))]))
+        (tc-moved-root-path-conflict-loop facts root-id (+ index 1))))))
 
 (define (tc-moved-root-path-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
-  (tc-moved-root-path-conflict-loop (tc-moved-paths set) root-id))
+  (tc-moved-root-path-conflict-loop (tc-moved-paths set) root-id 0))
 
 (define (tc-moved-root-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
   (match (tc-moved-conflict set root-id)
@@ -48732,17 +48962,22 @@
       without-path
       (tc-moved-remove-partial without-path root-id))))
 
-(define (tc-moved-union-path-loop [a : TcMovedPathFacts] [out : TcMovedSet]) : TcMovedSet
-  (match a
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+(define (tc-moved-union-path-loop
+  [a : TcMovedPathFacts]
+  [index : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (>= index (tc-moved-path-facts-len a))
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref a index)]
       (tc-moved-union-path-loop
-        (box-get rest)
+        a
+        (+ index 1)
         (tc-moved-add-path-fact
           out
           (struct-get fact path)
           (struct-get fact kind)
-          (tc-moved-path-fact-origin fact)))]))
+          (tc-moved-path-fact-origin fact))))))
 
 (define (tc-moved-union-id-loop
   [a : (& a tc_i64_i64_map.Map)]
@@ -48785,7 +49020,7 @@
         a-paths
         (tc-moved-exact-path-index-from-facts a-paths)
         b-hidden)]
-    [with-paths : TcMovedSet (tc-moved-union-path-loop b-paths with-a-paths)]
+    [with-paths : TcMovedSet (tc-moved-union-path-loop b-paths 0 with-a-paths)]
     (TcMovedSet
       (tc-moved-union-id-loop (& a-roots) 0 b-roots)
       (tc-moved-union-id-loop (& a-partials) 0 b-partials)
@@ -50179,7 +50414,7 @@
     loop-carried
     moved
     (tc-param-bound-names params)
-    TcStringList.Nil
+    (tc-string-list-nil)
     (tc-moved-len locals)
     body))
 
@@ -50784,10 +51019,10 @@
   [roots : TcMoveCleanupOwners]
   [scope : AstExpr]
   [index : i64]) : TcMoveResult
-  (if (>= index (struct-get (& roots) len))
+  (if (>= index (tc-move-cleanup-owners-len roots))
     (TcMoveResult.Ok moved)
     (let
-      [owner : TcMoveCleanupOwner (array-ref (struct-get roots slots) index)]
+      [owner : TcMoveCleanupOwner (tc-move-cleanup-owners-ref roots index)]
       [name-id : i64 (struct-get owner name-id)]
       (cond
         [(struct-get owner move-aware)
@@ -51992,21 +52227,23 @@
 ;; a non-conflicting marker that identifies the result binding for NLL pruning.
 (define (tc-borrow-check-lending-binding-at
   [facts : TcMovedPathFacts]
-  [path : TcMovePath]) : TcMaybeNameId
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcMaybeNameId.No)]
-    [(TcMovedPathFacts.Cons fact rest)
+  [path : TcMovePath]
+  [index : i64]) : TcMaybeNameId
+  (if (>= index (tc-moved-path-facts-len facts))
+    (TcMaybeNameId.No)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (if (tc-move-path-eq? (struct-get fact path) path)
         (match (struct-get fact kind)
           [(TcMovedPathKind.BorrowLending binding-id)
             (TcMaybeNameId.Some binding-id)]
-          [_ (tc-borrow-check-lending-binding-at (box-get rest) path)])
-        (tc-borrow-check-lending-binding-at (box-get rest) path))]))
+          [_ (tc-borrow-check-lending-binding-at facts path (+ index 1))])
+        (tc-borrow-check-lending-binding-at facts path (+ index 1))))))
 
 (define (tc-borrow-check-lending-binding
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMaybeNameId
-  (tc-borrow-check-lending-binding-at facts path))
+  (tc-borrow-check-lending-binding-at facts path 0))
 
 (define (tc-borrow-check-lending-binding?
   [facts : TcMovedPathFacts]
@@ -52039,19 +52276,25 @@
 (define (tc-moved-path-facts-remove-lending
   [facts : TcMovedPathFacts]
   [path : TcMovePath]) : TcMovedPathFacts
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
-    [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-lending (box-get rest) path)]
-        (if (and
-          (tc-move-path-eq? (struct-get fact path) path)
-          (match (struct-get fact kind)
-            [(TcMovedPathKind.BorrowLending _) true]
-            [_ false]))
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+  (let
+    [count : i64 (tc-moved-path-facts-len facts)]
+    [items : tc_moved_path_fact_vec.Vec
+      (tc_moved_path_fact_vec.with-capacity count)]
+    [at : i64 0]
+    (begin
+      (while (< at count)
+        (let
+          [fact : TcMovedPathFact (tc-moved-path-facts-ref facts at)]
+          (begin
+            (if (and
+              (tc-move-path-eq? (struct-get fact path) path)
+              (match (struct-get fact kind)
+                [(TcMovedPathKind.BorrowLending _) true]
+                [_ false]))
+              unit
+              (tc_moved_path_fact_vec.push (&mut items) fact))
+            (set! at (+ at 1)))))
+      (TcMovedPathFacts items))))
 
 (define (tc-borrow-check-remove-borrow-path
   [borrowed : TcMovedSet]
@@ -52182,7 +52425,7 @@
               seen)
             (if (and
               (tc-borrow-check-binding-stores-lifetime? ctx ty lifetime)
-              (tc-expr-list-uses-free-name? exprs name TcStringList.Nil))
+              (tc-expr-list-uses-free-name? exprs name (tc-string-list-nil)))
               true
               (tc-borrow-check-env-lifetime-used-in-exprs?
                 ctx
@@ -52205,7 +52448,7 @@
           env
           exprs
           lifetime
-          TcStringList.Nil)]
+          (tc-string-list-nil))]
       (begin
         (cfg
           compile-profile
@@ -52268,12 +52511,14 @@
   [env : TcTypeEnv]
   [outer-locals : TcMovedSet]
   [facts : TcMovedPathFacts]
+  [index : i64]
   [result-lifetimes : TcNameIdList]
   [direct-path : TcMaybeMovePath]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (>= index (tc-moved-path-facts-len facts))
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (let
         [path : TcMovePath (struct-get fact path)]
         [kind : TcMovedPathKind (struct-get fact kind)]
@@ -52314,10 +52559,11 @@
           ctx
           env
           outer-locals
-          (box-get rest)
+          facts
+          (+ index 1)
           result-lifetimes
           direct-path
-          out2))]))
+          out2)))))
 
 (define (tc-borrow-check-propagate-return-borrows
   [ctx : TcContext]
@@ -52343,6 +52589,7 @@
             env
             outer-locals
             (tc-moved-paths inner-borrowed)
+            0
             result-lifetimes
             (tc-borrow-check-result-direct-borrow-path outer-locals result-expr)
             (tc-moved-clone outer-borrowed))]))))
@@ -52353,13 +52600,15 @@
   [locals : TcMovedSet]
   [prior : TcMovedSet]
   [facts : TcMovedPathFacts]
+  [index : i64]
   [binding-id : i64]
   [result-lifetimes : TcNameIdList]
   [origin : AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (>= index (tc-moved-path-facts-len facts))
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (let
         [path : TcMovePath (struct-get fact path)]
         [shared : bool
@@ -52392,11 +52641,12 @@
           env
           locals
           prior
-          (box-get rest)
+          facts
+          (+ index 1)
           binding-id
           result-lifetimes
           origin
-          out2))]))
+          out2)))))
 
 ;; A propagated returned borrow needs an NLL marker for the outer result
 ;; binding. Mark only source paths newly introduced by the initializer; this
@@ -52427,6 +52677,7 @@
             locals
             prior
             (tc-moved-paths borrowed)
+            0
             binding-id
             result-lifetimes
             origin
@@ -52455,10 +52706,12 @@
   [exprs : AstExprList]
   [protected : TcMovedSet]
   [facts : TcMovedPathFacts]
+  [index : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (>= index (tc-moved-path-facts-len facts))
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (let
         [path : TcMovePath (struct-get fact path)]
         [shared : bool
@@ -52477,7 +52730,7 @@
                 (if (tc-expr-list-uses-free-name?
                   exprs
                   (tc-env-key-name-text lending-binding-id)
-                  TcStringList.Nil)
+                  (tc-string-list-nil))
                   out
                   (tc-borrow-check-remove-borrow-path out path))]
               [(TcMaybeNameId.No)
@@ -52493,8 +52746,9 @@
           env
           exprs
           protected
-          (box-get rest)
-          out2))]))
+          facts
+          (+ index 1)
+          out2)))))
 
 (define (tc-borrow-check-prune-before-exprs
   [ctx : TcContext]
@@ -52510,6 +52764,7 @@
       exprs
       protected
       (tc-moved-paths borrowed)
+      0
       borrowed)))
 
 (define (tc-borrow-check-place-path [expr : AstExpr]) : TcMaybeMovePath
@@ -53026,11 +53281,13 @@
   [env : TcTypeEnv]
   [prior : TcMovedSet]
   [facts : TcMovedPathFacts]
+  [index : i64]
   [value : AstExpr]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (>= index (tc-moved-path-facts-len facts))
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (let
         [path : TcMovePath (struct-get fact path)]
         [kind : TcMovedPathKind (struct-get fact kind)]
@@ -53067,9 +53324,10 @@
           ctx
           env
           prior
-          (box-get rest)
+          facts
+          (+ index 1)
           value
-          out2))]))
+          out2)))))
 
 ;; Argument auto-borrows created while evaluating an assignment RHS end after
 ;; that value is produced unless the result or a nested store retains their
@@ -53086,6 +53344,7 @@
     env
     prior
     (tc-moved-paths borrowed)
+    0
     value
     borrowed))
 
@@ -53668,10 +53927,12 @@
 (define (tc-borrow-check-activate-two-phase-mut-borrows-loop
   [borrowed : TcMovedSet]
   [facts : TcMovedPathFacts]
+  [index : i64]
   [primary : AstExpr]) : TcBorrowCheckResult
-  (match facts
-    [(TcMovedPathFacts.Nil) (TcBorrowCheckResult.Ok borrowed)]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (>= index (tc-moved-path-facts-len facts))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (match (struct-get fact kind)
         [(TcMovedPathKind.BorrowTwoPhaseMut)
           (let
@@ -53689,13 +53950,15 @@
               [TcMoveConflict.No
                 (tc-borrow-check-activate-two-phase-mut-borrows-loop
                   borrowed
-                  (box-get rest)
+                  facts
+                  (+ index 1)
                   primary)]))]
         [_
           (tc-borrow-check-activate-two-phase-mut-borrows-loop
             borrowed
-            (box-get rest)
-            primary)])]))
+            facts
+            (+ index 1)
+            primary)]))))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows
   [borrowed : TcMovedSet]
@@ -53703,6 +53966,7 @@
   (tc-borrow-check-activate-two-phase-mut-borrows-loop
     borrowed
     (tc-moved-paths borrowed)
+    0
     primary))
 
 (define (tc-borrow-check-reserve-two-phase-mut-call-arg
@@ -54454,10 +54718,12 @@
   [loop-env : TcTypeEnv]
   [before : TcMovedSet]
   [facts : TcMovedPathFacts]
+  [index : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (>= index (tc-moved-path-facts-len facts))
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (let
         [path : TcMovePath (struct-get fact path)]
         [kind : TcMovedPathKind (struct-get fact kind)]
@@ -54479,8 +54745,9 @@
           ctx
           loop-env
           before
-          (box-get rest)
-          out2))]))
+          facts
+          (+ index 1)
+          out2)))))
 
 (define (tc-borrow-check-loop-protect-carried-facts
   [ctx : TcContext]
@@ -54493,6 +54760,7 @@
     loop-env
     before
     (tc-moved-paths after)
+    0
     protected))
 
 (define (tc-borrow-check-loop-protect-stored-facts-loop
@@ -54500,10 +54768,12 @@
   [env : TcTypeEnv]
   [expr : AstExpr]
   [facts : TcMovedPathFacts]
+  [index : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (match facts
-    [(TcMovedPathFacts.Nil) out]
-    [(TcMovedPathFacts.Cons fact rest)
+  (if (>= index (tc-moved-path-facts-len facts))
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-ref facts index)]
       (let
         [path : TcMovePath (struct-get fact path)]
         [kind : TcMovedPathKind (struct-get fact kind)]
@@ -54525,8 +54795,9 @@
           ctx
           env
           expr
-          (box-get rest)
-          out2))]))
+          facts
+          (+ index 1)
+          out2)))))
 
 (define (tc-borrow-check-loop-protect-stored-facts
   [ctx : TcContext]
@@ -54539,6 +54810,7 @@
     env
     expr
     (tc-moved-paths borrowed)
+    0
     protected))
 
 (define (tc-borrow-check-loop-visible-body-borrows
@@ -57076,10 +57348,52 @@
   (No)
   (Some AstDeclList))
 
-(defenum MacroHygieneEnv
-  (Nil)
-  (Bind i64 i64 (Box MacroHygieneEnv))
-  (PatternName i64 i64 (Box MacroHygieneEnv)))
+;; One renamed template binding. `pattern-name?` distinguishes the former
+;; `PatternName` constructor from the ordinary `Bind` one.
+(defstruct MacroHygieneBinding
+  (key-id i64)
+  (value-id i64)
+  (pattern-name? bool))
+
+(import (vector.vector MacroHygieneBinding core) as macro_hygiene_binding_vec)
+
+;; Persistent scoped rename environment. Sibling output subtrees extend the same
+;; live parent, so `macro-hygiene-env-cons` copies into a right-sized buffer
+;; instead of appending to a vector a sibling branch still holds. Entry 0 is the
+;; most recent binding, so head-first lookup still resolves shadowing.
+(defstruct MacroHygieneEnv
+  (items macro_hygiene_binding_vec.Vec))
+
+(define (macro-hygiene-env-nil) : MacroHygieneEnv
+  (MacroHygieneEnv (macro_hygiene_binding_vec.new)))
+
+(define (macro-hygiene-env-len [env : MacroHygieneEnv]) : i64
+  (macro_hygiene_binding_vec.len (& (struct-get env items))))
+
+(define (macro-hygiene-env-ref [env : MacroHygieneEnv] [index : i64]) : MacroHygieneBinding
+  (array-ref (macro_hygiene_binding_vec.slots (& (struct-get env items))) index))
+
+(define (macro-hygiene-env-cons
+  [env : MacroHygieneEnv]
+  [key-id : i64]
+  [value-id : i64]
+  [pattern-name? : bool]) : MacroHygieneEnv
+  (let
+    [count : i64 (macro-hygiene-env-len env)]
+    [items : macro_hygiene_binding_vec.Vec
+      (macro_hygiene_binding_vec.with-capacity (+ count 1))]
+    [at : i64 0]
+    (begin
+      (macro_hygiene_binding_vec.push
+        (&mut items)
+        (MacroHygieneBinding key-id value-id pattern-name?))
+      (while (< at count)
+        (begin
+          (macro_hygiene_binding_vec.push
+            (&mut items)
+            (macro-hygiene-env-ref env at))
+          (set! at (+ at 1))))
+      (MacroHygieneEnv items))))
 
 (defenum MacroMaybeHygieneName
   (No)
@@ -61980,7 +62294,7 @@
           (macro-hygiene-output-macro-param-env
             (& params)
             0
-            MacroHygieneEnv.Nil)]
+            (macro-hygiene-env-nil))]
         [output-env : MacroHygieneEnv
           (macro-hygiene-output-decl-env expr param-env)]
         (CompilerCtfeValue.Expr
@@ -62433,58 +62747,76 @@
 
 (define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
   (or
-    (tc-expr-uses-free-name? expr "expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime.expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime/expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib.comptime.expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib.comptime/expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib/comptime.expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib/comptime/expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "expr-string?" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime.expr-string?" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime/expr-string?" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "expr-type" (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "comptime.expr-type" (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "comptime/expr-type" (tc-string-list-nil))
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib.comptime.expr-type"
+      (tc-string-list-nil))
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib.comptime/expr-type"
+      (tc-string-list-nil))
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib/comptime.expr-type"
+      (tc-string-list-nil))
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib/comptime/expr-type"
+      (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "expr-string?" (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "comptime.expr-string?" (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "comptime/expr-string?" (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib.comptime.expr-string?"
-      TcStringList.Nil)
+      (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib.comptime/expr-string?"
-      TcStringList.Nil)
+      (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib/comptime.expr-string?"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "expr-string-value" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime.expr-string-value" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime/expr-string-value" TcStringList.Nil)
+      (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "expr-string-value" (tc-string-list-nil))
+    (tc-expr-uses-free-name?
+      expr
+      "comptime.expr-string-value"
+      (tc-string-list-nil))
+    (tc-expr-uses-free-name?
+      expr
+      "comptime/expr-string-value"
+      (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib.comptime.expr-string-value"
-      TcStringList.Nil)
+      (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib.comptime/expr-string-value"
-      TcStringList.Nil)
+      (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib/comptime.expr-string-value"
-      TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "string-slice" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime.string-slice" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime/string-slice" TcStringList.Nil)
+      (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "string-slice" (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "comptime.string-slice" (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "comptime/string-slice" (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib.comptime.string-slice"
-      TcStringList.Nil)
+      (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib.comptime/string-slice"
-      TcStringList.Nil)
+      (tc-string-list-nil))
     (tc-expr-uses-free-name?
       expr
       "stdlib/comptime.string-slice"
-      TcStringList.Nil)))
+      (tc-string-list-nil))))
 
 (define (macro-collect-expr-type-decl-name
   [decl : AstDecl]
@@ -62706,46 +63038,58 @@
         (macro-hygiene-structural-source-name-id name-id)]
       [else fallback])))
 
+(define (macro-hygiene-env-lookup-at
+  [env : MacroHygieneEnv]
+  [name-id : i64]
+  [index : i64]) : MacroMaybeHygieneName
+  (if (>= index (macro-hygiene-env-len env))
+    (MacroMaybeHygieneName.No)
+    (let
+      [binding : MacroHygieneBinding (macro-hygiene-env-ref env index)]
+      (if (= (struct-get binding key-id) name-id)
+        (MacroMaybeHygieneName.Some (struct-get binding value-id))
+        (macro-hygiene-env-lookup-at env name-id (+ index 1))))))
+
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
-  (match env
-    [(MacroHygieneEnv.Nil) (MacroMaybeHygieneName.No)]
-    [(MacroHygieneEnv.Bind key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup (box-get rest) name-id))]
-    [(MacroHygieneEnv.PatternName key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup (box-get rest) name-id))]))
+  (macro-hygiene-env-lookup-at env name-id 0))
+
+(define (macro-hygiene-env-lookup-pattern-name-at
+  [env : MacroHygieneEnv]
+  [name-id : i64]
+  [index : i64]) : MacroMaybeHygieneName
+  (if (>= index (macro-hygiene-env-len env))
+    (MacroMaybeHygieneName.No)
+    (let
+      [binding : MacroHygieneBinding (macro-hygiene-env-ref env index)]
+      (if (and
+        (struct-get binding pattern-name?)
+        (= (struct-get binding key-id) name-id))
+        (MacroMaybeHygieneName.Some (struct-get binding value-id))
+        (macro-hygiene-env-lookup-pattern-name-at env name-id (+ index 1))))))
 
 (define (macro-hygiene-env-lookup-pattern-name
   [env : MacroHygieneEnv]
   [name-id : i64]) : MacroMaybeHygieneName
-  (match env
-    [(MacroHygieneEnv.Nil) (MacroMaybeHygieneName.No)]
-    [(MacroHygieneEnv.Bind _ _ rest)
-      (macro-hygiene-env-lookup-pattern-name (box-get rest) name-id)]
-    [(MacroHygieneEnv.PatternName key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup-pattern-name (box-get rest) name-id))]))
+  (macro-hygiene-env-lookup-pattern-name-at env name-id 0))
 
 (define (macro-hygiene-output-bind-id [env : MacroHygieneEnv] [name-id : i64]) : MacroHygieneEnv
   (if (ci.intern-template-source-id? name-id)
-    (MacroHygieneEnv.Bind
+    (macro-hygiene-env-cons
+      env
       name-id
       (ci.intern-template-source-name-id name-id)
-      (box env))
+      false)
     env))
 
 (define (macro-hygiene-output-pattern-name-id
   [env : MacroHygieneEnv]
   [name-id : i64]) : MacroHygieneEnv
   (if (ci.intern-template-source-id? name-id)
-    (MacroHygieneEnv.PatternName
+    (macro-hygiene-env-cons
+      env
       name-id
       (ci.intern-template-source-name-id name-id)
-      (box env))
+      true)
     env))
 
 (define (macro-hygiene-output-macro-param-env
@@ -62759,10 +63103,11 @@
         (macro-hygiene-output-macro-param-env
           params
           (+ index 1)
-          (MacroHygieneEnv.Bind
+          (macro-hygiene-env-cons
+            env
             (ci.intern-template-source-id name-id)
             name-id
-            (box env)))])))
+            false))])))
 
 (define (macro-hygiene-output-param-env
   [expr : AstExpr]
@@ -63178,7 +63523,7 @@
             (io.panic "typecheck: missing macro template binding source id"))
           (MacroHygieneName.Name
             renamed-id
-            (MacroHygieneEnv.Bind name-id renamed-id (box env)))))
+            (macro-hygiene-env-cons env name-id renamed-id false))))
       (MacroHygieneName.Name name-id env))))
 
 (define (macro-hygiene-expr-list
@@ -64294,9 +64639,10 @@
 ;; program's AstDecl.Module/AstDecl.Import declarations. Cache them at the same
 ;; per-program boundary so generated macro bodies do not repeatedly rescan the
 ;; whole declaration list.
+(import (vector.vector i64 core) as macro_flat_import_target_vec)
+
 (defstruct MacroFlatImportTargetList
-  (slots (Array i64))
-  (len i64))
+  (items macro_flat_import_target_vec.Vec))
 
 (defenum MacroFlatImportTargetCacheLookup
   (Missing)
@@ -64627,17 +64973,27 @@
         unit))))
 
 (define (macro-flat-import-target-list-empty) : MacroFlatImportTargetList
-  (MacroFlatImportTargetList (array.make-array i64 0) 0))
+  (MacroFlatImportTargetList (macro_flat_import_target_vec.new)))
+
+(define (macro-flat-import-target-list-len
+  [targets : MacroFlatImportTargetList]) : i64
+  (macro_flat_import_target_vec.len (& (struct-get targets items))))
+
+(define (macro-flat-import-target-list-ref
+  [targets : MacroFlatImportTargetList]
+  [index : i64]) : i64
+  (array-ref
+    (macro_flat_import_target_vec.slots (& (struct-get targets items)))
+    index))
 
 ;; Appends in program order, so no reversal pass is needed on store. The
 ;; per-module lists are a handful of entries, so the dedup scan and the
-;; append-copy both stay well inside a cache line's worth of work.
+;; append both stay well inside a cache line's worth of work.
 (define (macro-flat-import-target-list-add
   [targets : MacroFlatImportTargetList]
   [target-id : i64]) : MacroFlatImportTargetList
   (let
-    [slots : (Array i64) (struct-get targets slots)]
-    [len : i64 (struct-get targets len)]
+    [len : i64 (macro-flat-import-target-list-len targets)]
     [index : i64 0]
     [found : bool false]
     (begin
@@ -64645,15 +65001,17 @@
         false
         (< index len))
         (begin
-          (if (= (array-ref slots index) target-id)
+          (if (= (macro-flat-import-target-list-ref targets index) target-id)
             (set! found true)
             unit)
           (set! index (+ index 1))))
       (if found
-        (MacroFlatImportTargetList slots len)
+        targets
         (begin
-          (array-push! slots target-id)
-          (MacroFlatImportTargetList slots (+ len 1)))))))
+          (macro_flat_import_target_vec.push
+            (&mut (struct-get targets items))
+            target-id)
+          targets)))))
 
 (define (macro-flat-import-targets-from-list
   [decls : AstDeclList]
@@ -65485,8 +65843,7 @@
   [targets : MacroFlatImportTargetList]
   [lookup-name-id : i64]) : i64
   (let
-    [slots : (Array i64) (struct-get targets slots)]
-    [len : i64 (struct-get targets len)]
+    [len : i64 (macro-flat-import-target-list-len targets)]
     [index : i64 0]
     [target : i64 -1]
     (begin
@@ -65498,7 +65855,7 @@
             target
             (macro-unqualified-imported-call-target
               ctx
-              (array-ref slots index)
+              (macro-flat-import-target-list-ref targets index)
               lookup-name-id))
           (set! index (+ index 1))))
       target)))
@@ -67970,7 +68327,7 @@
                           expanded
                           (macro-hygiene-expr
                             (ast-node-get expanded)
-                            MacroHygieneEnv.Nil
+                            (macro-hygiene-env-nil)
                             (MacroHygieneContext
                               macro-name-id
                               definition-module-id
@@ -68004,7 +68361,7 @@
                           expanded
                           (macro-hygiene-expr
                             (ast-node-get expanded)
-                            MacroHygieneEnv.Nil
+                            (macro-hygiene-env-nil)
                             (MacroHygieneContext
                               macro-name-id
                               definition-module-id
@@ -72507,8 +72864,8 @@
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
   (or
-    (tc-expr-uses-free-name? expr "when" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "unless" TcStringList.Nil)))
+    (tc-expr-uses-free-name? expr "when" (tc-string-list-nil))
+    (tc-expr-uses-free-name? expr "unless" (tc-string-list-nil))))
 
 (define (macro-decl-needs-expansion? [decl : AstDecl]) : bool
   (match decl

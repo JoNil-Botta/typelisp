@@ -62586,6 +62586,20 @@
     [stride : i64 (intern-capacity)]
     (+ (macro-hygiene-structural-base) (* 2 (* stride stride)))))
 
+;; Hygienic locals are namespaced by the macro that produced them. That
+;; namespace must be a *stable* property of the macro itself: the identical
+;; macro is re-expanded for every import of a generated module whose parameter
+;; list disables the content-addressed memo shortcut (a syntax parameter --
+;; see macro-generated-identity-shortcut-safe-params?), and
+;; macro-generated-target-replay then compares the fresh body against the
+;; already-materialized one declaration by declaration. The macro's dense
+;; symbol declaration id is *not* stable across that window: splicing a
+;; generated module into the program declaration list re-indexes every
+;; declaration after the splice point, so the same `defmacro` answers to
+;; different dense ids at two expansions and the two bodies disagree on nothing
+;; but their renamed locals. Deriving the namespace from the macro's owning
+;; module and name -- the encoding lazy surface macros have always used --
+;; keeps the renaming a pure function of (macro, depth, source name).
 (define (macro-hygiene-local-id
   [hygiene : MacroHygieneContext]
   [depth : i64]
@@ -62593,16 +62607,13 @@
   (let
     [stride : i64 (intern-capacity)]
     [module-id : i64 (struct-get hygiene definition-module-id)]
-    [declaration-id : i64 (struct-get hygiene declaration-id)]
     [stored-module-id : i64
       (if (compiler-symbol-root-module-id? module-id)
         0
         (+ module-id 1))]
     [macro-name-id : i64 (struct-get hygiene macro-name-id)]
     [macro-id : i64
-      (if (>= declaration-id 0)
-        (+ declaration-id 1)
-        (+ (+ stride 1) (+ (* stored-module-id stride) macro-name-id)))]
+      (+ (+ stride 1) (+ (* stored-module-id stride) macro-name-id))]
     (begin
       (when
         (or
@@ -62610,7 +62621,6 @@
           (>= stored-module-id stride)
           (< macro-name-id 0)
           (>= macro-name-id stride)
-          (and (>= declaration-id 0) (>= declaration-id stride))
           (< depth 0)
           (>= depth 1024)
           (< source-name-id 0)
@@ -62619,6 +62629,50 @@
       (+
         (macro-hygiene-local-base)
         (+ (* macro-id (* 1024 stride)) (+ (* depth stride) source-name-id))))))
+
+;: A macro's hygienic-local namespace must not move when its dense symbol
+;: declaration id does. Two contexts that name the same macro but carry
+;: different declaration ids -- what a generated-module re-expansion sees
+;: after an intervening splice re-indexes the declaration list -- must rename
+;: a local to the same id, while a different macro still gets its own
+;: namespace.
+(define (macro-hygiene-local-id-declaration-stable?) : bool
+  (let
+    [macro-name-id : i64 (intern "gen")]
+    [other-name-id : i64 (intern "gen-other")]
+    [module-id : i64 (intern "stdlib.vector")]
+    [source-name-id : i64 (intern "cap")]
+    [early : MacroHygieneContext
+      (MacroHygieneContext
+        macro-name-id
+        module-id
+        1360
+        (compiler-symbols-empty))]
+    [late : MacroHygieneContext
+      (MacroHygieneContext
+        macro-name-id
+        module-id
+        1367
+        (compiler-symbols-empty))]
+    [other : MacroHygieneContext
+      (MacroHygieneContext
+        other-name-id
+        module-id
+        1360
+        (compiler-symbols-empty))]
+    (and
+      (=
+        (macro-hygiene-local-id early 1 source-name-id)
+        (macro-hygiene-local-id late 1 source-name-id))
+      (not
+        (=
+          (macro-hygiene-local-id early 1 source-name-id)
+          (macro-hygiene-local-id other 1 source-name-id)))
+      (not
+        (=
+          (macro-hygiene-local-id early 1 source-name-id)
+          (macro-hygiene-local-id early 2 source-name-id)))
+      (macro-hygiene-local-id? (macro-hygiene-local-id early 1 source-name-id)))))
 
 (define (macro-hygiene-local-id? [name-id : i64]) : bool
   (let

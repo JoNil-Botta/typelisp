@@ -100,9 +100,8 @@ use.
   value/range iterable, `I64Range`. The protocol is module-level rather than
   trait-based: a collection exposes an iterator constructor, and iterator state
   exposes `next` as a mutable-state step returning an option-like result. The
-  canonical consuming range names are `into-iterator` and `into-next`; the flat
-  compatibility names `i64-range-iterator` and `i64-range-next` remain
-  available. Repeated stepping after exhaustion returns `Done`.
+  consuming range pair is `into-iterator` and `into-next`, the same pair the
+  scalar `for` macro selects. Repeated stepping after exhaustion returns `Done`.
   Import it with `(import stdlib.iterator)`.
 - `env.tl`: recoverable environment variable lookup/mutation and PATH-style
   list/vector helpers, including the stdlib-owned `var-exists?`, `var-value`,

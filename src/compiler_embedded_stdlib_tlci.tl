@@ -604,6 +604,59 @@
                       second-node)])
                 (AstType.Expr)))))))))
 
+;; Pop a type value and push the composite that wraps it: kind 0 is
+;; `(Ptr T)`/`(MutPtr T)` selected by `flag`, 1 is `(Box T)`, 2 is the unsized
+;; `(Array T)`, 3 is `(Array T N)` with `flag` as the count, and 4 is
+;; `(& r T)`/`(&mut r T)` with `flag` selecting mutability and the lifetime name
+;; arriving as caller bytes. The lifetime name is interned through the same
+;; source-slice path template variable names use. Refs #5605.
+(define (compiler-comptime-host-type-wrap-step!
+  [kind : i64]
+  [flag : i64]
+  [name-ptr : i64]
+  [name-len : i64]) : i64
+  (if (< compiler-comptime-host-stack-len 1)
+    tlci-host-callback-status-bad-request
+    (match (array-ref
+      compiler-comptime-host-stack
+      (- compiler-comptime-host-stack-len 1))
+      [(CompilerCtfeValue.Type inner)
+        (let
+          [pools : AstNodePoolContext
+            (array-ref compiler-comptime-host-pools 0)]
+          (if (and (= kind 4) (or (<= name-ptr 0) (< name-len 0)))
+            tlci-host-callback-status-bad-request
+            (let
+              [region : i64
+                (if (= kind 4)
+                  (let
+                    [name : String
+                      (unsafe
+                        (string-from-bytes
+                          (int->ptr name-ptr : (Ptr u8))
+                          name-len))]
+                    (ci.intern-source-slice name 0 (string.string-length name)))
+                  0)]
+              (begin
+                (set!
+                  compiler-comptime-host-stack-len
+                  (- compiler-comptime-host-stack-len 1))
+                (compiler-comptime-host-push!
+                  (CompilerCtfeValue.Type
+                    (cond
+                      [(= kind 0)
+                        (if (= flag 0)
+                          (ast-ty-ptr-with-pools pools inner)
+                          (ast-ty-mut-ptr-with-pools pools inner))]
+                      [(= kind 1) (ast-ty-box-with-pools pools inner)]
+                      [(= kind 2) (ast-ty-dyn-array-with-pools pools inner)]
+                      [(= kind 3) (ast-ty-array-with-pools pools inner flag)]
+                      [else
+                        (if (= flag 0)
+                          (ast-ty-ref-with-pools pools region inner)
+                          (ast-ty-mut-ref-with-pools pools region inner))])))))))]
+      [_ tlci-host-callback-status-bad-request])))
+
 (define (compiler-comptime-host-invoke-step
   [session : i64]
   [operation : i64]
@@ -1886,6 +1939,49 @@
           [_ tlci-host-callback-status-bad-request]))]
     ;; The `comptime.Expr.Int` half: a data probe plus a value read that the
     ;; generated entry only issues inside the probe's matching arm. Refs #5602.
+    ;; expr-ptr-cast pops the type value then the pointer expression, the same
+    ;; order expr-make-array uses. Refs #5605.
+    [(= operation tlci-host-callback-op-expr-ptr-cast)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [type-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [ptr-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [ptr-node : i64 (compiler-comptime-host-value-node ptr-value)]
+          (if (< ptr-node 0)
+            tlci-host-callback-status-bad-request
+            (match type-value
+              [(CompilerCtfeValue.Type ty)
+                (begin
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 2))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.Expr
+                      (ast-expr-ptr-cast-with-pools
+                        (array-ref compiler-comptime-host-pools 0)
+                        ptr-node
+                        ty)
+                      (AstType.Expr))))]
+              [_ tlci-host-callback-status-bad-request]))))]
+    ;; Composite type templates: pop the element/inner type and push the
+    ;; wrapper. Refs #5605.
+    [(= operation tlci-host-callback-op-type-ptr)
+      (compiler-comptime-host-type-wrap-step! 0 arg-a 0 0)]
+    [(= operation tlci-host-callback-op-type-box)
+      (compiler-comptime-host-type-wrap-step! 1 0 0 0)]
+    [(= operation tlci-host-callback-op-type-dyn-array)
+      (compiler-comptime-host-type-wrap-step! 2 0 0 0)]
+    [(= operation tlci-host-callback-op-type-array)
+      (compiler-comptime-host-type-wrap-step! 3 arg-a 0 0)]
+    [(= operation tlci-host-callback-op-type-ref)
+      (compiler-comptime-host-type-wrap-step! 4 arg-a arg-b _arg-c)]
     ;; Literal text out of a string-literal Expr operand, mirroring
     ;; `ctfe-source-string-value`: the pushed value carries the intern id the
     ;; text entered CTFE with, not a fresh one. Refs #5626.

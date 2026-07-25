@@ -1930,6 +1930,45 @@
                         (CompilerCtfeValue.Expr node (ctfe-untyped-expr-type)))])))]
             [(CompilerCtfeMaybeExprList.None)
               tlci-host-callback-status-bad-request])))]
+    ;; value-i64: push a comptime i64 from the immediate, so a literal or a
+    ;; data-local index can feed int->string. Refs #5700.
+    [(= operation tlci-host-callback-op-value-i64)
+      (compiler-comptime-host-push! (CompilerCtfeValue.I64 arg-a))]
+    ;; int->string: pop a comptime i64 and push its decimal spelling as a
+    ;; comptime String, mirroring the interpreted `comptime.int->string`
+    ;; builtin. Refs #5700.
+    [(= operation tlci-host-callback-op-int->string)
+      (if (< compiler-comptime-host-stack-len 1)
+        tlci-host-callback-status-bad-request
+        (match (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))
+          [(CompilerCtfeValue.I64 value)
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-push!
+                (ctfe-generated-string-value (string.int->string value))))]
+          [_ tlci-host-callback-status-bad-request]))]
+    ;; `comptime.Expr.Var` destructuring (refs #5700). The probe answers as data
+    ;; like the other operand shape probes; the accessor pushes the identifier's
+    ;; spelling as a comptime String, which is what the nested-alias bodies
+    ;; append to.
+    [(= operation tlci-host-callback-op-operand-expr-var?)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        -3
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Var _) 1]
+          [_ 0]))]
+    [(= operation tlci-host-callback-op-operand-expr-var-name)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        tlci-host-callback-status-bad-request
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Var name-id)
+            (compiler-comptime-host-push!
+              (ctfe-generated-string-value (intern-str name-id)))]
+          [_ tlci-host-callback-status-bad-request]))]
     [(= operation tlci-host-callback-op-expr-int-from-data)
       (compiler-comptime-host-push!
         (CompilerCtfeValue.Expr
@@ -2250,6 +2289,7 @@
               (not (= operation tlci-host-callback-op-array-dynamic?))
               (not (= operation tlci-host-callback-op-operand-expr-call?))
               (not (= operation tlci-host-callback-op-operand-expr-int?))
+              (not (= operation tlci-host-callback-op-operand-expr-var?))
               (not (= operation tlci-host-callback-op-operand-expr-int-value))
               (not (= operation tlci-host-callback-op-local-expr-list-length))
               (not (= status tlci-host-callback-status-ok)))

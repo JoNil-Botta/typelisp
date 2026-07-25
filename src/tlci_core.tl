@@ -780,6 +780,23 @@
 ;; Additive ABI v1 op.
 (define tlci-host-callback-op-operand-expr-string-value : i64
   246)
+
+;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a plain
+;; identifier expression", and an accessor pushing that identifier's spelling as
+;; a comptime String so the body can build a derived name from it. The serialize
+;; nested-alias shape needs exactly this pair. Both unwrap `Spanned` first,
+;; matching `ctfe-match-expr-variant`. Additive ABI v1 ops. Refs #5700.
+(define tlci-host-callback-op-operand-expr-var? : i64
+  245)
+(define tlci-host-callback-op-operand-expr-var-name : i64
+  248)
+
+;; value-i64 pushes a comptime i64 from immediate `a`, which is what
+;; `comptime.int->string` consumes when its argument is a literal or a
+;; compile-time data local rather than a stack value. Additive ABI v1 op.
+;; Refs #5700.
+(define tlci-host-callback-op-value-i64 : i64
+  247)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

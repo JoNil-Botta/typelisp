@@ -696,6 +696,82 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; The serialize nested-alias shape, which is the whole point of the `Expr.Var`
+;; destructuring: bind an index from an `Expr.Int` operand, bind an identifier's
+;; spelling from an `Expr.Var` operand, and build a derived name from both. It
+;; exercises the `Expr.Var` shape probe and name accessor, `int->string` over a
+;; compile-time data local (which stages the index as a comptime value first),
+;; and the existing `string-append` chain -- none of which any other fixture
+;; reaches, and none of which the embedded image exercises yet, because every
+;; consuming stdlib body is still blocked on its own reflection family.
+;;
+;; `var-operand` false passes a non-identifier first operand instead, so the
+;; shape probe's negative answer and the wildcard arm stay covered too.
+;; Refs #5700.
+;; A computed identifier is interned from its assembled spelling, so it carries
+;; no template-source mark -- compare the text, the way the `gen` fixture's
+;; computed module name does.
+(define (producer-test-alias-result-ok?
+  [pools : AstNodePoolContext]
+  [expected : String]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Var name-id) (string.eq (intern-str name-id) expected)]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-dispatch-aliaslike?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]
+  [name : String]
+  [index : i64]
+  [var-operand : bool]
+  [expected : String]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [value : i64
+      (if var-operand
+        (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern name)))
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Literal (ast-lit-int index))))]
+    [idx : i64
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Literal (ast-lit-int index)))]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 2)]
+    (begin
+      (array-set! operands 0 (CompilerCtfeValue.Expr value (AstType.Expr)))
+      (array-set! operands 1 (CompilerCtfeValue.Expr idx (AstType.Expr)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        2
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= (struct-get dispatch status) tlci-host-callback-status-ok)
+                (compiler-comptime-host-result-ready?)
+                (if var-operand
+                  (producer-test-alias-result-ok? pools expected)
+                  (producer-test-operand-result-ok? value)))])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; The `places` fixture covers the template node kinds the json/serialize hooks
 ;; need: `(set! (struct-get ...) <float literal>)`, `(box ...)`, `(box-get ...)`,
 ;; and `(return ...)`. Refs #5605.
@@ -1270,8 +1346,8 @@
 (define (producer-test-package-native-image-ok?) : bool
   (let
     [source : String
-      "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.Var n) value] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n(defmacro (catlike [args : String ...]) : String (match (comptime.expr-list-length args) [0 `\"\"] [1 (comptime.expr-list-nth args 0)] [2 `(concat2 ,(comptime.expr-list-nth args 0) ,(comptime.expr-list-nth args 1))] [n `(concat-all (pack (__args ,@args) ,(comptime.expr-int n)))]))\n(defmacro (pushlike [carrier : Expr] [piece : Expr]) : Expr (match carrier [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)] [_ carrier]))\n(defmacro (finishlike [carrier : Expr]) : Expr (match carrier [(comptime.Expr.Call _ pieces) `(joined ,@pieces)] [_ `\"\"]))\n(defmacro (kindfull [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [\"f64\" `(kind-f64 ,value)]))\n(defmacro (kindly [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [other (comptime.comptime-error \"kindly: unsupported\")]))
-(defmacro (kindwild [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ `(kind-other ,value)]))\n(defmacro (places [value : Expr]) : Expr `(match ,value [(Some inner) (begin (set! (struct-get inner len) 1.5) (box-get (box inner)))] [_ (return ,value)]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n(defmacro (kindof [value : Expr]) : Expr (match (type-kind (comptime.expr-type value)) [\"f64\" `(f64-op ,value)] [_ `(other ,value)]))\n(defmacro (keyof [T : type] [value : Expr]) : Expr (match (type-key T) [\"i64\" `(i64-op (cast ,value : i64))] [_ `(other ,value)]))\n(defmacro (rawptr [value : Expr]) : Expr `(unsafe (ptr-write! (ptr-offset (string-data ,value) 1) (ptr-read (ptr-offset (array-data ,value) 2))) (string-from-bytes (string-data ,value) (ptr->int (string-data ,value)))))\n(defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))\n(defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))\n"]
+      "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.If c t e) c] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n(defmacro (catlike [args : String ...]) : String (match (comptime.expr-list-length args) [0 `\"\"] [1 (comptime.expr-list-nth args 0)] [2 `(concat2 ,(comptime.expr-list-nth args 0) ,(comptime.expr-list-nth args 1))] [n `(concat-all (pack (__args ,@args) ,(comptime.expr-int n)))]))\n(defmacro (pushlike [carrier : Expr] [piece : Expr]) : Expr (match carrier [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)] [_ carrier]))\n(defmacro (finishlike [carrier : Expr]) : Expr (match carrier [(comptime.Expr.Call _ pieces) `(joined ,@pieces)] [_ `\"\"]))\n(defmacro (kindfull [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [\"f64\" `(kind-f64 ,value)]))\n(defmacro (kindly [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [other (comptime.comptime-error \"kindly: unsupported\")]))
+(defmacro (kindwild [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ `(kind-other ,value)]))\n(defmacro (places [value : Expr]) : Expr `(match ,value [(Some inner) (begin (set! (struct-get inner len) 1.5) (box-get (box inner)))] [_ (return ,value)]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n(defmacro (kindof [value : Expr]) : Expr (match (type-kind (comptime.expr-type value)) [\"f64\" `(f64-op ,value)] [_ `(other ,value)]))\n(defmacro (keyof [T : type] [value : Expr]) : Expr (match (type-key T) [\"i64\" `(i64-op (cast ,value : i64))] [_ `(other ,value)]))\n(defmacro (rawptr [value : Expr]) : Expr `(unsafe (ptr-write! (ptr-offset (string-data ,value) 1) (ptr-read (ptr-offset (array-data ,value) 2))) (string-from-bytes (string-data ,value) (ptr->int (string-data ,value)))))\n(defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))\n(defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))\n(defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))\n"]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -1306,13 +1382,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 25)
-                              (= (struct-get captures len) 25)
+                              (= (array-length name-array) 26)
+                              (= (struct-get captures len) 26)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                24)
+                                25)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-partial-count
@@ -1440,6 +1516,20 @@
                                 (& loaded)
                                 "package.macros/foldlike"
                                 2)
+                              (producer-test-dispatch-aliaslike?
+                                (& loaded)
+                                "package.macros/aliaslike"
+                                "alias"
+                                3
+                                true
+                                "alias_n3")
+                              (producer-test-dispatch-aliaslike?
+                                (& loaded)
+                                "package.macros/aliaslike"
+                                "alias"
+                                3
+                                false
+                                "")
                               (let
                                 [fallback-operands : (Array CompilerCtfeValue)
                                   (array.make-array CompilerCtfeValue 1)]

@@ -189,18 +189,30 @@
         [(AstType.F32) false]
         [_ true])]))
 
+(define (compiler-backend-test-float-list-contains-from?
+  [items : BackendFloatSeq]
+  [ty : AstType]
+  [bits : u64]
+  [index : i64]) : bool
+  (if (>= index (compiler-backend-float-seq-count items))
+    false
+    (match (compiler-backend-float-seq-ref items index)
+      [(BackendFloatEntry.Entry item-ty item-bits)
+        (if (and
+          (compiler-backend-test-float-type-eq? item-ty ty)
+          (= item-bits bits))
+          true
+          (compiler-backend-test-float-list-contains-from?
+            items
+            ty
+            bits
+            (+ index 1)))])))
+
 (define (compiler-backend-test-float-list-contains?
-  [items : BackendFloatList]
+  [items : BackendFloatSeq]
   [ty : AstType]
   [bits : u64]) : bool
-  (match items
-    [(BackendFloatList.Nil) false]
-    [(BackendFloatList.Cons item-ty item-bits rest)
-      (if (and
-        (compiler-backend-test-float-type-eq? item-ty ty)
-        (= item-bits bits))
-        true
-        (compiler-backend-test-float-list-contains? (box-get rest) ty bits))]))
+  (compiler-backend-test-float-list-contains-from? items ty bits 0))
 
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
@@ -6008,7 +6020,7 @@
       (compiler-backend-peephole-assignments)]
     (match (compiler-backend-emit-binop
       (CompilerRegVarTypeList.Nil)
-      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-global-type-list-empty)
       assignments
       2
       (CompilerIrBinOp.Add)
@@ -6018,7 +6030,7 @@
       [(ResultCompilerBackend.Ok add-asm)
         (match (compiler-backend-emit-binop
           (CompilerRegVarTypeList.Nil)
-          (CompilerBackendGlobalTypeList.Nil)
+          (compiler-backend-global-type-list-empty)
           assignments
           2
           (CompilerIrBinOp.Mul)
@@ -6028,7 +6040,7 @@
           [(ResultCompilerBackend.Ok mul-asm)
             (match (compiler-backend-emit-binop
               (CompilerRegVarTypeList.Nil)
-              (CompilerBackendGlobalTypeList.Nil)
+              (compiler-backend-global-type-list-empty)
               assignments
               2
               (CompilerIrBinOp.Shl)
@@ -6038,7 +6050,7 @@
               [(ResultCompilerBackend.Ok shl-asm)
                 (match (compiler-backend-emit-binop
                   (CompilerRegVarTypeList.Nil)
-                  (CompilerBackendGlobalTypeList.Nil)
+                  (compiler-backend-global-type-list-empty)
                   assignments
                   2
                   (CompilerIrBinOp.Lt)
@@ -6685,7 +6697,7 @@
         CompilerRegAssignmentList.Nil
         vars
         CompilerRegVarTypeList.Nil
-        (CompilerBackendGlobalTypeList.Nil)
+        (compiler-backend-global-type-list-empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
         CompilerIrFunctionList.Nil
@@ -6834,7 +6846,7 @@
         CompilerRegAssignmentList.Nil
         compiler-backend-long-block-instr-count
         CompilerRegVarTypeList.Nil
-        (CompilerBackendGlobalTypeList.Nil)
+        (compiler-backend-global-type-list-empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
         CompilerIrFunctionList.Nil
@@ -6868,7 +6880,7 @@
           CompilerRegVarTypeList.Nil))]
     (match (compiler-backend-emit-binop
       (CompilerRegVarTypeList.Nil)
-      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-global-type-list-empty)
       rhs-spill
       2
       (CompilerIrBinOp.Add)
@@ -6878,7 +6890,7 @@
       [(ResultCompilerBackend.Ok add-asm)
         (match (compiler-backend-emit-binop
           cmp-types
-          (CompilerBackendGlobalTypeList.Nil)
+          (compiler-backend-global-type-list-empty)
           rhs-spill
           2
           (CompilerIrBinOp.Lt)
@@ -7386,7 +7398,7 @@
   (and
     (match (compiler-backend-emit-binop
       (CompilerRegVarTypeList.Nil)
-      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-global-type-list-empty)
       (compiler-backend-peephole-assignments)
       2
       (CompilerIrBinOp.Eq)
@@ -7402,7 +7414,7 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-binop
       (CompilerRegVarTypeList.Nil)
-      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-global-type-list-empty)
       (compiler-backend-peephole-assignments)
       2
       (CompilerIrBinOp.Gt)
@@ -7418,7 +7430,7 @@
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-binop
       (CompilerRegVarTypeList.Nil)
-      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-global-type-list-empty)
       (compiler-backend-peephole-assignments)
       2
       (CompilerIrBinOp.BitTestNe)
@@ -8037,7 +8049,7 @@
         assignments
         vars
         CompilerRegVarTypeList.Nil
-        (CompilerBackendGlobalTypeList.Nil)
+        (compiler-backend-global-type-list-empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
         CompilerIrFunctionList.Nil
@@ -8291,7 +8303,7 @@
         (compiler-backend-mov-phi-copy-assignments)
         3
         CompilerRegVarTypeList.Nil
-        (CompilerBackendGlobalTypeList.Nil)
+        (compiler-backend-global-type-list-empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
         CompilerIrFunctionList.Nil
@@ -12940,7 +12952,7 @@
         CompilerRegAssignmentList.Nil
         vars
         CompilerRegVarTypeList.Nil
-        (CompilerBackendGlobalTypeList.Nil)
+        (compiler-backend-global-type-list-empty)
         (AstType.I64)
         (CompilerBackendRuntimePlan.Plan
           false
@@ -13077,7 +13089,7 @@
         assignments
         vars
         CompilerRegVarTypeList.Nil
-        (CompilerBackendGlobalTypeList.Nil)
+        (compiler-backend-global-type-list-empty)
         (AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
         CompilerIrFunctionList.Nil
@@ -18248,7 +18260,7 @@
         (compiler-reg-var-type-cons
           (CompilerRegVarType.Type 2 ty)
           CompilerRegVarTypeList.Nil)))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -18307,7 +18319,7 @@
         (compiler-reg-var-type-cons
           (CompilerRegVarType.Type 2 ty)
           CompilerRegVarTypeList.Nil)))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -18366,7 +18378,7 @@
         (compiler-reg-var-type-cons
           (CompilerRegVarType.Type 2 (AstType.Bool))
           CompilerRegVarTypeList.Nil)))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -18425,7 +18437,7 @@
         (compiler-reg-var-type-cons
           (CompilerRegVarType.Type 2 (AstType.Bool))
           CompilerRegVarTypeList.Nil)))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -18486,7 +18498,7 @@
       (compiler-reg-var-type-cons
         (CompilerRegVarType.Type 2 ty)
         CompilerRegVarTypeList.Nil))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -18511,7 +18523,7 @@
         (compiler-reg-var-type-cons
           (CompilerRegVarType.Type 2 (AstType.Bool))
           CompilerRegVarTypeList.Nil)))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -24))
       (compiler-reg-assignment-cons
@@ -18571,7 +18583,7 @@
       (compiler-reg-var-type-cons
         (CompilerRegVarType.Type 1 (AstType.F64))
         CompilerRegVarTypeList.Nil))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -18625,7 +18637,7 @@
       (compiler-reg-var-type-cons
         (CompilerRegVarType.Type 1 (AstType.F64))
         CompilerRegVarTypeList.Nil))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -18650,7 +18662,7 @@
       (compiler-reg-var-type-cons
         (CompilerRegVarType.Type 1 (AstType.F64))
         CompilerRegVarTypeList.Nil))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -24))
       (compiler-reg-assignment-cons
@@ -18728,7 +18740,7 @@
         (ci.intern "ret_int")
         CompilerIrBlockList.Nil
         CompilerRegVarTypeList.Nil
-        (CompilerBackendGlobalTypeList.Nil)
+        (compiler-backend-global-type-list-empty)
         assignments
         2
         (CompilerIrBinOp.Add)
@@ -19131,7 +19143,7 @@
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.I64))
       CompilerRegVarTypeList.Nil)
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
       (compiler-reg-assignment-cons
@@ -19187,7 +19199,7 @@
         (compiler-reg-var-type-cons
           (CompilerRegVarType.Type 2 (AstType.I64))
           CompilerRegVarTypeList.Nil)))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
       (compiler-reg-assignment-cons
@@ -19236,7 +19248,7 @@
       (compiler-reg-var-type-cons
         (CompilerRegVarType.Type 1 ty)
         CompilerRegVarTypeList.Nil))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
       (compiler-reg-assignment-cons
@@ -19285,7 +19297,7 @@
         (compiler-reg-var-type-cons
           (CompilerRegVarType.Type 2 (AstType.I64))
           CompilerRegVarTypeList.Nil)))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
       (compiler-reg-assignment-cons
@@ -19344,7 +19356,7 @@
       (compiler-reg-var-type-cons
         (CompilerRegVarType.Type 1 result-ty)
         CompilerRegVarTypeList.Nil))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -19393,7 +19405,7 @@
         (compiler-reg-var-type-cons
           (CompilerRegVarType.Type 2 result-ty)
           CompilerRegVarTypeList.Nil)))
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -19985,7 +19997,7 @@
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (compiler-backend-divrem-binop-types ty)
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     CompilerRegAssignmentList.Nil
     2
     op
@@ -20028,7 +20040,7 @@
           CompilerRegAssignmentList.Nil))]
     (match (compiler-backend-emit-binop
       (compiler-backend-divrem-binop-types (AstType.I64))
-      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-global-type-list-empty)
       assignments
       2
       (CompilerIrBinOp.Div)
@@ -20263,7 +20275,7 @@
   [bad : String]) : bool
   (match (compiler-backend-emit-binop
     (compiler-backend-narrow-binop-types lhs-ty rhs-ty)
-    (CompilerBackendGlobalTypeList.Nil)
+    (compiler-backend-global-type-list-empty)
     CompilerRegAssignmentList.Nil
     2
     op
@@ -20389,14 +20401,14 @@
           "%rax")))))
 
 (define (compiler-backend-global-compare-types) : CompilerBackendGlobalTypeList
-  (CompilerBackendGlobalTypeList.Cons
-    (ci.intern "g_next")
-    (AstType.I64)
-    (box
-      (CompilerBackendGlobalTypeList.Cons
+  (CompilerBackendGlobalTypeList.Seq
+    (compiler-backend-global-type-seq-cons
+      (ci.intern "g_next")
+      (AstType.I64)
+      (compiler-backend-global-type-seq-cons
         (ci.intern "g_cap")
         (AstType.I64)
-        (box CompilerBackendGlobalTypeList.Nil)))))
+        (compiler-backend-global-type-seq-empty)))))
 
 (define (compiler-backend-global-compare-binop-ok?) : bool
   (match (compiler-backend-emit-binop
@@ -20485,7 +20497,7 @@
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-binop
       (CompilerRegVarTypeList.Nil)
-      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-global-type-list-empty)
       rhs-spill
       2
       (CompilerIrBinOp.Lt)
@@ -21419,7 +21431,7 @@
           CompilerRegAssignmentList.Nil
           ""
           CompilerRegVarTypeList.Nil
-          (CompilerBackendGlobalTypeList.Nil)
+          (compiler-backend-global-type-list-empty)
           0
           plan
           CompilerIrFunctionList.Nil
@@ -25603,7 +25615,7 @@
               (AstType.Bool)
               (AstType.F32)
               3)
-            (CompilerBackendGlobalTypeList.Nil)
+            (compiler-backend-global-type-list-empty)
             compare-assignments
             0
             (CompilerIrBinOp.Ge)

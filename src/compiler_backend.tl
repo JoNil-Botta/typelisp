@@ -382,10 +382,64 @@
   (No)
   (Some AstTypeList AstType))
 
+;; One global's interned name symbol and its declared type.
+(defenum CompilerBackendGlobalType
+  (Global i64 AstType))
+
+(import (vector.vector CompilerBackendGlobalType core) as backend_global_type_vec)
+
+;; Globals in declaration order. `compiler-backend-global-type-lookup` scans it
+;; front-to-back, which is the head-first order the cons chain was scanned in,
+;; so a shadowed name still resolves to the same entry.
+(defstruct CompilerBackendGlobalTypeSeq
+  (items backend_global_type_vec.Vec))
+
+;; `Cache` is the production path: `compiler-backend-global-types` always builds
+;; it, so every real lookup is one hash probe plus an array index. `Seq` is the
+;; small/empty fallback the emitters and tests hand in when there are no globals
+;; to resolve (or a handful spelled out by hand).
 (defenum CompilerBackendGlobalTypeList
-  (Nil)
-  (Cons i64 AstType (Box CompilerBackendGlobalTypeList))
+  (Seq CompilerBackendGlobalTypeSeq)
   (Cache backend_i64_i64_map.Map (Array AstType)))
+
+(define (compiler-backend-global-type-seq-count
+  [types : CompilerBackendGlobalTypeSeq]) : i64
+  (backend_global_type_vec.len (& (struct-get types items))))
+
+(define (compiler-backend-global-type-seq-ref
+  [types : CompilerBackendGlobalTypeSeq]
+  [index : i64]) : CompilerBackendGlobalType
+  (array-ref (backend_global_type_vec.slots (& (struct-get types items))) index))
+
+(define (compiler-backend-global-type-seq-empty) : CompilerBackendGlobalTypeSeq
+  (CompilerBackendGlobalTypeSeq (backend_global_type_vec.new)))
+
+;; Prepend, keeping `rest` intact: builds a fresh right-sized buffer rather than
+;; pushing into a shared `&mut` Vec, because the shorter sequence stays live in
+;; the caller exactly as the cons tail did.
+(define (compiler-backend-global-type-seq-cons
+  [name : i64]
+  [ty : AstType]
+  [rest : CompilerBackendGlobalTypeSeq]) : CompilerBackendGlobalTypeSeq
+  (let
+    [count : i64 (compiler-backend-global-type-seq-count rest)]
+    [out : backend_global_type_vec.Vec
+      (backend_global_type_vec.with-capacity (+ count 1))]
+    [index : i64 0]
+    (begin
+      (backend_global_type_vec.push
+        (&mut out)
+        (CompilerBackendGlobalType.Global name ty))
+      (while (< index count)
+        (begin
+          (backend_global_type_vec.push
+            (&mut out)
+            (compiler-backend-global-type-seq-ref rest index))
+          (set! index (+ index 1))))
+      (CompilerBackendGlobalTypeSeq out))))
+
+(define (compiler-backend-global-type-list-empty) : CompilerBackendGlobalTypeList
+  (CompilerBackendGlobalTypeList.Seq (compiler-backend-global-type-seq-empty)))
 
 (defenum ResultCompilerBackend
   (Ok String)
@@ -731,15 +785,26 @@
 (defstruct BackendSymbolSeq
   (items backend_symbol_vec.Vec))
 
-(defenum BackendFloatList
-  (Nil)
-  (Cons AstType u64 (Box BackendFloatList)))
+;; One deduped float literal: its AstType (F32 vs F64 selects the label prefix,
+;; the .balign and the emitted directive) and its already-masked payload bits.
+(defenum BackendFloatEntry
+  (Entry AstType u64))
 
-(define (compiler-backend-float-cons
-  [ty : AstType]
-  [bits : u64]
-  [rest : BackendFloatList]) : BackendFloatList
-  (BackendFloatList.Cons ty bits (box rest)))
+(import (vector.vector BackendFloatEntry core) as backend_float_vec)
+
+;; Rodata float literals in FIRST-SEEN order. The cons version prepended and
+;; reversed on read; the vector appends, so the storage order is the emitted
+;; order directly and the reversal pass is gone.
+(defstruct BackendFloatSeq
+  (items backend_float_vec.Vec))
+
+(define (compiler-backend-float-seq-count [floats : BackendFloatSeq]) : i64
+  (backend_float_vec.len (& (struct-get floats items))))
+
+(define (compiler-backend-float-seq-ref
+  [floats : BackendFloatSeq]
+  [index : i64]) : BackendFloatEntry
+  (array-ref (backend_float_vec.slots (& (struct-get floats items))) index))
 
 (define (compiler-backend-empty-string-list) : BackendStringSeq
   (BackendStringSeq (backend_string_vec.new)))
@@ -983,7 +1048,7 @@
 
 (defstruct BackendFloatSet
   (seen backend_string_i64_map.Map)
-  (items BackendFloatList))
+  (items BackendFloatSeq))
 
 (defstruct CompilerBackendProgramCollections
   (functions BackendSymbolSet)
@@ -1026,7 +1091,7 @@
 (define (compiler-backend-float-set-new [capacity : i64]) : BackendFloatSet
   (BackendFloatSet
     (backend_string_i64_map.with-capacity capacity)
-    BackendFloatList.Nil))
+    (BackendFloatSeq (backend_float_vec.new))))
 
 (define (compiler-backend-string-set-add
   [set : BackendStringSet]
@@ -1063,13 +1128,15 @@
     [payload-bits : u64 (compiler-backend-float-payload-bits ty bits)]
     [key : String (compiler-backend-float-key ty payload-bits)]
     [seen : backend_string_i64_map.Map (struct-get set seen)]
+    [items : BackendFloatSeq (struct-get set items)]
     (if (backend_string_i64_map.contains? (& seen) key)
       set
       (begin
         (backend_string_i64_map.insert-ref! (&mut seen) key 1)
-        (BackendFloatSet
-          seen
-          (compiler-backend-float-cons ty payload-bits (struct-get set items)))))))
+        (backend_float_vec.push
+          (&mut (struct-get items items))
+          (BackendFloatEntry.Entry ty payload-bits))
+        (BackendFloatSet seen items)))))
 
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
@@ -13569,15 +13636,24 @@
     [(AstType.U8) true]
     [_ false]))
 
+(define (compiler-backend-global-type-seq-lookup
+  [types : CompilerBackendGlobalTypeSeq]
+  [name : i64]
+  [index : i64]) : CompilerRegMaybeType
+  (if (>= index (compiler-backend-global-type-seq-count types))
+    (CompilerRegMaybeType.No)
+    (match (compiler-backend-global-type-seq-ref types index)
+      [(CompilerBackendGlobalType.Global key ty)
+        (if (compiler-ir-symbol-eq? key name)
+          (CompilerRegMaybeType.Some ty)
+          (compiler-backend-global-type-seq-lookup types name (+ index 1)))])))
+
 (define (compiler-backend-global-type-lookup
   [types : CompilerBackendGlobalTypeList]
   [name : i64]) : CompilerRegMaybeType
   (match types
-    [(CompilerBackendGlobalTypeList.Nil) (CompilerRegMaybeType.No)]
-    [(CompilerBackendGlobalTypeList.Cons key ty rest)
-      (if (compiler-ir-symbol-eq? key name)
-        (CompilerRegMaybeType.Some ty)
-        (compiler-backend-global-type-lookup (box-get rest) name))]
+    [(CompilerBackendGlobalTypeList.Seq items)
+      (compiler-backend-global-type-seq-lookup items name 0)]
     [(CompilerBackendGlobalTypeList.Cache ids values)
       (match (backend_i64_i64_map.get (& ids) (compiler-ir-symbol-id name))
         [(backend_i64_i64_map.LookupFound index)
@@ -13587,14 +13663,14 @@
 (define (compiler-backend-global-type-list-boxed-ok?) : bool
   (let
     [types : CompilerBackendGlobalTypeList
-      (CompilerBackendGlobalTypeList.Cons
-        (compiler-ir-test-symbol "left")
-        (AstType.I64)
-        (box
-          (CompilerBackendGlobalTypeList.Cons
+      (CompilerBackendGlobalTypeList.Seq
+        (compiler-backend-global-type-seq-cons
+          (compiler-ir-test-symbol "left")
+          (AstType.I64)
+          (compiler-backend-global-type-seq-cons
             (compiler-ir-test-symbol "right")
             (AstType.Bool)
-            (box CompilerBackendGlobalTypeList.Nil))))]
+            (compiler-backend-global-type-seq-empty))))]
     (and
       (match (compiler-backend-global-type-lookup
         types
@@ -38136,7 +38212,7 @@
     [_
       (match (compiler-backend-value-type
         types
-        (CompilerBackendGlobalTypeList.Nil)
+        (compiler-backend-global-type-list-empty)
         func)
         [(CompilerRegMaybeType.Some ty)
           (match ty
@@ -38536,7 +38612,7 @@
       (if (compiler-backend-type-list-has-aggregate? declared-param-types)
         (compiler-backend-call-c-abi-param-types
           types
-          (CompilerBackendGlobalTypeList.Nil)
+          (compiler-backend-global-type-list-empty)
           args
           declared-param-types
           program-index)
@@ -38546,7 +38622,7 @@
           declared-param-types
           (compiler-backend-call-actual-param-types
             types
-            (CompilerBackendGlobalTypeList.Nil)
+            (compiler-backend-global-type-list-empty)
             args)))]
     [call-space : i64
       (compiler-backend-call-arg-space
@@ -38764,7 +38840,7 @@
       (if (compiler-backend-type-list-has-aggregate? declared-param-types)
         (compiler-backend-call-c-abi-param-types
           types
-          (CompilerBackendGlobalTypeList.Nil)
+          (compiler-backend-global-type-list-empty)
           args
           declared-param-types
           program-index)
@@ -38774,7 +38850,7 @@
           declared-param-types
           (compiler-backend-call-actual-param-types
             types
-            (CompilerBackendGlobalTypeList.Nil)
+            (compiler-backend-global-type-list-empty)
             args)))]
     [call-space : i64
       (compiler-backend-call-stack-arg-layout-space
@@ -44118,16 +44194,82 @@
             0)
           unit)))))
 
-;; Increment the predecessor count for every label in `labels` (a deduped CFG
-;; successor set for one block). Each block contributes at most once per
-;; successor, so the resulting count is the number of DISTINCT predecessor
-;; blocks -- exactly the "is this label a merge?" signal we need.
-(define (compiler-backend-peephole-predcount-bump
+;; Label -> layout index for one function's blocks, plus those labels by index.
+;; Built once per function so a successor label set can be read back through the
+;; optimizer's own `opt-cfg-index-label-set-to-ids`: the backend never takes an
+;; OptLabelSet apart itself, so it can never drift from the CFG successor rules
+;; (and OptLabelSet stays free to change representation).
+(defstruct CompilerBackendPeepholeBlockIds
+  (ids backend_string_i64_map.Map)
+  (labels BackendStringSeq))
+
+(define (compiler-backend-peephole-block-ids-new) : CompilerBackendPeepholeBlockIds
+  (CompilerBackendPeepholeBlockIds
+    (backend_string_i64_map.with-capacity 64)
+    (compiler-backend-empty-string-list)))
+
+(define (compiler-backend-peephole-block-ids-label
+  [index : CompilerBackendPeepholeBlockIds]
+  [id : i64]) : String
+  (array-ref
+    (backend_string_vec.slots (& (struct-get (struct-get index labels) items)))
+    id))
+
+;; A repeated block label overwrites its id, exactly as the label-keyed count map
+;; folded repeated labels together before.
+(define (compiler-backend-peephole-block-ids-add
+  [index : CompilerBackendPeepholeBlockIds]
+  [label : String]) : CompilerBackendPeepholeBlockIds
+  (let
+    [ids : backend_string_i64_map.Map (struct-get index ids)]
+    [labels : BackendStringSeq (struct-get index labels)]
+    (begin
+      (backend_string_i64_map.insert-ref!
+        (&mut ids)
+        label
+        (backend_string_vec.len (& (struct-get labels items))))
+      (backend_string_vec.push (&mut (struct-get labels items)) label)
+      (CompilerBackendPeepholeBlockIds ids labels))))
+
+(define (compiler-backend-peephole-block-ids-build
+  [blocks : CompilerIrBlockList]
+  [index : CompilerBackendPeepholeBlockIds]) : CompilerBackendPeepholeBlockIds
+  (match blocks
+    [(CompilerIrBlockList.Nil) index]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-peephole-block-ids-build-seq seq 0 index)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label _)
+          (compiler-backend-peephole-block-ids-build
+            (box-get rest)
+            (compiler-backend-peephole-block-ids-add index label))])]))
+
+(define (compiler-backend-peephole-block-ids-build-seq
+  [blocks : CompilerIrBlockSeq]
+  [slot : i64]
+  [index : CompilerBackendPeepholeBlockIds]) : CompilerBackendPeepholeBlockIds
+  (if (>= slot (compiler-ir-block-seq-count blocks))
+    index
+    (match (compiler-ir-block-seq-ref blocks slot)
+      [(CompilerIrBlock.Block label _)
+        (compiler-backend-peephole-block-ids-build-seq
+          blocks
+          (+ slot 1)
+          (compiler-backend-peephole-block-ids-add index label))])))
+
+(define (compiler-backend-peephole-predcount-bump-ids
   [counts : backend_string_i64_map.Map]
-  [labels : OptLabelSet]) : backend_string_i64_map.Map
-  (match labels
-    [(OptLabelSet.Nil) counts]
-    [(OptLabelSet.Cons label rest)
+  [index : CompilerBackendPeepholeBlockIds]
+  [succ-ids : OptI64List]
+  [slot : i64]) : backend_string_i64_map.Map
+  (if (>= slot (opt-i64-list-count succ-ids))
+    counts
+    (let
+      [label : String
+        (compiler-backend-peephole-block-ids-label
+          index
+          (opt-i64-list-ref succ-ids slot))]
       (begin
         (backend_string_i64_map.insert-ref!
           (&mut counts)
@@ -44137,7 +44279,31 @@
             (match (backend_string_i64_map.get (& counts) label)
               [(backend_string_i64_map.LookupFound v) v]
               [(backend_string_i64_map.LookupMissing) 0])))
-        (compiler-backend-peephole-predcount-bump counts (box-get rest)))]))
+        (compiler-backend-peephole-predcount-bump-ids
+          counts
+          index
+          succ-ids
+          (+ slot 1))))))
+
+;; Increment the predecessor count for every label in `labels` (a deduped CFG
+;; successor set for one block). Each block contributes at most once per
+;; successor, so the resulting count is the number of DISTINCT predecessor
+;; blocks -- exactly the "is this label a merge?" signal we need.
+;;
+;; `opt-cfg-index-label-set-to-ids` resolves the set through `index` and drops
+;; any label that is not a block of this function; predcount is only ever
+;; queried for a real block label (see compiler-backend-peephole-carry-safe-scan),
+;; so those entries were dead weight before. Its id order is the reverse of the
+;; set's head-first order, which the counts are independent of.
+(define (compiler-backend-peephole-predcount-bump
+  [counts : backend_string_i64_map.Map]
+  [index : CompilerBackendPeepholeBlockIds]
+  [labels : OptLabelSet]) : backend_string_i64_map.Map
+  (compiler-backend-peephole-predcount-bump-ids
+    counts
+    index
+    (opt-cfg-index-label-set-to-ids labels (struct-get index ids))
+    0))
 
 ;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
 ;; (explicit IrInstrJump / IrInstrBranch / IrInstrSwitch targets PLUS the
@@ -44147,16 +44313,19 @@
 ;; this enumeration is complete (those are the only label-bearing terminators).
 (define (compiler-backend-peephole-predcount-build
   [blocks : CompilerIrBlockList]
+  [index : CompilerBackendPeepholeBlockIds]
   [counts : backend_string_i64_map.Map]) : backend_string_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) counts]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-peephole-predcount-build-seq seq 0 counts)]
+      (compiler-backend-peephole-predcount-build-seq seq 0 index counts)]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-backend-peephole-predcount-build
         (box-get rest)
+        index
         (compiler-backend-peephole-predcount-bump
           counts
+          index
           (opt-cfg-block-successors-with-next
             block
             (opt-cfg-entry-label (box-get rest)))))]))
@@ -44171,18 +44340,21 @@
 
 (define (compiler-backend-peephole-predcount-build-seq
   [blocks : CompilerIrBlockSeq]
-  [index : i64]
+  [slot : i64]
+  [index : CompilerBackendPeepholeBlockIds]
   [counts : backend_string_i64_map.Map]) : backend_string_i64_map.Map
-  (if (>= index (compiler-ir-block-seq-count blocks))
+  (if (>= slot (compiler-ir-block-seq-count blocks))
     counts
     (compiler-backend-peephole-predcount-build-seq
       blocks
-      (+ index 1)
+      (+ slot 1)
+      index
       (compiler-backend-peephole-predcount-bump
         counts
+        index
         (opt-cfg-block-successors-with-next
-          (compiler-ir-block-seq-ref blocks index)
-          (compiler-backend-block-seq-label-or-empty blocks (+ index 1)))))))
+          (compiler-ir-block-seq-ref blocks slot)
+          (compiler-backend-block-seq-label-or-empty blocks (+ slot 1)))))))
 
 ;; True iff `block`'s terminator is a conditional branch that NEEDS phi-copy edge
 ;; blocks. SOUNDNESS-CRITICAL: such a branch does NOT lower to a clean
@@ -44328,6 +44500,10 @@
                 (compiler-backend-peephole-predcount-build-seq
                   seq
                   0
+                  (compiler-backend-peephole-block-ids-build-seq
+                    seq
+                    0
+                    (compiler-backend-peephole-block-ids-new))
                   (backend_string_i64_map.with-capacity 64))
                 entry
                 seq
@@ -44340,6 +44516,9 @@
             entry-label
             (compiler-backend-peephole-predcount-build
               (compiler-ir-block-cons entry (box-get rest))
+              (compiler-backend-peephole-block-ids-build
+                (compiler-ir-block-cons entry (box-get rest))
+                (compiler-backend-peephole-block-ids-new))
               (backend_string_i64_map.with-capacity 64))
             entry
             (box-get rest))])]))
@@ -49094,27 +49273,14 @@
       program-index
       buf)))
 
-(define (compiler-backend-float-list-reverse-into
-  [floats : BackendFloatList]
-  [out : BackendFloatList]) : BackendFloatList
-  (match floats
-    [(BackendFloatList.Nil) out]
-    [(BackendFloatList.Cons ty bits rest)
-      (compiler-backend-float-list-reverse-into
-        (box-get rest)
-        (compiler-backend-float-cons ty bits out))]))
-
-(define (compiler-backend-float-list-reverse [floats : BackendFloatList]) : BackendFloatList
-  (compiler-backend-float-list-reverse-into floats BackendFloatList.Nil))
-
 (define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringSeq
   (struct-get set items))
 
 (define (compiler-backend-symbol-set-list [set : BackendSymbolSet]) : BackendSymbolSeq
   (struct-get set items))
 
-(define (compiler-backend-float-set-list [set : BackendFloatSet]) : BackendFloatList
-  (compiler-backend-float-list-reverse (struct-get set items)))
+(define (compiler-backend-float-set-list [set : BackendFloatSet]) : BackendFloatSeq
+  (struct-get set items))
 
 (define (compiler-backend-program-collections-functions
   [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
@@ -49125,7 +49291,7 @@
   (compiler-backend-string-set-list (struct-get collections strings)))
 
 (define (compiler-backend-program-collections-floats
-  [collections : CompilerBackendProgramCollections]) : BackendFloatList
+  [collections : CompilerBackendProgramCollections]) : BackendFloatSeq
   (compiler-backend-float-set-list (struct-get collections floats)))
 
 (define (compiler-backend-program-collections-bytes
@@ -49739,24 +49905,27 @@
     (compiler-backend-float-bits-directive ty bits)))
 
 (define (compiler-backend-emit-float-entries-into
-  [floats : BackendFloatList]
+  [floats : BackendFloatSeq]
+  [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match floats
-    [(BackendFloatList.Nil) buf]
-    [(BackendFloatList.Cons ty bits rest)
-      (compiler-backend-emit-float-entries-into
-        (box-get rest)
-        (text_buf.append buf (compiler-backend-emit-float-entry ty bits)))]))
+  (if (>= index (compiler-backend-float-seq-count floats))
+    buf
+    (compiler-backend-emit-float-entries-into
+      floats
+      (+ index 1)
+      (match (compiler-backend-float-seq-ref floats index)
+        [(BackendFloatEntry.Entry ty bits)
+          (text_buf.append buf (compiler-backend-emit-float-entry ty bits))]))))
 
 (define (compiler-backend-emit-float-rodata-into
-  [floats : BackendFloatList]
+  [floats : BackendFloatSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match floats
-    [(BackendFloatList.Nil) buf]
-    [_
-      (compiler-backend-emit-float-entries-into
-        floats
-        (text_buf.append buf "    .section .rodata\n"))]))
+  (if (= (compiler-backend-float-seq-count floats) 0)
+    buf
+    (compiler-backend-emit-float-entries-into
+      floats
+      0
+      (text_buf.append buf "    .section .rodata\n"))))
 
 (define (compiler-backend-emit-f64-sign-bit-rodata-into
   [enabled : bool]
@@ -51006,7 +51175,7 @@
   [closure-names : BackendSymbolSeq]
   [strings : BackendStringSeq]
   [bytes : BackendStringSeq]
-  [floats : BackendFloatList]
+  [floats : BackendFloatSeq]
   [uses-avx2-i64-lane-id : bool]
   [uses-avx512-i64-lane-id : bool]
   [uses-f64-neg : bool]
@@ -51147,7 +51316,7 @@
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringSeq
       (compiler-backend-program-collections-bytes collections)]
-    [floats : BackendFloatList
+    [floats : BackendFloatSeq
       (compiler-backend-program-collections-floats collections)]
     [uses-avx2-i64-lane-id : bool
       (compiler-backend-program-collections-uses-avx2-i64-lane-id? collections)]
@@ -54026,28 +54195,31 @@
 
 (define (compiler-backend-object-floats
   [parts : CompilerBackendObjectParts]
-  [floats : BackendFloatList]) : CompilerBackendObjectParts
-  (match floats
-    [(BackendFloatList.Nil) parts]
-    [(BackendFloatList.Cons ty bits rest)
-      (let
-        [symbol : String (compiler-backend-float-label ty bits)]
-        (compiler-backend-object-floats
-          (compiler-backend-object-add-rodata
+  [floats : BackendFloatSeq]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (compiler-backend-float-seq-count floats))
+    parts
+    (match (compiler-backend-float-seq-ref floats index)
+      [(BackendFloatEntry.Entry ty bits)
+        (let
+          [symbol : String (compiler-backend-float-label ty bits)]
+          (compiler-backend-object-floats
             (compiler-backend-object-add-rodata
               (compiler-backend-object-add-rodata
-                (compiler-backend-object-symbol-local-section
-                  parts
-                  symbol
-                  (cobj.CompilerObjectSectionKind.Rodata)
-                  (cobj.CompilerObjectSymbolKind.Data))
-                (cobj.CompilerObjectDataRecord.Align
-                  (if (compiler-backend-f64-type? ty)
-                    8
-                    4)))
-              (cobj.CompilerObjectDataRecord.Label symbol))
-            (compiler-backend-float-object-data ty bits))
-          (box-get rest)))]))
+                (compiler-backend-object-add-rodata
+                  (compiler-backend-object-symbol-local-section
+                    parts
+                    symbol
+                    (cobj.CompilerObjectSectionKind.Rodata)
+                    (cobj.CompilerObjectSymbolKind.Data))
+                  (cobj.CompilerObjectDataRecord.Align
+                    (if (compiler-backend-f64-type? ty)
+                      8
+                      4)))
+                (cobj.CompilerObjectDataRecord.Label symbol))
+              (compiler-backend-float-object-data ty bits))
+            floats
+            (+ index 1)))])))
 
 (define (compiler-backend-object-f64-sign-bit
   [parts : CompilerBackendObjectParts]
@@ -54970,7 +55142,7 @@
       (compiler-backend-program-collections-strings collections)]
     [bytes : BackendStringSeq
       (compiler-backend-program-collections-bytes collections)]
-    [floats : BackendFloatList
+    [floats : BackendFloatSeq
       (compiler-backend-program-collections-floats collections)]
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg? collections)]
@@ -55002,7 +55174,8 @@
                       0)
                     bytes
                     0)
-                  floats)
+                  floats
+                  0)
                 uses-f64-neg)
               externs
               plan

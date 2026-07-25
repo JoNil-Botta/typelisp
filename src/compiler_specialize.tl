@@ -7,6 +7,7 @@
 (import stdlib.string)
 (import stdlib.text_buf)
 (import stdlib.hashmap)
+(import stdlib.vector)
 (import (hashmap.hashmap i64 i64) as spec_id_i64_map)
 (import compiler_intern as spec_ci)
 (import compiler_builtin_ids as cbi)
@@ -22,14 +23,14 @@
   (Item i64 AstParamList AstType AstExpr))
 
 ;; Templates are collected once per program and then only counted and indexed,
-;; so the collection is one contiguous buffer plus a live count.
-(defstruct SpecTemplateList
-  (slots (Array SpecTemplate))
-  (len i64))
+;; so the collection is one generated append-only vector.
+(import (vector.vector SpecTemplate core) as spec_template_vec)
 
-(defenum SpecTemplateShadowList
-  (Nil)
-  (Cons i64 (Box SpecTemplateShadowList)))
+;; Names bound in the current scope that hide a same-named template. Sibling AST
+;; subtrees extend the same base environment, so `spec-template-shadow-cons`
+;; copies into a right-sized buffer instead of appending to a shared vector that
+;; a sibling branch still holds.
+(import (vector.vector i64 core) as spec_shadow_vec)
 
 (defenum SpecMaybeTemplate
   (None)
@@ -38,7 +39,7 @@
 (defstruct SpecTemplateEnv
   (index spec_id_i64_map.Map)
   (values (Array SpecMaybeTemplate))
-  (shadowed SpecTemplateShadowList))
+  (shadowed spec_shadow_vec.Vec))
 
 ;; The specialization cache (key -> generated function name) is a
 ;; generated-name-id -> generated-name-id hashmap.
@@ -50,123 +51,87 @@
 ;; shadowing still resolves head-first. `cons` copies into a right-sized buffer
 ;; so an inner instantiation can never write into the slot of an outer subst
 ;; that is still in use; the lists are one entry per comptime parameter.
-(defstruct SpecValueList
-  (slots (Array CompilerCtfeValue))
-  (len i64))
+(import (vector.vector CompilerCtfeValue core) as spec_value_vec)
 
 (defenum SpecValueBinding
   (Bind i64 CompilerCtfeValue))
 
-(defstruct SpecValueSubst
-  (slots (Array SpecValueBinding))
-  (len i64))
+(import (vector.vector SpecValueBinding core) as spec_value_binding_vec)
 
 (defenum SpecTypeBinding
   (Bind i64 AstType))
 
-(defstruct SpecTypeSubst
-  (slots (Array SpecTypeBinding))
-  (len i64))
+(import (vector.vector SpecTypeBinding core) as spec_type_binding_vec)
 
-(define (spec-template-list-new) : SpecTemplateList
-  (SpecTemplateList (array.make-array SpecTemplate 0) 0))
-
-(define (spec-template-list-copy-range
-  [dst : (&mut dst (Array SpecTemplate))]
-  [src : (& src (Array SpecTemplate))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! dst index (array.ref src index))
-      (spec-template-list-copy-range dst src (+ index 1) count))))
-
-(define (spec-template-list-grow
-  [templates : (&mut templates SpecTemplateList)]) : unit
+(define (spec-template-shadow-cons [name-id : i64] [rest : spec_shadow_vec.Vec]) : spec_shadow_vec.Vec
   (let
-    [count : i64 (struct-get templates len)]
-    [bigger : (Array SpecTemplate)
-      (array.make-array SpecTemplate (+ (* count 2) 8))]
-    (begin
-      (spec-template-list-copy-range
-        (&mut bigger)
-        (& (struct-get templates slots))
-        0
-        count)
-      (set! (struct-get templates slots) bigger))))
-
-(define (spec-template-list-push
-  [templates : (&mut templates SpecTemplateList)]
-  [item : SpecTemplate]) : unit
-  (begin
-    (if (<
-      (struct-get templates len)
-      (array.length (struct-get templates slots)))
-      unit
-      (spec-template-list-grow templates))
-    (let
-      [count : i64 (struct-get templates len)]
-      (begin
-        (array-set! (struct-get templates slots) count item)
-        (set! (struct-get templates len) (+ count 1))))))
-
-(define (spec-value-list-new) : SpecValueList
-  (SpecValueList (array.make-array CompilerCtfeValue 0) 0))
-
-(define (spec-value-cons [head : CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
-  (let
-    [count : i64 (struct-get rest len)]
-    [slots : (Array CompilerCtfeValue)
-      (array.make-array CompilerCtfeValue (+ count 1))]
+    [count : i64 (spec_shadow_vec.len (& rest))]
+    [out : spec_shadow_vec.Vec (spec_shadow_vec.with-capacity (+ count 1))]
     [at : i64 0]
     (begin
-      (array-set! slots 0 head)
+      (spec_shadow_vec.push (&mut out) name-id)
       (while (< at count)
         (begin
-          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (spec_shadow_vec.push
+            (&mut out)
+            (array.ref (spec_shadow_vec.slots (& rest)) at))
           (set! at (+ at 1))))
-      (SpecValueList slots (+ count 1)))))
+      out)))
 
-(define (spec-value-subst-new) : SpecValueSubst
-  (SpecValueSubst (array.make-array SpecValueBinding 0) 0))
+(define (spec-value-cons [head : CompilerCtfeValue] [rest : spec_value_vec.Vec]) : spec_value_vec.Vec
+  (let
+    [count : i64 (spec_value_vec.len (& rest))]
+    [out : spec_value_vec.Vec (spec_value_vec.with-capacity (+ count 1))]
+    [at : i64 0]
+    (begin
+      (spec_value_vec.push (&mut out) head)
+      (while (< at count)
+        (begin
+          (spec_value_vec.push
+            (&mut out)
+            (array.ref (spec_value_vec.slots (& rest)) at))
+          (set! at (+ at 1))))
+      out)))
 
 (define (spec-value-subst-cons
   [key-id : i64]
   [value : CompilerCtfeValue]
-  [rest : SpecValueSubst]) : SpecValueSubst
+  [rest : spec_value_binding_vec.Vec]) : spec_value_binding_vec.Vec
   (let
-    [count : i64 (struct-get rest len)]
-    [slots : (Array SpecValueBinding)
-      (array.make-array SpecValueBinding (+ count 1))]
+    [count : i64 (spec_value_binding_vec.len (& rest))]
+    [out : spec_value_binding_vec.Vec
+      (spec_value_binding_vec.with-capacity (+ count 1))]
     [at : i64 0]
     (begin
-      (array-set! slots 0 (SpecValueBinding.Bind key-id value))
+      (spec_value_binding_vec.push
+        (&mut out)
+        (SpecValueBinding.Bind key-id value))
       (while (< at count)
         (begin
-          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (spec_value_binding_vec.push
+            (&mut out)
+            (array.ref (spec_value_binding_vec.slots (& rest)) at))
           (set! at (+ at 1))))
-      (SpecValueSubst slots (+ count 1)))))
-
-(define (spec-type-subst-new) : SpecTypeSubst
-  (SpecTypeSubst (array.make-array SpecTypeBinding 0) 0))
+      out)))
 
 (define (spec-type-subst-cons
   [key-id : i64]
   [ty : AstType]
-  [rest : SpecTypeSubst]) : SpecTypeSubst
+  [rest : spec_type_binding_vec.Vec]) : spec_type_binding_vec.Vec
   (let
-    [count : i64 (struct-get rest len)]
-    [slots : (Array SpecTypeBinding)
-      (array.make-array SpecTypeBinding (+ count 1))]
+    [count : i64 (spec_type_binding_vec.len (& rest))]
+    [out : spec_type_binding_vec.Vec
+      (spec_type_binding_vec.with-capacity (+ count 1))]
     [at : i64 0]
     (begin
-      (array-set! slots 0 (SpecTypeBinding.Bind key-id ty))
+      (spec_type_binding_vec.push (&mut out) (SpecTypeBinding.Bind key-id ty))
       (while (< at count)
         (begin
-          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (spec_type_binding_vec.push
+            (&mut out)
+            (array.ref (spec_type_binding_vec.slots (& rest)) at))
           (set! at (+ at 1))))
-      (SpecTypeSubst slots (+ count 1)))))
+      out)))
 
 (defenum SpecMaybeString
   (None)
@@ -237,7 +202,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecArgs
-  (Ok SpecValueList AstExprList SpecState)
+  (Ok spec_value_vec.Vec AstExprList SpecState)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecEnsure
@@ -245,7 +210,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecBuild
-  (Ok AstParamList SpecValueSubst SpecTypeSubst)
+  (Ok AstParamList spec_value_binding_vec.Vec spec_type_binding_vec.Vec)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubExpr
@@ -430,15 +395,22 @@
       true
       (spec-param-list-has-comptime-at? params (+ index 1)))))
 
+;; Head-first scan: slot 0 is the newest shadow entry, matching the order the
+;; cons-shaped environment used.
 (define (spec-template-shadow-contains?
-  [shadowed : SpecTemplateShadowList]
+  [shadowed : spec_shadow_vec.Vec]
   [name-id : i64]) : bool
-  (match shadowed
-    [(SpecTemplateShadowList.Nil) false]
-    [(SpecTemplateShadowList.Cons shadow-name rest)
-      (if (= shadow-name name-id)
-        true
-        (spec-template-shadow-contains? (box-get rest) name-id))]))
+  (spec-template-shadow-contains-at? shadowed name-id 0))
+
+(define (spec-template-shadow-contains-at?
+  [shadowed : spec_shadow_vec.Vec]
+  [name-id : i64]
+  [at : i64]) : bool
+  (if (>= at (spec_shadow_vec.len (& shadowed)))
+    false
+    (if (= (array.ref (spec_shadow_vec.slots (& shadowed)) at) name-id)
+      true
+      (spec-template-shadow-contains-at? shadowed name-id (+ at 1)))))
 
 (define (spec-template-values-fill-empty
   [values : (Array SpecMaybeTemplate)]
@@ -451,15 +423,16 @@
       (spec-template-values-fill-empty values (+ index 1) count))))
 
 (define (spec-template-index-build
-  [templates : SpecTemplateList]
+  [templates : spec_template_vec.Vec]
   [index : spec_id_i64_map.Map]
   [values : (Array SpecMaybeTemplate)]
   [at : i64]
   [slot : i64]) : spec_id_i64_map.Map
-  (if (>= at (struct-get templates len))
+  (if (>= at (spec_template_vec.len (& templates)))
     index
     (let
-      [template : SpecTemplate (array.ref (struct-get templates slots) at)]
+      [template : SpecTemplate
+        (array.ref (spec_template_vec.slots (& templates)) at)]
       (match template
         [(SpecTemplate.Item name _ _ _)
           (if (spec_id_i64_map.contains? (& index) name)
@@ -477,9 +450,9 @@
                     (+ at 1)
                     (+ slot 1))))))]))))
 
-(define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
+(define (spec-template-env-from-list [templates : spec_template_vec.Vec]) : SpecTemplateEnv
   (let
-    [count : i64 (struct-get templates len)]
+    [count : i64 (spec_template_vec.len (& templates))]
     [values : (Array SpecMaybeTemplate)
       (array.make-array SpecMaybeTemplate count)]
     (begin
@@ -492,7 +465,7 @@
           0
           0)
         values
-        SpecTemplateShadowList.Nil))))
+        (spec_shadow_vec.new)))))
 
 (define (spec-template-lookup [templates : SpecTemplateEnv] [name-id : i64]) : SpecMaybeTemplate
   (if (spec-template-shadow-contains? (struct-get templates shadowed) name-id)
@@ -508,7 +481,7 @@
   (SpecTemplateEnv
     (struct-get templates index)
     (struct-get templates values)
-    (SpecTemplateShadowList.Cons name-id (box (struct-get templates shadowed)))))
+    (spec-template-shadow-cons name-id (struct-get templates shadowed))))
 
 (define (spec-template-env-shadow-params
   [templates : SpecTemplateEnv]
@@ -584,10 +557,10 @@
 
 (define (spec-collect-templates-with-pools
   [pools : AstNodePoolContext]
-  [decls : AstDeclList]) : SpecTemplateList
+  [decls : AstDeclList]) : spec_template_vec.Vec
   (let
     [cursor : AstDeclList decls]
-    [out : SpecTemplateList (spec-template-list-new)]
+    [out : spec_template_vec.Vec (spec_template_vec.new)]
     [done : bool false]
     (begin
       (while (not done)
@@ -600,7 +573,7 @@
                   (match (box-get inner-box)
                     [(AstDecl.DefFn decl-meta name params ret body-box _)
                       (if (spec-param-list-has-comptime? params)
-                        (spec-template-list-push
+                        (spec_template_vec.push
                           (&mut out)
                           (SpecTemplate.Item
                             name
@@ -611,7 +584,7 @@
                     [_ unit])]
                 [(AstDecl.DefFn decl-meta name params ret body-box _)
                   (if (spec-param-list-has-comptime? params)
-                    (spec-template-list-push
+                    (spec_template_vec.push
                       (&mut out)
                       (SpecTemplate.Item
                         name
@@ -623,7 +596,7 @@
               (set! cursor rest))]))
       out)))
 
-(define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
+(define (spec-collect-templates [decls : AstDeclList]) : spec_template_vec.Vec
   (spec-collect-templates-with-pools
     (ast-node-pool-context-capture-active)
     decls))
@@ -861,20 +834,20 @@
     [(CompilerCtfeValue.TypeVariant _ _) "type-variant"]
     [(CompilerCtfeValue.TypeVariantList _) "type-variant-list"]))
 
-(define (spec-values-key [values : SpecValueList]) : String
+(define (spec-values-key [values : spec_value_vec.Vec]) : String
   (spec-values-key-at values 0))
 
-(define (spec-values-key-at [values : SpecValueList] [at : i64]) : String
-  (if (>= at (struct-get values len))
+(define (spec-values-key-at [values : spec_value_vec.Vec] [at : i64]) : String
+  (if (>= at (spec_value_vec.len (& values)))
     "none"
     (string.append
-      (spec-value-key (array.ref (struct-get values slots) at))
+      (spec-value-key (array.ref (spec_value_vec.slots (& values)) at))
       (string.append "_" (spec-values-key-at values (+ at 1))))))
 
-(define (spec-specialization-key [name : String] [values : SpecValueList]) : String
+(define (spec-specialization-key [name : String] [values : spec_value_vec.Vec]) : String
   (string.append name (string.append ":" (spec-values-key values))))
 
-(define (spec-specialized-name [name : String] [values : SpecValueList]) : String
+(define (spec-specialized-name [name : String] [values : spec_value_vec.Vec]) : String
   (string.append
     "__tl_specialized_"
     (string.append name (string.append "_" (spec-values-key values)))))
@@ -2247,88 +2220,98 @@
 
 ;; Head-first scan: slot 0 is the newest binding, so the first hit is the one
 ;; that shadows. Returns -1 when the name is unbound.
-(define (spec-type-subst-find [subs : SpecTypeSubst] [name-id : i64] [at : i64]) : i64
-  (if (>= at (struct-get subs len))
+(define (spec-type-subst-find
+  [subs : spec_type_binding_vec.Vec]
+  [name-id : i64]
+  [at : i64]) : i64
+  (if (>= at (spec_type_binding_vec.len (& subs)))
     (- 0 1)
-    (match (array.ref (struct-get subs slots) at)
+    (match (array.ref (spec_type_binding_vec.slots (& subs)) at)
       [(SpecTypeBinding.Bind key-id _)
         (if (= key-id name-id)
           at
           (spec-type-subst-find subs name-id (+ at 1)))])))
 
-(define (spec-type-subst-lookup [subs : SpecTypeSubst] [name-id : i64]) : SpecMaybeId
+(define (spec-type-subst-lookup
+  [subs : spec_type_binding_vec.Vec]
+  [name-id : i64]) : SpecMaybeId
   (if (< (spec-type-subst-find subs name-id 0) 0)
     (SpecMaybeId.None)
     (SpecMaybeId.Some name-id)))
 
-(define (spec-type-subst-type [subs : SpecTypeSubst] [name-id : i64]) : AstType
+(define (spec-type-subst-type
+  [subs : spec_type_binding_vec.Vec]
+  [name-id : i64]) : AstType
   (let
     [at : i64 (spec-type-subst-find subs name-id 0)]
     (if (< at 0)
       (AstType.Var name-id)
-      (match (array.ref (struct-get subs slots) at)
+      (match (array.ref (spec_type_binding_vec.slots (& subs)) at)
         [(SpecTypeBinding.Bind _ ty) ty]))))
 
 (define (spec-value-subst-find
-  [subs : SpecValueSubst]
+  [subs : spec_value_binding_vec.Vec]
   [name-id : i64]
   [at : i64]) : i64
-  (if (>= at (struct-get subs len))
+  (if (>= at (spec_value_binding_vec.len (& subs)))
     (- 0 1)
-    (match (array.ref (struct-get subs slots) at)
+    (match (array.ref (spec_value_binding_vec.slots (& subs)) at)
       [(SpecValueBinding.Bind key-id _)
         (if (= key-id name-id)
           at
           (spec-value-subst-find subs name-id (+ at 1)))])))
 
-(define (spec-value-subst-lookup [subs : SpecValueSubst] [name-id : i64]) : SpecMaybeId
+(define (spec-value-subst-lookup
+  [subs : spec_value_binding_vec.Vec]
+  [name-id : i64]) : SpecMaybeId
   (if (< (spec-value-subst-find subs name-id 0) 0)
     (SpecMaybeId.None)
     (SpecMaybeId.Some name-id)))
 
-(define (spec-value-subst-value [subs : SpecValueSubst] [name-id : i64]) : CompilerCtfeValue
+(define (spec-value-subst-value
+  [subs : spec_value_binding_vec.Vec]
+  [name-id : i64]) : CompilerCtfeValue
   (let
     [at : i64 (spec-value-subst-find subs name-id 0)]
     (if (< at 0)
       (CompilerCtfeValue.Unit)
-      (match (array.ref (struct-get subs slots) at)
+      (match (array.ref (spec_value_binding_vec.slots (& subs)) at)
         [(SpecValueBinding.Bind _ value) value]))))
 
 ;; An unbound name leaves the environment alone, so the hot inner-scope walk
 ;; shares the outer buffer instead of rebuilding it.
-(define (spec-value-subst-remove-name [subs : SpecValueSubst] [name-id : i64]) : SpecValueSubst
+(define (spec-value-subst-remove-name
+  [subs : spec_value_binding_vec.Vec]
+  [name-id : i64]) : spec_value_binding_vec.Vec
   (if (< (spec-value-subst-find subs name-id 0) 0)
     subs
     (let
-      [slots : (Array SpecValueBinding)
-        (array.make-array SpecValueBinding (struct-get subs len))]
+      [count : i64 (spec_value_binding_vec.len (& subs))]
+      [out : spec_value_binding_vec.Vec
+        (spec_value_binding_vec.with-capacity count)]
       [at : i64 0]
-      [kept : i64 0]
       (begin
-        (while (< at (struct-get subs len))
+        (while (< at count)
           (begin
-            (match (array.ref (struct-get subs slots) at)
+            (match (array.ref (spec_value_binding_vec.slots (& subs)) at)
               [(SpecValueBinding.Bind key-id _)
                 (if (= key-id name-id)
                   unit
-                  (begin
-                    (array-set!
-                      slots
-                      kept
-                      (array.ref (struct-get subs slots) at))
-                    (set! kept (+ kept 1))))])
+                  (spec_value_binding_vec.push
+                    (&mut out)
+                    (array.ref (spec_value_binding_vec.slots (& subs)) at)))])
             (set! at (+ at 1))))
-        (SpecValueSubst slots kept)))))
+        out))))
 
 (define (spec-value-subst-remove-params
-  [subs : SpecValueSubst]
-  [params : AstParamList]) : SpecValueSubst
+  [subs : spec_value_binding_vec.Vec]
+  [params : AstParamList]) : spec_value_binding_vec.Vec
   (spec-value-subst-remove-params-at subs (& params) 0))
 
 (define (spec-value-subst-remove-params-at
-  [subs : SpecValueSubst]
+  [subs : spec_value_binding_vec.Vec]
   [params : (& params AstParamList)]
-  [index : i64]) : SpecValueSubst
+  [index : i64]) : spec_value_binding_vec.Vec
   (if (>= index (ast-param-list-len params))
     subs
     (spec-value-subst-remove-params-at
@@ -2340,14 +2323,14 @@
       (+ index 1))))
 
 (define (spec-value-subst-remove-let-binding-names
-  [subs : SpecValueSubst]
-  [bindings : AstLetBindingList]) : SpecValueSubst
+  [subs : spec_value_binding_vec.Vec]
+  [bindings : AstLetBindingList]) : spec_value_binding_vec.Vec
   (spec-value-subst-remove-let-binding-names-at subs (& bindings) 0))
 
 (define (spec-value-subst-remove-let-binding-names-at
-  [subs : SpecValueSubst]
+  [subs : spec_value_binding_vec.Vec]
   [bindings : (& bindings AstLetBindingList)]
-  [index : i64]) : SpecValueSubst
+  [index : i64]) : spec_value_binding_vec.Vec
   (if (>= index (ast-let-binding-list-len bindings))
     subs
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
@@ -2358,8 +2341,8 @@
           (+ index 1))])))
 
 (define (spec-value-subst-remove-pattern
-  [subs : SpecValueSubst]
-  [pattern : AstPattern]) : SpecValueSubst
+  [subs : spec_value_binding_vec.Vec]
+  [pattern : AstPattern]) : spec_value_binding_vec.Vec
   (match pattern
     [(AstPattern.Var name _) (spec-value-subst-remove-name subs name)]
     [(AstPattern.Tuple patterns-box)
@@ -2375,14 +2358,14 @@
     [(AstPattern.Literal _) subs]))
 
 (define (spec-value-subst-remove-pattern-list
-  [subs : SpecValueSubst]
-  [patterns : AstPatternList]) : SpecValueSubst
+  [subs : spec_value_binding_vec.Vec]
+  [patterns : AstPatternList]) : spec_value_binding_vec.Vec
   (spec-value-subst-remove-pattern-list-at subs (& patterns) 0))
 
 (define (spec-value-subst-remove-pattern-list-at
-  [subs : SpecValueSubst]
+  [subs : spec_value_binding_vec.Vec]
   [patterns : (& patterns AstPatternList)]
-  [index : i64]) : SpecValueSubst
+  [index : i64]) : spec_value_binding_vec.Vec
   (if (>= index (struct-get patterns len))
     subs
     (spec-value-subst-remove-pattern-list-at
@@ -2392,39 +2375,38 @@
       patterns
       (+ index 1))))
 
-(define (spec-type-subst-remove-name [subs : SpecTypeSubst] [name-id : i64]) : SpecTypeSubst
+(define (spec-type-subst-remove-name
+  [subs : spec_type_binding_vec.Vec]
+  [name-id : i64]) : spec_type_binding_vec.Vec
   (if (< (spec-type-subst-find subs name-id 0) 0)
     subs
     (let
-      [slots : (Array SpecTypeBinding)
-        (array.make-array SpecTypeBinding (struct-get subs len))]
+      [count : i64 (spec_type_binding_vec.len (& subs))]
+      [out : spec_type_binding_vec.Vec
+        (spec_type_binding_vec.with-capacity count)]
       [at : i64 0]
-      [kept : i64 0]
       (begin
-        (while (< at (struct-get subs len))
+        (while (< at count)
           (begin
-            (match (array.ref (struct-get subs slots) at)
+            (match (array.ref (spec_type_binding_vec.slots (& subs)) at)
               [(SpecTypeBinding.Bind key-id _)
                 (if (= key-id name-id)
                   unit
-                  (begin
-                    (array-set!
-                      slots
-                      kept
-                      (array.ref (struct-get subs slots) at))
-                    (set! kept (+ kept 1))))])
+                  (spec_type_binding_vec.push
+                    (&mut out)
+                    (array.ref (spec_type_binding_vec.slots (& subs)) at)))])
             (set! at (+ at 1))))
-        (SpecTypeSubst slots kept)))))
+        out))))
 
 (define (spec-type-subst-remove-params
-  [subs : SpecTypeSubst]
-  [params : AstParamList]) : SpecTypeSubst
+  [subs : spec_type_binding_vec.Vec]
+  [params : AstParamList]) : spec_type_binding_vec.Vec
   (spec-type-subst-remove-params-at subs (& params) 0))
 
 (define (spec-type-subst-remove-params-at
-  [subs : SpecTypeSubst]
+  [subs : spec_type_binding_vec.Vec]
   [params : (& params AstParamList)]
-  [index : i64]) : SpecTypeSubst
+  [index : i64]) : spec_type_binding_vec.Vec
   (if (>= index (ast-param-list-len params))
     subs
     (spec-type-subst-remove-params-at
@@ -2436,14 +2418,14 @@
       (+ index 1))))
 
 (define (spec-type-subst-remove-let-binding-names
-  [subs : SpecTypeSubst]
-  [bindings : AstLetBindingList]) : SpecTypeSubst
+  [subs : spec_type_binding_vec.Vec]
+  [bindings : AstLetBindingList]) : spec_type_binding_vec.Vec
   (spec-type-subst-remove-let-binding-names-at subs (& bindings) 0))
 
 (define (spec-type-subst-remove-let-binding-names-at
-  [subs : SpecTypeSubst]
+  [subs : spec_type_binding_vec.Vec]
   [bindings : (& bindings AstLetBindingList)]
-  [index : i64]) : SpecTypeSubst
+  [index : i64]) : spec_type_binding_vec.Vec
   (if (>= index (ast-let-binding-list-len bindings))
     subs
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
@@ -2454,8 +2436,8 @@
           (+ index 1))])))
 
 (define (spec-type-subst-remove-pattern
-  [subs : SpecTypeSubst]
-  [pattern : AstPattern]) : SpecTypeSubst
+  [subs : spec_type_binding_vec.Vec]
+  [pattern : AstPattern]) : spec_type_binding_vec.Vec
   (match pattern
     [(AstPattern.Var name _) (spec-type-subst-remove-name subs name)]
     [(AstPattern.Tuple patterns-box)
@@ -2471,14 +2453,14 @@
     [(AstPattern.Literal _) subs]))
 
 (define (spec-type-subst-remove-pattern-list
-  [subs : SpecTypeSubst]
-  [patterns : AstPatternList]) : SpecTypeSubst
+  [subs : spec_type_binding_vec.Vec]
+  [patterns : AstPatternList]) : spec_type_binding_vec.Vec
   (spec-type-subst-remove-pattern-list-at subs (& patterns) 0))
 
 (define (spec-type-subst-remove-pattern-list-at
-  [subs : SpecTypeSubst]
+  [subs : spec_type_binding_vec.Vec]
   [patterns : (& patterns AstPatternList)]
-  [index : i64]) : SpecTypeSubst
+  [index : i64]) : spec_type_binding_vec.Vec
   (if (>= index (struct-get patterns len))
     subs
     (spec-type-subst-remove-pattern-list-at
@@ -2488,7 +2470,7 @@
       patterns
       (+ index 1))))
 
-(define (spec-substitute-type [ty : AstType] [subs : SpecTypeSubst]) : AstType
+(define (spec-substitute-type [ty : AstType] [subs : spec_type_binding_vec.Vec]) : AstType
   (match ty
     [(AstType.Func args ret)
       (ast-ty-func
@@ -2528,7 +2510,7 @@
 
 (define (spec-substitute-type-list-into
   [types : (& types AstTypeList)]
-  [subs : SpecTypeSubst]
+  [subs : spec_type_binding_vec.Vec]
   [out : (&mut out AstTypeList)]
   [index : i64]) : unit
   (if (>= index (ast-type-list-len types))
@@ -2542,7 +2524,9 @@
             subs)))
       (spec-substitute-type-list-into types subs out (+ index 1)))))
 
-(define (spec-substitute-type-list [types : AstTypeList] [subs : SpecTypeSubst]) : AstTypeList
+(define (spec-substitute-type-list
+  [types : AstTypeList]
+  [subs : spec_type_binding_vec.Vec]) : AstTypeList
   (let
     [out : AstTypeList
       (ast-type-list-with-capacity (ast-type-list-len (& types)))]
@@ -2550,7 +2534,9 @@
       (spec-substitute-type-list-into (& types) subs (&mut out) 0)
       out)))
 
-(define (spec-substitute-maybe-type [ty : AstMaybeType] [subs : SpecTypeSubst]) : AstMaybeType
+(define (spec-substitute-maybe-type
+  [ty : AstMaybeType]
+  [subs : spec_type_binding_vec.Vec]) : AstMaybeType
   (match ty
     [(AstMaybeType.No) AstMaybeType.No]
     [(AstMaybeType.Some inner)
@@ -2558,7 +2544,7 @@
 
 (define (spec-substitute-param-types
   [params : AstParamList]
-  [subs : SpecTypeSubst]) : AstParamList
+  [subs : spec_type_binding_vec.Vec]) : AstParamList
   (let
     [out : AstParamList
       (ast-param-list-with-capacity (ast-param-list-len (& params)))]
@@ -2568,7 +2554,7 @@
 
 (define (spec-substitute-param-types-into
   [params : (& params AstParamList)]
-  [subs : SpecTypeSubst]
+  [subs : spec_type_binding_vec.Vec]
   [index : i64]
   [out : (&mut out AstParamList)]) : unit
   (if (>= index (ast-param-list-len params))
@@ -2951,7 +2937,7 @@
   (cond
     [(>= index (ast-param-list-len params))
       (if (>= index (struct-get args len))
-        (ResultSpecArgs.Ok (spec-value-list-new) (ast-expr-list-new) state)
+        (ResultSpecArgs.Ok (spec_value_vec.new) (ast-expr-list-new) state)
         (ResultSpecArgs.Err
           (box (compiler-diagnostic-at-start "" "specialize: arity mismatch"))))]
     [(>= index (struct-get args len))
@@ -3051,29 +3037,29 @@
 
 (define (spec-build-specialization
   [params : AstParamList]
-  [values : SpecValueList]) : ResultSpecBuild
+  [values : spec_value_vec.Vec]) : ResultSpecBuild
   (spec-build-specialization-at (& params) 0 values 0))
 
 (define (spec-build-specialization-at
   [params : (& params AstParamList)]
   [index : i64]
-  [values : SpecValueList]
+  [values : spec_value_vec.Vec]
   [at : i64]) : ResultSpecBuild
   (if (>= index (ast-param-list-len params))
-    (if (>= at (struct-get values len))
+    (if (>= at (spec_value_vec.len (& values)))
       (ResultSpecBuild.Ok
         (ast-param-list-new)
-        (spec-value-subst-new)
-        (spec-type-subst-new))
+        (spec_value_binding_vec.new)
+        (spec_type_binding_vec.new))
       (ResultSpecBuild.Err
         (box (compiler-diagnostic-at-start "" "specialize: value mismatch"))))
     (match (ast-param-list-get params index (ast-param-fallback))
       [(AstParam.Param name ty is-comptime consume?)
         (if is-comptime
-          (if (< at (struct-get values len))
+          (if (< at (spec_value_vec.len (& values)))
             (let
               [value : CompilerCtfeValue
-                (array.ref (struct-get values slots) at)]
+                (array.ref (spec_value_vec.slots (& values)) at)]
               (match (spec-build-specialization-at
                 params
                 (+ index 1)
@@ -3138,7 +3124,7 @@
 
 (define (spec-ensure-specialization
   [template : SpecTemplate]
-  [values : SpecValueList]
+  [values : spec_value_vec.Vec]
   [templates : SpecTemplateEnv]
   [state : SpecState]
   [_origin : AstExpr]) : ResultSpecEnsure
@@ -3994,7 +3980,7 @@
 
 (define (spec-ptr-addr-of-place-value-conflict
   [place : AstExpr]
-  [subs : SpecValueSubst]) : SpecMaybeId
+  [subs : spec_value_binding_vec.Vec]) : SpecMaybeId
   (match (ast-expr-unspan place)
     [(AstExpr.Var name) (spec-value-subst-lookup subs name)]
     [(AstExpr.StructGet receiver-box _)
@@ -4007,7 +3993,9 @@
         (spec-ptr-addr-of-place-value-conflict array subs))]
     [_ (SpecMaybeId.None)]))
 
-(define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
+(define (spec-substitute-values-expr
+  [expr : AstExpr]
+  [subs : spec_value_binding_vec.Vec]) : ResultSpecSubExpr
   (match expr
     [(AstExpr.Spanned inner-box span)
       (let
@@ -4372,9 +4360,9 @@
             [init : AstExpr (ast-node-get init-box)]
             [value : AstExpr (ast-node-get value-box)]
             [body : AstExpr (ast-node-get body-box)]
-            [value-subs : SpecValueSubst
+            [value-subs : spec_value_binding_vec.Vec
               (spec-value-subst-remove-name subs index)]
-            [body-subs : SpecValueSubst
+            [body-subs : spec_value_binding_vec.Vec
               (spec-value-subst-remove-name value-subs prefix)]
             (match (spec-substitute-values-expr start subs)
               [(ResultSpecSubExpr.Ok rewritten-start)
@@ -4761,7 +4749,7 @@
 
 (define (spec-substitute-values-expr-list
   [exprs : AstExprList]
-  [subs : SpecValueSubst]) : ResultSpecSubExprList
+  [subs : spec_value_binding_vec.Vec]) : ResultSpecSubExprList
   (let
     [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
     (match (spec-substitute-values-expr-list-at (& exprs) 0 subs (&mut out))
@@ -4771,7 +4759,7 @@
 (define (spec-substitute-values-expr-list-at
   [exprs : (& exprs AstExprList)]
   [index : i64]
-  [subs : SpecValueSubst]
+  [subs : spec_value_binding_vec.Vec]
   [out : (&mut out AstExprList)]) : ResultSpecSubExprListBuild
   (if (>= index (struct-get exprs len))
     (ResultSpecSubExprListBuild.Ok)
@@ -4786,7 +4774,7 @@
 
 (define (spec-substitute-values-let-bindings
   [bindings : AstLetBindingList]
-  [subs : SpecValueSubst]) : ResultSpecSubLetBindingList
+  [subs : spec_value_binding_vec.Vec]) : ResultSpecSubLetBindingList
   (let
     [out : AstLetBindingList
       (ast-let-binding-list-with-capacity
@@ -4804,7 +4792,7 @@
 (define (spec-substitute-values-let-bindings-at
   [bindings : (& bindings AstLetBindingList)]
   [index : i64]
-  [subs : SpecValueSubst]
+  [subs : spec_value_binding_vec.Vec]
   [out : (&mut out AstLetBindingList)]) : ResultSpecSubLetBindingListBuild
   (if (>= index (ast-let-binding-list-len bindings))
     (ResultSpecSubLetBindingListBuild.Ok)
@@ -4828,7 +4816,7 @@
 
 (define (spec-substitute-values-match-arms
   [arms : AstMatchArmList]
-  [subs : SpecValueSubst]) : ResultSpecSubMatchArmList
+  [subs : spec_value_binding_vec.Vec]) : ResultSpecSubMatchArmList
   (let
     [out : AstMatchArmList
       (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
@@ -4840,7 +4828,7 @@
 (define (spec-substitute-values-match-arms-at
   [arms : (& arms AstMatchArmList)]
   [index : i64]
-  [subs : SpecValueSubst]
+  [subs : spec_value_binding_vec.Vec]
   [out : (&mut out AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
   (if (>= index (struct-get arms len))
     (ResultSpecSubMatchArmListBuild.Ok)
@@ -4860,7 +4848,9 @@
             [(ResultSpecSubExpr.Err diag)
               (ResultSpecSubMatchArmListBuild.Err diag)]))])))
 
-(define (spec-substitute-types-expr [expr : AstExpr] [subs : SpecTypeSubst]) : ResultSpecSubExpr
+(define (spec-substitute-types-expr
+  [expr : AstExpr]
+  [subs : spec_type_binding_vec.Vec]) : ResultSpecSubExpr
   (match expr
     [(AstExpr.Spanned inner-box span)
       (let
@@ -5015,9 +5005,9 @@
             [init : AstExpr (ast-node-get init-box)]
             [value : AstExpr (ast-node-get value-box)]
             [body : AstExpr (ast-node-get body-box)]
-            [value-subs : SpecTypeSubst
+            [value-subs : spec_type_binding_vec.Vec
               (spec-type-subst-remove-name subs index)]
-            [body-subs : SpecTypeSubst
+            [body-subs : spec_type_binding_vec.Vec
               (spec-type-subst-remove-name value-subs prefix)]
             (match (spec-substitute-types-expr start subs)
               [(ResultSpecSubExpr.Ok rewritten-start)
@@ -5608,7 +5598,7 @@
 
 (define (spec-substitute-types-expr-list
   [exprs : AstExprList]
-  [subs : SpecTypeSubst]) : ResultSpecSubExprList
+  [subs : spec_type_binding_vec.Vec]) : ResultSpecSubExprList
   (let
     [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
     (match (spec-substitute-types-expr-list-at (& exprs) 0 subs (&mut out))
@@ -5618,7 +5608,7 @@
 (define (spec-substitute-types-expr-list-at
   [exprs : (& exprs AstExprList)]
   [index : i64]
-  [subs : SpecTypeSubst]
+  [subs : spec_type_binding_vec.Vec]
   [out : (&mut out AstExprList)]) : ResultSpecSubExprListBuild
   (if (>= index (struct-get exprs len))
     (ResultSpecSubExprListBuild.Ok)
@@ -5633,7 +5623,7 @@
 
 (define (spec-substitute-types-let-bindings
   [bindings : AstLetBindingList]
-  [subs : SpecTypeSubst]) : ResultSpecSubLetBindingList
+  [subs : spec_type_binding_vec.Vec]) : ResultSpecSubLetBindingList
   (let
     [out : AstLetBindingList
       (ast-let-binding-list-with-capacity
@@ -5651,7 +5641,7 @@
 (define (spec-substitute-types-let-bindings-at
   [bindings : (& bindings AstLetBindingList)]
   [index : i64]
-  [subs : SpecTypeSubst]
+  [subs : spec_type_binding_vec.Vec]
   [out : (&mut out AstLetBindingList)]) : ResultSpecSubLetBindingListBuild
   (if (>= index (ast-let-binding-list-len bindings))
     (ResultSpecSubLetBindingListBuild.Ok)
@@ -5678,7 +5668,7 @@
 
 (define (spec-substitute-types-match-arms
   [arms : AstMatchArmList]
-  [subs : SpecTypeSubst]) : ResultSpecSubMatchArmList
+  [subs : spec_type_binding_vec.Vec]) : ResultSpecSubMatchArmList
   (let
     [out : AstMatchArmList
       (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
@@ -5690,7 +5680,7 @@
 (define (spec-substitute-types-match-arms-at
   [arms : (& arms AstMatchArmList)]
   [index : i64]
-  [subs : SpecTypeSubst]
+  [subs : spec_type_binding_vec.Vec]
   [out : (&mut out AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
   (if (>= index (struct-get arms len))
     (ResultSpecSubMatchArmListBuild.Ok)
@@ -5914,8 +5904,8 @@
         [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            [templates : SpecTemplateList (spec-collect-templates decls)]
-            (if (= (struct-get templates len) 0)
+            [templates : spec_template_vec.Vec (spec-collect-templates decls)]
+            (if (= (spec_template_vec.len (& templates)) 0)
               (ResultSpecProgram.Ok normalized)
               (match (spec-rewrite-decls
                 decls
@@ -5945,8 +5935,8 @@
         [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            [templates : SpecTemplateList (spec-collect-templates decls)]
-            (if (= (struct-get templates len) 0)
+            [templates : spec_template_vec.Vec (spec-collect-templates decls)]
+            (if (= (spec_template_vec.len (& templates)) 0)
               (ResultSpecProgramWithPaths.Ok normalized normalized-paths)
               (match (spec-rewrite-decls-with-paths
                 decls
@@ -6042,9 +6032,9 @@
         (if (gen-decls-needed? decls)
           true
           (let
-            [templates : SpecTemplateList
+            [templates : spec_template_vec.Vec
               (spec-collect-templates-with-pools pools decls)]
-            (> (struct-get templates len) 0))))]))
+            (> (spec_template_vec.len (& templates)) 0))))]))
 
 (define (compiler-specialize-needed? [program : AstProgram]) : bool
   (compiler-specialize-needed-with-pools
@@ -6159,11 +6149,11 @@
 
 (define (compiler-specialize-raw-pointer-type-ok?) : bool
   (let
-    [subs : SpecTypeSubst
+    [subs : spec_type_binding_vec.Vec
       (spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
         (AstType.I64)
-        (spec-type-subst-new))]
+        (spec_type_binding_vec.new))]
     (and
       (string.eq (spec-type-key (ast-ty-ptr (AstType.I64))) "ptr_i64")
       (string.eq
@@ -6183,22 +6173,20 @@
 ;: encode without punctuation that could break generated identifiers.
 (define (compiler-specialize-name-key-ok?) : bool
   (let
-    [vals-i64 : SpecValueList
+    [vals-i64 : spec_value_vec.Vec
       (spec-value-cons
         (CompilerCtfeValue.Type (AstType.I64))
-        (spec-value-list-new))]
-    [vals-bool : SpecValueList
+        (spec_value_vec.new))]
+    [vals-bool : spec_value_vec.Vec
       (spec-value-cons
         (CompilerCtfeValue.Type (AstType.Bool))
-        (spec-value-list-new))]
-    [vals-multi : SpecValueList
+        (spec_value_vec.new))]
+    [vals-multi : spec_value_vec.Vec
       (spec-value-cons
         (CompilerCtfeValue.Type (AstType.I64))
-        (spec-value-cons (CompilerCtfeValue.I64 5) (spec-value-list-new)))]
-    [vals-string : SpecValueList
-      (spec-value-cons
-        (ctfe-generated-string-value "a b")
-        (spec-value-list-new))]
+        (spec-value-cons (CompilerCtfeValue.I64 5) (spec_value_vec.new)))]
+    [vals-string : spec_value_vec.Vec
+      (spec-value-cons (ctfe-generated-string-value "a b") (spec_value_vec.new))]
     (and
       (string.eq
         (spec-specialized-name "alloc" vals-i64)
@@ -6293,11 +6281,11 @@
 ;: the single MutPtr case embedded in `compiler-specialize-raw-pointer-type-ok?`.
 (define (compiler-specialize-subst-ok?) : bool
   (let
-    [subs : SpecTypeSubst
+    [subs : spec_type_binding_vec.Vec
       (spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
         (AstType.I64)
-        (spec-type-subst-new))]
+        (spec_type_binding_vec.new))]
     (and
       (string.eq
         (spec-type-key
@@ -6340,11 +6328,11 @@
 ;: variables and literals unchanged, and recurses through compound expressions.
 (define (compiler-specialize-value-subst-ok?) : bool
   (let
-    [subs : SpecValueSubst
+    [subs : spec_value_binding_vec.Vec
       (spec-value-subst-cons
         cbi.compiler-builtin-id-fix-x
         (CompilerCtfeValue.I64 5)
-        (spec-value-subst-new))]
+        (spec_value_binding_vec.new))]
     (and
       ;; mapped variable x -> integer literal 5
       (match (spec-substitute-values-expr
@@ -6395,18 +6383,18 @@
 
 (define (compiler-specialize-boxed-tails-ok?) : bool
   (let
-    [templates : SpecTemplateList
+    [templates : spec_template_vec.Vec
       (let
-        [out : SpecTemplateList (spec-template-list-new)]
+        [out : spec_template_vec.Vec (spec_template_vec.new)]
         (begin
-          (spec-template-list-push
+          (spec_template_vec.push
             (&mut out)
             (SpecTemplate.Item
               cbi.compiler-builtin-id-fix-x
               (ast-param-list-new)
               (AstType.I64)
               (AstExpr.Literal (ast-lit-int 1))))
-          (spec-template-list-push
+          (spec_template_vec.push
             (&mut out)
             (SpecTemplate.Item
               cbi.compiler-builtin-id-fix-second
@@ -6428,26 +6416,26 @@
             cbi.compiler-builtin-id-fix-x
             cbi.compiler-builtin-id-fix-x)
           seed-cache))]
-    [values : SpecValueList
+    [values : spec_value_vec.Vec
       (spec-value-cons
         (CompilerCtfeValue.I64 1)
-        (spec-value-cons (CompilerCtfeValue.Bool true) (spec-value-list-new)))]
-    [value-subs : SpecValueSubst
+        (spec-value-cons (CompilerCtfeValue.Bool true) (spec_value_vec.new)))]
+    [value-subs : spec_value_binding_vec.Vec
       (spec-value-subst-cons
         cbi.compiler-builtin-id-fix-x
         (CompilerCtfeValue.I64 1)
         (spec-value-subst-cons
           cbi.compiler-builtin-id-fix-flag
           (CompilerCtfeValue.Bool true)
-          (spec-value-subst-new)))]
-    [type-subs : SpecTypeSubst
+          (spec_value_binding_vec.new)))]
+    [type-subs : spec_type_binding_vec.Vec
       (spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
         (AstType.I64)
         (spec-type-subst-cons
           cbi.compiler-builtin-id-fix-U
           (AstType.Bool)
-          (spec-type-subst-new)))]
+          (spec_type_binding_vec.new)))]
     (and
       (match (spec-template-lookup
         template-env

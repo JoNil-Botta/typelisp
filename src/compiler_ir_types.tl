@@ -202,6 +202,11 @@
             (arena.tl_arena_set previous-arena))
           id))]))
 
+;: Number of distinct labels interned so far. Ids are dense in [0, count),
+;: so a side table indexed by label id needs exactly this many slots.
+(define (compiler-ir-label-count-value) : i64
+  compiler-ir-label-count)
+
 (define (compiler-ir-label-text [label : i64]) : String
   (if (or (< label 0) (>= label compiler-ir-label-count))
     ""

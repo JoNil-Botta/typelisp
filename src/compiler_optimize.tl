@@ -7438,6 +7438,59 @@
   (Nil)
   (Cons i64 (Box OptI64List)))
 
+;; Label id -> dense CFG index, without a hash map. Block labels are interned
+;; ids drawn densely from `compiler-ir-label-count`, so one array indexed by the
+;; label id answers the query directly. A per-build generation stamp makes
+;; "belongs to this CFG" a compare instead of a clear, so a rebuild costs one
+;; counter bump rather than a pass over the table (refs #5718, proposal 3).
+(define opt-cfg-label-slot : (Array i64)
+  (array.make-array i64 1))
+(define opt-cfg-label-stamp : (Array i64)
+  (array.make-array i64 1))
+(define opt-cfg-label-generation : i64
+  0)
+
+;; The table outlives every optimizer scratch rewind, so it is bound in the IR
+;; label arena -- the same dedicated, never-reset arena the label pool uses.
+;; Growing it in the ambient arena instead leaves the globals pointing into
+;; memory a later rewind frees.
+(define (opt-cfg-label-table-reserve! [count : i64]) : unit
+  (if (<= count (array-length opt-cfg-label-slot))
+    unit
+    (let
+      [size : i64 (array-length opt-cfg-label-slot)]
+      [previous-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (while (< size count)
+          (set! size (* size 2)))
+        (unsafe (arena.tl_arena_set (compiler-ir-label-arena)))
+        (set! opt-cfg-label-slot (array.make-array i64 size))
+        (set! opt-cfg-label-stamp (array.make-array i64 size))
+        (unsafe (arena.tl_arena_set previous-arena))
+        ;; A fresh stamp array reads as generation 0, so restart the counter
+        ;; above it rather than leaving stale entries live.
+        (set! opt-cfg-label-generation 0)))))
+
+(define (opt-cfg-label-table-begin!) : i64
+  (begin
+    (opt-cfg-label-table-reserve! (compiler-ir-label-count-value))
+    (set! opt-cfg-label-generation (+ opt-cfg-label-generation 1))
+    opt-cfg-label-generation))
+
+(define (opt-cfg-label-table-put! [label : i64] [id : i64] [generation : i64]) : unit
+  (if (or (< label 0) (>= label (array-length opt-cfg-label-slot)))
+    unit
+    (begin
+      (array-set! opt-cfg-label-slot label id)
+      (array-set! opt-cfg-label-stamp label generation))))
+
+(define (opt-cfg-label-table-get [label : i64] [generation : i64]) : i64
+  (if (or (< label 0) (>= label (array-length opt-cfg-label-stamp)))
+    -1
+    (if (= (array-ref opt-cfg-label-stamp label) generation)
+      (array-ref opt-cfg-label-slot label)
+      -1)))
+
 (defstruct OptCfgCsr
   (offsets (Array i64))
   (edges (Array i64)))
@@ -7449,7 +7502,8 @@
 ;; they replace rebuilding a label map and rehashing every label and every
 ;; successor edge, once per verified function (refs #5718).
 (defstruct OptCfgIndex
-  (ids opt_string_i64_map.Map)
+  (label-generation i64)
+  (labels-unique bool)
   (labels (Array i64))
   (succs OptCfgCsr)
   (preds OptCfgCsr)
@@ -7469,12 +7523,13 @@
 
 (define (opt-cfg-index-fill-label-seq!
   [blocks : CompilerIrBlockSeq]
-  [ids : opt_string_i64_map.Map]
+  [generation : i64]
   [labels : (Array i64)]
-  [base : i64]) : opt_string_i64_map.Map
+  [base : i64]) : bool
   (let
     [index : i64 0]
     [count : i64 (compiler-ir-block-seq-count blocks)]
+    [unique : bool true]
     (begin
       (while (< index count)
         (begin
@@ -7482,26 +7537,39 @@
             [(CompilerIrBlock.Block label _)
               (begin
                 (array-set! labels (+ base index) label)
-                (opt_string_i64_map.insert-ref! (&mut ids) label (+ base index)))])
+                (if (>= (opt-cfg-label-table-get label generation) 0)
+                  (set! unique false)
+                  unit)
+                (opt-cfg-label-table-put! label (+ base index) generation))])
           (set! index (+ index 1))))
-      ids)))
+      unique)))
 
 (define (opt-cfg-index-fill-labels!
   [blocks : CompilerIrBlockList]
-  [ids : opt_string_i64_map.Map]
+  [generation : i64]
   [labels : (Array i64)]
-  [index : i64]) : opt_string_i64_map.Map
+  [index : i64]) : bool
   (match blocks
-    [(CompilerIrBlockList.Nil) ids]
+    [(CompilerIrBlockList.Nil) true]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
-          (begin
-            (array-set! labels index label)
-            (opt_string_i64_map.insert-ref! (&mut ids) label index)
-            (opt-cfg-index-fill-labels! (box-get rest) ids labels (+ index 1)))])]
+          (let
+            [fresh : bool (< (opt-cfg-label-table-get label generation) 0)]
+            (begin
+              (array-set! labels index label)
+              (opt-cfg-label-table-put! label index generation)
+              ;; the recursion runs first: `and` short-circuits and the rest of
+              ;; the labels still have to be stamped
+              (and
+                (opt-cfg-index-fill-labels!
+                  (box-get rest)
+                  generation
+                  labels
+                  (+ index 1))
+                fresh)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-index-fill-label-seq! seq ids labels index)]))
+      (opt-cfg-index-fill-label-seq! seq generation labels index)]))
 
 (define (opt-i64-list-contains? [items : OptI64List] [value : i64]) : bool
   (match items
@@ -7570,16 +7638,17 @@
 
 (define (opt-cfg-index-label-set-to-ids
   [labels : OptLabelSet]
-  [ids : opt_string_i64_map.Map]) : OptI64List
+  [generation : i64]) : OptI64List
   (match labels
     [(OptLabelSet.Nil) (OptI64List.Nil)]
     [(OptLabelSet.Cons label rest)
       (let
-        [tail : OptI64List (opt-cfg-index-label-set-to-ids (box-get rest) ids)]
-        (match (opt_string_i64_map.get (& ids) label)
-          [(opt_string_i64_map.LookupFound idx)
-            (OptI64List.Cons idx (box tail))]
-          [(opt_string_i64_map.LookupMissing) tail]))]))
+        [tail : OptI64List
+          (opt-cfg-index-label-set-to-ids (box-get rest) generation)]
+        [idx : i64 (opt-cfg-label-table-get label generation)]
+        (if (< idx 0)
+          tail
+          (OptI64List.Cons idx (box tail))))]))
 
 ;; The successor row for this block already holds every resolved target id, in
 ;; label-set order, with unresolvable labels dropped -- exactly the sequence the
@@ -7609,7 +7678,7 @@
 ;; map and reprobing it.
 (define (opt-cfg-index-fill-row-seq!
   [blocks : CompilerIrBlockSeq]
-  [ids : opt_string_i64_map.Map]
+  [generation : i64]
   [succ-rows : (Array OptI64List)]
   [pred-rows : (Array OptI64List)]
   [base : i64]) : bool
@@ -7629,7 +7698,8 @@
           [succs : OptLabelSet
             (opt-cfg-block-successors-with-next block next-label)]
           [row : i64 (+ base index)]
-          [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
+          [succ-ids : OptI64List
+            (opt-cfg-index-label-set-to-ids succs generation)]
           (begin
             (array-set! succ-rows row succ-ids)
             (opt-cfg-index-add-pred-edges-from-ids! pred-rows row succ-ids)
@@ -7641,7 +7711,7 @@
 
 (define (opt-cfg-index-fill-rows!
   [blocks : CompilerIrBlockList]
-  [ids : opt_string_i64_map.Map]
+  [generation : i64]
   [succ-rows : (Array OptI64List)]
   [pred-rows : (Array OptI64List)]
   [index : i64]) : bool
@@ -7655,7 +7725,8 @@
               (opt-cfg-block-successors-with-next
                 block
                 (opt-cfg-entry-label (box-get rest)))]
-            [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
+            [succ-ids : OptI64List
+              (opt-cfg-index-label-set-to-ids succs generation)]
             [known : bool
               (= (opt-label-count succs) (opt-i64-list-count succ-ids))]
             (begin
@@ -7666,13 +7737,13 @@
               (and
                 (opt-cfg-index-fill-rows!
                   (box-get rest)
-                  ids
+                  generation
                   succ-rows
                   pred-rows
                   (+ index 1))
                 known)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-index-fill-row-seq! seq ids succ-rows pred-rows index)]))
+      (opt-cfg-index-fill-row-seq! seq generation succ-rows pred-rows index)]))
 
 (define (opt-cfg-csr-fill-rows!
   [rows : (Array OptI64List)]
@@ -7803,12 +7874,9 @@
   (let
     [count : i64 (compiler-ir-block-list-count blocks)]
     [labels : (Array i64) (array.make-array i64 count)]
-    [ids : opt_string_i64_map.Map
-      (opt-cfg-index-fill-labels!
-        blocks
-        (opt_string_i64_map.with-capacity (opt-pred-map-capacity count))
-        labels
-        0)]
+    [generation : i64 (opt-cfg-label-table-begin!)]
+    [labels-unique : bool
+      (opt-cfg-index-fill-labels! blocks generation labels 0)]
     [succ-rows : (Array OptI64List) (array.make-array OptI64List count)]
     [pred-rows : (Array OptI64List) (array.make-array OptI64List count)]
     [reachable : (Array bool) (array.make-array bool count)]
@@ -7822,7 +7890,7 @@
       (opt-cfg-i64-list-array-fill-empty! pred-rows count)
       (set!
         targets-known
-        (opt-cfg-index-fill-rows! blocks ids succ-rows pred-rows 0))
+        (opt-cfg-index-fill-rows! blocks generation succ-rows pred-rows 0))
       (opt-cfg-fill-bool! reachable count false)
       (opt-cfg-fill-i64! postorder count (- 0 1))
       (opt-cfg-fill-i64! rpo count (- 0 1))
@@ -7839,7 +7907,8 @@
           (opt-cfg-index-fill-rpo! postorder rpo reach-count 0)
           (opt-cfg-index-fill-rpo-num! rpo rpo-num reach-count 0)
           (OptCfgIndex
-            ids
+            generation
+            labels-unique
             labels
             succ-csr
             pred-csr
@@ -7855,19 +7924,31 @@
 ;; `opt-cfg-index-fill-labels!` inserts one entry per block and a repeated label
 ;; overwrites rather than adds, so a short id map is exactly a duplicate label.
 (define (opt-cfg-index-labels-unique? [index : OptCfgIndex]) : bool
-  (=
-    (opt_string_i64_map.len (& (struct-get index ids)))
-    (opt-cfg-index-block-count index)))
+  (struct-get index labels-unique))
 
 (define (opt-cfg-index-label [index : OptCfgIndex] [id : i64]) : i64
   (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
     (array-ref (struct-get index labels) id)
     (compiler-ir-label-none)))
 
+;; The shared table holds one build at a time. An index that is still live when
+;; a later build stamps over it therefore misses, and falls back to scanning its
+;; own id -> label array -- correct either way, because the fast path is only
+;; taken when the stamp proves the slot belongs to this build.
+(define (opt-cfg-index-id-scan [labels : (Array i64)] [label : i64] [id : i64]) : option_i64.Option
+  (if (>= id (array-length labels))
+    (option_i64.None)
+    (if (= (array-ref labels id) label)
+      (option_i64.Some id)
+      (opt-cfg-index-id-scan labels label (+ id 1)))))
+
 (define (opt-cfg-index-id [index : OptCfgIndex] [label : i64]) : option_i64.Option
-  (match (opt_string_i64_map.get (& (struct-get index ids)) label)
-    [(opt_string_i64_map.LookupFound id) (option_i64.Some id)]
-    [(opt_string_i64_map.LookupMissing) (option_i64.None)]))
+  (let
+    [id : i64
+      (opt-cfg-label-table-get label (struct-get index label-generation))]
+    (if (>= id 0)
+      (option_i64.Some id)
+      (opt-cfg-index-id-scan (struct-get index labels) label 0))))
 
 (define (opt-cfg-index-row-labels-from
   [index : OptCfgIndex]

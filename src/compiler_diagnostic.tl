@@ -1303,51 +1303,42 @@
 
 (define (compiler-diagnostic-typecheck-code-kinds-ok?) : bool
   (and
-    (and
-      (and
-        (compiler-diagnostic-typecheck-code-kind-is?
-          "typecheck: unbound name io/print-line"
-          (compiler-diagnostic-code-typecheck-unbound-name))
-        (compiler-diagnostic-typecheck-code-kind-is?
-          "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments"
-          (compiler-diagnostic-code-typecheck-arity-mismatch)))
-      (and
-        (compiler-diagnostic-typecheck-code-kind-is?
-          "typecheck: pattern arity mismatch"
-          (compiler-diagnostic-code-typecheck-arity-mismatch))
-        (compiler-diagnostic-typecheck-code-kind-is?
-          "typecheck: annotation type mismatch: expected i64, found bool"
-          (compiler-diagnostic-code-typecheck-type-mismatch))))
-    (and
-      (and
-        ;; The wording the exhaustiveness check actually emits. Pinning the
-        ;; other spelling alone let this rule pass while never firing on a real
-        ;; compile, which is how the first version of this shipped E0200 for a
-        ;; missing match arm.
-        (and
-          (compiler-diagnostic-typecheck-code-kind-is?
-            "typecheck: match missing arm for variant Err"
-            (compiler-diagnostic-code-typecheck-non-exhaustive-match))
-          (compiler-diagnostic-typecheck-code-kind-is?
-            "typecheck: non-exhaustive match"
-            (compiler-diagnostic-code-typecheck-non-exhaustive-match)))
-        (compiler-diagnostic-typecheck-code-kind-is?
-          "typecheck: unknown struct field len"
-          (compiler-diagnostic-code-typecheck-unknown-struct-field)))
-      (and
-        (compiler-diagnostic-typecheck-code-kind-is?
-          "typecheck: region-tagged value cannot escape its arena"
-          (compiler-diagnostic-code-typecheck-region-escape))
-        (and
-          ;; unclassified kinds keep the generic code
-          (compiler-diagnostic-typecheck-code-kind-is?
-            "typecheck: nominal type not found Foo"
-            (compiler-diagnostic-code-typecheck))
-          ;; the six codes must be distinct from each other and from E0200
-          (not
-            (string.eq
-              (compiler-diagnostic-code-typecheck-arity-mismatch)
-              (compiler-diagnostic-code-typecheck-type-mismatch))))))))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: unbound name io/print-line"
+      (compiler-diagnostic-code-typecheck-unbound-name))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments"
+      (compiler-diagnostic-code-typecheck-arity-mismatch))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: pattern arity mismatch"
+      (compiler-diagnostic-code-typecheck-arity-mismatch))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: annotation type mismatch: expected i64, found bool"
+      (compiler-diagnostic-code-typecheck-type-mismatch))
+    ;; The wording the exhaustiveness check actually emits. Pinning the other
+    ;; spelling alone let that rule pass while never firing on a real compile,
+    ;; which is how the first version of this shipped E0200 for a missing arm.
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: match missing arm for variant Err"
+      (compiler-diagnostic-code-typecheck-non-exhaustive-match))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: non-exhaustive match"
+      (compiler-diagnostic-code-typecheck-non-exhaustive-match))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: unknown struct field len"
+      (compiler-diagnostic-code-typecheck-unknown-struct-field))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: region-tagged value cannot escape its arena"
+      (compiler-diagnostic-code-typecheck-region-escape))
+    ;; an unclassified kind keeps the generic code
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: nominal type not found Foo"
+      (compiler-diagnostic-code-typecheck))
+    ;; the codes must actually differ from one another
+    (not
+      (string.eq
+        (compiler-diagnostic-code-typecheck-arity-mismatch)
+        (compiler-diagnostic-code-typecheck-type-mismatch)))))
 
 (define (compiler-diagnostic-self-test) : i64
   (begin

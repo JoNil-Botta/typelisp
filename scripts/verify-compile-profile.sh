@@ -1388,6 +1388,8 @@ if ! cmp -s "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
     diff -u "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
         "$STDLIB_TLCI_FOLDS_MODIFIED_ASM" >&2 || true
     fail "native and interpreted index folds produced different assembly"
+fi
+
 # Native-vs-interpreted parity over the computed string-dispatch scrutinees
 # (#5604): `(type-kind (comptime.expr-type e))` and `(type-key T)` probes pick
 # an arm inside the native entry, so a wrong probe result silently selects a

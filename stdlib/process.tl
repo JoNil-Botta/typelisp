@@ -15,14 +15,18 @@
 ;#
 ;# Usage: `(import stdlib.process)`
 ;#
+(import stdlib.array)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 
-;: Immutable list of process argument strings in argv order.
-(defenum ProcessStringList
-  (ProcessStringNil)
-  (ProcessStringCons String (Box ProcessStringList)))
+;: Immutable sequence of process argument strings in argv order. `slots` holds
+;: the `len` live entries. Sequences are shared persistently, so helpers that
+;: extend one copy into a right-sized array instead of mutating storage another
+;: value still observes.
+(defstruct ProcessStringList
+  (slots (Array String))
+  (len i64))
 
 ;: Optional string value used for cwd and stdin configuration.
 (defenum ProcessMaybeString
@@ -111,12 +115,25 @@
   (OkProcessChild ProcessChild)
   (ErrProcessChild ProcessError))
 
-;: Return a destructured step from an argv list.
+;: Return a destructured step from an argv list. The tail is copied into a
+;: right-sized array so the stepped-over sequence keeps its own storage.
 (define (string-step [args : ProcessStringList]) : ProcessStringStep
-  (match args
-    [(ProcessStringNil) (ProcessStringStep false "" (ProcessStringNil))]
-    [(ProcessStringCons value rest)
-      (ProcessStringStep true value (box-get rest))]))
+  (let
+    [n : i64 (- (struct-get args len) 1)]
+    (if (< n 0)
+      (ProcessStringStep false "" (args-empty))
+      (let
+        [slots : (Array String) (array.make-array String n)]
+        [i : i64 0]
+        (begin
+          (while (< i n)
+            (begin
+              (array-set! slots i (array-ref (struct-get args slots) (+ i 1)))
+              (set! i (+ i 1))))
+          (ProcessStringStep
+            true
+            (array-ref (struct-get args slots) 0)
+            (ProcessStringList slots n)))))))
 
 ;: Return whether a destructured argv step contains an item.
 (define (string-step-present? [step : ProcessStringStep]) : bool
@@ -169,46 +186,73 @@
 
 ;: Return an empty argument list.
 (define (args-empty) : ProcessStringList
-  (ProcessStringNil))
+  (ProcessStringList (array.make-array String 0) 0))
 
 ;: Return the number of argv entries in `args`.
 (define (args-count [args : ProcessStringList]) : i64
-  (match args
-    [(ProcessStringNil) 0]
-    [(ProcessStringCons _ rest) (+ 1 (args-count (box-get rest)))]))
+  (struct-get args len))
+
+;: Return the argv entry at `index`, or the empty string when out of range.
+(define (args-ref [args : ProcessStringList] [index : i64]) : String
+  (if (and (>= index 0) (< index (struct-get args len)))
+    (array-ref (struct-get args slots) index)
+    ""))
+
+;: Copy the `len` live entries of `args` into `dst` starting at `offset`.
+(define (args-copy-into
+  [dst : (&mut dst (Array String))]
+  [args : ProcessStringList]
+  [offset : i64]) : unit
+  (let
+    [n : i64 (struct-get args len)]
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! dst (+ offset i) (array-ref (struct-get args slots) i))
+        (set! i (+ i 1))))))
 
 ;: Prepend an owned argument string to an argv list.
 (define (args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
-  (ProcessStringCons value (box rest)))
+  (let
+    [n : i64 (struct-get rest len)]
+    [slots : (Array String) (array.make-array String (+ n 1))]
+    (begin
+      (array-set! slots 0 value)
+      (args-copy-into (&mut slots) rest 1)
+      (ProcessStringList slots (+ n 1)))))
 
 ;: Return a one-element argument list backed by an owned string.
 (define (args-single [value : String]) : ProcessStringList
-  (ProcessStringCons value (box (ProcessStringNil))))
+  (let
+    [slots : (Array String) (array.make-array String 1)]
+    (begin
+      (array-set! slots 0 value)
+      (ProcessStringList slots 1))))
 
 ;: Concatenate two argument lists while preserving argv order.
 (define (args-append [left : ProcessStringList] [right : ProcessStringList]) : ProcessStringList
-  (match left
-    [(ProcessStringNil) right]
-    [(ProcessStringCons value rest)
-      (ProcessStringCons value (box (args-append (box-get rest) right)))]))
+  (let
+    [ln : i64 (struct-get left len)]
+    [rn : i64 (struct-get right len)]
+    [slots : (Array String) (array.make-array String (+ ln rn))]
+    (begin
+      (args-copy-into (&mut slots) left 0)
+      (args-copy-into (&mut slots) right ln)
+      (ProcessStringList slots (+ ln rn)))))
 
-;: Convert a generated string-vector argv buffer to the list representation
-;: consumed by `ProcessCommand`, preserving vector order.
-(define (args-from-string-vec-from
-  [args : (& args svec.Vec)]
-  [index : i64]
-  [out : ProcessStringList]) : ProcessStringList
-  (if (< index 0)
-    out
-    (args-from-string-vec-from
-      args
-      (- index 1)
-      (args-cons (svec.get args index "") out))))
-
-;: Convert a generated string-vector argv buffer to the list representation
+;: Convert a generated string-vector argv buffer to the sequence representation
 ;: consumed by `ProcessCommand`, preserving vector order.
 (define (args-from-string-vec [args : (& args svec.Vec)]) : ProcessStringList
-  (args-from-string-vec-from args (- (svec.len args) 1) (ProcessStringNil)))
+  (let
+    [n : i64 (svec.len args)]
+    [slots : (Array String) (array.make-array String n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! slots i (svec.get args i ""))
+          (set! i (+ i 1))))
+      (ProcessStringList slots n))))
 
 ;: Return an empty environment override list.
 (define (env-empty) : ProcessEnvList
@@ -709,15 +753,22 @@
 ;: data model and validation helpers so the runtime sees a complete module.
 (import stdlib.process_runtime)
 
+;: Convert public argv storage to the runtime module's no-cycle representation,
+;: walking backwards so the emitted list keeps argv order.
+(define (runtime-args-from
+  [args : ProcessStringList]
+  [index : i64]
+  [out : process_runtime.ProcessRuntimeStringList]) : process_runtime.ProcessRuntimeStringList
+  (if (< index 0)
+    out
+    (runtime-args-from
+      args
+      (- index 1)
+      (process_runtime.args-cons (args-ref args index) out))))
+
 ;: Convert public argv storage to the runtime module's no-cycle representation.
 (define (runtime-args [args : ProcessStringList]) : process_runtime.ProcessRuntimeStringList
-  (let
-    [step : ProcessStringStep (string-step args)]
-    (if (string-step-present? step)
-      (process_runtime.args-cons
-        (string-step-value step)
-        (runtime-args (string-step-rest step)))
-      (process_runtime.args-empty))))
+  (runtime-args-from args (- (args-count args) 1) (process_runtime.args-empty)))
 
 ;: Convert public env storage to the runtime module's no-cycle representation.
 (define (runtime-env [env : ProcessEnvList]) : process_runtime.ProcessRuntimeEnvList
@@ -855,36 +906,23 @@
 
 ;: Inline test assertion for an empty process string list.
 (define (test-assert-string-empty [items : ProcessStringList]) : unit
-  (match items
-    [(ProcessStringNil) unit]
-    [(ProcessStringCons _ _) (test-fail)]))
+  (test-assert-i64-eq (args-count items) 0))
 
 ;: Inline test assertion for a one-item process string list.
 (define (test-assert-string-list1 [items : ProcessStringList] [first : String]) : unit
-  (match items
-    [(ProcessStringCons a rest)
-      (match (box-get rest)
-        [(ProcessStringNil) (test-assert-string-eq a first)]
-        [_ (test-fail)])]
-    [_ (test-fail)]))
+  (begin
+    (test-assert-i64-eq (args-count items) 1)
+    (test-assert-string-eq (args-ref items 0) first)))
 
 ;: Inline test assertion for a two-item process string list.
 (define (test-assert-string-list2
   [items : ProcessStringList]
   [first : String]
   [second : String]) : unit
-  (match items
-    [(ProcessStringCons a rest)
-      (match (box-get rest)
-        [(ProcessStringCons b tail)
-          (match (box-get tail)
-            [(ProcessStringNil)
-              (begin
-                (test-assert-string-eq a first)
-                (test-assert-string-eq b second))]
-            [_ (test-fail)])]
-        [_ (test-fail)])]
-    [_ (test-fail)]))
+  (begin
+    (test-assert-i64-eq (args-count items) 2)
+    (test-assert-string-eq (args-ref items 0) first)
+    (test-assert-string-eq (args-ref items 1) second)))
 
 ;: Inline test assertion for a three-item process string list.
 (define (test-assert-string-list3
@@ -892,22 +930,11 @@
   [first : String]
   [second : String]
   [third : String]) : unit
-  (match items
-    [(ProcessStringCons a rest)
-      (match (box-get rest)
-        [(ProcessStringCons b more)
-          (match (box-get more)
-            [(ProcessStringCons c tail)
-              (match (box-get tail)
-                [(ProcessStringNil)
-                  (begin
-                    (test-assert-string-eq a first)
-                    (test-assert-string-eq b second)
-                    (test-assert-string-eq c third))]
-                [_ (test-fail)])]
-            [_ (test-fail)])]
-        [_ (test-fail)])]
-    [_ (test-fail)]))
+  (begin
+    (test-assert-i64-eq (args-count items) 3)
+    (test-assert-string-eq (args-ref items 0) first)
+    (test-assert-string-eq (args-ref items 1) second)
+    (test-assert-string-eq (args-ref items 2) third)))
 
 ;: Inline test assertion for a present optional process string.
 (define (test-assert-some-string

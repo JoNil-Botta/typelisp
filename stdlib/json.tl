@@ -29,73 +29,92 @@
   (JsonBool bool)
   (JsonNumber String)
   (JsonString String)
-  (JsonArray (Box JsonList))
-  (JsonObject (Box JsonMemberList)))
+  (JsonArray (Box JsonSeq))
+  (JsonObject (Box JsonMemberSeq)))
 
 ;: Strategy value wrapper used by `stdlib.serialize`.
 (defenum Value
   (JsonValue Json))
 
-;: Immutable list of JSON array elements in source order.
-(defenum JsonList
-  (JsonListNil)
-  (JsonListCons Json (Box JsonList)))
+;: Immutable contiguous JSON array elements in source order.
+(defstruct JsonSeq
+  (slots (Array Json))
+  (len i64))
 
-;: Immutable list of JSON object members in source order.
-(defenum JsonMemberList
-  (JsonMemberListNil)
-  (JsonMemberListCons String Json (Box JsonMemberList)))
-
-;: Internal parser-builder object member stored in the generated member vector.
+;: One JSON object member stored in a member sequence or builder vector.
 (defstruct JsonMember
   (key String)
   (value Json))
 
+;: Immutable contiguous JSON object members in source order.
+(defstruct JsonMemberSeq
+  (slots (Array JsonMember))
+  (len i64))
+
 (import (vector.vector Json core) as jvec)
 (import (vector.vector JsonMember core) as jmvec)
 
-;: Convert builder elements `[0, index]` into a public JSON list.
-(define (vec-to-list-from
-  [items : (& items jvec.Vec)]
-  [index : i64]
-  [acc : JsonList]) : JsonList
-  (if (< index 0)
-    acc
-    (stdlib.json.vec-to-list-from
-      items
-      (- index 1)
-      (JsonListCons (jvec.get items index JsonNull) (box acc)))))
+;: Return the empty JSON array element sequence.
+(define (list-empty) : JsonSeq
+  (JsonSeq (make-array Json 0) 0))
 
-;: Convert an internal JSON element builder into the public list model.
-(define (vec-to-list [items : jvec.Vec]) : JsonList
-  (stdlib.json.vec-to-list-from
-    (& items)
-    (- (jvec.len (& items)) 1)
-    JsonListNil))
+;: Return `items` with `head` prepended, copied into a right-sized array.
+(define (list-cons [head : Json] [items : JsonSeq]) : JsonSeq
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array Json) (make-array Json (+ n 1))]
+    [i : i64 0]
+    (begin
+      (array-set! slots 0 head)
+      (while (< i n)
+        (begin
+          (array-set! slots (+ i 1) (array-ref (struct-get items slots) i))
+          (set! i (+ i 1))))
+      (JsonSeq slots (+ n 1)))))
 
-;: Convert builder members `[0, index]` into a public JSON member list.
-(define (member-vec-to-list-from
-  [items : (& items jmvec.Vec)]
-  [index : i64]
-  [acc : JsonMemberList]) : JsonMemberList
-  (if (< index 0)
-    acc
-    (let
-      [member : JsonMember (jmvec.get items index (JsonMember "" JsonNull))]
-      (stdlib.json.member-vec-to-list-from
-        items
-        (- index 1)
-        (JsonMemberListCons
-          (struct-get member key)
-          (struct-get member value)
-          (box acc))))))
+;: Return the empty JSON object member sequence.
+(define (member-list-empty) : JsonMemberSeq
+  (JsonMemberSeq (make-array JsonMember 0) 0))
 
-;: Convert an internal JSON member builder into the public list model.
-(define (member-vec-to-list [items : jmvec.Vec]) : JsonMemberList
-  (stdlib.json.member-vec-to-list-from
-    (& items)
-    (- (jmvec.len (& items)) 1)
-    JsonMemberListNil))
+;: Return `items` with `key`/`value` prepended into a right-sized array.
+(define (member-cons [key : String] [value : Json] [items : JsonMemberSeq]) : JsonMemberSeq
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array JsonMember) (make-array JsonMember (+ n 1))]
+    [i : i64 0]
+    (begin
+      (array-set! slots 0 (JsonMember key value))
+      (while (< i n)
+        (begin
+          (array-set! slots (+ i 1) (array-ref (struct-get items slots) i))
+          (set! i (+ i 1))))
+      (JsonMemberSeq slots (+ n 1)))))
+
+;: Convert an internal JSON element builder into the public sequence model.
+(define (vec-to-list [items : jvec.Vec]) : JsonSeq
+  (let
+    [n : i64 (jvec.len (& items))]
+    [slots : (Array Json) (make-array Json n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! slots i (jvec.get (& items) i JsonNull))
+          (set! i (+ i 1))))
+      (JsonSeq slots n))))
+
+;: Convert an internal JSON member builder into the public sequence model.
+(define (member-vec-to-list [items : jmvec.Vec]) : JsonMemberSeq
+  (let
+    [n : i64 (jmvec.len (& items))]
+    [slots : (Array JsonMember) (make-array JsonMember n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! slots i (jmvec.get (& items) i (JsonMember "" JsonNull)))
+          (set! i (+ i 1))))
+      (JsonMemberSeq slots n))))
 
 ;: Recoverable top-level parse result.
 (defenum JsonParseResult
@@ -265,66 +284,105 @@
               (set! ok false)))
           ok)))))
 
-;: Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
-(define (list-reverse-onto [items : JsonList] [acc : JsonList]) : JsonList
-  (match items
-    [(JsonListNil) acc]
-    [(JsonListCons head rest)
-      (stdlib.json.list-reverse-onto
-        (box-get rest)
-        (JsonListCons head (box acc)))]))
-
 ;: Return `items` in reverse order.
-(define (list-reverse [items : JsonList]) : JsonList
-  (stdlib.json.list-reverse-onto items JsonListNil))
-
-;: Reverse object `items` onto `acc`, allocating a fresh active-arena list spine.
-(define (member-list-reverse-onto
-  [items : JsonMemberList]
-  [acc : JsonMemberList]) : JsonMemberList
-  (match items
-    [(JsonMemberListNil) acc]
-    [(JsonMemberListCons key value rest)
-      (stdlib.json.member-list-reverse-onto
-        (box-get rest)
-        (JsonMemberListCons key value (box acc)))]))
+(define (list-reverse [items : JsonSeq]) : JsonSeq
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array Json) (make-array Json n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set!
+            slots
+            i
+            (array-ref (struct-get items slots) (- (- n 1) i)))
+          (set! i (+ i 1))))
+      (JsonSeq slots n))))
 
 ;: Return object `items` in reverse order.
-(define (member-list-reverse [items : JsonMemberList]) : JsonMemberList
-  (stdlib.json.member-list-reverse-onto items JsonMemberListNil))
+(define (member-list-reverse [items : JsonMemberSeq]) : JsonMemberSeq
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array JsonMember) (make-array JsonMember n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set!
+            slots
+            i
+            (array-ref (struct-get items slots) (- (- n 1) i)))
+          (set! i (+ i 1))))
+      (JsonMemberSeq slots n))))
 
-;: Return the number of elements in a JSON array list.
-(define (list-count [items : JsonList]) : i64
-  (match items
-    [(JsonListNil) 0]
-    [(JsonListCons _ rest) (+ 1 (stdlib.json.list-count (box-get rest)))]))
+;: Return the number of elements in a JSON array sequence.
+(define (list-count [items : JsonSeq]) : i64
+  (struct-get items len))
 
 ;: Look up an array element by zero-based index.
-(define (list-get-index [items : JsonList] [index : i64]) : JsonLookup
-  (if (< index 0)
+(define (list-get-index [items : JsonSeq] [index : i64]) : JsonLookup
+  (if (or (< index 0) (>= index (struct-get items len)))
     JsonMissing
-    (match items
-      [(JsonListNil) JsonMissing]
-      [(JsonListCons head rest)
-        (if (= index 0)
-          (JsonFound head)
-          (stdlib.json.list-get-index (box-get rest) (- index 1)))])))
+    (JsonFound (array-ref (struct-get items slots) index))))
 
-;: Return the number of key/value entries in a JSON object member list.
-(define (member-list-count [items : JsonMemberList]) : i64
-  (match items
-    [(JsonMemberListNil) 0]
-    [(JsonMemberListCons _ _ rest)
-      (+ 1 (stdlib.json.member-list-count (box-get rest)))]))
+;: Return `items` without its first element.
+(define (list-rest [items : JsonSeq]) : JsonSeq
+  (let
+    [n : i64 (struct-get items len)]
+    [count : i64
+      (if (< n 1)
+        0
+        (- n 1))]
+    [slots : (Array Json) (make-array Json count)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! slots i (array-ref (struct-get items slots) (+ i 1)))
+          (set! i (+ i 1))))
+      (JsonSeq slots count))))
 
-;: Look up borrowed `key` in an object member list.
-(define (member-list-get [items : JsonMemberList] [key : (& key str)]) : JsonLookup
-  (match items
-    [(JsonMemberListNil) JsonMissing]
-    [(JsonMemberListCons item-key value rest)
-      (if (string.eq (& item-key) key)
-        (JsonFound value)
-        (stdlib.json.member-list-get (box-get rest) key))]))
+;: Return the elements of `left` followed by the elements of `right`.
+(define (list-concat [left : JsonSeq] [right : JsonSeq]) : JsonSeq
+  (let
+    [ln : i64 (struct-get left len)]
+    [rn : i64 (struct-get right len)]
+    [slots : (Array Json) (make-array Json (+ ln rn))]
+    [i : i64 0]
+    (begin
+      (while (< i ln)
+        (begin
+          (array-set! slots i (array-ref (struct-get left slots) i))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i rn)
+        (begin
+          (array-set! slots (+ ln i) (array-ref (struct-get right slots) i))
+          (set! i (+ i 1))))
+      (JsonSeq slots (+ ln rn)))))
+
+;: Return the number of key/value entries in a JSON object member sequence.
+(define (member-list-count [items : JsonMemberSeq]) : i64
+  (struct-get items len))
+
+;: Look up borrowed `key` in an object member sequence.
+(define (member-list-get [items : JsonMemberSeq] [key : (& key str)]) : JsonLookup
+  (let
+    [n : i64 (struct-get items len)]
+    [i : i64 0]
+    [found : JsonLookup JsonMissing]
+    (begin
+      (while (< i n)
+        (let
+          [member : JsonMember (array-ref (struct-get items slots) i)]
+          [item-key : String (struct-get member key)]
+          (if (string.eq (& item-key) key)
+            (begin
+              (set! found (JsonFound (struct-get member value)))
+              (set! i n))
+            (set! i (+ i 1)))))
+      found)))
 
 ;: Compare two owned strings with only safe character indexing.
 (define (string-eq-safe? [left : String] [right : String]) : bool
@@ -345,14 +403,22 @@
               (set! same false)))
           same)))))
 
-;: Look up owned `key` in an object member list without unsafe helpers.
-(define (member-list-get-owned [items : JsonMemberList] [key : String]) : JsonLookup
-  (match items
-    [(JsonMemberListNil) JsonMissing]
-    [(JsonMemberListCons item-key value rest)
-      (if (stdlib.json.string-eq-safe? item-key key)
-        (JsonFound value)
-        (stdlib.json.member-list-get-owned (box-get rest) key))]))
+;: Look up owned `key` in an object member sequence without unsafe helpers.
+(define (member-list-get-owned [items : JsonMemberSeq] [key : String]) : JsonLookup
+  (let
+    [n : i64 (struct-get items len)]
+    [i : i64 0]
+    [found : JsonLookup JsonMissing]
+    (begin
+      (while (< i n)
+        (let
+          [member : JsonMember (array-ref (struct-get items slots) i)]
+          (if (stdlib.json.string-eq-safe? (struct-get member key) key)
+            (begin
+              (set! found (JsonFound (struct-get member value)))
+              (set! i n))
+            (set! i (+ i 1)))))
+      found)))
 
 ;: Look up borrowed `key` in `value` when it is a JSON object.
 ;:
@@ -366,10 +432,10 @@
 ;:     (json.object-get
 ;:       (json.JsonObject
 ;:         (box
-;:           (json.JsonMemberListCons
+;:           (json.member-cons
 ;:             "name"
 ;:             (json.JsonString "tl")
-;:             (box json.JsonMemberListNil))))
+;:             (json.member-list-empty))))
 ;:       (& key))))
 ;: ```
 (define (object-get [value : Json] [key : (& key str)]) : JsonLookup
@@ -470,54 +536,64 @@
       (text_buf.render out))))
 
 ;: Append serialized array elements to `buf`.
-(define (stringify-list-into [items : JsonList] [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match items
-    [(JsonListNil) buf]
-    [(JsonListCons head rest)
-      (let
-        [with-head : text_buf.TextBuf
-          (text_buf.append buf (stdlib.json.stringify head))]
-        (match (box-get rest)
-          [(JsonListNil) with-head]
-          [(JsonListCons _ _)
-            (stdlib.json.stringify-list-into
-              (box-get rest)
-              (text_buf.append with-head ","))]))]))
+(define (stringify-list-into [items : JsonSeq] [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (let
+    [n : i64 (struct-get items len)]
+    [i : i64 0]
+    [out : text_buf.TextBuf buf]
+    (begin
+      (while (< i n)
+        (begin
+          (if (> i 0)
+            (set! out (text_buf.append out ","))
+            unit)
+          (set!
+            out
+            (text_buf.append
+              out
+              (stdlib.json.stringify (array-ref (struct-get items slots) i))))
+          (set! i (+ i 1))))
+      out)))
 
 ;: Serialize array `items` without the surrounding brackets.
 ;:
 ;: The returned comma-separated string is allocated in the active arena.
-(define (stringify-list [items : JsonList]) : String
+(define (stringify-list [items : JsonSeq]) : String
   (text_buf.render (stdlib.json.stringify-list-into items (text_buf.empty))))
 
 ;: Append serialized object members to `buf`.
 (define (stringify-members-into
-  [items : JsonMemberList]
+  [items : JsonMemberSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match items
-    [(JsonMemberListNil) buf]
-    [(JsonMemberListCons key value rest)
-      (let
-        [text : String key]
-        [with-item : text_buf.TextBuf
-          (text_buf.append
-            (text_buf.append
+  (let
+    [n : i64 (struct-get items len)]
+    [i : i64 0]
+    [out : text_buf.TextBuf buf]
+    (begin
+      (while (< i n)
+        (let
+          [member : JsonMember (array-ref (struct-get items slots) i)]
+          [text : String (struct-get member key)]
+          (begin
+            (if (> i 0)
+              (set! out (text_buf.append out ","))
+              unit)
+            (set!
+              out
               (text_buf.append
-                (text_buf.append buf "\"")
-                (stdlib.json.escape-string (& text)))
-              "\":")
-            (stdlib.json.stringify value))]
-        (match (box-get rest)
-          [(JsonMemberListNil) with-item]
-          [(JsonMemberListCons _ _ _)
-            (stdlib.json.stringify-members-into
-              (box-get rest)
-              (text_buf.append with-item ","))]))]))
+                (text_buf.append
+                  (text_buf.append
+                    (text_buf.append out "\"")
+                    (stdlib.json.escape-string (& text)))
+                  "\":")
+                (stdlib.json.stringify (struct-get member value))))
+            (set! i (+ i 1)))))
+      out)))
 
 ;: Serialize object `items` without the surrounding braces.
 ;:
 ;: The returned comma-separated member string is allocated in the active arena.
-(define (stringify-members [items : JsonMemberList]) : String
+(define (stringify-members [items : JsonMemberSeq]) : String
   (text_buf.render (stdlib.json.stringify-members-into items (text_buf.empty))))
 
 ;: Serialize a JSON value to canonical compact JSON text.
@@ -529,7 +605,7 @@
 ;: (define encoded : String
 ;:   (json.stringify
 ;:     (json.JsonArray
-;:       (box (json.JsonListCons (json.JsonBool true) (box json.JsonListNil))))))
+;:       (box (json.list-cons (json.JsonBool true) (json.list-empty))))))
 ;: ```
 (define (stringify [value : Json]) : String
   (match value
@@ -1172,17 +1248,17 @@
         [_ (return (,err-ctor "json: expected string"))])]))
 
 ;: `stdlib.serialize` hook for beginning an object field list.
-(defmacro (object-empty) : JsonMemberList
-  `stdlib.json.JsonMemberListNil)
+(defmacro (object-empty) : JsonMemberSeq
+  `(stdlib.json.member-list-empty))
 
 ;: `stdlib.serialize` hook for adding one encoded object field.
 (defmacro (object-field
   [name : comptime.Expr]
   [value : comptime.Expr]
-  [rest : comptime.Expr]) : JsonMemberList
+  [rest : comptime.Expr]) : JsonMemberSeq
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
-      (stdlib.json.JsonMemberListCons ,name __json_value (box ,rest))]))
+      (stdlib.json.member-cons ,name __json_value ,rest)]))
 
 ;: `stdlib.serialize` hook for finishing an object value.
 (defmacro (object-finish [fields : comptime.Expr]) : Value
@@ -1211,17 +1287,17 @@
         [(stdlib.json.JsonMissing) (return (,err-ctor "json: missing field"))])]))
 
 ;: `stdlib.serialize` hook for beginning a sequence element list.
-(defmacro (sequence-empty) : JsonList
-  `JsonListNil)
+(defmacro (sequence-empty) : JsonSeq
+  `(stdlib.json.list-empty))
 
 ;: `stdlib.serialize` hook for adding one encoded sequence element.
 (defmacro (sequence-element
   [_index : comptime.Expr]
   [value : comptime.Expr]
-  [rest : comptime.Expr]) : JsonList
+  [rest : comptime.Expr]) : JsonSeq
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
-      (stdlib.json.JsonListCons __json_value (box ,rest))]))
+      (stdlib.json.list-cons __json_value ,rest)]))
 
 ;: `stdlib.serialize` hook for finishing a sequence value.
 (defmacro (sequence-finish [items : comptime.Expr]) : Value
@@ -1481,23 +1557,12 @@
     [(JsonMissing) unit]
     [(JsonFound _) (io.panic message)]))
 
-;: Build a JSON list node for inline tests.
-(define (stdlib-inline-test-list-cons [value : Json] [rest : JsonList]) : JsonList
-  (JsonListCons value (box rest)))
-
-;: Build a JSON member-list node for inline tests.
-(define (stdlib-inline-test-member-cons
-  [key : String]
-  [value : Json]
-  [rest : JsonMemberList]) : JsonMemberList
-  (JsonMemberListCons key value (box rest)))
-
 ;: Build a JSON array for inline tests.
-(define (stdlib-inline-test-array [items : JsonList]) : Json
+(define (stdlib-inline-test-array [items : JsonSeq]) : Json
   (JsonArray (box items)))
 
 ;: Build a JSON object for inline tests.
-(define (stdlib-inline-test-object [members : JsonMemberList]) : Json
+(define (stdlib-inline-test-object [members : JsonMemberSeq]) : Json
   (JsonObject (box members)))
 
 ;: Assert a successful parsed string and next position.
@@ -1701,7 +1766,7 @@
 
 ;: Borrowing wrapper for `member-list-get` inline tests.
 (define (stdlib-inline-test-member-list-get
-  [items : JsonMemberList]
+  [items : JsonMemberSeq]
   [key : String]) : JsonLookup
   (stdlib.json.member-list-get items (& key)))
 
@@ -1904,19 +1969,17 @@
       "stdlib.json.string-prefix-at? false")
     (stdlib.json.stdlib-inline-test-assert-i64-eq
       (stdlib.json.list-count
-        (stdlib.json.stdlib-inline-test-list-cons
+        (stdlib.json.list-cons
           JsonNull
-          (stdlib.json.stdlib-inline-test-list-cons (JsonBool true) JsonListNil)))
+          (stdlib.json.list-cons (JsonBool true) (stdlib.json.list-empty))))
       2
       "stdlib.json.list-count")
     (stdlib.json.stdlib-inline-test-assert-owned-string-eq
       (stdlib.json.stringify-list
         (stdlib.json.list-reverse
-          (stdlib.json.stdlib-inline-test-list-cons
+          (stdlib.json.list-cons
             (JsonNumber "2")
-            (stdlib.json.stdlib-inline-test-list-cons
-              (JsonNumber "1")
-              JsonListNil))))
+            (stdlib.json.list-cons (JsonNumber "1") (stdlib.json.list-empty)))))
       "1,2"
       "stdlib.json.list-reverse")
     (stdlib.json.stdlib-inline-test-assert-owned-string-eq
@@ -1931,45 +1994,45 @@
       "stdlib.json.vec-to-list")
     (stdlib.json.stdlib-inline-test-assert-i64-eq
       (stdlib.json.member-list-count
-        (stdlib.json.stdlib-inline-test-member-cons
+        (stdlib.json.member-cons
           "a"
           JsonNull
-          (stdlib.json.stdlib-inline-test-member-cons
+          (stdlib.json.member-cons
             "b"
             (JsonBool true)
-            JsonMemberListNil)))
+            (stdlib.json.member-list-empty))))
       2
       "stdlib.json.member-list-count")
     (stdlib.json.stdlib-inline-test-assert-found-number
       (stdlib.json.stdlib-inline-test-member-list-get
-        (stdlib.json.stdlib-inline-test-member-cons
+        (stdlib.json.member-cons
           "a"
           (JsonNumber "1")
-          (stdlib.json.stdlib-inline-test-member-cons
+          (stdlib.json.member-cons
             "b"
             (JsonNumber "2")
-            JsonMemberListNil))
+            (stdlib.json.member-list-empty)))
         "b")
       "2"
       "stdlib.json.member-list-get")
     (stdlib.json.stdlib-inline-test-assert-missing
       (stdlib.json.stdlib-inline-test-member-list-get
-        (stdlib.json.stdlib-inline-test-member-cons
+        (stdlib.json.member-cons
           "a"
           (JsonNumber "1")
-          JsonMemberListNil)
+          (stdlib.json.member-list-empty))
         "z")
       "stdlib.json.member-list-get missing")
     (stdlib.json.stdlib-inline-test-assert-owned-string-eq
       (stdlib.json.stringify-members
         (stdlib.json.member-list-reverse
-          (stdlib.json.stdlib-inline-test-member-cons
+          (stdlib.json.member-cons
             "b"
             (JsonBool true)
-            (stdlib.json.stdlib-inline-test-member-cons
+            (stdlib.json.member-cons
               "a"
               JsonNull
-              JsonMemberListNil))))
+              (stdlib.json.member-list-empty)))))
       "\"a\":null,\"b\":true"
       "stdlib.json.member-list-reverse")
     (stdlib.json.stdlib-inline-test-assert-found-number
@@ -1986,10 +2049,10 @@
     (stdlib.json.stdlib-inline-test-assert-found-number
       (stdlib.json.stdlib-inline-test-object-get
         (stdlib.json.stdlib-inline-test-object
-          (stdlib.json.stdlib-inline-test-member-cons
+          (stdlib.json.member-cons
             "n"
             (JsonNumber "7")
-            JsonMemberListNil))
+            (stdlib.json.member-list-empty)))
         "n")
       "7"
       "stdlib.json.object-get")
@@ -2035,9 +2098,9 @@
     (stdlib.json.stdlib-inline-test-assert-owned-string-eq
       (stdlib.json.stringify
         (stdlib.json.stdlib-inline-test-array
-          (stdlib.json.stdlib-inline-test-list-cons
+          (stdlib.json.list-cons
             (JsonNumber "1")
-            (stdlib.json.stdlib-inline-test-list-cons JsonNull JsonListNil))))
+            (stdlib.json.list-cons JsonNull (stdlib.json.list-empty)))))
       "[1,null]"
       "stdlib.json.stringify array")
     (stdlib.json.stdlib-inline-test-assert-codepoint

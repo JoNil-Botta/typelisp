@@ -62,10 +62,60 @@
   (title String)
   (weight i64))
 
-;: Immutable list of candidates in source order (PRs first, then issues).
-(defenum CandList
-  (Nil)
-  (Cons Candidate (Box CandList)))
+;: Immutable contiguous candidates in source order (PRs first, then issues).
+(defstruct CandSeq
+  (slots (Array Candidate))
+  (len i64))
+
+;: Capacity-doubling builder that appends candidates in source order.
+(defstruct CandBuilder
+  (slots (Array Candidate))
+  (len i64))
+
+(define (cand-builder-new) : CandBuilder
+  (CandBuilder (make-array Candidate 4) 0))
+
+(define (cand-builder-copy-range!
+  [dst : (&mut dst (Array Candidate))]
+  [src : (& src (Array Candidate))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (cand-builder-grow! [builder : (&mut builder CandBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length (struct-get builder slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array Candidate) (make-array Candidate new-cap)]
+    (begin
+      (cand-builder-copy-range!
+        (&mut bigger)
+        (& (struct-get builder slots))
+        (struct-get builder len))
+      (set! (struct-get builder slots) bigger))))
+
+(define (cand-builder-push!
+  [builder : (&mut builder CandBuilder)]
+  [cand : Candidate]) : unit
+  (begin
+    (if (< (struct-get builder len) (array-length (struct-get builder slots)))
+      unit
+      (cand-builder-grow! builder))
+    (let
+      [index : i64 (struct-get builder len)]
+      (begin
+        (array-set! (struct-get builder slots) index cand)
+        (set! (struct-get builder len) (+ index 1))))))
+
+(define (cand-builder-to-seq [builder : CandBuilder]) : CandSeq
+  (CandSeq (struct-get builder slots) (struct-get builder len)))
 
 (defenum ChooserResult
   (Ok Candidate)
@@ -169,27 +219,36 @@
       [(json.JsonMissing) false])))
 
 ;: True when any object in `labels` has a `name` equal to `needle`.
-(define (label-list-has? [labels : json.JsonList] [needle : String]) : bool
-  (match labels
-    [(json.JsonListNil) false]
-    [(json.JsonListCons head rest)
-      (if (string.eq (json-field-string head "name") needle)
-        true
-        (label-list-has? (box-get rest) needle))]))
+(define (label-list-has? [labels : json.JsonSeq] [needle : String]) : bool
+  (let
+    [n : i64 (json.list-count labels)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i n))
+        (begin
+          (match (json.list-get-index labels i)
+            [(json.JsonFound head)
+              (if (string.eq (json-field-string head "name") needle)
+                (set! found true)
+                unit)]
+            [(json.JsonMissing) unit])
+          (set! i (+ i 1))))
+      found)))
 
-;: Return the `labels` array of an issue, or an empty list when absent.
-(define (issue-label-list [item : json.Json]) : json.JsonList
+;: Return the `labels` array of an issue, or an empty sequence when absent.
+(define (issue-label-list [item : json.Json]) : json.JsonSeq
   (let
     [key : String "labels"]
     (match (json.object-get item (& key))
       [(json.JsonFound found)
         (match found
           [(json.JsonArray entries) (box-get entries)]
-          [_ (json.JsonListNil)])]
-      [(json.JsonMissing) (json.JsonListNil)])))
+          [_ (json.list-empty)])]
+      [(json.JsonMissing) (json.list-empty)])))
 
 ;: Return the priority bonus for a label list. p0 takes precedence over p1.
-(define (label-list-priority-bonus [labels : json.JsonList]) : i64
+(define (label-list-priority-bonus [labels : json.JsonSeq]) : i64
   (if (label-list-has? labels "p0")
     p0-priority-bonus
     (if (label-list-has? labels "p1")
@@ -233,13 +292,22 @@
           true)))))
 
 ;: Return true when every check rollup entry has reached a terminal state.
-(define (pr-check-list-complete? [checks : json.JsonList]) : bool
-  (match checks
-    [(json.JsonListNil) true]
-    [(json.JsonListCons head rest)
-      (if (pr-check-entry-complete? head)
-        (pr-check-list-complete? (box-get rest))
-        false)]))
+(define (pr-check-list-complete? [checks : json.JsonSeq]) : bool
+  (let
+    [n : i64 (json.list-count checks)]
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< i n))
+        (begin
+          (match (json.list-get-index checks i)
+            [(json.JsonFound head)
+              (if (pr-check-entry-complete? head)
+                unit
+                (set! ok false))]
+            [(json.JsonMissing) unit])
+          (set! i (+ i 1))))
+      ok)))
 
 ;: Missing or empty `statusCheckRollup` means the PR has no checks and remains
 ;: eligible. Only explicitly pending/running entries are skipped.
@@ -257,7 +325,7 @@
 ;: adding the priority bonus.
 (define (issue-candidate [item : json.Json]) : Candidate
   (let
-    [labels : json.JsonList (issue-label-list item)]
+    [labels : json.JsonSeq (issue-label-list item)]
     [ready : bool (label-list-has? labels "ready-for-implementation")]
     [bonus : i64 (label-list-priority-bonus labels)]
     (if ready
@@ -281,18 +349,24 @@
 (define (issue-ready? [item : json.Json]) : bool
   (label-list-has? (issue-label-list item) "ready-for-implementation"))
 
-;: Map a JSON array of PR objects to candidates, preserving source order. Draft
-;: PRs are never eligible, and non-draft PRs whose checks are still pending or
-;: running are skipped until their checks reach a terminal state.
-(define (pr-candidates [items : json.JsonList]) : CandList
-  (match items
-    [(json.JsonListNil) (CandList.Nil)]
-    [(json.JsonListCons head rest)
-      (let
-        [tail : CandList (pr-candidates (box-get rest))]
-        (if (and (not (pr-draft? head)) (pr-checks-complete? head))
-          (CandList.Cons (pr-candidate head) (box tail))
-          tail))]))
+;: Append a JSON array of PR objects as candidates, preserving source order.
+;: Draft PRs are never eligible, and non-draft PRs whose checks are still
+;: pending or running are skipped until their checks reach a terminal state.
+(define (pr-candidates-into
+  [items : json.JsonSeq]
+  [out : (&mut out CandBuilder)]) : unit
+  (let
+    [n : i64 (json.list-count items)]
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (match (json.list-get-index items i)
+          [(json.JsonFound head)
+            (if (and (not (pr-draft? head)) (pr-checks-complete? head))
+              (cand-builder-push! out (pr-candidate head))
+              unit)]
+          [(json.JsonMissing) unit])
+        (set! i (+ i 1))))))
 
 ;: Shortest digit run treated as an issue reference inside a branch name or PR
 ;: title. Four digits keeps `cycle28-divmod-hoist` and `perf-opt2-cycle1` from
@@ -375,114 +449,135 @@
 ;: True when some open PR already claims `number` through its branch name or
 ;: title. An issue someone has opened a PR for is not work to hand to a second
 ;: agent, so it leaves the pool entirely rather than merely changing lane.
-(define (issue-claimed-by-pr? [prs : json.JsonList] [number : i64]) : bool
-  (match prs
-    [(json.JsonListNil) false]
-    [(json.JsonListCons head rest)
-      (if (or
-        (text-claims-number? (json-field-string head "headRefName") number)
-        (text-claims-number? (json-field-string head "title") number))
-        true
-        (issue-claimed-by-pr? (box-get rest) number))]))
+(define (issue-claimed-by-pr? [prs : json.JsonSeq] [number : i64]) : bool
+  (let
+    [n : i64 (json.list-count prs)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i n))
+        (begin
+          (match (json.list-get-index prs i)
+            [(json.JsonFound head)
+              (if (or
+                (text-claims-number?
+                  (json-field-string head "headRefName")
+                  number)
+                (text-claims-number? (json-field-string head "title") number))
+                (set! found true)
+                unit)]
+            [(json.JsonMissing) unit])
+          (set! i (+ i 1))))
+      found)))
 
-;: Map a JSON array of issue objects to candidates, preserving source order.
+;: Append a JSON array of issue objects as candidates, preserving source order.
 ;: Blocked issues are always skipped, as are issues an open PR already claims;
 ;: ready-for-implementation issues are also skipped when `implement-allowed?` is
 ;: false (the review queue is saturated).
-(define (issue-candidates
-  [items : json.JsonList]
-  [prs : json.JsonList]
-  [implement-allowed? : bool]) : CandList
-  (match items
-    [(json.JsonListNil) (CandList.Nil)]
-    [(json.JsonListCons head rest)
-      (let
-        [tail : CandList
-          (issue-candidates (box-get rest) prs implement-allowed?)]
-        (if (or
-          (issue-blocked? head)
-          (issue-claimed-by-pr? prs (json-field-number head "number"))
-          (and (not implement-allowed?) (issue-ready? head)))
-          tail
-          (CandList.Cons (issue-candidate head) (box tail))))]))
+(define (issue-candidates-into
+  [items : json.JsonSeq]
+  [prs : json.JsonSeq]
+  [implement-allowed? : bool]
+  [out : (&mut out CandBuilder)]) : unit
+  (let
+    [n : i64 (json.list-count items)]
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (match (json.list-get-index items i)
+          [(json.JsonFound head)
+            (if (or
+              (issue-blocked? head)
+              (issue-claimed-by-pr? prs (json-field-number head "number"))
+              (and (not implement-allowed?) (issue-ready? head)))
+              unit
+              (cand-builder-push! out (issue-candidate head)))]
+          [(json.JsonMissing) unit])
+        (set! i (+ i 1))))))
 
-;: Concatenate two candidate lists, preserving order.
-(define (cand-append [front : CandList] [back : CandList]) : CandList
-  (match front
-    [(CandList.Nil) back]
-    [(CandList.Cons head rest)
-      (CandList.Cons head (box (cand-append (box-get rest) back)))]))
-
-;: Look up the JSON array stored at `field`, or an empty list when absent.
-(define (json-field-array [value : json.Json] [field : String]) : json.JsonList
+;: Look up the JSON array stored at `field`, or an empty sequence when absent.
+(define (json-field-array [value : json.Json] [field : String]) : json.JsonSeq
   (let
     [key : String field]
     (match (json.object-get value (& key))
       [(json.JsonFound found)
         (match found
           [(json.JsonArray entries) (box-get entries)]
-          [_ (json.JsonListNil)])]
-      [(json.JsonMissing) (json.JsonListNil)])))
+          [_ (json.list-empty)])]
+      [(json.JsonMissing) (json.list-empty)])))
 
 ;: Count open non-draft PRs in the raw `prs` array. Draft PRs and a missing
 ;: `isDraft` field are handled by `json-field-bool` (missing => non-draft).
-(define (count-open-nondraft-prs [items : json.JsonList]) : i64
-  (match items
-    [(json.JsonListNil) 0]
-    [(json.JsonListCons head rest)
-      (let
-        [tail : i64 (count-open-nondraft-prs (box-get rest))]
-        (if (json-field-bool head "isDraft")
-          tail
-          (+ 1 tail)))]))
-
-;: Build the full candidate list: PR candidates first, then issue candidates.
-;: Ready-for-implementation issues are dropped once more than `implement-pr-cap`
-;: open non-draft PRs are present, leaving only review and research/triage work.
-(define (build-candidates [root : json.Json]) : CandList
+(define (count-open-nondraft-prs [items : json.JsonSeq]) : i64
   (let
-    [prs : json.JsonList (json-field-array root "prs")]
-    [issues : json.JsonList (json-field-array root "issues")]
+    [n : i64 (json.list-count items)]
+    [i : i64 0]
+    [open : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (json.list-get-index items i)
+            [(json.JsonFound head)
+              (if (json-field-bool head "isDraft")
+                unit
+                (set! open (+ open 1)))]
+            [(json.JsonMissing) unit])
+          (set! i (+ i 1))))
+      open)))
+
+;: Build the full candidate sequence: PR candidates first, then issue
+;: candidates. Ready-for-implementation issues are dropped once more than
+;: `implement-pr-cap` open non-draft PRs are present, leaving only review and
+;: research/triage work.
+(define (build-candidates [root : json.Json]) : CandSeq
+  (let
+    [prs : json.JsonSeq (json-field-array root "prs")]
+    [issues : json.JsonSeq (json-field-array root "issues")]
     [implement-allowed? : bool
       (<= (count-open-nondraft-prs prs) implement-pr-cap)]
-    (cand-append
-      (pr-candidates prs)
-      (issue-candidates issues prs implement-allowed?))))
+    [out : CandBuilder (cand-builder-new)]
+    (begin
+      (pr-candidates-into prs (&mut out))
+      (issue-candidates-into issues prs implement-allowed? (&mut out))
+      (cand-builder-to-seq out))))
 
-;: Build the weight list from candidates, preserving order so a chosen weight
-;: index maps back to the candidate at the same position.
-(define (cand-weights [cands : CandList]) : random.RandomWeightList
-  (match cands
-    [(CandList.Nil) (random.weight-list-empty)]
-    [(CandList.Cons head rest)
-      (random.weight-list-cons
-        (struct-get head weight)
-        (cand-weights (box-get rest)))]))
+;: Number of candidates in a sequence.
+(define (cand-count [cands : CandSeq]) : i64
+  (struct-get cands len))
 
 ;: Return the candidate at zero-based `index`, or a sentinel triage candidate
 ;: when out of range (should not happen for a valid weighted index).
-(define (cand-nth [cands : CandList] [index : i64]) : Candidate
-  (match cands
-    [(CandList.Nil) (Candidate kind-triage 0 "" research-weight)]
-    [(CandList.Cons head rest)
-      (if (= index 0)
-        head
-        (cand-nth (box-get rest) (- index 1)))]))
+(define (cand-nth [cands : CandSeq] [index : i64]) : Candidate
+  (if (or (< index 0) (>= index (struct-get cands len)))
+    (Candidate kind-triage 0 "" research-weight)
+    (array-ref (struct-get cands slots) index)))
 
-;: Number of candidates in a list.
-(define (cand-count [cands : CandList]) : i64
-  (match cands
-    [(CandList.Nil) 0]
-    [(CandList.Cons _ rest) (+ 1 (cand-count (box-get rest)))]))
+;: Build the weight list from candidates, preserving order so a chosen weight
+;: index maps back to the candidate at the same position.
+(define (cand-weights-from [cands : CandSeq] [index : i64]) : random.RandomWeightList
+  (if (>= index (cand-count cands))
+    (random.weight-list-empty)
+    (random.weight-list-cons
+      (struct-get (cand-nth cands index) weight)
+      (cand-weights-from cands (+ index 1)))))
 
-;: True when any candidate in the list has the given kind tag.
-(define (cand-list-has-kind? [cands : CandList] [target-kind : i64]) : bool
-  (match cands
-    [(CandList.Nil) false]
-    [(CandList.Cons head rest)
-      (if (= (struct-get head kind) target-kind)
-        true
-        (cand-list-has-kind? (box-get rest) target-kind))]))
+(define (cand-weights [cands : CandSeq]) : random.RandomWeightList
+  (cand-weights-from cands 0))
+
+;: True when any candidate in the sequence has the given kind tag.
+(define (cand-list-has-kind? [cands : CandSeq] [target-kind : i64]) : bool
+  (let
+    [n : i64 (cand-count cands)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i n))
+        (begin
+          (if (= (struct-get (cand-nth cands i) kind) target-kind)
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
 
 (test
   chooser-skips-incomplete-pr-checks
@@ -492,7 +587,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (begin
             (if (= (cand-count cands) 5)
               unit
@@ -522,7 +617,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (begin
             (if (= (cand-count cands) 2)
               unit
@@ -547,7 +642,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (begin
             (if (= (cand-count cands) 2)
               unit
@@ -568,7 +663,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (begin
             (if (= (cand-count cands) 1)
               unit
@@ -586,7 +681,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (begin
             (if (= (cand-count cands) 2)
               unit
@@ -609,7 +704,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (begin
             (if (= (cand-count cands) 5)
               unit
@@ -639,7 +734,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (begin
             (if (= (cand-count cands) 5)
               unit
@@ -660,7 +755,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (begin
             (if (= (cand-count cands) 4)
               unit
@@ -683,7 +778,7 @@
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (if (= (cand-count cands) 0)
             unit
             (io.panic
@@ -725,7 +820,7 @@
         (ChooserResult.Err (string.append "Error: invalid JSON: " message))]
       [(json.OkJson root)
         (let
-          [cands : CandList (build-candidates root)]
+          [cands : CandSeq (build-candidates root)]
           (if (= (cand-count cands) 0)
             (ChooserResult.Err "Error: no eligible candidates were provided")
             (match (random.system-seed)

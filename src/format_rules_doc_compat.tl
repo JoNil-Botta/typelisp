@@ -183,8 +183,7 @@
   [head : String]
   [rest : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Empty)
-      (format-rules-inline-form-doc head FormatCstList.Nil)]
+    [(FormatCstListStep.Empty) (format-rules-inline-form-doc head rest)]
     [(FormatCstListStep.Item first tail)
       (format-rules-first-line-form-doc head first tail)]))
 
@@ -419,7 +418,8 @@
 
 (define (format-rules-special-list-doc
   [head : FormatCst]
-  [rest : FormatCstList]) : fmt_doc.Doc
+  [rest : FormatCstList]
+  [items : FormatCstList]) : fmt_doc.Doc
   (let
     [head-name : String (format-rules-node-symbol-name head)]
     (cond
@@ -446,37 +446,27 @@
         (format-rules-line-form-doc "unsafe" rest)]
       [(string.eq head-name "match")
         (format-rules-first-or-line-form-doc "match" rest)]
-      [else
-        (format-rules-delimited-doc
-          "("
-          (FormatCstList.Cons head (box rest))
-          ")")])))
+      [else (format-rules-delimited-doc "(" items ")")])))
 
-(define (format-rules-colon-list-doc [rest : FormatCstList]) : fmt_doc.Doc
+(define (format-rules-colon-list-doc
+  [rest : FormatCstList]
+  [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step rest)
     [(FormatCstListStep.Item key tail)
       (let
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string-length name) 0)
           (format-rules-inline-form-doc (string.append ":" name) tail)
-          (format-rules-delimited-doc
-            "("
-            (FormatCstList.Cons (FormatCst.Atom (FormatToken.Colon)) (box rest))
-            ")")))]
-    [_
-      (format-rules-delimited-doc
-        "("
-        (FormatCstList.Cons (FormatCst.Atom (FormatToken.Colon)) (box rest))
-        ")")]))
+          (format-rules-delimited-doc "(" items ")")))]
+    [_ (format-rules-delimited-doc "(" items ")")]))
 
 (define (format-rules-list-doc [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty)
-      (format-rules-delimited-doc "(" FormatCstList.Nil ")")]
+    [(FormatCstListStep.Empty) (format-rules-delimited-doc "(" items ")")]
     [(FormatCstListStep.Item head rest)
       (if (format-rules-node-colon? head)
-        (format-rules-colon-list-doc rest)
-        (format-rules-special-list-doc head rest))]))
+        (format-rules-colon-list-doc rest items)
+        (format-rules-special-list-doc head rest items))]))
 
 (define (format-rules-forms-tail-doc
   [previous : FormatCst]

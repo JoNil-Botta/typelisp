@@ -21,9 +21,11 @@
 (defenum SpecTemplate
   (Item i64 AstParamList AstType AstExpr))
 
-(defenum SpecTemplateList
-  (Nil)
-  (Cons SpecTemplate (Box SpecTemplateList)))
+;; Templates are collected once per program and then only counted and indexed,
+;; so the collection is one contiguous buffer plus a live count.
+(defstruct SpecTemplateList
+  (slots (Array SpecTemplate))
+  (len i64))
 
 (defenum SpecTemplateShadowList
   (Nil)
@@ -43,35 +45,128 @@
 (defenum SpecState
   (State AstDeclList spec_id_i64_map.Map CtfeEnv AstNodePoolContext))
 
-(defenum SpecValueList
-  (Nil)
-  (Cons CompilerCtfeValue (Box SpecValueList)))
+;; Comptime argument vectors and the two substitution environments keep their
+;; head at slot 0, so every lookup scans forward from the newest binding and
+;; shadowing still resolves head-first. `cons` copies into a right-sized buffer
+;; so an inner instantiation can never write into the slot of an outer subst
+;; that is still in use; the lists are one entry per comptime parameter.
+(defstruct SpecValueList
+  (slots (Array CompilerCtfeValue))
+  (len i64))
 
-(defenum SpecValueSubst
-  (Nil)
-  (Cons i64 CompilerCtfeValue (Box SpecValueSubst)))
+(defenum SpecValueBinding
+  (Bind i64 CompilerCtfeValue))
 
-(defenum SpecTypeSubst
-  (Nil)
-  (Cons i64 AstType (Box SpecTypeSubst)))
+(defstruct SpecValueSubst
+  (slots (Array SpecValueBinding))
+  (len i64))
 
-(define (spec-template-cons [head : SpecTemplate] [rest : SpecTemplateList]) : SpecTemplateList
-  (SpecTemplateList.Cons head (box rest)))
+(defenum SpecTypeBinding
+  (Bind i64 AstType))
+
+(defstruct SpecTypeSubst
+  (slots (Array SpecTypeBinding))
+  (len i64))
+
+(define (spec-template-list-new) : SpecTemplateList
+  (SpecTemplateList (array.make-array SpecTemplate 0) 0))
+
+(define (spec-template-list-copy-range
+  [dst : (&mut dst (Array SpecTemplate))]
+  [src : (& src (Array SpecTemplate))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array.ref src index))
+      (spec-template-list-copy-range dst src (+ index 1) count))))
+
+(define (spec-template-list-grow
+  [templates : (&mut templates SpecTemplateList)]) : unit
+  (let
+    [count : i64 (struct-get templates len)]
+    [bigger : (Array SpecTemplate)
+      (array.make-array SpecTemplate (+ (* count 2) 8))]
+    (begin
+      (spec-template-list-copy-range
+        (&mut bigger)
+        (& (struct-get templates slots))
+        0
+        count)
+      (set! (struct-get templates slots) bigger))))
+
+(define (spec-template-list-push
+  [templates : (&mut templates SpecTemplateList)]
+  [item : SpecTemplate]) : unit
+  (begin
+    (if (<
+      (struct-get templates len)
+      (array.length (struct-get templates slots)))
+      unit
+      (spec-template-list-grow templates))
+    (let
+      [count : i64 (struct-get templates len)]
+      (begin
+        (array-set! (struct-get templates slots) count item)
+        (set! (struct-get templates len) (+ count 1))))))
+
+(define (spec-value-list-new) : SpecValueList
+  (SpecValueList (array.make-array CompilerCtfeValue 0) 0))
 
 (define (spec-value-cons [head : CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
-  (SpecValueList.Cons head (box rest)))
+  (let
+    [count : i64 (struct-get rest len)]
+    [slots : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue (+ count 1))]
+    [at : i64 0]
+    (begin
+      (array-set! slots 0 head)
+      (while (< at count)
+        (begin
+          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (set! at (+ at 1))))
+      (SpecValueList slots (+ count 1)))))
+
+(define (spec-value-subst-new) : SpecValueSubst
+  (SpecValueSubst (array.make-array SpecValueBinding 0) 0))
 
 (define (spec-value-subst-cons
   [key-id : i64]
   [value : CompilerCtfeValue]
   [rest : SpecValueSubst]) : SpecValueSubst
-  (SpecValueSubst.Cons key-id value (box rest)))
+  (let
+    [count : i64 (struct-get rest len)]
+    [slots : (Array SpecValueBinding)
+      (array.make-array SpecValueBinding (+ count 1))]
+    [at : i64 0]
+    (begin
+      (array-set! slots 0 (SpecValueBinding.Bind key-id value))
+      (while (< at count)
+        (begin
+          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (set! at (+ at 1))))
+      (SpecValueSubst slots (+ count 1)))))
+
+(define (spec-type-subst-new) : SpecTypeSubst
+  (SpecTypeSubst (array.make-array SpecTypeBinding 0) 0))
 
 (define (spec-type-subst-cons
   [key-id : i64]
   [ty : AstType]
   [rest : SpecTypeSubst]) : SpecTypeSubst
-  (SpecTypeSubst.Cons key-id ty (box rest)))
+  (let
+    [count : i64 (struct-get rest len)]
+    [slots : (Array SpecTypeBinding)
+      (array.make-array SpecTypeBinding (+ count 1))]
+    [at : i64 0]
+    (begin
+      (array-set! slots 0 (SpecTypeBinding.Bind key-id ty))
+      (while (< at count)
+        (begin
+          (array-set! slots (+ at 1) (array.ref (struct-get rest slots) at))
+          (set! at (+ at 1))))
+      (SpecTypeSubst slots (+ count 1)))))
 
 (defenum SpecMaybeString
   (None)
@@ -345,12 +440,6 @@
         true
         (spec-template-shadow-contains? (box-get rest) name-id))]))
 
-(define (spec-template-list-count [templates : SpecTemplateList]) : i64
-  (match templates
-    [(SpecTemplateList.Nil) 0]
-    [(SpecTemplateList.Cons _ rest)
-      (+ 1 (spec-template-list-count (box-get rest)))]))
-
 (define (spec-template-values-fill-empty
   [values : (Array SpecMaybeTemplate)]
   [index : i64]
@@ -365,14 +454,16 @@
   [templates : SpecTemplateList]
   [index : spec_id_i64_map.Map]
   [values : (Array SpecMaybeTemplate)]
+  [at : i64]
   [slot : i64]) : spec_id_i64_map.Map
-  (match templates
-    [(SpecTemplateList.Nil) index]
-    [(SpecTemplateList.Cons template rest)
+  (if (>= at (struct-get templates len))
+    index
+    (let
+      [template : SpecTemplate (array.ref (struct-get templates slots) at)]
       (match template
         [(SpecTemplate.Item name _ _ _)
           (if (spec_id_i64_map.contains? (& index) name)
-            (spec-template-index-build (box-get rest) index values slot)
+            (spec-template-index-build templates index values (+ at 1) slot)
             (begin
               (array-set! values slot (SpecMaybeTemplate.Some template))
               (let
@@ -380,14 +471,15 @@
                 (begin
                   (spec_id_i64_map.insert-ref! (&mut next-index) name slot)
                   (spec-template-index-build
-                    (box-get rest)
+                    templates
                     next-index
                     values
-                    (+ slot 1))))))])]))
+                    (+ at 1)
+                    (+ slot 1))))))]))))
 
 (define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
   (let
-    [count : i64 (spec-template-list-count templates)]
+    [count : i64 (struct-get templates len)]
     [values : (Array SpecMaybeTemplate)
       (array.make-array SpecMaybeTemplate count)]
     (begin
@@ -397,6 +489,7 @@
           templates
           (spec_id_i64_map.with-capacity (+ (* count 2) 16))
           values
+          0
           0)
         values
         SpecTemplateShadowList.Nil))))
@@ -494,7 +587,7 @@
   [decls : AstDeclList]) : SpecTemplateList
   (let
     [cursor : AstDeclList decls]
-    [reversed : SpecTemplateList (SpecTemplateList.Nil)]
+    [out : SpecTemplateList (spec-template-list-new)]
     [done : bool false]
     (begin
       (while (not done)
@@ -507,44 +600,28 @@
                   (match (box-get inner-box)
                     [(AstDecl.DefFn decl-meta name params ret body-box _)
                       (if (spec-param-list-has-comptime? params)
-                        (set!
-                          reversed
-                          (spec-template-cons
-                            (SpecTemplate.Item
-                              name
-                              params
-                              ret
-                              (ast-node-pool-context-expr-get pools body-box))
-                            reversed))
+                        (spec-template-list-push
+                          (&mut out)
+                          (SpecTemplate.Item
+                            name
+                            params
+                            ret
+                            (ast-node-pool-context-expr-get pools body-box)))
                         unit)]
                     [_ unit])]
                 [(AstDecl.DefFn decl-meta name params ret body-box _)
                   (if (spec-param-list-has-comptime? params)
-                    (set!
-                      reversed
-                      (spec-template-cons
-                        (SpecTemplate.Item
-                          name
-                          params
-                          ret
-                          (ast-node-pool-context-expr-get pools body-box))
-                        reversed))
+                    (spec-template-list-push
+                      (&mut out)
+                      (SpecTemplate.Item
+                        name
+                        params
+                        ret
+                        (ast-node-pool-context-expr-get pools body-box)))
                     unit)]
                 [_ unit])
               (set! cursor rest))]))
-      (let
-        [remaining : SpecTemplateList reversed]
-        [out : SpecTemplateList (SpecTemplateList.Nil)]
-        [reverse-done : bool false]
-        (begin
-          (while (not reverse-done)
-            (match remaining
-              [(SpecTemplateList.Nil) (set! reverse-done true)]
-              [(SpecTemplateList.Cons item rest-box)
-                (begin
-                  (set! out (spec-template-cons item out))
-                  (set! remaining (box-get rest-box)))]))
-          out)))))
+      out)))
 
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
   (spec-collect-templates-with-pools
@@ -785,12 +862,14 @@
     [(CompilerCtfeValue.TypeVariantList _) "type-variant-list"]))
 
 (define (spec-values-key [values : SpecValueList]) : String
-  (match values
-    [(SpecValueList.Nil) "none"]
-    [(SpecValueList.Cons head rest)
-      (string.append
-        (spec-value-key head)
-        (string.append "_" (spec-values-key (box-get rest))))]))
+  (spec-values-key-at values 0))
+
+(define (spec-values-key-at [values : SpecValueList] [at : i64]) : String
+  (if (>= at (struct-get values len))
+    "none"
+    (string.append
+      (spec-value-key (array.ref (struct-get values slots) at))
+      (string.append "_" (spec-values-key-at values (+ at 1))))))
 
 (define (spec-specialization-key [name : String] [values : SpecValueList]) : String
   (string.append name (string.append ":" (spec-values-key values))))
@@ -2166,48 +2245,80 @@
     [(CompilerCtfeValue.TypeVariant _ _) "TypeVariant"]
     [(CompilerCtfeValue.TypeVariantList _) "TypeVariantList"]))
 
+;; Head-first scan: slot 0 is the newest binding, so the first hit is the one
+;; that shadows. Returns -1 when the name is unbound.
+(define (spec-type-subst-find [subs : SpecTypeSubst] [name-id : i64] [at : i64]) : i64
+  (if (>= at (struct-get subs len))
+    (- 0 1)
+    (match (array.ref (struct-get subs slots) at)
+      [(SpecTypeBinding.Bind key-id _)
+        (if (= key-id name-id)
+          at
+          (spec-type-subst-find subs name-id (+ at 1)))])))
+
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name-id : i64]) : SpecMaybeId
-  (match subs
-    [(SpecTypeSubst.Nil) (SpecMaybeId.None)]
-    [(SpecTypeSubst.Cons key-id _ rest)
-      (if (= key-id name-id)
-        (SpecMaybeId.Some key-id)
-        (spec-type-subst-lookup (box-get rest) name-id))]))
+  (if (< (spec-type-subst-find subs name-id 0) 0)
+    (SpecMaybeId.None)
+    (SpecMaybeId.Some name-id)))
 
 (define (spec-type-subst-type [subs : SpecTypeSubst] [name-id : i64]) : AstType
-  (match subs
-    [(SpecTypeSubst.Nil) (AstType.Var name-id)]
-    [(SpecTypeSubst.Cons key-id ty rest)
-      (if (= key-id name-id)
-        ty
-        (spec-type-subst-type (box-get rest) name-id))]))
+  (let
+    [at : i64 (spec-type-subst-find subs name-id 0)]
+    (if (< at 0)
+      (AstType.Var name-id)
+      (match (array.ref (struct-get subs slots) at)
+        [(SpecTypeBinding.Bind _ ty) ty]))))
+
+(define (spec-value-subst-find
+  [subs : SpecValueSubst]
+  [name-id : i64]
+  [at : i64]) : i64
+  (if (>= at (struct-get subs len))
+    (- 0 1)
+    (match (array.ref (struct-get subs slots) at)
+      [(SpecValueBinding.Bind key-id _)
+        (if (= key-id name-id)
+          at
+          (spec-value-subst-find subs name-id (+ at 1)))])))
 
 (define (spec-value-subst-lookup [subs : SpecValueSubst] [name-id : i64]) : SpecMaybeId
-  (match subs
-    [(SpecValueSubst.Nil) (SpecMaybeId.None)]
-    [(SpecValueSubst.Cons key-id _ rest)
-      (if (= key-id name-id)
-        (SpecMaybeId.Some key-id)
-        (spec-value-subst-lookup (box-get rest) name-id))]))
+  (if (< (spec-value-subst-find subs name-id 0) 0)
+    (SpecMaybeId.None)
+    (SpecMaybeId.Some name-id)))
 
 (define (spec-value-subst-value [subs : SpecValueSubst] [name-id : i64]) : CompilerCtfeValue
-  (match subs
-    [(SpecValueSubst.Nil) (CompilerCtfeValue.Unit)]
-    [(SpecValueSubst.Cons key-id value rest)
-      (if (= key-id name-id)
-        value
-        (spec-value-subst-value (box-get rest) name-id))]))
+  (let
+    [at : i64 (spec-value-subst-find subs name-id 0)]
+    (if (< at 0)
+      (CompilerCtfeValue.Unit)
+      (match (array.ref (struct-get subs slots) at)
+        [(SpecValueBinding.Bind _ value) value]))))
 
+;; An unbound name leaves the environment alone, so the hot inner-scope walk
+;; shares the outer buffer instead of rebuilding it.
 (define (spec-value-subst-remove-name [subs : SpecValueSubst] [name-id : i64]) : SpecValueSubst
-  (match subs
-    [(SpecValueSubst.Nil) SpecValueSubst.Nil]
-    [(SpecValueSubst.Cons key-id value rest)
-      (if (= key-id name-id)
-        (spec-value-subst-remove-name (box-get rest) name-id)
-        (spec-value-subst-cons
-          key-id
-          value
-          (spec-value-subst-remove-name (box-get rest) name-id)))]))
+  (if (< (spec-value-subst-find subs name-id 0) 0)
+    subs
+    (let
+      [slots : (Array SpecValueBinding)
+        (array.make-array SpecValueBinding (struct-get subs len))]
+      [at : i64 0]
+      [kept : i64 0]
+      (begin
+        (while (< at (struct-get subs len))
+          (begin
+            (match (array.ref (struct-get subs slots) at)
+              [(SpecValueBinding.Bind key-id _)
+                (if (= key-id name-id)
+                  unit
+                  (begin
+                    (array-set!
+                      slots
+                      kept
+                      (array.ref (struct-get subs slots) at))
+                    (set! kept (+ kept 1))))])
+            (set! at (+ at 1))))
+        (SpecValueSubst slots kept)))))
 
 (define (spec-value-subst-remove-params
   [subs : SpecValueSubst]
@@ -2282,15 +2393,28 @@
       (+ index 1))))
 
 (define (spec-type-subst-remove-name [subs : SpecTypeSubst] [name-id : i64]) : SpecTypeSubst
-  (match subs
-    [(SpecTypeSubst.Nil) SpecTypeSubst.Nil]
-    [(SpecTypeSubst.Cons key-id ty rest)
-      (if (= key-id name-id)
-        (spec-type-subst-remove-name (box-get rest) name-id)
-        (spec-type-subst-cons
-          key-id
-          ty
-          (spec-type-subst-remove-name (box-get rest) name-id)))]))
+  (if (< (spec-type-subst-find subs name-id 0) 0)
+    subs
+    (let
+      [slots : (Array SpecTypeBinding)
+        (array.make-array SpecTypeBinding (struct-get subs len))]
+      [at : i64 0]
+      [kept : i64 0]
+      (begin
+        (while (< at (struct-get subs len))
+          (begin
+            (match (array.ref (struct-get subs slots) at)
+              [(SpecTypeBinding.Bind key-id _)
+                (if (= key-id name-id)
+                  unit
+                  (begin
+                    (array-set!
+                      slots
+                      kept
+                      (array.ref (struct-get subs slots) at))
+                    (set! kept (+ kept 1))))])
+            (set! at (+ at 1))))
+        (SpecTypeSubst slots kept)))))
 
 (define (spec-type-subst-remove-params
   [subs : SpecTypeSubst]
@@ -2827,7 +2951,7 @@
   (cond
     [(>= index (ast-param-list-len params))
       (if (>= index (struct-get args len))
-        (ResultSpecArgs.Ok SpecValueList.Nil (ast-expr-list-new) state)
+        (ResultSpecArgs.Ok (spec-value-list-new) (ast-expr-list-new) state)
         (ResultSpecArgs.Err
           (box (compiler-diagnostic-at-start "" "specialize: arity mismatch"))))]
     [(>= index (struct-get args len))
@@ -2928,31 +3052,33 @@
 (define (spec-build-specialization
   [params : AstParamList]
   [values : SpecValueList]) : ResultSpecBuild
-  (spec-build-specialization-at (& params) 0 values))
+  (spec-build-specialization-at (& params) 0 values 0))
 
 (define (spec-build-specialization-at
   [params : (& params AstParamList)]
   [index : i64]
-  [values : SpecValueList]) : ResultSpecBuild
+  [values : SpecValueList]
+  [at : i64]) : ResultSpecBuild
   (if (>= index (ast-param-list-len params))
-    (match values
-      [(SpecValueList.Nil)
-        (ResultSpecBuild.Ok
-          (ast-param-list-new)
-          SpecValueSubst.Nil
-          SpecTypeSubst.Nil)]
-      [_
-        (ResultSpecBuild.Err
-          (box (compiler-diagnostic-at-start "" "specialize: value mismatch")))])
+    (if (>= at (struct-get values len))
+      (ResultSpecBuild.Ok
+        (ast-param-list-new)
+        (spec-value-subst-new)
+        (spec-type-subst-new))
+      (ResultSpecBuild.Err
+        (box (compiler-diagnostic-at-start "" "specialize: value mismatch"))))
     (match (ast-param-list-get params index (ast-param-fallback))
       [(AstParam.Param name ty is-comptime consume?)
         (if is-comptime
-          (match values
-            [(SpecValueList.Cons value rest-values)
+          (if (< at (struct-get values len))
+            (let
+              [value : CompilerCtfeValue
+                (array.ref (struct-get values slots) at)]
               (match (spec-build-specialization-at
                 params
                 (+ index 1)
-                (box-get rest-values))
+                values
+                (+ at 1))
                 [(ResultSpecBuild.Ok runtime value-subs type-subs)
                   (if (spec-type-kind? ty)
                     (match value
@@ -2971,12 +3097,11 @@
                       runtime
                       (spec-value-subst-cons name value value-subs)
                       type-subs))]
-                [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)])]
-            [_
-              (ResultSpecBuild.Err
-                (box
-                  (compiler-diagnostic-at-start "" "specialize: value mismatch")))])
-          (match (spec-build-specialization-at params (+ index 1) values)
+                [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)]))
+            (ResultSpecBuild.Err
+              (box
+                (compiler-diagnostic-at-start "" "specialize: value mismatch"))))
+          (match (spec-build-specialization-at params (+ index 1) values at)
             [(ResultSpecBuild.Ok runtime value-subs type-subs)
               (ResultSpecBuild.Ok
                 (ast-param-cons (AstParam.Param name ty false consume?) runtime)
@@ -5790,25 +5915,24 @@
           (let
             [decls : AstDeclList (box-get decls-box)]
             [templates : SpecTemplateList (spec-collect-templates decls)]
-            (match templates
-              [(SpecTemplateList.Nil) (ResultSpecProgram.Ok normalized)]
-              [_
-                (match (spec-rewrite-decls
-                  decls
-                  (spec-template-env-from-list templates)
-                  (SpecState.State
-                    (ast-decl-list-new)
-                    (spec_id_i64_map.with-capacity 64)
-                    (ctfe-env-with-reflections
-                      (ctfe-reflections-from-program normalized))
-                    (ast-node-pool-context-capture-active)))
-                  [(ResultSpecDecls.Ok rewritten state)
-                    (match state
-                      [(SpecState.State generated _ _ _)
-                        (ResultSpecProgram.Ok
-                          (ast-program
-                            (spec-decl-list-append rewritten generated)))])]
-                  [(ResultSpecDecls.Err diag) (ResultSpecProgram.Err diag)])]))])]
+            (if (= (struct-get templates len) 0)
+              (ResultSpecProgram.Ok normalized)
+              (match (spec-rewrite-decls
+                decls
+                (spec-template-env-from-list templates)
+                (SpecState.State
+                  (ast-decl-list-new)
+                  (spec_id_i64_map.with-capacity 64)
+                  (ctfe-env-with-reflections
+                    (ctfe-reflections-from-program normalized))
+                  (ast-node-pool-context-capture-active)))
+                [(ResultSpecDecls.Ok rewritten state)
+                  (match state
+                    [(SpecState.State generated _ _ _)
+                      (ResultSpecProgram.Ok
+                        (ast-program
+                          (spec-decl-list-append rewritten generated)))])]
+                [(ResultSpecDecls.Err diag) (ResultSpecProgram.Err diag)])))])]
     [(ResultGenProgram.Err diag) (ResultSpecProgram.Err diag)]))
 
 (define (compiler-specialize-program-with-paths-active
@@ -5822,32 +5946,30 @@
           (let
             [decls : AstDeclList (box-get decls-box)]
             [templates : SpecTemplateList (spec-collect-templates decls)]
-            (match templates
-              [(SpecTemplateList.Nil)
-                (ResultSpecProgramWithPaths.Ok normalized normalized-paths)]
-              [_
-                (match (spec-rewrite-decls-with-paths
-                  decls
-                  normalized-paths
-                  fallback-path
-                  (spec-template-env-from-list templates)
-                  (SpecState.State
-                    (ast-decl-list-new)
-                    (spec_id_i64_map.with-capacity 64)
-                    (ctfe-env-with-reflections
-                      (ctfe-reflections-from-program normalized))
-                    (ast-node-pool-context-capture-active)))
-                  [(ResultSpecDeclsWithPaths.Ok rewritten rewritten-paths state)
-                    (match state
-                      [(SpecState.State generated _ _ _)
-                        (ResultSpecProgramWithPaths.Ok
-                          (ast-program
-                            (spec-decl-list-append rewritten generated))
-                          (spec-decl-path-list-append
-                            rewritten-paths
-                            (spec-generated-paths generated fallback-path)))])]
-                  [(ResultSpecDeclsWithPaths.Err diag)
-                    (ResultSpecProgramWithPaths.Err diag)])]))])]
+            (if (= (struct-get templates len) 0)
+              (ResultSpecProgramWithPaths.Ok normalized normalized-paths)
+              (match (spec-rewrite-decls-with-paths
+                decls
+                normalized-paths
+                fallback-path
+                (spec-template-env-from-list templates)
+                (SpecState.State
+                  (ast-decl-list-new)
+                  (spec_id_i64_map.with-capacity 64)
+                  (ctfe-env-with-reflections
+                    (ctfe-reflections-from-program normalized))
+                  (ast-node-pool-context-capture-active)))
+                [(ResultSpecDeclsWithPaths.Ok rewritten rewritten-paths state)
+                  (match state
+                    [(SpecState.State generated _ _ _)
+                      (ResultSpecProgramWithPaths.Ok
+                        (ast-program
+                          (spec-decl-list-append rewritten generated))
+                        (spec-decl-path-list-append
+                          rewritten-paths
+                          (spec-generated-paths generated fallback-path)))])]
+                [(ResultSpecDeclsWithPaths.Err diag)
+                  (ResultSpecProgramWithPaths.Err diag)])))])]
     [(ResultGenProgramWithPaths.Err diag) (ResultSpecProgramWithPaths.Err diag)]))
 
 (define (compiler-specialize-program-with-pools
@@ -5919,9 +6041,10 @@
         [decls : AstDeclList (box-get decls-box)]
         (if (gen-decls-needed? decls)
           true
-          (match (spec-collect-templates-with-pools pools decls)
-            [(SpecTemplateList.Nil) false]
-            [_ true])))]))
+          (let
+            [templates : SpecTemplateList
+              (spec-collect-templates-with-pools pools decls)]
+            (> (struct-get templates len) 0))))]))
 
 (define (compiler-specialize-needed? [program : AstProgram]) : bool
   (compiler-specialize-needed-with-pools
@@ -6040,7 +6163,7 @@
       (spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
         (AstType.I64)
-        SpecTypeSubst.Nil)]
+        (spec-type-subst-new))]
     (and
       (string.eq (spec-type-key (ast-ty-ptr (AstType.I64))) "ptr_i64")
       (string.eq
@@ -6063,17 +6186,19 @@
     [vals-i64 : SpecValueList
       (spec-value-cons
         (CompilerCtfeValue.Type (AstType.I64))
-        (SpecValueList.Nil))]
+        (spec-value-list-new))]
     [vals-bool : SpecValueList
       (spec-value-cons
         (CompilerCtfeValue.Type (AstType.Bool))
-        (SpecValueList.Nil))]
+        (spec-value-list-new))]
     [vals-multi : SpecValueList
       (spec-value-cons
         (CompilerCtfeValue.Type (AstType.I64))
-        (spec-value-cons (CompilerCtfeValue.I64 5) (SpecValueList.Nil)))]
+        (spec-value-cons (CompilerCtfeValue.I64 5) (spec-value-list-new)))]
     [vals-string : SpecValueList
-      (spec-value-cons (ctfe-generated-string-value "a b") (SpecValueList.Nil))]
+      (spec-value-cons
+        (ctfe-generated-string-value "a b")
+        (spec-value-list-new))]
     (and
       (string.eq
         (spec-specialized-name "alloc" vals-i64)
@@ -6172,7 +6297,7 @@
       (spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
         (AstType.I64)
-        SpecTypeSubst.Nil)]
+        (spec-type-subst-new))]
     (and
       (string.eq
         (spec-type-key
@@ -6219,7 +6344,7 @@
       (spec-value-subst-cons
         cbi.compiler-builtin-id-fix-x
         (CompilerCtfeValue.I64 5)
-        SpecValueSubst.Nil)]
+        (spec-value-subst-new))]
     (and
       ;; mapped variable x -> integer literal 5
       (match (spec-substitute-values-expr
@@ -6271,19 +6396,24 @@
 (define (compiler-specialize-boxed-tails-ok?) : bool
   (let
     [templates : SpecTemplateList
-      (spec-template-cons
-        (SpecTemplate.Item
-          cbi.compiler-builtin-id-fix-x
-          (ast-param-list-new)
-          (AstType.I64)
-          (AstExpr.Literal (ast-lit-int 1)))
-        (spec-template-cons
-          (SpecTemplate.Item
-            cbi.compiler-builtin-id-fix-second
-            (ast-param-list-new)
-            (AstType.Bool)
-            (AstExpr.Literal (AstLiteral.Bool true)))
-          SpecTemplateList.Nil))]
+      (let
+        [out : SpecTemplateList (spec-template-list-new)]
+        (begin
+          (spec-template-list-push
+            (&mut out)
+            (SpecTemplate.Item
+              cbi.compiler-builtin-id-fix-x
+              (ast-param-list-new)
+              (AstType.I64)
+              (AstExpr.Literal (ast-lit-int 1))))
+          (spec-template-list-push
+            (&mut out)
+            (SpecTemplate.Item
+              cbi.compiler-builtin-id-fix-second
+              (ast-param-list-new)
+              (AstType.Bool)
+              (AstExpr.Literal (AstLiteral.Bool true))))
+          out))]
     [template-env : SpecTemplateEnv (spec-template-env-from-list templates)]
     [cache : spec_id_i64_map.Map
       (let
@@ -6301,7 +6431,7 @@
     [values : SpecValueList
       (spec-value-cons
         (CompilerCtfeValue.I64 1)
-        (spec-value-cons (CompilerCtfeValue.Bool true) SpecValueList.Nil))]
+        (spec-value-cons (CompilerCtfeValue.Bool true) (spec-value-list-new)))]
     [value-subs : SpecValueSubst
       (spec-value-subst-cons
         cbi.compiler-builtin-id-fix-x
@@ -6309,7 +6439,7 @@
         (spec-value-subst-cons
           cbi.compiler-builtin-id-fix-flag
           (CompilerCtfeValue.Bool true)
-          SpecValueSubst.Nil))]
+          (spec-value-subst-new)))]
     [type-subs : SpecTypeSubst
       (spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
@@ -6317,7 +6447,7 @@
         (spec-type-subst-cons
           cbi.compiler-builtin-id-fix-U
           (AstType.Bool)
-          SpecTypeSubst.Nil))]
+          (spec-type-subst-new)))]
     (and
       (match (spec-template-lookup
         template-env

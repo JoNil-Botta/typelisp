@@ -367,6 +367,53 @@ assert_baseline_refreshed() {
     fi
 }
 
+# Every TypeLisp benchmark row in a baseline must have both clang rows beside
+# it. Checking the *baseline* rather than the measurement is what keeps the hole
+# from reopening: a leg that stopped measuring scalar-fair rows, or a refresh
+# taken without them, would otherwise compare cleanly against a baseline that
+# had quietly lost the comparison (#5678).
+assert_scalar_fair_baseline() {
+    _asfb_baseline=$1
+    awk -F '\t' -v file="$_asfb_baseline" '
+        NR == 1 && $1 == "name" { next }
+        $1 ~ /^benchmark\/typelisp\// {
+            name = substr($1, length("benchmark/typelisp/") + 1)
+            if (!(name in seen)) { order[++count] = name; seen[name] = 1 }
+            next
+        }
+        $1 ~ /^benchmark\/c-scalar\// {
+            scalar[substr($1, length("benchmark/c-scalar/") + 1)] = 1
+            next
+        }
+        $1 ~ /^benchmark\/c\// {
+            auto[substr($1, length("benchmark/c/") + 1)] = 1
+        }
+        END {
+            for (i = 1; i <= count; i++) {
+                name = order[i]
+                if (!(name in auto)) {
+                    print "[ir-check] " file ": benchmark/c/" name \
+                        " is missing" > "/dev/stderr"
+                    missing += 1
+                }
+                if (!(name in scalar)) {
+                    print "[ir-check] " file ": benchmark/c-scalar/" name \
+                        " is missing" > "/dev/stderr"
+                    missing += 1
+                }
+            }
+            if (missing > 0) {
+                print "[ir-check] every benchmark case needs both a" \
+                    " scalar-fair and an auto-vectorized clang row" \
+                    > "/dev/stderr"
+                print "[ir-check] see perf/README.md; refresh with" \
+                    " --update-baseline on Linux" > "/dev/stderr"
+                exit 1
+            }
+        }
+    ' "$_asfb_baseline"
+}
+
 self_test() {
     SELF_TEST_DIR=${TMPDIR:-/tmp}/ir-check-self-test.$$
     mkdir -p "$SELF_TEST_DIR"
@@ -423,6 +470,41 @@ self_test() {
         _st_status=1
     fi
 
+    # The scalar-fair row contract (#5678). The committed baselines are checked
+    # too, not just fixtures: the hole this closes was a real baseline missing
+    # real rows, so a fixture-only test would have passed throughout it.
+    printf 'name\tir_count\nbenchmark/typelisp/a\t1\nbenchmark/c/a\t2\nbenchmark/c-scalar/a\t3\n' \
+        > "$SELF_TEST_DIR/scalar-complete.tsv"
+    if ! (assert_scalar_fair_baseline "$SELF_TEST_DIR/scalar-complete.tsv") \
+        >/dev/null 2>&1; then
+        echo "self-test scalar-complete: a complete baseline was rejected" >&2
+        _st_status=1
+    fi
+    printf 'name\tir_count\nbenchmark/typelisp/a\t1\nbenchmark/c/a\t2\n' \
+        > "$SELF_TEST_DIR/scalar-missing.tsv"
+    if (assert_scalar_fair_baseline "$SELF_TEST_DIR/scalar-missing.tsv") \
+        >/dev/null 2>&1; then
+        echo "self-test scalar-missing: a baseline with no c-scalar row passed" >&2
+        _st_status=1
+    fi
+    printf 'name\tir_count\nbenchmark/typelisp/a\t1\nbenchmark/c-scalar/a\t3\n' \
+        > "$SELF_TEST_DIR/auto-missing.tsv"
+    if (assert_scalar_fair_baseline "$SELF_TEST_DIR/auto-missing.tsv") \
+        >/dev/null 2>&1; then
+        echo "self-test auto-missing: a baseline with no benchmark/c row passed" >&2
+        _st_status=1
+    fi
+    for _st_baseline in perf/insn-exec-baseline.tsv \
+        perf/insn-exec-heavy-baseline.tsv; do
+        if [ -f "$ROOT/$_st_baseline" ] &&
+            ! (assert_scalar_fair_baseline "$ROOT/$_st_baseline") \
+            >/dev/null 2>&1; then
+            echo "self-test committed-baseline: $_st_baseline lacks a" \
+                "scalar-fair row" >&2
+            _st_status=1
+        fi
+    done
+
     rm -rf "$SELF_TEST_DIR"
     if [ "$_st_status" -ne 0 ]; then
         return 1
@@ -454,12 +536,20 @@ if [ "$BENCHMARKS_ONLY" -eq 1 ] && [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
     exit 2
 fi
 
-SCALAR_FAIR=0
-case "$BASELINE" in
-    "$DEFAULT_BASELINE" | perf/insn-exec-baseline.tsv | ./perf/insn-exec-baseline.tsv)
-        SCALAR_FAIR=1
-        ;;
-esac
+# Scalar-fair C rows are required of every benchmark leg, not of one baseline
+# file. This used to key off the baseline's *name*, which made the rows
+# structurally unreachable for the heavy leg and left 5 of 16 cases with no
+# scalar-fair comparison at all (#5678) -- an ordering artifact of #5176 writing
+# the policy and #5184 promoting the heavy corpus into the gate afterwards.
+# `string_scan` was the worst of it: its C baseline is a serial
+# `acc = acc*131 + byte` recurrence clang cannot vectorize, so its ratio was
+# measured only against auto-vectorized clang, which is exactly the conflation
+# between "our scalar codegen is behind" and "their auto-vectorizer won" that
+# #5176 existed to remove.
+SCALAR_FAIR=1
+if [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
+    SCALAR_FAIR=0
+fi
 
 case "$(uname -s)" in
     Linux*) ;;
@@ -620,6 +710,10 @@ if [ ! -f "$BASELINE" ]; then
     echo "[ir-check] missing baseline: $BASELINE" >&2
     echo "[ir-check] create it with: $update_command" >&2
     exit 1
+fi
+
+if [ "$SELF_COMPILE_ONLY" -eq 0 ]; then
+    assert_scalar_fair_baseline "$BASELINE" || exit 1
 fi
 
 if compare_counts "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then

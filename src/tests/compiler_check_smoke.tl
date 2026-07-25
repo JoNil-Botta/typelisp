@@ -75,8 +75,14 @@
       [(ResultCompilerCheck.Err diag-box)
         (let
           [diag : CompilerDiagnostic (box-get diag-box)]
-          (match (compiler-diagnostic-fixes diag)
-            [(CompilerDiagnosticFixCons fix fix-rest)
+          [fixes : CompilerDiagnosticFixSeq (compiler-diagnostic-fixes diag)]
+          (and
+            (= (struct-get fixes len) 1)
+            (let
+              [fix : CompilerDiagnosticFix
+                (array-ref (struct-get fixes slots) 0)]
+              [edits : CompilerDiagnosticTextEditSeq
+                (compiler-diagnostic-fix-edits fix)]
               (and
                 (string.eq
                   (compiler-diagnostic-fix-title fix)
@@ -84,36 +90,29 @@
                 (match (compiler-diagnostic-fix-applicability fix)
                   [CompilerDiagnosticMachineApplicable true]
                   [_ false])
-                (match (compiler-diagnostic-fix-edits fix)
-                  [(CompilerDiagnosticTextEditCons edit edit-rest)
-                    (let
-                      [span : CompilerDiagnosticSpan
-                        (compiler-diagnostic-text-edit-span edit)]
-                      (and
-                        (string.eq (compiler-diagnostic-span-path span) path)
-                        (= (compiler-diagnostic-span-start-line span) 5)
-                        (= (compiler-diagnostic-span-start-col span) 4)
-                        (= (compiler-diagnostic-span-end-line span) 5)
-                        (= (compiler-diagnostic-span-end-col span) 16)
-                        (string.eq
-                          (compiler-diagnostic-text-edit-replacement edit)
-                          "render-value")
-                        (match (box-get edit-rest)
-                          [CompilerDiagnosticTextEditNil
-                            (match (compiler-check-fix-test-apply source edit)
-                              [(CompilerDiagnosticSomeString updated)
-                                (and
-                                  (string.eq
-                                    updated
-                                    (compiler-check-near-miss-fixed-source))
-                                  (compiler-check-source-ok? path updated))]
-                              [CompilerDiagnosticNoString false])]
-                          [(CompilerDiagnosticTextEditCons _ _) false])))]
-                  [CompilerDiagnosticTextEditNil false])
-                (match (box-get fix-rest)
-                  [CompilerDiagnosticFixNil true]
-                  [(CompilerDiagnosticFixCons _ _) false]))]
-            [CompilerDiagnosticFixNil false]))])))
+                (= (struct-get edits len) 1)
+                (let
+                  [edit : CompilerDiagnosticTextEdit
+                    (array-ref (struct-get edits slots) 0)]
+                  [span : CompilerDiagnosticSpan
+                    (compiler-diagnostic-text-edit-span edit)]
+                  (and
+                    (string.eq (compiler-diagnostic-span-path span) path)
+                    (= (compiler-diagnostic-span-start-line span) 5)
+                    (= (compiler-diagnostic-span-start-col span) 4)
+                    (= (compiler-diagnostic-span-end-line span) 5)
+                    (= (compiler-diagnostic-span-end-col span) 16)
+                    (string.eq
+                      (compiler-diagnostic-text-edit-replacement edit)
+                      "render-value")
+                    (match (compiler-check-fix-test-apply source edit)
+                      [(CompilerDiagnosticSomeString updated)
+                        (and
+                          (string.eq
+                            updated
+                            (compiler-check-near-miss-fixed-source))
+                          (compiler-check-source-ok? path updated))]
+                      [CompilerDiagnosticNoString false])))))))])))
 
 (define (compiler-check-import-help-not-machine-fix-ok?) : bool
   (match (compiler-check-source
@@ -121,9 +120,7 @@
     "(define (main) : i64 (begin (print 1) 0))")
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (match (compiler-diagnostic-fixes (box-get diag))
-        [CompilerDiagnosticFixNil true]
-        [(CompilerDiagnosticFixCons _ _) false])]))
+      (= (struct-get (compiler-diagnostic-fixes (box-get diag)) len) 0)]))
 
 (define (main) : i64
   (begin

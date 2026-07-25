@@ -46,22 +46,18 @@
   (span CompilerDiagnosticSpan)
   (replacement String))
 
-(defenum CompilerDiagnosticTextEditList
-  (CompilerDiagnosticTextEditNil)
-  (CompilerDiagnosticTextEditCons
-    CompilerDiagnosticTextEdit
-    (Box CompilerDiagnosticTextEditList)))
+(defstruct CompilerDiagnosticTextEditSeq
+  (slots (Array CompilerDiagnosticTextEdit))
+  (len i64))
 
 (defstruct CompilerDiagnosticFix
   (title String)
   (applicability CompilerDiagnosticApplicability)
-  (edits CompilerDiagnosticTextEditList))
+  (edits CompilerDiagnosticTextEditSeq))
 
-(defenum CompilerDiagnosticFixList
-  (CompilerDiagnosticFixNil)
-  (CompilerDiagnosticFixCons
-    CompilerDiagnosticFix
-    (Box CompilerDiagnosticFixList)))
+(defstruct CompilerDiagnosticFixSeq
+  (slots (Array CompilerDiagnosticFix))
+  (len i64))
 
 (defstruct CompilerDiagnostic
   (message String)
@@ -72,7 +68,7 @@
   (help CompilerDiagnosticMaybeString)
   (secondary CompilerDiagnosticLabelList)
   (notes CompilerDiagnosticNoteList)
-  (fixes CompilerDiagnosticFixList))
+  (fixes CompilerDiagnosticFixSeq))
 
 (define (compiler-diagnostic-span-path [span : (& span CompilerDiagnosticSpan)]) : String
   (string.copy (& (struct-get span path))))
@@ -150,7 +146,7 @@
 (define (compiler-diagnostic-notes [diag : CompilerDiagnostic]) : CompilerDiagnosticNoteList
   (struct-get diag notes))
 
-(define (compiler-diagnostic-fixes [diag : CompilerDiagnostic]) : CompilerDiagnosticFixList
+(define (compiler-diagnostic-fixes [diag : CompilerDiagnostic]) : CompilerDiagnosticFixSeq
   (struct-get diag fixes))
 
 (define (compiler-diagnostic-primary-span [diag : CompilerDiagnostic]) : CompilerDiagnosticSpan
@@ -169,7 +165,7 @@
 (define (compiler-diagnostic-fix-applicability [fix : CompilerDiagnosticFix]) : CompilerDiagnosticApplicability
   (struct-get fix applicability))
 
-(define (compiler-diagnostic-fix-edits [fix : CompilerDiagnosticFix]) : CompilerDiagnosticTextEditList
+(define (compiler-diagnostic-fix-edits [fix : CompilerDiagnosticFix]) : CompilerDiagnosticTextEditSeq
   (struct-get fix edits))
 
 (define (compiler-diagnostic-new
@@ -190,7 +186,7 @@
     help
     secondary
     notes
-    CompilerDiagnosticFixNil))
+    (CompilerDiagnosticFixSeq (make-array CompilerDiagnosticFix 0) 0)))
 
 (define (compiler-diagnostic-copy-maybe-string
   [value : CompilerDiagnosticMaybeString]) : CompilerDiagnosticMaybeString
@@ -233,13 +229,22 @@
     (string.copy (& (struct-get edit replacement)))))
 
 (define (compiler-diagnostic-copy-text-edit-list
-  [edits : CompilerDiagnosticTextEditList]) : CompilerDiagnosticTextEditList
-  (match edits
-    [CompilerDiagnosticTextEditNil CompilerDiagnosticTextEditNil]
-    [(CompilerDiagnosticTextEditCons edit rest)
-      (CompilerDiagnosticTextEditCons
-        (compiler-diagnostic-copy-text-edit edit)
-        (box (compiler-diagnostic-copy-text-edit-list (box-get rest))))]))
+  [edits : CompilerDiagnosticTextEditSeq]) : CompilerDiagnosticTextEditSeq
+  (let
+    [count : i64 (struct-get edits len)]
+    [src : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [dst : (Array CompilerDiagnosticTextEdit)
+      (make-array CompilerDiagnosticTextEdit count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            dst
+            index
+            (compiler-diagnostic-copy-text-edit (array-ref src index)))
+          (set! index (+ index 1))))
+      (CompilerDiagnosticTextEditSeq dst count))))
 
 (define (compiler-diagnostic-copy-fix [fix : CompilerDiagnosticFix]) : CompilerDiagnosticFix
   (CompilerDiagnosticFix
@@ -247,13 +252,22 @@
     (struct-get fix applicability)
     (compiler-diagnostic-copy-text-edit-list (struct-get fix edits))))
 
-(define (compiler-diagnostic-copy-fix-list [fixes : CompilerDiagnosticFixList]) : CompilerDiagnosticFixList
-  (match fixes
-    [CompilerDiagnosticFixNil CompilerDiagnosticFixNil]
-    [(CompilerDiagnosticFixCons fix rest)
-      (CompilerDiagnosticFixCons
-        (compiler-diagnostic-copy-fix fix)
-        (box (compiler-diagnostic-copy-fix-list (box-get rest))))]))
+(define (compiler-diagnostic-copy-fix-list [fixes : CompilerDiagnosticFixSeq]) : CompilerDiagnosticFixSeq
+  (let
+    [count : i64 (struct-get fixes len)]
+    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
+    [dst : (Array CompilerDiagnosticFix)
+      (make-array CompilerDiagnosticFix count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            dst
+            index
+            (compiler-diagnostic-copy-fix (array-ref src index)))
+          (set! index (+ index 1))))
+      (CompilerDiagnosticFixSeq dst count))))
 
 (define (compiler-diagnostic-copy [diag : CompilerDiagnostic]) : CompilerDiagnostic
   (CompilerDiagnostic
@@ -345,46 +359,64 @@
       same-path
       (or same-empty-position (not (or left-before-right right-before-left))))))
 
-(define (compiler-diagnostic-edit-overlaps-list?
+;; Scans the suffix after `start`, matching the old cons walk over the tail.
+(define (compiler-diagnostic-edit-overlaps-rest?
   [diagnostic-path : String]
   [edit : CompilerDiagnosticTextEdit]
-  [rest : CompilerDiagnosticTextEditList]) : bool
-  (match rest
-    [CompilerDiagnosticTextEditNil false]
-    [(CompilerDiagnosticTextEditCons candidate tail)
-      (or
-        (compiler-diagnostic-edit-overlaps? diagnostic-path edit candidate)
-        (compiler-diagnostic-edit-overlaps-list?
-          diagnostic-path
-          edit
-          (box-get tail)))]))
+  [slots : (Array CompilerDiagnosticTextEdit)]
+  [count : i64]
+  [start : i64]) : bool
+  (let
+    [cursor : i64 start]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< cursor count))
+        (begin
+          (if (compiler-diagnostic-edit-overlaps?
+            diagnostic-path
+            edit
+            (array-ref slots cursor))
+            (set! found true)
+            unit)
+          (set! cursor (+ cursor 1))))
+      found)))
 
 (define (compiler-diagnostic-edit-list-valid?
   [diagnostic-path : String]
-  [edits : CompilerDiagnosticTextEditList]) : bool
-  (match edits
-    [CompilerDiagnosticTextEditNil true]
-    [(CompilerDiagnosticTextEditCons edit rest)
-      (and
-        (compiler-diagnostic-span-valid-for-edit? (struct-get edit span))
-        (not
-          (compiler-diagnostic-edit-overlaps-list?
-            diagnostic-path
-            edit
-            (box-get rest)))
-        (compiler-diagnostic-edit-list-valid? diagnostic-path (box-get rest)))]))
+  [edits : CompilerDiagnosticTextEditSeq]) : bool
+  (let
+    [count : i64 (struct-get edits len)]
+    [slots : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [edit : CompilerDiagnosticTextEdit (array-ref slots index)]
+          (begin
+            (if (and
+              (compiler-diagnostic-span-valid-for-edit? (struct-get edit span))
+              (not
+                (compiler-diagnostic-edit-overlaps-rest?
+                  diagnostic-path
+                  edit
+                  slots
+                  count
+                  (+ index 1))))
+              unit
+              (set! ok false))
+            (set! index (+ index 1)))))
+      ok)))
 
 (define (compiler-diagnostic-fix-valid?
   [diagnostic-path : String]
   [fix : CompilerDiagnosticFix]) : bool
-  (and
-    (> (string.string-length (struct-get fix title)) 0)
-    (match (struct-get fix edits)
-      [CompilerDiagnosticTextEditNil false]
-      [(CompilerDiagnosticTextEditCons _ _)
-        (compiler-diagnostic-edit-list-valid?
-          diagnostic-path
-          (struct-get fix edits))])))
+  (let
+    [edits : CompilerDiagnosticTextEditSeq (struct-get fix edits)]
+    (and
+      (> (string.string-length (struct-get fix title)) 0)
+      (> (struct-get edits len) 0)
+      (compiler-diagnostic-edit-list-valid? diagnostic-path edits))))
 
 (define (compiler-diagnostic-repath-text-edit
   [edit : CompilerDiagnosticTextEdit]
@@ -404,29 +436,49 @@
       (struct-get edit replacement))))
 
 (define (compiler-diagnostic-repath-text-edit-list
-  [edits : CompilerDiagnosticTextEditList]
-  [path : String]) : CompilerDiagnosticTextEditList
-  (match edits
-    [CompilerDiagnosticTextEditNil CompilerDiagnosticTextEditNil]
-    [(CompilerDiagnosticTextEditCons edit rest)
-      (CompilerDiagnosticTextEditCons
-        (compiler-diagnostic-repath-text-edit edit path)
-        (box (compiler-diagnostic-repath-text-edit-list (box-get rest) path)))]))
+  [edits : CompilerDiagnosticTextEditSeq]
+  [path : String]) : CompilerDiagnosticTextEditSeq
+  (let
+    [count : i64 (struct-get edits len)]
+    [src : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [dst : (Array CompilerDiagnosticTextEdit)
+      (make-array CompilerDiagnosticTextEdit count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            dst
+            index
+            (compiler-diagnostic-repath-text-edit (array-ref src index) path))
+          (set! index (+ index 1))))
+      (CompilerDiagnosticTextEditSeq dst count))))
 
 (define (compiler-diagnostic-repath-fix-list
-  [fixes : CompilerDiagnosticFixList]
-  [path : String]) : CompilerDiagnosticFixList
-  (match fixes
-    [CompilerDiagnosticFixNil CompilerDiagnosticFixNil]
-    [(CompilerDiagnosticFixCons fix rest)
-      (CompilerDiagnosticFixCons
-        (CompilerDiagnosticFix
-          (struct-get fix title)
-          (struct-get fix applicability)
-          (compiler-diagnostic-repath-text-edit-list
-            (struct-get fix edits)
-            path))
-        (box (compiler-diagnostic-repath-fix-list (box-get rest) path)))]))
+  [fixes : CompilerDiagnosticFixSeq]
+  [path : String]) : CompilerDiagnosticFixSeq
+  (let
+    [count : i64 (struct-get fixes len)]
+    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
+    [dst : (Array CompilerDiagnosticFix)
+      (make-array CompilerDiagnosticFix count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [fix : CompilerDiagnosticFix (array-ref src index)]
+          (begin
+            (array-set!
+              dst
+              index
+              (CompilerDiagnosticFix
+                (struct-get fix title)
+                (struct-get fix applicability)
+                (compiler-diagnostic-repath-text-edit-list
+                  (struct-get fix edits)
+                  path)))
+            (set! index (+ index 1)))))
+      (CompilerDiagnosticFixSeq dst count))))
 
 (define (compiler-diagnostic-simple
   [path : String]
@@ -635,14 +687,38 @@
   (CompilerDiagnosticTextEdit span replacement))
 
 (define (compiler-diagnostic-text-edit-single
-  [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditList
-  (CompilerDiagnosticTextEditCons edit (box CompilerDiagnosticTextEditNil)))
+  [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
+  (let
+    [slots : (Array CompilerDiagnosticTextEdit)
+      (make-array CompilerDiagnosticTextEdit 1)]
+    (begin
+      (array-set! slots 0 edit)
+      (CompilerDiagnosticTextEditSeq slots 1))))
 
 (define (compiler-diagnostic-fix-new
   [title : String]
   [applicability : CompilerDiagnosticApplicability]
-  [edits : CompilerDiagnosticTextEditList]) : CompilerDiagnosticFix
+  [edits : CompilerDiagnosticTextEditSeq]) : CompilerDiagnosticFix
   (CompilerDiagnosticFix title applicability edits))
+
+;; Copies into a right-sized array rather than appending in place: `with-fix` is
+;; a persistent update, so the source diagnostic must keep its own fix list.
+(define (compiler-diagnostic-fix-prepend
+  [fix : CompilerDiagnosticFix]
+  [fixes : CompilerDiagnosticFixSeq]) : CompilerDiagnosticFixSeq
+  (let
+    [count : i64 (struct-get fixes len)]
+    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
+    [dst : (Array CompilerDiagnosticFix)
+      (make-array CompilerDiagnosticFix (+ count 1))]
+    [index : i64 0]
+    (begin
+      (array-set! dst 0 fix)
+      (while (< index count)
+        (begin
+          (array-set! dst (+ index 1) (array-ref src index))
+          (set! index (+ index 1))))
+      (CompilerDiagnosticFixSeq dst (+ count 1)))))
 
 ;; Fix attachment is the validation boundary: generated/unknown 0:0 spans,
 ;; reversed spans, empty edit sets, and overlapping half-open edits are not
@@ -660,7 +736,7 @@
       (compiler-diagnostic-help diag)
       (compiler-diagnostic-secondary-spans diag)
       (compiler-diagnostic-notes diag)
-      (CompilerDiagnosticFixCons fix (box (compiler-diagnostic-fixes diag))))
+      (compiler-diagnostic-fix-prepend fix (compiler-diagnostic-fixes diag)))
     diag))
 
 (define (compiler-diagnostic-render-notes [notes : CompilerDiagnosticNoteList]) : String

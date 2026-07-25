@@ -1389,6 +1389,43 @@ if ! cmp -s "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
         "$STDLIB_TLCI_FOLDS_MODIFIED_ASM" >&2 || true
     fail "native and interpreted index folds produced different assembly"
 fi
+# #5658: `stdlib.hash/hash` generates its module in the wildcard arm of a
+# type-kind match, so every type except `unit` goes through an arm that was
+# interpreted per invocation until that arm compiled. A wrong module name or a
+# dropped declaration there still compiles and still runs, so the route
+# differential is the contract.
+echo "[compile-profile] verify tlci wildcard-arm route differential"
+STDLIB_TLCI_WILD_SOURCE="$ROOT/tests/integration/tlci_native_wildcard_arms.tl"
+STDLIB_TLCI_WILD_EMBEDDED_ASM="$STDLIB_TLCI_DIR/wild-embedded.s"
+STDLIB_TLCI_WILD_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/wild-embedded.stdout"
+STDLIB_TLCI_WILD_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/wild-embedded.stderr"
+STDLIB_TLCI_WILD_MODIFIED_ASM="$STDLIB_TLCI_DIR/wild-modified.s"
+STDLIB_TLCI_WILD_MODIFIED_STDOUT="$STDLIB_TLCI_DIR/wild-modified.stdout"
+STDLIB_TLCI_WILD_MODIFIED_STDERR="$STDLIB_TLCI_DIR/wild-modified.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$STDLIB_TLCI_WILD_SOURCE"         -o "$STDLIB_TLCI_WILD_EMBEDDED_ASM"         --target "$NL_BOOTSTRAP_TARGET"         $(native_target_cfg_args)
+) > "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT"     2> "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT"         "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"
+    fail "embedded tlci wildcard-arm fixture compile failed"
+fi
+if ! (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" compile "$STDLIB_TLCI_WILD_SOURCE"         -o "$STDLIB_TLCI_WILD_MODIFIED_ASM"         --target "$NL_BOOTSTRAP_TARGET"         $(native_target_cfg_args)         --stdlib-root stdlib
+) > "$STDLIB_TLCI_WILD_MODIFIED_STDOUT"     2> "$STDLIB_TLCI_WILD_MODIFIED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_WILD_MODIFIED_STDOUT"         "$STDLIB_TLCI_WILD_MODIFIED_STDERR"
+    fail "comment-modified-root tlci wildcard-arm fixture compile failed"
+fi
+assert_profile_counter_at_least_in     "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"     "typecheck.macro.stdlib_tlci_native_dispatches"     1     "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT"     "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"
+assert_profile_counter_eq_in     "$STDLIB_TLCI_WILD_MODIFIED_STDERR"     "typecheck.macro.stdlib_tlci_catalog_hits"     0     "$STDLIB_TLCI_WILD_MODIFIED_STDOUT"     "$STDLIB_TLCI_WILD_MODIFIED_STDERR"
+# Both wildcard-arm identities must fire, so a fixture edit cannot silently
+# stop covering them.
+assert_contains "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" "stdlib.hash/hash arity=1"
+assert_contains "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" "stdlib.eq/inline-eq arity=3"
+if ! cmp -s "$STDLIB_TLCI_WILD_EMBEDDED_ASM"     "$STDLIB_TLCI_WILD_MODIFIED_ASM"; then
+    diff -u "$STDLIB_TLCI_WILD_EMBEDDED_ASM"         "$STDLIB_TLCI_WILD_MODIFIED_ASM" >&2 || true
+    fail "native and interpreted wildcard arms produced different assembly"
+fi
 fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"

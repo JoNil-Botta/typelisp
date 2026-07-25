@@ -221,13 +221,31 @@
 (define (doc-site-stdlib-api-tree) : DocSiteApiTree
   (DocSiteApiTree.ApiTree "stdlib" "stdlib.html" (doc-site-stdlib-modules)))
 
+;; The getting-started guide is a `.tl` module rather than a Markdown page so
+;; that `typelisp doc --test` compiles every example in it. A Markdown guide
+;; would be prose the language could drift away from. Refs #5672.
+(define (doc-site-guide-modules) : doc_site_modules.Vec
+  (let
+    [modules : doc_site_modules.Vec (doc_site_modules.with-capacity 1)]
+    (begin
+      (doc_site_modules.push
+        (&mut modules)
+        (DocSiteModule.Module "docs/getting_started.tl" "getting-started.html"))
+      modules)))
+
+(define (doc-site-guide-api-tree) : DocSiteApiTree
+  (DocSiteApiTree.ApiTree "guide" "guide.html" (doc-site-guide-modules)))
+
 (define (doc-site-typelisp-sections) : doc_site_sections.Vec
   (let
-    [sections : doc_site_sections.Vec (doc_site_sections.with-capacity 2)]
+    [sections : doc_site_sections.Vec (doc_site_sections.with-capacity 3)]
     (begin
       (doc_site_sections.push
         (&mut sections)
         (DocSiteSection.Guide "Language" (doc-site-language-guides)))
+      (doc_site_sections.push
+        (&mut sections)
+        (DocSiteSection.ApiTree (doc-site-guide-api-tree)))
       (doc_site_sections.push
         (&mut sections)
         (DocSiteSection.ApiTree (doc-site-stdlib-api-tree)))

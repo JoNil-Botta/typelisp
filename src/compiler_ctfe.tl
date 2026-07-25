@@ -698,9 +698,9 @@
 (define (ctfe-type-info-box-source-type) : AstType
   (ast-ty-box (ctfe-type-info-source-type)))
 
-(defenum CtfeValueList
-  (Nil)
-  (Cons CompilerCtfeValue (Box CtfeValueList)))
+(defstruct CtfeValueSeq
+  (slots (Array CompilerCtfeValue))
+  (len i64))
 
 (defenum CtfeMaybeSyntaxPools
   (None)
@@ -9011,20 +9011,34 @@
 ;; Evaluate a small CTFE-owned `match` subset. Runtime enum/struct values still
 ;; have no CTFE representation; this covers scalar values and the public
 ;; stdlib.comptime syntax pseudo-values backed by CompilerCtfeValue.Expr/CompilerCtfeValue.ExprList.
-(define (ctfe-value-list-cons [head : CompilerCtfeValue] [tail : CtfeValueList]) : CtfeValueList
-  (CtfeValueList.Cons head (box tail)))
+(define (ctfe-value-seq-with-capacity [capacity : i64]) : CtfeValueSeq
+  (CtfeValueSeq (array.make-array CompilerCtfeValue capacity) 0))
 
-(define (ctfe-value-list1 [a : CompilerCtfeValue]) : CtfeValueList
-  (ctfe-value-list-cons a CtfeValueList.Nil))
+(define (ctfe-value-seq-push [items : CtfeValueSeq] [value : CompilerCtfeValue]) : CtfeValueSeq
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array CompilerCtfeValue) (struct-get items slots)]
+    (begin
+      (array-set! slots n value)
+      (CtfeValueSeq slots (+ n 1)))))
 
-(define (ctfe-value-list2 [a : CompilerCtfeValue] [b : CompilerCtfeValue]) : CtfeValueList
-  (ctfe-value-list-cons a (ctfe-value-list1 b)))
+(define (ctfe-value-list1 [a : CompilerCtfeValue]) : CtfeValueSeq
+  (ctfe-value-seq-push (ctfe-value-seq-with-capacity 1) a))
+
+(define (ctfe-value-list2 [a : CompilerCtfeValue] [b : CompilerCtfeValue]) : CtfeValueSeq
+  (ctfe-value-seq-push
+    (ctfe-value-seq-push (ctfe-value-seq-with-capacity 2) a)
+    b))
 
 (define (ctfe-value-list3
   [a : CompilerCtfeValue]
   [b : CompilerCtfeValue]
-  [c : CompilerCtfeValue]) : CtfeValueList
-  (ctfe-value-list-cons a (ctfe-value-list2 b c)))
+  [c : CompilerCtfeValue]) : CtfeValueSeq
+  (ctfe-value-seq-push
+    (ctfe-value-seq-push
+      (ctfe-value-seq-push (ctfe-value-seq-with-capacity 3) a)
+      b)
+    c))
 
 (define (ctfe-string-suffix? [text : String] [suffix : String]) : bool
   (let
@@ -9082,34 +9096,31 @@
 
 (define (ctfe-match-pattern-list
   [patterns : AstPatternList]
-  [values : CtfeValueList]
+  [values : CtfeValueSeq]
   [env : CtfeEnv]) : CtfePatternMatch
   (ctfe-match-pattern-list-at (& patterns) 0 values env))
 
 (define (ctfe-match-pattern-list-at
   [patterns : (& patterns AstPatternList)]
   [index : i64]
-  [values : CtfeValueList]
+  [values : CtfeValueSeq]
   [env : CtfeEnv]) : CtfePatternMatch
   (if (>= index (struct-get patterns len))
-    (match values
-      [(CtfeValueList.Nil) (CtfePatternMatch.Matched env)]
-      [_ (CtfePatternMatch.No)])
-    (match values
-      [(CtfeValueList.Cons value rest-values)
+    (if (= index (struct-get values len))
+      (CtfePatternMatch.Matched env)
+      (CtfePatternMatch.No))
+    (if (>= index (struct-get values len))
+      (CtfePatternMatch.No)
+      (let
+        [value : CompilerCtfeValue (array.ref (struct-get values slots) index)]
         (match (ctfe-match-pattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))
           value
           (ctfe-value-default-cast-type value)
           env)
           [(CtfePatternMatch.Matched next-env)
-            (ctfe-match-pattern-list-at
-              patterns
-              (+ index 1)
-              (box-get rest-values)
-              next-env)]
-          [(CtfePatternMatch.No) (CtfePatternMatch.No)])]
-      [(CtfeValueList.Nil) (CtfePatternMatch.No)])))
+            (ctfe-match-pattern-list-at patterns (+ index 1) values next-env)]
+          [(CtfePatternMatch.No) (CtfePatternMatch.No)])))))
 
 (define (ctfe-match-expr-variant
   [variant : i64]

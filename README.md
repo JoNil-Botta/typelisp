@@ -492,12 +492,23 @@ Self-host bootstrap builds the compiler's exact embedded stdlib source set into
 a source-bound `stdlib.tlci`, embeds it in the next compiler stage, and validates
 all registered macro identities through the production loader. A bootstrapped
 compiler exposes that payload as `typelisp inspect embedded:stdlib.tlci`.
-When compilation consumes the embedded stdlib and no explicit `--stdlib-root`
-was supplied, macro expansion maps that image once per expansion pass and
-checks each stdlib macro against its native registration catalog. Transformer
-bodies still execute through CTFE; compile-profile counters report catalog
-hits/misses, load failures, and the interpreted fallback separately. Supplying
-an explicit stdlib root skips the TLCI route. The compile-profile gate compiles
+Dispatching stdlib macros through that image is **opt-in and not yet enabled in
+shipped builds**. It requires `--cfg tlci-native-route`, and even with that flag
+it stays off on Windows until the environmental sensitivity tracked by #5460 is
+closed; `scripts/build-stage0.sh` passes only `--cfg embedded-stdlib-tlci`, so
+the published stage0 never activates it. Today only
+`scripts/verify-compile-profile.sh` turns it on, to run the route differential.
+
+When the route *is* active, and compilation consumes the embedded stdlib with no
+explicit `--stdlib-root`, macro expansion maps the image once per expansion pass
+and checks each stdlib macro against its native registration catalog. A
+cataloged macro with a compiled entry dispatches natively and commits the
+transformer's result directly; anything else — an uncataloged identity, a
+registration shell, or the route being off — falls back to CTFE, which is what a
+default build does for every stdlib macro. Compile-profile counters report
+catalog hits, catalog misses, load failures, native dispatches, and interpreted
+fallbacks separately. Supplying an explicit stdlib root skips the TLCI route
+regardless of the flag. The compile-profile gate compiles
 the same corpus through both routes and requires byte-identical assembly.
 `typelisp run [--manifest-path <typelisp.pkg>]` uses the same package
 resolution and build profile rules, then executes `bin` package artifacts;

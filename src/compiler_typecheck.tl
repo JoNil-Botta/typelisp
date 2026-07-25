@@ -8126,6 +8126,23 @@
 (import (gen-b))
 (define (main) : i64 (answer))")
 
+;; A syntax (`Expr`) parameter disables the content-addressed memo shortcut, so
+;; every import of the same generated identity re-expands the macro and replays
+;; the fresh body against the materialized one. Hygienic locals must rename to
+;; the same ids across those expansions, or the replay reports a payload
+;; conflict for what is one module.
+(define (compiler-typecheck-module-macro-import-syntax-param-repeat-source) : String
+  "(defmacro (gen [T : type] [capabilities : Expr ...]) : Module
+  `(begin
+    (module generated.module)
+    (define (answer) : i64
+      (let
+        [cap : i64 42]
+        cap))))
+(import (gen i64 core) as first)
+(import (gen i64 core) as second)
+(define (main) : i64 (+ (first.answer) (second.answer)))")
+
 (define (compiler-typecheck-module-macro-import-distinct-collision-source) : String
   "(defmacro (gen-a) : Module
   `(begin
@@ -8737,6 +8754,10 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-target-collision-source)
       "typecheck: Module macro output for generated identity :gen-b() has incompatible payload")
+    ;; The same identity re-expanded through a syntax parameter dedupes instead:
+    ;; hygienic locals rename identically, so the replay finds one payload.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-module-macro-import-syntax-param-repeat-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-distinct-collision-source)
       "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
@@ -8901,6 +8922,10 @@
     (if (tc-spmd-env-box-smoke?)
       unit
       (io.panic "typecheck: boxed spmd env smoke mismatch"))
+    (if (macro-hygiene-local-id-declaration-stable?)
+      unit
+      (io.panic
+        "typecheck: hygienic local renaming depends on the dense declaration id"))
     (if (compiler-typecheck-ptr-null-tests-ok?)
       unit
       (io.panic "typecheck: ptr-null construction/check tests failed"))

@@ -568,7 +568,7 @@
   [index : i64]) : CompilerObjectSection
   (array-ref (struct-get sections slots) index))
 
-(define (compiler-object-image-dense? [image : CompilerObjectImage]) : bool
+(define (compiler-object-image-dense? [_image : CompilerObjectImage]) : bool
   true)
 
 (define (compiler-object-section-list-find

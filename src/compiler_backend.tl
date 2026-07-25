@@ -1053,9 +1053,9 @@
     (begin
       (while (< i n)
         (begin
-          (if (string.eq (array-ref (struct-get items slots) i) needle)
-            (return true)
-            unit)
+          (when
+            (string.eq (array-ref (struct-get items slots) i) needle)
+            (return true))
           (set! i (+ i 1))))
       false)))
 
@@ -1068,11 +1068,11 @@
     (begin
       (while (< i n)
         (begin
-          (if (=
-            (compiler-ir-symbol-id (array-ref (struct-get items slots) i))
-            needle-id)
-            (return true)
-            unit)
+          (when
+            (=
+              (compiler-ir-symbol-id (array-ref (struct-get items slots) i))
+              needle-id)
+            (return true))
           (set! i (+ i 1))))
       false)))
 
@@ -27523,10 +27523,10 @@
         (begin
           (match (array-ref (struct-get moves slots) i)
             [(BackendArgMove dest _)
-              (if (= (compiler-backend-parallel-reg-resource dest) want)
+              (when
+                (= (compiler-backend-parallel-reg-resource dest) want)
                 (return
-                  (BackendSomeArgMove (array-ref (struct-get moves slots) i)))
-                unit)])
+                  (BackendSomeArgMove (array-ref (struct-get moves slots) i))))])
           (set! i (+ i 1))))
       BackendNoArgMove)))
 
@@ -28685,11 +28685,11 @@
         (begin
           (match (array-ref (struct-get copies slots) i)
             [(CompilerBackendPhiCopy.Copy dst _ _)
-              (if (= dst want)
+              (when
+                (= dst want)
                 (return
                   (CompilerBackendMaybePhiCopy.Some
-                    (array-ref (struct-get copies slots) i)))
-                unit)])
+                    (array-ref (struct-get copies slots) i))))])
           (set! i (+ i 1))))
       CompilerBackendMaybePhiCopy.No)))
 
@@ -28785,9 +28785,9 @@
         (begin
           (match (array-ref (struct-get copies slots) i)
             [(CompilerBackendPhiCopy.Copy _ source _)
-              (if (compiler-backend-phi-source-is-var? source var)
-                (return true)
-                unit)])
+              (when
+                (compiler-backend-phi-source-is-var? source var)
+                (return true))])
           (set! i (+ i 1))))
       false)))
 
@@ -29380,11 +29380,11 @@
     (begin
       (while (< i (struct-get copies len))
         (begin
-          (if (compiler-backend-phi-copy-reg-swappable?
-            assignments
-            (array-ref (struct-get copies slots) i)
-            program-index)
-            unit
+          (unless
+            (compiler-backend-phi-copy-reg-swappable?
+              assignments
+              (array-ref (struct-get copies slots) i)
+              program-index)
             (return false))
           (set! i (+ i 1))))
       true)))
@@ -29428,11 +29428,11 @@
     (begin
       (while (< i (struct-get copies len))
         (begin
-          (if (compiler-backend-phi-copy-xmm-swappable?
-            assignments
-            (array-ref (struct-get copies slots) i)
-            program-index)
-            unit
+          (unless
+            (compiler-backend-phi-copy-xmm-swappable?
+              assignments
+              (array-ref (struct-get copies slots) i)
+              program-index)
             (return false))
           (set! i (+ i 1))))
       true)))

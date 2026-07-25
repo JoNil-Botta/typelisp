@@ -4527,6 +4527,15 @@
           (compiler-symbols-empty))
         3
         source-id)]
+    [other-macro-local-id : i64
+      (macro-hygiene-local-id
+        (MacroHygieneContext
+          (+ source-id 1)
+          (compiler-symbol-root-module-id)
+          declaration-id
+          (compiler-symbols-empty))
+        3
+        source-id)]
     (and
       (macro-hygiene-global-legacy-id? legacy-id)
       (= (macro-hygiene-global-module-id legacy-id) module-id)
@@ -4538,7 +4547,12 @@
       (= (macro-hygiene-structural-source-name-id root-context-id) source-id)
       (macro-hygiene-local-id? direct-local-id)
       (macro-hygiene-local-id? surface-local-id)
-      (not (= direct-local-id surface-local-id)))))
+      ;; The hygienic-local namespace belongs to the macro, not to the route
+      ;; that resolved it: a dense symbol declaration id and the surface
+      ;; fallback must rename the same local to the same id. Two different
+      ;; macros still get two namespaces.
+      (= direct-local-id surface-local-id)
+      (not (= direct-local-id other-macro-local-id)))))
 
 (define (compiler-typecheck-smoke-macro-change-signal-source-ok?
   [source : String]

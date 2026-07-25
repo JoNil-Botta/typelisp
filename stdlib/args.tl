@@ -50,10 +50,10 @@
   (short String)
   (arity ArgsOptionArity))
 
-;: Immutable list of option specs.
-(defenum ArgsOptionSpecList
-  (ArgsOptionSpecNil)
-  (ArgsOptionSpecCons ArgsOptionSpec (Box ArgsOptionSpecList)))
+;: Immutable sequence of option specs in a contiguous backing array.
+(defstruct ArgsOptionSpecList
+  (slots (Array ArgsOptionSpec))
+  (len i64))
 
 ;: One parsed option occurrence in input order. Boolean flags set `has-value`
 ;: false and store the empty string as `value`.
@@ -62,10 +62,11 @@
   (value String)
   (has-value bool))
 
-;: Immutable list of parsed option occurrences.
-(defenum ArgsOptionList
-  (ArgsOptionNil)
-  (ArgsOptionCons ArgsOption (Box ArgsOptionList)))
+;: Immutable sequence of parsed option occurrences in a contiguous backing
+;: array. `len` is the live prefix; the array may hold builder slack.
+(defstruct ArgsOptionList
+  (slots (Array ArgsOption))
+  (len i64))
 
 ;: Parsed argv result: ordered option occurrences and ordered positionals.
 (defstruct ArgsParsed
@@ -87,8 +88,8 @@
   (ArgsNoOptionSpec)
   (ArgsSomeOptionSpec ArgsOptionSpec))
 
-;: Internal parse accumulator. Options are stored reversed until the final
-;: result is produced; positionals are appended into a vector in input order.
+;: Internal parse accumulator. Options and positionals are both appended in
+;: input order, so the final result needs no reordering.
 (defstruct ArgsParseState
   (options ArgsOptionList)
   (positionals svec.Vec)
@@ -106,11 +107,24 @@
 
 ;: Return an empty option spec list.
 (define (option-spec-empty) : ArgsOptionSpecList
-  (ArgsOptionSpecNil))
+  (ArgsOptionSpecList (array.make-array ArgsOptionSpec 0) 0))
 
-;: Prepend `spec` to `rest`.
+;: Prepend `spec` to `rest`, copying `rest` into a right-sized array.
 (define (option-spec-cons [spec : ArgsOptionSpec] [rest : ArgsOptionSpecList]) : ArgsOptionSpecList
-  (ArgsOptionSpecCons spec (box rest)))
+  (let
+    [len : i64 (struct-get rest len)]
+    [slots : (Array ArgsOptionSpec) (array.make-array ArgsOptionSpec (+ len 1))]
+    [index : i64 0]
+    (begin
+      (array-set! slots 0 spec)
+      (while (< index len)
+        (begin
+          (array-set!
+            slots
+            (+ index 1)
+            (array-ref (struct-get rest slots) index))
+          (set! index (+ index 1))))
+      (ArgsOptionSpecList slots (+ len 1)))))
 
 ;: Construct a boolean flag spec.
 (define (flag-option [name : String] [long : String] [short : String]) : ArgsOptionSpec
@@ -154,13 +168,56 @@
     (string.eq (option-spec-short spec) name)
     false))
 
+;: Copy `count` occurrences from `src` into `dst` starting at `offset`.
+(define (option-list-copy!
+  [dst : (&mut dst (Array ArgsOption))]
+  [src : (& src (Array ArgsOption))]
+  [offset : i64]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst (+ index offset) (array-ref src index))
+        (set! index (+ index 1))))))
+
 ;: Return an empty parsed option list.
 (define (option-list-empty) : ArgsOptionList
-  (ArgsOptionNil))
+  (ArgsOptionList (array.make-array ArgsOption 0) 0))
 
-;: Prepend one parsed option occurrence.
+;: Prepend one parsed option occurrence, copying `rest` into a right-sized
+;: array.
 (define (option-list-cons [option : ArgsOption] [rest : ArgsOptionList]) : ArgsOptionList
-  (ArgsOptionCons option (box rest)))
+  (let
+    [len : i64 (struct-get rest len)]
+    [slots : (Array ArgsOption) (array.make-array ArgsOption (+ len 1))]
+    (begin
+      (array-set! slots 0 option)
+      (option-list-copy! (&mut slots) (& (struct-get rest slots)) 1 len)
+      (ArgsOptionList slots (+ len 1)))))
+
+;: Append one parsed option occurrence, doubling the backing array when the
+;: live prefix has filled it.
+(define (option-list-push [items : ArgsOptionList] [option : ArgsOption]) : ArgsOptionList
+  (let
+    [len : i64 (struct-get items len)]
+    [slots : (Array ArgsOption) (struct-get items slots)]
+    [capacity : i64 (array-length slots)]
+    (begin
+      (if (< len capacity)
+        unit
+        (let
+          [bigger : (Array ArgsOption)
+            (array.make-array
+              ArgsOption
+              (if (< capacity 1)
+                4
+                (* capacity 2)))]
+          (begin
+            (option-list-copy! (&mut bigger) (& slots) 0 len)
+            (set! slots bigger))))
+      (array-set! slots len option)
+      (ArgsOptionList slots (+ len 1)))))
 
 ;: Return a parsed option occurrence's canonical name.
 (define (option-name [option : ArgsOption]) : String
@@ -174,29 +231,21 @@
 (define (option-has-value? [option : ArgsOption]) : bool
   (struct-get option has-value))
 
-;: Reverse parsed options onto `acc`, allocating a fresh list spine.
-(define (option-list-reverse-onto
-  [items : ArgsOptionList]
-  [acc : ArgsOptionList]) : ArgsOptionList
-  (match items
-    [(ArgsOptionNil) acc]
-    [(ArgsOptionCons head rest)
-      (option-list-reverse-onto (box-get rest) (ArgsOptionCons head (box acc)))]))
-
-;: Return options in reverse order.
-(define (option-list-reverse [items : ArgsOptionList]) : ArgsOptionList
-  (option-list-reverse-onto items (ArgsOptionNil)))
-
 ;: Count parsed option occurrences with the canonical `name`.
 (define (option-list-count [items : ArgsOptionList] [name : String]) : i64
-  (match items
-    [(ArgsOptionNil) 0]
-    [(ArgsOptionCons head rest)
-      (+
-        (if (string.eq (option-name head) name)
-          1
-          0)
-        (option-list-count (box-get rest) name))]))
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (struct-get items len))
+        (begin
+          (if (string.eq
+            (option-name (array-ref (struct-get items slots) index))
+            name)
+            (set! count (+ count 1))
+            unit)
+          (set! index (+ index 1))))
+      count)))
 
 ;: Return true when `items` contains at least one option with `name`.
 (define (option-list-present? [items : ArgsOptionList] [name : String]) : bool
@@ -208,17 +257,21 @@
   [items : ArgsOptionList]
   [name : String]
   [fallback : String]) : String
-  (match items
-    [(ArgsOptionNil) fallback]
-    [(ArgsOptionCons head rest)
-      (option-list-value-or
-        (box-get rest)
-        name
-        (if (if (string.eq (option-name head) name)
-          (option-has-value? head)
-          false)
-          (option-value head)
-          fallback))]))
+  (let
+    [index : i64 0]
+    [result : String fallback]
+    (begin
+      (while (< index (struct-get items len))
+        (let
+          [head : ArgsOption (array-ref (struct-get items slots) index)]
+          (begin
+            (if (if (string.eq (option-name head) name)
+              (option-has-value? head)
+              false)
+              (set! result (option-value head))
+              unit)
+            (set! index (+ index 1)))))
+      result)))
 
 ;: Return the parsed option occurrence list.
 (define (parsed-options [parsed : ArgsParsed]) : ArgsOptionList
@@ -298,23 +351,30 @@
 (define (token-short-name [token : String]) : String
   (string.substring token 1 1))
 
+;: Find the first spec from `index` matching `name`, comparing long spellings
+;: when `long?` is true and short spellings otherwise.
+(define (find-spec-from
+  [specs : ArgsOptionSpecList]
+  [name : String]
+  [long? : bool]
+  [index : i64]) : ArgsMaybeOptionSpec
+  (if (>= index (struct-get specs len))
+    (ArgsNoOptionSpec)
+    (let
+      [spec : ArgsOptionSpec (array-ref (struct-get specs slots) index)]
+      (if (if long?
+        (option-spec-matches-long? spec name)
+        (option-spec-matches-short? spec name))
+        (ArgsSomeOptionSpec spec)
+        (find-spec-from specs name long? (+ index 1))))))
+
 ;: Find a spec by long spelling.
 (define (find-spec-long [specs : ArgsOptionSpecList] [name : String]) : ArgsMaybeOptionSpec
-  (match specs
-    [(ArgsOptionSpecNil) (ArgsNoOptionSpec)]
-    [(ArgsOptionSpecCons spec rest)
-      (if (option-spec-matches-long? spec name)
-        (ArgsSomeOptionSpec spec)
-        (find-spec-long (box-get rest) name))]))
+  (find-spec-from specs name true 0))
 
 ;: Find a spec by short spelling.
 (define (find-spec-short [specs : ArgsOptionSpecList] [name : String]) : ArgsMaybeOptionSpec
-  (match specs
-    [(ArgsOptionSpecNil) (ArgsNoOptionSpec)]
-    [(ArgsOptionSpecCons spec rest)
-      (if (option-spec-matches-short? spec name)
-        (ArgsSomeOptionSpec spec)
-        (find-spec-short (box-get rest) name))]))
+  (find-spec-from specs name false 0))
 
 ;: Find a matching spec for a supported option token.
 (define (find-spec-token [specs : ArgsOptionSpecList] [token : String]) : ArgsMaybeOptionSpec
@@ -326,7 +386,7 @@
 
 ;: Return a fresh empty parse state.
 (define (parse-state-empty) : ArgsParseState
-  (ArgsParseState (ArgsOptionNil) (svec.new) false))
+  (ArgsParseState (option-list-empty) (svec.new) false))
 
 ;: Add a positional token to a parse state.
 (define (parse-state-add-positional [state : ArgsParseState] [value : String]) : ArgsParseState
@@ -346,9 +406,9 @@
   [value : String]
   [has-value : bool]) : ArgsParseState
   (ArgsParseState
-    (ArgsOptionCons
-      (ArgsOption name value has-value)
-      (box (struct-get state options)))
+    (option-list-push
+      (struct-get state options)
+      (ArgsOption name value has-value))
     (struct-get state positionals)
     (struct-get state stop-options)))
 
@@ -359,17 +419,15 @@
     (struct-get state positionals)
     true))
 
-;: Convert the reversed parse state into the public ordered result.
+;: Convert the parse state into the public ordered result.
 (define (parse-state-finish [state : ArgsParseState]) : ArgsParsed
-  (ArgsParsed
-    (option-list-reverse (struct-get state options))
-    (struct-get state positionals)))
+  (ArgsParsed (struct-get state options) (struct-get state positionals)))
 
 ;: Finish parser field accumulators into the public ordered result.
 (define (parse-finish-fields
   [options : ArgsOptionList]
   [positionals : svec.Vec]) : ArgsParsed
-  (ArgsParsed (option-list-reverse options) positionals))
+  (ArgsParsed options positionals))
 
 ;: Advance past one positional token.
 (define (advance-positional
@@ -499,12 +557,12 @@
                     argv
                     (+ index 2)
                     end
-                    (ArgsOptionCons
+                    (stdlib.args.option-list-push
+                      options
                       (ArgsOption
                         (stdlib.args.option-spec-name spec)
                         next-value
-                        true)
-                      (box options))
+                        true))
                     positionals
                     stop-options)
                   (ErrArgsParsed (ArgsMissingValue current)))
@@ -513,9 +571,9 @@
                   argv
                   (+ index 1)
                   end
-                  (ArgsOptionCons
-                    (ArgsOption (stdlib.args.option-spec-name spec) "" false)
-                    (box options))
+                  (stdlib.args.option-list-push
+                    options
+                    (ArgsOption (stdlib.args.option-spec-name spec) "" false))
                   positionals
                   stop-options))])]
         [else
@@ -557,7 +615,7 @@
     [limit : i64 (array-length argv)]
     [i : i64 (stdlib.args.clamp-start start)]
     [last : i64 (stdlib.args.clamp-end end limit)]
-    [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
+    [options : ArgsOptionList (stdlib.args.option-list-empty)]
     [positionals : svec.Vec (svec.new)]
     [stop-options : bool false]
     [failed : bool false]
@@ -593,12 +651,12 @@
                       (begin
                         (set!
                           options
-                          (stdlib.args.ArgsOptionCons
+                          (stdlib.args.option-list-push
+                            options
                             (stdlib.args.ArgsOption
                               (stdlib.args.option-spec-name spec)
                               next-value
-                              true)
-                            (box options)))
+                              true)))
                         (set! i (+ i 2)))
                       (begin
                         (set! error (stdlib.args.ArgsMissingValue current))
@@ -606,12 +664,12 @@
                     (begin
                       (set!
                         options
-                        (stdlib.args.ArgsOptionCons
+                        (stdlib.args.option-list-push
+                          options
                           (stdlib.args.ArgsOption
                             (stdlib.args.option-spec-name spec)
                             ""
-                            false)
-                          (box options)))
+                            false)))
                       (set! i (+ i 1))))])]
             [else
               (begin
@@ -672,12 +730,12 @@
                     specs
                     (+ index 2)
                     end
-                    (ArgsOptionCons
+                    (stdlib.args.option-list-push
+                      options
                       (ArgsOption
                         (stdlib.args.option-spec-name spec)
                         next-value
-                        true)
-                      (box options))
+                        true))
                     positionals
                     stop-options)
                   (ErrArgsParsed (ArgsMissingValue current)))
@@ -685,9 +743,9 @@
                   specs
                   (+ index 1)
                   end
-                  (ArgsOptionCons
-                    (ArgsOption (stdlib.args.option-spec-name spec) "" false)
-                    (box options))
+                  (stdlib.args.option-list-push
+                    options
+                    (ArgsOption (stdlib.args.option-spec-name spec) "" false))
                   positionals
                   stop-options))])]
         [else
@@ -725,7 +783,7 @@
     [limit : i64 (io.arg-count)]
     [i : i64 (stdlib.args.clamp-start start)]
     [last : i64 (stdlib.args.clamp-end end limit)]
-    [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
+    [options : ArgsOptionList (stdlib.args.option-list-empty)]
     [positionals : svec.Vec (svec.new)]
     [stop-options : bool false]
     [failed : bool false]
@@ -761,12 +819,12 @@
                       (begin
                         (set!
                           options
-                          (stdlib.args.ArgsOptionCons
+                          (stdlib.args.option-list-push
+                            options
                             (stdlib.args.ArgsOption
                               (stdlib.args.option-spec-name spec)
                               next-value
-                              true)
-                            (box options)))
+                              true)))
                         (set! i (+ i 2)))
                       (begin
                         (set! error (stdlib.args.ArgsMissingValue current))
@@ -774,12 +832,12 @@
                     (begin
                       (set!
                         options
-                        (stdlib.args.ArgsOptionCons
+                        (stdlib.args.option-list-push
+                          options
                           (stdlib.args.ArgsOption
                             (stdlib.args.option-spec-name spec)
                             ""
-                            false)
-                          (box options)))
+                            false)))
                       (set! i (+ i 1))))])]
             [else
               (begin

@@ -17434,7 +17434,6 @@
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegStringList]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]
   [is-float : bool]
   [float-idx : i64]
   [position : i64]
@@ -17489,7 +17488,6 @@
           abi
           pool
           value
-          types
           is-float
           float-idx
           position
@@ -17523,7 +17521,6 @@
         abi
         pool
         a
-        types
         (compiler-reg-call-arg-float? a types)
         0
         position
@@ -17537,7 +17534,6 @@
             abi
             pool
             a
-            types
             a-float
             0
             position
@@ -17547,7 +17543,6 @@
             abi
             pool
             b
-            types
             (compiler-reg-call-arg-float? b types)
             (if a-float
               1
@@ -17706,7 +17701,6 @@
 (define (compiler-reg-float-arg-demote-value!
   [abi : CompilerRegTargetAbi]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]
   [is-float : bool]
   [float-idx : i64]
   [position : i64]
@@ -17755,7 +17749,6 @@
         (compiler-reg-float-arg-demote-value!
           abi
           value
-          types
           is-float
           float-idx
           position
@@ -17786,7 +17779,6 @@
       (compiler-reg-float-arg-demote-value!
         abi
         a
-        types
         (compiler-reg-call-arg-float? a types)
         0
         position
@@ -17799,7 +17791,6 @@
           (compiler-reg-float-arg-demote-value!
             abi
             a
-            types
             a-float
             0
             position
@@ -17808,7 +17799,6 @@
           (compiler-reg-float-arg-demote-value!
             abi
             b
-            types
             (compiler-reg-call-arg-float? b types)
             (if a-float
               1

@@ -8987,10 +8987,9 @@
     false
     (let
       [set : (Array bool) (array.make-array bool vars)]
-      (begin
-        (and
-          (opt-verify-param-def-set params set)
-          (opt-verify-block-def-set blocks set))))))
+      (and
+        (opt-verify-param-def-set params set)
+        (opt-verify-block-def-set blocks set)))))
 
 (define (opt-var-defs-from-params
   [params : CompilerIrParamList]

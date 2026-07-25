@@ -1912,6 +1912,12 @@
   [ops : (Array String)]
   [ops-count : (Array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
+    ;; A quasiquote in computed position produces the same expression value as
+    ;; a body-level template; reuse the template walker for its inner syntax.
+    ;; This is needed for computed match-arm bodies in enum dispatch. Refs
+    ;; #5626.
+    [(AstExpr.Quasiquote inner)
+      (embedded-native-template-ops params inner ops ops-count)]
     [(AstExpr.Literal lit)
       (match lit
         [(AstLiteral.String sid)
@@ -2183,6 +2189,167 @@
                   ops-count)]
               [(and
                   (or
+                    (string.eq head "comptime.struct-field-name")
+                    (string.eq head "struct-field-name"))
+                  (= argc 2))
+                (embedded-native-computed-indexed-type-query-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  135
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.enum-variant-name")
+                    (string.eq head "enum-variant-name"))
+                  (= argc 2))
+                (embedded-native-computed-indexed-type-query-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  138
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.struct-field-type")
+                    (string.eq head "struct-field-type"))
+                  (= argc 2))
+                (embedded-native-computed-indexed-type-query-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  136
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.enum-variant-payload-type")
+                    (string.eq head "enum-variant-payload-type"))
+                  (= argc 3))
+                (embedded-native-computed-double-indexed-type-query-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  (ast-expr-list-get (& args) 2 0)
+                  140
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.tuple-element-type")
+                    (string.eq head "tuple-element-type"))
+                  (= argc 2))
+                (embedded-native-computed-indexed-type-query-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  145
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-struct-get")
+                    (string.eq head "expr-struct-get"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  259
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-tuple-ref")
+                    (string.eq head "expr-tuple-ref"))
+                  (= argc 2))
+                (embedded-native-computed-indexed-expr-query-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  105
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.pattern-list-bindings")
+                    (string.eq head "pattern-list-bindings"))
+                  (= argc 2))
+                (embedded-native-computed-data-arg-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  169
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.pattern-variant")
+                    (string.eq head "pattern-variant"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  260
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.pattern-wildcard")
+                    (string.eq head "pattern-wildcard"))
+                  (= argc 0))
+                (begin
+                  (embedded-native-template-push! ops ops-count 116 "0" "0" "0")
+                  1)]
+              [(and
+                  (or
+                    (string.eq head "comptime.match-arm")
+                    (string.eq head "match-arm"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  121
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.match-arm-list-empty")
+                    (string.eq head "match-arm-list-empty"))
+                  (= argc 0))
+                (begin
+                  (embedded-native-template-push! ops ops-count 122 "0" "0" "0")
+                  1)]
+              [(and
+                  (or
+                    (string.eq head "comptime.match-arm-list-cons")
+                    (string.eq head "match-arm-list-cons"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  261
+                  ops
+                  ops-count)]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-match")
+                    (string.eq head "expr-match"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  124
+                  ops
+                  ops-count)]
+              [(and
+                  (or
                     (string.eq head "comptime.expr-int")
                     (string.eq head "expr-int"))
                   (= argc 1))
@@ -2376,6 +2543,45 @@
       name
       1)))
 
+;; Concatenate the still-open host-op let/if chain emitted into `ops`.
+(define (embedded-native-ops-open-text [ops : (Array String)] [count : i64]) : String
+  (let
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! out (str-cat out (array-ref ops index)))
+          (set! index (+ index 1))))
+      out)))
+
+;; A data-returning reflection op first consumes a computed type stack value,
+;; then returns its count directly. Keep both open chains visible to the
+;; surrounding data expression so its caller closes them together. Refs #5626.
+(define (embedded-native-stacked-data-probe-value
+  [params : (& params AstMacroParamList)]
+  [type-node : i64]
+  [op : i64]
+  [arg : String]) : EmbeddedNativeDataValue
+  (let
+    [ops : (Array String) (array.make-array String embedded-native-ops-cap)]
+    [ops-count : (Array i64) (make-array 0)]
+    [type-opened : i64
+      (embedded-native-computed-expr-ops params type-node ops ops-count)]
+    (if (or
+      (< type-opened 0)
+      (>= type-opened embedded-native-ops-cap)
+      (>= (array-ref ops-count 0) embedded-native-ops-cap))
+      (embedded-native-data-value-none)
+      (let
+        [name : String (embedded-native-temp-name!)]
+        (EmbeddedNativeDataValue
+          (str-cat
+            (embedded-native-ops-open-text ops (array-ref ops-count 0))
+            (embedded-native-data-probe-open name op arg "0"))
+          name
+          (+ type-opened 1))))))
+
 ;; Literals, data locals, and arithmetic over them need no probe; an operand or
 ;; local expression-list length, and the comptime string-scanner reads over a
 ;; String session local, each hoist one. Arithmetic recurses so a probed
@@ -2430,8 +2636,64 @@
             ")")
           (+ (struct-get left opens) (struct-get right opens)))))))
 
-;; The probe-backed data calls: the two expression-list lengths and the two
-;; comptime string reads over a String session local. Refs #5602, #5701.
+;; One reflection count over a type operand/session local, or no value.
+(define (embedded-native-reflection-count-value
+  [params : (& params AstMacroParamList)]
+  [node : i64]) : EmbeddedNativeDataValue
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Call func args)
+      (match (embedded-stdlib-tlci-unwrap-expr func)
+        [(AstExpr.Var head-id)
+          (let
+            [head : String (intern-str head-id)]
+            [argc : i64 (ast-expr-list-len (& args))]
+            [op : i64
+              (cond
+                [(and
+                    (= argc 1)
+                    (or
+                      (string.eq head "comptime.struct-field-count")
+                      (string.eq head "struct-field-count")))
+                  134]
+                [(and
+                    (= argc 1)
+                    (or
+                      (string.eq head "comptime.enum-variant-count")
+                      (string.eq head "enum-variant-count")))
+                  137]
+                [(and
+                    (= argc 2)
+                    (or
+                      (string.eq head "comptime.enum-variant-payload-count")
+                      (string.eq head "enum-variant-payload-count")))
+                  139]
+                [(and
+                    (= argc 1)
+                    (or
+                      (string.eq head "comptime.tuple-element-count")
+                      (string.eq head "tuple-element-count")))
+                  144]
+                [else -1])]
+            (if (< op 0)
+              (embedded-native-data-value-none)
+              (let
+                [index-text : String
+                  (if (= argc 2)
+                    (embedded-native-data-index-text
+                      (ast-expr-list-get (& args) 1 0))
+                    "0")]
+                (if (string.eq index-text "")
+                  (embedded-native-data-value-none)
+                  (embedded-native-stacked-data-probe-value
+                    params
+                    (ast-expr-list-get (& args) 0 0)
+                    op
+                    index-text)))))]
+        [_ (embedded-native-data-value-none)])]
+    [_ (embedded-native-data-value-none)]))
+
+;; The probe-backed data calls: expression-list lengths, reflection counts, and
+;; comptime string reads over a String session local. Refs #5602, #5626, #5701.
 (define (embedded-native-data-call-value
   [params : (& params AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
@@ -2443,7 +2705,12 @@
         [slot : i64 (embedded-native-expr-list-length-local params node)]
         (if (>= slot 0)
           (embedded-native-data-probe-value 227 (string.int->string slot) "0")
-          (embedded-native-string-scan-value params node))))))
+          (let
+            [reflection : EmbeddedNativeDataValue
+              (embedded-native-reflection-count-value params node)]
+            (if (string.eq (struct-get reflection text) "")
+              (embedded-native-string-scan-value params node)
+              reflection)))))))
 
 ;; `(string.string-length <String local>)` and
 ;; `(string.string-ref <String local> <data>)`: the stdlib string functions the
@@ -2629,6 +2896,28 @@
             (embedded-native-template-push! ops ops-count op "0" "0" "0")
             (+ left-opened right-opened 1)))))))
 
+;; Compile one stack-valued argument followed by an i64 literal/data-local
+;; immediate. Used by dense computed pattern binding construction. Refs #5626.
+(define (embedded-native-computed-data-arg-ops
+  [params : (& params AstMacroParamList)]
+  [value-node : i64]
+  [data-node : i64]
+  [op : i64]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (let
+    [data-text : String (embedded-native-data-index-text data-node)]
+    (if (string.eq data-text "")
+      -1
+      (let
+        [value-opened : i64
+          (embedded-native-computed-expr-ops params value-node ops ops-count)]
+        (if (< value-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push! ops ops-count op data-text "0" "0")
+            (+ value-opened 1)))))))
+
 ;; `(type-key T)` / `(type-kind T)` with a type parameter scrutinee.
 (define (embedded-native-computed-type-query-ops
   [params : (& params AstMacroParamList)]
@@ -2671,6 +2960,86 @@
             (embedded-native-template-push! ops ops-count 125 "0" "0" "0")
             (embedded-native-template-push! ops ops-count op "0" "0" "0")
             3)))]))
+
+;; Compile an indexed reflection query whose type can be either a macro
+;; operand or a let-bound session value and whose index is a literal/data
+;; local. The host operation replaces the pushed type with its reflected
+;; result. Refs #5626.
+(define (embedded-native-computed-indexed-type-query-ops
+  [params : (& params AstMacroParamList)]
+  [type-node : i64]
+  [index-node : i64]
+  [op : i64]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (let
+    [index-text : String (embedded-native-data-index-text index-node)]
+    (if (string.eq index-text "")
+      -1
+      (let
+        [type-opened : i64
+          (embedded-native-computed-expr-ops params type-node ops ops-count)]
+        (if (< type-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push! ops ops-count op index-text "0" "0")
+            (+ type-opened 1)))))))
+
+;; Compile a reflection query with two literal/data-local indexes. The type
+;; value stays on the session stack while both indexes travel in the callback
+;; operation's immediate arguments. Refs #5626.
+(define (embedded-native-computed-double-indexed-type-query-ops
+  [params : (& params AstMacroParamList)]
+  [type-node : i64]
+  [first-index-node : i64]
+  [second-index-node : i64]
+  [op : i64]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (let
+    [first-index-text : String
+      (embedded-native-data-index-text first-index-node)]
+    [second-index-text : String
+      (embedded-native-data-index-text second-index-node)]
+    (if (or (string.eq first-index-text "") (string.eq second-index-text ""))
+      -1
+      (let
+        [type-opened : i64
+          (embedded-native-computed-expr-ops params type-node ops ops-count)]
+        (if (< type-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              op
+              first-index-text
+              second-index-text
+              "0")
+            (+ type-opened 1)))))))
+
+;; Compile an expression projection with a literal/data-local index. The
+;; expression value is pushed first and the host operation replaces it with
+;; the projected expression. Refs #5626.
+(define (embedded-native-computed-indexed-expr-query-ops
+  [params : (& params AstMacroParamList)]
+  [expr-node : i64]
+  [index-node : i64]
+  [op : i64]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (let
+    [index-text : String (embedded-native-data-index-text index-node)]
+    (if (string.eq index-text "")
+      -1
+      (let
+        [expr-opened : i64
+          (embedded-native-computed-expr-ops params expr-node ops ops-count)]
+        (if (< expr-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push! ops ops-count op index-text "0" "0")
+            (+ expr-opened 1)))))))
 
 ;; The `(comptime-host-invoke host session 204 N 0 0)` local-set final text
 ;; for one binding slot.

@@ -377,6 +377,15 @@
       [(CompilerCtfeValue.String text _) (CompilerCtfeMaybeString.Some text)]
       [_ (CompilerCtfeMaybeString.None)])))
 
+;; Public CTFE String arguments also accept inspected Name values; this is how
+;; reflection names flow through ordinary string helpers on the interpreted
+;; route. Refs #5626.
+(define (compiler-comptime-host-value-string [value : CompilerCtfeValue]) : CompilerCtfeMaybeString
+  (match value
+    [(CompilerCtfeValue.String text _) (CompilerCtfeMaybeString.Some text)]
+    [(CompilerCtfeValue.Name text _) (CompilerCtfeMaybeString.Some text)]
+    [_ (CompilerCtfeMaybeString.None)]))
+
 ;; The pools that own an operand's expression nodes: a captured operand keeps
 ;; its caller pools, every other value reads the session pools. Refs #5602.
 (define (compiler-comptime-host-value-pools [value : CompilerCtfeValue]) : AstNodePoolContext
@@ -460,6 +469,50 @@
               (- compiler-comptime-host-stack-len 2))
             (compiler-comptime-host-push!
               (CompilerCtfeValue.Expr node (AstType.Expr)))))))))
+
+;; Build a computed struct projection from an already-resolved opaque syntax
+;; identity. Source-name identities are not sign-constrained, so callers must
+;; discriminate the value variant rather than treating a negative id as an
+;; error sentinel. Refs #5626.
+(define (compiler-comptime-host-build-struct-get-from-id!
+  [target-node : i64]
+  [name-id : i64]) : i64
+  (begin
+    (set!
+      compiler-comptime-host-stack-len
+      (- compiler-comptime-host-stack-len 2))
+    (compiler-comptime-host-push!
+      (CompilerCtfeValue.Expr
+        (ast-expr-struct-get-id-with-pools
+          (array-ref compiler-comptime-host-pools 0)
+          target-node
+          name-id)
+        (AstType.Expr)))))
+
+;; Resolve a computed String/Name identity the same way the interpreted
+;; pattern-variant builder does, then consume its payload list.
+(define (compiler-comptime-host-build-pattern-variant-from-name!
+  [text : String]
+  [name-id : i64]
+  [payloads-value : CompilerCtfeValue]) : i64
+  (match payloads-value
+    [(CompilerCtfeValue.PatternList payloads)
+      (let
+        [env : CtfeEnv
+          (ctfe-env-empty-with-pools (array-ref compiler-comptime-host-pools 0))]
+        (begin
+          (set!
+            compiler-comptime-host-stack-len
+            (- compiler-comptime-host-stack-len 2))
+          (compiler-comptime-host-push!
+            (CompilerCtfeValue.Pattern
+              (ast-pat-variant-id
+                (ctfe-string-syntax-name-id
+                  (ctfe-env-source-names env)
+                  text
+                  name-id)
+                payloads)))))]
+    [_ tlci-host-callback-status-bad-request]))
 
 ;; Decode the scalar AstType ordinal a native image passes for type-scalar.
 ;; The producer and consumer are always the same source-bound binary, so the
@@ -655,6 +708,187 @@
                         (if (= flag 0)
                           (ast-ty-ref-with-pools pools region inner)
                           (ast-ty-mut-ref-with-pools pools region inner))])))))))]
+      [_ tlci-host-callback-status-bad-request])))
+
+;; Replace the type value at the top of the session stack with one reflected
+;; field/variant name. `kind` is 0 for a struct field and 1 for an enum
+;; variant. The returned `Name` preserves the declaration's intern identity,
+;; matching the interpreted reflection path rather than materializing a fresh
+;; computed String. Refs #5626.
+(define (compiler-comptime-host-reflection-name-step!
+  [kind : i64]
+  [index : i64]) : i64
+  (if (< compiler-comptime-host-stack-len 1)
+    tlci-host-callback-status-bad-request
+    (match (array-ref
+      compiler-comptime-host-stack
+      (- compiler-comptime-host-stack-len 1))
+      [(CompilerCtfeValue.Type ty)
+        (match (ctfe-reflect-info-for-type-with-pools
+          (array-ref compiler-comptime-host-pools 0)
+          (array-ref compiler-comptime-host-reflections 0)
+          ty)
+          [(CtfeMaybeReflectInfo.Some info)
+            (match info
+              [(CtfeReflectInfo.Struct _ _ _ _ _ fields)
+                (if (= kind 0)
+                  (match (ctfe-reflect-field-name-at fields index)
+                    [(ResultCtfeNameLookup.Ok name)
+                      (begin
+                        (set!
+                          compiler-comptime-host-stack-len
+                          (- compiler-comptime-host-stack-len 1))
+                        (compiler-comptime-host-push! (ctfe-name-value name)))]
+                    [(ResultCtfeNameLookup.Err _)
+                      tlci-host-callback-status-bad-request])
+                  tlci-host-callback-status-bad-request)]
+              [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
+                (if (= kind 1)
+                  (match (ctfe-reflect-variant-name-at variants index)
+                    [(ResultCtfeNameLookup.Ok name)
+                      (begin
+                        (set!
+                          compiler-comptime-host-stack-len
+                          (- compiler-comptime-host-stack-len 1))
+                        (compiler-comptime-host-push! (ctfe-name-value name)))]
+                    [(ResultCtfeNameLookup.Err _)
+                      tlci-host-callback-status-bad-request])
+                  tlci-host-callback-status-bad-request)])]
+          [(CtfeMaybeReflectInfo.None) tlci-host-callback-status-bad-request])]
+      [_ tlci-host-callback-status-bad-request])))
+
+;; Reflection counts return their value directly through the callback ABI, so
+;; success consumes the type stack value and failure uses the negative data-op
+;; sentinel. `kind` is struct fields, enum variants, enum variant payloads, or
+;; tuple elements (0 through 3). Refs #5626.
+(define (compiler-comptime-host-reflection-count-step!
+  [kind : i64]
+  [index : i64]) : i64
+  (if (< compiler-comptime-host-stack-len 1)
+    -3
+    (match (array-ref
+      compiler-comptime-host-stack
+      (- compiler-comptime-host-stack-len 1))
+      [(CompilerCtfeValue.Type ty)
+        (let
+          [pools : AstNodePoolContext
+            (array-ref compiler-comptime-host-pools 0)]
+          [infos : CtfeReflectInfoList
+            (array-ref compiler-comptime-host-reflections 0)]
+          [count : i64
+            (cond
+              [(= kind 0)
+                (match (ctfe-reflect-info-for-type-with-pools pools infos ty)
+                  [(CtfeMaybeReflectInfo.Some
+                      (CtfeReflectInfo.Struct _ _ _ _ _ fields))
+                    (ctfe-reflect-field-list-count fields)]
+                  [_ -3])]
+              [(= kind 1)
+                (match (ctfe-reflect-info-for-type-with-pools pools infos ty)
+                  [(CtfeMaybeReflectInfo.Some
+                      (CtfeReflectInfo.Enum _ _ _ _ _ variants))
+                    (ctfe-reflect-variant-list-count variants)]
+                  [_ -3])]
+              [(= kind 2)
+                (match (ctfe-reflect-info-for-type-with-pools pools infos ty)
+                  [(CtfeMaybeReflectInfo.Some
+                      (CtfeReflectInfo.Enum _ _ _ _ _ variants))
+                    (match (ctfe-reflect-variant-payloads-at variants index)
+                      [(ResultCtfeTypeListLookup.Ok payloads)
+                        (ctfe-type-list-count payloads)]
+                      [(ResultCtfeTypeListLookup.Err _) -3])]
+                  [_ -3])]
+              [else
+                (match (ctfe-reflect-resolve-type-with-pools pools infos ty)
+                  [(AstType.Tuple elems) (ctfe-type-list-count (box-get elems))]
+                  [_ -3])])]
+          (if (< count 0)
+            -3
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              count)))]
+      [_ -3])))
+
+;; Replace the type stack value with one indexed reflected type. `kind` is a
+;; struct field, enum payload, or tuple element (0 through 2). Refs #5626.
+(define (compiler-comptime-host-reflection-type-step!
+  [kind : i64]
+  [first-index : i64]
+  [second-index : i64]) : i64
+  (if (< compiler-comptime-host-stack-len 1)
+    tlci-host-callback-status-bad-request
+    (match (array-ref
+      compiler-comptime-host-stack
+      (- compiler-comptime-host-stack-len 1))
+      [(CompilerCtfeValue.Type ty)
+        (let
+          [pools : AstNodePoolContext
+            (array-ref compiler-comptime-host-pools 0)]
+          [infos : CtfeReflectInfoList
+            (array-ref compiler-comptime-host-reflections 0)]
+          (cond
+            [(= kind 0)
+              (match (ctfe-reflect-info-for-type-with-pools pools infos ty)
+                [(CtfeMaybeReflectInfo.Some
+                    (CtfeReflectInfo.Struct _ _ _ _ _ fields))
+                  (match (ctfe-reflect-field-type-at
+                    fields
+                    pools
+                    infos
+                    first-index)
+                    [(ResultCtfeTypeLookup.Ok field-ty)
+                      (begin
+                        (set!
+                          compiler-comptime-host-stack-len
+                          (- compiler-comptime-host-stack-len 1))
+                        (compiler-comptime-host-push!
+                          (CompilerCtfeValue.Type field-ty)))]
+                    [(ResultCtfeTypeLookup.Err _)
+                      tlci-host-callback-status-bad-request])]
+                [_ tlci-host-callback-status-bad-request])]
+            [(= kind 1)
+              (match (ctfe-reflect-info-for-type-with-pools pools infos ty)
+                [(CtfeMaybeReflectInfo.Some
+                    (CtfeReflectInfo.Enum _ _ _ _ _ variants))
+                  (match (ctfe-reflect-variant-payloads-at variants first-index)
+                    [(ResultCtfeTypeListLookup.Ok payloads)
+                      (match (ctfe-type-list-ref-with-pools
+                        payloads
+                        pools
+                        infos
+                        second-index)
+                        [(ResultCtfeTypeLookup.Ok payload-ty)
+                          (begin
+                            (set!
+                              compiler-comptime-host-stack-len
+                              (- compiler-comptime-host-stack-len 1))
+                            (compiler-comptime-host-push!
+                              (CompilerCtfeValue.Type payload-ty)))]
+                        [(ResultCtfeTypeLookup.Err _)
+                          tlci-host-callback-status-bad-request])]
+                    [(ResultCtfeTypeListLookup.Err _)
+                      tlci-host-callback-status-bad-request])]
+                [_ tlci-host-callback-status-bad-request])]
+            [else
+              (match (ctfe-reflect-resolve-type-with-pools pools infos ty)
+                [(AstType.Tuple elems)
+                  (match (ctfe-type-list-ref-with-pools
+                    (box-get elems)
+                    pools
+                    infos
+                    first-index)
+                    [(ResultCtfeTypeLookup.Ok element-ty)
+                      (begin
+                        (set!
+                          compiler-comptime-host-stack-len
+                          (- compiler-comptime-host-stack-len 1))
+                        (compiler-comptime-host-push!
+                          (CompilerCtfeValue.Type element-ty)))]
+                    [(ResultCtfeTypeLookup.Err _)
+                      tlci-host-callback-status-bad-request])]
+                [_ tlci-host-callback-status-bad-request])]))]
       [_ tlci-host-callback-status-bad-request])))
 
 (define (compiler-comptime-host-invoke-step
@@ -1324,6 +1558,26 @@
                     (array-ref compiler-comptime-host-reflections 0)
                     ty))))]
           [_ tlci-host-callback-status-bad-request]))]
+    ;; Indexed nominal-name reflection. The producer leaves the type value on
+    ;; the stack and passes its generated i64 index in `a`.
+    [(= operation tlci-host-callback-op-struct-field-name)
+      (compiler-comptime-host-reflection-name-step! 0 arg-a)]
+    [(= operation tlci-host-callback-op-enum-variant-name)
+      (compiler-comptime-host-reflection-name-step! 1 arg-a)]
+    [(= operation tlci-host-callback-op-struct-field-count)
+      (compiler-comptime-host-reflection-count-step! 0 0)]
+    [(= operation tlci-host-callback-op-enum-variant-count)
+      (compiler-comptime-host-reflection-count-step! 1 0)]
+    [(= operation tlci-host-callback-op-enum-variant-payload-count)
+      (compiler-comptime-host-reflection-count-step! 2 arg-a)]
+    [(= operation tlci-host-callback-op-tuple-element-count)
+      (compiler-comptime-host-reflection-count-step! 3 0)]
+    [(= operation tlci-host-callback-op-struct-field-type)
+      (compiler-comptime-host-reflection-type-step! 0 arg-a 0)]
+    [(= operation tlci-host-callback-op-enum-variant-payload-type)
+      (compiler-comptime-host-reflection-type-step! 1 arg-a arg-b)]
+    [(= operation tlci-host-callback-op-tuple-element-type)
+      (compiler-comptime-host-reflection-type-step! 2 arg-a 0)]
     ;; string-append: pop the second then the first comptime String value and
     ;; push the concatenation, a generated string value like the interpreted
     ;; operation's.
@@ -1339,10 +1593,10 @@
             (array-ref
               compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 2))]
-          (match left-value
-            [(CompilerCtfeValue.String left-text _)
-              (match right-value
-                [(CompilerCtfeValue.String right-text _)
+          (match (compiler-comptime-host-value-string left-value)
+            [(CompilerCtfeMaybeString.Some left-text)
+              (match (compiler-comptime-host-value-string right-value)
+                [(CompilerCtfeMaybeString.Some right-text)
                   (begin
                     (set!
                       compiler-comptime-host-stack-len
@@ -1350,8 +1604,10 @@
                     (compiler-comptime-host-push!
                       (ctfe-generated-string-value
                         (string.append left-text right-text))))]
-                [_ tlci-host-callback-status-bad-request])]
-            [_ tlci-host-callback-status-bad-request])))]
+                [(CompilerCtfeMaybeString.None)
+                  tlci-host-callback-status-bad-request])]
+            [(CompilerCtfeMaybeString.None)
+              tlci-host-callback-status-bad-request])))]
     ;; Pattern construction, mirroring the interpreted quote's pattern rebuild:
     ;; variant names pass through unmarked while Var/Binding names carry the
     ;; template-source mark.
@@ -1421,7 +1677,89 @@
                 [_ tlci-host-callback-status-bad-request])]
             [_ tlci-host-callback-status-bad-request])))]
     [(= operation tlci-host-callback-op-pattern-list-bindings)
-      tlci-host-callback-status-bad-request]
+      (cond
+        [(or (< arg-a 0) (< compiler-comptime-host-stack-len 1))
+          tlci-host-callback-status-bad-request]
+        [(> arg-a compiler-comptime-host-session-fuel)
+          tlci-host-callback-status-fuel-exhausted]
+        [else
+          (match (array-ref
+            compiler-comptime-host-stack
+            (- compiler-comptime-host-stack-len 1))
+            [(CompilerCtfeValue.String prefix _)
+              (let
+                [patterns : AstPatternList
+                  (ast-pattern-list-with-capacity arg-a)]
+                [index : i64 0]
+                (begin
+                  (while (< index arg-a)
+                    (let
+                      [name : String
+                        (string.append prefix (string.int->string index))]
+                      (begin
+                        (ast-pattern-list-push
+                          (&mut patterns)
+                          (ast-pat-binding-id
+                            (ctfe-materialize-generated-name-id name)))
+                        (set! index (+ index 1)))))
+                  (set!
+                    compiler-comptime-host-session-fuel
+                    (- compiler-comptime-host-session-fuel arg-a))
+                  (set!
+                    compiler-comptime-host-stack-len
+                    (- compiler-comptime-host-stack-len 1))
+                  (compiler-comptime-host-push!
+                    (CompilerCtfeValue.PatternList patterns))))]
+            [_ tlci-host-callback-status-bad-request])])]
+    [(= operation tlci-host-callback-op-pattern-variant-from-value)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [payloads-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [name-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          (match name-value
+            [(CompilerCtfeValue.Name text name-id)
+              (compiler-comptime-host-build-pattern-variant-from-name!
+                text
+                name-id
+                payloads-value)]
+            [(CompilerCtfeValue.String text string-id)
+              (compiler-comptime-host-build-pattern-variant-from-name!
+                text
+                string-id
+                payloads-value)]
+            [_ tlci-host-callback-status-bad-request])))]
+    [(= operation tlci-host-callback-op-match-arm-list-cons-from-values)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [rest-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [head-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          (match head-value
+            [(CompilerCtfeValue.MatchArm head)
+              (match rest-value
+                [(CompilerCtfeValue.MatchArmList rest)
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 2))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.MatchArmList
+                        (ast-match-arm-cons head rest))))]
+                [_ tlci-host-callback-status-bad-request])]
+            [_ tlci-host-callback-status-bad-request])))]
     [(= operation tlci-host-callback-op-match-arm)
       (if (< compiler-comptime-host-stack-len 2)
         tlci-host-callback-status-bad-request
@@ -1578,6 +1916,29 @@
                       0))]
                 [_ -3])]
             [_ -3])))]
+    ;; tuple-ref: pop the target expression and use the computed index in `a`.
+    [(= operation tlci-host-callback-op-expr-tuple-ref)
+      (if (< compiler-comptime-host-stack-len 1)
+        tlci-host-callback-status-bad-request
+        (let
+          [target-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [target-node : i64 (compiler-comptime-host-value-node target-value)]
+          (if (or (< target-node 0) (< arg-a 0))
+            tlci-host-callback-status-bad-request
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-push!
+                (CompilerCtfeValue.Expr
+                  (ast-expr-tuple-ref-with-pools
+                    (array-ref compiler-comptime-host-pools 0)
+                    target-node
+                    arg-a)
+                  (AstType.Expr)))))))]
     ;; struct-get: pop the target expression and push the field access node
     ;; for the field name in `a`/`b`.
     [(= operation tlci-host-callback-op-expr-struct-get)
@@ -1606,6 +1967,39 @@
                       0
                       arg-b))
                   (AstType.Expr)))))))]
+    ;; Dynamic struct-get: pop the computed name after the target expression.
+    [(= operation tlci-host-callback-op-expr-struct-get-from-value)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [name-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [target-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [target-node : i64 (compiler-comptime-host-value-node target-value)]
+          (if (< target-node 0)
+            tlci-host-callback-status-bad-request
+            (match name-value
+              [(CompilerCtfeValue.Name _ name-id)
+                (compiler-comptime-host-build-struct-get-from-id!
+                  target-node
+                  name-id)]
+              [(CompilerCtfeValue.String text string-id)
+                (let
+                  [env : CtfeEnv
+                    (ctfe-env-empty-with-pools
+                      (array-ref compiler-comptime-host-pools 0))]
+                  (compiler-comptime-host-build-struct-get-from-id!
+                    target-node
+                    (ctfe-string-syntax-name-id
+                      (ctfe-env-source-names env)
+                      text
+                      string-id)))]
+              [_ tlci-host-callback-status-bad-request]))))]
     ;; array-set!: pop the value, index, and target expressions and push the
     ;; node the parser produces.
     [(= operation tlci-host-callback-op-expr-array-set)
@@ -2473,6 +2867,10 @@
     (= operation tlci-host-callback-op-string-eq)
     (= operation tlci-host-callback-op-array-length)
     (= operation tlci-host-callback-op-array-dynamic?)
+    (= operation tlci-host-callback-op-struct-field-count)
+    (= operation tlci-host-callback-op-enum-variant-count)
+    (= operation tlci-host-callback-op-enum-variant-payload-count)
+    (= operation tlci-host-callback-op-tuple-element-count)
     (= operation tlci-host-callback-op-operand-expr-call?)
     (= operation tlci-host-callback-op-operand-expr-int?)
     (= operation tlci-host-callback-op-operand-expr-var?)

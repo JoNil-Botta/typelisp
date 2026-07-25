@@ -861,6 +861,24 @@
   257)
 (define tlci-host-callback-op-type-ref : i64
   258)
+
+;; A computed struct field name is a stack value rather than caller bytes:
+;; pop the name after the target expression and push the resulting field
+;; projection. Additive ABI v1 op. Refs #5626.
+(define tlci-host-callback-op-expr-struct-get-from-value : i64
+  259)
+
+;; Computed enum variant names likewise retain their source-name identity as a
+;; session value. Pop a PatternList after the name and push the resulting
+;; variant pattern. Additive ABI v1 op. Refs #5626.
+(define tlci-host-callback-op-pattern-variant-from-value : i64
+  260)
+
+;; The computed public cons builder evaluates its head before its tail; consume
+;; that stack order and prepend the head to the MatchArmList. Additive ABI v1
+;; op. Refs #5626.
+(define tlci-host-callback-op-match-arm-list-cons-from-values : i64
+  261)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64
@@ -3314,6 +3332,9 @@
     (= tlci-host-callback-op-expr-not 196)
     (= tlci-host-callback-op-expr-while 197)
     (= tlci-host-callback-op-syntax-name-fresh 198)
+    (= tlci-host-callback-op-expr-struct-get-from-value 259)
+    (= tlci-host-callback-op-pattern-variant-from-value 260)
+    (= tlci-host-callback-op-match-arm-list-cons-from-values 261)
     (= tlci-host-callback-stdlib-op-count 99)))
 
 (define (tlci-test-host-abi-ok?) : bool

@@ -8,11 +8,9 @@
 ;# canonical pair with `IterNext.Item (& source T)` for shared traversal and
 ;# `into-iterator` / `into-next` with owned `IntoNext.Item T` results for
 ;# consuming traversal. Consuming construction uses a `(:consume)` parameter,
-;# so the source moves exactly once and cannot be reused. The
-;# current flat stdlib compatibility names keep their module prefix. Scalar
-;# ranges additionally implement the canonical consuming protocol through
-;# `into-iterator` / `into-next`, while retaining `i64-range-iterator` and
-;# `i64-range-next`.
+;# so the source moves exactly once and cannot be reused. Scalar ranges
+;# implement the same canonical consuming protocol through `into-iterator` /
+;# `into-next`, which is the pair the scalar `for` macro selects.
 ;#
 ;# `next` never uses sentinels, panics, or exceptions for exhaustion. It returns
 ;# a concrete `Done` variant, and repeated calls after exhaustion keep returning
@@ -23,14 +21,14 @@
 ;# (define (main) : i64
 ;#   (let
 ;#     [items : iter.I64Range (iter.range 0 3)]
-;#     [it : iter.I64RangeIter (iter.i64-range-iterator items)]
+;#     [it : iter.IntoIter (iter.into-iterator items)]
 ;#     [sum : i64 0]
 ;#     [done : bool false]
 ;#     (begin
 ;#       (while (not done)
-;#         (match (iter.i64-range-next (&mut it))
-;#           [(iter.I64RangeItem value) (set! sum (+ sum value))]
-;#           [(iter.I64RangeDone) (set! done true)]))
+;#         (match (iter.into-next (&mut it))
+;#           [(iter.Item value) (set! sum (+ sum value))]
+;#           [(iter.Done) (set! done true)]))
 ;#       sum)))
 ;# ```
 ;: Scalar `i64` range iterable. Half-open ranges yield `[start, end)`;
@@ -39,18 +37,6 @@
   (start i64)
   (end i64)
   (inclusive bool))
-
-;: Iterator state for an `I64Range`.
-(defstruct I64RangeIter
-  (current i64)
-  (end i64)
-  (inclusive bool)
-  (exhausted bool))
-
-;: Option-like result returned by `i64-range-next`.
-(defenum I64RangeNext
-  (I64RangeDone)
-  (I64RangeItem i64))
 
 ;: Canonical consuming iterator state used by the scalar `for` macro.
 (defstruct IntoIter
@@ -74,41 +60,6 @@
 ;: exhaustion directly, so an inclusive maximum `i64` endpoint is valid.
 (define (range-inclusive [start : i64] [end : i64]) : I64Range
   (I64Range start end true))
-
-;: Build an iterator for `items`.
-(define (i64-range-iterator [items : I64Range]) : I64RangeIter
-  (let
-    [start : i64 (struct-get items start)]
-    [end : i64 (struct-get items end)]
-    [inclusive : bool (struct-get items inclusive)]
-    [empty : bool
-      (if inclusive
-        (> start end)
-        (>= start end))]
-    (I64RangeIter start end inclusive empty)))
-
-;: Return the next range item and advance the iterator, or `I64RangeDone` when
-;: exhausted. Calling again after exhaustion returns `I64RangeDone`.
-(define (i64-range-next [iter : (&mut iter I64RangeIter)]) : I64RangeNext
-  (if (struct-get iter exhausted)
-    (I64RangeDone)
-    (let
-      [current : i64 (struct-get iter current)]
-      [end : i64 (struct-get iter end)]
-      [inclusive : bool (struct-get iter inclusive)]
-      (begin
-        (if inclusive
-          (if (= current end)
-            (set! (struct-get iter exhausted) true)
-            (set! (struct-get iter current) (+ current 1)))
-          (let
-            [next-current : i64 (+ current 1)]
-            (begin
-              (set! (struct-get iter current) next-current)
-              (if (= next-current end)
-                (set! (struct-get iter exhausted) true)
-                (set! (struct-get iter exhausted) false)))))
-        (I64RangeItem current)))))
 
 ;: Consume a scalar range into its canonical iterator state.
 (define (into-iterator [items : I64Range (:consume)]) : IntoIter
@@ -143,51 +94,40 @@
               (set! (struct-get iter exhausted) (= next-current end)))))
         (Item current)))))
 
-;: Return true when a range next-result is exhausted.
-(define (i64-range-done? [result : I64RangeNext]) : bool
-  (match result
-    [(I64RangeDone) true]
-    [(I64RangeItem _) false]))
-
-;: Return the yielded range item or `fallback` when the result is exhausted.
-(define (i64-range-value-or [result : I64RangeNext] [fallback : i64]) : i64
-  (match result
-    [(I64RangeItem value) value]
-    [(I64RangeDone) fallback]))
-
 (cfg test (import stdlib.test))
 
 (cfg
   test
   (define (iterator-test-range-sum [items : I64Range]) : i64
     (let
-      [iter : I64RangeIter (i64-range-iterator items)]
+      [iter : IntoIter (into-iterator items)]
       [sum : i64 0]
       [done : bool false]
       (begin
         (while (not done)
-          (match (i64-range-next (&mut iter))
-            [(I64RangeItem value) (set! sum (+ sum value))]
-            [(I64RangeDone) (set! done true)]))
+          (match (into-next (&mut iter))
+            [(Item value) (set! sum (+ sum value))]
+            [(Done) (set! done true)]))
         sum))))
 
 (cfg
   test
   (define (iterator-test-expect-next
-    [iter : (&mut iter I64RangeIter)]
+    [iter : (&mut iter IntoIter)]
     [expected : i64]
     [message : String]) : unit
-    (test.assert-i64-eq
-      (i64-range-value-or (i64-range-next iter) -1)
-      expected
-      message)))
+    (match (into-next iter)
+      [(Item value) (test.assert-i64-eq value expected message)]
+      [(Done) (test.assert-true false message)])))
 
 (cfg
   test
   (define (iterator-test-expect-done
-    [iter : (&mut iter I64RangeIter)]
+    [iter : (&mut iter IntoIter)]
     [message : String]) : unit
-    (test.assert-true (i64-range-done? (i64-range-next iter)) message)))
+    (match (into-next iter)
+      [(Done) unit]
+      [(Item _) (test.assert-true false message)])))
 
 (cfg
   test
@@ -222,7 +162,7 @@
         0
         "inclusive descending range sum")
       (let
-        [iter : I64RangeIter (i64-range-iterator (range 7 8))]
+        [iter : IntoIter (into-iterator (range 7 8))]
         (begin
           (iterator-test-expect-next (&mut iter) 7 "first next yields value")
           (iterator-test-expect-done (&mut iter) "second next exhausted")
@@ -232,28 +172,18 @@
       (let
         [iter : IntoIter (into-iterator (range 8 10))]
         (begin
-          (match (into-next (&mut iter))
-            [(Item value)
-              (test.assert-i64-eq value 8 "canonical range first item")]
-            [(Done)
-              (test.assert-true false "canonical range unexpectedly empty")])
-          (match (into-next (&mut iter))
-            [(Item value)
-              (test.assert-i64-eq value 9 "canonical range second item")]
-            [(Done) (test.assert-true false "canonical range exhausted early")])
-          (match (into-next (&mut iter))
-            [(Done) unit]
-            [(Item _)
-              (test.assert-true false "canonical range did not exhaust")])
-          (match (into-next (&mut iter))
-            [(Done) unit]
-            [(Item _)
-              (test.assert-true
-                false
-                "canonical range repeated exhaustion failed")])))
+          (iterator-test-expect-next (&mut iter) 8 "canonical range first item")
+          (iterator-test-expect-next
+            (&mut iter)
+            9
+            "canonical range second item")
+          (iterator-test-expect-done (&mut iter) "canonical range exhausts")
+          (iterator-test-expect-done
+            (&mut iter)
+            "canonical range repeated exhaustion")))
       (let
-        [iter : I64RangeIter
-          (i64-range-iterator
+        [iter : IntoIter
+          (into-iterator
             (range-inclusive 9223372036854775807 9223372036854775807))]
         (begin
           (iterator-test-expect-next

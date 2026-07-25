@@ -3,6 +3,9 @@
 (import stdlib.fs)
 (import stdlib.string)
 (import stdlib.str_cat)
+(import stdlib.vector)
+(import doc_site_stdlib_manifest as stdlib_manifest)
+(import (vector.vector String) as doc_site_name_vec)
 
 (define doc-site-expand-status-ok : i64
   0)
@@ -715,30 +718,20 @@
           (io.panic (str_cat.str-cat "doc-site-expand: missing page: " path "")))))))
 
 (define (doc-site-expand-pages [site-dir : String]) : i64
-  (begin
-    (doc-site-expand-page site-dir "stdlib/arena.tl" "stdlib-arena.html")
-    (doc-site-expand-page site-dir "stdlib/cpu.tl" "stdlib-cpu.html")
-    (doc-site-expand-page site-dir "stdlib/env.tl" "stdlib-env.html")
-    (doc-site-expand-page site-dir "stdlib/ffi.tl" "stdlib-ffi.html")
-    (doc-site-expand-page site-dir "stdlib/fs.tl" "stdlib-fs.html")
-    (doc-site-expand-page site-dir "stdlib/hash.tl" "stdlib-hash.html")
-    (doc-site-expand-page site-dir "stdlib/hashmap.tl" "stdlib-hashmap.html")
-    (doc-site-expand-page site-dir "stdlib/io.tl" "stdlib-io.html")
-    (doc-site-expand-page
-      site-dir
-      "stdlib/byte_buf_core.tl"
-      "stdlib-byte-buf-core.html")
-    (doc-site-expand-page site-dir "stdlib/json.tl" "stdlib-json.html")
-    (doc-site-expand-page site-dir "stdlib/msvc.tl" "stdlib-msvc.html")
-    (doc-site-expand-page site-dir "stdlib/process.tl" "stdlib-process.html")
-    (doc-site-expand-page site-dir "stdlib/queue.tl" "stdlib-queue.html")
-    (doc-site-expand-page site-dir "stdlib/random.tl" "stdlib-random.html")
-    (doc-site-expand-page site-dir "stdlib/string.tl" "stdlib-string.html")
-    (doc-site-expand-page site-dir "stdlib/test.tl" "stdlib-test.html")
-    (doc-site-expand-page site-dir "stdlib/text_buf.tl" "stdlib-text-buf.html")
-    (doc-site-expand-page
-      site-dir
-      "stdlib/text_buf_borrowed.tl"
-      "stdlib-text-buf-borrowed.html")
-    (doc-site-expand-page site-dir "stdlib/vector.tl" "stdlib-vector.html")
-    0))
+  (let
+    [names : doc_site_name_vec.Vec
+      (stdlib_manifest.doc-site-stdlib-module-names)]
+    [count : i64 (stdlib_manifest.doc-site-stdlib-module-count (& names))]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (let
+          [name : String
+            (stdlib_manifest.doc-site-stdlib-module-name (& names) i)]
+          (begin
+            (doc-site-expand-page
+              site-dir
+              (stdlib_manifest.doc-site-stdlib-module-source (& name))
+              (stdlib_manifest.doc-site-stdlib-module-page (& name)))
+            (set! i (+ i 1)))))
+      0)))

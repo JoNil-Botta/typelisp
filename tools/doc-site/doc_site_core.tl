@@ -10,6 +10,8 @@
 (import stdlib.vector)
 (import doc_site_doc_bridge as doc_bridge)
 (import doc_md)
+(import doc_site_stdlib_manifest as stdlib_manifest)
+(import (vector.vector String) as doc_site_name_vec)
 
 (defenum DocSiteModule
   (Module String String))
@@ -32,8 +34,6 @@
 
 (define doc-site-status-ok : i64
   0)
-(define doc-site-stdlib-manifest-size : i64
-  19)
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
 (define doc-site-repo-tree-root : String
@@ -179,70 +179,23 @@
 
 (define (doc-site-stdlib-modules) : doc_site_modules.Vec
   (let
-    [modules : doc_site_modules.Vec
-      (doc_site_modules.with-capacity doc-site-stdlib-manifest-size)]
+    [names : doc_site_name_vec.Vec
+      (stdlib_manifest.doc-site-stdlib-module-names)]
+    [count : i64 (stdlib_manifest.doc-site-stdlib-module-count (& names))]
+    [modules : doc_site_modules.Vec (doc_site_modules.with-capacity count)]
+    [i : i64 0]
     (begin
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/arena.tl" "stdlib-arena.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/cpu.tl" "stdlib-cpu.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/env.tl" "stdlib-env.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/ffi.tl" "stdlib-ffi.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/fs.tl" "stdlib-fs.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/hash.tl" "stdlib-hash.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/hashmap.tl" "stdlib-hashmap.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/io.tl" "stdlib-io.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module
-          "stdlib/byte_buf_core.tl"
-          "stdlib-byte-buf-core.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/json.tl" "stdlib-json.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/msvc.tl" "stdlib-msvc.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/process.tl" "stdlib-process.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/queue.tl" "stdlib-queue.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/random.tl" "stdlib-random.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/string.tl" "stdlib-string.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/test.tl" "stdlib-test.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/text_buf.tl" "stdlib-text-buf.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module
-          "stdlib/text_buf_borrowed.tl"
-          "stdlib-text-buf-borrowed.html"))
-      (doc_site_modules.push
-        (&mut modules)
-        (DocSiteModule.Module "stdlib/vector.tl" "stdlib-vector.html"))
+      (while (< i count)
+        (let
+          [name : String
+            (stdlib_manifest.doc-site-stdlib-module-name (& names) i)]
+          (begin
+            (doc_site_modules.push
+              (&mut modules)
+              (DocSiteModule.Module
+                (stdlib_manifest.doc-site-stdlib-module-source (& name))
+                (stdlib_manifest.doc-site-stdlib-module-page (& name))))
+            (set! i (+ i 1)))))
       modules)))
 
 (define (doc-site-language-guides) : doc_site_guides.Vec
@@ -329,15 +282,19 @@
             (set! i (+ i 1)))))
       duplicate)))
 
-(define (doc-site-expected-manifest-size? [modules : doc_site_modules.Vec]) : bool
-  (= (doc-site-module-list-count modules) doc-site-stdlib-manifest-size))
+;; Completeness against stdlib/ is a filesystem question, and
+;; scripts/verify-doc-site.sh answers it by comparing the generated pages with
+;; stdlib/*.tl. What the builder can still catch on its own is an empty manifest,
+;; which would publish an API tree with no modules under it.
+(define (doc-site-manifest-populated? [modules : doc_site_modules.Vec]) : bool
+  (> (doc-site-module-list-count modules) 0))
 
 (define (doc-site-panic-unit [message : String]) : unit
   (io.panic message))
 
 (define (doc-site-validate-stdlib-manifest [modules : doc_site_modules.Vec]) : unit
-  (if (not (doc-site-expected-manifest-size? modules))
-    (doc-site-panic-unit "doc-site: missing stdlib manifest entry")
+  (if (not (doc-site-manifest-populated? modules))
+    (doc-site-panic-unit "doc-site: empty stdlib manifest")
     (if (doc-site-output-list-has-duplicate? modules)
       (doc-site-panic-unit "doc-site: duplicate output path in stdlib manifest")
       unit)))
@@ -1431,6 +1388,12 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
               modules)))
         "doc-site: duplicate output detection missing")
       (doc-site-require
-        (not (doc-site-expected-manifest-size? (doc-site-module-list-empty)))
-        "doc-site: missing manifest detection missing")
+        (not (doc-site-manifest-populated? (doc-site-module-list-empty)))
+        "doc-site: empty manifest detection missing")
+      (doc-site-require
+        (doc-site-manifest-populated? (doc-site-stdlib-modules))
+        "doc-site: stdlib manifest is empty")
+      (doc-site-require
+        (not (doc-site-output-list-has-duplicate? (doc-site-stdlib-modules)))
+        "doc-site: stdlib manifest has a duplicate or reserved output")
       42)))

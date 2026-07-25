@@ -8845,8 +8845,13 @@
     [(ResultCompilerOptimizeVerify.Err message) (string.eq message want)]
     [(ResultCompilerOptimizeVerify.Ok) false]))
 
+;; The block is the CFG index's dense block id, not its label. Definitions are
+;; collected by walking the same block list the paired `OptCfgContext` was built
+;; from, and `opt-cfg-index-build` numbers blocks in that walk order, so the
+;; position is the id. Recovering it by hashing the label was the single largest
+;; `opt-cfg-index-id` caller (refs #5718).
 (defenum OptVarDef
-  (Def i64 String i64))
+  (Def i64 i64 i64))
 
 (defenum OptVarDefList
   (Nil)
@@ -8998,26 +9003,21 @@
 
 (define (opt-var-defs-from-params
   [params : CompilerIrParamList]
-  [entry-label : String]
   [defs : OptVarDefList]) : OptVarDefList
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) defs]
     [(CompilerIrParamList.Array seq)
-      (opt-var-defs-from-params
-        (compiler-ir-param-seq-to-list seq)
-        entry-label
-        defs)]
+      (opt-var-defs-from-params (compiler-ir-param-seq-to-list seq) defs)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
           (opt-var-defs-from-params
             (box-get rest)
-            entry-label
-            (OptVarDefList.Cons (OptVarDef.Def var entry-label 0) (box defs)))])]))
+            (OptVarDefList.Cons (OptVarDef.Def var 0 0) (box defs)))])]))
 
 (define (opt-var-defs-from-instr-seq-from
   [instrs : CompilerIrInstrSeq]
-  [block-label : String]
+  [block-id : i64]
   [index : i64]
   [pos : i64]
   [defs : OptVarDefList]) : OptVarDefList
@@ -9029,43 +9029,50 @@
         [(option_i64.Some var)
           (opt-var-defs-from-instr-seq-from
             instrs
-            block-label
+            block-id
             (+ index 1)
             (+ pos 1)
             (OptVarDefList.Cons
-              (OptVarDef.Def var block-label (opt-instr-def-position instr pos))
+              (OptVarDef.Def var block-id (opt-instr-def-position instr pos))
               (box defs)))]
         [(option_i64.None)
           (opt-var-defs-from-instr-seq-from
             instrs
-            block-label
+            block-id
             (+ index 1)
             (+ pos 1)
             defs)]))))
 
 (define (opt-var-defs-from-blocks
   [blocks : CompilerIrBlockList]
+  [block-id : i64]
   [defs : OptVarDefList]) : OptVarDefList
   (match blocks
     [(CompilerIrBlockList.Nil) defs]
     [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block label instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (opt-var-defs-from-blocks
             (box-get rest)
-            (opt-var-defs-from-instr-seq-from instrs label 0 1 defs))])]
+            (+ block-id 1)
+            (opt-var-defs-from-instr-seq-from instrs block-id 0 1 defs))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-var-defs-from-blocks (compiler-ir-block-seq-to-list seq) defs)]))
+      (opt-var-defs-from-blocks
+        (compiler-ir-block-seq-to-list seq)
+        block-id
+        defs)]))
 
+;; Parameter definitions belong to the entry block, which `opt-cfg-index-build`
+;; always numbers 0. An empty block list has no ids at all, and every id-keyed
+;; dominance query range-checks against the block count, so the placeholder 0
+;; answers exactly like the old missing-label lookup did.
 (define (opt-var-defs-from-function
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptVarDefList
   (opt-var-defs-from-blocks
     blocks
-    (opt-var-defs-from-params
-      params
-      (opt-cfg-entry-label blocks)
-      (OptVarDefList.Nil))))
+    0
+    (opt-var-defs-from-params params (OptVarDefList.Nil))))
 
 ;; The use verifier resolves every operand's defining block, so the
 ;; def list is indexed into a var-id-keyed array once per verification
@@ -9114,11 +9121,13 @@
     (array-ref defs var)
     (OptMaybeVarDef.No)))
 
+;; Block labels are unique -- every entry point into this family checks that
+;; first -- so id equality decides label equality without a `string.eq`.
 (define (opt-verify-var-use
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [var : i64]
-  [use-block : String]
+  [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
   (match (opt-var-def-lookup defs var)
     [(OptMaybeVarDef.No)
@@ -9127,10 +9136,10 @@
     [(OptMaybeVarDef.Some def)
       (match def
         [(OptVarDef.Def _ def-block def-pos)
-          (if (not (opt-dom-dominates? doms def-block use-block))
+          (if (not (opt-dom-info-dominates-id? doms def-block use-block))
             (ResultCompilerOptimizeVerify.Err
               "optimizer verify: use is not dominated by definition")
-            (if (and (string.eq def-block use-block) (>= def-pos use-pos))
+            (if (and (= def-block use-block) (>= def-pos use-pos))
               (ResultCompilerOptimizeVerify.Err
                 "optimizer verify: use before definition")
               (ResultCompilerOptimizeVerify.Ok)))])]))
@@ -9147,7 +9156,12 @@
     [(OptMaybeVarDef.Some def)
       (match def
         [(OptVarDef.Def _ def-block _)
-          (if (opt-dom-dominates? doms def-block pred-label)
+          (if (opt-dom-info-dominates-id?
+            doms
+            def-block
+            (match (opt-cfg-index-id (struct-get doms index) pred-label)
+              [(option_i64.Some pred-id) pred-id]
+              [(option_i64.None) (- 0 1)]))
             (ResultCompilerOptimizeVerify.Ok)
             (ResultCompilerOptimizeVerify.Err
               "optimizer verify: use is not dominated by definition"))])]))
@@ -9156,7 +9170,7 @@
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [value : CompilerIrValue]
-  [use-block : String]
+  [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
   (match value
     [(CompilerIrValue.Var var)
@@ -9167,7 +9181,7 @@
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [values : CompilerIrValueList]
-  [use-block : String]
+  [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
   (match values
     [(CompilerIrValueList.Nil) (ResultCompilerOptimizeVerify.Ok)]
@@ -9194,7 +9208,7 @@
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [values : (Array CompilerIrValue)]
-  [use-block : String]
+  [use-block : i64]
   [use-pos : i64]
   [index : i64]) : ResultCompilerOptimizeVerify
   (if (>= index (array-length values))
@@ -9220,7 +9234,7 @@
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [args : CompilerIrCallArgs]
-  [use-block : String]
+  [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
   (match args
     [(CompilerIrCallArgs.Nil) (ResultCompilerOptimizeVerify.Ok)]
@@ -9237,7 +9251,7 @@
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [args : CompilerIrSpmdCallArgList]
-  [use-block : String]
+  [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
   (match args
     [(CompilerIrSpmdCallArgList.Nil) (ResultCompilerOptimizeVerify.Ok)]
@@ -9277,7 +9291,7 @@
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [value : CompilerIrMaybeValue]
-  [use-block : String]
+  [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
   (match value
     [(CompilerIrMaybeValue.No) (ResultCompilerOptimizeVerify.Ok)]
@@ -9316,92 +9330,92 @@
 (define (opt-verify-instr-uses
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
-  [block-label : String]
+  [block-id : i64]
   [pos : i64]
   [instr : CompilerIrInstr]) : ResultCompilerOptimizeVerify
   (match instr
     [(CompilerIrInstr.Mov _ src _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.AddrOf _ src)
-      (opt-verify-var-use defs doms src block-label pos)]
+      (opt-verify-var-use defs doms src block-id pos)]
     [(CompilerIrInstr.Gep _ base offset _)
       (opt-verify-two
-        (opt-verify-value-use defs doms base block-label pos)
-        (opt-verify-value-use defs doms offset block-label pos))]
+        (opt-verify-value-use defs doms base block-id pos)
+        (opt-verify-value-use defs doms offset block-id pos))]
     [(CompilerIrInstr.Load _ src _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.StorePtr ptr value _)
       (opt-verify-two
-        (opt-verify-value-use defs doms ptr block-label pos)
-        (opt-verify-value-use defs doms value block-label pos))]
+        (opt-verify-value-use defs doms ptr block-id pos)
+        (opt-verify-value-use defs doms value block-id pos))]
     [(CompilerIrInstr.CopyBytes dst src _)
       (opt-verify-two
-        (opt-verify-value-use defs doms dst block-label pos)
-        (opt-verify-value-use defs doms src block-label pos))]
+        (opt-verify-value-use defs doms dst block-id pos)
+        (opt-verify-value-use defs doms src block-id pos))]
     [(CompilerIrInstr.BoundsCheck index length _)
       (opt-verify-two
-        (opt-verify-value-use defs doms index block-label pos)
-        (opt-verify-value-use defs doms length block-label pos))]
+        (opt-verify-value-use defs doms index block-id pos)
+        (opt-verify-value-use defs doms length block-id pos))]
     [(CompilerIrInstr.Cast _ src _ _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.Bitcast _ src _ _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.BinOp _ _ lhs rhs _)
       (opt-verify-two
-        (opt-verify-value-use defs doms lhs block-label pos)
-        (opt-verify-value-use defs doms rhs block-label pos))]
+        (opt-verify-value-use defs doms lhs block-id pos)
+        (opt-verify-value-use defs doms rhs block-id pos))]
     [(CompilerIrInstr.UnOp _ _ src _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.Splat _ src _ _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
           (opt-verify-two
-            (opt-verify-value-use defs doms lhs block-label pos)
-            (opt-verify-value-use defs doms rhs block-label pos))])]
+            (opt-verify-value-use defs doms lhs block-id pos)
+            (opt-verify-value-use defs doms rhs block-id pos))])]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
           (opt-verify-two
-            (opt-verify-value-use defs doms src block-label pos)
-            (opt-verify-value-use defs doms carry block-label pos))])]
+            (opt-verify-value-use defs doms src block-id pos)
+            (opt-verify-value-use defs doms carry block-id pos))])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
           (opt-verify-two
-            (opt-verify-value-use defs doms lhs block-label pos)
-            (opt-verify-value-use defs doms rhs block-label pos))])]
+            (opt-verify-value-use defs doms lhs block-id pos)
+            (opt-verify-value-use defs doms rhs block-id pos))])]
     [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (opt-verify-two
-        (opt-verify-value-use defs doms lhs block-label pos)
-        (opt-verify-value-use defs doms rhs block-label pos))]
+        (opt-verify-value-use defs doms lhs block-id pos)
+        (opt-verify-value-use defs doms rhs block-id pos))]
     [(CompilerIrInstr.MaskNot _ src _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.MaskReduce _ _ src _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload _ mask on-true on-false _ _)
           (opt-verify-two
-            (opt-verify-value-use defs doms mask block-label pos)
+            (opt-verify-value-use defs doms mask block-id pos)
             (opt-verify-two
-              (opt-verify-value-use defs doms on-true block-label pos)
-              (opt-verify-value-use defs doms on-false block-label pos)))])]
+              (opt-verify-value-use defs doms on-true block-id pos)
+              (opt-verify-value-use defs doms on-false block-id pos)))])]
     [(CompilerIrInstr.VectorLoad _ base index _ _)
       (opt-verify-two
-        (opt-verify-value-use defs doms base block-label pos)
-        (opt-verify-value-use defs doms index block-label pos))]
+        (opt-verify-value-use defs doms base block-id pos)
+        (opt-verify-value-use defs doms index block-id pos))]
     [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
           (opt-verify-two
-            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-value-use defs doms base block-id pos)
             (opt-verify-two
-              (opt-verify-value-use defs doms index block-label pos)
-              (opt-verify-value-use defs doms value block-label pos)))])]
+              (opt-verify-value-use defs doms index block-id pos)
+              (opt-verify-value-use defs doms value block-id pos)))])]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedStorePayload.Payload
@@ -9412,20 +9426,20 @@
             _
             _)
           (opt-verify-two
-            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-value-use defs doms base block-id pos)
             (opt-verify-two
-              (opt-verify-value-use defs doms index block-label pos)
+              (opt-verify-value-use defs doms index block-id pos)
               (opt-verify-two
-                (opt-verify-value-use defs doms value block-label pos)
-                (opt-verify-value-use defs doms mask block-label pos))))])]
+                (opt-verify-value-use defs doms value block-id pos)
+                (opt-verify-value-use defs doms mask block-id pos))))])]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
           (opt-verify-two
-            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-value-use defs doms base block-id pos)
             (opt-verify-two
-              (opt-verify-value-use defs doms index block-label pos)
-              (opt-verify-value-use defs doms mask block-label pos)))])]
+              (opt-verify-value-use defs doms index block-id pos)
+              (opt-verify-value-use defs doms mask block-id pos)))])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload
@@ -9437,10 +9451,10 @@
             _
             _)
           (opt-verify-two
-            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-value-use defs doms base block-id pos)
             (opt-verify-two
-              (opt-verify-value-use defs doms index-base block-label pos)
-              (opt-verify-value-use defs doms index block-label pos)))])]
+              (opt-verify-value-use defs doms index-base block-id pos)
+              (opt-verify-value-use defs doms index block-id pos)))])]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorShufflePayload.Payload
@@ -9452,48 +9466,48 @@
             _
             _)
           (opt-verify-two
-            (opt-verify-value-use defs doms source block-label pos)
+            (opt-verify-value-use defs doms source block-id pos)
             (opt-verify-two
-              (opt-verify-value-use defs doms selector-low block-label pos)
+              (opt-verify-value-use defs doms selector-low block-id pos)
               (opt-verify-two
                 (opt-verify-maybe-value-use
                   defs
                   doms
                   selector-high
-                  block-label
+                  block-id
                   pos)
-                (opt-verify-value-use defs doms active-lanes block-label pos))))])]
+                (opt-verify-value-use defs doms active-lanes block-id pos))))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (opt-verify-two
-        (opt-verify-value-use defs doms index block-label pos)
-        (opt-verify-value-use defs doms length block-label pos))]
+        (opt-verify-value-use defs doms index block-id pos)
+        (opt-verify-value-use defs doms length block-id pos))]
     [(CompilerIrInstr.EntryArgc _) (ResultCompilerOptimizeVerify.Ok)]
     [(CompilerIrInstr.EntryArgv _) (ResultCompilerOptimizeVerify.Ok)]
     [(CompilerIrInstr.EntryEnvp _) (ResultCompilerOptimizeVerify.Ok)]
     [(CompilerIrInstr.CpuId _ leaf subleaf _)
       (opt-verify-two
-        (opt-verify-value-use defs doms leaf block-label pos)
-        (opt-verify-value-use defs doms subleaf block-label pos))]
+        (opt-verify-value-use defs doms leaf block-id pos)
+        (opt-verify-value-use defs doms subleaf block-id pos))]
     [(CompilerIrInstr.Xgetbv _ index)
-      (opt-verify-value-use defs doms index block-label pos)]
+      (opt-verify-value-use defs doms index block-id pos)]
     [(CompilerIrInstr.Syscall _ args)
-      (opt-verify-call-args-uses defs doms args block-label pos)]
+      (opt-verify-call-args-uses defs doms args block-id pos)]
     [(CompilerIrInstr.Call _ _ args _)
-      (opt-verify-call-args-uses defs doms args block-label pos)]
+      (opt-verify-call-args-uses defs doms args block-id pos)]
     [(CompilerIrInstr.CallIndirect _ func args _)
       (opt-verify-two
-        (opt-verify-value-use defs doms func block-label pos)
-        (opt-verify-call-args-uses defs doms args block-label pos))]
+        (opt-verify-value-use defs doms func block-id pos)
+        (opt-verify-call-args-uses defs doms args block-id pos))]
     [(CompilerIrInstr.CallIndirectC _ func args _)
       (opt-verify-two
-        (opt-verify-value-use defs doms func block-label pos)
-        (opt-verify-call-args-uses defs doms args block-label pos))]
+        (opt-verify-value-use defs doms func block-id pos)
+        (opt-verify-call-args-uses defs doms args block-id pos))]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
           (opt-verify-two
-            (opt-verify-value-use defs doms base block-label pos)
-            (opt-verify-call-args-uses defs doms args block-label pos))])]
+            (opt-verify-value-use defs doms base block-id pos)
+            (opt-verify-call-args-uses defs doms args block-id pos))])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
@@ -9502,24 +9516,24 @@
             args
             _)
           (opt-verify-two
-            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-value-use defs doms base block-id pos)
             (opt-verify-two
-              (opt-verify-value-use defs doms func block-label pos)
-              (opt-verify-call-args-uses defs doms args block-label pos)))])]
+              (opt-verify-value-use defs doms func block-id pos)
+              (opt-verify-call-args-uses defs doms args block-id pos)))])]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
           (opt-verify-two
-            (opt-verify-value-use defs doms active-mask block-label pos)
-            (opt-verify-spmd-call-args-uses defs doms args block-label pos))])]
+            (opt-verify-value-use defs doms active-mask block-id pos)
+            (opt-verify-spmd-call-args-uses defs doms args block-id pos))])]
     [(CompilerIrInstr.TailCall _ args _)
-      (opt-verify-call-args-uses defs doms args block-label pos)]
+      (opt-verify-call-args-uses defs doms args block-id pos)]
     [(CompilerIrInstr.Store _ value _)
-      (opt-verify-value-use defs doms value block-label pos)]
+      (opt-verify-value-use defs doms value block-id pos)]
     [(CompilerIrInstr.Branch cond _ _)
-      (opt-verify-value-use defs doms cond block-label pos)]
+      (opt-verify-value-use defs doms cond block-id pos)]
     [(CompilerIrInstr.Return maybe)
-      (opt-verify-maybe-value-use defs doms maybe block-label pos)]
+      (opt-verify-maybe-value-use defs doms maybe block-id pos)]
     [(CompilerIrInstr.Phi _ inputs _)
       (opt-verify-phi-input-uses defs doms inputs)]
     [(CompilerIrInstr.Alloc _ _) (ResultCompilerOptimizeVerify.Ok)]
@@ -9527,20 +9541,20 @@
     [(CompilerIrInstr.Jump _) (ResultCompilerOptimizeVerify.Ok)]
     ;; Verify register-group operands dominate their use.
     [(CompilerIrInstr.Pack _ words _)
-      (opt-verify-value-list-uses defs doms words block-label pos)]
+      (opt-verify-value-list-uses defs doms words block-id pos)]
     [(CompilerIrInstr.Word _ src _ _)
-      (opt-verify-value-use defs doms src block-label pos)]
+      (opt-verify-value-use defs doms src block-id pos)]
     [(CompilerIrInstr.TailCallIndirect func args _)
       (opt-verify-two
-        (opt-verify-value-use defs doms func block-label pos)
-        (opt-verify-call-args-uses defs doms args block-label pos))]
+        (opt-verify-value-use defs doms func block-id pos)
+        (opt-verify-call-args-uses defs doms args block-id pos))]
     [(CompilerIrInstr.Switch index _ _ _)
-      (opt-verify-value-use defs doms index block-label pos)]))
+      (opt-verify-value-use defs doms index block-id pos)]))
 
 (define (opt-verify-instr-seq-uses-from
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
-  [block-label : String]
+  [block-id : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [pos : i64]) : ResultCompilerOptimizeVerify
@@ -9549,14 +9563,14 @@
     (match (opt-verify-instr-uses
       defs
       doms
-      block-label
+      block-id
       pos
       (compiler-ir-instr-seq-ref instrs index))
       [(ResultCompilerOptimizeVerify.Ok)
         (opt-verify-instr-seq-uses-from
           defs
           doms
-          block-label
+          block-id
           instrs
           (+ index 1)
           (+ pos 1))]
@@ -9653,24 +9667,29 @@
 (define (opt-verify-block-uses
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
-  [blocks : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
+  [blocks : CompilerIrBlockList]
+  [block-id : i64]) : ResultCompilerOptimizeVerify
   (match blocks
     [(CompilerIrBlockList.Nil) (ResultCompilerOptimizeVerify.Ok)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block label instrs)
-          (match (opt-verify-instr-seq-uses-from defs doms label instrs 0 1)
+        [(CompilerIrBlock.Block _ instrs)
+          (match (opt-verify-instr-seq-uses-from defs doms block-id instrs 0 1)
             [(ResultCompilerOptimizeVerify.Ok)
-              (opt-verify-block-uses defs doms (box-get rest))]
+              (opt-verify-block-uses defs doms (box-get rest) (+ block-id 1))]
             [(ResultCompilerOptimizeVerify.Err message)
               (ResultCompilerOptimizeVerify.Err message)])])]
     [(CompilerIrBlockList.Array seq)
-      (opt-verify-block-uses defs doms (compiler-ir-block-seq-to-list seq))]))
+      (opt-verify-block-uses
+        defs
+        doms
+        (compiler-ir-block-seq-to-list seq)
+        block-id)]))
 
 (define (opt-verify-instr-seq-uses-contextual
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
-  [block-label : String]
+  [block-id : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [pos : i64]) : ResultCompilerOptimizeVerify
@@ -9679,14 +9698,14 @@
     (match (opt-verify-instr-uses
       defs
       doms
-      block-label
+      block-id
       pos
       (compiler-ir-instr-seq-ref instrs index))
       [(ResultCompilerOptimizeVerify.Ok)
         (opt-verify-instr-seq-uses-contextual
           defs
           doms
-          block-label
+          block-id
           instrs
           (+ index 1)
           (+ pos 1))]
@@ -9694,7 +9713,7 @@
         (ResultCompilerOptimizeVerify.Err
           (str_cat.str-cat
             "block "
-            block-label
+            (opt-cfg-index-label (struct-get doms index) block-id)
             " instruction "
             (string.int->string index)
             ": "
@@ -9703,28 +9722,34 @@
 (define (opt-verify-block-uses-contextual
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
-  [blocks : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
+  [blocks : CompilerIrBlockList]
+  [block-id : i64]) : ResultCompilerOptimizeVerify
   (match blocks
     [(CompilerIrBlockList.Nil) (ResultCompilerOptimizeVerify.Ok)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block label instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (match (opt-verify-instr-seq-uses-contextual
             defs
             doms
-            label
+            block-id
             instrs
             0
             1)
             [(ResultCompilerOptimizeVerify.Ok)
-              (opt-verify-block-uses-contextual defs doms (box-get rest))]
+              (opt-verify-block-uses-contextual
+                defs
+                doms
+                (box-get rest)
+                (+ block-id 1))]
             [(ResultCompilerOptimizeVerify.Err message)
               (ResultCompilerOptimizeVerify.Err message)])])]
     [(CompilerIrBlockList.Array seq)
       (opt-verify-block-uses-contextual
         defs
         doms
-        (compiler-ir-block-seq-to-list seq))]))
+        (compiler-ir-block-seq-to-list seq)
+        block-id)]))
 
 (define (opt-verify-function-body-with-context
   [func : CompilerIrFunction]
@@ -9743,7 +9768,7 @@
               (opt-var-defs-index (opt-var-defs-from-function params blocks))]
             (match (opt-verify-phi-predecessors-blocks pred-map blocks)
               [(ResultCompilerOptimizeVerify.Ok)
-                (opt-verify-block-uses defs doms blocks)]
+                (opt-verify-block-uses defs doms blocks 0)]
               [(ResultCompilerOptimizeVerify.Err message)
                 (ResultCompilerOptimizeVerify.Err message)]))])]))
 
@@ -9764,7 +9789,7 @@
               (opt-var-defs-index (opt-var-defs-from-function params blocks))]
             (match (opt-verify-phi-predecessors-blocks pred-map blocks)
               [(ResultCompilerOptimizeVerify.Ok)
-                (opt-verify-block-uses-contextual defs doms blocks)]
+                (opt-verify-block-uses-contextual defs doms blocks 0)]
               [(ResultCompilerOptimizeVerify.Err message)
                 (ResultCompilerOptimizeVerify.Err message)]))])]))
 

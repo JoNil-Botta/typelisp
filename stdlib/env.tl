@@ -488,12 +488,11 @@
   (EnvSomeString String))
 
 ;: Immutable sequence of strings used for PATH-style environment variables.
-;: `slots` holds the `len` live entries in list order. Sequences are shared
-;: persistently, so helpers that extend one copy into a right-sized array
-;: instead of mutating storage another value still observes.
+;: `items` holds the live entries in list order. Sequences are shared
+;: persistently, so helpers extend one copy into a fresh right-sized generated
+;: vector instead of mutating storage another value still observes.
 (defstruct EnvStringList
-  (slots (Array String))
-  (len i64))
+  (items svec.Vec))
 
 ;: Optional PATH-style list result. Missing variables use `EnvNoStringList`;
 ;: present empty variables use `EnvSomeStringList` with an empty sequence.
@@ -522,55 +521,53 @@
 
 ;: Return an empty environment string list.
 (define (string-list-empty) : EnvStringList
-  (EnvStringList (array.make-array String 0) 0))
+  (EnvStringList (svec.with-capacity 0)))
 
 ;: Return the number of entries in `items`.
 (define (string-list-count [items : EnvStringList]) : i64
-  (struct-get items len))
+  (svec.len (& (struct-get items items))))
 
 ;: Return the entry at `index`, or the empty string when `index` is out of range.
 (define (string-list-ref [items : EnvStringList] [index : i64]) : String
-  (if (and (>= index 0) (< index (struct-get items len)))
-    (array-ref (struct-get items slots) index)
-    ""))
+  (svec.get (& (struct-get items items)) index ""))
 
 ;: Prepend an owned string to an environment string list.
 (define (string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
   (let
-    [n : i64 (struct-get rest len)]
-    [slots : (Array String) (array.make-array String (+ n 1))]
+    [n : i64 (string-list-count rest)]
+    [out : svec.Vec (svec.with-capacity (+ n 1))]
     [i : i64 0]
     (begin
-      (array-set! slots 0 value)
+      (svec.push (&mut out) value)
       (while (< i n)
         (begin
-          (array-set! slots (+ i 1) (array-ref (struct-get rest slots) i))
+          (svec.push (&mut out) (string-list-ref rest i))
           (set! i (+ i 1))))
-      (EnvStringList slots (+ n 1)))))
+      (EnvStringList out))))
 
 ;: Build an environment string list from `items`, preserving vector order.
 (define (string-list-from-vec [items : svec.Vec]) : EnvStringList
   (let
     [n : i64 (svec.len (& items))]
-    [slots : (Array String) (array.make-array String n)]
+    [out : svec.Vec (svec.with-capacity n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (svec.get (& items) i ""))
+          (svec.push (&mut out) (svec.get (& items) i ""))
           (set! i (+ i 1))))
-      (EnvStringList slots n))))
+      (EnvStringList out))))
 
 ;: Copy `items` into `out`, preserving list order.
 (define (string-list-to-vec-into
   [items : EnvStringList]
   [out : (&mut out svec.Vec)]) : unit
   (let
-    [n : i64 (struct-get items len)]
+    [n : i64 (string-list-count items)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (svec.push out (array-ref (struct-get items slots) i))
+        (svec.push out (string-list-ref items i))
         (set! i (+ i 1))))))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.

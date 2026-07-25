@@ -15,28 +15,34 @@
 ;#
 ;# Usage: `(import stdlib.process)`
 ;#
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 
-;: Immutable sequence of process argument strings in argv order. `slots` holds
-;: the `len` live entries. Sequences are shared persistently, so helpers that
-;: extend one copy into a right-sized array instead of mutating storage another
-;: value still observes.
+;: Immutable sequence of process argument strings in argv order. `items` holds
+;: the live entries. Sequences are shared persistently, so helpers extend one
+;: copy into a fresh right-sized generated vector instead of mutating storage
+;: another value still observes.
 (defstruct ProcessStringList
-  (slots (Array String))
-  (len i64))
+  (items svec.Vec))
 
 ;: Optional string value used for cwd and stdin configuration.
 (defenum ProcessMaybeString
   (ProcessNoString)
   (ProcessSomeString String))
 
-;: Environment override list stored as name/value pairs.
-(defenum ProcessEnvList
-  (ProcessEnvNil)
-  (ProcessEnvCons String String (Box ProcessEnvList)))
+;: One environment override name/value pair.
+(defstruct ProcessEnvEntry
+  (name String)
+  (value String))
+
+(import (vector.vector ProcessEnvEntry core) as env_entry_vec)
+
+;: Environment override sequence of name/value pairs in override order. Like
+;: `ProcessStringList` the sequence is shared persistently, so `env-cons` and
+;: `env-step` build fresh right-sized generated vectors.
+(defstruct ProcessEnvList
+  (items env_entry_vec.Vec))
 
 ;: Vector-backed process environment overrides. `names` and `values` are
 ;: parallel generated string-vector buffers with the invariant that their live
@@ -116,24 +122,21 @@
   (ErrProcessChild ProcessError))
 
 ;: Return a destructured step from an argv list. The tail is copied into a
-;: right-sized array so the stepped-over sequence keeps its own storage.
+;: right-sized vector so the stepped-over sequence keeps its own storage.
 (define (string-step [args : ProcessStringList]) : ProcessStringStep
   (let
-    [n : i64 (- (struct-get args len) 1)]
+    [n : i64 (- (args-count args) 1)]
     (if (< n 0)
       (ProcessStringStep false "" (args-empty))
       (let
-        [slots : (Array String) (array.make-array String n)]
+        [tail : svec.Vec (svec.with-capacity n)]
         [i : i64 0]
         (begin
           (while (< i n)
             (begin
-              (array-set! slots i (array-ref (struct-get args slots) (+ i 1)))
+              (svec.push (&mut tail) (args-ref args (+ i 1)))
               (set! i (+ i 1))))
-          (ProcessStringStep
-            true
-            (array-ref (struct-get args slots) 0)
-            (ProcessStringList slots n)))))))
+          (ProcessStringStep true (args-ref args 0) (ProcessStringList tail)))))))
 
 ;: Return whether a destructured argv step contains an item.
 (define (string-step-present? [step : ProcessStringStep]) : bool
@@ -147,12 +150,27 @@
 (define (string-step-rest [step : ProcessStringStep]) : ProcessStringList
   (struct-get step rest))
 
-;: Return a destructured step from an environment override list.
+;: Return a destructured step from an environment override list. The tail is
+;: copied into a right-sized vector so the stepped-over sequence keeps its own
+;: storage.
 (define (env-step [env : ProcessEnvList]) : ProcessEnvStep
-  (match env
-    [(ProcessEnvNil) (ProcessEnvStep false "" "" (ProcessEnvNil))]
-    [(ProcessEnvCons name value rest)
-      (ProcessEnvStep true name value (box-get rest))]))
+  (let
+    [n : i64 (- (env-count env) 1)]
+    (if (< n 0)
+      (ProcessEnvStep false "" "" (env-empty))
+      (let
+        [tail : env_entry_vec.Vec (env_entry_vec.with-capacity n)]
+        [i : i64 0]
+        (begin
+          (while (< i n)
+            (begin
+              (env_entry_vec.push (&mut tail) (env-ref env (+ i 1)))
+              (set! i (+ i 1))))
+          (ProcessEnvStep
+            true
+            (struct-get (env-ref env 0) name)
+            (struct-get (env-ref env 0) value)
+            (ProcessEnvList tail)))))))
 
 ;: Return whether a destructured env step contains an item.
 (define (env-step-present? [step : ProcessEnvStep]) : bool
@@ -186,87 +204,97 @@
 
 ;: Return an empty argument list.
 (define (args-empty) : ProcessStringList
-  (ProcessStringList (array.make-array String 0) 0))
+  (ProcessStringList (svec.with-capacity 0)))
 
 ;: Return the number of argv entries in `args`.
 (define (args-count [args : ProcessStringList]) : i64
-  (struct-get args len))
+  (svec.len (& (struct-get args items))))
 
 ;: Return the argv entry at `index`, or the empty string when out of range.
 (define (args-ref [args : ProcessStringList] [index : i64]) : String
-  (if (and (>= index 0) (< index (struct-get args len)))
-    (array-ref (struct-get args slots) index)
-    ""))
+  (svec.get (& (struct-get args items)) index ""))
 
-;: Copy the `len` live entries of `args` into `dst` starting at `offset`.
-(define (args-copy-into
-  [dst : (&mut dst (Array String))]
-  [args : ProcessStringList]
-  [offset : i64]) : unit
+;: Append the live entries of `args` to `dst`, preserving argv order.
+(define (args-copy-into [dst : (&mut dst svec.Vec)] [args : ProcessStringList]) : unit
   (let
-    [n : i64 (struct-get args len)]
+    [n : i64 (args-count args)]
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! dst (+ offset i) (array-ref (struct-get args slots) i))
+        (svec.push dst (args-ref args i))
         (set! i (+ i 1))))))
 
 ;: Prepend an owned argument string to an argv list.
 (define (args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
   (let
-    [n : i64 (struct-get rest len)]
-    [slots : (Array String) (array.make-array String (+ n 1))]
+    [out : svec.Vec (svec.with-capacity (+ (args-count rest) 1))]
     (begin
-      (array-set! slots 0 value)
-      (args-copy-into (&mut slots) rest 1)
-      (ProcessStringList slots (+ n 1)))))
+      (svec.push (&mut out) value)
+      (args-copy-into (&mut out) rest)
+      (ProcessStringList out))))
 
 ;: Return a one-element argument list backed by an owned string.
 (define (args-single [value : String]) : ProcessStringList
   (let
-    [slots : (Array String) (array.make-array String 1)]
+    [out : svec.Vec (svec.with-capacity 1)]
     (begin
-      (array-set! slots 0 value)
-      (ProcessStringList slots 1))))
+      (svec.push (&mut out) value)
+      (ProcessStringList out))))
 
 ;: Concatenate two argument lists while preserving argv order.
 (define (args-append [left : ProcessStringList] [right : ProcessStringList]) : ProcessStringList
   (let
-    [ln : i64 (struct-get left len)]
-    [rn : i64 (struct-get right len)]
-    [slots : (Array String) (array.make-array String (+ ln rn))]
+    [out : svec.Vec
+      (svec.with-capacity (+ (args-count left) (args-count right)))]
     (begin
-      (args-copy-into (&mut slots) left 0)
-      (args-copy-into (&mut slots) right ln)
-      (ProcessStringList slots (+ ln rn)))))
+      (args-copy-into (&mut out) left)
+      (args-copy-into (&mut out) right)
+      (ProcessStringList out))))
 
 ;: Convert a generated string-vector argv buffer to the sequence representation
 ;: consumed by `ProcessCommand`, preserving vector order.
 (define (args-from-string-vec [args : (& args svec.Vec)]) : ProcessStringList
   (let
     [n : i64 (svec.len args)]
-    [slots : (Array String) (array.make-array String n)]
+    [out : svec.Vec (svec.with-capacity n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set! slots i (svec.get args i ""))
+          (svec.push (&mut out) (svec.get args i ""))
           (set! i (+ i 1))))
-      (ProcessStringList slots n))))
+      (ProcessStringList out))))
 
 ;: Return an empty environment override list.
 (define (env-empty) : ProcessEnvList
-  (ProcessEnvNil))
+  (ProcessEnvList (env_entry_vec.with-capacity 0)))
+
+;: Compatibility constructor kept so callers written against the former
+;: `ProcessEnvList` cons enum keep building an empty override sequence.
+(define (ProcessEnvNil) : ProcessEnvList
+  (env-empty))
 
 ;: Return the number of env overrides in `env`.
 (define (env-count [env : ProcessEnvList]) : i64
-  (match env
-    [(ProcessEnvNil) 0]
-    [(ProcessEnvCons _ _ rest) (+ 1 (env-count (box-get rest)))]))
+  (env_entry_vec.len (& (struct-get env items))))
+
+;: Return the override pair at `index`, or an empty pair when out of range.
+(define (env-ref [env : ProcessEnvList] [index : i64]) : ProcessEnvEntry
+  (env_entry_vec.get (& (struct-get env items)) index (ProcessEnvEntry "" "")))
 
 ;: Prepend owned environment override strings to an env list.
 (define (env-cons [name : String] [value : String] [rest : ProcessEnvList]) : ProcessEnvList
-  (ProcessEnvCons name value (box rest)))
+  (let
+    [n : i64 (env-count rest)]
+    [out : env_entry_vec.Vec (env_entry_vec.with-capacity (+ n 1))]
+    [i : i64 0]
+    (begin
+      (env_entry_vec.push (&mut out) (ProcessEnvEntry name value))
+      (while (< i n)
+        (begin
+          (env_entry_vec.push (&mut out) (env-ref rest i))
+          (set! i (+ i 1))))
+      (ProcessEnvList out))))
 
 ;: Return true when `text` contains `needle`.
 (define (string-contains-char? [text : (& text str)] [needle : char]) : bool
@@ -332,15 +360,15 @@
     (env-vec-to-list-from
       env
       (- index 1)
-      (ProcessEnvCons
+      (env-cons
         (svec.get (env-vec-names env) index "")
         (svec.get (env-vec-values env) index "")
-        (box out)))))
+        out))))
 
 ;: Convert vector-backed env overrides to the list representation consumed by
 ;: `ProcessCommand` and the process runtime.
 (define (env-vec-to-list [env : (& env ProcessEnvVec)]) : ProcessEnvList
-  (env-vec-to-list-from env (- (env-vec-count env) 1) (ProcessEnvNil)))
+  (env-vec-to-list-from env (- (env-vec-count env) 1) (env-empty)))
 
 ;: Return the first vector-backed env validation error, or `ProcessNoString`.
 (define (env-vec-validation-error-from
@@ -395,7 +423,7 @@
     executable
     argv
     (ProcessNoString)
-    (ProcessEnvNil)
+    (env-empty)
     (ProcessNoString)))
 
 ;: Construct a process command from an executable and a vector-backed argv
@@ -470,7 +498,7 @@
     (command-executable command)
     (command-argv command)
     (command-cwd command)
-    (ProcessEnvCons name value (box (command-env command)))
+    (env-cons name value (command-env command))
     (command-stdin command)))
 
 ;: Return a copy of `command` with the full env override list replaced.
@@ -690,16 +718,22 @@
     [(ProcessUnsupported _) true]
     [_ false]))
 
-;: Return the first env validation error, or `ProcessNoString`.
-(define (env-validation-error [env : ProcessEnvList]) : ProcessMaybeString
-  (match env
-    [(ProcessEnvNil) (ProcessNoString)]
-    [(ProcessEnvCons name _ rest)
+;: Return the first env validation error at or after `index`, or
+;: `ProcessNoString`.
+(define (env-validation-error-from [env : ProcessEnvList] [index : i64]) : ProcessMaybeString
+  (if (>= index (env-count env))
+    (ProcessNoString)
+    (let
+      [name : String (struct-get (env-ref env index) name)]
       (if (string.eq name "")
         (ProcessSomeString "process: environment variable name is empty")
         (if (string-contains-char? (& name) '=')
           (ProcessSomeString "process: environment variable name contains '='")
-          (env-validation-error (box-get rest))))]))
+          (env-validation-error-from env (+ index 1)))))))
+
+;: Return the first env validation error, or `ProcessNoString`.
+(define (env-validation-error [env : ProcessEnvList]) : ProcessMaybeString
+  (env-validation-error-from env 0))
 
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (command-validation-error [command : ProcessCommand]) : ProcessMaybeString
@@ -955,12 +989,11 @@
   [env : ProcessEnvList]
   [expected-name : String]
   [expected-value : String]) : unit
-  (match env
-    [(ProcessEnvCons name value _)
-      (begin
-        (test-assert-string-eq name expected-name)
-        (test-assert-string-eq value expected-value))]
-    [(ProcessEnvNil) (test-fail)]))
+  (if (<= (env-count env) 0)
+    (test-fail)
+    (begin
+      (test-assert-string-eq (struct-get (env-ref env 0) name) expected-name)
+      (test-assert-string-eq (struct-get (env-ref env 0) value) expected-value))))
 
 ;: Inline test assertion for a two-entry process environment list.
 (define (test-assert-env-list2
@@ -969,21 +1002,13 @@
   [first-value : String]
   [second-name : String]
   [second-value : String]) : unit
-  (match env
-    [(ProcessEnvCons name value rest)
-      (begin
-        (test-assert-string-eq name first-name)
-        (test-assert-string-eq value first-value)
-        (match (box-get rest)
-          [(ProcessEnvCons next-name next-value tail)
-            (begin
-              (test-assert-string-eq next-name second-name)
-              (test-assert-string-eq next-value second-value)
-              (match (box-get tail)
-                [(ProcessEnvNil) unit]
-                [_ (test-fail)]))]
-          [(ProcessEnvNil) (test-fail)]))]
-    [(ProcessEnvNil) (test-fail)]))
+  (if (= (env-count env) 2)
+    (begin
+      (test-assert-string-eq (struct-get (env-ref env 0) name) first-name)
+      (test-assert-string-eq (struct-get (env-ref env 0) value) first-value)
+      (test-assert-string-eq (struct-get (env-ref env 1) name) second-name)
+      (test-assert-string-eq (struct-get (env-ref env 1) value) second-value))
+    (test-fail)))
 
 ;: Inline test assertion for process validation diagnostics.
 (define (test-assert-validation

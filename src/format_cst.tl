@@ -5,6 +5,7 @@
 ;; and parenthesized/bracketed lists keep their delimiter kind.
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
 (import "format_tokens.tl")
 
 (defenum FormatCst
@@ -17,15 +18,18 @@
 
 ;; A list is a contiguous slice `slots[start .. start + len)`. Tails share the
 ;; backing array, so stepping is index arithmetic instead of a pointer chase,
-;; and every walker can also take the whole run at once.
+;; and every walker can also take the whole run at once. The backing run is
+;; built by the generated vector below; the slice view is the public shape
+;; because a generated `Vec` has no non-allocating tail.
 (defstruct FormatCstList
   (slots (Array FormatCst))
   (start i64)
   (len i64))
 
+(import (vector.vector FormatCst core) as fmt_cst_vec)
+
 (defstruct FormatCstVec
-  (slots (Array FormatCst))
-  (len i64))
+  (items fmt_cst_vec.Vec))
 
 (defenum FormatCstListStep
   (Empty)
@@ -54,52 +58,20 @@
   (Err FormatSourceError))
 
 (define (format-cst-vec-new) : FormatCstVec
-  (FormatCstVec (make-array FormatCst 4) 0))
-
-(define (format-cst-vec-copy-range!
-  [dst : (&mut dst (Array FormatCst))]
-  [src : (& src (Array FormatCst))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! dst index (array-ref src index))
-      (format-cst-vec-copy-range! dst src (+ index 1) count))))
-
-(define (format-cst-vec-grow! [v : (&mut v FormatCstVec)]) : unit
-  (let
-    [count : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (Array FormatCst) (make-array FormatCst new-cap)]
-    (begin
-      (format-cst-vec-copy-range!
-        (&mut bigger)
-        (& (struct-get v slots))
-        0
-        count)
-      (set! (struct-get v slots) bigger))))
+  (FormatCstVec (fmt_cst_vec.with-capacity 4)))
 
 (define (format-cst-vec-push! [v : (&mut v FormatCstVec)] [value : FormatCst]) : unit
-  (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
-      unit
-      (format-cst-vec-grow! v))
-    (let
-      [index : i64 (struct-get v len)]
-      (begin
-        (array-set! (struct-get v slots) index value)
-        (set! (struct-get v len) (+ index 1))))))
+  (fmt_cst_vec.push (&mut (struct-get v items)) value))
 
 (define (fmt-cst-list-nil) : FormatCstList
   (FormatCstList (make-array FormatCst 0) 0 0))
 
+;; The finished vector hands its backing run to the slice view, so the whole
+;; run and every tail share the storage the vector grew.
 (define (fmt-cst-list-from-vec [items : FormatCstVec]) : FormatCstList
-  (FormatCstList (struct-get items slots) 0 (struct-get items len)))
+  (let
+    [count : i64 (fmt_cst_vec.len (& (struct-get items items)))]
+    (FormatCstList (struct-get (struct-get items items) slots) 0 count)))
 
 (define (fmt-cst-vec-push-list!
   [v : (&mut v FormatCstVec)]

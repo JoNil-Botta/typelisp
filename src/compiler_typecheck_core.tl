@@ -670,9 +670,15 @@
   (Nil)
   (Cons i64 (Box TcNameIdList)))
 
-(defenum TcLazyImportStubList
-  (Nil)
-  (Cons i64 i64 i64 bool (Box TcLazyImportStubList)))
+(defstruct TcLazyImportStub
+  (module-id i64)
+  (alias-id i64)
+  (target-id i64)
+  (summary-backed bool))
+
+(defstruct TcLazyImportStubList
+  (slots (Array TcLazyImportStub))
+  (len i64))
 
 (defenum TcThreadTransferClass
   (Transferable)
@@ -717,9 +723,18 @@
   (No)
   (Some TcTypeEnv))
 
-(defenum TcModuleLocalEnvCache
-  (Nil)
-  (Cons i64 TcTypeEnv (Box TcModuleLocalEnvCache)))
+(defstruct TcModuleLocalEnvEntry
+  (module-id i64)
+  (env TcTypeEnv))
+
+;; Value semantics matter here: every insert publishes a fresh right-sized array
+;; so a caller still holding the shorter cache never observes a later branch's
+;; entry (tc-check-decls-with-paths-in-module-env deliberately re-resolves from
+;; the pre-insert cache to obtain a second owned env). Inserts only happen on a
+;; miss, so the copy is bounded by the distinct module count, not program size.
+(defstruct TcModuleLocalEnvCache
+  (slots (Array TcModuleLocalEnvEntry))
+  (len i64))
 
 (defenum ResultTcModuleLocalEnv
   (Ok TcTypeEnv TcModuleLocalEnvCache)
@@ -8322,7 +8337,7 @@
   TcTypeEnv.Nil)
 
 (define (tc-empty-module-local-env-cache) : TcModuleLocalEnvCache
-  TcModuleLocalEnvCache.Nil)
+  (TcModuleLocalEnvCache (array.make-array TcModuleLocalEnvEntry 0) 0))
 
 (define tc-hygiene-active-top-env : TcTypeEnv
   (tc-empty-type-env))
@@ -9311,54 +9326,102 @@
   (BoxName i64)
   (ArrayName i64))
 
-(defenum TcStdlibTypeSpecList
-  (Nil)
-  (Cons TcStdlibTypeSpec (Box TcStdlibTypeSpecList)))
+;; The expected-surface spec tables are fixed, tiny (at most twelve entries) and
+;; rebuilt once per stdlib surface check, so they are dense arrays and the
+;; `-cons` spellings prepend by copy rather than chaining cells.
+(defstruct TcStdlibTypeSpecList
+  (slots (Array TcStdlibTypeSpec))
+  (len i64))
 
-(defenum TcStdlibFieldSpecList
-  (Nil)
-  (Cons i64 TcStdlibTypeSpec (Box TcStdlibFieldSpecList)))
+(defenum TcStdlibFieldSpec
+  (Spec i64 TcStdlibTypeSpec))
 
-(defenum TcStdlibVariantSpecList
-  (Nil)
-  (Cons i64 TcStdlibTypeSpecList (Box TcStdlibVariantSpecList)))
+(defstruct TcStdlibFieldSpecList
+  (slots (Array TcStdlibFieldSpec))
+  (len i64))
+
+(defenum TcStdlibVariantSpec
+  (Spec i64 TcStdlibTypeSpecList))
+
+(defstruct TcStdlibVariantSpecList
+  (slots (Array TcStdlibVariantSpec))
+  (len i64))
+
+(define (tc-stdlib-type-spec-list0) : TcStdlibTypeSpecList
+  (TcStdlibTypeSpecList (array.make-array TcStdlibTypeSpec 0) 0))
 
 (define (tc-stdlib-type-spec-list1 [a : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
-  (TcStdlibTypeSpecList.Cons a (box (TcStdlibTypeSpecList.Nil))))
+  (let
+    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 1)]
+    (begin
+      (array-set! slots 0 a)
+      (TcStdlibTypeSpecList slots 1))))
 
 (define (tc-stdlib-type-spec-list2
   [a : TcStdlibTypeSpec]
   [b : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
-  (TcStdlibTypeSpecList.Cons
-    a
-    (box (TcStdlibTypeSpecList.Cons b (box (TcStdlibTypeSpecList.Nil))))))
+  (let
+    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 2)]
+    (begin
+      (array-set! slots 0 a)
+      (array-set! slots 1 b)
+      (TcStdlibTypeSpecList slots 2))))
 
 (define (tc-stdlib-type-spec-list3
   [a : TcStdlibTypeSpec]
   [b : TcStdlibTypeSpec]
   [c : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
-  (TcStdlibTypeSpecList.Cons
-    a
-    (box
-      (TcStdlibTypeSpecList.Cons
-        b
-        (box (TcStdlibTypeSpecList.Cons c (box (TcStdlibTypeSpecList.Nil))))))))
+  (let
+    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 3)]
+    (begin
+      (array-set! slots 0 a)
+      (array-set! slots 1 b)
+      (array-set! slots 2 c)
+      (TcStdlibTypeSpecList slots 3))))
+
+(define (tc-stdlib-field-spec-nil) : TcStdlibFieldSpecList
+  (TcStdlibFieldSpecList (array.make-array TcStdlibFieldSpec 0) 0))
 
 (define (tc-stdlib-field-spec-cons
   [name : i64]
   [ty : TcStdlibTypeSpec]
   [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
-  (begin
-    (cfg compile-profile (tc-lp-note 8))
-    (TcStdlibFieldSpecList.Cons name ty (box rest))))
+  (let
+    [n : i64 (struct-get rest len)]
+    [src : (Array TcStdlibFieldSpec) (struct-get rest slots)]
+    [slots : (Array TcStdlibFieldSpec)
+      (array.make-array TcStdlibFieldSpec (+ n 1))]
+    [i : i64 0]
+    (begin
+      (cfg compile-profile (tc-lp-note 8))
+      (array-set! slots 0 (TcStdlibFieldSpec.Spec name ty))
+      (while (< i n)
+        (begin
+          (array-set! slots (+ i 1) (array-ref src i))
+          (set! i (+ i 1))))
+      (TcStdlibFieldSpecList slots (+ n 1)))))
+
+(define (tc-stdlib-variant-spec-nil) : TcStdlibVariantSpecList
+  (TcStdlibVariantSpecList (array.make-array TcStdlibVariantSpec 0) 0))
 
 (define (tc-stdlib-variant-spec-cons
   [name : i64]
   [payloads : TcStdlibTypeSpecList]
   [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
-  (begin
-    (cfg compile-profile (tc-lp-note 10))
-    (TcStdlibVariantSpecList.Cons name payloads (box rest))))
+  (let
+    [n : i64 (struct-get rest len)]
+    [src : (Array TcStdlibVariantSpec) (struct-get rest slots)]
+    [slots : (Array TcStdlibVariantSpec)
+      (array.make-array TcStdlibVariantSpec (+ n 1))]
+    [i : i64 0]
+    (begin
+      (cfg compile-profile (tc-lp-note 10))
+      (array-set! slots 0 (TcStdlibVariantSpec.Spec name payloads))
+      (while (< i n)
+        (begin
+          (array-set! slots (+ i 1) (array-ref src i))
+          (set! i (+ i 1))))
+      (TcStdlibVariantSpecList slots (+ n 1)))))
 
 (define (tc-stdlib-well-known-mismatch [type-name : String] [detail : String]) : ResultTcUnit
   (ResultTcUnit.Err
@@ -9582,22 +9645,20 @@
   [fields : AstFieldDefList]
   [specs : TcStdlibFieldSpecList]
   [index : i64]) : ResultTcUnit
-  (match specs
-    [(TcStdlibFieldSpecList.Nil)
-      (if (>= index (struct-get (& fields) len))
-        ResultTcUnit.Ok
-        (tc-stdlib-well-known-mismatch type-name "unexpected extra field"))]
-    [(TcStdlibFieldSpecList.Cons expected-name expected-ty rest-specs)
-      (let
-        [expected-name-text : String (intern-str expected-name)]
-        (begin
-          (cfg compile-profile (tc-lp-note 9))
-          (if (>= index (struct-get (& fields) len))
-            (tc-stdlib-well-known-mismatch
-              type-name
-              (str_cat.str-cat "missing field " expected-name-text))
-            (let
-              [rest-specs : TcStdlibFieldSpecList (box-get rest-specs)]
+  (if (>= index (struct-get (& specs) len))
+    (if (>= index (struct-get (& fields) len))
+      ResultTcUnit.Ok
+      (tc-stdlib-well-known-mismatch type-name "unexpected extra field"))
+    (match (array-ref (struct-get specs slots) index)
+      [(TcStdlibFieldSpec.Spec expected-name expected-ty)
+        (let
+          [expected-name-text : String (intern-str expected-name)]
+          (begin
+            (cfg compile-profile (tc-lp-note 9))
+            (if (>= index (struct-get (& fields) len))
+              (tc-stdlib-well-known-mismatch
+                type-name
+                (str_cat.str-cat "missing field " expected-name-text))
               (match (ast-field-def-list-get
                 (& fields)
                 index
@@ -9617,7 +9678,7 @@
                         ctx
                         type-name
                         fields
-                        rest-specs
+                        specs
                         (+ index 1))]
                     [else
                       (tc-stdlib-well-known-mismatch
@@ -9626,7 +9687,7 @@
                           "expected field "
                           expected-name-text
                           " type "
-                          (tc-stdlib-type-spec-render expected-ty)))])])))))]))
+                          (tc-stdlib-type-spec-render expected-ty)))])]))))])))
 
 (define (tc-stdlib-check-payload-specs
   [ctx : TcContext]
@@ -9635,38 +9696,37 @@
   [actual : AstTypeList]
   [expected : TcStdlibTypeSpecList]
   [index : i64]) : ResultTcUnit
-  (match expected
-    [(TcStdlibTypeSpecList.Nil)
-      (if (>= index (ast-type-list-len (& actual)))
-        ResultTcUnit.Ok
-        (tc-stdlib-well-known-mismatch
-          type-name
-          (str_cat.str-cat "payload arity mismatch for variant " variant-name)))]
-    [(TcStdlibTypeSpecList.Cons expected-ty rest-expected)
-      (if (>= index (ast-type-list-len (& actual)))
-        (tc-stdlib-well-known-mismatch
-          type-name
-          (str_cat.str-cat "payload arity mismatch for variant " variant-name))
-        (let
-          [actual-id : i64
-            (ast-type-list-get (& actual) index (ast-type-id-fallback))]
-          [actual-ty : AstType (tc-context-type-get ctx actual-id)]
-          [rest-expected : TcStdlibTypeSpecList (box-get rest-expected)]
-          (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
-            (tc-stdlib-check-payload-specs
-              ctx
-              type-name
+  (if (>= index (struct-get (& expected) len))
+    (if (>= index (ast-type-list-len (& actual)))
+      ResultTcUnit.Ok
+      (tc-stdlib-well-known-mismatch
+        type-name
+        (str_cat.str-cat "payload arity mismatch for variant " variant-name)))
+    (if (>= index (ast-type-list-len (& actual)))
+      (tc-stdlib-well-known-mismatch
+        type-name
+        (str_cat.str-cat "payload arity mismatch for variant " variant-name))
+      (let
+        [actual-id : i64
+          (ast-type-list-get (& actual) index (ast-type-id-fallback))]
+        [actual-ty : AstType (tc-context-type-get ctx actual-id)]
+        [expected-ty : TcStdlibTypeSpec
+          (array-ref (struct-get expected slots) index)]
+        (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
+          (tc-stdlib-check-payload-specs
+            ctx
+            type-name
+            variant-name
+            actual
+            expected
+            (+ index 1))
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str_cat.str-cat
+              "payload type mismatch for variant "
               variant-name
-              actual
-              rest-expected
-              (+ index 1))
-            (tc-stdlib-well-known-mismatch
-              type-name
-              (str_cat.str-cat
-                "payload type mismatch for variant "
-                variant-name
-                " at index "
-                (string.int->string index))))))]))
+              " at index "
+              (string.int->string index))))))))
 
 (define (tc-stdlib-check-variant-specs
   [ctx : TcContext]
@@ -9674,52 +9734,51 @@
   [variants : AstVariantDefList]
   [specs : TcStdlibVariantSpecList]
   [index : i64]) : ResultTcUnit
-  (match specs
-    [(TcStdlibVariantSpecList.Nil)
-      (if (>= index (struct-get (& variants) len))
-        ResultTcUnit.Ok
-        (tc-stdlib-well-known-mismatch type-name "unexpected extra variant"))]
-    [(TcStdlibVariantSpecList.Cons expected-name expected-payloads rest-specs)
-      (let
-        [expected-name-text : String (intern-str expected-name)]
-        (begin
-          (cfg compile-profile (tc-lp-note 11))
-          (if (>= index (struct-get (& variants) len))
-            (tc-stdlib-well-known-mismatch
-              type-name
-              (str_cat.str-cat "missing variant " expected-name-text))
-            (let
-              [variant : AstVariantDef
-                (ast-variant-def-list-get
-                  (& variants)
-                  index
-                  (ast-variant-def-fallback))]
-              [rest-specs : TcStdlibVariantSpecList (box-get rest-specs)]
-              (match variant
-                [(AstVariantDef.Def actual-name actual-payloads _)
-                  (if (not (= actual-name expected-name))
-                    (tc-stdlib-well-known-mismatch
-                      type-name
-                      (str_cat.str-cat
-                        "expected variant "
+  (if (>= index (struct-get (& specs) len))
+    (if (>= index (struct-get (& variants) len))
+      ResultTcUnit.Ok
+      (tc-stdlib-well-known-mismatch type-name "unexpected extra variant"))
+    (match (array-ref (struct-get specs slots) index)
+      [(TcStdlibVariantSpec.Spec expected-name expected-payloads)
+        (let
+          [expected-name-text : String (intern-str expected-name)]
+          (begin
+            (cfg compile-profile (tc-lp-note 11))
+            (if (>= index (struct-get (& variants) len))
+              (tc-stdlib-well-known-mismatch
+                type-name
+                (str_cat.str-cat "missing variant " expected-name-text))
+              (let
+                [variant : AstVariantDef
+                  (ast-variant-def-list-get
+                    (& variants)
+                    index
+                    (ast-variant-def-fallback))]
+                (match variant
+                  [(AstVariantDef.Def actual-name actual-payloads _)
+                    (if (not (= actual-name expected-name))
+                      (tc-stdlib-well-known-mismatch
+                        type-name
+                        (str_cat.str-cat
+                          "expected variant "
+                          expected-name-text
+                          " at index "
+                          (string.int->string index)))
+                      (match (tc-stdlib-check-payload-specs
+                        ctx
+                        type-name
                         expected-name-text
-                        " at index "
-                        (string.int->string index)))
-                    (match (tc-stdlib-check-payload-specs
-                      ctx
-                      type-name
-                      expected-name-text
-                      actual-payloads
-                      expected-payloads
-                      0)
-                      [(ResultTcUnit.Ok)
-                        (tc-stdlib-check-variant-specs
-                          ctx
-                          type-name
-                          variants
-                          rest-specs
-                          (+ index 1))]
-                      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))))]))
+                        actual-payloads
+                        expected-payloads
+                        0)
+                        [(ResultTcUnit.Ok)
+                          (tc-stdlib-check-variant-specs
+                            ctx
+                            type-name
+                            variants
+                            specs
+                            (+ index 1))]
+                        [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))))])))
 
 (define (tc-stdlib-check-struct
   [ctx : TcContext]
@@ -9850,7 +9909,7 @@
                         (tc-stdlib-type-spec-list1
                           (TcStdlibTypeSpec.BoxName
                             cbi.compiler-builtin-id-fix-Expr))
-                        (TcStdlibVariantSpecList.Nil)))))))))))))
+                        (tc-stdlib-variant-spec-nil)))))))))))))
 
 (define (tc-stdlib-sequence-fields [_ctx : TcContext] [elem-name : i64]) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
@@ -9859,12 +9918,12 @@
     (tc-stdlib-field-spec-cons
       cbi.compiler-builtin-id-fix-len
       (TcStdlibTypeSpec.I64)
-      (TcStdlibFieldSpecList.Nil))))
+      (tc-stdlib-field-spec-nil))))
 
 (define (tc-stdlib-pattern-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
     cbi.compiler-builtin-id-comptime-pattern-wildcard-variant
-    (TcStdlibTypeSpecList.Nil)
+    (tc-stdlib-type-spec-list0)
     (tc-stdlib-variant-spec-cons
       cbi.compiler-builtin-id-comptime-pattern-binding-variant
       (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
@@ -9873,7 +9932,7 @@
         (tc-stdlib-type-spec-list2
           (TcStdlibTypeSpec.String)
           (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-PatternList))
-        (TcStdlibVariantSpecList.Nil)))))
+        (tc-stdlib-variant-spec-nil)))))
 
 (define (tc-stdlib-match-arm-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
@@ -9882,7 +9941,7 @@
     (tc-stdlib-field-spec-cons
       cbi.compiler-builtin-id-fix-body
       (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-Expr)
-      (TcStdlibFieldSpecList.Nil))))
+      (tc-stdlib-field-spec-nil))))
 
 (define (tc-stdlib-type-info-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
@@ -9921,7 +9980,7 @@
                 (tc-stdlib-variant-spec-cons
                   cbi.compiler-builtin-id-comptime-type-info-opaque-variant
                   (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
-                  (TcStdlibVariantSpecList.Nil))))))))))
+                  (tc-stdlib-variant-spec-nil))))))))))
 
 (define (tc-stdlib-comptime-surface-step
   [current : ResultTcUnit]
@@ -9937,7 +9996,7 @@
     (tc-stdlib-field-spec-cons
       cbi.compiler-builtin-id-fix-second
       (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-Expr)
-      (TcStdlibFieldSpecList.Nil))))
+      (tc-stdlib-field-spec-nil))))
 
 (define (tc-stdlib-expr-binding-clause-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
@@ -9952,7 +10011,7 @@
         (tc-stdlib-field-spec-cons
           cbi.compiler-builtin-id-fix-init
           (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-Expr)
-          (TcStdlibFieldSpecList.Nil))))))
+          (tc-stdlib-field-spec-nil))))))
 
 (define (tc-stdlib-type-field-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
@@ -9961,13 +10020,13 @@
     (tc-stdlib-field-spec-cons
       cbi.compiler-builtin-id-fix-ty
       (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-TypeInfo)
-      (TcStdlibFieldSpecList.Nil))))
+      (tc-stdlib-field-spec-nil))))
 
 (define (tc-stdlib-type-variant-payload-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     cbi.compiler-builtin-id-fix-ty
     (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-TypeInfo)
-    (TcStdlibFieldSpecList.Nil)))
+    (tc-stdlib-field-spec-nil)))
 
 (define (tc-stdlib-type-variant-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
@@ -9976,7 +10035,7 @@
     (tc-stdlib-field-spec-cons
       cbi.compiler-builtin-id-fix-payloads
       (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-TypeVariantPayloadList)
-      (TcStdlibFieldSpecList.Nil))))
+      (tc-stdlib-field-spec-nil))))
 
 (define (tc-stdlib-type-param-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
@@ -9985,7 +10044,7 @@
     (tc-stdlib-field-spec-cons
       cbi.compiler-builtin-id-fix-ty
       (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-TypeInfo)
-      (TcStdlibFieldSpecList.Nil))))
+      (tc-stdlib-field-spec-nil))))
 
 (define (tc-stdlib-comptime-surface-ok-impl [ctx : TcContext]) : ResultTcUnit
   (if (not (tc-stdlib-comptime-present? ctx))
@@ -15055,8 +15114,11 @@
           cursor
           handle)))))
 
+(define (tc-lazy-import-stub-list-empty) : TcLazyImportStubList
+  (TcLazyImportStubList (array.make-array TcLazyImportStub 0) 0))
+
 (define tc-lazy-import-stubs : TcLazyImportStubList
-  (TcLazyImportStubList.Nil))
+  (tc-lazy-import-stub-list-empty))
 (define tc-lazy-import-stub-capacity : i64
   65536)
 (define tc-lazy-import-stub-module-ids : (Array i64)
@@ -15144,7 +15206,7 @@
 
 (define (tc-lazy-import-stubs-reset!) : unit
   (begin
-    (set! tc-lazy-import-stubs (TcLazyImportStubList.Nil))
+    (set! tc-lazy-import-stubs (tc-lazy-import-stub-list-empty))
     (set! tc-lazy-import-stub-record-count 0)
     (set! tc-lazy-import-summary-backed-count 0)
     (set! tc-lazy-import-summary-macro-force-record-count 0)
@@ -15231,29 +15293,31 @@
 (define (tc-lazy-import-stub-target-in
   [stubs : TcLazyImportStubList]
   [importer-module-id : i64]
-  [alias-id : i64]) : TcMaybeNameId
-  (match stubs
-    [(TcLazyImportStubList.Nil) (TcMaybeNameId.No)]
-    [(TcLazyImportStubList.Cons
-        stub-module-id
-        stub-alias-id
-        target-module-id
-        _
-        rest-box)
-      (if (and (= stub-module-id importer-module-id) (= stub-alias-id alias-id))
+  [alias-id : i64]
+  [index : i64]) : TcMaybeNameId
+  (if (>= index (struct-get (& stubs) len))
+    (TcMaybeNameId.No)
+    (let
+      [stub : TcLazyImportStub (array-ref (struct-get stubs slots) index)]
+      [target-module-id : i64 (struct-get stub target-id)]
+      (if (and
+        (= (struct-get stub module-id) importer-module-id)
+        (= (struct-get stub alias-id) alias-id))
         (if (= target-module-id alias-id)
           (match (tc-lazy-import-stub-target-in
-            (box-get rest-box)
+            stubs
             importer-module-id
-            alias-id)
+            alias-id
+            (+ index 1))
             [(TcMaybeNameId.Some concrete-target-id)
               (TcMaybeNameId.Some concrete-target-id)]
             [(TcMaybeNameId.No) (TcMaybeNameId.Some target-module-id)])
           (TcMaybeNameId.Some target-module-id))
         (tc-lazy-import-stub-target-in
-          (box-get rest-box)
+          stubs
           importer-module-id
-          alias-id))]))
+          alias-id
+          (+ index 1))))))
 
 (define (tc-lazy-import-stub-target-id
   [importer-module-id : i64]
@@ -23638,15 +23702,40 @@
             module-id
             ""))])))
 
+(define (tc-module-local-env-cache-lookup-at
+  [cache : TcModuleLocalEnvCache]
+  [module-id : i64]
+  [index : i64]) : TcMaybeTypeEnv
+  (if (>= index (struct-get (& cache) len))
+    (TcMaybeTypeEnv.No)
+    (let
+      [entry : TcModuleLocalEnvEntry (array-ref (struct-get cache slots) index)]
+      (if (= (struct-get entry module-id) module-id)
+        (TcMaybeTypeEnv.Some (struct-get entry env))
+        (tc-module-local-env-cache-lookup-at cache module-id (+ index 1))))))
+
 (define (tc-module-local-env-cache-lookup
   [cache : TcModuleLocalEnvCache]
   [module-id : i64]) : TcMaybeTypeEnv
-  (match cache
-    [(TcModuleLocalEnvCache.Nil) (TcMaybeTypeEnv.No)]
-    [(TcModuleLocalEnvCache.Cons cached-module-id env rest)
-      (if (= cached-module-id module-id)
-        (TcMaybeTypeEnv.Some env)
-        (tc-module-local-env-cache-lookup (box-get rest) module-id))]))
+  (tc-module-local-env-cache-lookup-at cache module-id 0))
+
+(define (tc-module-local-env-cache-insert
+  [cache : TcModuleLocalEnvCache]
+  [module-id : i64]
+  [env : TcTypeEnv]) : TcModuleLocalEnvCache
+  (let
+    [n : i64 (struct-get cache len)]
+    [src : (Array TcModuleLocalEnvEntry) (struct-get cache slots)]
+    [slots : (Array TcModuleLocalEnvEntry)
+      (array.make-array TcModuleLocalEnvEntry (+ n 1))]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! slots i (array-ref src i))
+          (set! i (+ i 1))))
+      (array-set! slots n (TcModuleLocalEnvEntry module-id env))
+      (TcModuleLocalEnvCache slots (+ n 1)))))
 
 (define (tc-module-local-env-cached-id
   [ctx : TcContext]
@@ -23668,7 +23757,7 @@
             [(ResultTcEnv.Ok env)
               (ResultTcModuleLocalEnv.Ok
                 env
-                (TcModuleLocalEnvCache.Cons module-id env (box cache)))]
+                (tc-module-local-env-cache-insert cache module-id env))]
             [(ResultTcEnv.Err message) (ResultTcModuleLocalEnv.Err message)]))])))
 
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
@@ -47587,9 +47676,35 @@
   (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet)
   (Err String))
 
-(defenum TcMoveCleanupOwners
-  (Nil)
-  (Cons i64 i64 bool (Box TcMoveCleanupOwners)))
+(defstruct TcMoveCleanupOwner
+  (name-id i64)
+  (owner-origin-id i64)
+  (move-aware bool))
+
+;; One slot per resource binding, filled in binding order as the checked
+;; recursion unwinds, so the exit scan walks the same order the cons chain did.
+(defstruct TcMoveCleanupOwners
+  (slots (Array TcMoveCleanupOwner))
+  (len i64))
+
+(define (tc-move-cleanup-owners-new [count : i64]) : TcMoveCleanupOwners
+  (TcMoveCleanupOwners (array.make-array TcMoveCleanupOwner count) count))
+
+(define (tc-move-cleanup-owners-set
+  [owners : TcMoveCleanupOwners]
+  [index : i64]
+  [name-id : i64]
+  [owner-origin-id : i64]
+  [move-aware : bool]) : TcMoveCleanupOwners
+  (let
+    [slots : (Array TcMoveCleanupOwner) (struct-get owners slots)]
+    [len : i64 (struct-get owners len)]
+    (begin
+      (array-set!
+        slots
+        index
+        (TcMoveCleanupOwner name-id owner-origin-id move-aware))
+      (TcMoveCleanupOwners slots len))))
 
 (defenum TcMoveResourceBindings
   (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet TcMoveCleanupOwners)
@@ -50511,7 +50626,7 @@
       moved
       locals
       loop-carried
-      TcMoveCleanupOwners.Nil)
+      (tc-move-cleanup-owners-new (ast-resource-binding-list-len bindings)))
     (match (ast-resource-binding-list-get
       bindings
       index
@@ -50566,11 +50681,12 @@
                             moved3
                             locals2
                             loop-carried2
-                            (TcMoveCleanupOwners.Cons
+                            (tc-move-cleanup-owners-set
+                              roots
+                              index
                               name
                               init-box
-                              move-aware?
-                              (box roots)))]
+                              move-aware?))]
                         [(TcMoveResourceBindings.Err message)
                           (TcMoveResourceBindings.Err message)])]
                     [(ResultTcType.Err message)
@@ -50582,16 +50698,20 @@
 (define (tc-move-check-cleanup-owner-exit
   [moved : TcMovedSet]
   [roots : TcMoveCleanupOwners]
-  [scope : AstExpr]) : TcMoveResult
-  (match roots
-    [(TcMoveCleanupOwners.Nil) (TcMoveResult.Ok moved)]
-    [(TcMoveCleanupOwners.Cons name-id owner-origin-id move-aware? rest)
+  [scope : AstExpr]
+  [index : i64]) : TcMoveResult
+  (if (>= index (struct-get (& roots) len))
+    (TcMoveResult.Ok moved)
+    (let
+      [owner : TcMoveCleanupOwner (array-ref (struct-get roots slots) index)]
+      [name-id : i64 (struct-get owner name-id)]
       (cond
-        [move-aware?
+        [(struct-get owner move-aware)
           (tc-move-check-cleanup-owner-exit
             (tc-moved-remove-root-state moved name-id)
-            (box-get rest)
-            scope)]
+            roots
+            scope
+            (+ index 1))]
         [(or
             (tc-moved-contains? moved name-id)
             (tc-moved-partial? moved name-id))
@@ -50599,9 +50719,9 @@
             (tc-move-rich-cleanup-owner-exit-message
               (tc-moved-root-conflict moved name-id)
               (tc-hygiene-name-text-id name-id)
-              owner-origin-id
+              (struct-get owner owner-origin-id)
               scope))]
-        [else (tc-move-check-cleanup-owner-exit moved (box-get rest) scope)])]))
+        [else (tc-move-check-cleanup-owner-exit moved roots scope (+ index 1))]))))
 
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
   (match names
@@ -51416,7 +51536,7 @@
                 moved1
                 exprs)
                 [(TcMoveResult.Ok moved2)
-                  (tc-move-check-cleanup-owner-exit moved2 roots expr)]
+                  (tc-move-check-cleanup-owner-exit moved2 roots expr 0)]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [(TcMoveResourceBindings.Err message) (TcMoveResult.Err message)])])]
     [(AstExpr.Box inner-box)
@@ -63746,9 +63866,9 @@
 ;; program's AstDecl.Module/AstDecl.Import declarations. Cache them at the same
 ;; per-program boundary so generated macro bodies do not repeatedly rescan the
 ;; whole declaration list.
-(defenum MacroFlatImportTargetList
-  (Nil)
-  (Cons i64 (Box MacroFlatImportTargetList)))
+(defstruct MacroFlatImportTargetList
+  (slots (Array i64))
+  (len i64))
 
 (defenum MacroFlatImportTargetCacheLookup
   (Missing)
@@ -64078,38 +64198,34 @@
                   (set! steps (+ steps 1)))))))
         unit))))
 
-(define (macro-flat-import-target-list-contains?
-  [targets : MacroFlatImportTargetList]
-  [target-id : i64]) : bool
-  (match targets
-    [(MacroFlatImportTargetList.Nil) false]
-    [(MacroFlatImportTargetList.Cons target rest)
-      (if (= target target-id)
-        true
-        (macro-flat-import-target-list-contains? (box-get rest) target-id))]))
+(define (macro-flat-import-target-list-empty) : MacroFlatImportTargetList
+  (MacroFlatImportTargetList (array.make-array i64 0) 0))
 
+;; Appends in program order, so no reversal pass is needed on store. The
+;; per-module lists are a handful of entries, so the dedup scan and the
+;; append-copy both stay well inside a cache line's worth of work.
 (define (macro-flat-import-target-list-add
   [targets : MacroFlatImportTargetList]
   [target-id : i64]) : MacroFlatImportTargetList
-  (if (macro-flat-import-target-list-contains? targets target-id)
-    targets
-    (MacroFlatImportTargetList.Cons target-id (box targets))))
-
-(define (macro-flat-import-target-list-reverse-into
-  [targets : MacroFlatImportTargetList]
-  [out : MacroFlatImportTargetList]) : MacroFlatImportTargetList
-  (match targets
-    [(MacroFlatImportTargetList.Nil) out]
-    [(MacroFlatImportTargetList.Cons target rest)
-      (macro-flat-import-target-list-reverse-into
-        (box-get rest)
-        (MacroFlatImportTargetList.Cons target (box out)))]))
-
-(define (macro-flat-import-target-list-reverse
-  [targets : MacroFlatImportTargetList]) : MacroFlatImportTargetList
-  (macro-flat-import-target-list-reverse-into
-    targets
-    (MacroFlatImportTargetList.Nil)))
+  (let
+    [slots : (Array i64) (struct-get targets slots)]
+    [len : i64 (struct-get targets len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (if found
+        false
+        (< index len))
+        (begin
+          (if (= (array-ref slots index) target-id)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      (if found
+        (MacroFlatImportTargetList slots len)
+        (begin
+          (array-push! slots target-id)
+          (MacroFlatImportTargetList slots (+ len 1)))))))
 
 (define (macro-flat-import-targets-from-list
   [decls : AstDeclList]
@@ -64152,7 +64268,7 @@
                   [(AstMaybeImportAlias.No) unit])]
               [_ unit])
             (set! index (+ index 1)))))
-      (macro-flat-import-target-list-reverse cur-targets))))
+      cur-targets)))
 
 ;; Overwrite the stored list for a module id already present in the table
 ;; (macro-flat-import-target-cache-put! keeps existing entries untouched).
@@ -64190,11 +64306,10 @@
 ;; per-module cache miss used to rescan the ENTIRE declaration list (with a
 ;; ~100B AstDecl unwrap copy per declaration), and the cache resets at every
 ;; in-pass splice rebuild, so a self-compile re-paid those whole-program scans
-;; per module per epoch. Lists are accumulated newest-first in program order
-;; and reversed on store, matching macro-flat-import-targets-from-list's
-;; add-then-reverse order exactly. If the table's half-load insert cap is hit,
-;; complete stays false and misses fall back to the exact scan, so only
-;; memoization -- never correctness -- degrades.
+;; per module per epoch. Lists are appended in program order, matching
+;; macro-flat-import-targets-from-list exactly. If the table's half-load insert
+;; cap is hit, complete stays false and misses fall back to the exact scan, so
+;; only memoization -- never correctness -- degrades.
 (define (macro-flat-import-target-cache-build! [decls : AstDeclList]) : unit
   (let
     [count : i64 (ast-decl-list-len (& decls))]
@@ -64234,24 +64349,12 @@
                                 (macro-flat-import-target-cache-put!
                                   cur-module-id
                                   (macro-flat-import-target-list-add
-                                    (MacroFlatImportTargetList.Nil)
+                                    (macro-flat-import-target-list-empty)
                                     target-module)))]))]
                       [(AstMaybeModuleName.No) unit])
                     unit)]
                 [(AstMaybeImportAlias.No) unit])]
             [_ unit])
-          (set! i (+ i 1))))
-      ;; Reverse each accumulated list into program order.
-      (set! i 0)
-      (while (< i macro-flat-import-target-cache-capacity)
-        (begin
-          (if (= (array-ref macro-flat-import-target-cache-module-keys i) 0)
-            unit
-            (array-set!
-              macro-flat-import-target-cache-values
-              i
-              (macro-flat-import-target-list-reverse
-                (array-ref macro-flat-import-target-cache-values i))))
           (set! i (+ i 1))))
       (set! macro-flat-import-target-cache-built true)
       (set!
@@ -64281,14 +64384,14 @@
           (=
             macro-flat-import-target-cache-built-decl-offset
             (struct-get decls offset)))
-          (MacroFlatImportTargetList.Nil)
+          (macro-flat-import-target-list-empty)
           (let
             [targets : MacroFlatImportTargetList
               (macro-flat-import-targets-from-list
                 decls
                 current-module-id
                 cbi.compiler-builtin-id-fix-empty
-                (MacroFlatImportTargetList.Nil))]
+                (macro-flat-import-target-list-empty))]
             (begin
               (macro-flat-import-target-cache-put! current-module-id targets)
               targets)))])))
@@ -64953,21 +65056,24 @@
   [ctx : TcContext]
   [targets : MacroFlatImportTargetList]
   [lookup-name-id : i64]) : i64
-  (match targets
-    [(MacroFlatImportTargetList.Nil) -1]
-    [(MacroFlatImportTargetList.Cons target-module-id rest-box)
-      (let
-        [target : i64
-          (macro-unqualified-imported-call-target
-            ctx
-            target-module-id
-            lookup-name-id)]
-        (if (= target -1)
-          (macro-unqualified-imported-call-target-from-imports
-            ctx
-            (box-get rest-box)
-            lookup-name-id)
-          target))]))
+  (let
+    [slots : (Array i64) (struct-get targets slots)]
+    [len : i64 (struct-get targets len)]
+    [index : i64 0]
+    [target : i64 -1]
+    (begin
+      (while (if (= target -1)
+        (< index len)
+        false)
+        (begin
+          (set!
+            target
+            (macro-unqualified-imported-call-target
+              ctx
+              (array-ref slots index)
+              lookup-name-id))
+          (set! index (+ index 1))))
+      target)))
 
 (define (macro-unqualified-imported-call-decl-from-target
   [ctx : TcContext]
@@ -74258,7 +74364,7 @@
       summary
       ""
       cbi.compiler-builtin-id-fix-empty
-      (TcModuleLocalEnvCache.Nil))))
+      (tc-empty-module-local-env-cache))))
 
 (define (tc-check-decls-with-prefix-hit
   [prefix-cache : TcPrefixSnapshotCacheState]
@@ -74281,7 +74387,7 @@
       summary
       module
       module-id
-      (TcModuleLocalEnvCache.Nil))))
+      (tc-empty-module-local-env-cache))))
 
 (define (tc-check-decls-with-prefix-miss
   [prefix-cache : TcPrefixSnapshotCacheState]
@@ -74304,7 +74410,7 @@
       (CompilerTypecheckSummary 0 0 0)
       ""
       cbi.compiler-builtin-id-fix-empty
-      (TcModuleLocalEnvCache.Nil))
+      (tc-empty-module-local-env-cache))
       [(ResultCompilerTypecheck.Ok prefix-summary)
         (begin
           (tc-prefix-snapshot-cache-store-persistent-for-state
@@ -74323,7 +74429,7 @@
             prefix-summary
             module
             module-id
-            (TcModuleLocalEnvCache.Nil)))]
+            (tc-empty-module-local-env-cache)))]
       [(ResultCompilerTypecheck.Err diag) (ResultCompilerTypecheck.Err diag)])))
 
 (cfg
@@ -74364,7 +74470,7 @@
         (struct-get facts summary-externs))
       module
       module-id
-      (TcModuleLocalEnvCache.Nil))))
+      (tc-empty-module-local-env-cache))))
 
 (define (tc-check-decls-with-paths
   [prefix-cache : TcPrefixSnapshotCacheState]

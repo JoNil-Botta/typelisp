@@ -251,7 +251,7 @@
     i64
     i64
     i64
-    String
+    i64
     CompilerIrInstrBuilder
     CompilerIrBlockBuilder
     CompilerIrFunctionBuilder
@@ -413,7 +413,7 @@
   (Storage LowerState i64))
 
 (defenum LowerLabel
-  (Label LowerState String))
+  (Label LowerState i64))
 
 (defenum LowerLambdaName
   (Name LowerState i64))
@@ -947,7 +947,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum LowerLoopTarget
-  (Target String String))
+  (Target i64 i64))
 
 (defenum ResultLowerLoopTarget
   (Ok LowerLoopTarget)
@@ -10617,7 +10617,7 @@
   (match state
     [(LowerState.State next-var _ _ _ _ _ _ _ _ _ _ _ _ _ _) next-var]))
 
-(define (lower-state-current-label [state : LowerState]) : String
+(define (lower-state-current-label [state : LowerState]) : i64
   (match state
     [(LowerState.State _ _ _ label _ _ _ _ _ _ _ _ _ _ _) label]))
 
@@ -10815,9 +10815,10 @@
           address-taken
           tail-param-start
           tail-param-end)
-        (string.append
-          (string.append prefix ".")
-          (string.int->string next-label)))]))
+        (compiler-ir-label
+          (string.append
+            (string.append prefix ".")
+            (string.int->string next-label))))]))
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
   (match state
@@ -10910,7 +10911,7 @@
   ;; recorded separately after escape.
   (lower-state-emit state instr))
 
-(define (lower-state-finish-block [state : LowerState] [next-label : String]) : LowerState
+(define (lower-state-finish-block [state : LowerState] [next-label : i64]) : LowerState
   (match state
     [(LowerState.State
         next-var
@@ -14863,7 +14864,7 @@
   [offset : i64]
   [next-index : i64]
   [next-cursor : i64]
-  [fail-label : String]
+  [fail-label : i64]
   [scrut-reg-group? : bool]) : ResultLowerEnv
   (match (tc-type-strip-region (tc-resolve-type ctx resolved))
     [(AstType.Box _)
@@ -14926,7 +14927,7 @@
   [offset : i64]
   [next-index : i64]
   [next-cursor : i64]
-  [fail-label : String]
+  [fail-label : i64]
   [scrut-reg-group? : bool]) : ResultLowerEnv
   (match (if scrut-reg-group?
     (lower-read-register-group-payload
@@ -14989,7 +14990,7 @@
   [variant-name-id : i64]
   [index : i64]
   [cursor : i64]
-  [fail-label : String]
+  [fail-label : i64]
   ;; Whether the scrutinee enum is a 2-word register-group value, computed
   ;; ONCE by the caller and threaded here. Recomputing it per payload field (a full
   ;; transient layout rebuild) at every binding site across the whole compiler was
@@ -15431,7 +15432,7 @@
   [variant-name-id : i64]
   [index : i64]
   [cursor : i64]
-  [fail-label : String]) : ResultLowerEnv
+  [fail-label : i64]) : ResultLowerEnv
   (if (ast-pattern-list-empty? (& patterns))
     (if (ast-type-list-empty? (& types))
       (ResultLowerEnv.Ok state env type-env)
@@ -15748,7 +15749,7 @@
   [variant-name-id : i64]
   [index : i64]
   [cursor : i64]
-  [fail-label : String]
+  [fail-label : i64]
   [scrut-reg-group? : bool]) : ResultLowerEnv
   (match borrow-lifetime
     [(TcMaybeNameId.No)
@@ -16926,7 +16927,7 @@
   [tag : CompilerIrValue]
   [variants : AstVariantDefList]
   [index : i64]
-  [done-label : String]) : ResultLowerState
+  [done-label : i64]) : ResultLowerState
   (if (>= index (struct-get (& variants) len))
     (ResultLowerState.Ok
       (lower-state-finish-block
@@ -17336,7 +17337,7 @@
             param-count)
           0
           0
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-builder-new)
           (compiler-ir-block-builder-new)
           (compiler-ir-function-builder-new)
@@ -17579,7 +17580,7 @@
 (define (lower-while-header-label-id [label-number : i64]) : i64
   (lower-private-name-id 14 label-number))
 
-(define (lower-loop-label-name [name-id : i64]) : String
+(define (lower-loop-label-name [name-id : i64]) : i64
   (let
     [kind : i64 (lower-private-name-kind name-id)]
     [prefix : String
@@ -17588,9 +17589,10 @@
         (if (= kind 14)
           "while_header"
           "invalid_loop_label"))]
-    (string.append
-      (string.append prefix ".")
-      (string.int->string (lower-private-name-value name-id)))))
+    (compiler-ir-label
+      (string.append
+        (string.append prefix ".")
+        (string.int->string (lower-private-name-value name-id))))))
 
 (define (lower-cleanup-metadata-type
   [hidden-name-id : i64]
@@ -18414,8 +18416,8 @@
   [result-value : CompilerIrValue]
   [operand-info : TcResultInfo]
   [return-info : TcResultInfo]
-  [ok-label : String]
-  [err-label : String]) : ResultLowerExpr
+  [ok-label : i64]
+  [err-label : i64]) : ResultLowerExpr
   (let
     [err-start : LowerState (lower-state-finish-block state err-label)]
     (match (lower-load-single-payload
@@ -19147,8 +19149,8 @@
 (define (lower-clone-dynarray-advance
   [state : LowerState]
   [index-var : i64]
-  [header-label : String]
-  [exit-label : String]) : ResultLowerState
+  [header-label : i64]
+  [exit-label : i64]) : ResultLowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc inc-alloc inc-var)
       (ResultLowerState.Ok
@@ -19175,8 +19177,8 @@
   [state : LowerState]
   [new-buf : CompilerIrValue]
   [index-var : i64]
-  [header-label : String]
-  [exit-label : String]
+  [header-label : i64]
+  [exit-label : i64]
   [clone-value : CompilerIrValue]
   [elem-ty : AstType]) : ResultLowerState
   (match (lower-emit-elem-addr-gep
@@ -19205,8 +19207,8 @@
   [old-buf : CompilerIrValue]
   [new-buf : CompilerIrValue]
   [index-var : i64]
-  [header-label : String]
-  [exit-label : String]
+  [header-label : i64]
+  [exit-label : i64]
   [elem-ty : AstType]) : ResultLowerState
   (match (lower-emit-elem-addr-gep
     ctx
@@ -24622,8 +24624,8 @@
   [start-value : CompilerIrValue]
   [len-value : CompilerIrValue]
   [len-ok-var : i64]
-  [fail-label : String]
-  [copy-label : String]) : ResultLowerExpr
+  [fail-label : i64]
+  [copy-label : i64]) : ResultLowerExpr
   (let
     [fail-start : LowerState
       (lower-state-finish-block
@@ -24648,8 +24650,8 @@
   [src-len : CompilerIrValue]
   [start-value : CompilerIrValue]
   [len-value : CompilerIrValue]
-  [fail-label : String]
-  [copy-label : String]) : ResultLowerExpr
+  [fail-label : i64]
+  [copy-label : i64]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc rem-alloc rem-var)
       (let
@@ -26856,9 +26858,9 @@
 
 (define (lower-inline-string-eq-finish
   [state : LowerState]
-  [_true-label : String]
-  [false-label : String]
-  [done-label : String]
+  [_true-label : i64]
+  [false-label : i64]
+  [done-label : i64]
   [result-var : i64]
   [result-ty : AstType]) : LowerExpr
   (let
@@ -26881,10 +26883,10 @@
 
 (define (lower-inline-string-eq-body
   [state : LowerState]
-  [header-label : String]
-  [true-label : String]
-  [false-label : String]
-  [done-label : String]
+  [header-label : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [done-label : i64]
   [result-var : i64]
   [index-var : i64]
   [left-ptr : CompilerIrValue]
@@ -27032,8 +27034,8 @@
 
 (define (lower-inline-string-to-int-negate
   [state : LowerState]
-  [negate-label : String]
-  [done-label : String]
+  [negate-label : i64]
+  [done-label : i64]
   [value-var : i64]
   [negative-var : i64]
   [result-ty : AstType]) : LowerExpr
@@ -27068,10 +27070,10 @@
 (define (lower-inline-string-to-int-body
   [state : LowerState]
   [ptr : CompilerIrValue]
-  [header-label : String]
-  [apply-label : String]
-  [negate-label : String]
-  [done-label : String]
+  [header-label : i64]
+  [apply-label : i64]
+  [negate-label : i64]
+  [done-label : i64]
   [value-var : i64]
   [index-var : i64]
   [negative-var : i64]
@@ -27140,11 +27142,11 @@
   [state : LowerState]
   [ptr : CompilerIrValue]
   [len : CompilerIrValue]
-  [body-label : String]
-  [apply-label : String]
-  [header-label : String]
-  [negate-label : String]
-  [done-label : String]
+  [body-label : i64]
+  [apply-label : i64]
+  [header-label : i64]
+  [negate-label : i64]
+  [done-label : i64]
   [value-var : i64]
   [index-var : i64]
   [negative-var : i64]
@@ -27176,12 +27178,12 @@
   [state : LowerState]
   [ptr : CompilerIrValue]
   [len : CompilerIrValue]
-  [minus-label : String]
-  [header-label : String]
-  [body-label : String]
-  [apply-label : String]
-  [negate-label : String]
-  [done-label : String]
+  [minus-label : i64]
+  [header-label : i64]
+  [body-label : i64]
+  [apply-label : i64]
+  [negate-label : i64]
+  [done-label : i64]
   [value-var : i64]
   [index-var : i64]
   [negative-var : i64]
@@ -30250,8 +30252,8 @@
 (define (lower-make-array-init-advance
   [state : LowerState]
   [index-var : i64]
-  [header-label : String]
-  [exit-label : String]) : ResultLowerState
+  [header-label : i64]
+  [exit-label : i64]) : ResultLowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc inc-alloc inc-var)
       (ResultLowerState.Ok
@@ -30278,8 +30280,8 @@
   [state : LowerState]
   [buf-value : CompilerIrValue]
   [index-var : i64]
-  [header-label : String]
-  [exit-label : String]
+  [header-label : i64]
+  [exit-label : i64]
   [elem-ty : AstType]
   [init-value : CompilerIrValue]) : ResultLowerState
   (match (lower-emit-elem-addr-gep
@@ -30302,8 +30304,8 @@
   [type-env : TcTypeEnv]
   [buf-value : CompilerIrValue]
   [index-var : i64]
-  [header-label : String]
-  [exit-label : String]
+  [header-label : i64]
+  [exit-label : i64]
   [elem-ty : AstType]
   [origin : AstExpr]) : ResultLowerState
   (match (lower-init-expr ctx state env type-env elem-ty origin elem-ty)
@@ -30338,9 +30340,9 @@
   [len-i64 : CompilerIrValue]
   [elem-ty : AstType]
   [origin : AstExpr]
-  [header-label : String]
-  [body-label : String]
-  [exit-label : String]) : ResultLowerState
+  [header-label : i64]
+  [body-label : i64]
+  [exit-label : i64]) : ResultLowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc index-alloc index-var)
       (let
@@ -30388,9 +30390,9 @@
   [len-i64 : CompilerIrValue]
   [elem-ty : AstType]
   [init-value : CompilerIrValue]
-  [header-label : String]
-  [body-label : String]
-  [exit-label : String]) : ResultLowerState
+  [header-label : i64]
+  [body-label : i64]
+  [exit-label : i64]) : ResultLowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc index-alloc index-var)
       (let
@@ -30789,8 +30791,8 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [fail-label : String]
-  [alloc-label : String]
+  [fail-label : i64]
+  [alloc-label : i64]
   [arr-ty : AstType]
   [len-i64 : CompilerIrValue]
   [elem-ty : AstType]
@@ -32515,8 +32517,8 @@
 (define (lower-array-push-after-max-check
   [ctx : TcContext]
   [state : LowerState]
-  [fail-label : String]
-  [alloc-label : String]
+  [fail-label : i64]
+  [alloc-label : i64]
   [arr-value : CompilerIrValue]
   [old-buf : CompilerIrValue]
   [old-len : CompilerIrValue]
@@ -33635,12 +33637,12 @@
   [ctx : TcContext]
   [else-state : LowerState]
   [then-value : CompilerIrValue]
-  [then-end-label : String]
+  [then-end-label : i64]
   [else-value : CompilerIrValue]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]) : ResultLowerExpr
   (let
-    [else-end-label : String (lower-state-current-label else-state)]
+    [else-end-label : i64 (lower-state-current-label else-state)]
     [expr-ir-ty : AstType (lower-one-word-register-storage-type ctx expr-ty)]
     [merge-start : LowerState
       (lower-state-finish-block
@@ -33668,7 +33670,7 @@
 (define (lower-if-single-merge
   [state : LowerState]
   [value : CompilerIrValue]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]) : ResultLowerExpr
   (let
     [merge-start : LowerState
@@ -33681,11 +33683,11 @@
   [ctx : TcContext]
   [then-value : CompilerIrValue]
   [then-ty : AstType]
-  [then-end-label : String]
+  [then-end-label : i64]
   [else-state : LowerState]
   [else-value : CompilerIrValue]
   [else-ty : AstType]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]) : ResultLowerExpr
   (if (tc-never-type? then-ty)
     (if (tc-never-type? else-ty)
@@ -33718,8 +33720,8 @@
   [else-branch : AstExpr]
   [then-value : CompilerIrValue]
   [then-ty : AstType]
-  [then-end-label : String]
-  [merge-label : String]
+  [then-end-label : i64]
+  [merge-label : i64]
   [expr-ty : AstType]) : ResultLowerExpr
   (match (lower-expr-expected
     ctx
@@ -33751,8 +33753,8 @@
   [type-env : TcTypeEnv]
   [then-branch : AstExpr]
   [else-branch : AstExpr]
-  [else-label : String]
-  [merge-label : String]
+  [else-label : i64]
+  [merge-label : i64]
   [expr-ty : AstType]) : ResultLowerExpr
   (match (lower-expr-expected
     ctx
@@ -33766,7 +33768,7 @@
       (match then-lowered
         [(LowerExpr.Expr then-state then-value then-ty)
           (let
-            [then-end-label : String (lower-state-current-label then-state)]
+            [then-end-label : i64 (lower-state-current-label then-state)]
             [else-start : LowerState
               (if (tc-never-type? then-ty)
                 (lower-state-finish-block then-state else-label)
@@ -41299,11 +41301,11 @@
               (lower-state-emit
                 index-state
                 (CompilerIrInstr.Mov index-var start-value index-ty))]
-            [header-label : String ""]
-            [body-label : String ""]
-            [tail-header-label : String ""]
-            [tail-body-label : String ""]
-            [exit-label : String ""]
+            [header-label : i64 (compiler-ir-label-none)]
+            [body-label : i64 (compiler-ir-label-none)]
+            [tail-header-label : i64 (compiler-ir-label-none)]
+            [tail-body-label : i64 (compiler-ir-label-none)]
+            [exit-label : i64 (compiler-ir-label-none)]
             [arrays : LowerArrayVarSet
               (lower-array-var-set-add
                 (lower-array-var-set-add
@@ -41541,12 +41543,12 @@
               (lower-state-emit
                 index-alloc
                 (CompilerIrInstr.Mov index-var start-value index-ty))]
-            [header-label : String ""]
-            [body-label : String ""]
-            [tail-init-label : String ""]
-            [tail-header-label : String ""]
-            [tail-body-label : String ""]
-            [exit-label : String ""]
+            [header-label : i64 (compiler-ir-label-none)]
+            [body-label : i64 (compiler-ir-label-none)]
+            [tail-init-label : i64 (compiler-ir-label-none)]
+            [tail-header-label : i64 (compiler-ir-label-none)]
+            [tail-body-label : i64 (compiler-ir-label-none)]
+            [exit-label : i64 (compiler-ir-label-none)]
             [arrays : LowerArrayVarSet
               (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
             [vector-limit : CompilerIrValue CompilerIrValue.Unit]
@@ -41808,12 +41810,12 @@
             [(LowerAlloc.Alloc base-alloc tail-base-var)
               (let
                 [s : LowerState base-alloc]
-                [header-label : String ""]
-                [body-label : String ""]
-                [tail-init-label : String ""]
-                [tail-check-label : String ""]
-                [tail-body-label : String ""]
-                [exit-label : String ""]
+                [header-label : i64 (compiler-ir-label-none)]
+                [body-label : i64 (compiler-ir-label-none)]
+                [tail-init-label : i64 (compiler-ir-label-none)]
+                [tail-check-label : i64 (compiler-ir-label-none)]
+                [tail-body-label : i64 (compiler-ir-label-none)]
+                [exit-label : i64 (compiler-ir-label-none)]
                 [arrays : LowerArrayVarSet
                   (lower-vector-map-value-array-vars value-plan)]
                 [vector-limit : CompilerIrValue CompilerIrValue.Unit]
@@ -43562,7 +43564,7 @@
   [stores : LowerVectorMapStoreList]
   [elem-ty : AstType]
   [lanes : i64]
-  [exit-label : String]) : ResultLowerExpr
+  [exit-label : i64]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc alloc-state tail-var)
       (let
@@ -43574,8 +43576,8 @@
               (CompilerIrValue.Var index-var)
               (AstType.I64)))]
         [tail-lane-var : i64 0]
-        [header-label : String ""]
-        [body-label : String ""]
+        [header-label : i64 (compiler-ir-label-none)]
+        [body-label : i64 (compiler-ir-label-none)]
         [active-lanes : CompilerIrValue CompilerIrValue.Unit]
         [tail-cond : CompilerIrValue CompilerIrValue.Unit]
         [scalar-value : CompilerIrValue CompilerIrValue.Unit]
@@ -44500,9 +44502,9 @@
               active-mask
               active-mask
               lanes))]
-        [header-label : String ""]
-        [body-label : String ""]
-        [exit-label : String ""]
+        [header-label : i64 (compiler-ir-label-none)]
+        [body-label : i64 (compiler-ir-label-none)]
+        [exit-label : i64 (compiler-ir-label-none)]
         [cond-active : CompilerIrValue CompilerIrValue.Unit]
         [any-active : CompilerIrValue CompilerIrValue.Unit]
         (begin
@@ -44938,8 +44940,8 @@
     [invalid : CompilerIrValue CompilerIrValue.Unit]
     [active-invalid : CompilerIrValue CompilerIrValue.Unit]
     [any-invalid : CompilerIrValue CompilerIrValue.Unit]
-    [abort-label : String ""]
-    [continue-label : String ""]
+    [abort-label : i64 (compiler-ir-label-none)]
+    [continue-label : i64 (compiler-ir-label-none)]
     (begin
       (match (lower-emit-splat s (CompilerIrValue.I64 0) lanes count-ty)
         [(LowerExpr.Expr next-s value _)
@@ -47866,7 +47868,7 @@
         param-count
         0
         0
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-builder-new)
         (compiler-ir-block-builder-new)
         (compiler-ir-function-builder-new)
@@ -47984,7 +47986,7 @@
         param-count
         0
         0
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-builder-new)
         (compiler-ir-block-builder-new)
         (compiler-ir-function-builder-new)
@@ -49166,13 +49168,13 @@
                 body-type-env
                 index
                 body)]
-            [header-label : String ""]
-            [body-label : String ""]
-            [tail-header-label : String ""]
-            [tail-check-label : String ""]
-            [tail-mask-label : String ""]
-            [tail-body-label : String ""]
-            [exit-label : String ""]
+            [header-label : i64 (compiler-ir-label-none)]
+            [body-label : i64 (compiler-ir-label-none)]
+            [tail-header-label : i64 (compiler-ir-label-none)]
+            [tail-check-label : i64 (compiler-ir-label-none)]
+            [tail-mask-label : i64 (compiler-ir-label-none)]
+            [tail-body-label : i64 (compiler-ir-label-none)]
+            [exit-label : i64 (compiler-ir-label-none)]
             [vector-limit : CompilerIrValue CompilerIrValue.Unit]
             [vector-start-ok : CompilerIrValue CompilerIrValue.Unit]
             [next-index : CompilerIrValue CompilerIrValue.Unit]
@@ -49533,13 +49535,13 @@
                 (CompilerIrInstr.Mov index-var start-value index-ty))]
             [arrays : LowerArrayVarSet
               (lower-vector-map-store-list-array-vars stores)]
-            [header-label : String ""]
-            [body-label : String ""]
-            [tail-header-label : String ""]
-            [tail-check-label : String ""]
-            [tail-mask-label : String ""]
-            [tail-body-label : String ""]
-            [exit-label : String ""]
+            [header-label : i64 (compiler-ir-label-none)]
+            [body-label : i64 (compiler-ir-label-none)]
+            [tail-header-label : i64 (compiler-ir-label-none)]
+            [tail-check-label : i64 (compiler-ir-label-none)]
+            [tail-mask-label : i64 (compiler-ir-label-none)]
+            [tail-body-label : i64 (compiler-ir-label-none)]
+            [exit-label : i64 (compiler-ir-label-none)]
             [vector-limit : CompilerIrValue CompilerIrValue.Unit]
             [vector-start-ok : CompilerIrValue CompilerIrValue.Unit]
             [next-index : CompilerIrValue CompilerIrValue.Unit]
@@ -50337,7 +50339,7 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [force-memory : bool]) : ResultLowerExpr
@@ -50717,7 +50719,7 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (if (ast-match-arm-list-empty? (& arms))
@@ -50830,7 +50832,7 @@
   [arm : AstMatchArm]
   [pat : AstPattern]
   [body : AstExpr]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
@@ -50898,7 +50900,7 @@
   [pat : AstPattern]
   [body : AstExpr]
   [rest : AstMatchArmList]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
@@ -50967,7 +50969,7 @@
   [scrut-ty : AstType]
   [tag-var : i64]
   [arms : AstMatchArmList]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
@@ -51026,7 +51028,7 @@
   [variant-name-id : i64]
   [args : AstPatternList]
   [body : AstExpr]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
@@ -51096,7 +51098,7 @@
                           (match body-lowered
                             [(LowerExpr.Expr body-state body-value body-ty)
                               (let
-                                [body-end-label : String
+                                [body-end-label : i64
                                   (lower-state-current-label body-state)]
                                 (if (tc-never-type? body-ty)
                                   (lower-match-finish
@@ -51129,7 +51131,7 @@
 (define (lower-match-variant-body
   [ctx : TcContext]
   [body-start : LowerState]
-  [next-label : String]
+  [next-label : i64]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
@@ -51141,7 +51143,7 @@
   [args : AstPatternList]
   [body : AstExpr]
   [rest : AstMatchArmList]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
@@ -51177,7 +51179,7 @@
           (match body-lowered
             [(LowerExpr.Expr body-state body-value body-ty)
               (let
-                [body-end-label : String (lower-state-current-label body-state)]
+                [body-end-label : i64 (lower-state-current-label body-state)]
                 (lower-match-enum-arms
                   ctx
                   (if (tc-never-type? body-ty)
@@ -51227,7 +51229,7 @@
           [_ false])])))
 
 (define (lower-enum-match-next-label-base
-  [current-label : String]
+  [current-label : i64]
   [rest : AstMatchArmList]) : String
   ;; Seed the proof once four explicit comparisons remain, carry it only along
   ;; the outer compare chain, and put the durable marker on the final arm's
@@ -51235,10 +51237,13 @@
   ;; nested match lowered inside the final arm from inheriting the outer proof.
   (let
     [remaining : i64 (ast-match-arm-list-len (& rest))]
+    ;; This proof marker rides on the label's spelling, so it needs the text
+    ;; back out of the intern pool.
+    [current-label-text : String (compiler-ir-label-text current-label)]
     [chain-marker : String "match_total_enum_chain"]
     [total-chain? : bool
       (or
-        (string.contains (& current-label) (& chain-marker))
+        (string.contains (& current-label-text) (& chain-marker))
         (and
           (= remaining 4)
           (lower-total-enum-switch-rest-explicit-from? (& rest) 0)))]
@@ -51260,7 +51265,7 @@
   [args : AstPatternList]
   [body : AstExpr]
   [rest : AstMatchArmList]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [borrow-lifetime : TcMaybeNameId]
   [phi-inputs : CompilerIrPhiInputList]
@@ -51359,7 +51364,7 @@
   [lit : AstLiteral]
   [body : AstExpr]
   [rest : AstMatchArmList]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
@@ -51400,7 +51405,7 @@
                       (match body-lowered
                         [(LowerExpr.Expr body-state body-value body-ty)
                           (let
-                            [body-end-label : String
+                            [body-end-label : i64
                               (lower-state-current-label body-state)]
                             (lower-match-arms
                               ctx
@@ -51435,7 +51440,7 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [arm : AstMatchArm]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match arm
@@ -51463,7 +51468,7 @@
                 (match body-lowered
                   [(LowerExpr.Expr body-state body-value body-ty)
                     (let
-                      [body-end-label : String
+                      [body-end-label : i64
                         (lower-state-current-label body-state)]
                       (if (tc-never-type? body-ty)
                         (lower-match-finish
@@ -51494,7 +51499,7 @@
 (define (lower-match-finish
   [ctx : TcContext]
   [state : LowerState]
-  [merge-label : String]
+  [merge-label : i64]
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (let
@@ -53454,7 +53459,7 @@
 (define (lower-tail-match-variant-body
   [ctx : TcContext]
   [body-start : LowerState]
-  [next-label : String]
+  [next-label : i64]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
@@ -54074,7 +54079,7 @@
             param-count)
           0
           0
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-builder-new)
           (compiler-ir-block-builder-new)
           (compiler-ir-function-builder-new)
@@ -54994,7 +54999,7 @@
   [ret-ty : AstType]
   [call-var : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "cached"
+    (compiler-ir-label "cached")
     (compiler-ir-instr-cons
       (CompilerIrInstr.CallIndirect
         call-var
@@ -55006,7 +55011,7 @@
         CompilerIrInstrList.Nil))))
 
 (define (lower-dispatch-select-block
-  [label : String]
+  [label : i64]
   [cache-name : i64]
   [fn-name : i64]
   [fn-ty : AstType]
@@ -55034,9 +55039,9 @@
   [cache-name : i64]
   [_fn-ty : AstType]
   [cached-var : i64]
-  [resolve-label : String]) : CompilerIrBlock
+  [resolve-label : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         cached-var
@@ -55047,7 +55052,7 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Branch
           (CompilerIrValue.Var cached-var)
-          "cached"
+          (compiler-ir-label "cached")
           resolve-label)
         CompilerIrInstrList.Nil))))
 
@@ -55059,15 +55064,17 @@
   [prefix : String]
   [xcr0-mask : i64]
   [feature-mask : i64]
-  [select-label : String]
-  [fallback-label : String]
+  [select-label : i64]
+  [fallback-label : i64]
   [base : i64]
   [tail : CompilerIrBlockList]) : CompilerIrBlockList
   (let
-    [check-label : String (clone prefix)]
-    [osxsave-label : String (string.append (clone prefix) "_osxsave")]
-    [xcr0-label : String (string.append (clone prefix) "_xcr0")]
-    [leaf7-label : String (string.append prefix "_leaf7")]
+    [check-label : i64 (compiler-ir-label (clone prefix))]
+    [osxsave-label : i64
+      (compiler-ir-label (string.append (clone prefix) "_osxsave"))]
+    [xcr0-label : i64
+      (compiler-ir-label (string.append (clone prefix) "_xcr0"))]
+    [leaf7-label : i64 (compiler-ir-label (string.append prefix "_leaf7"))]
     [max-leaf-var : i64 base]
     [max-ok-var : i64 (+ base 1)]
     [leaf1-ecx-var : i64 (+ base 2)]
@@ -55213,7 +55220,7 @@
           (compiler-ir-block-builder-push!
             (&mut blocks)
             (lower-dispatch-select-block
-              "select_avx512"
+              (compiler-ir-label "select_avx512")
               cache-name
               avx512-name
               fn-ty
@@ -55226,7 +55233,7 @@
           (compiler-ir-block-builder-push!
             (&mut blocks)
             (lower-dispatch-select-block
-              "select_avx2"
+              (compiler-ir-label "select_avx2")
               cache-name
               avx2-name
               fn-ty
@@ -55237,7 +55244,7 @@
       (compiler-ir-block-builder-push!
         (&mut blocks)
         (lower-dispatch-select-block
-          "select_scalar"
+          (compiler-ir-label "select_scalar")
           cache-name
           scalar-name
           fn-ty
@@ -55248,13 +55255,13 @@
 
 (define (lower-dispatch-resolve-label
   [maybe-avx2 : LowerMaybeIrSymbol]
-  [maybe-avx512 : LowerMaybeIrSymbol]) : String
+  [maybe-avx512 : LowerMaybeIrSymbol]) : i64
   (match maybe-avx512
-    [(LowerMaybeIrSymbol.Some _) "check_avx512"]
+    [(LowerMaybeIrSymbol.Some _) (compiler-ir-label "check_avx512")]
     [(LowerMaybeIrSymbol.No)
       (match maybe-avx2
-        [(LowerMaybeIrSymbol.Some _) "check_avx2"]
-        [(LowerMaybeIrSymbol.No) "select_scalar"])]))
+        [(LowerMaybeIrSymbol.Some _) (compiler-ir-label "check_avx2")]
+        [(LowerMaybeIrSymbol.No) (compiler-ir-label "select_scalar")])]))
 
 (define (lower-dispatch-resolve-blocks
   [maybe-avx2 : LowerMaybeIrSymbol]
@@ -55269,8 +55276,8 @@
             "check_avx2"
             6
             32
-            "select_avx2"
-            "select_scalar"
+            (compiler-ir-label "select_avx2")
+            (compiler-ir-label "select_scalar")
             (+ base 12)
             tail)]
         [(LowerMaybeIrSymbol.No) tail])]
@@ -55280,10 +55287,10 @@
           "check_avx512"
           230
           lower-dispatch-avx512-required-feature-mask
-          "select_avx512"
+          (compiler-ir-label "select_avx512")
           (match maybe-avx2
-            [(LowerMaybeIrSymbol.Some _) "check_avx2"]
-            [(LowerMaybeIrSymbol.No) "select_scalar"])
+            [(LowerMaybeIrSymbol.Some _) (compiler-ir-label "check_avx2")]
+            [(LowerMaybeIrSymbol.No) (compiler-ir-label "select_scalar")])
           (+ base 1)
           with-avx2)]
       [(LowerMaybeIrSymbol.No) with-avx2])))

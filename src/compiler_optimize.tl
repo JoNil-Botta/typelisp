@@ -31,7 +31,7 @@
 (import stdlib.arena)
 (import stdlib.hash)
 (import stdlib.hashmap)
-(import (hashmap.hashmap String i64) as opt_string_i64_map)
+(import (hashmap.hashmap i64 i64) as opt_string_i64_map)
 (import (hashmap.hashmap i64 i64) as opt_i64_i64_map)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -4726,10 +4726,10 @@
 
 (define (opt-phi-input-eq
   [av : CompilerIrValue]
-  [alabel : String]
+  [alabel : i64]
   [bv : CompilerIrValue]
-  [blabel : String]) : bool
-  (and (string.eq alabel blabel) (opt-value-eq av bv)))
+  [blabel : i64]) : bool
+  (and (= alabel blabel) (opt-value-eq av bv)))
 
 (define (opt-phi-input-list-eq
   [a : CompilerIrPhiInputList]
@@ -4764,7 +4764,7 @@
     [(CompilerIrSwitchCase.Case at alabel)
       (match b
         [(CompilerIrSwitchCase.Case bt blabel)
-          (and (= at bt) (string.eq alabel blabel))])]))
+          (and (= at bt) (= alabel blabel))])]))
 
 (define (opt-switch-case-list-eq
   [a : CompilerIrSwitchCaseList]
@@ -5352,16 +5352,16 @@
           (and
             (opt-value-eq aindex bindex)
             (opt-value-eq alength blength)
-            (string.eq alabel blabel))]
+            (= alabel blabel))]
         [_ false])]
     [(CompilerIrInstr.Jump alabel)
       (match b
-        [(CompilerIrInstr.Jump blabel) (string.eq alabel blabel)]
+        [(CompilerIrInstr.Jump blabel) (= alabel blabel)]
         [_ false])]
     [(CompilerIrInstr.Branch av at bt)
       (match b
         [(CompilerIrInstr.Branch bv af bf)
-          (and (string.eq at af) (string.eq bt bf) (opt-value-eq av bv))]
+          (and (= at af) (= bt bf) (opt-value-eq av bv))]
         [_ false])]
     [(CompilerIrInstr.Return av)
       (match b
@@ -5399,7 +5399,7 @@
             (opt-value-eq av bv)
             (= abase bbase)
             (opt-switch-case-list-eq acases bcases)
-            (string.eq adefault bdefault))]
+            (= adefault bdefault))]
         [_ false])]))
 
 (define (opt-instr-list-eq [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : bool
@@ -5440,7 +5440,7 @@
     [(CompilerIrBlock.Block alabel ainstrs)
       (match b
         [(CompilerIrBlock.Block blabel binstrs)
-          (and (string.eq alabel blabel) (opt-instr-seq-eq ainstrs binstrs))])]))
+          (and (= alabel blabel) (opt-instr-seq-eq ainstrs binstrs))])]))
 
 (define (opt-block-list-eq [a : CompilerIrBlockList] [b : CompilerIrBlockList]) : bool
   (match a
@@ -7131,9 +7131,9 @@
 ;; inputs from predecessors that are no longer reachable.
 (defenum OptLabelSet
   (Nil)
-  (Cons String (Box OptLabelSet)))
+  (Cons i64 (Box OptLabelSet)))
 
-(define (opt-label-contains [set : OptLabelSet] [label : String]) : bool
+(define (opt-label-contains [set : OptLabelSet] [label : i64]) : bool
   (let
     [cursor : OptLabelSet set]
     [found : bool false]
@@ -7142,12 +7142,12 @@
         (match cursor
           [(OptLabelSet.Nil) (return false)]
           [(OptLabelSet.Cons head rest)
-            (if (string.eq head label)
+            (if (= head label)
               (set! found true)
               (set! cursor (box-get rest)))]))
       true)))
 
-(define (opt-label-add [set : OptLabelSet] [label : String]) : OptLabelSet
+(define (opt-label-add [set : OptLabelSet] [label : i64]) : OptLabelSet
   (if (opt-label-contains set label)
     set
     (OptLabelSet.Cons label (box set))))
@@ -7180,7 +7180,7 @@
   (No)
   (Some CompilerIrBlock))
 
-(define (opt-cfg-find-block [blocks : CompilerIrBlockList] [label : String]) : OptMaybeBlock
+(define (opt-cfg-find-block [blocks : CompilerIrBlockList] [label : i64]) : OptMaybeBlock
   (let
     [cursor : CompilerIrBlockList blocks]
     (begin
@@ -7190,7 +7190,7 @@
           [(CompilerIrBlockList.Cons block rest)
             (match block
               [(CompilerIrBlock.Block block-label _)
-                (if (string.eq block-label label)
+                (if (= block-label label)
                   (return (OptMaybeBlock.Some block))
                   (set! cursor (box-get rest)))])]
           [(CompilerIrBlockList.Array seq)
@@ -7204,20 +7204,20 @@
                       (compiler-ir-block-seq-ref seq index)]
                     (match block
                       [(CompilerIrBlock.Block block-label _)
-                        (if (string.eq block-label label)
+                        (if (= block-label label)
                           (return (OptMaybeBlock.Some block))
                           (set! index (+ index 1)))])))
                 (return (OptMaybeBlock.No))))]))
       (OptMaybeBlock.No))))
 
-(define (opt-cfg-block-exists? [blocks : CompilerIrBlockList] [label : String]) : bool
+(define (opt-cfg-block-exists? [blocks : CompilerIrBlockList] [label : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.Some _) true]
     [(OptMaybeBlock.No) false]))
 
-(define (opt-cfg-entry-label [blocks : CompilerIrBlockList]) : String
+(define (opt-cfg-entry-label [blocks : CompilerIrBlockList]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) ""]
+    [(CompilerIrBlockList.Nil) (compiler-ir-label-none)]
     [(CompilerIrBlockList.Cons block _)
       (match block
         [(CompilerIrBlock.Block label _) label])]
@@ -7296,9 +7296,7 @@
     blocks
     (opt-cfg-block-label-map blocks (opt_string_i64_map.with-capacity 64))))
 
-(define (opt-cfg-predecessors-scan
-  [blocks : CompilerIrBlockList]
-  [label : String]) : OptLabelSet
+(define (opt-cfg-predecessors-scan [blocks : CompilerIrBlockList] [label : i64]) : OptLabelSet
   (match blocks
     [(CompilerIrBlockList.Nil) (OptLabelSet.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -7317,7 +7315,7 @@
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-predecessors-scan (compiler-ir-block-seq-to-list seq) label)]))
 
-(define (opt-cfg-predecessors [blocks : CompilerIrBlockList] [label : String]) : OptLabelSet
+(define (opt-cfg-predecessors [blocks : CompilerIrBlockList] [label : i64]) : OptLabelSet
   (opt-cfg-index-predecessors (opt-cfg-index-build blocks) label))
 
 (define (opt-cfg-filter-blocks-by-labels
@@ -7342,13 +7340,13 @@
   (opt-cfg-filter-blocks-by-labels (opt-cfg-reachable-blocks blocks) blocks))
 
 (defenum OptDomEntry
-  (Entry String OptLabelSet))
+  (Entry i64 OptLabelSet))
 
 (defenum OptLegacyDomTable
   (Nil)
   (Cons OptDomEntry (Box OptLegacyDomTable)))
 
-(define (opt-dom-table-lookup [table : OptLegacyDomTable] [label : String]) : OptLabelSet
+(define (opt-dom-table-lookup [table : OptLegacyDomTable] [label : i64]) : OptLabelSet
   (match table
     [(OptLegacyDomTable.Nil) (OptLabelSet.Nil)]
     [(OptLegacyDomTable.Cons entry rest)
@@ -7356,7 +7354,7 @@
         [rest : OptLegacyDomTable (box-get rest)]
         (match entry
           [(OptDomEntry.Entry entry-label labels)
-            (if (string.eq entry-label label)
+            (if (= entry-label label)
               labels
               (opt-dom-table-lookup rest label))]))]))
 
@@ -7365,9 +7363,7 @@
     [(OptDomEntry.Entry a-label a-labels)
       (match b
         [(OptDomEntry.Entry b-label b-labels)
-          (and
-            (string.eq a-label b-label)
-            (opt-label-set-eq? a-labels b-labels))])]))
+          (and (= a-label b-label) (opt-label-set-eq? a-labels b-labels))])]))
 
 (define (opt-dom-table-eq? [a : OptLegacyDomTable] [b : OptLegacyDomTable]) : bool
   (match a
@@ -7409,7 +7405,7 @@
 (define (opt-cfg-dominators-initial
   [blocks : CompilerIrBlockList]
   [reachable : OptLabelSet]
-  [entry-label : String]
+  [entry-label : i64]
   [all-reachable : OptLabelSet]) : OptLegacyDomTable
   (match blocks
     [(CompilerIrBlockList.Nil) (OptLegacyDomTable.Nil)]
@@ -7420,7 +7416,7 @@
             (OptLegacyDomTable.Cons
               (OptDomEntry.Entry
                 label
-                (if (string.eq label entry-label)
+                (if (= label entry-label)
                   (opt-label-add (OptLabelSet.Nil) label)
                   all-reachable))
               (box
@@ -7462,7 +7458,7 @@
 ;; successor edge, once per verified function (refs #5718).
 (defstruct OptCfgIndex
   (ids opt_string_i64_map.Map)
-  (labels (Array String))
+  (labels (Array i64))
   (succs OptCfgCsr)
   (preds OptCfgCsr)
   (reachable (Array bool))
@@ -7482,7 +7478,7 @@
 (define (opt-cfg-index-fill-label-seq!
   [blocks : CompilerIrBlockSeq]
   [ids : opt_string_i64_map.Map]
-  [labels : (Array String)]
+  [labels : (Array i64)]
   [base : i64]) : opt_string_i64_map.Map
   (let
     [index : i64 0]
@@ -7501,7 +7497,7 @@
 (define (opt-cfg-index-fill-labels!
   [blocks : CompilerIrBlockList]
   [ids : opt_string_i64_map.Map]
-  [labels : (Array String)]
+  [labels : (Array i64)]
   [index : i64]) : opt_string_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) ids]
@@ -7633,11 +7629,11 @@
       (while (< index count)
         (let
           [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
-          [next-label : String
+          [next-label : i64
             (if (< (+ index 1) count)
               (match (compiler-ir-block-seq-ref blocks (+ index 1))
                 [(CompilerIrBlock.Block label _) label])
-              "")]
+              (compiler-ir-label-none))]
           [succs : OptLabelSet
             (opt-cfg-block-successors-with-next block next-label)]
           [row : i64 (+ base index)]
@@ -7809,7 +7805,7 @@
 (define (opt-cfg-index-build [blocks : CompilerIrBlockList]) : OptCfgIndex
   (let
     [count : i64 (compiler-ir-block-list-count blocks)]
-    [labels : (Array String) (array.make-array String count)]
+    [labels : (Array i64) (array.make-array i64 count)]
     [ids : opt_string_i64_map.Map
       (opt-cfg-index-fill-labels!
         blocks
@@ -7866,12 +7862,12 @@
     (opt_string_i64_map.len (& (struct-get index ids)))
     (opt-cfg-index-block-count index)))
 
-(define (opt-cfg-index-label [index : OptCfgIndex] [id : i64]) : String
+(define (opt-cfg-index-label [index : OptCfgIndex] [id : i64]) : i64
   (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
     (array-ref (struct-get index labels) id)
-    ""))
+    (compiler-ir-label-none)))
 
-(define (opt-cfg-index-id [index : OptCfgIndex] [label : String]) : option_i64.Option
+(define (opt-cfg-index-id [index : OptCfgIndex] [label : i64]) : option_i64.Option
   (match (opt_string_i64_map.get (& (struct-get index ids)) label)
     [(opt_string_i64_map.LookupFound id) (option_i64.Some id)]
     [(opt_string_i64_map.LookupMissing) (option_i64.None)]))
@@ -7906,19 +7902,19 @@
       (OptLabelSet.Nil))
     (OptLabelSet.Nil)))
 
-(define (opt-cfg-index-successors [index : OptCfgIndex] [label : String]) : OptLabelSet
+(define (opt-cfg-index-successors [index : OptCfgIndex] [label : i64]) : OptLabelSet
   (match (opt-cfg-index-id index label)
     [(option_i64.Some id)
       (opt-cfg-index-row-labels index (struct-get index succs) id)]
     [(option_i64.None) (OptLabelSet.Nil)]))
 
-(define (opt-cfg-index-predecessors [index : OptCfgIndex] [label : String]) : OptLabelSet
+(define (opt-cfg-index-predecessors [index : OptCfgIndex] [label : i64]) : OptLabelSet
   (match (opt-cfg-index-id index label)
     [(option_i64.Some id)
       (opt-cfg-index-row-labels index (struct-get index preds) id)]
     [(option_i64.None) (OptLabelSet.Nil)]))
 
-(define (opt-cfg-index-reachable? [index : OptCfgIndex] [label : String]) : bool
+(define (opt-cfg-index-reachable? [index : OptCfgIndex] [label : i64]) : bool
   (match (opt-cfg-index-id index label)
     [(option_i64.Some id) (array-ref (struct-get index reachable) id)]
     [(option_i64.None) false]))
@@ -7941,7 +7937,7 @@
 (define (opt-cfg-index-reachable-predecessor?
   [index : OptCfgIndex]
   [block-id : i64]
-  [predecessor-label : String]) : bool
+  [predecessor-label : i64]) : bool
   (match (opt-cfg-index-id index predecessor-label)
     [(option_i64.Some predecessor-id)
       (and
@@ -7970,7 +7966,7 @@
       (+ id 1)
       (if (array-ref (struct-get index reachable) id)
         (let
-          [label : String (opt-cfg-index-label index id)]
+          [label : i64 (opt-cfg-index-label index id)]
           (if (opt_string_i64_map.contains? (& seen) label)
             labels
             (begin
@@ -8050,24 +8046,24 @@
     (array-ref (struct-get index rpo-num) id)
     (- 0 1)))
 
-(define (opt-cfg-index-rpo-label [index : OptCfgIndex] [slot : i64]) : String
+(define (opt-cfg-index-rpo-label [index : OptCfgIndex] [slot : i64]) : i64
   (opt-cfg-index-label index (opt-cfg-index-rpo-id index slot)))
 
-(define (opt-pred-map-lookup [map : OptPredMap] [label : String]) : OptLabelSet
+(define (opt-pred-map-lookup [map : OptPredMap] [label : i64]) : OptLabelSet
   (opt-cfg-index-predecessors (struct-get map index) label))
 
-(define (opt-pred-map-successors [map : OptPredMap] [label : String]) : OptLabelSet
+(define (opt-pred-map-successors [map : OptPredMap] [label : i64]) : OptLabelSet
   (opt-cfg-index-successors (struct-get map index) label))
 
 (define (opt-cfg-dominators-step-entry
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [entry-label : String]
+  [entry-label : i64]
   [old : OptLegacyDomTable]
   [entry : OptDomEntry]) : OptDomEntry
   (match entry
     [(OptDomEntry.Entry label _)
-      (if (string.eq label entry-label)
+      (if (= label entry-label)
         (OptDomEntry.Entry label (opt-label-add (OptLabelSet.Nil) label))
         (let
           [preds : OptLabelSet
@@ -8081,7 +8077,7 @@
 (define (opt-cfg-dominators-step
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [entry-label : String]
+  [entry-label : i64]
   [old : OptLegacyDomTable]
   [remaining : OptLegacyDomTable]) : OptLegacyDomTable
   (match remaining
@@ -8100,7 +8096,7 @@
 (define (opt-cfg-dominators-fixed
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [entry-label : String]
+  [entry-label : i64]
   [table : OptLegacyDomTable]
   [remaining : i64]) : OptLegacyDomTable
   (if (<= remaining 0)
@@ -8121,7 +8117,7 @@
   [blocks : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [entry-label : String]) : OptLegacyDomTable
+  [entry-label : i64]) : OptLegacyDomTable
   (let
     [initial : OptLegacyDomTable
       (opt-cfg-dominators-initial blocks reachable entry-label reachable)]
@@ -8356,7 +8352,7 @@
 
 (define (opt-cfg-dominators-bitset-with
   [index : OptCfgIndex]
-  [entry-label : String]) : OptDomInfo
+  [entry-label : i64]) : OptDomInfo
   (let
     [count : i64 (opt-cfg-index-block-count index)]
     [words : i64 (opt-bits-words count)]
@@ -8529,7 +8525,7 @@
               unit)))
         unit))))
 
-(define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : String]) : OptDomInfo
+(define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : i64]) : OptDomInfo
   (let
     [count : i64 (opt-cfg-index-block-count index)]
     [idom : (Array i64) (array.make-array i64 count)]
@@ -8615,7 +8611,7 @@
     (if (>= dominator-id count)
       true
       (let
-        [label : String (opt-cfg-index-label index dominator-id)]
+        [label : i64 (opt-cfg-index-label index dominator-id)]
         [legacy-has : bool (opt-label-contains legacy-labels label)]
         [info-has : bool
           (opt-dom-info-dominates-id? info dominator-id label-id)]
@@ -8638,7 +8634,7 @@
       true
       (if (array-ref (struct-get index reachable) id)
         (let
-          [label : String (opt-cfg-index-label index id)]
+          [label : i64 (opt-cfg-index-label index id)]
           [legacy-labels : OptLabelSet (opt-dom-table-lookup legacy label)]
           (if (opt-dom-info-row-matches-legacy? info legacy-labels id 0)
             (opt-dom-info-matches-legacy-from? info legacy (+ id 1))
@@ -8693,7 +8689,7 @@
   (index OptCfgIndex)
   (pred-map OptPredMap)
   (reachable OptLabelSet)
-  (entry-label String)
+  (entry-label i64)
   (doms OptDomInfo))
 
 (define (opt-cfg-context-build [blocks : CompilerIrBlockList]) : OptCfgContext
@@ -8701,7 +8697,7 @@
     [index : OptCfgIndex (opt-cfg-index-build blocks)]
     [pred-map : OptPredMap (OptPredMap index)]
     [reachable : OptLabelSet (opt-cfg-index-reachable-labels index)]
-    [entry-label : String (opt-cfg-entry-label blocks)]
+    [entry-label : i64 (opt-cfg-entry-label blocks)]
     [doms : OptDomInfo (opt-cfg-dominators-with index entry-label)]
     (OptCfgContext index pred-map reachable entry-label doms)))
 
@@ -8753,8 +8749,8 @@
 
 (define (opt-dom-dominates?
   [table : OptDomInfo]
-  [dominator : String]
-  [label : String]) : bool
+  [dominator : i64]
+  [label : i64]) : bool
   (match (opt-cfg-index-id (struct-get table index) dominator)
     [(option_i64.Some dominator-id)
       (match (opt-cfg-index-id (struct-get table index) label)
@@ -8842,7 +8838,7 @@
 (define (opt-cfg-dominance-frontier-with-context
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
-  [label : String]) : OptLabelSet
+  [label : i64]) : OptLabelSet
   (let
     [index : OptCfgIndex (struct-get context index)]
     [label-id : i64
@@ -8858,7 +8854,7 @@
 
 (define (opt-cfg-dominance-frontier
   [blocks : CompilerIrBlockList]
-  [label : String]) : OptLabelSet
+  [label : i64]) : OptLabelSet
   (opt-cfg-dominance-frontier-with-context
     blocks
     (opt-cfg-context-build blocks)
@@ -9183,7 +9179,7 @@
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [var : i64]
-  [pred-label : String]) : ResultCompilerOptimizeVerify
+  [pred-label : i64]) : ResultCompilerOptimizeVerify
   (match (opt-var-def-lookup defs var)
     [(OptMaybeVarDef.No)
       (ResultCompilerOptimizeVerify.Err
@@ -9645,7 +9641,7 @@
 
 (define (opt-verify-phi-predecessors-instr-seq-from
   [pred-map : OptPredMap]
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : ResultCompilerOptimizeVerify
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -9748,7 +9744,8 @@
         (ResultCompilerOptimizeVerify.Err
           (str_cat.str-cat
             "block "
-            (opt-cfg-index-label (struct-get doms index) block-id)
+            (compiler-ir-label-text
+              (opt-cfg-index-label (struct-get doms index) block-id))
             " instruction "
             (string.int->string index)
             ": "
@@ -9930,7 +9927,7 @@
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -9980,7 +9977,7 @@
   (Cons i64 OptLabelSet (Array bool) (Box OptSsaVarBlocks)))
 
 (defenum OptSsaPhiSite
-  (Site i64 String AstType i64))
+  (Site i64 i64 AstType i64))
 
 (defenum OptSsaPhiSites
   (Nil)
@@ -9994,14 +9991,14 @@
   (Cons i64 i64 (Box OptSsaRenameEnv)))
 
 (defenum OptSsaRenameBlock
-  (Block String CompilerIrInstrList))
+  (Block i64 CompilerIrInstrList))
 
 (defenum OptSsaRenameBlocks
   (Nil)
   (Cons OptSsaRenameBlock (Box OptSsaRenameBlocks)))
 
 (defenum OptSsaBlockOut
-  (Out String OptSsaRenameEnv))
+  (Out i64 OptSsaRenameEnv))
 
 (defenum OptSsaBlockOuts
   (Nil)
@@ -10277,7 +10274,7 @@
   [index : OptCfgIndex]
   [members : (Array bool)]
   [labels : OptLabelSet]
-  [label : String]) : OptLabelSet
+  [label : i64]) : OptLabelSet
   (match (opt-cfg-index-id index label)
     [(option_i64.Some id)
       (if (opt-ssa-label-member? members id)
@@ -10307,7 +10304,7 @@
   [index : OptCfgIndex]
   [blocks : OptSsaVarBlocks]
   [var : i64]
-  [label : String]) : OptSsaVarBlocks
+  [label : i64]) : OptSsaVarBlocks
   (match blocks
     [(OptSsaVarBlocks.Nil)
       (let
@@ -10339,7 +10336,7 @@
 (define (opt-ssa-def-blocks-add-param
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
-  [label : String]
+  [label : i64]
   [defs : OptSsaVarBlocks]
   [param : CompilerIrParam]) : OptSsaVarBlocks
   (match param
@@ -10351,7 +10348,7 @@
 (define (opt-ssa-def-blocks-add-params
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
-  [label : String]
+  [label : i64]
   [defs : OptSsaVarBlocks]
   [params : CompilerIrParamList]) : OptSsaVarBlocks
   (match (compiler-ir-param-list-force-cons params)
@@ -10374,7 +10371,7 @@
 (define (opt-ssa-def-blocks-add-instr
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
-  [label : String]
+  [label : i64]
   [defs : OptSsaVarBlocks]
   [instr : CompilerIrInstr]) : OptSsaVarBlocks
   (match (opt-instr-def-var instr)
@@ -10387,7 +10384,7 @@
 (define (opt-ssa-def-blocks-add-instr-seq-from
   [cfg-index : OptCfgIndex]
   [facts : OptSsaFacts]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [instr-index : i64]
   [defs : OptSsaVarBlocks]) : OptSsaVarBlocks
@@ -10455,7 +10452,7 @@
   [state : OptSsaPhiInsertState]
   [var : i64]
   [ty : AstType]
-  [label : String]) : OptSsaPhiInsertState
+  [label : i64]) : OptSsaPhiInsertState
   (match state
     [(OptSsaPhiInsertState.State
         sites
@@ -10639,7 +10636,7 @@
 
 (define (opt-ssa-env-bind-phis
   [sites : OptSsaPhiSites]
-  [label : String]
+  [label : i64]
   [env : OptSsaRenameEnv]) : OptSsaRenameEnv
   (match sites
     [(OptSsaPhiSites.Nil) env]
@@ -10649,7 +10646,7 @@
           (opt-ssa-env-bind-phis
             (box-get rest)
             label
-            (if (string.eq label site-label)
+            (if (= label site-label)
               (opt-ssa-env-bind env var phi-var)
               env))])]))
 
@@ -11292,41 +11289,41 @@
 
 (define (opt-ssa-rename-blocks-contains?
   [blocks : OptSsaRenameBlocks]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match blocks
     [(OptSsaRenameBlocks.Nil) false]
     [(OptSsaRenameBlocks.Cons block rest)
       (match block
         [(OptSsaRenameBlock.Block block-label _)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             true
             (opt-ssa-rename-blocks-contains? (box-get rest) label))])]))
 
 (define (opt-ssa-rename-blocks-lookup
   [blocks : OptSsaRenameBlocks]
-  [label : String]) : CompilerIrInstrList
+  [label : i64]) : CompilerIrInstrList
   (match blocks
     [(OptSsaRenameBlocks.Nil) (CompilerIrInstrList.Nil)]
     [(OptSsaRenameBlocks.Cons block rest)
       (match block
         [(OptSsaRenameBlock.Block block-label instrs)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             instrs
             (opt-ssa-rename-blocks-lookup (box-get rest) label))])]))
 
-(define (opt-ssa-block-out-lookup [outs : OptSsaBlockOuts] [label : String]) : OptSsaRenameEnv
+(define (opt-ssa-block-out-lookup [outs : OptSsaBlockOuts] [label : i64]) : OptSsaRenameEnv
   (match outs
     [(OptSsaBlockOuts.Nil) (OptSsaRenameEnv.Nil)]
     [(OptSsaBlockOuts.Cons out rest)
       (match out
         [(OptSsaBlockOut.Out out-label env)
-          (if (string.eq out-label label)
+          (if (= out-label label)
             env
             (opt-ssa-block-out-lookup (box-get rest) label))])]))
 
 (define (opt-ssa-rename-state-add-block
   [state : OptSsaRenameState]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrList]
   [env : OptSsaRenameEnv]
   [next-var : i64]) : OptSsaRenameState
@@ -11349,7 +11346,7 @@
   [state : OptSsaRenameState]) : OptSsaRenameState
   (let
     [index : OptCfgIndex (struct-get context index)]
-    [label : String (array-ref (struct-get index labels) id)]
+    [label : i64 (array-ref (struct-get index labels) id)]
     (match (opt-cfg-find-block blocks label)
       [(OptMaybeBlock.No) state]
       [(OptMaybeBlock.Some block)
@@ -11468,7 +11465,7 @@
   (let
     [initial-env : OptSsaRenameEnv
       (opt-ssa-env-from-params facts params (OptSsaRenameEnv.Nil))]
-    [entry-label : String (opt-cfg-entry-label blocks)]
+    [entry-label : i64 (opt-cfg-entry-label blocks)]
     (match (opt-cfg-index-id (struct-get context index) entry-label)
       [(option_i64.Some entry-id)
         (opt-ssa-rename-missing-blocks
@@ -11534,7 +11531,7 @@
   [pred-map : OptPredMap]
   [outs : OptSsaBlockOuts]
   [sites : OptSsaPhiSites]
-  [label : String]) : CompilerIrInstrList
+  [label : i64]) : CompilerIrInstrList
   (match sites
     [(OptSsaPhiSites.Nil) (CompilerIrInstrList.Nil)]
     [(OptSsaPhiSites.Cons site rest)
@@ -11543,7 +11540,7 @@
           (opt-ssa-phis-for-label pred-map outs (box-get rest) label)]
         (match site
           [(OptSsaPhiSite.Site var site-label ty phi-var)
-            (if (string.eq site-label label)
+            (if (= site-label label)
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Phi
                   phi-var
@@ -11789,10 +11786,12 @@
 ;; blocks; the caller observes that their entry still has predecessors.
 (define (opt-ssa-explicit-entry-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
-    [entry : String (opt-cfg-entry-label blocks)]
-    [preheader : String (string.append entry "__ssa_entry")]
+    [entry : i64 (opt-cfg-entry-label blocks)]
+    [preheader : i64
+      (compiler-ir-label
+        (string.append (compiler-ir-label-text entry) "__ssa_entry"))]
     (if (or
-      (= (string.string-length entry) 0)
+      (not (compiler-ir-label-some? entry))
       (opt-cfg-block-exists? blocks preheader))
       blocks
       (compiler-ir-block-cons
@@ -12107,7 +12106,7 @@
     (< def-pos use-pos)
     (opt-dom-info-dominates-id? doms def-block-id use-block-id)))
 
-(define (opt-global-block-id [doms : OptDomInfo] [label : String]) : i64
+(define (opt-global-block-id [doms : OptDomInfo] [label : i64]) : i64
   (match (opt-cfg-index-id (struct-get doms index) label)
     [(option_i64.Some id) id]
     [(option_i64.None) (- 0 1)]))
@@ -13246,13 +13245,14 @@
 ;; reach backend compare/branch fusion. On the next optimizer fixpoint
 ;; iteration, CSE must not merge those clones back into a dominating comparison
 ;; -- doing so recreates the setcc/test materialization the CFG rewrite removed.
-(define (opt-bool-branch-chain-generated-label? [label : String]) : bool
+(define (opt-bool-branch-chain-generated-label? [label : i64]) : bool
   (let
     [marker : String "__bool_and."]
-    (string.contains (& label) (& marker))))
+    [text : String (compiler-ir-label-text label)]
+    (string.contains (& text) (& marker))))
 
 (define (opt-bool-branch-chain-check-block?
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]) : bool
   (if (opt-bool-branch-chain-generated-label? block-label)
     true
@@ -13268,7 +13268,7 @@
           [_ false])))))
 
 (define (opt-global-cse-bool-chain-compare?
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]
   [instr : CompilerIrInstr]) : bool
   (and
@@ -13283,12 +13283,13 @@
 ;; SIB displacements. Cross-block CSE would merge them into one dominating add
 ;; and force the offset into a register again.
 (define (opt-global-cse-unroll2-address-offset?
-  [block-label : String]
+  [block-label : i64]
   [instr : CompilerIrInstr]) : bool
   (let
     [marker : String "__unroll2_1"]
+    [text : String (compiler-ir-label-text block-label)]
     (and
-      (string.contains (& block-label) (& marker))
+      (string.contains (& text) (& marker))
       (match instr
         [(CompilerIrInstr.BinOp _ op _ rhs _)
           (and
@@ -13303,7 +13304,7 @@
 (define (opt-global-cse-instr-seq
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
-  [block-label : String]
+  [block-label : i64]
   [block-id : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
@@ -13649,27 +13650,27 @@
 
 (define (opt-cfg-block-successors-with-next
   [block : CompilerIrBlock]
-  [next-label : String]) : OptLabelSet
+  [next-label : i64]) : OptLabelSet
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (let
         [explicit : OptLabelSet
           (opt-cfg-instr-seq-successors (OptLabelSet.Nil) instrs)]
         (if (and
-          (> (string.string-length next-label) 0)
+          (compiler-ir-label-some? next-label)
           (opt-cfg-instr-seq-can-fallthrough? instrs))
           (opt-label-add explicit next-label)
           explicit))]))
 
 (define (opt-cfg-blocks-successors-scan
   [blocks : CompilerIrBlockList]
-  [label : String]) : OptLabelSet
+  [label : i64]) : OptLabelSet
   (match blocks
     [(CompilerIrBlockList.Nil) (OptLabelSet.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label _)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             (opt-cfg-block-successors-with-next
               block
               (opt-cfg-entry-label (box-get rest)))
@@ -13682,11 +13683,11 @@
 
 (defenum OptLoopPreheader
   (No)
-  (Some String))
+  (Some i64))
 
 (defenum OptLoopPreheaderCandidate
   (None)
-  (One String)
+  (One i64)
   (Many))
 
 (defstruct OptLoopBody
@@ -13695,7 +13696,7 @@
   (blocks CompilerIrBlockList))
 
 (defenum OptNaturalLoop
-  (Loop String String OptLoopBody OptLoopPreheader))
+  (Loop i64 i64 OptLoopBody OptLoopPreheader))
 
 (defenum OptMaybeNaturalLoop
   (No)
@@ -13779,7 +13780,7 @@
 (define (opt-loop-body-label-member?
   [body : OptLoopBody]
   [index : OptCfgIndex]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match (opt-cfg-index-id index label)
     [(option_i64.Some id) (opt-loop-body-contains-id? body id)]
     [(option_i64.None) false]))
@@ -13808,11 +13809,11 @@
         (compiler-ir-block-seq-to-list seq)
         block-id)]))
 
-(define (opt-natural-loop-header [loop : OptNaturalLoop]) : String
+(define (opt-natural-loop-header [loop : OptNaturalLoop]) : i64
   (match loop
     [(OptNaturalLoop.Loop header _ _ _) header]))
 
-(define (opt-natural-loop-latch [loop : OptNaturalLoop]) : String
+(define (opt-natural-loop-latch [loop : OptNaturalLoop]) : i64
   (match loop
     [(OptNaturalLoop.Loop _ latch _ _) latch]))
 
@@ -13847,14 +13848,14 @@
 
 (define (opt-natural-loop-find
   [loops : OptNaturalLoopList]
-  [header : String]
-  [latch : String]) : OptMaybeNaturalLoop
+  [header : i64]
+  [latch : i64]) : OptMaybeNaturalLoop
   (match loops
     [(OptNaturalLoopList.Nil) (OptMaybeNaturalLoop.No)]
     [(OptNaturalLoopList.Cons loop rest)
       (if (and
-        (string.eq (opt-natural-loop-header loop) header)
-        (string.eq (opt-natural-loop-latch loop) latch))
+        (= (opt-natural-loop-header loop) header)
+        (= (opt-natural-loop-latch loop) latch))
         (OptMaybeNaturalLoop.Some loop)
         (opt-natural-loop-find (box-get rest) header latch))]))
 
@@ -13866,7 +13867,7 @@
   [index : OptCfgIndex]
   [marks : (Array bool)]
   [state : OptNaturalLoopCollectState]
-  [pred : String]) : OptNaturalLoopCollectState
+  [pred : i64]) : OptNaturalLoopCollectState
   (match state
     [(OptNaturalLoopCollectState.State body worklist)
       (match (opt-cfg-index-id index pred)
@@ -13931,15 +13932,15 @@
 (define (opt-natural-loop-mark-label!
   [index : OptCfgIndex]
   [marks : (Array bool)]
-  [label : String]) : unit
+  [label : i64]) : unit
   (match (opt-cfg-index-id index label)
     [(option_i64.Some id) (array-set! marks id true)]
     [(option_i64.None) unit]))
 
 (define (opt-natural-loop-safe-preheader-block?
   [pred-map : OptPredMap]
-  [label : String]
-  [header : String]) : bool
+  [label : i64]
+  [header : i64]) : bool
   (let
     [successors : OptLabelSet (opt-pred-map-successors pred-map label)]
     (and
@@ -13948,9 +13949,9 @@
 
 (define (opt-natural-loop-preheader-candidate-add
   [pred-map : OptPredMap]
-  [header : String]
+  [header : i64]
   [candidate : OptLoopPreheaderCandidate]
-  [pred : String]) : OptLoopPreheaderCandidate
+  [pred : i64]) : OptLoopPreheaderCandidate
   (match candidate
     [(OptLoopPreheaderCandidate.Many) (OptLoopPreheaderCandidate.Many)]
     [(OptLoopPreheaderCandidate.None)
@@ -13962,7 +13963,7 @@
 (define (opt-natural-loop-preheader-candidate-scan
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [header : String]
+  [header : i64]
   [body : OptLabelSet]
   [preds : OptLabelSet]
   [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
@@ -14001,7 +14002,7 @@
   [_blocks : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [header : String]
+  [header : i64]
   [body : OptLabelSet]) : OptLoopPreheader
   (opt-natural-loop-preheader-from-candidate
     (opt-natural-loop-preheader-candidate-scan
@@ -14016,8 +14017,8 @@
   [blocks : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
-  [header : String]
-  [latch : String]) : OptNaturalLoop
+  [header : i64]
+  [latch : i64]) : OptNaturalLoop
   (let
     [index : OptCfgIndex (struct-get pred-map index)]
     [marks : (Array bool)
@@ -14038,7 +14039,7 @@
         index
         marks
         (opt-label-add (opt-label-add (OptLabelSet.Nil) header) latch)
-        (if (string.eq header latch)
+        (if (= header latch)
           (OptLabelSet.Nil)
           (opt-label-add (OptLabelSet.Nil) latch)))]
     [body : OptLoopBody
@@ -14060,7 +14061,7 @@
   [reachable : OptLabelSet]
   [doms : OptDomInfo]
   [source-id : i64]
-  [source : String]
+  [source : i64]
   [successors : OptLabelSet]
   [tail : OptNaturalLoopList]) : OptNaturalLoopList
   (match successors
@@ -14163,7 +14164,7 @@
   [reachable : OptLabelSet]
   [doms : OptDomInfo]
   [source-id : i64]
-  [source : String]
+  [source : i64]
   [edge : i64]
   [end : i64]
   [acc : OptNaturalLoopList]) : OptNaturalLoopList
@@ -14285,7 +14286,7 @@
 (define (opt-loop-preheaders-outside-preds-scan
   [reachable : OptLabelSet]
   [doms : OptDomInfo]
-  [header : String]
+  [header : i64]
   [body : OptLabelSet]
   [preds : OptLabelSet]) : OptLabelSet
   (match preds
@@ -14310,7 +14311,7 @@
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [doms : OptDomInfo]
-  [header : String]
+  [header : i64]
   [body : OptLabelSet]) : OptLabelSet
   (opt-loop-preheaders-outside-preds-scan
     reachable
@@ -14319,19 +14320,20 @@
     body
     (opt-pred-map-lookup pred-map header)))
 
-(define (opt-loop-preheaders-candidate-label [header : String] [suffix : i64]) : String
-  (if (= suffix 0)
-    (string.append header "__preheader")
-    (string.append
-      header
-      (string.append "__preheader" (string.int->string suffix)))))
+(define (opt-loop-preheaders-candidate-label [header : i64] [suffix : i64]) : i64
+  (compiler-ir-label
+    (if (= suffix 0)
+      (string.append (compiler-ir-label-text header) "__preheader")
+      (string.append
+        (compiler-ir-label-text header)
+        (string.append "__preheader" (string.int->string suffix))))))
 
 (define (opt-loop-preheaders-fresh-label
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [suffix : i64]) : String
+  [header : i64]
+  [suffix : i64]) : i64
   (let
-    [candidate : String (opt-loop-preheaders-candidate-label header suffix)]
+    [candidate : i64 (opt-loop-preheaders-candidate-label header suffix)]
     (if (opt-cfg-block-exists? blocks candidate)
       (opt-loop-preheaders-fresh-label blocks header (+ suffix 1))
       candidate)))
@@ -14395,7 +14397,7 @@
 
 (define (opt-loop-preheaders-header-compatible?
   [blocks : CompilerIrBlockList]
-  [header : String]
+  [header : i64]
   [outside : OptLabelSet]) : bool
   (match (opt-cfg-find-block blocks header)
     [(OptMaybeBlock.No) false]
@@ -14406,7 +14408,7 @@
 
 (define (opt-loop-preheaders-existing-candidate-scan
   [pred-map : OptPredMap]
-  [header : String]
+  [header : i64]
   [outside : OptLabelSet]
   [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
   (match outside
@@ -14424,7 +14426,7 @@
 
 (define (opt-loop-preheaders-existing-safe-preheader?
   [pred-map : OptPredMap]
-  [header : String]
+  [header : i64]
   [outside : OptLabelSet]) : bool
   (match (opt-natural-loop-preheader-from-candidate
     (opt-loop-preheaders-existing-candidate-scan
@@ -14438,7 +14440,7 @@
 (define (opt-loop-preheaders-rewrite-phi-inputs-acc
   [inputs : CompilerIrPhiInputList]
   [outside : OptLabelSet]
-  [preheader : String]
+  [preheader : i64]
   [emitted : bool]
   [acc : CompilerIrPhiInputList]) : OptLoopPreheadersPhiRewriteResult
   (match (compiler-ir-phi-input-list-force-cons inputs)
@@ -14480,7 +14482,7 @@
 (define (opt-loop-preheaders-rewrite-phi-inputs
   [inputs : CompilerIrPhiInputList]
   [outside : OptLabelSet]
-  [preheader : String]) : CompilerIrPhiInputList
+  [preheader : i64]) : CompilerIrPhiInputList
   (match (opt-loop-preheaders-rewrite-phi-inputs-acc
     inputs
     outside
@@ -14491,7 +14493,7 @@
 
 (define (opt-loop-preheaders-rewrite-header-instr
   [outside : OptLabelSet]
-  [preheader : String]
+  [preheader : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(CompilerIrInstr.Phi dst inputs ty)
@@ -14503,7 +14505,7 @@
 
 (define (opt-loop-preheaders-rewrite-header-instrs-from
   [outside : OptLabelSet]
-  [preheader : String]
+  [preheader : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -14520,17 +14522,17 @@
         (+ index 1)))))
 
 (define (opt-loop-preheaders-retarget-label
-  [label : String]
-  [header : String]
-  [preheader : String]) : String
-  (if (string.eq label header)
+  [label : i64]
+  [header : i64]
+  [preheader : i64]) : i64
+  (if (= label header)
     preheader
     label))
 
 (define (opt-loop-preheaders-retarget-switch-cases-acc
   [cases : CompilerIrSwitchCaseList]
-  [header : String]
-  [preheader : String]
+  [header : i64]
+  [preheader : i64]
   [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (match (compiler-ir-switch-case-list-force-cons cases)
     [(CompilerIrSwitchCaseList.Nil) acc]
@@ -14554,8 +14556,8 @@
 
 (define (opt-loop-preheaders-retarget-switch-cases
   [cases : CompilerIrSwitchCaseList]
-  [header : String]
-  [preheader : String]) : CompilerIrSwitchCaseList
+  [header : i64]
+  [preheader : i64]) : CompilerIrSwitchCaseList
   (compiler-ir-switch-case-list-compact-reversed
     (opt-loop-preheaders-retarget-switch-cases-acc
       cases
@@ -14565,8 +14567,8 @@
 
 (define (opt-loop-preheaders-retarget-instr
   [instr : CompilerIrInstr]
-  [header : String]
-  [preheader : String]) : CompilerIrInstr
+  [header : i64]
+  [preheader : i64]) : CompilerIrInstr
   (match instr
     [(CompilerIrInstr.Jump label)
       (CompilerIrInstr.Jump
@@ -14586,8 +14588,8 @@
 
 (define (opt-loop-preheaders-retarget-instrs-from
   [instrs : CompilerIrInstrSeq]
-  [header : String]
-  [preheader : String]
+  [header : i64]
+  [preheader : i64]
   [index : i64]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
@@ -14604,7 +14606,7 @@
 
 (define (opt-loop-preheaders-append-jump
   [instrs : CompilerIrInstrList]
-  [target : String]) : CompilerIrInstrList
+  [target : i64]) : CompilerIrInstrList
   (opt-aggregate-instr-list-append
     instrs
     (compiler-ir-instr-cons
@@ -14613,13 +14615,13 @@
 
 (define (opt-loop-preheaders-rewrite-block
   [block : CompilerIrBlock]
-  [next-label : String]
-  [header : String]
+  [next-label : i64]
+  [header : i64]
   [outside : OptLabelSet]
-  [preheader : String]) : CompilerIrBlock
+  [preheader : i64]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (if (string.eq label header)
+      (if (= label header)
         (compiler-ir-block
           label
           (opt-loop-preheaders-rewrite-header-instrs-from
@@ -14638,7 +14640,7 @@
             (compiler-ir-block
               label
               (if (and
-                (string.eq next-label header)
+                (= next-label header)
                 (opt-cfg-instr-seq-can-fallthrough? instrs))
                 (opt-loop-preheaders-append-jump retargeted preheader)
                 retargeted)))
@@ -14646,9 +14648,9 @@
 
 (define (opt-loop-preheaders-rewrite-blocks
   [blocks : CompilerIrBlockList]
-  [header : String]
+  [header : i64]
   [outside : OptLabelSet]
-  [preheader : String]) : CompilerIrBlockList
+  [preheader : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -14671,7 +14673,7 @@
         outside
         preheader)]))
 
-(define (opt-loop-preheaders-new-block [preheader : String] [header : String]) : CompilerIrBlock
+(define (opt-loop-preheaders-new-block [preheader : i64] [header : i64]) : CompilerIrBlock
   (compiler-ir-block
     preheader
     (compiler-ir-instr-cons
@@ -14680,14 +14682,14 @@
 
 (define (opt-loop-preheaders-insert-before-header
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [preheader : String]) : CompilerIrBlockList
+  [header : i64]
+  [preheader : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
-          (if (string.eq label header)
+          (if (= label header)
             (compiler-ir-block-cons
               (opt-loop-preheaders-new-block preheader header)
               (compiler-ir-block-cons block (box-get rest)))
@@ -14711,7 +14713,7 @@
     [(OptLoopPreheader.Some _) (OptLoopPreheadersResult.Result blocks false)]
     [(OptLoopPreheader.No)
       (let
-        [header : String (opt-natural-loop-header loop)]
+        [header : i64 (opt-natural-loop-header loop)]
         [body : OptLabelSet (opt-natural-loop-body loop)]
         [outside : OptLabelSet
           (opt-loop-preheaders-outside-preds
@@ -14729,8 +14731,7 @@
               outside))
           (opt-loop-preheaders-header-compatible? blocks header outside))
           (let
-            [preheader : String
-              (opt-loop-preheaders-fresh-label blocks header 0)]
+            [preheader : i64 (opt-loop-preheaders-fresh-label blocks header 0)]
             [rewritten : CompilerIrBlockList
               (opt-loop-preheaders-rewrite-blocks
                 blocks
@@ -14877,12 +14878,12 @@
 
 (define (opt-loop-rotation-header-count
   [loops : OptNaturalLoopList]
-  [header : String]) : i64
+  [header : i64]) : i64
   (match loops
     [(OptNaturalLoopList.Nil) 0]
     [(OptNaturalLoopList.Cons loop rest)
       (+
-        (if (string.eq (opt-natural-loop-header loop) header)
+        (if (= (opt-natural-loop-header loop) header)
           1
           0)
         (opt-loop-rotation-header-count (box-get rest) header))]))
@@ -14917,16 +14918,16 @@
 
 (define (opt-loop-rotation-body-target?
   [body : OptLabelSet]
-  [header : String]
-  [label : String]) : bool
-  (and (not (string.eq label header)) (opt-label-contains body label)))
+  [header : i64]
+  [label : i64]) : bool
+  (and (not (= label header)) (opt-label-contains body label)))
 
-(define (opt-loop-rotation-exit-target? [body : OptLabelSet] [label : String]) : bool
+(define (opt-loop-rotation-exit-target? [body : OptLabelSet] [label : i64]) : bool
   (not (opt-label-contains body label)))
 
 (define (opt-loop-rotation-header-shape
   [blocks : CompilerIrBlockList]
-  [header : String]
+  [header : i64]
   [body : OptLabelSet]) : OptLoopRotationHeader
   (match (opt-cfg-find-block blocks header)
     [(OptMaybeBlock.No) (OptLoopRotationHeader.No)]
@@ -14963,19 +14964,19 @@
 
 (define (opt-loop-rotation-final-jump-to?
   [instrs : CompilerIrInstrSeq]
-  [target : String]) : bool
+  [target : i64]) : bool
   (let
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     (if (<= count 0)
       false
       (match (compiler-ir-instr-seq-ref instrs (- count 1))
-        [(CompilerIrInstr.Jump label) (string.eq label target)]
+        [(CompilerIrInstr.Jump label) (= label target)]
         [_ false]))))
 
 (define (opt-loop-rotation-edge-compatible?
   [blocks : CompilerIrBlockList]
-  [label : String]
-  [target : String]) : bool
+  [label : i64]
+  [target : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -15005,12 +15006,12 @@
 
 (define (opt-loop-rotation-rewrite-block
   [block : CompilerIrBlock]
-  [preheader : String]
-  [latch : String]
+  [preheader : i64]
+  [latch : i64]
   [guard : CompilerIrInstrList]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (if (or (string.eq label preheader) (string.eq label latch))
+      (if (or (= label preheader) (= label latch))
         (compiler-ir-block
           label
           (opt-loop-rotation-replace-final-jump instrs guard))
@@ -15018,16 +15019,16 @@
 
 (define (opt-loop-rotation-rewrite-blocks
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [preheader : String]
-  [latch : String]
+  [header : i64]
+  [preheader : i64]
+  [latch : i64]
   [guard : CompilerIrInstrList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
-          (if (string.eq label header)
+          (if (= label header)
             (opt-loop-rotation-rewrite-blocks
               (box-get rest)
               header
@@ -15052,9 +15053,9 @@
 
 (define (opt-loop-rotation-apply-guard
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [preheader : String]
-  [latch : String]
+  [header : i64]
+  [preheader : i64]
+  [latch : i64]
   [guard : CompilerIrInstrList]) : OptLoopRotationResult
   (let
     [next : CompilerIrBlockList
@@ -15071,8 +15072,8 @@
   [loops : OptNaturalLoopList]
   [loop : OptNaturalLoop]) : OptLoopRotationResult
   (let
-    [header : String (opt-natural-loop-header loop)]
-    [latch : String (opt-natural-loop-latch loop)]
+    [header : i64 (opt-natural-loop-header loop)]
+    [latch : i64 (opt-natural-loop-latch loop)]
     [body : OptLabelSet (opt-natural-loop-body loop)]
     [preds : OptLabelSet
       (opt-pred-map-lookup (struct-get context pred-map) header)]
@@ -15214,10 +15215,10 @@
   (recs OptRotateSsaPhiRecs)
   (guard CompilerIrInstrList)
   (cond-value CompilerIrValue)
-  (true-label String)
-  (false-label String)
-  (body-label String)
-  (exit-label String))
+  (true-label i64)
+  (false-label i64)
+  (body-label i64)
+  (exit-label i64))
 
 (defenum OptRotateSsaMaybeShape
   (No)
@@ -15234,12 +15235,12 @@
   (Some CompilerIrBlockList i64))
 
 (defstruct OptRotateSsaPlan
-  (header String)
-  (preheader String)
-  (latch String)
-  (land-label String)
-  (body-label String)
-  (exit-label String)
+  (header i64)
+  (preheader i64)
+  (latch i64)
+  (land-label i64)
+  (body-label i64)
+  (exit-label i64)
   (body OptLabelSet)
   (phis CompilerIrInstrList)
   (preheader-guard CompilerIrInstrList)
@@ -15247,10 +15248,11 @@
   (exit-phis CompilerIrInstrList)
   (exit-env OptCopyEnv))
 
-(define (opt-rotate-ssa-land-label [header : String]) : String
-  (string.append header "__rotate_land"))
+(define (opt-rotate-ssa-land-label [header : i64]) : i64
+  (compiler-ir-label
+    (string.append (compiler-ir-label-text header) "__rotate_land")))
 
-(define (opt-rotate-ssa-only-label? [set : OptLabelSet] [label : String]) : bool
+(define (opt-rotate-ssa-only-label? [set : OptLabelSet] [label : i64]) : bool
   (and (= (opt-label-count set) 1) (opt-label-contains set label)))
 
 (define (opt-rotate-ssa-leading-phi-end
@@ -15267,8 +15269,8 @@
 ;; latch}; the record keeps (dst, preheader input, latch input, type).
 (define (opt-rotate-ssa-phi-recs
   [phis : CompilerIrInstrList]
-  [preheader : String]
-  [latch : String]) : OptRotateSsaMaybePhiRecs
+  [preheader : i64]
+  [latch : i64]) : OptRotateSsaMaybePhiRecs
   (match phis
     [(CompilerIrInstrList.Nil)
       (OptRotateSsaMaybePhiRecs.Some (OptRotateSsaPhiRecs.Nil))]
@@ -15289,8 +15291,8 @@
                         [(CompilerIrPhiInputList.Nil)
                           (cond
                             [(and
-                                (string.eq first-label preheader)
-                                (string.eq second-label latch))
+                                (= first-label preheader)
+                                (= second-label latch))
                               (OptRotateSsaMaybePhiRecs.Some
                                 (OptRotateSsaPhiRecs.Cons
                                   dst
@@ -15299,8 +15301,8 @@
                                   ty
                                   (box recs)))]
                             [(and
-                                (string.eq first-label latch)
-                                (string.eq second-label preheader))
+                                (= first-label latch)
+                                (= second-label preheader))
                               (OptRotateSsaMaybePhiRecs.Some
                                 (OptRotateSsaPhiRecs.Cons
                                   dst
@@ -15318,13 +15320,13 @@
   [instrs : CompilerIrInstrSeq]
   [phi-end : i64]
   [last : i64]
-  [header : String]
-  [preheader : String]
-  [latch : String]
+  [header : i64]
+  [preheader : i64]
+  [latch : i64]
   [body : OptLabelSet]
   [cond-value : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]) : OptRotateSsaMaybeShape
+  [true-label : i64]
+  [false-label : i64]) : OptRotateSsaMaybeShape
   (let
     [true-is-body : bool
       (and
@@ -15363,9 +15365,9 @@
 ;; arm out of it.
 (define (opt-rotate-ssa-header-shape
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [preheader : String]
-  [latch : String]
+  [header : i64]
+  [preheader : i64]
+  [latch : i64]
   [body : OptLabelSet]) : OptRotateSsaMaybeShape
   (match (opt-cfg-find-block blocks header)
     [(OptMaybeBlock.No) (OptRotateSsaMaybeShape.No)]
@@ -15411,7 +15413,7 @@
 ;; blocks are rejected (a missing block is rejected too).
 (define (opt-rotate-ssa-block-has-phi?
   [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) true]
     [(OptMaybeBlock.Some block)
@@ -15424,14 +15426,14 @@
 (define (opt-rotate-ssa-body-avoids-exit?
   [pred-map : OptPredMap]
   [body : OptLabelSet]
-  [header : String]
-  [exit-label : String]) : bool
+  [header : i64]
+  [exit-label : i64]) : bool
   (match body
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Cons label rest)
       (and
         (or
-          (string.eq label header)
+          (= label header)
           (not
             (opt-label-contains
               (opt-pred-map-successors pred-map label)
@@ -15445,14 +15447,14 @@
 (define (opt-rotate-ssa-uses-except-header
   [set : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
-  [header : String]) : opt_i64_i64_map.Map
+  [header : i64]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
           (opt-rotate-ssa-uses-except-header
-            (if (string.eq label header)
+            (if (= label header)
               set
               (opt-collect-instr-seq-uses set instrs))
             (box-get rest)
@@ -15556,8 +15558,8 @@
   [env : OptCopyEnv]
   [guard : CompilerIrInstrList]
   [cond-value : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [next-var : i64]) : OptRotateSsaClone
   (match guard
     [(CompilerIrInstrList.Nil)
@@ -15595,8 +15597,8 @@
 ;; preheader-side predecessor), latch input unchanged.
 (define (opt-rotate-ssa-moved-phis
   [recs : OptRotateSsaPhiRecs]
-  [land-label : String]
-  [latch : String]) : CompilerIrInstrList
+  [land-label : i64]
+  [latch : i64]) : CompilerIrInstrList
   (match recs
     [(OptRotateSsaPhiRecs.Nil) (CompilerIrInstrList.Nil)]
     [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
@@ -15616,8 +15618,8 @@
 (define (opt-rotate-ssa-exit-phis
   [recs : OptRotateSsaPhiRecs]
   [outside-uses : opt_i64_i64_map.Map]
-  [preheader : String]
-  [latch : String]
+  [preheader : i64]
+  [latch : i64]
   [next-var : i64]) : OptRotateSsaExitPhis
   (match recs
     [(OptRotateSsaPhiRecs.Nil)
@@ -15740,14 +15742,12 @@
       (- count 1)
       initial)))
 
-(define (opt-rotate-ssa-block-touched?
-  [plan : OptRotateSsaPlan]
-  [label : String]) : bool
+(define (opt-rotate-ssa-block-touched? [plan : OptRotateSsaPlan] [label : i64]) : bool
   (or
-    (string.eq label (struct-get plan preheader))
-    (string.eq label (struct-get plan latch))
-    (string.eq label (struct-get plan body-label))
-    (string.eq label (struct-get plan exit-label))
+    (= label (struct-get plan preheader))
+    (= label (struct-get plan latch))
+    (= label (struct-get plan body-label))
+    (= label (struct-get plan exit-label))
     (and
       (not (opt-label-contains (struct-get plan body) label))
       (match (struct-get plan exit-env)
@@ -15756,19 +15756,18 @@
 
 (define (opt-rotate-ssa-rewrite-instrs
   [plan : OptRotateSsaPlan]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [replace-final? : bool
       (or
-        (string.eq label (struct-get plan preheader))
-        (string.eq label (struct-get plan latch)))]
+        (= label (struct-get plan preheader))
+        (= label (struct-get plan latch)))]
     [guard : CompilerIrInstrList
       (cond
-        [(string.eq label (struct-get plan preheader))
+        [(= label (struct-get plan preheader))
           (struct-get plan preheader-guard)]
-        [(string.eq label (struct-get plan latch))
-          (struct-get plan latch-guard)]
+        [(= label (struct-get plan latch)) (struct-get plan latch-guard)]
         [else CompilerIrInstrList.Nil])]
     [retargeted : CompilerIrInstrList
       (opt-rotate-ssa-rewrite-instr-seq
@@ -15778,9 +15777,9 @@
         guard
         instrs)]
     (cond
-      [(string.eq label (struct-get plan body-label))
+      [(= label (struct-get plan body-label))
         (opt-aggregate-instr-list-append (struct-get plan phis) retargeted)]
-      [(string.eq label (struct-get plan exit-label))
+      [(= label (struct-get plan exit-label))
         (opt-aggregate-instr-list-append (struct-get plan exit-phis) retargeted)]
       [else retargeted])))
 
@@ -15797,7 +15796,7 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (if (string.eq label (struct-get plan header))
+            (if (= label (struct-get plan header))
               (compiler-ir-block
                 (struct-get plan land-label)
                 (compiler-ir-instr-cons
@@ -15816,20 +15815,20 @@
   [blocks : CompilerIrBlockList]
   [pred-map : OptPredMap]
   [frame : i64]
-  [header : String]
-  [preheader : String]
-  [latch : String]
+  [header : i64]
+  [preheader : i64]
+  [latch : i64]
   [body : OptLabelSet]
   [shape : OptRotateSsaShape]) : OptRotateSsaRewrite
   (let
-    [body-label : String (struct-get shape body-label)]
-    [exit-label : String (struct-get shape exit-label)]
-    [land-label : String (opt-rotate-ssa-land-label header)]
+    [body-label : i64 (struct-get shape body-label)]
+    [exit-label : i64 (struct-get shape exit-label)]
+    [land-label : i64 (opt-rotate-ssa-land-label header)]
     [phis : CompilerIrInstrList (struct-get shape phis)]
     [recs : OptRotateSsaPhiRecs (struct-get shape recs)]
     [guard : CompilerIrInstrList (struct-get shape guard)]
     (if (and
-      (not (string.eq exit-label preheader))
+      (not (= exit-label preheader))
       (not (opt-cfg-block-exists? blocks land-label))
       (opt-rotate-ssa-only-label?
         (opt-pred-map-lookup pred-map body-label)
@@ -15853,10 +15852,10 @@
         (opt-rotate-ssa-edge-env recs true)
         guard
         (struct-get shape cond-value)
-        (if (string.eq (struct-get shape true-label) body-label)
+        (if (= (struct-get shape true-label) body-label)
           land-label
           (struct-get shape true-label))
-        (if (string.eq (struct-get shape false-label) body-label)
+        (if (= (struct-get shape false-label) body-label)
           land-label
           (struct-get shape false-label))
         frame)
@@ -15907,13 +15906,13 @@
     [(OptLoopPreheader.No) (OptRotateSsaRewrite.No)]
     [(OptLoopPreheader.Some preheader)
       (let
-        [header : String (opt-natural-loop-header loop)]
-        [latch : String (opt-natural-loop-latch loop)]
+        [header : i64 (opt-natural-loop-header loop)]
+        [latch : i64 (opt-natural-loop-latch loop)]
         [body : OptLabelSet (opt-natural-loop-body loop)]
         [pred-map : OptPredMap (struct-get context pred-map)]
         [header-preds : OptLabelSet (opt-pred-map-lookup pred-map header)]
         (if (and
-          (not (string.eq header latch))
+          (not (= header latch))
           (opt-rotate-ssa-only-label?
             (opt-pred-map-successors pred-map preheader)
             header)
@@ -17165,7 +17164,7 @@
             [(CompilerIrBlock.Block label _)
               (match replacement
                 [(CompilerIrBlock.Block replacement-label _)
-                  (if (string.eq label replacement-label)
+                  (if (= label replacement-label)
                     (compiler-ir-block-cons
                       replacement
                       (opt-licm-replace-body-blocks
@@ -17228,7 +17227,7 @@
   (opt-licm-insert-before-terminator-seq-from hoisted instrs 0))
 
 (define (opt-licm-insert-preheader-blocks
-  [preheader : String]
+  [preheader : i64]
   [hoisted : CompilerIrInstrList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -17237,7 +17236,7 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (if (string.eq label preheader)
+            (if (= label preheader)
               (compiler-ir-block
                 label
                 (opt-licm-insert-before-terminator-seq hoisted instrs))
@@ -17441,7 +17440,7 @@
 ;; staging-only blocks (chained by unconditional Jumps).
 (define (opt-licm-return-shaped-target?
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [fuel : i64]) : bool
   (if (<= fuel 0)
     false
@@ -17478,7 +17477,7 @@
 (define (opt-licm-branch-exit-return-shaped?
   [blocks : CompilerIrBlockList]
   [body : OptLabelSet]
-  [target : String]) : bool
+  [target : i64]) : bool
   (if (opt-label-contains body target)
     true
     (opt-licm-return-shaped-target? blocks target 8)))
@@ -17540,8 +17539,8 @@
 ;; terminator classifications.
 (define (opt-licm-loop-side-exit-kind
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [latch : String]
+  [header : i64]
+  [latch : i64]
   [body : OptLabelSet]
   [body-blocks : CompilerIrBlockList]) : i64
   (match body-blocks
@@ -17555,8 +17554,8 @@
               ;; normal counted exits (a rotated loop tests at its latch);
               ;; only OTHER blocks' exits mark the early-return probe shape.
               (if (or
-                (string.eq label header)
-                (string.eq label latch)
+                (= label header)
+                (= label latch)
                 (= (compiler-ir-instr-seq-count instrs) 0))
                 0
                 (opt-licm-instr-side-exit-kind
@@ -17904,16 +17903,16 @@
 
 (define (opt-induction-phi-input-pair
   [a-value : CompilerIrValue]
-  [a-label : String]
+  [a-label : i64]
   [b-value : CompilerIrValue]
-  [b-label : String]
-  [preheader : String]
-  [latch : String]) : OptInductionPhiInputs
-  (if (and (string.eq a-label preheader) (string.eq b-label latch))
+  [b-label : i64]
+  [preheader : i64]
+  [latch : i64]) : OptInductionPhiInputs
+  (if (and (= a-label preheader) (= b-label latch))
     (match b-value
       [(CompilerIrValue.Var back) (OptInductionPhiInputs.Some a-value back)]
       [_ (OptInductionPhiInputs.No)])
-    (if (and (string.eq b-label preheader) (string.eq a-label latch))
+    (if (and (= b-label preheader) (= a-label latch))
       (match a-value
         [(CompilerIrValue.Var back) (OptInductionPhiInputs.Some b-value back)]
         [_ (OptInductionPhiInputs.No)])
@@ -17921,8 +17920,8 @@
 
 (define (opt-induction-phi-inputs
   [inputs : CompilerIrPhiInputList]
-  [preheader : String]
-  [latch : String]) : OptInductionPhiInputs
+  [preheader : i64]
+  [latch : i64]) : OptInductionPhiInputs
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Cons a-value a-label rest)
       (match (box-get rest)
@@ -18117,7 +18116,7 @@
 (define (opt-induction-fact-from-phi
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
-  [preheader : String]
+  [preheader : i64]
   [instr : CompilerIrInstr]) : OptMaybeInductionFact
   (match instr
     [(CompilerIrInstr.Phi phi-var inputs ty)
@@ -18157,7 +18156,7 @@
 (define (opt-induction-find-fact-instr-seq-from
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
-  [preheader : String]
+  [preheader : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : OptMaybeInductionFact
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -18179,14 +18178,14 @@
 (define (opt-induction-find-fact-instr-seq
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
-  [preheader : String]
+  [preheader : i64]
   [instrs : CompilerIrInstrSeq]) : OptMaybeInductionFact
   (opt-induction-find-fact-instr-seq-from body-blocks loop preheader instrs 0))
 
 (define (opt-induction-find-fact
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
-  [preheader : String]) : OptMaybeInductionFact
+  [preheader : i64]) : OptMaybeInductionFact
   (match (opt-cfg-find-block body-blocks (opt-natural-loop-header loop))
     [(OptMaybeBlock.Some block)
       (match block
@@ -18861,7 +18860,7 @@
 
 (define (opt-induction-switch-predecessor?
   [blocks : CompilerIrBlockList]
-  [target : String]) : bool
+  [target : i64]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Cons block rest)
@@ -18889,7 +18888,7 @@
 (define (opt-induction-switch-arm?
   [_index : OptCfgIndex]
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [arm-instrs : CompilerIrInstrSeq]) : bool
   (and
     (opt-induction-remat-arm-seq? arm-instrs 0)
@@ -19278,8 +19277,8 @@
 
 (define (opt-induction-phi-instr
   [derived : OptInductionDerived]
-  [preheader : String]
-  [latch : String]
+  [preheader : i64]
+  [latch : i64]
   [seed-var : i64]
   [derived-phi : i64]
   [next-var : i64]) : CompilerIrInstr
@@ -19310,8 +19309,8 @@
 
 (define (opt-induction-phi-instrs
   [deriveds : OptInductionDerivedList]
-  [preheader : String]
-  [latch : String]
+  [preheader : i64]
+  [latch : i64]
   [frame : i64]) : CompilerIrInstrList
   (match deriveds
     [(OptInductionDerivedList.Nil) CompilerIrInstrList.Nil]
@@ -19349,9 +19348,9 @@
           (+ frame (opt-induction-derived-slot-count derived))))]))
 
 (define (opt-induction-insert-support-blocks
-  [header : String]
-  [preheader : String]
-  [latch : String]
+  [header : i64]
+  [preheader : i64]
+  [latch : i64]
   [seed-instrs : CompilerIrInstrList]
   [phi-instrs : CompilerIrInstrList]
   [next-instrs : CompilerIrInstrList]
@@ -19368,15 +19367,15 @@
                 0
                 CompilerIrInstrList.Nil)]
             [with-phi : CompilerIrInstrList
-              (if (string.eq label header)
+              (if (= label header)
                 (opt-aggregate-instr-list-append phi-instrs list-instrs)
                 list-instrs)]
             [with-seed : CompilerIrInstrList
-              (if (string.eq label preheader)
+              (if (= label preheader)
                 (opt-licm-insert-before-terminator seed-instrs with-phi)
                 with-phi)]
             [with-next : CompilerIrInstrList
-              (if (string.eq label latch)
+              (if (= label latch)
                 (opt-licm-insert-before-terminator next-instrs with-seed)
                 with-seed)]
             (compiler-ir-block-cons
@@ -19609,7 +19608,7 @@
 
 (define (opt-cfg-clean-instr-seq
   [index : OptCfgIndex]
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [block-id : i64
@@ -19659,7 +19658,7 @@
 
 (define (opt-cfg-clean-instr-seq-rewrite!
   [index : OptCfgIndex]
-  [block-label : String]
+  [block-label : i64]
   [used : (Array i64)]
   [instrs : CompilerIrInstrSeq]) : unit
   (let
@@ -19768,7 +19767,7 @@
 ;; stay untouched.
 (defenum OptBoolBranchDef
   (No)
-  (Some CompilerIrInstr String))
+  (Some CompilerIrInstr i64))
 
 (defenum OptBoolBranchConjBuild
   (No)
@@ -19776,7 +19775,7 @@
 
 (defenum OptBoolBranchLabelList
   (Nil)
-  (Cons String (Box OptBoolBranchLabelList)))
+  (Cons i64 (Box OptBoolBranchLabelList)))
 
 (defenum OptBoolBranchChainRewrite
   (No)
@@ -19787,7 +19786,7 @@
 
 (defenum OptBoolBranchPhiInputs
   (No)
-  (Two CompilerIrValue String CompilerIrValue String))
+  (Two CompilerIrValue i64 CompilerIrValue i64))
 
 (defenum OptBoolBranchConstantInputs
   (No)
@@ -19829,7 +19828,7 @@
 ;; rewrite. Or is deliberately not admitted in this first cut.
 (define (opt-bool-branch-defs-fill-instrs!
   [defs : (Array OptBoolBranchDef)]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : unit
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -19970,7 +19969,7 @@
   [expanded : (Array bool)]
   [emitted : (Array bool)]
   [remove : (Array bool)]
-  [source-label : String]
+  [source-label : i64]
   [cell : (Array i64)]
   [value : CompilerIrValue]) : OptBoolBranchConjBuild
   (match value
@@ -19986,7 +19985,7 @@
                     (OptBoolBranchConjBuild.Some (CompilerIrInstrList.Nil))
                     (begin
                       (array-set! expanded var true)
-                      (if (string.eq def-label source-label)
+                      (if (= def-label source-label)
                         (array-set! remove dst true)
                         unit)
                       (match (opt-bool-branch-chain-flatten-value
@@ -20023,7 +20022,7 @@
                     (let
                       [move? : bool
                         (and
-                          (string.eq def-label source-label)
+                          (= def-label source-label)
                           (=
                             (opt-bool-branch-use-count uses var)
                             (array-ref refs var)))]
@@ -20054,22 +20053,23 @@
       (+ 1 (opt-bool-branch-chain-conj-count (box-get rest)))]))
 
 (define (opt-bool-branch-chain-label-candidate
-  [source-label : String]
-  [suffix : i64]) : String
-  (string.append
-    source-label
-    (string.append "__bool_and." (string.int->string suffix))))
+  [source-label : i64]
+  [suffix : i64]) : i64
+  (compiler-ir-label
+    (string.append
+      (compiler-ir-label-text source-label)
+      (string.append "__bool_and." (string.int->string suffix)))))
 
 (define (opt-bool-branch-chain-labels
   [blocks : CompilerIrBlockList]
-  [source-label : String]
+  [source-label : i64]
   [remaining : i64]
   [suffix : i64]
   [made : OptLabelSet]) : OptBoolBranchLabelList
   (if (<= remaining 0)
     (OptBoolBranchLabelList.Nil)
     (let
-      [candidate : String
+      [candidate : i64
         (opt-bool-branch-chain-label-candidate source-label suffix)]
       (if (or
         (opt-cfg-block-exists? blocks candidate)
@@ -20100,7 +20100,7 @@
 
 (define (opt-bool-branch-chain-last-label
   [labels : OptBoolBranchLabelList]
-  [fallback : String]) : String
+  [fallback : i64]) : i64
   (match labels
     [(OptBoolBranchLabelList.Nil) fallback]
     [(OptBoolBranchLabelList.Cons label rest)
@@ -20110,7 +20110,7 @@
 
 (define (opt-bool-branch-chain-first-label
   [labels : OptBoolBranchLabelList]
-  [fallback : String]) : String
+  [fallback : i64]) : i64
   (match labels
     [(OptBoolBranchLabelList.Nil) fallback]
     [(OptBoolBranchLabelList.Cons label _) label]))
@@ -20144,8 +20144,8 @@
 (define (opt-bool-branch-chain-fresh-blocks
   [conjs : CompilerIrInstrList]
   [labels : OptBoolBranchLabelList]
-  [true-label : String]
-  [false-label : String]) : CompilerIrBlockList
+  [true-label : i64]
+  [false-label : i64]) : CompilerIrBlockList
   (match conjs
     [(CompilerIrInstrList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrInstrList.Cons conj conj-rest)
@@ -20153,7 +20153,7 @@
         [(OptBoolBranchLabelList.Nil) (CompilerIrBlockList.Nil)]
         [(OptBoolBranchLabelList.Cons label label-rest)
           (let
-            [next-label : String
+            [next-label : i64
               (opt-bool-branch-chain-first-label
                 (box-get label-rest)
                 true-label)]
@@ -20191,7 +20191,7 @@
 
 (define (opt-bool-branch-chain-replace-block
   [blocks : CompilerIrBlockList]
-  [source-label : String]
+  [source-label : i64]
   [source : CompilerIrBlock]
   [fresh : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -20199,7 +20199,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
-          (if (string.eq label source-label)
+          (if (= label source-label)
             (compiler-ir-block-cons
               source
               (opt-bool-branch-chain-prepend-blocks fresh (box-get rest)))
@@ -20220,12 +20220,12 @@
 (define (opt-bool-branch-chain-phi-inputs-have-none-except?
   [inputs : CompilerIrPhiInputList]
   [labels : OptLabelSet]
-  [old-label : String]) : bool
+  [old-label : i64]) : bool
   (match labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Cons label rest)
       (and
-        (if (string.eq label old-label)
+        (if (= label old-label)
           true
           (not (opt-bool-branch-phi-input-has-label? inputs label)))
         (opt-bool-branch-chain-phi-inputs-have-none-except?
@@ -20236,7 +20236,7 @@
 (define (opt-bool-branch-chain-target-phis-repairable-from?
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [old-label : String]
+  [old-label : i64]
   [new-preds : OptLabelSet]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     true
@@ -20257,8 +20257,8 @@
 
 (define (opt-bool-branch-chain-target-phis-repairable?
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [old-label : String]
+  [target-label : i64]
+  [old-label : i64]
   [new-preds : OptLabelSet]) : bool
   (match (opt-cfg-find-block blocks target-label)
     [(OptMaybeBlock.No) false]
@@ -20288,9 +20288,7 @@
                 (CompilerIrValue.Var root)
                 true-label
                 false-label)
-              (if (or
-                (string.eq source-label true-label)
-                (string.eq source-label false-label))
+              (if (or (= source-label true-label) (= source-label false-label))
                 (OptBoolBranchChainRewrite.No)
                 (match (opt-bool-branch-def defs root)
                   [(OptBoolBranchDef.No) (OptBoolBranchChainRewrite.No)]
@@ -20384,7 +20382,7 @@
                                                   labels
                                                   source-label))]
                                             [same-target? : bool
-                                              (string.eq true-label false-label)]
+                                              (= true-label false-label)]
                                             [all-preds : OptLabelSet
                                               (if same-target?
                                                 false-preds
@@ -20574,8 +20572,8 @@
 
 (define (opt-bool-branch-pred-constant-rewriteable?
   [blocks : CompilerIrBlockList]
-  [merge-label : String]
-  [pred-label : String]) : bool
+  [merge-label : i64]
+  [pred-label : i64]) : bool
   (match (opt-cfg-find-block blocks pred-label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -20586,12 +20584,12 @@
             (and
               (> count 0)
               (match (compiler-ir-instr-seq-ref instrs (- count 1))
-                [(CompilerIrInstr.Jump target) (string.eq target merge-label)]
+                [(CompilerIrInstr.Jump target) (= target merge-label)]
                 [_ false])))])]))
 
 (define (opt-bool-branch-preds-constant-rewriteable?
   [blocks : CompilerIrBlockList]
-  [merge-label : String]
+  [merge-label : i64]
   [preds : OptLabelSet]) : bool
   (match preds
     [(OptLabelSet.Nil) true]
@@ -20608,7 +20606,7 @@
 
 (define (opt-bool-branch-phi-input-has-label?
   [inputs : CompilerIrPhiInputList]
-  [needle : String]) : bool
+  [needle : i64]) : bool
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) false]
     [(CompilerIrPhiInputList.Array seq)
@@ -20616,7 +20614,7 @@
         (compiler-ir-phi-input-seq-to-list seq)
         needle)]
     [(CompilerIrPhiInputList.Cons _ label rest)
-      (if (string.eq label needle)
+      (if (= label needle)
         true
         (opt-bool-branch-phi-input-has-label? (box-get rest) needle))]))
 
@@ -20633,7 +20631,7 @@
 (define (opt-bool-branch-target-phis-repairable-from?
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [merge-label : String]
+  [merge-label : i64]
   [new-preds : OptLabelSet]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     true
@@ -20651,8 +20649,8 @@
 
 (define (opt-bool-branch-target-phis-repairable?
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [merge-label : String]
+  [target-label : i64]
+  [merge-label : i64]
   [new-preds : OptLabelSet]) : bool
   (match (opt-cfg-find-block blocks target-label)
     [(OptMaybeBlock.No) false]
@@ -20679,7 +20677,7 @@
 
 (define (opt-bool-branch-repair-phi-inputs
   [inputs : CompilerIrPhiInputList]
-  [merge-label : String]
+  [merge-label : i64]
   [new-preds : OptLabelSet]) : CompilerIrPhiInputList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
@@ -20695,14 +20693,14 @@
             (box-get rest)
             merge-label
             new-preds)]
-        (if (string.eq label merge-label)
+        (if (= label merge-label)
           (opt-bool-branch-prepend-phi-inputs value new-preds tail)
           (compiler-ir-phi-input-cons value label tail)))]))
 
 (define (opt-bool-branch-repair-target-phis-from!
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [merge-label : String]
+  [merge-label : i64]
   [new-preds : OptLabelSet]) : unit
   (if (< index (compiler-ir-instr-seq-count instrs))
     (match (compiler-ir-instr-seq-ref instrs index)
@@ -20725,8 +20723,8 @@
 
 (define (opt-bool-branch-repair-target-phis!
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [merge-label : String]
+  [target-label : i64]
+  [merge-label : i64]
   [new-preds : OptLabelSet]) : unit
   (match (opt-cfg-find-block blocks target-label)
     [(OptMaybeBlock.No) unit]
@@ -20742,7 +20740,7 @@
 (define (opt-bool-branch-apply-constant-pred-rewrites!
   [blocks : CompilerIrBlockList]
   [preds : OptLabelSet]
-  [target-label : String]) : unit
+  [target-label : i64]) : unit
   (match preds
     [(OptLabelSet.Nil) unit]
     [(OptLabelSet.Cons pred-label rest)
@@ -20767,26 +20765,26 @@
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
-  [merge-label : String]
+  [merge-label : i64]
   [dst : i64]
   [inputs : CompilerIrPhiInputList]
   [ty : AstType]
   [cond-var : i64]
-  [true-label : String]
-  [false-label : String]) : bool
+  [true-label : i64]
+  [false-label : i64]) : bool
   (if (or
     (not (= dst cond-var))
     (not (= (opt-bool-branch-use-count uses dst) 1))
     (not (opt-type-eq ty (AstType.Bool)))
-    (string.eq merge-label true-label)
-    (string.eq merge-label false-label))
+    (= merge-label true-label)
+    (= merge-label false-label))
     false
     (match (opt-bool-branch-constant-inputs inputs)
       [(OptBoolBranchConstantInputs.No) false]
       [(OptBoolBranchConstantInputs.Some true-preds false-preds input-count)
         (let
           [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
-          [same-target? : bool (string.eq true-label false-label)]
+          [same-target? : bool (= true-label false-label)]
           [all-preds : OptLabelSet
             (opt-bool-branch-label-union true-preds false-preds)]
           (if (or
@@ -20854,7 +20852,7 @@
 
 (define (opt-bool-branch-target-has-phi?
   [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.Some block)
       (match block
@@ -20868,11 +20866,11 @@
 
 (define (opt-bool-branch-pred-rewrite
   [blocks : CompilerIrBlockList]
-  [merge-label : String]
+  [merge-label : i64]
   [value : CompilerIrValue]
-  [pred-label : String]
-  [true-label : String]
-  [false-label : String]) : OptBoolBranchPredRewrite
+  [pred-label : i64]
+  [true-label : i64]
+  [false-label : i64]) : OptBoolBranchPredRewrite
   (match (opt-cfg-find-block blocks pred-label)
     [(OptMaybeBlock.No) (OptBoolBranchPredRewrite.No)]
     [(OptMaybeBlock.Some block)
@@ -20884,7 +20882,7 @@
               (OptBoolBranchPredRewrite.No)
               (match (compiler-ir-instr-seq-ref instrs (- count 1))
                 [(CompilerIrInstr.Jump target)
-                  (if (not (string.eq target merge-label))
+                  (if (not (= target merge-label))
                     (OptBoolBranchPredRewrite.No)
                     (match value
                       [(CompilerIrValue.Bool known)
@@ -20945,19 +20943,19 @@
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
-  [merge-label : String]
+  [merge-label : i64]
   [dst : i64]
   [inputs : CompilerIrPhiInputList]
   [ty : AstType]
   [cond-var : i64]
-  [true-label : String]
-  [false-label : String]) : bool
+  [true-label : i64]
+  [false-label : i64]) : bool
   (if (or
     (not (= dst cond-var))
     (not (= (opt-bool-branch-use-count uses dst) 1))
     (not (opt-type-eq ty (AstType.Bool)))
-    (string.eq merge-label true-label)
-    (string.eq merge-label false-label)
+    (= merge-label true-label)
+    (= merge-label false-label)
     (opt-bool-branch-target-has-phi? blocks true-label)
     (opt-bool-branch-target-has-phi? blocks false-label))
     false
@@ -20967,7 +20965,7 @@
         (let
           [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
           (if (or
-            (string.eq first-label second-label)
+            (= first-label second-label)
             (not (= (opt-label-count preds) 2))
             (not (opt-label-contains preds first-label))
             (not (opt-label-contains preds second-label)))
@@ -20992,13 +20990,13 @@
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
-  [merge-label : String]
+  [merge-label : i64]
   [dst : i64]
   [inputs : CompilerIrPhiInputList]
   [ty : AstType]
   [cond-var : i64]
-  [true-label : String]
-  [false-label : String]) : bool
+  [true-label : i64]
+  [false-label : i64]) : bool
   (if (opt-bool-branch-fuse-constant-phi!
     blocks
     index
@@ -21532,7 +21530,7 @@
             (opt-sccp-env-set env var merged)
             true)))]))
 
-(define (opt-sccp-state-mark-executable [state : OptSccpState] [label : String]) : OptSccpState
+(define (opt-sccp-state-mark-executable [state : OptSccpState] [label : i64]) : OptSccpState
   (match state
     [(OptSccpState.State cfg-index executable env changed)
       (match (opt-cfg-index-id cfg-index label)
@@ -21615,7 +21613,7 @@
 (define (opt-sccp-phi-input-value
   [state : OptSccpState]
   [value : CompilerIrValue]
-  [pred : String]
+  [pred : i64]
   [ty : AstType]) : OptSccpValue
   (match state
     [(OptSccpState.State cfg-index executable _ _)
@@ -21645,8 +21643,8 @@
 (define (opt-sccp-mark-branch-targets
   [state : OptSccpState]
   [cond : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]) : OptSccpState
+  [true-label : i64]
+  [false-label : i64]) : OptSccpState
   (match (opt-sccp-value state cond (AstType.Bool))
     [(OptSccpValue.Const value _)
       (match value
@@ -22590,15 +22588,15 @@
 
 (defenum OptSwitchCompare
   (No)
-  (Some i64 i64 i64 String String))
+  (Some i64 i64 i64 i64 i64))
 
 (defenum OptSwitchCandidateList
   (Nil)
-  (Cons String i64 i64 String String (Box OptSwitchCandidateList)))
+  (Cons i64 i64 i64 i64 i64 (Box OptSwitchCandidateList)))
 
 (defenum OptSwitchMaybeLabel
   (NoLabel)
-  (SomeLabel String))
+  (SomeLabel i64))
 
 ;; The trailing i64 is the chain head's prefix instruction count: a head block
 ;; whose compare+branch merely TRAIL other instructions (e.g. a dispatch fetch)
@@ -22606,7 +22604,7 @@
 ;; pure compare+branch head.
 (defenum OptMaybeSwitchChain
   (No)
-  (Some i64 i64 i64 String OptSwitchCandidateList i64))
+  (Some i64 i64 i64 i64 OptSwitchCandidateList i64))
 
 (defenum OptSwitchRewriteResult
   (Result CompilerIrBlockList OptLabelSet bool))
@@ -22680,7 +22678,7 @@
 ;; instruction count kept ahead of the Switch.
 (defenum OptSwitchCompareTail
   (No)
-  (Some i64 i64 i64 String String i64))
+  (Some i64 i64 i64 i64 i64 i64))
 
 (define (opt-switch-parse-compare-block-tail
   [block : CompilerIrBlock]
@@ -22815,11 +22813,11 @@
 
 (define (opt-switch-candidate-has-label?
   [items : OptSwitchCandidateList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match items
     [(OptSwitchCandidateList.Nil) false]
     [(OptSwitchCandidateList.Cons item-label _ _ _ _ rest)
-      (if (string.eq item-label label)
+      (if (= item-label label)
         true
         (opt-switch-candidate-has-label? (box-get rest) label))]))
 
@@ -22896,7 +22894,7 @@
       min-tag
       CompilerIrSwitchCaseList.Nil)))
 
-(define (opt-switch-total-enum-trap-block [label : String] [dst : i64]) : CompilerIrBlock
+(define (opt-switch-total-enum-trap-block [label : i64] [dst : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
@@ -22924,15 +22922,16 @@
 (defenum OptLateTotalSwitchBlocks
   (Result CompilerIrBlockList CompilerIrBlockList))
 
-(define (opt-late-total-switch-marker-label? [label : String]) : bool
+(define (opt-late-total-switch-marker-label? [label : i64]) : bool
   (let
     [marker : String "match_total_enum_default"]
-    (string.contains (& label) (& marker))))
+    [text : String (compiler-ir-label-text label)]
+    (string.contains (& text) (& marker))))
 
 (define (opt-late-total-switch-cases-from
   [cases : CompilerIrSwitchCaseList]
   [expected : i64]
-  [final-label : String]) : OptLateTotalSwitchCases
+  [final-label : i64]) : OptLateTotalSwitchCases
   (match cases
     [(CompilerIrSwitchCaseList.Nil)
       (OptLateTotalSwitchCases.Some
@@ -23012,8 +23011,11 @@
                     (if (< case-count 4)
                       (OptLateTotalSwitchBlock.Unchanged block)
                       (let
-                        [trap-label : String
-                          (string.append "match_total_trap__" label)]
+                        [trap-label : i64
+                          (compiler-ir-label
+                            (string.append
+                              "match_total_trap__"
+                              (compiler-ir-label-text label)))]
                         ;; Switch formation removes at least four compare
                         ;; destinations but deliberately leaves the frame
                         ;; numbering stable. Reuse one such unmentioned slot so
@@ -23133,7 +23135,7 @@
 
 (define (opt-switch-block-starts-with-phi?
   [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) true]
     [(OptMaybeBlock.Some block)
@@ -23149,7 +23151,7 @@
   [blocks : CompilerIrBlockList]
   [all-items : OptSwitchCandidateList]
   [items : OptSwitchCandidateList]
-  [default-label : String]) : bool
+  [default-label : i64]) : bool
   (if (or
     (opt-switch-candidate-has-label? all-items default-label)
     (opt-switch-block-starts-with-phi? blocks default-label))
@@ -23169,13 +23171,13 @@
 (define (opt-switch-targets-safe?
   [blocks : CompilerIrBlockList]
   [items : OptSwitchCandidateList]
-  [default-label : String]) : bool
+  [default-label : i64]) : bool
   (opt-switch-targets-safe-from? blocks items items default-label))
 
 (define (opt-switch-single-pred-from?
   [index : OptCfgIndex]
-  [label : String]
-  [pred : String]) : bool
+  [label : i64]
+  [pred : i64]) : bool
   (let
     [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
     (and (= (opt-label-count preds) 1) (opt-label-contains preds pred))))
@@ -23184,7 +23186,7 @@
   [blocks : CompilerIrBlockList]
   [index-var : i64]
   [items : OptSwitchCandidateList]
-  [default-label : String]
+  [default-label : i64]
   [head-prefix : i64]) : OptMaybeSwitchChain
   (if (or (= index-var (- 0 1)) (opt-switch-candidate-empty? items))
     (OptMaybeSwitchChain.No)
@@ -23209,16 +23211,16 @@
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
-  [label : String]
+  [label : i64]
   [index-var : i64]
-  [prev-label : String]
+  [prev-label : i64]
   [seen : OptLabelSet]
   [items : OptSwitchCandidateList]
   [candidate-index : i64]
   [tag : i64]
   [eq-var : i64]
-  [arm-label : String]
-  [next-label : String]
+  [arm-label : i64]
+  [next-label : i64]
   [head-prefix : i64]
   [copies : OptSwitchCopyEnv]) : OptMaybeSwitchChain
   ;; Candidate vars read through the head prefix's copy Movs: block-local copy
@@ -23262,9 +23264,9 @@
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
-  [label : String]
+  [label : i64]
   [index-var : i64]
-  [prev-label : String]
+  [prev-label : i64]
   [seen : OptLabelSet]
   [items : OptSwitchCandidateList]
   [head-prefix : i64]
@@ -23344,7 +23346,7 @@
 
 (define (opt-switch-skip-candidate-labels
   [items : OptSwitchCandidateList]
-  [first-label : String]
+  [first-label : i64]
   [skip : OptLabelSet]) : OptLabelSet
   (match items
     [(OptSwitchCandidateList.Nil) skip]
@@ -23352,7 +23354,7 @@
       (opt-switch-skip-candidate-labels
         (box-get rest)
         first-label
-        (if (string.eq label first-label)
+        (if (= label first-label)
           skip
           (opt-label-add skip label)))]))
 
@@ -23422,7 +23424,7 @@
               uses
               label
               (- 0 1)
-              ""
+              (compiler-ir-label-none)
               (OptLabelSet.Nil)
               (OptSwitchCandidateList.Nil)
               0
@@ -23800,7 +23802,7 @@
     [(CompilerIrInstr.Xgetbv _ _) true]
     [_ false]))
 
-(define (opt-gvn-block-id [doms : OptDomInfo] [label : String]) : i64
+(define (opt-gvn-block-id [doms : OptDomInfo] [label : i64]) : i64
   (match (opt-cfg-index-id (struct-get doms index) label)
     [(option_i64.Some id) id]
     [(option_i64.None) (- 0 1)]))
@@ -24173,7 +24175,7 @@
     [count : i64 (opt-cfg-index-block-count index)]
     (if (and (>= id 0) (< id count))
       (let
-        [label : String (array-ref (struct-get index labels) id)]
+        [label : i64 (array-ref (struct-get index labels) id)]
         (match (opt-cfg-find-block blocks label)
           [(OptMaybeBlock.No) 0]
           [(OptMaybeBlock.Some block)
@@ -24592,7 +24594,7 @@
 ;; `defs` table stays BinOp-only and the passes reading it are untouched.
 (define (opt-bounds-dom-phi-defs-fill-instrs!
   [defs : (Array OptBoolBranchDef)]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : unit
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -24820,8 +24822,8 @@
   [terms : (Array OptBoolBranchDef)]
   [defs : (Array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
-  [from-label : String]
-  [to-label : String]
+  [from-label : i64]
+  [to-label : i64]
   [stepped : CompilerIrValue]
   [len : CompilerIrValue]) : bool
   (match (opt-cfg-index-id index from-label)
@@ -24835,8 +24837,8 @@
             (match instr
               [(CompilerIrInstr.Branch cond true-label false-label)
                 (and
-                  (string.eq true-label to-label)
-                  (not (string.eq false-label to-label))
+                  (= true-label to-label)
+                  (not (= false-label to-label))
                   (match cond
                     [(CompilerIrValue.Var var)
                       (match (opt-bool-branch-def defs var)
@@ -24866,11 +24868,11 @@
   [defs : (Array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
-  [block-label : String]
+  [block-label : i64]
   [self : i64]
   [len : CompilerIrValue]
   [value : CompilerIrValue]
-  [from-label : String]) : bool
+  [from-label : i64]) : bool
   (match value
     [(CompilerIrValue.I64 seed)
       (and
@@ -24917,7 +24919,7 @@
   [defs : (Array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
-  [block-label : String]
+  [block-label : i64]
   [self : i64]
   [len : CompilerIrValue]
   [inputs : CompilerIrPhiInputList]) : bool
@@ -24968,7 +24970,7 @@
   [phi-defs : (Array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
-  [block-label : String]
+  [block-label : i64]
   [idx : CompilerIrValue]
   [len : CompilerIrValue]) : bool
   (match idx
@@ -25128,7 +25130,7 @@
   [phi-defs : (Array OptBoolBranchDef)]
   [terms : (Array OptBoolBranchDef)]
   [cfg-index : OptCfgIndex]
-  [block-label : String]
+  [block-label : i64]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [sources : opt_i64_i64_map.Map]
@@ -25293,7 +25295,7 @@
     [count : i64 (opt-cfg-index-block-count index)]
     (if (and (>= id 0) (< id count))
       (let
-        [label : String (array-ref (struct-get index labels) id)]
+        [label : i64 (array-ref (struct-get index labels) id)]
         (match (opt-cfg-find-block blocks label)
           [(OptMaybeBlock.No) unit]
           [(OptMaybeBlock.Some block)
@@ -25401,14 +25403,13 @@
       (match (compiler-ir-instr-seq-ref parent-instrs (- count 1))
         [(CompilerIrInstr.Branch cond true-label false-label)
           (let
-            [child-label : String
-              (array-ref (struct-get index labels) child-id)]
+            [child-label : i64 (array-ref (struct-get index labels) child-id)]
             (cond
               ;; A branch whose edges share one label decides nothing about it.
-              [(string.eq true-label false-label) cmp-facts]
-              [(string.eq child-label true-label)
+              [(= true-label false-label) cmp-facts]
+              [(= child-label true-label)
                 (opt-dom-cmp-edge-fact defs copies sources cond true cmp-facts)]
-              [(string.eq child-label false-label)
+              [(= child-label false-label)
                 (opt-dom-cmp-edge-fact defs copies sources cond false cmp-facts)]
               [else cmp-facts]))]
         [_ cmp-facts]))))
@@ -26040,7 +26041,7 @@
 (define (opt-divrem-set-successor-facts!
   [index : OptCfgIndex]
   [facts-by-id : (Array OptDivRemFacts)]
-  [label : String]
+  [label : i64]
   [facts : OptDivRemFacts]) : unit
   (match (opt-cfg-index-id index label)
     [(option_i64.Some id)
@@ -26126,7 +26127,7 @@
       unit
       (let
         [id : i64 (opt-cfg-index-rpo-id index slot)]
-        [label : String (opt-cfg-index-label index id)]
+        [label : i64 (opt-cfg-index-label index id)]
         [facts : OptDivRemFacts (array-ref facts-by-id id)]
         (begin
           (match (opt-cfg-find-block blocks label)
@@ -26314,12 +26315,12 @@
 
 (defenum OptLoopBceGuardEnv
   (Nil)
-  (Cons String OptLoopBceExpr OptLoopBceExpr (Box OptLoopBceGuardEnv)))
+  (Cons i64 OptLoopBceExpr OptLoopBceExpr (Box OptLoopBceGuardEnv)))
 
 (defenum OptRangeFact
-  (Nonnegative String OptLoopBceExpr)
-  (LessThan String OptLoopBceExpr OptLoopBceExpr)
-  (LessThanOrEq String OptLoopBceExpr OptLoopBceExpr))
+  (Nonnegative i64 OptLoopBceExpr)
+  (LessThan i64 OptLoopBceExpr OptLoopBceExpr)
+  (LessThanOrEq i64 OptLoopBceExpr OptLoopBceExpr))
 
 (defenum OptRangeFacts
   (Nil)
@@ -26362,7 +26363,7 @@
 
 (defenum OptLoopBceMaybeLabel
   (NoLabel)
-  (SomeLabel String))
+  (SomeLabel i64))
 
 (defenum OptLoopBceMaybeVar
   (NoVar)
@@ -26444,23 +26445,21 @@
 
 (define (opt-range-nonnegative-contains?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [expr : OptLoopBceExpr]) : bool
   (match facts
     [(OptRangeFacts.Nil) false]
     [(OptRangeFacts.Cons fact rest)
       (match fact
         [(OptRangeFact.Nonnegative fact-label fact-expr)
-          (if (and
-            (string.eq fact-label label)
-            (opt-loop-bce-expr-eq fact-expr expr))
+          (if (and (= fact-label label) (opt-loop-bce-expr-eq fact-expr expr))
             true
             (opt-range-nonnegative-contains? (box-get rest) label expr))]
         [_ (opt-range-nonnegative-contains? (box-get rest) label expr)])]))
 
 (define (opt-range-less-than-contains?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
   (match facts
@@ -26469,7 +26468,7 @@
       (match fact
         [(OptRangeFact.LessThan fact-label fact-lhs fact-rhs)
           (if (and
-            (string.eq fact-label label)
+            (= fact-label label)
             (opt-loop-bce-expr-eq fact-lhs lhs)
             (opt-loop-bce-expr-eq fact-rhs rhs))
             true
@@ -26478,7 +26477,7 @@
 
 (define (opt-range-less-than-or-eq-contains?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
   (match facts
@@ -26487,7 +26486,7 @@
       (match fact
         [(OptRangeFact.LessThanOrEq fact-label fact-lhs fact-rhs)
           (if (and
-            (string.eq fact-label label)
+            (= fact-label label)
             (opt-loop-bce-expr-eq fact-lhs lhs)
             (opt-loop-bce-expr-eq fact-rhs rhs))
             true
@@ -26496,7 +26495,7 @@
 
 (define (opt-range-proves-less-than-or-eq?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
   (or
@@ -26507,7 +26506,7 @@
 (define (opt-range-proves-less-than-through-one-bound-from?
   [all-facts : OptRangeFacts]
   [scan : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
   (match scan
@@ -26516,7 +26515,7 @@
       (match fact
         [(OptRangeFact.LessThan fact-label fact-lhs fact-mid)
           (if (and
-            (string.eq fact-label label)
+            (= fact-label label)
             (opt-loop-bce-expr-eq fact-lhs lhs)
             (opt-range-proves-less-than-or-eq? all-facts label fact-mid rhs))
             true
@@ -26536,14 +26535,14 @@
 
 (define (opt-range-proves-less-than-through-one-bound?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
   (opt-range-proves-less-than-through-one-bound-from? facts facts label lhs rhs))
 
 (define (opt-range-proves-less-than?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
   (or
@@ -26552,13 +26551,13 @@
 
 (define (opt-range-proves-nonnegative?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [expr : OptLoopBceExpr]) : bool
   (opt-range-nonnegative-contains? facts label expr))
 
 (define (opt-range-facts-add-nonnegative
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [expr : OptLoopBceExpr]) : OptRangeFacts
   (if (opt-range-nonnegative-contains? facts label expr)
     facts
@@ -26566,7 +26565,7 @@
 
 (define (opt-range-facts-add-less-than
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : OptRangeFacts
   (if (opt-range-less-than-contains? facts label lhs rhs)
@@ -26575,7 +26574,7 @@
 
 (define (opt-range-facts-add-less-than-or-eq
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : OptRangeFacts
   (if (opt-range-less-than-or-eq-contains? facts label lhs rhs)
@@ -26585,9 +26584,9 @@
 (define (opt-range-facts-propagate-label-from
   [source : OptRangeFacts]
   [out : OptRangeFacts]
-  [parent-label : String]
-  [child-label : String]) : OptRangeFacts
-  (if (string.eq parent-label child-label)
+  [parent-label : i64]
+  [child-label : i64]) : OptRangeFacts
+  (if (= parent-label child-label)
     out
     (match source
       [(OptRangeFacts.Nil) out]
@@ -26596,15 +26595,15 @@
           [next : OptRangeFacts
             (match fact
               [(OptRangeFact.Nonnegative label expr)
-                (if (string.eq label parent-label)
+                (if (= label parent-label)
                   (opt-range-facts-add-nonnegative out child-label expr)
                   out)]
               [(OptRangeFact.LessThan label lhs rhs)
-                (if (string.eq label parent-label)
+                (if (= label parent-label)
                   (opt-range-facts-add-less-than out child-label lhs rhs)
                   out)]
               [(OptRangeFact.LessThanOrEq label lhs rhs)
-                (if (string.eq label parent-label)
+                (if (= label parent-label)
                   (opt-range-facts-add-less-than-or-eq out child-label lhs rhs)
                   out)])]
           (opt-range-facts-propagate-label-from
@@ -26615,8 +26614,8 @@
 
 (define (opt-range-facts-propagate-label
   [facts : OptRangeFacts]
-  [parent-label : String]
-  [child-label : String]) : OptRangeFacts
+  [parent-label : i64]
+  [child-label : i64]) : OptRangeFacts
   (opt-range-facts-propagate-label-from facts facts parent-label child-label))
 
 (define (opt-range-expr-stable?
@@ -26689,7 +26688,7 @@
 
 (define (opt-range-proves-additive-index-parts-in-range?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [base : OptLoopBceExpr]
   [offset-expr : OptLoopBceExpr]
   [upper : OptLoopBceExpr]
@@ -26712,7 +26711,7 @@
 
 (define (opt-range-proves-additive-index-in-range?
   [facts : OptRangeFacts]
-  [label : String]
+  [label : i64]
   [index : OptLoopBceExpr]
   [upper : OptLoopBceExpr]
   [upper-known-nonnegative : bool]) : bool
@@ -26744,7 +26743,7 @@
 (define (opt-range-add-nonnegative-from-compare
   [facts : OptRangeFacts]
   [sources : opt_i64_i64_map.Map]
-  [label : String]
+  [label : i64]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]
@@ -26787,7 +26786,7 @@
 (define (opt-range-add-less-than-from-compare
   [facts : OptRangeFacts]
   [sources : opt_i64_i64_map.Map]
-  [label : String]
+  [label : i64]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : OptRangeFacts
@@ -26809,7 +26808,7 @@
 (define (opt-range-add-less-than-or-eq-from-compare
   [facts : OptRangeFacts]
   [sources : opt_i64_i64_map.Map]
-  [label : String]
+  [label : i64]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : OptRangeFacts
@@ -26832,7 +26831,7 @@
   [facts : OptRangeFacts]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
-  [label : String]
+  [label : i64]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]
@@ -27023,20 +27022,20 @@
         (OptLoopBceCmpEnv.Cons id op lhs rhs ty (box OptLoopBceCmpEnv.Nil))
         (opt-loop-bce-cmp-lookup (box-get rest) var))]))
 
-(define (opt-loop-bce-guard-unbind [env : OptLoopBceGuardEnv] [label : String]) : OptLoopBceGuardEnv
+(define (opt-loop-bce-guard-unbind [env : OptLoopBceGuardEnv] [label : i64]) : OptLoopBceGuardEnv
   (match env
     [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
     [(OptLoopBceGuardEnv.Cons id index length rest)
       (let
         [tail : OptLoopBceGuardEnv
           (opt-loop-bce-guard-unbind (box-get rest) label)]
-        (if (string.eq id label)
+        (if (= id label)
           tail
           (OptLoopBceGuardEnv.Cons id index length (box tail))))]))
 
 (define (opt-loop-bce-guard-bind
   [env : OptLoopBceGuardEnv]
-  [label : String]
+  [label : i64]
   [index : OptLoopBceExpr]
   [length : OptLoopBceExpr]) : OptLoopBceGuardEnv
   (OptLoopBceGuardEnv.Cons
@@ -27045,11 +27044,11 @@
     length
     (box (opt-loop-bce-guard-unbind env label))))
 
-(define (opt-loop-bce-guard-lookup [env : OptLoopBceGuardEnv] [label : String]) : OptLoopBceGuardEnv
+(define (opt-loop-bce-guard-lookup [env : OptLoopBceGuardEnv] [label : i64]) : OptLoopBceGuardEnv
   (match env
     [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
     [(OptLoopBceGuardEnv.Cons id index length rest)
-      (if (string.eq id label)
+      (if (= id label)
         (OptLoopBceGuardEnv.Cons id index length (box OptLoopBceGuardEnv.Nil))
         (opt-loop-bce-guard-lookup (box-get rest) label))]))
 
@@ -27231,7 +27230,7 @@
 
 (define (opt-loop-bce-state-bind-guard
   [state : OptLoopBceState]
-  [label : String]
+  [label : i64]
   [index : OptLoopBceExpr]
   [length : OptLoopBceExpr]) : OptLoopBceState
   (OptLoopBceState
@@ -27263,13 +27262,11 @@
         [_ (OptLoopBceMaybeVar.NoVar)])]
     [_ (OptLoopBceMaybeVar.NoVar)]))
 
-(define (opt-loop-bce-label-set-other-than
-  [labels : OptLabelSet]
-  [skip : String]) : OptLoopBceMaybeLabel
+(define (opt-loop-bce-label-set-other-than [labels : OptLabelSet] [skip : i64]) : OptLoopBceMaybeLabel
   (match labels
     [(OptLabelSet.Nil) (OptLoopBceMaybeLabel.NoLabel)]
     [(OptLabelSet.Cons label rest)
-      (if (string.eq label skip)
+      (if (= label skip)
         (opt-loop-bce-label-set-other-than (box-get rest) skip)
         (match (opt-loop-bce-label-set-other-than (box-get rest) skip)
           [(OptLoopBceMaybeLabel.NoLabel)
@@ -27434,9 +27431,7 @@
         [(OptLoopBceIndexDef.Increment) true]
         [_ false])]))
 
-(define (opt-loop-bce-block-jumps-to?
-  [block : CompilerIrBlock]
-  [target : String]) : bool
+(define (opt-loop-bce-block-jumps-to? [block : CompilerIrBlock] [target : i64]) : bool
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (let
@@ -27444,13 +27439,13 @@
         (if (= count 0)
           false
           (match (compiler-ir-instr-seq-ref instrs (- count 1))
-            [(CompilerIrInstr.Jump label) (string.eq label target)]
+            [(CompilerIrInstr.Jump label) (= label target)]
             [_ false])))]))
 
 (define (opt-loop-bce-header-edge-shape
   [blocks : CompilerIrBlockList]
   [preds : OptLabelSet]
-  [header-label : String]
+  [header-label : i64]
   [index-var : i64]
   [seen-init : bool]
   [seen-latch : bool]) : OptLoopBceHeaderEdges
@@ -27480,8 +27475,8 @@
 (define (opt-loop-bce-guard-nonnegative?
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
-  [header-label : String]
-  [body-label : String]
+  [header-label : i64]
+  [body-label : i64]
   [index-expr : OptLoopBceExpr]) : bool
   (match (opt-loop-bce-expr-var index-expr)
     [(OptLoopBceMaybeVar.NoVar) false]
@@ -27560,7 +27555,7 @@
 (define (opt-loop-bce-induction-fact-for-var-instr-seq-from
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
-  [preheader : String]
+  [preheader : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [var : i64]) : OptMaybeInductionFact
@@ -27595,7 +27590,7 @@
 (define (opt-loop-bce-induction-fact-for-var
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
-  [preheader : String]
+  [preheader : i64]
   [var : i64]) : OptMaybeInductionFact
   (let
     [body-blocks : CompilerIrBlockList
@@ -27616,13 +27611,13 @@
 (define (opt-loop-bce-canonical-iv-loop
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
-  [header-label : String]
-  [body-label : String]) : OptMaybeNaturalLoop
+  [header-label : i64]
+  [body-label : i64]) : OptMaybeNaturalLoop
   (match loops
     [(OptNaturalLoopList.Nil) (OptMaybeNaturalLoop.No)]
     [(OptNaturalLoopList.Cons loop rest)
       (if (and
-        (string.eq (opt-natural-loop-header loop) header-label)
+        (= (opt-natural-loop-header loop) header-label)
         (opt-label-contains (opt-natural-loop-body loop) body-label)
         (opt-dom-dominates? doms header-label body-label))
         (OptMaybeNaturalLoop.Some loop)
@@ -27637,8 +27632,8 @@
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
   [sources : opt_i64_i64_map.Map]
-  [header-label : String]
-  [body-label : String]
+  [header-label : i64]
+  [body-label : i64]
   [iv : OptLoopBceExpr]
   [upper : OptLoopBceExpr]
   [upper-inclusive : bool]) : bool
@@ -27676,8 +27671,8 @@
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
   [sources : opt_i64_i64_map.Map]
-  [header-label : String]
-  [body-label : String]
+  [header-label : i64]
+  [body-label : i64]
   [iv : OptLoopBceExpr]
   [upper : OptLoopBceExpr]
   [upper-inclusive : bool]) : OptRangeFacts
@@ -27705,8 +27700,8 @@
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
   [sources : opt_i64_i64_map.Map]
-  [header-label : String]
-  [body-label : String]
+  [header-label : i64]
+  [body-label : i64]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : OptRangeFacts
@@ -27769,10 +27764,10 @@
   [doms : OptDomInfo]
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
-  [block-label : String]
+  [block-label : i64]
   [cond : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]) : OptLoopBceState
+  [true-label : i64]
+  [false-label : i64]) : OptLoopBceState
   (match cond
     [(CompilerIrValue.Var cond-var)
       (match (opt-loop-bce-cmp-lookup (struct-get state cmps) cond-var)
@@ -28027,7 +28022,7 @@
   [doms : OptDomInfo]
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
-  [block-label : String]
+  [block-label : i64]
   [instr : CompilerIrInstr]) : OptLoopBceState
   (match instr
     [(CompilerIrInstr.Mov dst src _)
@@ -28224,7 +28219,7 @@
 (define (opt-loop-bce-range-can-remove?
   [state : OptLoopBceState]
   [sources : opt_i64_i64_map.Map]
-  [block-label : String]
+  [block-label : i64]
   [index : CompilerIrValue]
   [length : CompilerIrValue]) : bool
   (let
@@ -28249,7 +28244,7 @@
 (define (opt-loop-bce-can-remove?
   [state : OptLoopBceState]
   [sources : opt_i64_i64_map.Map]
-  [block-label : String]
+  [block-label : i64]
   [index : CompilerIrValue]
   [length : CompilerIrValue]) : bool
   (let
@@ -28277,7 +28272,7 @@
   [doms : OptDomInfo]
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]
   [pos : i64]
   [count : i64]) : OptLoopBceRewrite
@@ -28344,7 +28339,7 @@
   [doms : OptDomInfo]
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]) : OptLoopBceRewrite
   (opt-loop-bce-rewrite-instr-seq-from
     state
@@ -28730,7 +28725,7 @@
     [count : i64 (opt-cfg-index-block-count cfg-index)]
     (if (and (>= id 0) (< id count))
       (let
-        [label : String (array-ref (struct-get cfg-index labels) id)]
+        [label : i64 (array-ref (struct-get cfg-index labels) id)]
         (match (opt-cfg-find-block blocks label)
           [(OptMaybeBlock.No) unit]
           [(OptMaybeBlock.Some block)
@@ -28779,15 +28774,15 @@
   (let
     [offsets : (Array i64) (struct-get children offsets)]
     [edges : (Array i64) (struct-get children edges)]
-    [labels : (Array String) (struct-get cfg-index labels)]
-    [parent-label : String (array-ref labels parent-id)]
+    [labels : (Array i64) (struct-get cfg-index labels)]
+    [parent-label : i64 (array-ref labels parent-id)]
     [edge : i64 (array-ref offsets parent-id)]
     [end : i64 (array-ref offsets (+ parent-id 1))]
     (begin
       (while (< edge end)
         (let
           [child-id : i64 (array-ref edges edge)]
-          [child-label : String (array-ref labels child-id)]
+          [child-label : i64 (array-ref labels child-id)]
           [child-state : OptLoopBceState
             (opt-loop-bce-state-propagate-guard state parent-label child-label)]
           (begin
@@ -28857,8 +28852,8 @@
 
 (define (opt-loop-bce-state-propagate-guard
   [state : OptLoopBceState]
-  [parent-label : String]
-  [child-label : String]) : OptLoopBceState
+  [parent-label : i64]
+  [child-label : i64]) : OptLoopBceState
   (let
     [range-state : OptLoopBceState
       (opt-loop-bce-state-bind-ranges
@@ -30025,7 +30020,7 @@
   [hs : OptLoadHeaderSet]
   [dead-kinds : OptLoadPtrKinds]
   [load-kinds : OptLoadPtrKinds]
-  [entry-label : String]
+  [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
   [block : CompilerIrBlock]) : CompilerIrBlock
@@ -30056,17 +30051,17 @@
 
 (define (optimize-block-entry-facts
   [block : CompilerIrBlock]
-  [entry-label : String]
+  [entry-label : i64]
   [seed-facts : OptAliasFacts]) : OptAliasFacts
   (match block
     [(CompilerIrBlock.Block label _)
-      (if (string.eq label entry-label)
+      (if (= label entry-label)
         seed-facts
         (opt-alias-empty))]))
 
 (define (optimize-block-seq-hs
   [hs : OptLoadHeaderSet]
-  [entry-label : String]
+  [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
   [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
@@ -30095,7 +30090,7 @@
 
 (define (optimize-block-seq-hs-dense
   [hs : OptLoadHeaderSet]
-  [entry-label : String]
+  [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
   [frame : i64]
@@ -30133,7 +30128,7 @@
 
 (define (optimize-block-list-hs
   [hs : OptLoadHeaderSet]
-  [entry-label : String]
+  [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -30170,7 +30165,7 @@
   (let
     [hs : OptLoadHeaderSet
       (opt-load-header-set-from-function-with-size params blocks frame)]
-    [entry-label : String (opt-cfg-entry-label blocks)]
+    [entry-label : i64 (opt-cfg-entry-label blocks)]
     [seed-facts : OptAliasFacts (opt-alias-seed-params params)]
     [scan-work : (Array i64) (array.make-array i64 frame)]
     (match blocks
@@ -30187,7 +30182,7 @@
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (optimize-block-list-hs
     (opt-load-header-set-empty)
-    "entry"
+    (compiler-ir-label "entry")
     (opt-alias-empty)
     (array.make-array i64 0)
     blocks))
@@ -30482,7 +30477,7 @@
   [n : i64]
   [base : i64]
   [hybrid? : bool]
-  [entry-label : String]) : CompilerIrInstrList
+  [entry-label : i64]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     CompilerIrInstrList.Nil
     (let
@@ -30533,7 +30528,7 @@
   [n : i64]
   [base : i64]
   [hybrid? : bool]
-  [entry-label : String]) : CompilerIrInstrList
+  [entry-label : i64]) : CompilerIrInstrList
   (opt-tailrec-rewrite-instr-seq-from
     instrs
     0
@@ -30551,7 +30546,7 @@
   [n : i64]
   [base : i64]
   [hybrid? : bool]
-  [entry-label : String]) : CompilerIrBlockList
+  [entry-label : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -30694,15 +30689,15 @@
 ;; init value (from the outside pred), back-edge value, outside pred label.
 (defenum OptUnrollPhiSplit
   (No)
-  (Split CompilerIrValue CompilerIrValue String))
+  (Split CompilerIrValue CompilerIrValue i64))
 
 (defenum OptUnrollMaybePhis
   (No)
   (Some OptUnrollPhiList))
 
 (defstruct OptUnrollShape
-  (loop-label String)
-  (pred-label String)
+  (loop-label i64)
+  (pred-label i64)
   (phi-count i64)
   (cond-index i64)
   (cond-var i64)
@@ -30845,21 +30840,21 @@
 
 (define (opt-unroll-split-phi-inputs
   [inputs : CompilerIrPhiInputList]
-  [loop-label : String]) : OptUnrollPhiSplit
+  [loop-label : i64]) : OptUnrollPhiSplit
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Cons first-value first-label rest-box)
       (match (box-get rest-box)
         [(CompilerIrPhiInputList.Cons second-value second-label tail-box)
           (match (box-get tail-box)
             [(CompilerIrPhiInputList.Nil)
-              (if (string.eq first-label loop-label)
-                (if (string.eq second-label loop-label)
+              (if (= first-label loop-label)
+                (if (= second-label loop-label)
                   (OptUnrollPhiSplit.No)
                   (OptUnrollPhiSplit.Split
                     second-value
                     first-value
                     second-label))
-                (if (string.eq second-label loop-label)
+                (if (= second-label loop-label)
                   (OptUnrollPhiSplit.Split first-value second-value first-label)
                   (OptUnrollPhiSplit.No)))]
             [_ (OptUnrollPhiSplit.No)])]
@@ -30870,8 +30865,8 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [phi-count : i64]
-  [loop-label : String]
-  [pred-label : String]
+  [loop-label : i64]
+  [pred-label : i64]
   [iphi : i64]) : OptUnrollMaybePhis
   (if (>= index phi-count)
     (OptUnrollMaybePhis.Some (OptUnrollPhiList.Nil))
@@ -30887,7 +30882,7 @@
             iphi)
           (match (opt-unroll-split-phi-inputs inputs loop-label)
             [(OptUnrollPhiSplit.Split init back split-pred)
-              (if (string.eq split-pred pred-label)
+              (if (= split-pred pred-label)
                 (match (opt-unroll-collect-other-phis
                   instrs
                   (+ index 1)
@@ -30918,7 +30913,7 @@
 ;; supported.
 (define (opt-unroll-pred-retargetable?
   [blocks : CompilerIrBlockList]
-  [pred-label : String]) : bool
+  [pred-label : i64]) : bool
   (match (opt-cfg-find-block blocks pred-label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -30947,7 +30942,7 @@
 
 (define (opt-unroll-shape-finish
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [cond-index : i64]
@@ -30958,10 +30953,16 @@
   [inext : i64]
   [ity : AstType]
   [bound : CompilerIrValue]
-  [pred-label : String]) : OptUnrollMaybeShape
+  [pred-label : i64]) : OptUnrollMaybeShape
   (if (or
-    (opt-cfg-block-exists? blocks (string.append label "__unroll_guard"))
-    (opt-cfg-block-exists? blocks (string.append label "__unroll_body"))
+    (opt-cfg-block-exists?
+      blocks
+      (compiler-ir-label
+        (string.append (compiler-ir-label-text label) "__unroll_guard")))
+    (opt-cfg-block-exists?
+      blocks
+      (compiler-ir-label
+        (string.append (compiler-ir-label-text label) "__unroll_body")))
     (not (opt-unroll-pred-retargetable? blocks pred-label)))
     (OptUnrollMaybeShape.No)
     (match (opt-unroll-collect-other-phis
@@ -30990,7 +30991,7 @@
 
 (define (opt-unroll-shape-phi
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
@@ -31010,7 +31011,7 @@
           (match (opt-unroll-split-phi-inputs inputs label)
             [(OptUnrollPhiSplit.Split seed back pred-label)
               (if (and
-                (not (string.eq pred-label label))
+                (not (= pred-label label))
                 (opt-unroll-back-resolves-to? instrs phi-count last back inext))
                 (opt-unroll-shape-finish
                   blocks
@@ -31032,7 +31033,7 @@
 
 (define (opt-unroll-shape-step
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
@@ -31079,7 +31080,7 @@
 
 (define (opt-unroll-shape-counter
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
@@ -31140,7 +31141,7 @@
 
 (define (opt-unroll-shape-scan
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [count : i64]
   [cond-var : i64]) : OptUnrollMaybeShape
@@ -31170,7 +31171,7 @@
 
 (define (opt-unroll-block-shape
   [blocks : CompilerIrBlockList]
-  [entry-label : String]
+  [entry-label : i64]
   [block : CompilerIrBlock]) : OptUnrollMaybeShape
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -31183,9 +31184,9 @@
               (match cond
                 [(CompilerIrValue.Var cond-var)
                   (if (and
-                    (string.eq then-label label)
-                    (not (string.eq else-label label))
-                    (not (string.eq label entry-label)))
+                    (= then-label label)
+                    (not (= else-label label))
+                    (not (= label entry-label)))
                     (opt-unroll-shape-scan blocks label instrs count cond-var)
                     (OptUnrollMaybeShape.No))]
                 [_ (OptUnrollMaybeShape.No)])]
@@ -31315,7 +31316,10 @@
       (CompilerIrInstr.BoundsCheck
         (opt-unroll-subst-value remap index)
         (opt-unroll-subst-value remap length)
-        (string.append ok-label (opt-unroll-copy-suffix copy)))]
+        (compiler-ir-label
+          (string.append
+            (compiler-ir-label-text ok-label)
+            (opt-unroll-copy-suffix copy))))]
     [_ instr]))
 
 (define (opt-unroll-phi-list-count [phis : OptUnrollPhiList]) : i64
@@ -31466,8 +31470,8 @@
   [ku-ids : (Array i64)]
   [index : i64]
   [chains : CompilerIrValueList]
-  [guard-label : String]
-  [unrolled-label : String]
+  [guard-label : i64]
+  [unrolled-label : i64]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
   (match others
     [(OptUnrollPhiList.Nil) tail]
@@ -31513,15 +31517,15 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [count : i64]
-  [loop-label : String]
+  [loop-label : i64]
   [iphi : i64]
   [seed : CompilerIrValue]
   [inext : i64]
   [inext3 : CompilerIrValue]
   [others : OptUnrollPhiList]
   [chains : CompilerIrValueList]
-  [guard-label : String]
-  [unrolled-label : String]) : CompilerIrInstrList
+  [guard-label : i64]
+  [unrolled-label : i64]) : CompilerIrInstrList
   (if (>= index count)
     (CompilerIrInstrList.Nil)
     (match (compiler-ir-instr-seq-ref instrs index)
@@ -31622,23 +31626,21 @@
 
 (define (opt-unroll-retarget-instr
   [instr : CompilerIrInstr]
-  [from-label : String]
-  [to-label : String]) : CompilerIrInstr
+  [from-label : i64]
+  [to-label : i64]) : CompilerIrInstr
   (match instr
     [(CompilerIrInstr.Jump target)
-      (if (string.eq target from-label)
+      (if (= target from-label)
         (CompilerIrInstr.Jump to-label)
         instr)]
     [(CompilerIrInstr.Branch cond then-label else-label)
-      (if (or
-        (string.eq then-label from-label)
-        (string.eq else-label from-label))
+      (if (or (= then-label from-label) (= else-label from-label))
         (CompilerIrInstr.Branch
           cond
-          (if (string.eq then-label from-label)
+          (if (= then-label from-label)
             to-label
             then-label)
-          (if (string.eq else-label from-label)
+          (if (= else-label from-label)
             to-label
             else-label))
         instr)]
@@ -31647,8 +31649,8 @@
 (define (opt-unroll-retarget-instrs
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [from-label : String]
-  [to-label : String]) : CompilerIrInstrList
+  [from-label : i64]
+  [to-label : i64]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
     (compiler-ir-instr-cons
@@ -31663,18 +31665,18 @@
 ;; from B to the guard.
 (define (opt-unroll-rewrite-blocks
   [blocks : CompilerIrBlockList]
-  [pred-label : String]
-  [loop-label : String]
+  [pred-label : i64]
+  [loop-label : i64]
   [guard-block : CompilerIrBlock]
   [unrolled-block : CompilerIrBlock]
   [tail-block : CompilerIrBlock]
-  [guard-label : String]) : CompilerIrBlockList
+  [guard-label : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
-          (if (string.eq label loop-label)
+          (if (= label loop-label)
             (compiler-ir-block-cons
               guard-block
               (compiler-ir-block-cons
@@ -31690,7 +31692,7 @@
                     tail-block
                     guard-label))))
             (compiler-ir-block-cons
-              (if (string.eq label pred-label)
+              (if (= label pred-label)
                 (compiler-ir-block
                   label
                   (opt-unroll-retarget-instrs instrs 0 loop-label guard-label))
@@ -31732,9 +31734,13 @@
         [ity : AstType (struct-get shape ity)]
         [bound : CompilerIrValue (struct-get shape bound)]
         [others : OptUnrollPhiList (struct-get shape others)]
-        [pred-label : String (struct-get shape pred-label)]
-        [guard-label : String (string.append label "__unroll_guard")]
-        [unrolled-label : String (string.append label "__unroll_body")]
+        [pred-label : i64 (struct-get shape pred-label)]
+        [guard-label : i64
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__unroll_guard"))]
+        [unrolled-label : i64
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__unroll_body"))]
         [remap : (Array CompilerIrValue)
           (array.make-array CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
@@ -31882,7 +31888,7 @@
 (define (opt-unroll-blocks-scan
   [blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
-  [entry-label : String]
+  [entry-label : i64]
   [frame : i64]) : OptUnrollResult
   (match remaining
     [(CompilerIrBlockList.Nil) (OptUnrollResult.Result blocks frame false)]
@@ -31914,8 +31920,7 @@
           (match (compiler-ir-instr-seq-ref instrs 0)
             [(CompilerIrInstr.Phi _ _ _)
               (match (compiler-ir-instr-seq-ref instrs (- count 1))
-                [(CompilerIrInstr.Branch _ true-label _)
-                  (string.eq true-label label)]
+                [(CompilerIrInstr.Branch _ true-label _) (= true-label label)]
                 [_ false])]
             [_ false])))]))
 
@@ -32476,7 +32481,7 @@
 ;; --- shape scan ---------------------------------------------------------------
 (define (opt-bce-version-shape-phi
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
@@ -32496,16 +32501,22 @@
           (match (opt-unroll-split-phi-inputs inputs label)
             [(OptUnrollPhiSplit.Split seed back pred-label)
               (if (and
-                (not (string.eq pred-label label))
+                (not (= pred-label label))
                 (opt-unroll-back-resolves-to? instrs phi-count last back inext)
                 (not
                   (opt-cfg-block-exists?
                     blocks
-                    (string.append label "__bce_guard")))
+                    (compiler-ir-label
+                      (string.append
+                        (compiler-ir-label-text label)
+                        "__bce_guard"))))
                 (not
                   (opt-cfg-block-exists?
                     blocks
-                    (string.append label "__bce_fast")))
+                    (compiler-ir-label
+                      (string.append
+                        (compiler-ir-label-text label)
+                        "__bce_fast"))))
                 (opt-unroll-pred-retargetable? blocks pred-label))
                 (match (opt-unroll-collect-other-phis
                   instrs
@@ -32536,7 +32547,7 @@
 
 (define (opt-bce-version-shape-step
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
@@ -32590,7 +32601,7 @@
 
 (define (opt-bce-version-shape-counter
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
@@ -32625,7 +32636,7 @@
 
 (define (opt-bce-version-block-shape
   [blocks : CompilerIrBlockList]
-  [entry-label : String]
+  [entry-label : i64]
   [block : CompilerIrBlock]) : OptUnrollMaybeShape
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -32638,9 +32649,9 @@
               (match cond
                 [(CompilerIrValue.Var cond-var)
                   (if (and
-                    (string.eq then-label label)
-                    (not (string.eq else-label label))
-                    (not (string.eq label entry-label)))
+                    (= then-label label)
+                    (not (= else-label label))
+                    (not (= label entry-label)))
                     (let
                       [last : i64 (- count 1)]
                       [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
@@ -32676,7 +32687,7 @@
 (define (opt-bce-version-outside-phi-uses
   [set : opt_i64_i64_map.Map]
   [inputs : CompilerIrPhiInputList]
-  [loop-label : String]) : opt_i64_i64_map.Map
+  [loop-label : i64]) : opt_i64_i64_map.Map
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) set]
     [(CompilerIrPhiInputList.Array seq)
@@ -32686,7 +32697,7 @@
         loop-label)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (opt-bce-version-outside-phi-uses
-        (if (string.eq label loop-label)
+        (if (= label loop-label)
           set
           (opt-collect-value-uses set value))
         (box-get rest)
@@ -32696,7 +32707,7 @@
   [set : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [loop-label : String]) : opt_i64_i64_map.Map
+  [loop-label : i64]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     set
     (let
@@ -32713,14 +32724,14 @@
 (define (opt-bce-version-outside-uses
   [set : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
-  [loop-label : String]) : opt_i64_i64_map.Map
+  [loop-label : i64]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
       (opt-bce-version-outside-uses
         (match block
           [(CompilerIrBlock.Block label instrs)
-            (if (string.eq label loop-label)
+            (if (= label loop-label)
               set
               (opt-bce-version-outside-uses-seq set instrs 0 loop-label))])
         (box-get rest)
@@ -32749,8 +32760,8 @@
 (define (opt-bce-version-fast-phis
   [others : OptUnrollPhiList]
   [remap : (Array CompilerIrValue)]
-  [guard-label : String]
-  [fast-label : String]
+  [guard-label : i64]
+  [fast-label : i64]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
   (match others
     [(OptUnrollPhiList.Nil) tail]
@@ -32801,8 +32812,8 @@
 ;; Relabel the loop phis' outside-pred inputs to the guard block.
 (define (opt-relabel-phi-inputs
   [inputs : CompilerIrPhiInputList]
-  [pred-label : String]
-  [guard-label : String]) : CompilerIrPhiInputList
+  [pred-label : i64]
+  [guard-label : i64]) : CompilerIrPhiInputList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
     [(CompilerIrPhiInputList.Array seq)
@@ -32813,7 +32824,7 @@
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-phi-input-cons
         value
-        (if (string.eq label pred-label)
+        (if (= label pred-label)
           guard-label
           label)
         (opt-relabel-phi-inputs (box-get rest) pred-label guard-label))]))
@@ -32821,8 +32832,8 @@
 (define (opt-relabel-phi-instrs
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [pred-label : String]
-  [guard-label : String]) : CompilerIrInstrList
+  [pred-label : i64]
+  [guard-label : i64]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
     (let
@@ -32841,8 +32852,8 @@
 ;; parallel input carrying the fast clone's remapped value.
 (define (opt-bce-version-extend-phi-inputs
   [inputs : CompilerIrPhiInputList]
-  [loop-label : String]
-  [fast-label : String]
+  [loop-label : i64]
+  [fast-label : i64]
   [remap : (Array CompilerIrValue)]) : CompilerIrPhiInputList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
@@ -32860,7 +32871,7 @@
             loop-label
             fast-label
             remap)]
-        (if (string.eq label loop-label)
+        (if (= label loop-label)
           (compiler-ir-phi-input-cons
             value
             label
@@ -32873,8 +32884,8 @@
 (define (opt-bce-version-extend-exit-instrs
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [loop-label : String]
-  [fast-label : String]
+  [loop-label : i64]
+  [fast-label : i64]
   [remap : (Array CompilerIrValue)]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
@@ -32901,11 +32912,11 @@
 
 (define (opt-bce-version-rewrite-blocks
   [blocks : CompilerIrBlockList]
-  [pred-label : String]
-  [loop-label : String]
-  [exit-label : String]
-  [fast-label : String]
-  [guard-label : String]
+  [pred-label : i64]
+  [loop-label : i64]
+  [exit-label : i64]
+  [fast-label : i64]
+  [guard-label : i64]
   [guard-block : CompilerIrBlock]
   [fast-block : CompilerIrBlock]
   [remap : (Array CompilerIrValue)]) : CompilerIrBlockList
@@ -32926,7 +32937,7 @@
                 guard-block
                 fast-block
                 remap)]
-            (if (string.eq label loop-label)
+            (if (= label loop-label)
               (compiler-ir-block-cons
                 guard-block
                 (compiler-ir-block-cons
@@ -32938,7 +32949,7 @@
                     tail)))
               (compiler-ir-block-cons
                 (cond
-                  [(string.eq label pred-label)
+                  [(= label pred-label)
                     (compiler-ir-block
                       label
                       (opt-unroll-retarget-instrs
@@ -32946,7 +32957,7 @@
                         0
                         loop-label
                         guard-label))]
-                  [(string.eq label exit-label)
+                  [(= label exit-label)
                     (compiler-ir-block
                       label
                       (opt-bce-version-extend-exit-instrs
@@ -32986,14 +32997,18 @@
         [inext : i64 (struct-get shape inext)]
         [bound : CompilerIrValue (struct-get shape bound)]
         [others : OptUnrollPhiList (struct-get shape others)]
-        [pred-label : String (struct-get shape pred-label)]
+        [pred-label : i64 (struct-get shape pred-label)]
         [cond-var : i64 (struct-get shape cond-var)]
-        [exit-label : String
+        [exit-label : i64
           (match (compiler-ir-instr-seq-ref instrs last)
             [(CompilerIrInstr.Branch _ _ else-label) else-label]
             [_ label])]
-        [guard-label : String (string.append label "__bce_guard")]
-        [fast-label : String (string.append label "__bce_fast")]
+        [guard-label : i64
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__bce_guard"))]
+        [fast-label : i64
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__bce_fast"))]
         [defs : opt_i64_i64_map.Map
           (opt-unroll-block-defs
             (struct-get instrs slots)
@@ -33006,8 +33021,8 @@
             blocks
             label)]
         (if (or
-          (string.eq exit-label label)
-          (string.eq exit-label pred-label)
+          (= exit-label label)
+          (= exit-label pred-label)
           (opt-bce-version-defs-escape?
             (struct-get instrs slots)
             0
@@ -33119,7 +33134,7 @@
 (define (opt-bce-version-blocks-scan
   [blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
-  [entry-label : String]
+  [entry-label : i64]
   [frame : i64]) : OptUnrollResult
   (match remaining
     [(CompilerIrBlockList.Nil) (OptUnrollResult.Result blocks frame false)]
@@ -33158,7 +33173,7 @@
               (match (compiler-ir-instr-seq-ref instrs (- count 1))
                 [(CompilerIrInstr.Branch _ true-label _)
                   (and
-                    (string.eq true-label label)
+                    (= true-label label)
                     (>= (opt-bce-version-check-count instrs 0 (- count 1) 0) 1))]
                 [_ false])]
             [_ false])))]))
@@ -33230,7 +33245,7 @@
 ;; cond-var, exit-label of a latch branch.
 (defenum OptBceMbMaybeLatch
   (No)
-  (Some i64 String))
+  (Some i64 i64))
 
 ;; iphi, seed, inext, bound.
 (defenum OptBceMbMaybeCounter
@@ -33238,9 +33253,9 @@
   (Some i64 CompilerIrValue i64 CompilerIrValue))
 
 (defstruct OptBceMbShape
-  (header String)
-  (latch String)
-  (preheader String)
+  (header i64)
+  (latch i64)
+  (preheader i64)
   (body-labels OptLabelSet)
   (body-blocks CompilerIrBlockList)
   (iphi i64)
@@ -33327,7 +33342,7 @@
 ;; The latch must end `Branch c header exit` with the exit outside the loop.
 (define (opt-bce-mb-latch-branch
   [block : CompilerIrBlock]
-  [header : String]
+  [header : i64]
   [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
   (match block
     [(CompilerIrBlock.Block _ instrs)
@@ -33340,7 +33355,7 @@
               (match cond
                 [(CompilerIrValue.Var cond-var)
                   (if (and
-                    (string.eq then-label header)
+                    (= then-label header)
                     (not (opt-label-contains body-labels else-label)))
                     (OptBceMbMaybeLatch.Some cond-var else-label)
                     (OptBceMbMaybeLatch.No))]
@@ -33351,8 +33366,8 @@
 ;; of type i64 fed (seed from the preheader, inext from the latch).
 (define (opt-bce-mb-counter-phi
   [body-blocks : CompilerIrBlockList]
-  [latch : String]
-  [preheader : String]
+  [latch : i64]
+  [preheader : i64]
   [inext : i64]
   [iphi : i64]) : OptBceMbMaybeSeed
   (match (opt-bce-mb-find-def body-blocks iphi)
@@ -33365,7 +33380,7 @@
               (match (opt-unroll-split-phi-inputs inputs latch)
                 [(OptUnrollPhiSplit.Split seed back pred-label)
                   (if (and
-                    (string.eq pred-label preheader)
+                    (= pred-label preheader)
                     (match back
                       [(CompilerIrValue.Var back-id)
                         (= (opt-bce-mb-resolve body-blocks back-id 16) inext)]
@@ -33378,8 +33393,8 @@
 
 (define (opt-bce-mb-counter-step-inext
   [body-blocks : CompilerIrBlockList]
-  [latch : String]
-  [preheader : String]
+  [latch : i64]
+  [preheader : i64]
   [inext : i64]
   [bound : CompilerIrValue]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-find-def body-blocks inext)
@@ -33423,8 +33438,8 @@
 (define (opt-bce-mb-counter-step
   [body-blocks : CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
-  [latch : String]
-  [preheader : String]
+  [latch : i64]
+  [preheader : i64]
   [cond-var : i64]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-find-def body-blocks cond-var)
     [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
@@ -33453,15 +33468,15 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [phi-count : i64]
-  [latch : String]
-  [preheader : String]) : bool
+  [latch : i64]
+  [preheader : i64]) : bool
   (if (>= index phi-count)
     true
     (match (compiler-ir-instr-seq-ref instrs index)
       [(CompilerIrInstr.Phi _ inputs _)
         (match (opt-unroll-split-phi-inputs inputs latch)
           [(OptUnrollPhiSplit.Split _ _ pred-label)
-            (if (string.eq pred-label preheader)
+            (if (= pred-label preheader)
               (opt-bce-mb-header-phis-ok?
                 instrs
                 (+ index 1)
@@ -33574,15 +33589,18 @@
   (match body-labels
     [(OptLabelSet.Nil) true]
     [(OptLabelSet.Cons label rest)
-      (if (opt-cfg-block-exists? blocks (string.append label "__bce_fast"))
+      (if (opt-cfg-block-exists?
+        blocks
+        (compiler-ir-label
+          (string.append (compiler-ir-label-text label) "__bce_fast")))
         false
         (opt-bce-mb-fast-labels-fresh? blocks (box-get rest)))]))
 
 (define (opt-bce-mb-loop-shape-finish
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [latch : String]
-  [pred : String]
+  [header : i64]
+  [latch : i64]
+  [pred : i64]
   [body-labels : OptLabelSet]
   [body-blocks : CompilerIrBlockList]
   [counter : OptBceMbMaybeCounter]) : OptBceMbMaybeShape
@@ -33621,7 +33639,7 @@
 ;; loops keep the full win.
 (define (opt-bce-mb-has-nested-loop?
   [loops : OptNaturalLoopList]
-  [header : String]
+  [header : i64]
   [body-labels : OptLabelSet]) : bool
   (match loops
     [(OptNaturalLoopList.Nil) false]
@@ -33629,7 +33647,7 @@
       (match loop
         [(OptNaturalLoop.Loop other-header _ _ _)
           (if (and
-            (not (string.eq other-header header))
+            (not (= other-header header))
             (opt-label-contains body-labels other-header))
             true
             (opt-bce-mb-has-nested-loop? (box-get rest) header body-labels))])]))
@@ -33637,17 +33655,20 @@
 (define (opt-bce-mb-loop-shape-with-preheader
   [blocks : CompilerIrBlockList]
   [loops : OptNaturalLoopList]
-  [header : String]
-  [latch : String]
+  [header : i64]
+  [latch : i64]
   [body : OptLoopBody]
-  [pred : String]) : OptBceMbMaybeShape
+  [pred : i64]) : OptBceMbMaybeShape
   (let
     [body-labels : OptLabelSet (struct-get body labels)]
     [body-blocks : CompilerIrBlockList (struct-get body blocks)]
     (if (or
       (< (opt-label-count body-labels) 2)
       (> (opt-label-count body-labels) (opt-bce-mb-block-max))
-      (opt-cfg-block-exists? blocks (string.append header "__bce_guard"))
+      (opt-cfg-block-exists?
+        blocks
+        (compiler-ir-label
+          (string.append (compiler-ir-label-text header) "__bce_guard")))
       (opt-bce-mb-has-nested-loop? loops header body-labels)
       (opt-bce-mb-body-has-total-enum-switch? body-blocks)
       (not (opt-bce-mb-fast-labels-fresh? blocks body-labels))
@@ -33676,7 +33697,7 @@
 (define (opt-bce-mb-loop-shape
   [blocks : CompilerIrBlockList]
   [loops : OptNaturalLoopList]
-  [entry-label : String]
+  [entry-label : i64]
   [loop : OptNaturalLoop]) : OptBceMbMaybeShape
   (match loop
     [(OptNaturalLoop.Loop header latch body preheader)
@@ -33685,8 +33706,8 @@
         [(OptLoopPreheader.Some pred)
           (if (or
             ;; single-block self-loops belong to the dedicated pass above
-            (string.eq header latch)
-            (string.eq header entry-label))
+            (= header latch)
+            (= header entry-label))
             (OptBceMbMaybeShape.No)
             (opt-bce-mb-loop-shape-with-preheader
               blocks
@@ -33896,16 +33917,16 @@
 ;; pair is a stable identity between guard derivation and cloning.
 (defenum OptBceMbKeep
   (Nil)
-  (Cons String i64 (Box OptBceMbKeep)))
+  (Cons i64 i64 (Box OptBceMbKeep)))
 
 (define (opt-bce-mb-keep-contains?
   [keep : OptBceMbKeep]
-  [label : String]
+  [label : i64]
   [index : i64]) : bool
   (match keep
     [(OptBceMbKeep.Nil) false]
     [(OptBceMbKeep.Cons item-label item-index rest)
-      (if (and (= item-index index) (string.eq item-label label))
+      (if (and (= item-index index) (= item-label label))
         true
         (opt-bce-mb-keep-contains? (box-get rest) label index))]))
 
@@ -34063,7 +34084,7 @@
 ;; a block.
 (defenum OptLateBoundsPairPlan
   (Nil)
-  (Cons String i64 i64 bool CompilerIrValue (Box OptLateBoundsPairPlan)))
+  (Cons i64 i64 i64 bool CompilerIrValue (Box OptLateBoundsPairPlan)))
 
 (defenum OptLateBoundsPairAt
   (No)
@@ -34095,7 +34116,7 @@
     [(CompilerIrMaybeValue.Some found) (opt-value-eq found length)]))
 
 (define (opt-late-bounds-pair-collect-block
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [body-blocks : CompilerIrBlockList]
@@ -34197,7 +34218,7 @@
 
 (define (opt-late-bounds-pair-at
   [plans : OptLateBoundsPairPlan]
-  [label : String]
+  [label : i64]
   [index : i64]) : OptLateBoundsPairAt
   (match plans
     [(OptLateBoundsPairPlan.Nil) (OptLateBoundsPairAt.No)]
@@ -34208,9 +34229,9 @@
         first-smaller
         second-value
         rest)
-      (if (and (string.eq item-label label) (= index first))
+      (if (and (= item-label label) (= index first))
         (OptLateBoundsPairAt.First first-smaller second-value)
-        (if (and (string.eq item-label label) (= index second))
+        (if (and (= item-label label) (= index second))
           (OptLateBoundsPairAt.Second)
           (opt-late-bounds-pair-at (box-get rest) label index)))]))
 
@@ -34247,7 +34268,7 @@
 ;; affine def chain, and drop that dead chain in the same walk. The combined
 ;; check therefore does not add per-iteration index arithmetic.
 (define (opt-late-bounds-pair-rewrite-instrs
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [body-blocks : CompilerIrBlockList]
@@ -34423,7 +34444,7 @@
 
 (define (opt-late-bounds-pair-preheader
   [block : CompilerIrBlock]
-  [header : String]
+  [header : i64]
   [length : CompilerIrValue]
   [nonempty : i64]
   [nonempty-i64 : i64]
@@ -34436,7 +34457,7 @@
           (OptLateBoundsPairPreheader.No)
           (match (compiler-ir-instr-seq-ref instrs (- count 1))
             [(CompilerIrInstr.Jump target)
-              (if (string.eq target header)
+              (if (= target header)
                 (OptLateBoundsPairPreheader.Some
                   (compiler-ir-block
                     label
@@ -34454,7 +34475,7 @@
 (define (opt-late-bounds-pair-rewrite-blocks
   [blocks : CompilerIrBlockList]
   [body-blocks : CompilerIrBlockList]
-  [preheader-label : String]
+  [preheader-label : i64]
   [rewritten-preheader : CompilerIrBlock]
   [plans : OptLateBoundsPairPlan]
   [short-length : CompilerIrValue]
@@ -34465,7 +34486,7 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (if (string.eq label preheader-label)
+            (if (= label preheader-label)
               rewritten-preheader
               (compiler-ir-block
                 label
@@ -34661,8 +34682,8 @@
   [all-blocks : CompilerIrBlockList]
   [body-blocks : CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
-  [latch : String]
-  [preheader : String]
+  [latch : i64]
+  [preheader : i64]
   [iphi : i64]
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
@@ -34738,7 +34759,7 @@
                         (match (opt-unroll-split-phi-inputs inputs latch)
                           [(OptUnrollPhiSplit.Split init back pred-label)
                             (if (and
-                              (string.eq pred-label preheader)
+                              (= pred-label preheader)
                               (opt-bce-mb-seeds-match? all-blocks seed init)
                               (opt-bce-mb-bounded-value? body-blocks id back 8))
                               (opt-bce-version-cond-counter-seen
@@ -34755,14 +34776,14 @@
     [_ (OptBceVersionGuardAcc.No)]))
 
 (define (opt-bce-mb-derive-block
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [all-blocks : CompilerIrBlockList]
   [body-blocks : CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
-  [latch : String]
-  [preheader : String]
+  [latch : i64]
+  [preheader : i64]
   [iphi : i64]
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
@@ -34830,8 +34851,8 @@
   [all-blocks : CompilerIrBlockList]
   [body-blocks : CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
-  [latch : String]
-  [preheader : String]
+  [latch : i64]
+  [preheader : i64]
   [iphi : i64]
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
@@ -34919,9 +34940,10 @@
           (OptBceMbGuardOut.Some guard-instrs guard-value (struct-get dr keep))]))))
 
 ;; --- fast-clone emission --------------------------------------------------------
-(define (opt-bce-mb-fast-label [body-labels : OptLabelSet] [label : String]) : String
+(define (opt-bce-mb-fast-label [body-labels : OptLabelSet] [label : i64]) : i64
   (if (opt-label-contains body-labels label)
-    (string.append label "__bce_fast")
+    (compiler-ir-label
+      (string.append (compiler-ir-label-text label) "__bce_fast"))
     label))
 
 ;; Pass A: allocate a fresh id for every def in the loop BEFORE any clone
@@ -34998,8 +35020,8 @@
   [inputs : CompilerIrPhiInputList]
   [remap : (Array CompilerIrValue)]
   [body-labels : OptLabelSet]
-  [preheader : String]
-  [guard-label : String]) : CompilerIrPhiInputList
+  [preheader : i64]
+  [guard-label : i64]) : CompilerIrPhiInputList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
     [(CompilerIrPhiInputList.Array seq)
@@ -35014,7 +35036,7 @@
         (opt-unroll-subst-value remap value)
         ;; only header phis carry a preheader input: it now comes from the
         ;; guard; every other loop-edge input comes from the fast clone.
-        (if (string.eq label preheader)
+        (if (= label preheader)
           guard-label
           (opt-bce-mb-fast-label body-labels label))
         (opt-bce-mb-clone-phi-inputs
@@ -35028,8 +35050,8 @@
   [remap : (Array CompilerIrValue)]
   [body-labels : OptLabelSet]
   [all-labels : OptLabelSet]
-  [preheader : String]
-  [guard-label : String]
+  [preheader : i64]
+  [guard-label : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(CompilerIrInstr.Mov dst src ty)
@@ -35115,7 +35137,8 @@
           (opt-bce-mb-fast-label body-labels ok-label)
           (if (opt-label-contains all-labels ok-label)
             ok-label
-            (string.append ok-label "__bce_fast"))))]
+            (compiler-ir-label
+              (string.append (compiler-ir-label-text ok-label) "__bce_fast")))))]
     ;; unreachable: the shape scan whitelisted every loop instruction
     [_ instr]))
 
@@ -35138,14 +35161,14 @@
 ;; proved non-failing and remapping the kept underivable ones (partial
 ;; versioning: the fast clone is not necessarily check-free).
 (define (opt-bce-mb-clone-instrs
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [remap : (Array CompilerIrValue)]
   [body-labels : OptLabelSet]
   [all-labels : OptLabelSet]
-  [preheader : String]
-  [guard-label : String]
+  [preheader : i64]
+  [guard-label : i64]
   [keep : OptBceMbKeep]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
@@ -35207,8 +35230,8 @@
   [remap : (Array CompilerIrValue)]
   [body-labels : OptLabelSet]
   [all-labels : OptLabelSet]
-  [preheader : String]
-  [guard-label : String]
+  [preheader : i64]
+  [guard-label : i64]
   [keep : OptBceMbKeep]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -35217,7 +35240,8 @@
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
             (compiler-ir-block
-              (string.append label "__bce_fast")
+              (compiler-ir-label
+                (string.append (compiler-ir-label-text label) "__bce_fast"))
               (opt-bce-mb-clone-instrs
                 label
                 instrs
@@ -35270,7 +35294,8 @@
             label
             (compiler-ir-phi-input-cons
               (opt-unroll-subst-value remap value)
-              (string.append label "__bce_fast")
+              (compiler-ir-label
+                (string.append (compiler-ir-label-text label) "__bce_fast"))
               tail))
           (compiler-ir-phi-input-cons value label tail)))]))
 
@@ -35325,7 +35350,7 @@
                 fast-blocks
                 remap)]
             (cond
-              [(string.eq label (struct-get shape header))
+              [(= label (struct-get shape header))
                 ;; guard + fast group immediately before the slow header: a
                 ;; fallthrough preheader lands on the guard, and the fast
                 ;; group preserves loop order for intra-loop fallthroughs.
@@ -35340,11 +35365,12 @@
                           instrs
                           0
                           (struct-get shape preheader)
-                          (string.append
-                            (struct-get shape header)
-                            "__bce_guard")))
+                          (compiler-ir-label
+                            (string.append
+                              (compiler-ir-label-text (struct-get shape header))
+                              "__bce_guard"))))
                       tail)))]
-              [(string.eq label (struct-get shape preheader))
+              [(= label (struct-get shape preheader))
                 (compiler-ir-block-cons
                   (compiler-ir-block
                     label
@@ -35352,7 +35378,10 @@
                       instrs
                       0
                       (struct-get shape header)
-                      (string.append (struct-get shape header) "__bce_guard")))
+                      (compiler-ir-label
+                        (string.append
+                          (compiler-ir-label-text (struct-get shape header))
+                          "__bce_guard"))))
                   tail)]
               [(opt-label-contains (struct-get shape body-labels) label)
                 (compiler-ir-block-cons block tail)]
@@ -35394,7 +35423,10 @@
     [(OptLabelSet.Cons label rest)
       (opt-bce-mb-fast-labels-from
         (box-get rest)
-        (opt-label-add acc (string.append label "__bce_fast")))]))
+        (opt-label-add
+          acc
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__bce_fast"))))]))
 
 ;; Is `var` defined by a Phi instruction in this block's instruction seq?
 (define (opt-bce-mb-block-phi-var?
@@ -35504,8 +35536,8 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [blocks : CompilerIrBlockList]
-  [preheader : String]
-  [guard-label : String]
+  [preheader : i64]
+  [guard-label : i64]
   [cseed : CompilerIrValue]
   [iphi : i64]) : i64
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -35526,9 +35558,7 @@
                     unit)]
                 [(CompilerIrPhiInputList.Cons value label rest)
                   (if (and
-                    (or
-                      (string.eq label preheader)
-                      (string.eq label guard-label))
+                    (or (= label preheader) (= label guard-label))
                     (opt-value-eq (opt-bce-mb-canon-value blocks value) cseed))
                     (set! hit true)
                     (set! walk (box-get rest)))]))
@@ -35555,9 +35585,9 @@
 (define (opt-bce-mb-find-bounded-phi
   [body-blocks : CompilerIrBlockList]
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [preheader : String]
-  [guard-label : String]
+  [header : i64]
+  [preheader : i64]
+  [guard-label : i64]
   [cseed : CompilerIrValue]
   [iphi : i64]) : i64
   (match body-blocks
@@ -35565,7 +35595,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
-          (if (string.eq label header)
+          (if (= label header)
             (opt-bce-mb-find-bounded-phi-instrs
               instrs
               0
@@ -35687,25 +35717,25 @@
 (define (opt-bce-mb-block-targets?
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [label : String]) : bool
+  [label : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
     (match (compiler-ir-instr-seq-ref instrs index)
       [(CompilerIrInstr.Branch _ true-label false-label)
         (or
-          (string.eq true-label label)
-          (string.eq false-label label)
+          (= true-label label)
+          (= false-label label)
           (opt-bce-mb-block-targets? instrs (+ index 1) label))]
       [(CompilerIrInstr.Jump target)
         (or
-          (string.eq target label)
+          (= target label)
           (opt-bce-mb-block-targets? instrs (+ index 1) label))]
       [_ (opt-bce-mb-block-targets? instrs (+ index 1) label)])))
 
 ;; Labels of blocks whose terminator mentions `label`.
 (define (opt-bce-mb-preds-from
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [acc : OptLabelSet]) : OptLabelSet
   (match blocks
     [(CompilerIrBlockList.Nil) acc]
@@ -35753,7 +35783,7 @@
 ;; chain dominates it. True when a strict BoundsCheck(bound, len) appears.
 (define (opt-bce-mb-strict-check-chain?
   [blocks : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [bound : CompilerIrValue]
   [len : CompilerIrValue]
   [fuel : i64]) : bool
@@ -35800,16 +35830,14 @@
           (set! walk (+ walk 1))))
       found)))
 
-(define (opt-bce-mb-find-block-seq
-  [blocks : CompilerIrBlockList]
-  [label : String]) : CompilerIrInstrSeq
+(define (opt-bce-mb-find-block-seq [blocks : CompilerIrBlockList] [label : i64]) : CompilerIrInstrSeq
   (match blocks
     [(CompilerIrBlockList.Nil)
       (compiler-ir-instr-seq-from-list (CompilerIrInstrList.Nil))]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             instrs
             (opt-bce-mb-find-block-seq (box-get rest) label))])]
     [(CompilerIrBlockList.Array seq)
@@ -35821,7 +35849,7 @@
 ;; canonicalization, predecessor scans, and the strict-check chain.
 (defenum OptBceMbExitSplit
   (No)
-  (Some String i64 i64 CompilerIrValue OptLabelSet))
+  (Some i64 i64 i64 CompilerIrValue OptLabelSet))
 
 ;; Find the first outside block whose checked exit phi is provably in range
 ;; on every fast arrival. `blocks` is the walk tail; `all-blocks` is the
@@ -35843,11 +35871,14 @@
             [body-labels : OptLabelSet (struct-get shape body-labels)]
             (if (or
               (opt-label-contains body-labels label)
-              (string.eq label (struct-get shape header))
-              (string.eq label (struct-get shape preheader))
-              (string.eq
+              (= label (struct-get shape header))
+              (= label (struct-get shape preheader))
+              (=
                 label
-                (string.append (struct-get shape header) "__bce_guard"))
+                (compiler-ir-label
+                  (string.append
+                    (compiler-ir-label-text (struct-get shape header))
+                    "__bce_guard")))
               (opt-label-contains
                 (opt-bce-mb-fast-labels-from body-labels (OptLabelSet.Nil))
                 label))
@@ -35924,7 +35955,7 @@
 ;; caller-provided check blocks land immediately before it.
 (define (opt-bce-mb-sink-exit-block-list
   [blocks : CompilerIrBlockList]
-  [exit-label : String]
+  [exit-label : i64]
   [check-pos : i64]
   [phi-var : i64]
   [fast-labels : OptLabelSet]
@@ -35934,7 +35965,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
-          (if (string.eq label exit-label)
+          (if (= label exit-label)
             (opt-bce-mb-blocks-cons-onto
               check-blocks
               (compiler-ir-block-cons
@@ -35974,7 +36005,7 @@
   [check-pos : i64]
   [phi-var : i64]
   [fast-labels : OptLabelSet]
-  [exit-label : String]) : CompilerIrInstrList
+  [exit-label : i64]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
     (if (= index check-pos)
@@ -36057,7 +36088,7 @@
 (define (opt-bce-mb-sink-phi-relabel-inputs
   [inputs : CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
-  [exit-label : String]) : CompilerIrPhiInputList
+  [exit-label : i64]) : CompilerIrPhiInputList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
     [(CompilerIrPhiInputList.Array seq)
@@ -36070,7 +36101,11 @@
         value
         (if (opt-label-contains fast-labels label)
           label
-          (str_cat.str-cat exit-label "__xchk_" label))
+          (compiler-ir-label
+            (str_cat.str-cat
+              (compiler-ir-label-text exit-label)
+              "__xchk_"
+              (compiler-ir-label-text label))))
         (opt-bce-mb-sink-phi-relabel-inputs
           (box-get rest)
           fast-labels
@@ -36082,7 +36117,7 @@
   [blocks : CompilerIrBlockList]
   [inputs : CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
-  [exit-label : String]) : CompilerIrBlockList
+  [exit-label : i64]) : CompilerIrBlockList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) blocks]
     [(CompilerIrPhiInputList.Array seq)
@@ -36102,7 +36137,11 @@
           (opt-bce-mb-sink-retarget-preds
             blocks
             exit-label
-            (str_cat.str-cat exit-label "__xchk_" label)
+            (compiler-ir-label
+              (str_cat.str-cat
+                (compiler-ir-label-text exit-label)
+                "__xchk_"
+                (compiler-ir-label-text label)))
             label)
           (box-get rest)
           fast-labels
@@ -36113,15 +36152,15 @@
 ;; `pred-label`.
 (define (opt-bce-mb-sink-retarget-preds
   [blocks : CompilerIrBlockList]
-  [from-label : String]
-  [to-label : String]
-  [pred-label : String]) : CompilerIrBlockList
+  [from-label : i64]
+  [to-label : i64]
+  [pred-label : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
-          (if (string.eq label pred-label)
+          (if (= label pred-label)
             (compiler-ir-block-cons
               (compiler-ir-block
                 label
@@ -36150,7 +36189,7 @@
 (define (opt-bce-mb-sink-check-blocks-from
   [inputs : CompilerIrPhiInputList]
   [fast-labels : OptLabelSet]
-  [exit-label : String]
+  [exit-label : i64]
   [len : CompilerIrValue]
   [blocks : CompilerIrBlockList]
   [cell : (Array i64)]) : CompilerIrBlockList
@@ -36174,9 +36213,16 @@
           blocks
           cell)
         (let
-          [check-label : String (str_cat.str-cat exit-label "__xchk_" label)]
+          [check-label : i64
+            (compiler-ir-label
+              (str_cat.str-cat
+                (compiler-ir-label-text exit-label)
+                "__xchk_"
+                (compiler-ir-label-text label)))]
           [cast-var : i64 (opt-bce-version-alloc-var cell)]
-          [ok-label : String (str_cat.str-cat check-label ".0")]
+          [ok-label : i64
+            (compiler-ir-label
+              (str_cat.str-cat (compiler-ir-label-text check-label) ".0"))]
           (compiler-ir-block-cons
             (compiler-ir-block
               check-label
@@ -36276,8 +36322,11 @@
                 (array.make-array CompilerIrValue frame)]
               [_fill : unit (opt-unroll-remap-fill remap 0)]
               [_alloc : unit (opt-bce-mb-alloc-defs! body-blocks remap cell)]
-              [guard-label : String
-                (string.append (struct-get shape header) "__bce_guard")]
+              [guard-label : i64
+                (compiler-ir-label
+                  (string.append
+                    (compiler-ir-label-text (struct-get shape header))
+                    "__bce_guard"))]
               [fast-blocks : CompilerIrBlockList
                 (opt-bce-mb-clone-blocks
                   body-blocks
@@ -36295,7 +36344,10 @@
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Branch
                         guard-value
-                        (string.append (struct-get shape header) "__bce_fast")
+                        (compiler-ir-label
+                          (string.append
+                            (compiler-ir-label-text (struct-get shape header))
+                            "__bce_fast"))
                         (struct-get shape header))
                       (CompilerIrInstrList.Nil))))]
               (OptUnrollResult.Result
@@ -36313,7 +36365,10 @@
                       rewritten-blocks
                       (struct-get shape header)
                       (struct-get shape preheader)
-                      (string.append (struct-get shape header) "__bce_guard")
+                      (compiler-ir-label
+                        (string.append
+                          (compiler-ir-label-text (struct-get shape header))
+                          "__bce_guard"))
                       (opt-bce-mb-canon-value blocks (struct-get shape seed))
                       (struct-get shape iphi))]
                   (opt-bce-mb-split-exit-checks
@@ -36336,7 +36391,7 @@
   [blocks : CompilerIrBlockList]
   [all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
-  [entry-label : String]
+  [entry-label : i64]
   [frame : i64]) : OptUnrollResult
   (match loops
     [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
@@ -36502,10 +36557,10 @@
 ;; pays one increment/compare/branch while every memory operation remains in
 ;; the already-proven check-free fast region.
 (defstruct OptUnrollMbShape
-  (header String)
-  (latch String)
-  (preheader String)
-  (exit-label String)
+  (header i64)
+  (latch i64)
+  (preheader i64)
+  (exit-label i64)
   (body-labels OptLabelSet)
   (body-blocks CompilerIrBlockList)
   (iphi i64)
@@ -36525,14 +36580,18 @@
 
 (define (opt-unroll-mb-label
   [body-labels : OptLabelSet]
-  [label : String]
-  [copy : i64]) : String
+  [label : i64]
+  [copy : i64]) : i64
   (if (opt-label-contains body-labels label)
-    (string.append label (opt-unroll-mb-copy-suffix copy))
+    (compiler-ir-label
+      (string.append
+        (compiler-ir-label-text label)
+        (opt-unroll-mb-copy-suffix copy)))
     label))
 
-(define (opt-unroll-mb-guard-label [header : String]) : String
-  (string.append header "__unroll2_guard"))
+(define (opt-unroll-mb-guard-label [header : i64]) : i64
+  (compiler-ir-label
+    (string.append (compiler-ir-label-text header) "__unroll2_guard")))
 
 (define (opt-unroll-mb-block-terminator-ok? [instr : CompilerIrInstr]) : bool
   (match instr
@@ -36620,8 +36679,9 @@
     [(OptLabelSet.Cons label rest)
       (let
         [marker : String "__bce_fast"]
+        [text : String (compiler-ir-label-text label)]
         (and
-          (string.contains (& label) (& marker))
+          (string.contains (& text) (& marker))
           (opt-unroll-mb-all-fast-labels? (box-get rest))))]))
 
 (define (opt-unroll-mb-labels-fresh?
@@ -36634,17 +36694,23 @@
         (not
           (opt-cfg-block-exists?
             blocks
-            (string.append label (opt-unroll-mb-copy-suffix 0))))
+            (compiler-ir-label
+              (string.append
+                (compiler-ir-label-text label)
+                (opt-unroll-mb-copy-suffix 0)))))
         (not
           (opt-cfg-block-exists?
             blocks
-            (string.append label (opt-unroll-mb-copy-suffix 1))))
+            (compiler-ir-label
+              (string.append
+                (compiler-ir-label-text label)
+                (opt-unroll-mb-copy-suffix 1)))))
         (opt-unroll-mb-labels-fresh? blocks (box-get rest)))]))
 
 (define (opt-unroll-mb-block-jumps-to?
   [blocks : CompilerIrBlockList]
-  [label : String]
-  [target : String]) : bool
+  [label : i64]
+  [target : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -36655,15 +36721,15 @@
             (and
               (> count 0)
               (match (compiler-ir-instr-seq-ref instrs (- count 1))
-                [(CompilerIrInstr.Jump actual) (string.eq actual target)]
+                [(CompilerIrInstr.Jump actual) (= actual target)]
                 [_ false])))])]))
 
 ;; The only admitted control shape is H -> {then, else} -> L -> {H, exit}.
 (define (opt-unroll-mb-diamond?
   [blocks : CompilerIrBlockList]
   [body-labels : OptLabelSet]
-  [header : String]
-  [latch : String]) : bool
+  [header : i64]
+  [latch : i64]) : bool
   (match (opt-cfg-find-block blocks header)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -36676,11 +36742,11 @@
               (match (compiler-ir-instr-seq-ref instrs (- count 1))
                 [(CompilerIrInstr.Branch _ then-label else-label)
                   (and
-                    (not (string.eq then-label else-label))
-                    (not (string.eq then-label header))
-                    (not (string.eq else-label header))
-                    (not (string.eq then-label latch))
-                    (not (string.eq else-label latch))
+                    (not (= then-label else-label))
+                    (not (= then-label header))
+                    (not (= else-label header))
+                    (not (= then-label latch))
+                    (not (= else-label latch))
                     (opt-label-contains body-labels then-label)
                     (opt-label-contains body-labels else-label)
                     (opt-unroll-mb-block-jumps-to? blocks then-label latch)
@@ -36804,14 +36870,14 @@
 
 (define (opt-unroll-mb-shape-finish
   [blocks : CompilerIrBlockList]
-  [header : String]
-  [latch : String]
-  [preheader : String]
+  [header : i64]
+  [latch : i64]
+  [preheader : i64]
   [body-labels : OptLabelSet]
   [body-blocks : CompilerIrBlockList]
   [counter : OptBceMbMaybeCounter]
   [cond-var : i64]
-  [exit-label : String]) : OptUnrollMbMaybeShape
+  [exit-label : i64]) : OptUnrollMbMaybeShape
   (match counter
     [(OptBceMbMaybeCounter.No) (OptUnrollMbMaybeShape.No)]
     [(OptBceMbMaybeCounter.Some iphi seed inext bound)
@@ -36864,7 +36930,7 @@
 
 (define (opt-unroll-mb-loop-shape
   [blocks : CompilerIrBlockList]
-  [entry-label : String]
+  [entry-label : i64]
   [loop : OptNaturalLoop]) : OptUnrollMbMaybeShape
   (match loop
     [(OptNaturalLoop.Loop header latch body preheader)
@@ -36875,7 +36941,7 @@
             [body-labels : OptLabelSet (struct-get body labels)]
             [body-blocks : CompilerIrBlockList (struct-get body blocks)]
             (if (or
-              (string.eq header entry-label)
+              (= header entry-label)
               (not (= (opt-label-count body-labels) 4)))
               (OptUnrollMbMaybeShape.No)
               (match (opt-cfg-find-block blocks latch)
@@ -37052,7 +37118,7 @@
           (struct-get shape inext))))))
 
 (define (opt-unroll-mb-clone-instrs
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [shape : OptUnrollMbShape]
@@ -37065,7 +37131,7 @@
     (if (or
       (and
         (= copy 1)
-        (string.eq label (struct-get shape header))
+        (= label (struct-get shape header))
         (match (compiler-ir-instr-seq-ref instrs index)
           [(CompilerIrInstr.Phi dst _ _) (= dst (struct-get shape iphi))]
           [_ false]))
@@ -37074,7 +37140,7 @@
       ;; `i + 1` in copy 1, where the offset must remain address-only.
       (and
         (= copy 0)
-        (string.eq label (struct-get shape latch))
+        (= label (struct-get shape latch))
         (opt-unroll-mb-copy0-counter-tail?
           (compiler-ir-instr-seq-ref instrs index)
           shape)))
@@ -37095,7 +37161,7 @@
             remap0
             remap1)]
         [cloned : CompilerIrInstr
-          (if (and last? (string.eq label (struct-get shape latch)))
+          (if (and last? (= label (struct-get shape latch)))
             (match instr
               [(CompilerIrInstr.Branch cond _ _)
                 (if (= copy 0)
@@ -37113,7 +37179,7 @@
                     (struct-get shape exit-label)))]
               [_ instr])
             (if (and
-              (string.eq label (struct-get shape header))
+              (= label (struct-get shape header))
               (match instr
                 [(CompilerIrInstr.Phi _ _ _) true]
                 [_ false]))
@@ -37208,8 +37274,8 @@
 (define (opt-unroll-mb-peel-header-instrs
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [latch : String]
-  [guard-label : String]) : CompilerIrInstrList
+  [latch : i64]
+  [guard-label : i64]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
     (let
@@ -37232,8 +37298,8 @@
 
 (define (opt-unroll-mb-extend-exit-phi-inputs
   [inputs : CompilerIrPhiInputList]
-  [latch : String]
-  [clone-latch : String]
+  [latch : i64]
+  [clone-latch : i64]
   [remap1 : (Array CompilerIrValue)]) : CompilerIrPhiInputList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
@@ -37251,7 +37317,7 @@
             latch
             clone-latch
             remap1)]
-        (if (string.eq label latch)
+        (if (= label latch)
           (compiler-ir-phi-input-cons
             value
             label
@@ -37264,8 +37330,8 @@
 (define (opt-unroll-mb-extend-exit-instrs
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [latch : String]
-  [clone-latch : String]
+  [latch : i64]
+  [clone-latch : i64]
   [remap1 : (Array CompilerIrValue)]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
@@ -37312,7 +37378,7 @@
                 copy1
                 remap1)]
             (cond
-              [(string.eq label (struct-get shape header))
+              [(= label (struct-get shape header))
                 (compiler-ir-block-cons
                   guard-block
                   (opt-bce-mb-blocks-cons-onto
@@ -37329,7 +37395,7 @@
                             (opt-unroll-mb-guard-label
                               (struct-get shape header))))
                         tail))))]
-              [(string.eq label (struct-get shape preheader))
+              [(= label (struct-get shape preheader))
                 (compiler-ir-block-cons
                   (compiler-ir-block
                     label
@@ -37339,7 +37405,7 @@
                       (struct-get shape header)
                       (opt-unroll-mb-guard-label (struct-get shape header))))
                   tail)]
-              [(string.eq label (struct-get shape latch))
+              [(= label (struct-get shape latch))
                 (compiler-ir-block-cons
                   (compiler-ir-block
                     label
@@ -37412,7 +37478,7 @@
         [span : i64 (opt-unroll-alloc-var cell)]
         [odd : i64 (opt-unroll-alloc-var cell)]
         [is-odd : i64 (opt-unroll-alloc-var cell)]
-        [guard-label : String
+        [guard-label : i64
           (opt-unroll-mb-guard-label (struct-get shape header))]
         [guard-block : CompilerIrBlock
           (compiler-ir-block
@@ -37466,7 +37532,7 @@
   [blocks : CompilerIrBlockList]
   [_all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
-  [entry-label : String]
+  [entry-label : i64]
   [frame : i64]) : OptUnrollResult
   (match loops
     [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
@@ -37499,8 +37565,9 @@
         [(CompilerIrBlock.Block label instrs)
           (let
             [marker : String "__bce_fast"]
+            [text : String (compiler-ir-label-text label)]
             (if (and
-              (string.contains (& label) (& marker))
+              (string.contains (& text) (& marker))
               (> (compiler-ir-instr-seq-count instrs) 0)
               (compiler-ir-instr-seq-phi? instrs 0))
               true
@@ -38208,7 +38275,7 @@
   ;; `origins[i]` is that source index for a moved instruction and -1 for a
   ;; rematerialized clone. Keeping the distinction makes use accounting ignore
   ;; new clone uses when deciding whether another original producer can move.
-  (Move String (Array i64) String CompilerIrInstrSeq (Array i64)))
+  (Move i64 (Array i64) i64 CompilerIrInstrSeq (Array i64)))
 
 (defenum OptSuccessorSinkMoves
   (Nil)
@@ -38216,7 +38283,7 @@
 
 (defenum OptSuccessorSinkMaybeLabel
   (No)
-  (Some String))
+  (Some i64))
 
 (defenum OptSuccessorSinkPrepared
   (No)
@@ -38232,11 +38299,11 @@
 
 (defenum OptSuccessorSinkMaybeInductionShape
   (No)
-  (Some String String))
+  (Some i64 i64))
 
 (defstruct OptSuccessorSinkPrepareContext
   (frame i64)
-  (target String)
+  (target i64)
   (blocks CompilerIrBlockList)
   (instrs CompilerIrInstrSeq)
   (terminator-index i64)
@@ -38607,7 +38674,7 @@
           [(OptSuccessorSinkMaybeLabel.No)
             (OptSuccessorSinkMaybeInductionShape.No)]
           [(OptSuccessorSinkMaybeLabel.Some step-label)
-            (if (string.eq seed-label step-label)
+            (if (= seed-label step-label)
               (OptSuccessorSinkMaybeInductionShape.No)
               (OptSuccessorSinkMaybeInductionShape.Some seed-label step-label))])])))
 
@@ -38705,7 +38772,7 @@
           [(OptSuccessorSinkMaybeLabel.No)
             (OptSuccessorSinkMaybeInductionShape.No)]
           [(OptSuccessorSinkMaybeLabel.Some step-label)
-            (if (string.eq seed-label step-label)
+            (if (= seed-label step-label)
               (OptSuccessorSinkMaybeInductionShape.No)
               (OptSuccessorSinkMaybeInductionShape.Some seed-label step-label))])])))
 
@@ -38961,8 +39028,8 @@
                                         ptr-seed
                                         ptr-step)
                                       (if (and
-                                        (string.eq iv-seed ptr-seed)
-                                        (string.eq iv-step ptr-step))
+                                        (= iv-seed ptr-seed)
+                                        (= iv-step ptr-step))
                                         (OptSuccessorSinkMaybeRecipe.Some
                                           mul
                                           base
@@ -38996,7 +39063,7 @@
 ;; the successor. The insertion point is immediately after this leading prefix.
 (define (opt-successor-sink-collect-successor-uses!
   [blocks : CompilerIrBlockList]
-  [target : String]
+  [target : i64]
   [uses : (Array i64)]) : unit
   (match (opt-cfg-find-block blocks target)
     [(OptMaybeBlock.No) unit]
@@ -39015,7 +39082,7 @@
 
 (define (opt-successor-sink-collect-moved-uses!
   [moves : OptSuccessorSinkMoves]
-  [target : String]
+  [target : i64]
   [uses : (Array i64)]) : unit
   (match moves
     [(OptSuccessorSinkMoves.Nil) unit]
@@ -39023,7 +39090,7 @@
       (begin
         (match move
           [(OptSuccessorSinkMove.Move _ _ move-target instrs origins)
-            (if (string.eq move-target target)
+            (if (= move-target target)
               (let
                 [index : i64 0]
                 [count : i64 (compiler-ir-instr-seq-count instrs)]
@@ -39042,9 +39109,9 @@
 
 (define (opt-successor-sink-single-pred?
   [cfg : OptCfgIndex]
-  [source : String]
-  [target : String]) : bool
-  (if (string.eq source target)
+  [source : i64]
+  [target : i64]) : bool
+  (if (= source target)
     false
     (let
       [preds : OptLabelSet (opt-cfg-index-predecessors cfg target)]
@@ -39057,8 +39124,8 @@
   [total-uses : (Array i64)]
   [allowed-uses : (Array i64)]
   [moves : OptSuccessorSinkMoves]
-  [source : String]
-  [target : String]
+  [source : i64]
+  [target : i64]
   [dst : i64]) : bool
   (if (or (< dst 0) (>= dst frame))
     false
@@ -39084,7 +39151,7 @@
   [total-uses : (Array i64)]
   [allowed-uses : (Array i64)]
   [moves : OptSuccessorSinkMoves]
-  [source : String]
+  [source : i64]
   [successors : OptLabelSet]
   [dst : i64]) : OptSuccessorSinkMaybeLabel
   (match successors
@@ -39183,13 +39250,13 @@
 (define (opt-successor-sink-loop-target?
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
-  [source : String]
-  [target : String]) : bool
+  [source : i64]
+  [target : i64]) : bool
   (match loops
     [(OptNaturalLoopList.Nil) false]
     [(OptNaturalLoopList.Cons loop rest)
       (if (and
-        (string.eq (opt-natural-loop-header loop) source)
+        (= (opt-natural-loop-header loop) source)
         (opt-loop-body-label-member?
           (opt-natural-loop-body-info loop)
           index
@@ -39515,7 +39582,7 @@
   [total-uses : (Array i64)]
   [loop-phi-leaves : (Array i64)]
   [moves : OptSuccessorSinkMoves]
-  [target : String]
+  [target : i64]
   [instrs : CompilerIrInstrSeq]
   [terminator-index : i64]
   [index : i64]
@@ -39748,7 +39815,7 @@
 
 (define (opt-successor-sink-source-index?
   [moves : OptSuccessorSinkMoves]
-  [source : String]
+  [source : i64]
   [index : i64]) : bool
   (match moves
     [(OptSuccessorSinkMoves.Nil) false]
@@ -39756,7 +39823,7 @@
       (match move
         [(OptSuccessorSinkMove.Move move-source removed _ _ _)
           (if (and
-            (string.eq move-source source)
+            (= move-source source)
             (>= index 0)
             (< index (array-length removed))
             (> (array-ref removed index) 0))
@@ -39765,7 +39832,7 @@
 
 (define (opt-successor-sink-push-target-moves!
   [moves : OptSuccessorSinkMoves]
-  [target : String]
+  [target : i64]
   [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
   (match moves
     [(OptSuccessorSinkMoves.Nil) unit]
@@ -39773,7 +39840,7 @@
       (begin
         (match move
           [(OptSuccessorSinkMove.Move _ _ move-target instrs _)
-            (if (string.eq move-target target)
+            (if (= move-target target)
               (let
                 [index : i64 0]
                 [count : i64 (compiler-ir-instr-seq-count instrs)]
@@ -40052,7 +40119,7 @@
 
 ;; ---------------------------------------------------------------------------
 (defstruct OptIfConvertBlockFact
-  (label String)
+  (label i64)
   (instrs CompilerIrInstrSeq)
   (count i64)
   (first CompilerIrInstrScalarFact)
@@ -40097,11 +40164,11 @@
           (set! index (+ index 1))))
       facts)))
 
-(define (opt-if-convert-arm? [fact : OptIfConvertBlockFact] [merge : String]) : bool
+(define (opt-if-convert-arm? [fact : OptIfConvertBlockFact] [merge : i64]) : bool
   (and
     (= (struct-get fact count) 1)
     (match (struct-get fact last)
-      [(CompilerIrInstrScalarFact.Jump target) (string.eq target merge)]
+      [(CompilerIrInstrScalarFact.Jump target) (= target merge)]
       [_ false])))
 
 (define (opt-if-convert-live-values?
@@ -40125,10 +40192,10 @@
       [a : OptIfConvertBlockFact (array-ref facts (+ id 1))]
       [b : OptIfConvertBlockFact (array-ref facts (+ id 2))]
       [merge : OptIfConvertBlockFact (array-ref facts (+ id 3))]
-      [source-label : String (struct-get source label)]
-      [a-label : String (struct-get a label)]
-      [b-label : String (struct-get b label)]
-      [merge-label : String (struct-get merge label)]
+      [source-label : i64 (struct-get source label)]
+      [a-label : i64 (struct-get a label)]
+      [b-label : i64 (struct-get b label)]
+      [merge-label : i64 (struct-get merge label)]
       [source-instrs : CompilerIrInstrSeq (struct-get source instrs)]
       [merge-instrs : CompilerIrInstrSeq (struct-get merge instrs)]
       (begin
@@ -40146,8 +40213,8 @@
           [(CompilerIrInstrScalarFact.Branch condition yes no)
             (if (not
               (or
-                (and (string.eq a-label yes) (string.eq b-label no))
-                (and (string.eq a-label no) (string.eq b-label yes))))
+                (and (= a-label yes) (= b-label no))
+                (and (= a-label no) (= b-label yes))))
               false
               (match condition
                 [(CompilerIrValue.Var condition-var)
@@ -40181,11 +40248,11 @@
                                     (not
                                       (or
                                         (and
-                                          (string.eq first-label yes)
-                                          (string.eq second-label no))
+                                          (= first-label yes)
+                                          (= second-label no))
                                         (and
-                                          (string.eq first-label no)
-                                          (string.eq second-label yes))))
+                                          (= first-label no)
+                                          (= second-label yes))))
                                     (not
                                       (opt-if-convert-live-values? first second)))
                                     false
@@ -40195,10 +40262,10 @@
                                           (ir-instr-select
                                             dst
                                             condition
-                                            (if (string.eq first-label yes)
+                                            (if (= first-label yes)
                                               first
                                               second)
-                                            (if (string.eq first-label yes)
+                                            (if (= first-label yes)
                                               second
                                               first)
                                             0
@@ -42665,7 +42732,7 @@
 
 (defenum OptInlinePredRenameList
   (Nil)
-  (Cons String String (Box OptInlinePredRenameList)))
+  (Cons i64 i64 (Box OptInlinePredRenameList)))
 
 (defenum OptInlineBlocks
   (Blocks CompilerIrBlockList i64 i64))
@@ -42942,7 +43009,7 @@
 
 (define (opt-inline-phi-input-label?
   [inputs : CompilerIrPhiInputList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) false]
     [(CompilerIrPhiInputList.Array seq)
@@ -42950,14 +43017,14 @@
         (compiler-ir-phi-input-seq-to-list seq)
         label)]
     [(CompilerIrPhiInputList.Cons _ input-label rest)
-      (if (string.eq input-label label)
+      (if (= input-label label)
         true
         (opt-inline-phi-input-label? (box-get rest) label))]))
 
 (define (opt-inline-instr-seq-phi-label-from?
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [label : String]) : bool
+  [label : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
     (match (compiler-ir-instr-seq-ref instrs index)
@@ -43019,8 +43086,8 @@
 ;; every non-matching phi input byte-for-byte equivalent.
 (define (opt-inline-repair-successor-phis
   [blocks : CompilerIrBlockList]
-  [old-label : String]
-  [new-label : String]) : CompilerIrBlockList
+  [old-label : i64]
+  [new-label : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -43770,10 +43837,13 @@
         (opt-inline-remap-value value sa np base)
         (opt-inline-remap-value-list (box-get rest) sa np base))]))
 
-(define (opt-inline-maybe-prefix-label [prefix : String] [label : String]) : String
+;; Inlining renames a callee's blocks by prefixing the caller-site tag onto the
+;; original spelling, so the derived name is re-interned into a fresh id.
+(define (opt-inline-maybe-prefix-label [prefix : String] [label : i64]) : i64
   (if (string.eq prefix "")
-    (clone label)
-    (string.append (string.append prefix ".") label)))
+    label
+    (compiler-ir-label
+      (string.append (string.append prefix ".") (compiler-ir-label-text label)))))
 
 (define (opt-inline-clone-instr
   [instr : CompilerIrInstr]
@@ -44070,18 +44140,20 @@
 
 (define (opt-inline-site-prefix
   [_func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [pos : i64]
   [_callee-name : i64]) : String
   (string.append
-    (string.append (string.append "inl." block-label) ".")
+    (string.append
+      (string.append "inl." (compiler-ir-label-text block-label))
+      ".")
     (string.int->string pos)))
 
-(define (opt-inline-prefix-label [prefix : String] [label : String]) : String
+(define (opt-inline-prefix-label [prefix : String] [label : i64]) : i64
   (opt-inline-maybe-prefix-label prefix label))
 
-(define (opt-inline-cont-label [prefix : String]) : String
-  (string.append prefix ".cont"))
+(define (opt-inline-cont-label [prefix : String]) : i64
+  (compiler-ir-label (string.append prefix ".cont")))
 
 (define (opt-inline-remap-phi-inputs
   [inputs : CompilerIrPhiInputList]
@@ -44176,9 +44248,9 @@
   [instrs : CompilerIrInstrSeq]
   [pos : i64]
   [count : i64]
-  [cloned-label : String]
+  [cloned-label : i64]
   [prefix : String]
-  [cont-label : String]
+  [cont-label : i64]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
@@ -44219,9 +44291,9 @@
 
 (define (opt-inline-clone-multiblock-instr-seq
   [instrs : CompilerIrInstrSeq]
-  [cloned-label : String]
+  [cloned-label : i64]
   [prefix : String]
-  [cont-label : String]
+  [cont-label : i64]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
@@ -44239,14 +44311,14 @@
 (define (opt-inline-clone-multiblock-block
   [block : CompilerIrBlock]
   [prefix : String]
-  [cont-label : String]
+  [cont-label : i64]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiClone
   (match block
     [(CompilerIrBlock.Block label instrs)
       (let
-        [cloned-label : String (opt-inline-prefix-label prefix label)]
+        [cloned-label : i64 (opt-inline-prefix-label prefix label)]
         (match (opt-inline-clone-multiblock-instr-seq
           instrs
           cloned-label
@@ -44265,7 +44337,7 @@
 (define (opt-inline-clone-multiblock-blocks
   [blocks : CompilerIrBlockList]
   [prefix : String]
-  [cont-label : String]
+  [cont-label : i64]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiClone
@@ -44436,7 +44508,7 @@
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [vars : i64]
   [caller-blocks : i64]
@@ -44549,7 +44621,7 @@
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [vars : i64]
   [caller-blocks : i64]
@@ -44678,7 +44750,7 @@
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [vars : i64]
   [caller-blocks : i64]
@@ -44729,7 +44801,7 @@
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [vars : i64]
   [caller-blocks : i64]
@@ -44785,7 +44857,7 @@
                 spans3)])]))))
 
 (define (opt-inline-rewrite-single-block-seq
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -44818,7 +44890,7 @@
         added2)]))
 
 (define (opt-inline-multiblock-build-rewrite-seq
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]
   [call-pos : i64]
   [count : i64]
@@ -44935,11 +45007,11 @@
                             block-label
                             site-pos
                             callee-name)]
-                        [entry-label : String
+                        [entry-label : i64
                           (opt-inline-prefix-label
                             prefix
                             (opt-cfg-entry-label cblocks))]
-                        [cont-label : String (opt-inline-cont-label prefix)]
+                        [cont-label : i64 (opt-inline-cont-label prefix)]
                         [vars2 : i64
                           (+
                             prefix-vars
@@ -45041,7 +45113,7 @@
   [instrs : CompilerIrInstrSeq]
   [pos : i64]
   [count : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -45201,9 +45273,9 @@
   [instrs : CompilerIrInstrSeq]
   [pos : i64]
   [count : i64]
-  [cloned-label : String]
+  [cloned-label : i64]
   [prefix : String]
-  [cont-label : String]
+  [cont-label : i64]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -45269,9 +45341,9 @@
 
 (define (opt-inline-clone-multiblock-instr-seq-with-spans
   [instrs : CompilerIrInstrSeq]
-  [cloned-label : String]
+  [cloned-label : i64]
   [prefix : String]
-  [cont-label : String]
+  [cont-label : i64]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -45299,7 +45371,7 @@
 (define (opt-inline-clone-multiblock-block-with-spans
   [block : CompilerIrBlock]
   [prefix : String]
-  [cont-label : String]
+  [cont-label : i64]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -45311,7 +45383,7 @@
   (match block
     [(CompilerIrBlock.Block label instrs)
       (let
-        [cloned-label : String (opt-inline-prefix-label prefix label)]
+        [cloned-label : i64 (opt-inline-prefix-label prefix label)]
         (match (opt-inline-clone-multiblock-instr-seq-with-spans
           instrs
           cloned-label
@@ -45336,7 +45408,7 @@
 (define (opt-inline-clone-multiblock-blocks-with-spans
   [blocks : CompilerIrBlockList]
   [prefix : String]
-  [cont-label : String]
+  [cont-label : i64]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -45397,7 +45469,7 @@
         callee)]))
 
 (define (opt-inline-rewrite-single-block-seq-with-spans
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -45435,7 +45507,7 @@
         spans2)]))
 
 (define (opt-inline-multiblock-build-span-rewrite-seq
-  [block-label : String]
+  [block-label : i64]
   [instrs : CompilerIrInstrSeq]
   [call-pos : i64]
   [count : i64]
@@ -45552,11 +45624,11 @@
                             block-label
                             site-pos
                             callee-name)]
-                        [entry-label : String
+                        [entry-label : i64
                           (opt-inline-prefix-label
                             prefix
                             (opt-cfg-entry-label cblocks))]
-                        [cont-label : String (opt-inline-cont-label prefix)]
+                        [cont-label : i64 (opt-inline-cont-label prefix)]
                         [vars2 : i64
                           (+
                             prefix-vars
@@ -45678,7 +45750,7 @@
   [instrs : CompilerIrInstrSeq]
   [pos : i64]
   [count : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -46429,7 +46501,7 @@
   [index : OptFunctionIndex]
   [flags : (Array bool)]
   [func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [vars : i64]) : OptInlineState
   (match instr
@@ -46482,7 +46554,7 @@
   [index : OptFunctionIndex]
   [flags : (Array bool)]
   [func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [vars : i64]) : OptInlineState
   (if (>= pos end)
@@ -46626,7 +46698,7 @@
   [index : OptFunctionIndex]
   [flags : (Array bool)]
   [func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [vars : i64]
   [source-spans : CompilerSourceSpans]
@@ -46692,7 +46764,7 @@
   [index : OptFunctionIndex]
   [flags : (Array bool)]
   [func-name : i64]
-  [block-label : String]
+  [block-label : i64]
   [site-pos : i64]
   [vars : i64]
   [source-spans : CompilerSourceSpans]
@@ -47924,7 +47996,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (if has-entry
           (compiler-ir-instr-cons
             (CompilerIrInstr.EntryArgc 0)
@@ -50956,8 +51028,8 @@
     [status : String]
     [scope : String]
     [function : String]
-    [label : String]
-    [latch : String]
+    [label : i64]
+    [latch : i64]
     [allocs : i64]
     [bytes : i64]
     [reason : String]) : String
@@ -50988,8 +51060,8 @@
   (define (compiler-opt-scratch-region-report-one
     [scope : String]
     [function : String]
-    [label : String]
-    [latch : String]
+    [label : i64]
+    [latch : i64]
     [report : OptScratchScopeReport]) : unit
     (match report
       [(OptScratchScopeReport.Report allocs bytes blocker)
@@ -51024,7 +51096,7 @@
                 "block"
                 function
                 label
-                "-"
+                (compiler-ir-label "-")
                 (opt-scratch-scope-report-block block))])
           (compiler-opt-scratch-region-report-blocks function (box-get rest)))]
       [(CompilerIrBlockList.Array seq)
@@ -51062,8 +51134,8 @@
             (compiler-opt-scratch-region-report-one
               "function"
               name-text
-              "-"
-              "-"
+              (compiler-ir-label "-")
+              (compiler-ir-label "-")
               (opt-scratch-scope-report-blocks blocks))
             (compiler-opt-scratch-region-report-blocks name-text blocks)
             (compiler-opt-scratch-region-report-loops
@@ -51101,11 +51173,11 @@
 
 (defenum OptScratchResetMarkBlock
   (No)
-  (Some String))
+  (Some i64))
 
 (defenum OptScratchResetMarkCandidate
   (None)
-  (One String)
+  (One i64)
   (Many))
 
 (define (opt-scratch-scope-state-blocks [blocks : CompilerIrBlockList]) : OptScratchScopeState
@@ -51122,7 +51194,7 @@
 
 (define (opt-scratch-block-alloc-count
   [blocks : CompilerIrBlockList]
-  [label : String]) : i64
+  [label : i64]) : i64
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) 0]
     [(OptMaybeBlock.Some block)
@@ -51130,7 +51202,7 @@
 
 (define (opt-scratch-reset-mark-candidate-add
   [candidate : OptScratchResetMarkCandidate]
-  [pred : String]) : OptScratchResetMarkCandidate
+  [pred : i64]) : OptScratchResetMarkCandidate
   (match candidate
     [(OptScratchResetMarkCandidate.None)
       (OptScratchResetMarkCandidate.One pred)]
@@ -51157,7 +51229,7 @@
 
 (define (opt-scratch-reset-mark-candidate-scan-not-label
   [reachable : OptLabelSet]
-  [skip : String]
+  [skip : i64]
   [preds : OptLabelSet]
   [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
   (match preds
@@ -51167,9 +51239,7 @@
         reachable
         skip
         (box-get rest)
-        (if (and
-          (opt-label-contains reachable pred)
-          (not (string.eq pred skip)))
+        (if (and (opt-label-contains reachable pred) (not (= pred skip)))
           (opt-scratch-reset-mark-candidate-add candidate pred)
           candidate))]))
 
@@ -51188,12 +51258,12 @@
       (OptScratchResetMarkBlock.Some preheader)]
     [(OptLoopPreheader.No)
       (let
-        [header : String (opt-natural-loop-header loop)]
+        [header : i64 (opt-natural-loop-header loop)]
         [preds : OptLabelSet
           (opt-pred-map-lookup (struct-get context pred-map) header)]
         [reachable : OptLabelSet (struct-get context reachable)]
         (opt-scratch-reset-mark-block-from-candidate
-          (if (string.eq header (opt-natural-loop-latch loop))
+          (if (= header (opt-natural-loop-latch loop))
             (opt-scratch-reset-mark-candidate-scan-not-label
               reachable
               header
@@ -51297,10 +51367,10 @@
 
 (define (opt-scratch-successors-loop-safe?
   [body : OptLabelSet]
-  [label : String]
-  [header : String]
-  [latch : String]
-  [mark-block : String]
+  [label : i64]
+  [header : i64]
+  [latch : i64]
+  [mark-block : i64]
   [successors : OptLabelSet]) : bool
   (match successors
     [(OptLabelSet.Nil) true]
@@ -51308,9 +51378,9 @@
       (and
         (or
           (opt-label-contains body succ)
-          (string.eq label header)
-          (string.eq label latch)
-          (string.eq label mark-block))
+          (= label header)
+          (= label latch)
+          (= label mark-block))
         (opt-scratch-successors-loop-safe?
           body
           label
@@ -51322,9 +51392,9 @@
 (define (opt-scratch-loop-block-exits-safe?
   [index : OptCfgIndex]
   [body : OptLabelSet]
-  [header : String]
-  [latch : String]
-  [mark-block : String]
+  [header : i64]
+  [latch : i64]
+  [mark-block : i64]
   [block : CompilerIrBlock]) : bool
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -51341,9 +51411,9 @@
 (define (opt-scratch-loop-blocks-exits-safe?
   [index : OptCfgIndex]
   [body : OptLabelSet]
-  [header : String]
-  [latch : String]
-  [mark-block : String]
+  [header : i64]
+  [latch : i64]
+  [mark-block : i64]
   [blocks : CompilerIrBlockList]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) true]
@@ -51381,8 +51451,8 @@
     [(OptScratchResetMarkBlock.Some mark-block)
       (let
         [index : OptCfgIndex (struct-get context index)]
-        [header : String (opt-natural-loop-header loop)]
-        [latch : String (opt-natural-loop-latch loop)]
+        [header : i64 (opt-natural-loop-header loop)]
+        [latch : i64 (opt-natural-loop-latch loop)]
         [body : OptLabelSet (opt-natural-loop-body loop)]
         [body-blocks : CompilerIrBlockList
           (opt-natural-loop-current-body-blocks loop blocks)]
@@ -51391,7 +51461,7 @@
         (and
           (opt-scratch-state-candidate? state)
           (or
-            (string.eq header latch)
+            (= header latch)
             (= (opt-scratch-block-alloc-count blocks header) 0))
           (not (opt-scratch-state-loop-carried-candidate? state body-blocks))
           (opt-scratch-loop-blocks-exits-safe?
@@ -51432,19 +51502,19 @@
 
 (define (opt-scratch-reset-rewrite-block
   [block : CompilerIrBlock]
-  [preheader : String]
-  [latch : String]
+  [preheader : i64]
+  [latch : i64]
   [mark-var : i64]
   [reset-var : i64]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (if (string.eq label preheader)
+      (if (= label preheader)
         (compiler-ir-block
           label
           (opt-licm-insert-before-terminator-seq
             (opt-scratch-reset-mark-instrs mark-var)
             instrs))
-        (if (string.eq label latch)
+        (if (= label latch)
           (compiler-ir-block
             label
             (opt-licm-insert-before-terminator-seq
@@ -51454,8 +51524,8 @@
 
 (define (opt-scratch-reset-rewrite-blocks
   [blocks : CompilerIrBlockList]
-  [preheader : String]
-  [latch : String]
+  [preheader : i64]
+  [latch : i64]
   [mark-var : i64]
   [reset-var : i64]) : CompilerIrBlockList
   (match blocks
@@ -54052,15 +54122,15 @@
 ;; Header label -> proven loop-carry-safe.
 (defenum OptLoadGvnLoopSafeList
   (Nil)
-  (Cons String (Box OptLoadGvnLoopSafeList)))
+  (Cons i64 (Box OptLoadGvnLoopSafeList)))
 
 (define (opt-load-gvn-loop-safe-contains?
   [safe : OptLoadGvnLoopSafeList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match safe
     [(OptLoadGvnLoopSafeList.Nil) false]
     [(OptLoadGvnLoopSafeList.Cons name rest)
-      (if (string.eq name label)
+      (if (= name label)
         true
         (opt-load-gvn-loop-safe-contains? (box-get rest) label))]))
 
@@ -54089,7 +54159,7 @@
   [processed : (Array bool)]
   [sources : opt_i64_i64_map.Map]
   [loop-safe : OptLoadGvnLoopSafeList]
-  [label : String]
+  [label : i64]
   [empty-state : OptLoadCseState]
   [edge : i64]
   [end : i64]
@@ -54189,7 +54259,7 @@
   (let
     [index : OptCfgIndex (struct-get context index)]
     [preds : OptCfgCsr (struct-get index preds)]
-    [entry-label : String (struct-get context entry-label)]
+    [entry-label : i64 (struct-get context entry-label)]
     (match (opt-cfg-index-id index entry-label)
       [(option_i64.Some entry-id)
         (if (= id entry-id)
@@ -54269,7 +54339,7 @@
   [id : i64]) : unit
   (let
     [index : OptCfgIndex (struct-get context index)]
-    [label : String (opt-cfg-index-label index id)]
+    [label : i64 (opt-cfg-index-label index id)]
     [entry-state : OptLoadCseState
       (opt-load-gvn-entry-state
         context

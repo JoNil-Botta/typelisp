@@ -25,7 +25,7 @@
       5
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -97,7 +97,7 @@
     8
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 1 (CompilerIrValue.Var 0) (AstType.U64))
           (compiler-ir-instr-cons

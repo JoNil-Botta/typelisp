@@ -22,6 +22,9 @@
 (import stdlib.hash)
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as backend_string_i64_map)
+
+;; Block labels are interned ids, so their maps are integer-keyed (refs #5718).
+(import (hashmap.hashmap i64 i64) as backend_label_i64_map)
 (import (hashmap.hashmap i64 i64) as backend_i64_i64_map)
 (import stdlib.string)
 (import stdlib.byte_buf_core)
@@ -367,7 +370,7 @@
 
 (defenum CompilerBackendMaybeLabel
   (No)
-  (Some String))
+  (Some i64))
 
 (defenum CompilerBackendMaybeSignature
   (No)
@@ -628,8 +631,8 @@
   0)
 (define compiler-backend-shrinkwrap-bare-label : String
   "")
-(define compiler-backend-current-block-label : String
-  "")
+(define compiler-backend-current-block-label : i64
+  -1)
 
 ;; Compare->branch fusion state. A comparison result may be fused to `cmp`/`jcc`
 ;; (never materialized as a boolean) when EVERY use of it is a branch fed by its
@@ -659,7 +662,7 @@
   (function String)
   (source-function i64)
   (blocks CompilerIrBlockList)
-  (current-label String)
+  (current-label i64)
   (assignments CompilerRegAssignmentList)
   (vars i64)
   (types CompilerRegVarTypeList)
@@ -741,8 +744,27 @@
 (define (compiler-backend-empty-string-list) : BackendStringList
   BackendStringList.Nil)
 
-(define compiler-backend-current-phi-targets : BackendStringList
-  (compiler-backend-empty-string-list))
+;; Phi targets are block labels, so they are a list of interned ids rather
+;; than of spellings (refs #5718).
+(defenum BackendLabelList
+  (Nil)
+  (Cons i64 (Box BackendLabelList)))
+
+(define (compiler-backend-empty-label-list) : BackendLabelList
+  BackendLabelList.Nil)
+
+(define (compiler-backend-label-list-contains?
+  [items : BackendLabelList]
+  [needle : i64]) : bool
+  (match items
+    [(BackendLabelList.Nil) false]
+    [(BackendLabelList.Cons head rest)
+      (if (= head needle)
+        true
+        (compiler-backend-label-list-contains? (box-get rest) needle))]))
+
+(define compiler-backend-current-phi-targets : BackendLabelList
+  (compiler-backend-empty-label-list))
 (define compiler-backend-current-phi-target-count : i64
   0)
 (define compiler-backend-identity-tail-forwarder-active : bool
@@ -3356,17 +3378,18 @@
 
 (define (compiler-backend-avx512-mask-label
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [suffix : String]) : String
   (compiler-backend-asm-label
     function
-    (str_cat.str-cat
-      "tail_mask_"
-      current-label
-      "_v"
-      (string.int->string dst)
-      suffix)))
+    (compiler-ir-label
+      (str_cat.str-cat
+        "tail_mask_"
+        (compiler-ir-label-text current-label)
+        "_v"
+        (string.int->string dst)
+        suffix))))
 
 (define (compiler-backend-avx2-i64-lane-id-label) : String
   ".L_tl_lane_id_i64x4")
@@ -3455,7 +3478,7 @@
 
 (define (compiler-backend-emit-vector-lane-id
   [_function : String]
-  [_current-label : String]
+  [_current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [lanes : i64]
@@ -4813,17 +4836,18 @@
 
 (define (compiler-backend-shuffle-label
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [suffix : String]) : String
   (compiler-backend-asm-label
     function
-    (str_cat.str-cat
-      "vector_shuffle_"
-      current-label
-      "_v"
-      (string.int->string dst)
-      suffix)))
+    (compiler-ir-label
+      (str_cat.str-cat
+        "vector_shuffle_"
+        (compiler-ir-label-text current-label)
+        "_v"
+        (string.int->string dst)
+        suffix))))
 
 (define (compiler-backend-shuffle-selector-offset
   [lane : i64]
@@ -4835,7 +4859,7 @@
 
 (define (compiler-backend-shuffle-index-lane-asm
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [lane : i64]
   [lanes : i64]
@@ -4932,7 +4956,7 @@
 (define (compiler-backend-emit-vector-shuffle
   [target : CompilerBackendTarget]
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [source : CompilerIrValue]
@@ -6379,7 +6403,7 @@
 
 (define (compiler-backend-emit-avx512-tail-mask-dynamic
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst-reg : String]
   [dst : i64]
@@ -6536,7 +6560,7 @@
 
 (define (compiler-backend-emit-avx512-tail-mask
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [index : CompilerIrValue]
@@ -8002,17 +8026,18 @@
 
 (define (compiler-backend-avx2-mask-label
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [suffix : String]) : String
   (compiler-backend-asm-label
     function
-    (str_cat.str-cat
-      "avx2_mask_"
-      current-label
-      "_v"
-      (string.int->string dst)
-      suffix)))
+    (compiler-ir-label
+      (str_cat.str-cat
+        "avx2_mask_"
+        (compiler-ir-label-text current-label)
+        "_v"
+        (string.int->string dst)
+        suffix))))
 
 (define (compiler-backend-address-add-byte-offset [addr : String] [disp : i64]) : String
   (if (= disp 0)
@@ -8079,7 +8104,7 @@
 
 (define (compiler-backend-avx2-predicated-load-lanes
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [addr : String]
   [lane : i64]
@@ -8161,7 +8186,7 @@
 
 (define (compiler-backend-avx2-predicated-store-lanes
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst-tag : i64]
   [addr : String]
   [lane : i64]
@@ -8217,7 +8242,7 @@
 
 (define (compiler-backend-avx2-predicated-bool-store-lanes
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst-tag : i64]
   [addr : String]
   [lane : i64]
@@ -8259,7 +8284,7 @@
 
 (define (compiler-backend-emit-avx2-predicated-load
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -8342,7 +8367,7 @@
 
 (define (compiler-backend-emit-avx2-predicated-store
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
@@ -8467,7 +8492,7 @@
 
 (define (compiler-backend-emit-predicated-load
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -8500,7 +8525,7 @@
 
 (define (compiler-backend-emit-predicated-store
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
@@ -8533,7 +8558,7 @@
 
 (define (compiler-backend-avx2-tail-mask-fill-lanes
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [lane : i64]
   [lanes : i64]
@@ -8578,7 +8603,7 @@
 
 (define (compiler-backend-emit-avx2-tail-mask
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [index : CompilerIrValue]
@@ -8643,7 +8668,7 @@
 
 (define (compiler-backend-emit-tail-mask
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [index : CompilerIrValue]
@@ -8862,8 +8887,12 @@
   (compiler-backend-frame-offset
     (compiler-backend-win64-xmm-callee-slot-offset assignments vars idx)))
 
-(define (compiler-backend-asm-label [function : String] [label : String]) : String
-  (str_cat.str-cat ".L" (compiler-backend-asm-safe-symbol function) "_" label))
+(define (compiler-backend-asm-label [function : String] [label : i64]) : String
+  (str_cat.str-cat
+    ".L"
+    (compiler-backend-asm-safe-symbol function)
+    "_"
+    (compiler-ir-label-text label)))
 
 (define (compiler-backend-emit-stack-sub
   [target : CompilerBackendTarget]
@@ -9380,7 +9409,7 @@
               (= (compiler-ir-param-list-count params) 0)]
             [_ true])))]
     [old-bare : String compiler-backend-shrinkwrap-bare-label]
-    [old-current-block : String compiler-backend-current-block-label]
+    [old-current-block : i64 compiler-backend-current-block-label]
     ;; The ordinary function emitter has a dense index for the allocator's
     ;; post-prologue homes.  It deliberately ignores the list argument passed
     ;; to emit-assignment-lookup.  That is correct for normal emission, but an
@@ -9408,9 +9437,7 @@
                       (CompilerBackendMaybeLabel.Some next-label)])
                   (CompilerBackendMaybeLabel.No))]
               [_current-block : unit
-                (set!
-                  compiler-backend-current-block-label
-                  (string.copy (& label)))]
+                (set! compiler-backend-current-block-label label)]
               [piece : ResultCompilerBackend
                 (if (= count 2)
                   (match (compiler-ir-instr-seq-ref instrs 0)
@@ -10360,7 +10387,7 @@
 (define (compiler-backend-return-label [source-function : i64]) : String
   (compiler-backend-asm-label
     (compiler-backend-user-symbol-id source-function)
-    "return"))
+    (compiler-ir-label "return")))
 
 (define (compiler-backend-inline-return-tail
   [assignments : CompilerRegAssignmentList]
@@ -14304,8 +14331,8 @@
   (make-array bool 1))
 (define compiler-backend-const-hoist-inject-count : i64
   0)
-(define compiler-backend-const-hoist-inject-labels : (Array String)
-  (make-array String 1))
+(define compiler-backend-const-hoist-inject-labels : (Array i64)
+  (make-array i64 1))
 (define compiler-backend-const-hoist-inject-texts : (Array String)
   (make-array String 1))
 
@@ -14480,13 +14507,13 @@
 ;; loops; the load lands at prologue end so back edges re-enter after it),
 ;; false the after-label entries (dedicated preheader blocks).
 (define (compiler-backend-const-hoist-injection-from
-  [label : String]
+  [label : i64]
   [pre : bool]
   [i : i64]) : String
   (if (>= i compiler-backend-const-hoist-inject-count)
     ""
     (if (and
-      (string.eq (array-ref compiler-backend-const-hoist-inject-labels i) label)
+      (= (array-ref compiler-backend-const-hoist-inject-labels i) label)
       (if pre
         (array-ref compiler-backend-const-hoist-inject-pres i)
         (not (array-ref compiler-backend-const-hoist-inject-pres i))))
@@ -14495,9 +14522,7 @@
         (compiler-backend-const-hoist-injection-from label pre (+ i 1)))
       (compiler-backend-const-hoist-injection-from label pre (+ i 1)))))
 
-(define (compiler-backend-const-hoist-injection-for
-  [label : String]
-  [pre : bool]) : String
+(define (compiler-backend-const-hoist-injection-for [label : i64] [pre : bool]) : String
   (if (= compiler-backend-const-hoist-inject-count 0)
     ""
     (compiler-backend-const-hoist-injection-from label pre 0)))
@@ -14595,24 +14620,24 @@
 
 ;; Any block outside [h..le] branching to a block strictly inside (h..le]?
 (define (compiler-backend-const-hoist-succs-inside?
-  [ids : backend_string_i64_map.Map]
+  [ids : backend_label_i64_map.Map]
   [succs : CompilerLiveLabelSet]
   [h : i64]
   [le : i64]) : bool
   (match succs
     [(CompilerLiveLabelSet.Nil) false]
     [(CompilerLiveLabelSet.Cons label rest)
-      (match (backend_string_i64_map.get (& ids) label)
-        [(backend_string_i64_map.LookupFound q)
+      (match (backend_label_i64_map.get (& ids) label)
+        [(backend_label_i64_map.LookupFound q)
           (if (and (> q h) (<= q le))
             true
             (compiler-backend-const-hoist-succs-inside? ids (box-get rest) h le))]
-        [(backend_string_i64_map.LookupMissing)
+        [(backend_label_i64_map.LookupMissing)
           (compiler-backend-const-hoist-succs-inside? ids (box-get rest) h le)])]))
 
 (define (compiler-backend-const-hoist-side-entry?
   [orig : (Array CompilerIrBlock)]
-  [ids : backend_string_i64_map.Map]
+  [ids : backend_label_i64_map.Map]
   [h : i64]
   [le : i64]) : bool
   (let
@@ -14636,15 +14661,15 @@
 
 ;; Any successor of `succs` inside the inclusive index range [lo..le]?
 (define (compiler-backend-const-hoist-succs-within?
-  [ids : backend_string_i64_map.Map]
+  [ids : backend_label_i64_map.Map]
   [succs : CompilerLiveLabelSet]
   [lo : i64]
   [le : i64]) : bool
   (match succs
     [(CompilerLiveLabelSet.Nil) false]
     [(CompilerLiveLabelSet.Cons label rest)
-      (match (backend_string_i64_map.get (& ids) label)
-        [(backend_string_i64_map.LookupFound q)
+      (match (backend_label_i64_map.get (& ids) label)
+        [(backend_label_i64_map.LookupFound q)
           (if (and (>= q lo) (<= q le))
             true
             (compiler-backend-const-hoist-succs-within?
@@ -14652,7 +14677,7 @@
               (box-get rest)
               lo
               le))]
-        [(backend_string_i64_map.LookupMissing)
+        [(backend_label_i64_map.LookupMissing)
           (compiler-backend-const-hoist-succs-within? ids (box-get rest) lo le)])]))
 
 ;; A block may sit on a guard chain only when nothing it holds is a call.
@@ -14667,7 +14692,7 @@
 ;; smallest index seen (progress for the chain walk below).
 (define (compiler-backend-const-hoist-collect-outside-preds
   [orig : (Array CompilerIrBlock)]
-  [ids : backend_string_i64_map.Map]
+  [ids : backend_label_i64_map.Map]
   [lo : i64]
   [le : i64]
   [out : (Array i64)]) : i64
@@ -14728,7 +14753,7 @@
 ;; caller with h := the resolved index.
 (define (compiler-backend-const-hoist-resolve-inject
   [orig : (Array CompilerIrBlock)]
-  [ids : backend_string_i64_map.Map]
+  [ids : backend_label_i64_map.Map]
   [h : i64]
   [le : i64]) : i64
   (let
@@ -14753,7 +14778,7 @@
             [(= count 1)
               (let
                 [p : i64 (array-ref preds 0)]
-                (if (string.eq
+                (if (=
                   (compiler-backend-const-hoist-jump-target (array-ref orig p))
                   (compiler-backend-const-hoist-block-label (array-ref orig lo)))
                   (begin
@@ -14796,18 +14821,18 @@
       clean)))
 
 ;; "" unless the block's terminator is an unconditional Jump; else its target.
-(define (compiler-backend-const-hoist-jump-target [block : CompilerIrBlock]) : String
+(define (compiler-backend-const-hoist-jump-target [block : CompilerIrBlock]) : i64
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (let
         [c : i64 (compiler-ir-instr-seq-count instrs)]
         (if (<= c 0)
-          ""
+          (compiler-ir-label-none)
           (match (compiler-ir-instr-seq-ref instrs (- c 1))
             [(CompilerIrInstr.Jump label) label]
-            [_ ""])))]))
+            [_ (compiler-ir-label-none)])))]))
 
-(define (compiler-backend-const-hoist-block-label [block : CompilerIrBlock]) : String
+(define (compiler-backend-const-hoist-block-label [block : CompilerIrBlock]) : i64
   (match block
     [(CompilerIrBlock.Block label _) label]))
 
@@ -14927,10 +14952,10 @@
         (if (not (compiler-backend-const-hoist-any-constant? orig))
           empty
           (let
-            [ids : backend_string_i64_map.Map
+            [ids : backend_label_i64_map.Map
               (compiler-reg-loop-depth-block-ids
                 dense-blocks
-                (backend_string_i64_map.with-capacity
+                (backend_label_i64_map.with-capacity
                   (compiler-reg-bits-map-capacity count))
                 0)]
             [loop-ends : (Array i64)
@@ -14946,7 +14971,7 @@
             [site-wide : (Array bool) (make-array bool site-cap)]
             [site-frame : (Array bool) (make-array bool site-cap)]
             [site-count : i64 0]
-            [inject-labels : (Array String) (make-array String synth-cap)]
+            [inject-labels : (Array i64) (make-array i64 synth-cap)]
             [inject-texts : (Array String) (make-array String synth-cap)]
             [inject-pres : (Array bool) (make-array bool synth-cap)]
             [inject-count : i64 0]
@@ -14972,7 +14997,7 @@
                       (compiler-backend-const-hoist-region-leaf? orig h le))
                       ;; lint-allow: nested-let
                       (let
-                        [h-label : String
+                        [h-label : i64
                           (compiler-backend-const-hoist-block-label
                             (array-ref orig h))]
                         [p : i64
@@ -15004,7 +15029,7 @@
                               (and
                                 (>= p 0)
                                 (< p h)
-                                (string.eq
+                                (=
                                   (compiler-backend-const-hoist-jump-target
                                     (array-ref orig p))
                                   h-label)))]
@@ -15042,7 +15067,7 @@
                                   0
                                   (array-ref points site))]
                               [hi : i64 (array-ref points (+ le 1))]
-                              [inject-label : String
+                              [inject-label : i64
                                 (if (= h 0)
                                   h-label
                                   (compiler-backend-const-hoist-block-label
@@ -19867,7 +19892,7 @@
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)]))))))
 
-(define (compiler-backend-jump-label [function : String] [label : String]) : String
+(define (compiler-backend-jump-label [function : String] [label : i64]) : String
   (str_cat.str-cat
     "    jmp "
     (compiler-backend-asm-label function label)
@@ -19875,16 +19900,16 @@
     ""))
 
 (define (compiler-backend-jump-target-is-fallthrough?
-  [target : String]
+  [target : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : bool
   (match fallthrough
-    [(CompilerBackendMaybeLabel.Some label) (string.eq target label)]
+    [(CompilerBackendMaybeLabel.Some label) (= target label)]
     [(CompilerBackendMaybeLabel.No) false]))
 
 (define (compiler-backend-emit-branch-jumps
   [function : String]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : String
   ;; Flush any pending emergency restore inline (after the test, before the jumps)
   ;; -- flag-safe and on a reachable path for both edges.
@@ -19946,8 +19971,8 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [cond : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [planned-test : String]) : ResultCompilerBackend
   (let
@@ -19978,8 +20003,8 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [cond : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [planned-test : String]) : ResultCompilerBackend
   (match cond
@@ -20066,8 +20091,8 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [cond : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (compiler-backend-emit-branch-with-plan
     assignments
@@ -20168,7 +20193,7 @@
 (define (compiler-backend-emit-jcc-label
   [jcc : String]
   [function : String]
-  [label : String]) : String
+  [label : i64]) : String
   (str_cat.str-cat
     "    "
     jcc
@@ -20178,8 +20203,8 @@
 
 (define (compiler-backend-emit-compare-branch-jumps
   [function : String]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [true-jcc : String]
   [false-jcc : String]) : String
@@ -20271,8 +20296,8 @@
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [true-jcc : String]
   [false-jcc : String]
@@ -20371,8 +20396,8 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [planned-lhs : String]
   [planned-rhs : String]) : ResultCompilerBackend
@@ -20525,8 +20550,8 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (compiler-backend-emit-compare-branch-with-plan
     assignments
@@ -20565,8 +20590,8 @@
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [planned-base : String]
   [planned-rhs : String]) : ResultCompilerBackend
@@ -20674,8 +20699,8 @@
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (compiler-backend-emit-load-compare-branch-with-plan
     assignments
@@ -20699,8 +20724,8 @@
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [planned-base : String]
   [planned-rhs : String]) : ResultCompilerBackend
@@ -20840,8 +20865,8 @@
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (compiler-backend-emit-gep-load-compare-branch-with-plan
     assignments
@@ -20969,7 +20994,7 @@
   [planned-index : String]
   [index : CompilerIrValue]
   [length : CompilerIrValue]
-  [ok-label : String]
+  [ok-label : i64]
   [plan : CompilerBackendRuntimePlan]
   [_functions : CompilerIrFunctionList]
   [_externs : CompilerIrExternList]
@@ -23677,19 +23702,20 @@
     [_ "sd"]))
 
 (define (compiler-backend-u64-to-float-cast-label
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
-  [suffix : String]) : String
-  (str_cat.str-cat
-    "cast_u64_float_"
-    current-label
-    "_v"
-    (string.int->string dst)
-    suffix))
+  [suffix : String]) : i64
+  (compiler-ir-label
+    (str_cat.str-cat
+      "cast_u64_float_"
+      (compiler-ir-label-text current-label)
+      "_v"
+      (string.int->string dst)
+      suffix)))
 
 (define (compiler-backend-u64-to-float-cast-asm
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [to-ty : AstType]
   [value-reg : String]
@@ -23697,9 +23723,9 @@
   [scratch-reg : String]) : String
   (let
     [op : String (compiler-backend-u64-to-float-cast-op to-ty)]
-    [high-label : String
+    [high-label : i64
       (compiler-backend-u64-to-float-cast-label current-label dst "_high")]
-    [done-label : String
+    [done-label : i64
       (compiler-backend-u64-to-float-cast-label current-label dst "_done")]
     [high-symbol : String (compiler-backend-asm-label function high-label)]
     [done-symbol : String (compiler-backend-asm-label function done-label)]
@@ -23822,7 +23848,7 @@
 
 (define (compiler-backend-emit-int-to-float-cast
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -24009,7 +24035,7 @@
 
 (define (compiler-backend-emit-cast
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -24543,17 +24569,23 @@
 
 (define (compiler-backend-fast-alloc-site-label
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [suffix : String]) : String
   (compiler-backend-asm-label
     function
-    (str_cat.str-cat "alloc" current-label "_v" (string.int->string dst) suffix)))
+    (compiler-ir-label
+      (str_cat.str-cat
+        "alloc"
+        (compiler-ir-label-text current-label)
+        "_v"
+        (string.int->string dst)
+        suffix))))
 
 (define (compiler-backend-emit-inline-fast-alloc
   [target : CompilerBackendTarget]
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [size : i64]
   [profile : bool]) : String
@@ -28342,17 +28374,19 @@
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
-  [from-label : String]) : ResultBackendValue
+  [from-label : i64]) : ResultBackendValue
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil)
       (ResultBackendValue.Err
-        (string.append "backend: missing phi input from " from-label))]
+        (string.append
+          "backend: missing phi input from "
+          (compiler-ir-label-text from-label)))]
     [(CompilerIrPhiInputList.Array seq)
       (compiler-backend-phi-input-value
         (compiler-ir-phi-input-seq-to-list seq)
         from-label)]
     [(CompilerIrPhiInputList.Cons value label rest)
-      (if (string.eq label from-label)
+      (if (= label from-label)
         (ResultBackendValue.Ok value)
         (compiler-backend-phi-input-value (box-get rest) from-label))]))
 
@@ -29690,7 +29724,7 @@
   [assignments : CompilerRegAssignmentList]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [from-label : String]) : ResultBackendPhiCopies
+  [from-label : i64]) : ResultBackendPhiCopies
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)
     (match (compiler-ir-instr-seq-ref instrs index)
@@ -29721,13 +29755,13 @@
 (define (compiler-backend-leading-phi-copies-seq
   [assignments : CompilerRegAssignmentList]
   [instrs : CompilerIrInstrSeq]
-  [from-label : String]) : ResultBackendPhiCopies
+  [from-label : i64]) : ResultBackendPhiCopies
   (compiler-backend-leading-phi-copies-seq-from assignments instrs 0 from-label))
 
 (define (compiler-backend-emit-leading-phi-copies
   [assignments : CompilerRegAssignmentList]
   [instrs : CompilerIrInstrSeq]
-  [from-label : String]
+  [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match (compiler-backend-leading-phi-copies-seq assignments instrs from-label)
@@ -29745,8 +29779,8 @@
 (define (compiler-backend-emit-phi-edge-copies
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [planned-cycle : String]
@@ -29767,8 +29801,8 @@
 (define (compiler-backend-emit-phi-edge-copies-scan
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match blocks
@@ -29777,11 +29811,13 @@
         (box
           (compiler-diagnostic-at-start
             ""
-            (string.append "backend: unknown block " target-label))))]
+            (string.append
+              "backend: unknown block "
+              (compiler-ir-label-text target-label)))))]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label target-label)
+          (if (= block-label target-label)
             (compiler-backend-emit-leading-phi-copies
               assignments
               instrs
@@ -29809,8 +29845,8 @@
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (if (>= index (compiler-ir-block-seq-count blocks))
@@ -29818,10 +29854,12 @@
       (box
         (compiler-diagnostic-at-start
           ""
-          (string.append "backend: unknown block " target-label))))
+          (string.append
+            "backend: unknown block "
+            (compiler-ir-label-text target-label)))))
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block block-label instrs)
-        (if (string.eq block-label target-label)
+        (if (= block-label target-label)
           (compiler-backend-emit-leading-phi-copies
             assignments
             instrs
@@ -29840,8 +29878,8 @@
 (define (compiler-backend-emit-mov-phi-copy-edge
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [moved-dst : i64]
   [moved-src : CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]
@@ -29884,8 +29922,8 @@
 (define (compiler-backend-emit-mov-phi-copy-edge-scan
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [moved-dst : i64]
   [moved-src : CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]
@@ -29896,11 +29934,13 @@
         (box
           (compiler-diagnostic-at-start
             ""
-            (string.append "backend: unknown block " target-label))))]
+            (string.append
+              "backend: unknown block "
+              (compiler-ir-label-text target-label)))))]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label target-label)
+          (if (= block-label target-label)
             (match (compiler-backend-leading-phi-copies-seq
               assignments
               instrs
@@ -29952,8 +29992,8 @@
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [moved-dst : i64]
   [moved-src : CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]
@@ -29963,10 +30003,12 @@
       (box
         (compiler-diagnostic-at-start
           ""
-          (string.append "backend: unknown block " target-label))))
+          (string.append
+            "backend: unknown block "
+            (compiler-ir-label-text target-label)))))
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block block-label instrs)
-        (if (string.eq block-label target-label)
+        (if (= block-label target-label)
           (match (compiler-backend-leading-phi-copies-seq
             assignments
             instrs
@@ -30011,7 +30053,7 @@
 
 (define (compiler-backend-phi-target-labels
   [blocks : CompilerIrBlockList]
-  [out : BackendStringList]) : BackendStringList
+  [out : BackendLabelList]) : BackendLabelList
   (match blocks
     [(CompilerIrBlockList.Nil) out]
     [(CompilerIrBlockList.Cons block rest)
@@ -30024,7 +30066,7 @@
                 (set!
                   compiler-backend-current-phi-target-count
                   (+ compiler-backend-current-phi-target-count 1))
-                (compiler-backend-string-cons label out))
+                (BackendLabelList.Cons label (box out)))
               out))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-phi-target-labels-seq seq 0 out)]))
@@ -30032,7 +30074,7 @@
 (define (compiler-backend-phi-target-labels-seq
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [out : BackendStringList]) : BackendStringList
+  [out : BackendLabelList]) : BackendLabelList
   (if (>= index (compiler-ir-block-seq-count blocks))
     out
     (match (compiler-ir-block-seq-ref blocks index)
@@ -30045,45 +30087,48 @@
               (set!
                 compiler-backend-current-phi-target-count
                 (+ compiler-backend-current-phi-target-count 1))
-              (compiler-backend-string-cons label out))
+              (BackendLabelList.Cons label (box out)))
             out))])))
 
 (define (compiler-backend-phi-target-labels-for-blocks
-  [blocks : CompilerIrBlockList]) : BackendStringList
+  [blocks : CompilerIrBlockList]) : BackendLabelList
   (begin
     (set! compiler-backend-current-phi-target-count 0)
     (compiler-backend-phi-target-labels
       blocks
-      (compiler-backend-empty-string-list))))
+      (compiler-backend-empty-label-list))))
 
 (define (compiler-backend-branch-needs-phi-copies?
-  [true-label : String]
-  [false-label : String]) : bool
+  [true-label : i64]
+  [false-label : i64]) : bool
   (if (= compiler-backend-current-phi-target-count 0)
     false
     (or
-      (compiler-backend-string-list-contains?
+      (compiler-backend-label-list-contains?
         compiler-backend-current-phi-targets
         true-label)
-      (compiler-backend-string-list-contains?
+      (compiler-backend-label-list-contains?
         compiler-backend-current-phi-targets
         false-label))))
 
 (define (compiler-backend-branch-edge-label
-  [current-label : String]
-  [suffix : String]) : String
-  (string.append (string.append current-label "_branch_") suffix))
+  [current-label : i64]
+  [suffix : String]) : i64
+  (compiler-ir-label
+    (string.append
+      (string.append (compiler-ir-label-text current-label) "_branch_")
+      suffix)))
 
 (define (compiler-backend-branch-edge-target
-  [edge-label : String]
-  [target-label : String]
-  [copies : String]) : String
+  [edge-label : i64]
+  [target-label : i64]
+  [copies : String]) : i64
   (if (string.eq copies "")
     target-label
     edge-label))
 
 (define (compiler-backend-branch-edge-fallthrough
-  [current-label : String]
+  [current-label : i64]
   [true-copies : String]
   [false-copies : String]
   [fallthrough : CompilerBackendMaybeLabel]) : CompilerBackendMaybeLabel
@@ -30097,8 +30142,8 @@
 
 (define (compiler-backend-emit-branch-edge-block
   [function : String]
-  [edge-label : String]
-  [target-label : String]
+  [edge-label : i64]
+  [target-label : i64]
   [copies : String]) : String
   (if (string.eq copies "")
     ""
@@ -30111,16 +30156,15 @@
 
 (define (compiler-backend-emit-branch-edges
   [function : String]
-  [current-label : String]
-  [true-label : String]
-  [false-label : String]
+  [current-label : i64]
+  [true-label : i64]
+  [false-label : i64]
   [true-copies : String]
   [false-copies : String]
   [branch-asm : String]) : String
   (let
-    [true-edge : String
-      (compiler-backend-branch-edge-label current-label "true")]
-    [false-edge : String
+    [true-edge : i64 (compiler-backend-branch-edge-label current-label "true")]
+    [false-edge : i64
       (compiler-backend-branch-edge-label current-label "false")]
     (string.append
       branch-asm
@@ -30140,10 +30184,10 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [current-label : i64]
   [cond : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -30182,16 +30226,16 @@
           compiler-backend-current-phi-planned-xmm-cycle)
           [(ResultCompilerBackend.Ok false-copies)
             (let
-              [true-edge : String
+              [true-edge : i64
                 (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : String
+              [false-edge : i64
                 (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : String
+              [true-target : i64
                 (compiler-backend-branch-edge-target
                   true-edge
                   true-label
                   true-copies)]
-              [false-target : String
+              [false-target : i64
                 (compiler-backend-branch-edge-target
                   false-edge
                   false-label
@@ -30230,10 +30274,10 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [current-label : i64]
   [cond : CompilerIrValue]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -30258,13 +30302,13 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [current-label : i64]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -30308,16 +30352,16 @@
           compiler-backend-current-phi-planned-xmm-cycle)
           [(ResultCompilerBackend.Ok false-copies)
             (let
-              [true-edge : String
+              [true-edge : i64
                 (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : String
+              [false-edge : i64
                 (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : String
+              [true-target : i64
                 (compiler-backend-branch-edge-target
                   true-edge
                   true-label
                   true-copies)]
-              [false-target : String
+              [false-target : i64
                 (compiler-backend-branch-edge-target
                   false-edge
                   false-label
@@ -30360,13 +30404,13 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [current-label : i64]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -30395,13 +30439,13 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [current-label : i64]
   [ptr : CompilerIrValue]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -30445,16 +30489,16 @@
           compiler-backend-current-phi-planned-xmm-cycle)
           [(ResultCompilerBackend.Ok false-copies)
             (let
-              [true-edge : String
+              [true-edge : i64
                 (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : String
+              [false-edge : i64
                 (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : String
+              [true-target : i64
                 (compiler-backend-branch-edge-target
                   true-edge
                   true-label
                   true-copies)]
-              [false-target : String
+              [false-target : i64
                 (compiler-backend-branch-edge-target
                   false-edge
                   false-label
@@ -30497,13 +30541,13 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [current-label : i64]
   [ptr : CompilerIrValue]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -30532,15 +30576,15 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [current-label : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -30586,16 +30630,16 @@
           compiler-backend-current-phi-planned-xmm-cycle)
           [(ResultCompilerBackend.Ok false-copies)
             (let
-              [true-edge : String
+              [true-edge : i64
                 (compiler-backend-branch-edge-label current-label "true")]
-              [false-edge : String
+              [false-edge : i64
                 (compiler-backend-branch-edge-label current-label "false")]
-              [true-target : String
+              [true-target : i64
                 (compiler-backend-branch-edge-target
                   true-edge
                   true-label
                   true-copies)]
-              [false-target : String
+              [false-target : i64
                 (compiler-backend-branch-edge-target
                   false-edge
                   false-label
@@ -30640,15 +30684,15 @@
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [current-label : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -30703,7 +30747,7 @@
       out)))
 
 (define (compiler-backend-shared-return-block-count
-  [label : String]
+  [label : i64]
   [instrs : CompilerIrInstrSeq]) : i64
   ;; Bare shrink-wrap exits return before the frame exists and never target the
   ;; framed epilogue. Excluding them keeps a function with one ordinary framed
@@ -30712,7 +30756,7 @@
   (if (and
     (not (string.eq compiler-backend-shrinkwrap-bare-label ""))
     (compiler-backend-string-prefix-at?
-      label
+      (compiler-ir-label-text label)
       compiler-backend-shrinkwrap-bare-label
       0))
     0
@@ -30774,7 +30818,7 @@
   (if (and
     (not (string.eq compiler-backend-shrinkwrap-bare-label ""))
     (compiler-backend-string-prefix-at?
-      compiler-backend-current-block-label
+      (compiler-ir-label-text compiler-backend-current-block-label)
       compiler-backend-shrinkwrap-bare-label
       0))
     "    ret\n"
@@ -31115,7 +31159,7 @@
 
 (define (compiler-backend-trivial-phi-return-find
   [instrs : CompilerIrInstrSeq]
-  [from-label : String]
+  [from-label : i64]
   [returned-dst : i64]
   [index : i64]
   [last-index : i64]
@@ -31143,7 +31187,7 @@
   [source-function : i64]
   [return-count : i64]
   [instrs : CompilerIrInstrSeq]
-  [from-label : String]
+  [from-label : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [ret-ty : AstType]
@@ -31193,8 +31237,8 @@
 (define (compiler-backend-emit-trivial-phi-return-edge
   [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [ret-ty : AstType]
@@ -31204,7 +31248,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label target-label)
+          (if (= block-label target-label)
             (compiler-backend-emit-trivial-phi-return-edge-instrs
               source-function
               (compiler-backend-shared-return-count assignments blocks)
@@ -31239,8 +31283,8 @@
   [source-function : i64]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [ret-ty : AstType]
@@ -31249,7 +31293,7 @@
     (ResultCompilerBackend.Ok "")
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block block-label instrs)
-        (if (string.eq block-label target-label)
+        (if (= block-label target-label)
           (compiler-backend-emit-trivial-phi-return-edge-instrs
             source-function
             (compiler-backend-block-seq-return-count blocks index)
@@ -31274,7 +31318,7 @@
   [source-function : i64]
   [return-count : i64]
   [instrs : CompilerIrInstrSeq]
-  [from-label : String]
+  [from-label : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [ret-ty : AstType]
@@ -31329,8 +31373,8 @@
 (define (compiler-backend-emit-mov-trivial-phi-return-edge
   [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [ret-ty : AstType]
@@ -31342,7 +31386,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label target-label)
+          (if (= block-label target-label)
             (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
               source-function
               (compiler-backend-shared-return-count assignments blocks)
@@ -31383,8 +31427,8 @@
   [source-function : i64]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [ret-ty : AstType]
@@ -31395,7 +31439,7 @@
     (ResultCompilerBackend.Ok "")
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block block-label instrs)
-        (if (string.eq block-label target-label)
+        (if (= block-label target-label)
           (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
             source-function
             (compiler-backend-block-seq-return-count blocks index)
@@ -32110,7 +32154,7 @@
 (define (compiler-backend-emit-direct-call-with-arg-assignments
   [target : CompilerBackendTarget]
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [dst : i64]
   [name : i64]
   [args : CompilerIrCallArgs]
@@ -33029,7 +33073,7 @@
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
-  [label : String]
+  [label : i64]
   [ty : AstType]) : ResultCompilerBackend
   (let
     [r11-occupied : bool
@@ -33049,7 +33093,12 @@
       (compiler-backend-scavenge-reg dst exclude exclude-n "%r11")]
     [scratch-asm : String
       (string.append
-        (str_cat.str-cat "    movq " label "(%rip), " scratch-reg "\n")
+        (str_cat.str-cat
+          "    movq "
+          (compiler-ir-label-text label)
+          "(%rip), "
+          scratch-reg
+          "\n")
         (compiler-backend-emit-store-typed-var-with-plan
           assignments
           dst
@@ -33062,7 +33111,12 @@
           ;; homes stay on the scratch fallback.
           [(CompilerRegLocation.Register home)
             (ResultCompilerBackend.Ok
-              (str_cat.str-cat "    movq " label "(%rip), " home "\n"))]
+              (str_cat.str-cat
+                "    movq "
+                (compiler-ir-label-text label)
+                "(%rip), "
+                home
+                "\n"))]
           [_ (ResultCompilerBackend.Ok scratch-asm)])]
       [(CompilerRegMaybeLocation.No) (ResultCompilerBackend.Ok scratch-asm)])))
 
@@ -33262,7 +33316,7 @@
 
 (define (compiler-backend-total-switch-trap-instrs?
   [instrs : CompilerIrInstrSeq]
-  [label : String]) : bool
+  [label : i64]) : bool
   (and
     (= (compiler-ir-instr-seq-count instrs) 2)
     (match (compiler-ir-instr-seq-ref instrs 0)
@@ -33270,13 +33324,13 @@
         (cbi.compiler-builtin-backend-tl-oob-abort-id? name)]
       [_ false])
     (match (compiler-ir-instr-seq-ref instrs 1)
-      [(CompilerIrInstr.Jump target) (string.eq target label)]
+      [(CompilerIrInstr.Jump target) (= target label)]
       [_ false])))
 
 (define (compiler-backend-total-switch-trap-block-from?
   [all-blocks : CompilerIrBlockList]
   [cursor : CompilerIrBlockList]
-  [label : String]
+  [label : i64]
   [fuel : i64]) : bool
   (if (<= fuel 0)
     false
@@ -33285,7 +33339,7 @@
       [(CompilerIrBlockList.Cons block rest)
         (match block
           [(CompilerIrBlock.Block block-label instrs)
-            (if (string.eq block-label label)
+            (if (= block-label label)
               (or
                 (compiler-backend-total-switch-trap-instrs? instrs label)
                 ;; Loop canonicalization treats the self-looping no-return
@@ -33296,9 +33350,9 @@
                   (match (compiler-ir-instr-seq-ref instrs 0)
                     [(CompilerIrInstr.Jump target)
                       (and
-                        (not (string.eq target label))
+                        (not (= target label))
                         (compiler-backend-string-contains?
-                          target
+                          (compiler-ir-label-text target)
                           "match_total_trap")
                         (compiler-backend-total-switch-trap-block-from?
                           all-blocks
@@ -33320,20 +33374,22 @@
 
 (define (compiler-backend-total-switch-trap-block?
   [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+  [label : i64]) : bool
   ;; The marker is compiler-owned.  Requiring it as well as the exact abort
   ;; block prevents a user integer switch with a trapping default from being
   ;; mistaken for a type-proven enum dispatch.  Inline/BCE label remapping and
   ;; loop-preheader insertion preserve the marker substring.
   (and
-    (compiler-backend-string-contains? label "match_total_trap")
+    (compiler-backend-string-contains?
+      (compiler-ir-label-text label)
+      "match_total_trap")
     (compiler-backend-total-switch-trap-block-from? blocks blocks label 8)))
 
 (define (compiler-backend-total-switch?
   [blocks : CompilerIrBlockList]
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : String]) : bool
+  [default-label : i64]) : bool
   (and
     (= base 0)
     (> (compiler-backend-switch-case-count cases) 0)
@@ -33343,7 +33399,7 @@
 (define (compiler-backend-object-total-switch?
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : String]) : bool
+  [default-label : i64]) : bool
   (and
     (= base 0)
     (> (compiler-backend-switch-case-count cases) 0)
@@ -33352,7 +33408,9 @@
     ;; but does not retain its owning block list at each instruction.  The
     ;; compiler-owned marker is the totality proof here; source assembly also
     ;; checks the exact abort block before taking the unchecked path.
-    (compiler-backend-string-contains? default-label "match_total_trap")))
+    (compiler-backend-string-contains?
+      (compiler-ir-label-text default-label)
+      "match_total_trap")))
 
 (define (compiler-backend-switch-cases-target-phi?
   [cases : CompilerIrSwitchCaseList]) : bool
@@ -33362,7 +33420,7 @@
       (match case
         [(CompilerIrSwitchCase.Case _ label)
           (or
-            (compiler-backend-string-list-contains?
+            (compiler-backend-label-list-contains?
               compiler-backend-current-phi-targets
               label)
             (compiler-backend-switch-cases-target-phi? (box-get rest)))])]
@@ -33372,29 +33430,31 @@
 
 (define (compiler-backend-switch-target-phi?
   [cases : CompilerIrSwitchCaseList]
-  [default-label : String]) : bool
+  [default-label : i64]) : bool
   (if (= compiler-backend-current-phi-target-count 0)
     false
     (or
-      (compiler-backend-string-list-contains?
+      (compiler-backend-label-list-contains?
         compiler-backend-current-phi-targets
         default-label)
       (compiler-backend-switch-cases-target-phi? cases))))
 
 (define (compiler-backend-switch-case-edge-label
-  [current-label : String]
-  [tag : i64]) : String
-  (string.append
-    (string.append current-label "_switch_case_")
-    (string.int->string tag)))
+  [current-label : i64]
+  [tag : i64]) : i64
+  (compiler-ir-label
+    (string.append
+      (string.append (compiler-ir-label-text current-label) "_switch_case_")
+      (string.int->string tag))))
 
-(define (compiler-backend-switch-default-edge-label [current-label : String]) : String
-  (string.append current-label "_switch_default"))
+(define (compiler-backend-switch-default-edge-label [current-label : i64]) : i64
+  (compiler-ir-label
+    (string.append (compiler-ir-label-text current-label) "_switch_default")))
 
 (define (compiler-backend-emit-switch-edge-block
   [function : String]
-  [edge-label : String]
-  [target-label : String]
+  [edge-label : i64]
+  [target-label : i64]
   [copies : String]) : String
   (str_cat.str-cat
     (compiler-backend-asm-label function edge-label)
@@ -33406,7 +33466,7 @@
 
 (define (compiler-backend-emit-switch-case-edge-blocks
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [cases : CompilerIrSwitchCaseList]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
@@ -33419,7 +33479,7 @@
     [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case tag label)
-          (if (compiler-backend-string-list-contains?
+          (if (compiler-backend-label-list-contains?
             compiler-backend-current-phi-targets
             label)
             (match (compiler-backend-emit-phi-edge-copies
@@ -33482,14 +33542,18 @@
 
 (define (compiler-backend-switch-table-label
   [function : String]
-  [current-label : String]) : String
+  [current-label : i64]) : String
   (compiler-backend-asm-label
     function
-    (str_cat.str-cat current-label "_switch_table" "")))
+    (compiler-ir-label
+      (str_cat.str-cat
+        (compiler-ir-label-text current-label)
+        "_switch_table"
+        ""))))
 
 (define (compiler-backend-emit-switch-table-cases-into
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [retarget-phi-edges : bool]
   [cases : CompilerIrSwitchCaseList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -33510,7 +33574,7 @@
                   function
                   (if (and
                     retarget-phi-edges
-                    (compiler-backend-string-list-contains?
+                    (compiler-backend-label-list-contains?
                       compiler-backend-current-phi-targets
                       label))
                     (compiler-backend-switch-case-edge-label current-label tag)
@@ -33526,7 +33590,7 @@
 
 (define (compiler-backend-emit-switch-table
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [cases : CompilerIrSwitchCaseList]
   [retarget-phi-edges : bool]) : String
   (text_buf.render
@@ -33545,7 +33609,7 @@
 
 (define (compiler-backend-emit-switch-tables-instr-seq-into
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -33699,8 +33763,8 @@
 ;; `jmp *-K(%rbp)` like any other frame reference (delta 0, no rsp motion).
 (define (compiler-backend-emit-switch-dispatch-emergency
   [function : String]
-  [current-label : String]
-  [default-label : String]
+  [current-label : i64]
+  [default-label : i64]
   [total-switch : bool]
   [case-count : i64]
   [base : i64]
@@ -33719,7 +33783,8 @@
     [done-label : String
       (compiler-backend-asm-label
         function
-        (str_cat.str-cat current-label "_disp_j" ""))]
+        (compiler-ir-label
+          (str_cat.str-cat (compiler-ir-label-text current-label) "_disp_j" "")))]
     ;; Emits the borrowed-occupant restores here (before the transfer) and
     ;; suppresses the wrap's trailing restore. Must be spliced AFTER the target
     ;; stash and BEFORE the indirect jump.
@@ -33788,11 +33853,11 @@
 
 (define (compiler-backend-emit-switch-dispatch
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [index : CompilerIrValue]
   [base : i64]
   [case-count : i64]
-  [default-label : String]
+  [default-label : i64]
   [total-switch : bool]
   [assignments : CompilerRegAssignmentList]
   [planned-index-reg : String]
@@ -33948,11 +34013,11 @@
 
 (define (compiler-backend-emit-switch
   [function : String]
-  [current-label : String]
+  [current-label : i64]
   [index : CompilerIrValue]
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : String]
+  [default-label : i64]
   [assignments : CompilerRegAssignmentList]
   [planned-index-reg : String]
   [planned-table-reg : String]
@@ -33990,7 +34055,7 @@
           [(ResultCompilerBackend.Ok case-blocks)
             (let
               [default-needs-edge : bool
-                (compiler-backend-string-list-contains?
+                (compiler-backend-label-list-contains?
                   compiler-backend-current-phi-targets
                   default-label)]
               (match (if default-needs-edge
@@ -34060,7 +34125,7 @@
 (define (compiler-backend-switch-validate-one
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : String]) : CompilerBackendSwitchValidation
+  [default-label : i64]) : CompilerBackendSwitchValidation
   (let
     [case-count : i64 (compiler-backend-switch-case-count cases)]
     (cond
@@ -34678,19 +34743,19 @@
         (compiler-backend-emit-entry-load
           ctx.assignments
           dst
-          ".L_tl_argc"
+          (compiler-ir-label ".L_tl_argc")
           (AstType.I64))]
       [(CompilerIrInstr.EntryArgv dst)
         (compiler-backend-emit-entry-load
           ctx.assignments
           dst
-          ".L_tl_argv"
+          (compiler-ir-label ".L_tl_argv")
           (ast-ty-ptr (ast-ty-ptr (AstType.U8))))]
       [(CompilerIrInstr.EntryEnvp dst)
         (compiler-backend-emit-entry-load
           ctx.assignments
           dst
-          ".L_tl_envp"
+          (compiler-ir-label ".L_tl_envp")
           (ast-ty-ptr (ast-ty-ptr (AstType.U8))))]
       [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
         (compiler-backend-emit-cpuid
@@ -36218,8 +36283,8 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
@@ -36280,8 +36345,8 @@
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [_cmp-ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
@@ -36338,8 +36403,8 @@
   [dst : i64]
   [src : CompilerIrValue]
   [ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   ;; `not src` branches to its false successor when src is true. Emit the
@@ -36402,8 +36467,8 @@
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [_cmp-ty : AstType]
-  [true-label : String]
-  [false-label : String]
+  [true-label : i64]
+  [false-label : i64]
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
@@ -37717,7 +37782,7 @@
   [dst : i64]
   [src : CompilerIrValue]
   [ty : AstType]
-  [target-label : String]
+  [target-label : i64]
   [after-jump : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-mov-trivial-phi-return-edge
@@ -41412,7 +41477,7 @@
   (match block
     [(CompilerIrBlock.Block label instrs)
       (begin
-        (set! compiler-backend-current-block-label (string.copy (& label)))
+        (set! compiler-backend-current-block-label label)
         (match (compiler-backend-emit-instrs
           (CompilerBackendEmissionContext
             target
@@ -43968,20 +44033,20 @@
 ;; successor, so the resulting count is the number of DISTINCT predecessor
 ;; blocks -- exactly the "is this label a merge?" signal we need.
 (define (compiler-backend-peephole-predcount-bump
-  [counts : backend_string_i64_map.Map]
-  [labels : OptLabelSet]) : backend_string_i64_map.Map
+  [counts : backend_label_i64_map.Map]
+  [labels : OptLabelSet]) : backend_label_i64_map.Map
   (match labels
     [(OptLabelSet.Nil) counts]
     [(OptLabelSet.Cons label rest)
       (begin
-        (backend_string_i64_map.insert-ref!
+        (backend_label_i64_map.insert-ref!
           (&mut counts)
           label
           (+
             1
-            (match (backend_string_i64_map.get (& counts) label)
-              [(backend_string_i64_map.LookupFound v) v]
-              [(backend_string_i64_map.LookupMissing) 0])))
+            (match (backend_label_i64_map.get (& counts) label)
+              [(backend_label_i64_map.LookupFound v) v]
+              [(backend_label_i64_map.LookupMissing) 0])))
         (compiler-backend-peephole-predcount-bump counts (box-get rest)))]))
 
 ;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
@@ -43992,7 +44057,7 @@
 ;; this enumeration is complete (those are the only label-bearing terminators).
 (define (compiler-backend-peephole-predcount-build
   [blocks : CompilerIrBlockList]
-  [counts : backend_string_i64_map.Map]) : backend_string_i64_map.Map
+  [counts : backend_label_i64_map.Map]) : backend_label_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) counts]
     [(CompilerIrBlockList.Array seq)
@@ -44008,16 +44073,16 @@
 
 (define (compiler-backend-block-seq-label-or-empty
   [blocks : CompilerIrBlockSeq]
-  [index : i64]) : String
+  [index : i64]) : i64
   (if (>= index (compiler-ir-block-seq-count blocks))
-    ""
+    (compiler-ir-label-none)
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block label _) label])))
 
 (define (compiler-backend-peephole-predcount-build-seq
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [counts : backend_string_i64_map.Map]) : backend_string_i64_map.Map
+  [counts : backend_label_i64_map.Map]) : backend_label_i64_map.Map
   (if (>= index (compiler-ir-block-seq-count blocks))
     counts
     (compiler-backend-peephole-predcount-build-seq
@@ -44075,8 +44140,8 @@
 ;;       so B's running map would be the OTHER edge's, not prev's exit.
 (define (compiler-backend-peephole-carry-safe-scan
   [label-scope : String]
-  [entry-label : String]
-  [predcount : backend_string_i64_map.Map]
+  [entry-label : i64]
+  [predcount : backend_label_i64_map.Map]
   [prev : CompilerIrBlock]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
@@ -44094,13 +44159,13 @@
         [(CompilerIrBlock.Block cur-label _)
           (begin
             (if (and
-              (not (string.eq cur-label entry-label))
+              (not (= cur-label entry-label))
               (not (compiler-backend-peephole-prev-splits-edge? prev))
               (=
                 1
-                (match (backend_string_i64_map.get (& predcount) cur-label)
-                  [(backend_string_i64_map.LookupFound v) v]
-                  [(backend_string_i64_map.LookupMissing) 0]))
+                (match (backend_label_i64_map.get (& predcount) cur-label)
+                  [(backend_label_i64_map.LookupFound v) v]
+                  [(backend_label_i64_map.LookupMissing) 0]))
               (opt-label-contains
                 (opt-cfg-block-successors-with-next prev cur-label)
                 cur-label))
@@ -44116,8 +44181,8 @@
 
 (define (compiler-backend-peephole-carry-safe-scan-seq
   [label-scope : String]
-  [entry-label : String]
-  [predcount : backend_string_i64_map.Map]
+  [entry-label : i64]
+  [predcount : backend_label_i64_map.Map]
   [prev : CompilerIrBlock]
   [blocks : CompilerIrBlockSeq]
   [index : i64]) : unit
@@ -44129,13 +44194,13 @@
         [(CompilerIrBlock.Block cur-label _)
           (begin
             (if (and
-              (not (string.eq cur-label entry-label))
+              (not (= cur-label entry-label))
               (not (compiler-backend-peephole-prev-splits-edge? prev))
               (=
                 1
-                (match (backend_string_i64_map.get (& predcount) cur-label)
-                  [(backend_string_i64_map.LookupFound v) v]
-                  [(backend_string_i64_map.LookupMissing) 0]))
+                (match (backend_label_i64_map.get (& predcount) cur-label)
+                  [(backend_label_i64_map.LookupFound v) v]
+                  [(backend_label_i64_map.LookupMissing) 0]))
               (opt-label-contains
                 (opt-cfg-block-successors-with-next prev cur-label)
                 cur-label))
@@ -44173,7 +44238,7 @@
                 (compiler-backend-peephole-predcount-build-seq
                   seq
                   0
-                  (backend_string_i64_map.with-capacity 64))
+                  (backend_label_i64_map.with-capacity 64))
                 entry
                 seq
                 1)])))]
@@ -44185,7 +44250,7 @@
             entry-label
             (compiler-backend-peephole-predcount-build
               (compiler-ir-block-cons entry (box-get rest))
-              (backend_string_i64_map.with-capacity 64))
+              (backend_label_i64_map.with-capacity 64))
             entry
             (box-get rest))])]))
 
@@ -46968,7 +47033,9 @@
               compiler-backend-scalar-registers-enabled)
               (compiler-reg-early-exit-shrinkwrap-function folded-func)
               (begin
-                (set! compiler-reg-early-exit-saving-label "")
+                (set!
+                  compiler-reg-early-exit-saving-label
+                  (compiler-ir-label-none))
                 (set! compiler-reg-early-exit-bare-label "")
                 (set! compiler-reg-early-exit-prefix-count 0)
                 folded-func)))]
@@ -47368,7 +47435,7 @@
             params
             emit-blocks-list
             program-index)]
-        [shrinkwrap-saving-label : String compiler-reg-early-exit-saving-label]
+        [shrinkwrap-saving-label : i64 compiler-reg-early-exit-saving-label]
         [shrinkwrap-bare-label : String compiler-reg-early-exit-bare-label]
         [shrinkwrap-prefix-count : i64 compiler-reg-early-exit-prefix-count]
         [shrinkwrap-planned-guard : String
@@ -47417,7 +47484,7 @@
         [shrinkwrap-candidate? : bool
           (and
             shrinkwrap-state-admissible?
-            (not (string.eq shrinkwrap-saving-label ""))
+            (not (= shrinkwrap-saving-label (compiler-ir-label-none)))
             (not (string.eq shrinkwrap-bare-label ""))
             (not (string.eq shrinkwrap-planned-guard ""))
             (not (string.eq shrinkwrap-incoming-guard ""))
@@ -47955,7 +48022,10 @@
                                 ;; function with the rewrite disabled.
                                 (and
                                   (not shrinkwrap-active?)
-                                  (not (string.eq shrinkwrap-saving-label "")))
+                                  (not
+                                    (=
+                                      shrinkwrap-saving-label
+                                      (compiler-ir-label-none))))
                                 (compiler-backend-shrinkwrap-splice-fallback-required?
                                   shrinkwrap-active?
                                   body
@@ -48037,14 +48107,14 @@
     (compiler-backend-group-vars-disable!)
     (compiler-backend-fuse-need-disable!)
     (compiler-backend-gep-fold-disable!)
-    (set! compiler-backend-current-phi-targets BackendStringList.Nil)
+    (set! compiler-backend-current-phi-targets BackendLabelList.Nil)
     (set! compiler-backend-current-phi-target-count 0)
     (set! compiler-backend-emit-instr-post-base 0)
     (set! compiler-backend-emit-current-count 0)
     (set! compiler-backend-emit-instrs-loop-active false)
     (set! compiler-backend-emit-instrs-continue-pending false)
     (set! compiler-backend-shrinkwrap-bare-label "")
-    (set! compiler-backend-current-block-label "")
+    (set! compiler-backend-current-block-label (compiler-ir-label-none))
     (compiler-backend-set-current-mode! (CompilerBackendMode.Scalar))
     (set! compiler-backend-identity-tail-forwarder-active false)
     (set! compiler-backend-emergency-used false)
@@ -48175,7 +48245,7 @@
     (compiler-ir-block-list-compact
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -52341,7 +52411,7 @@
 (define (compiler-backend-object-switch-table
   [parts : CompilerBackendObjectParts]
   [label-scope : String]
-  [current-label : String]
+  [current-label : i64]
   [cases : CompilerIrSwitchCaseList]) : CompilerBackendObjectParts
   (let
     [table-label : String
@@ -52365,11 +52435,11 @@
   [parts : CompilerBackendObjectParts]
   [function-symbol : String]
   [label-scope : String]
-  [current-label : String]
+  [current-label : i64]
   [index : CompilerIrValue]
   [base : i64]
   [case-count : i64]
-  [default-label : String]
+  [default-label : i64]
   [total-switch : bool]) : CompilerBackendObjectParts
   (let
     [default-symbol : String
@@ -52423,11 +52493,11 @@
   [parts : CompilerBackendObjectParts]
   [function-symbol : String]
   [label-scope : String]
-  [current-label : String]
+  [current-label : i64]
   [index : CompilerIrValue]
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : String]) : CompilerBackendObjectParts
+  [default-label : i64]) : CompilerBackendObjectParts
   (let
     ;; Decide before the table walker consumes its case-list cursor.
     [total-switch : bool
@@ -52733,7 +52803,7 @@
 (define (compiler-backend-object-edge-phi-copies-scan
   [instrs : CompilerIrInstrSeq]
   [program-index : CompilerBackendProgramIndex]
-  [from-label : String]
+  [from-label : i64]
   [index : i64]
   [acc : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -52767,14 +52837,14 @@
 (define (compiler-backend-object-edge-phi-copies-seq
   [blocks : CompilerIrBlockSeq]
   [program-index : CompilerBackendProgramIndex]
-  [target-label : String]
-  [from-label : String]
+  [target-label : i64]
+  [from-label : i64]
   [index : i64]) : CompilerBackendPhiCopyList
   (if (>= index (compiler-ir-block-seq-count blocks))
     CompilerBackendPhiCopyList.Nil
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block label instrs)
-        (if (string.eq label target-label)
+        (if (= label target-label)
           (compiler-backend-object-edge-phi-copies-scan
             instrs
             program-index
@@ -52791,14 +52861,14 @@
 (define (compiler-backend-object-edge-phi-copies
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
-  [target-label : String]
-  [from-label : String]) : CompilerBackendPhiCopyList
+  [target-label : i64]
+  [from-label : i64]) : CompilerBackendPhiCopyList
   (match blocks
     [(CompilerIrBlockList.Nil) CompilerBackendPhiCopyList.Nil]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
-          (if (string.eq label target-label)
+          (if (= label target-label)
             (compiler-backend-object-edge-phi-copies-scan
               instrs
               program-index
@@ -52894,7 +52964,7 @@
   [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
-  [current-label : String]
+  [current-label : i64]
   [blocks : CompilerIrBlockList]
   [instr : CompilerIrInstr]
   [plan : CompilerBackendRuntimePlan]
@@ -53089,11 +53159,17 @@
             [true-edge : String
               (compiler-backend-asm-label
                 label-scope
-                (str_cat.str-cat current-label ".phit"))]
+                (compiler-ir-label
+                  (str_cat.str-cat
+                    (compiler-ir-label-text current-label)
+                    ".phit")))]
             [false-edge : String
               (compiler-backend-asm-label
                 label-scope
-                (str_cat.str-cat current-label ".phif"))]
+                (compiler-ir-label
+                  (str_cat.str-cat
+                    (compiler-ir-label-text current-label)
+                    ".phif")))]
             (compiler-backend-object-add-text
               (compiler-backend-object-add-text-relocation
                 (compiler-backend-object-emit-phi-copies
@@ -53407,7 +53483,7 @@
   [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
-  [current-label : String]
+  [current-label : i64]
   [blocks : CompilerIrBlockList]
   [instrs : CompilerIrInstrSeq]
   [plan : CompilerBackendRuntimePlan]
@@ -58100,7 +58176,7 @@
             (cobj.compiler-object-data-record-list-ref records index)]
           (match record
             [(cobj.CompilerObjectDataRecord.Label found)
-              (if (string.eq found label)
+              (if (= found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -58408,7 +58484,7 @@
         4
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 0
@@ -58676,7 +58752,7 @@
         0
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
@@ -58690,7 +58766,7 @@
           0
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
@@ -58866,7 +58942,7 @@
         0
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
@@ -58880,7 +58956,7 @@
           1
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   0
@@ -58920,7 +58996,7 @@
         0
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
@@ -58934,7 +59010,7 @@
           2
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   0
@@ -58996,7 +59072,7 @@
         0
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
@@ -59010,7 +59086,7 @@
           1
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   0

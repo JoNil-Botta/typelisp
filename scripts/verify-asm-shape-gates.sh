@@ -364,15 +364,28 @@ check_frame_slot_repacking() {
     _windows_asm=$(compile_gate frame_slot_repacking_windows tests/integration/early_return.tl windows-x86_64)
     _linux_body=$(function_body "$_linux_asm" _tl_early_return_choose)
     _windows_body=$(function_body "$_windows_asm" _tl_early_return_choose)
-    assert_regex_count_eq "$_linux_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 frame-slot-repacking-linux
-    assert_regex_count_eq "$_windows_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 frame-slot-repacking-windows
-    _linux_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_linux_body")
-    _windows_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_windows_body")
-    if [ "$_linux_frame" -gt 24 ] || [ "$_windows_frame" -gt 24 ]; then
-        fail "frame-slot-repacking expected frames <= 24 bytes, got linux=$_linux_frame windows=$_windows_frame"
+    # The gate protects two properties: the repacked frame stays small, and the
+    # two targets agree on it. A function that ends up needing no frame at all
+    # satisfies both, so zero allocations is accepted as long as BOTH targets
+    # reach it -- one target dropping the frame while the other keeps it is
+    # exactly the layout drift this gate exists to catch.
+    _linux_subs=$(count_regex "$_linux_body" '^[[:space:]]+subq \$[0-9]+, %rsp$')
+    _windows_subs=$(count_regex "$_windows_body" '^[[:space:]]+subq \$[0-9]+, %rsp$')
+    if [ "$_linux_subs" -ne "$_windows_subs" ]; then
+        fail "frame-slot-repacking target drift: linux has $_linux_subs stack allocation(s), windows has $_windows_subs"
     fi
-    if [ "$_linux_frame" -ne "$_windows_frame" ]; then
-        fail "frame-slot-repacking target layout drift: linux=$_linux_frame windows=$_windows_frame"
+    if [ "$_linux_subs" -gt 1 ]; then
+        fail "frame-slot-repacking expected at most one stack allocation, got $_linux_subs"
+    fi
+    if [ "$_linux_subs" -eq 1 ]; then
+        _linux_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_linux_body")
+        _windows_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_windows_body")
+        if [ "$_linux_frame" -gt 24 ] || [ "$_windows_frame" -gt 24 ]; then
+            fail "frame-slot-repacking expected frames <= 24 bytes, got linux=$_linux_frame windows=$_windows_frame"
+        fi
+        if [ "$_linux_frame" -ne "$_windows_frame" ]; then
+            fail "frame-slot-repacking target layout drift: linux=$_linux_frame windows=$_windows_frame"
+        fi
     fi
 }
 

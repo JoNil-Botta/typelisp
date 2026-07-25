@@ -105,6 +105,7 @@ total_switch_runtime|tests/integration/total_switch_runtime.tl|42|-|-|stdlib/arr
 cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+const_global_mask_unroll|tests/integration/const_global_mask_unroll.tl|0|-|-|stdlib/array.tl
 rbp_base_deref|tests/integration/rbp_base_deref.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 rbp_sixth_csr|tests/integration/rbp_sixth_csr.tl|42|-|-|stdlib/io.tl
 win64_rbp_eighth_csr|tests/integration/win64_rbp_eighth_csr.tl|42|-|-|stdlib/io.tl

@@ -769,6 +769,21 @@ The verify-*/check-* scripts fetch the published stage0 when `TYPELISP_BIN` is
 unset (via `scripts/lib-stage0.sh`); CI always passes `TYPELISP_BIN`
 explicitly.
 
+Writing a gate is not enough; it has to be invoked. `check-gate-reachability.sh`
+runs before the bootstrap and enforces that. It walks
+`scripts/<name>.(sh|ps1|awk)` references transitively from the
+`.github/workflows` files and requires every top-level `check-*` and `verify-*`
+script to be reached. Documentation is never a root, so a gate that only this
+file or `scripts/README.md` mentions still counts as unreferenced — that is how
+two ISPC correctness gates went unexecuted for months (#5690). A gate that is
+intentionally unwired goes in `scripts/optional-gate-allowlist.tsv` as
+`scripts/<name>.sh<TAB><reason>`; the sweep rejects a reason-less row, a
+duplicate row, an entry that is not a gate, and an entry whose gate has since
+become reachable. Optional local tools keep a `benchmark-`, `measure-`, or
+`analyze-` name, which the sweep does not require to be reachable. Because the
+sweep reads reachable scripts as text, that gate deliberately names no other
+gate's path anywhere in its own body, and checks itself for that.
+
 `scripts/check-bootstrap-fixpoint.sh` is host-sensitive. Linux uses the existing
 `as` plus `ld` path and compares Linux `stage2.s` with `stage3.s`. Git
 Bash/MSYS/Cygwin on Windows emits `windows-x86_64` assembly, assembles each

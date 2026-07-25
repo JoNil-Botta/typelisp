@@ -1,0 +1,15 @@
+# optional-gate-allowlist-schema	1
+#
+# Read by scripts/check-gate-reachability.sh.
+#
+# Every scripts/check-*.sh and scripts/verify-*.sh must be reachable from a
+# .github/workflows entry point. A gate that is deliberately not wired is
+# listed here as `scripts/<name>.sh<TAB><reason>`; the reason is mandatory and
+# the entry is rejected once the gate becomes reachable, so this file cannot
+# quietly outlive its justification.
+#
+# Prefer wiring the gate. An optional local tool belongs under a
+# benchmark-/measure-/analyze- name instead (scripts/README.md), which this
+# gate does not require to be reachable.
+#
+# script	reason

@@ -3019,7 +3019,7 @@
         CompilerIrInstrList.Nil)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -3170,7 +3170,7 @@
         CompilerIrInstrList.Nil)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -3266,7 +3266,7 @@
         CompilerIrInstrList.Nil)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -4129,7 +4129,7 @@
         0
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return CompilerIrMaybeValue.No)
               CompilerIrInstrList.Nil))
@@ -4141,7 +4141,9 @@
           (AstType.I64)
           8
           (compiler-ir-block-cons
-            (compiler-ir-block "entry" (compiler-backend-call-save-main-instrs))
+            (compiler-ir-block
+              (compiler-ir-label "entry")
+              (compiler-backend-call-save-main-instrs))
             CompilerIrBlockList.Nil))
         CompilerIrFunctionList.Nil))
     CompilerIrExternList.Nil))
@@ -4250,8 +4252,8 @@
         (CompilerIrValue.I64 0)
         (CompilerIrValue.Var 0)
         (AstType.I64)
-        "then"
-        "else"
+        (compiler-ir-label "then")
+        (compiler-ir-label "else")
         (CompilerBackendMaybeLabel.No))
         [(ResultCompilerBackend.Ok asm)
           (and
@@ -4449,13 +4451,13 @@
 (define (compiler-backend-callee-save-double-return-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Return CompilerIrMaybeValue.No)
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "alt"
+        (compiler-ir-label "alt")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return CompilerIrMaybeValue.No)
           CompilerIrInstrList.Nil))
@@ -4877,7 +4879,7 @@
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
         "_tl_test"
-        "entry"
+        (compiler-ir-label "entry")
         coalesced
         2
         (CompilerIrValue.Var 0)
@@ -4893,7 +4895,7 @@
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
         "_tl_test"
-        "entry"
+        (compiler-ir-label "entry")
         casted
         2
         (CompilerIrValue.Var 0)
@@ -4909,7 +4911,7 @@
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
         "_tl_test"
-        "entry"
+        (compiler-ir-label "entry")
         casted
         2
         (CompilerIrValue.Var 0)
@@ -5028,7 +5030,7 @@
           3
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Pack
                   2
@@ -5058,7 +5060,7 @@
           3
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Pack
                   2
@@ -5145,7 +5147,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Gep
             1
@@ -5171,7 +5173,7 @@
       18
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Alloc 0 (AstType.U64))
             (compiler-ir-instr-cons
@@ -5484,7 +5486,7 @@
       4
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (ir-instr-descriptor-pair-pack
               0
@@ -5814,7 +5816,7 @@
                     2
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.String "phi-string")
-                      "entry"
+                      (compiler-ir-label "entry")
                       CompilerIrPhiInputList.Nil)
                     (AstType.String))
                   (compiler-ir-instr-cons
@@ -5826,7 +5828,7 @@
           (CompilerIrBlockList.Array
             (compiler-ir-block-seq-from-list
               (compiler-ir-block-cons
-                (CompilerIrBlock.Block "entry" instrs)
+                (CompilerIrBlock.Block (compiler-ir-label "entry") instrs)
                 CompilerIrBlockList.Nil)))]
         [functions : CompilerIrFunctionList
           (CompilerIrFunctionList.Array
@@ -5898,7 +5900,7 @@
       (CompilerIrBlockList.Array
         (compiler-ir-block-seq-from-list
           (compiler-ir-block-cons
-            (CompilerIrBlock.Block "entry" instrs)
+            (CompilerIrBlock.Block (compiler-ir-label "entry") instrs)
             CompilerIrBlockList.Nil)))]
     [functions : CompilerIrFunctionList
       (CompilerIrFunctionList.Array
@@ -5947,7 +5949,7 @@
         (CompilerBackendTarget.Linux)
         "main"
         "main"
-        "entry"
+        (compiler-ir-label "entry")
         CompilerIrBlockList.Nil
         (CompilerIrInstr.Pack 0 values ty)
         plan
@@ -5958,7 +5960,7 @@
         (CompilerBackendTarget.Linux)
         "main"
         "main"
-        "entry"
+        (compiler-ir-label "entry")
         CompilerIrBlockList.Nil
         (CompilerIrInstr.Word
           1
@@ -6050,8 +6052,8 @@
                       assignments
                       "peephole"
                       (CompilerIrValue.Var 0)
-                      "then"
-                      "else"
+                      (compiler-ir-label "then")
+                      (compiler-ir-label "else")
                       (CompilerBackendMaybeLabel.No))
                       [(ResultCompilerBackend.Ok branch-asm)
                         (and
@@ -6629,7 +6631,7 @@
           3
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Pack
                   2
@@ -6671,7 +6673,7 @@
   (let
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
@@ -6681,7 +6683,7 @@
         "_tl_test"
         (ci.intern "test")
         blocks
-        "entry"
+        (compiler-ir-label "entry")
         CompilerRegAssignmentList.Nil
         vars
         CompilerRegVarTypeList.Nil
@@ -6818,7 +6820,7 @@
     [instrs : CompilerIrInstrList (compiler-ir-instr-seq-to-list seq)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (CompilerIrBlock.Block "entry" seq)
+        (CompilerIrBlock.Block (compiler-ir-label "entry") seq)
         CompilerIrBlockList.Nil)]
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts
@@ -6830,7 +6832,7 @@
         "_tl_test"
         (ci.intern "test")
         blocks
-        "entry"
+        (compiler-ir-label "entry")
         CompilerRegAssignmentList.Nil
         compiler-backend-long-block-instr-count
         CompilerRegVarTypeList.Nil
@@ -6931,7 +6933,7 @@
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.I64 3)
-          "bounds_ok")
+          (compiler-ir-label "bounds_ok"))
         CompilerIrInstrList.Nil)
       index-reg
       2)
@@ -6941,7 +6943,7 @@
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 0)
               (CompilerIrValue.Var 1)
-              "bounds_ok")
+              (compiler-ir-label "bounds_ok"))
             CompilerIrInstrList.Nil)
           index-reg-length-spill
           3)
@@ -7000,7 +7002,7 @@
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "bounds_ok")
+          (compiler-ir-label "bounds_ok"))
         (compiler-backend-bounds-direct-pressure-tail 1 count))]
     [result : ResultCompilerBackend
       (compiler-backend-emit-test-instrs instrs assignments count)]
@@ -7031,7 +7033,7 @@
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.I64 0)
             (CompilerIrValue.Var 1)
-            "bounds_ok")
+            (compiler-ir-label "bounds_ok"))
           CompilerIrInstrList.Nil)
         length-rax
         2)
@@ -7066,8 +7068,8 @@
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 1)
         (AstType.I64)
-        "then"
-        "else"
+        (compiler-ir-label "then")
+        (compiler-ir-label "else")
         (CompilerBackendMaybeLabel.No))
         [(ResultCompilerBackend.Ok asm)
           ;; The merged emitter folds the spilled LHS (var0 at -8(%rbp)) directly
@@ -7312,13 +7314,13 @@
         0
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "done")
+              (CompilerIrInstr.Jump (compiler-ir-label "done"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "done"
+              (compiler-ir-label "done")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
@@ -7344,17 +7346,17 @@
       assignments
       "branch"
       (CompilerIrValue.Var 0)
-      "then"
-      "else"
-      (CompilerBackendMaybeLabel.Some "else"))
+      (compiler-ir-label "then")
+      (compiler-ir-label "else")
+      (CompilerBackendMaybeLabel.Some (compiler-ir-label "else")))
       [(ResultCompilerBackend.Ok false-fallthrough)
         (match (compiler-backend-emit-branch
           assignments
           "branch"
           (CompilerIrValue.Var 0)
-          "then"
-          "else"
-          (CompilerBackendMaybeLabel.Some "then"))
+          (compiler-ir-label "then")
+          (compiler-ir-label "else")
+          (CompilerBackendMaybeLabel.Some (compiler-ir-label "then")))
           [(ResultCompilerBackend.Ok true-fallthrough)
             (and
               (compiler-backend-string-contains?
@@ -7587,7 +7589,7 @@
         0
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
@@ -7601,7 +7603,7 @@
           1
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   0
@@ -7644,13 +7646,13 @@
 (define (compiler-backend-phi-same-home-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "join"
+      (compiler-ir-label "join")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Phi
           1
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 0)
-            "entry"
+            (compiler-ir-label "entry")
             CompilerIrPhiInputList.Nil)
           (AstType.I64))
         CompilerIrInstrList.Nil))
@@ -7659,13 +7661,13 @@
 (define (compiler-backend-phi-cycle-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "join"
+      (compiler-ir-label "join")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Phi
           0
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 1)
-            "back"
+            (compiler-ir-label "back")
             CompilerIrPhiInputList.Nil)
           (AstType.I64))
         (compiler-ir-instr-cons
@@ -7673,7 +7675,7 @@
             1
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 0)
-              "back"
+              (compiler-ir-label "back")
               CompilerIrPhiInputList.Nil)
             (AstType.I64))
           CompilerIrInstrList.Nil)))
@@ -7695,13 +7697,13 @@
     [ty : AstType (compiler-backend-register-group-test-type)]
     (compiler-ir-block-cons
       (compiler-ir-block
-        "join"
+        (compiler-ir-label "join")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             0
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "back"
+              (compiler-ir-label "back")
               CompilerIrPhiInputList.Nil)
             ty)
           (compiler-ir-instr-cons
@@ -7709,7 +7711,7 @@
               1
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 0)
-                "back"
+                (compiler-ir-label "back")
                 CompilerIrPhiInputList.Nil)
               ty)
             CompilerIrInstrList.Nil)))
@@ -7736,13 +7738,13 @@
 (define (compiler-backend-phi-f64-cycle-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "join"
+      (compiler-ir-label "join")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Phi
           0
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 1)
-            "back"
+            (compiler-ir-label "back")
             CompilerIrPhiInputList.Nil)
           (AstType.F64))
         (compiler-ir-instr-cons
@@ -7750,7 +7752,7 @@
             1
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 0)
-              "back"
+              (compiler-ir-label "back")
               CompilerIrPhiInputList.Nil)
             (AstType.F64))
           CompilerIrInstrList.Nil)))
@@ -7772,13 +7774,13 @@
 (define (compiler-backend-phi-f32-three-cycle-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "join"
+      (compiler-ir-label "join")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Phi
           0
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 1)
-            "back"
+            (compiler-ir-label "back")
             CompilerIrPhiInputList.Nil)
           (AstType.F32))
         (compiler-ir-instr-cons
@@ -7786,7 +7788,7 @@
             1
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 2)
-              "back"
+              (compiler-ir-label "back")
               CompilerIrPhiInputList.Nil)
             (AstType.F32))
           (compiler-ir-instr-cons
@@ -7794,7 +7796,7 @@
               2
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 0)
-                "back"
+                (compiler-ir-label "back")
                 CompilerIrPhiInputList.Nil)
               (AstType.F32))
             CompilerIrInstrList.Nil))))
@@ -7816,13 +7818,13 @@
     [ty : AstType (compiler-backend-register-group-f64-test-type)]
     (compiler-ir-block-cons
       (compiler-ir-block
-        "join"
+        (compiler-ir-label "join")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             0
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "back"
+              (compiler-ir-label "back")
               CompilerIrPhiInputList.Nil)
             ty)
           (compiler-ir-instr-cons
@@ -7830,7 +7832,7 @@
               1
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 0)
-                "back"
+                (compiler-ir-label "back")
                 CompilerIrPhiInputList.Nil)
               ty)
             CompilerIrInstrList.Nil)))
@@ -7839,21 +7841,21 @@
 (define (compiler-backend-branch-phi-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "body"
+      (compiler-ir-label "body")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Phi
           0
           (compiler-ir-phi-input-cons
             (CompilerIrValue.I64 1)
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "body"
+              (compiler-ir-label "body")
               CompilerIrPhiInputList.Nil))
           (AstType.I64))
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
-      (compiler-ir-block "exit" CompilerIrInstrList.Nil)
+      (compiler-ir-block (compiler-ir-label "exit") CompilerIrInstrList.Nil)
       CompilerIrBlockList.Nil)))
 
 (define (compiler-backend-branch-phi-assignments) : CompilerRegAssignmentList
@@ -7877,13 +7879,13 @@
       (compiler-backend-branch-phi-assignments)
       "phi_edge"
       (compiler-backend-branch-phi-blocks)
-      "entry"
+      (compiler-ir-label "entry")
       (CompilerIrBinOp.Lt)
       (CompilerIrValue.I64 1)
       (CompilerIrValue.Var 2)
       (AstType.I64)
-      "body"
-      "exit"
+      (compiler-ir-label "body")
+      (compiler-ir-label "exit")
       (CompilerBackendMaybeLabel.No)
       (compiler-backend-program-index-build
         CompilerIrFunctionList.Nil
@@ -7916,8 +7918,8 @@
   (match (compiler-backend-emit-phi-edge-copies
     CompilerRegAssignmentList.Nil
     (compiler-backend-branch-phi-blocks)
-    "body"
-    "entry"
+    (compiler-ir-label "body")
+    (compiler-ir-label "entry")
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
@@ -7943,8 +7945,8 @@
           (CompilerRegLocation.Register "%r13"))
         CompilerRegAssignmentList.Nil))
     (compiler-backend-branch-phi-blocks)
-    "body"
-    "body"
+    (compiler-ir-label "body")
+    (compiler-ir-label "body")
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
@@ -7962,8 +7964,8 @@
             (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
             CompilerRegAssignmentList.Nil))
         (compiler-backend-branch-phi-blocks)
-        "body"
-        "body"
+        (compiler-ir-label "body")
+        (compiler-ir-label "body")
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
@@ -7983,8 +7985,8 @@
                   (CompilerRegLocation.Register "%r13"))
                 CompilerRegAssignmentList.Nil))
             (compiler-backend-branch-phi-blocks)
-            "body"
-            "body"
+            (compiler-ir-label "body")
+            (compiler-ir-label "body")
             (compiler-backend-program-index-build
               CompilerIrFunctionList.Nil
               CompilerIrExternList.Nil)
@@ -8033,7 +8035,7 @@
         "_tl_test"
         (ci.intern "test")
         blocks
-        "entry"
+        (compiler-ir-label "entry")
         assignments
         vars
         CompilerRegVarTypeList.Nil
@@ -8056,7 +8058,7 @@
   (compiler-ir-instr-cons
     (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 7) (AstType.I64))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Jump "join")
+      (CompilerIrInstr.Jump (compiler-ir-label "join"))
       CompilerIrInstrList.Nil)))
 
 (define (compiler-backend-single-phi-return-join-instrs) : CompilerIrInstrList
@@ -8065,7 +8067,7 @@
       0
       (compiler-ir-phi-input-cons
         (CompilerIrValue.Var 1)
-        "entry"
+        (compiler-ir-label "entry")
         CompilerIrPhiInputList.Nil)
       (AstType.I64))
     (compiler-ir-instr-cons
@@ -8076,11 +8078,11 @@
 (define (compiler-backend-single-phi-return-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-backend-single-phi-return-entry-instrs))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "join"
+        (compiler-ir-label "join")
         (compiler-backend-single-phi-return-join-instrs))
       CompilerIrBlockList.Nil)))
 
@@ -8112,7 +8114,7 @@
     (compiler-ir-instr-cons
       (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 11) (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "join")
+        (CompilerIrInstr.Jump (compiler-ir-label "join"))
         CompilerIrInstrList.Nil))))
 
 (define (compiler-backend-multi-phi-return-join-instrs) : CompilerIrInstrList
@@ -8121,7 +8123,7 @@
       0
       (compiler-ir-phi-input-cons
         (CompilerIrValue.Var 3)
-        "entry"
+        (compiler-ir-label "entry")
         CompilerIrPhiInputList.Nil)
       (AstType.I64))
     (compiler-ir-instr-cons
@@ -8129,7 +8131,7 @@
         1
         (compiler-ir-phi-input-cons
           (CompilerIrValue.Var 2)
-          "entry"
+          (compiler-ir-label "entry")
           CompilerIrPhiInputList.Nil)
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -8137,7 +8139,7 @@
           4
           (compiler-ir-phi-input-cons
             (CompilerIrValue.I64 99)
-            "entry"
+            (compiler-ir-label "entry")
             CompilerIrPhiInputList.Nil)
           (AstType.I64))
         (compiler-ir-instr-cons
@@ -8147,9 +8149,13 @@
 
 (define (compiler-backend-multi-phi-return-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (compiler-ir-block "entry" (compiler-backend-multi-phi-return-entry-instrs))
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-backend-multi-phi-return-entry-instrs))
     (compiler-ir-block-cons
-      (compiler-ir-block "join" (compiler-backend-multi-phi-return-join-instrs))
+      (compiler-ir-block
+        (compiler-ir-label "join")
+        (compiler-backend-multi-phi-return-join-instrs))
       CompilerIrBlockList.Nil)))
 
 (define (compiler-backend-multi-phi-return-assignments) : CompilerRegAssignmentList
@@ -8193,7 +8199,7 @@
       0
       (compiler-ir-phi-input-cons
         (CompilerIrValue.Var 1)
-        "entry"
+        (compiler-ir-label "entry")
         CompilerIrPhiInputList.Nil)
       (AstType.I64))
     (compiler-ir-instr-cons
@@ -8206,10 +8212,12 @@
 (define (compiler-backend-phi-return-work-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-backend-single-phi-return-entry-instrs))
     (compiler-ir-block-cons
-      (compiler-ir-block "join" (compiler-backend-phi-return-work-join-instrs))
+      (compiler-ir-block
+        (compiler-ir-label "join")
+        (compiler-backend-phi-return-work-join-instrs))
       CompilerIrBlockList.Nil)))
 
 (define (compiler-backend-phi-return-work-assignments) : CompilerRegAssignmentList
@@ -8240,7 +8248,7 @@
   (compiler-ir-instr-cons
     (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 7) (AstType.I64))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Jump "join")
+      (CompilerIrInstr.Jump (compiler-ir-label "join"))
       CompilerIrInstrList.Nil)))
 
 (define (compiler-backend-mov-phi-copy-join-instrs) : CompilerIrInstrList
@@ -8249,7 +8257,7 @@
       0
       (compiler-ir-phi-input-cons
         (CompilerIrValue.Var 2)
-        "entry"
+        (compiler-ir-label "entry")
         CompilerIrPhiInputList.Nil)
       (AstType.I64))
     (compiler-ir-instr-cons
@@ -8261,9 +8269,13 @@
 
 (define (compiler-backend-mov-phi-copy-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (compiler-ir-block "entry" (compiler-backend-mov-phi-copy-entry-instrs))
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-backend-mov-phi-copy-entry-instrs))
     (compiler-ir-block-cons
-      (compiler-ir-block "join" (compiler-backend-mov-phi-copy-join-instrs))
+      (compiler-ir-block
+        (compiler-ir-label "join")
+        (compiler-backend-mov-phi-copy-join-instrs))
       CompilerIrBlockList.Nil)))
 
 (define (compiler-backend-mov-phi-copy-assignments) : CompilerRegAssignmentList
@@ -8287,7 +8299,7 @@
         "_tl_test"
         (ci.intern "test")
         blocks
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-backend-mov-phi-copy-assignments)
         3
         CompilerRegVarTypeList.Nil
@@ -8325,8 +8337,8 @@
       (match (compiler-backend-emit-phi-edge-copies
         (compiler-backend-phi-same-home-assignments)
         (compiler-backend-phi-same-home-blocks)
-        "join"
-        "entry"
+        (compiler-ir-label "join")
+        (compiler-ir-label "entry")
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
@@ -8338,8 +8350,8 @@
           (match (compiler-backend-emit-phi-edge-copies
             CompilerRegAssignmentList.Nil
             (compiler-backend-phi-cycle-blocks)
-            "join"
-            "back"
+            (compiler-ir-label "join")
+            (compiler-ir-label "back")
             (compiler-backend-program-index-build
               CompilerIrFunctionList.Nil
               CompilerIrExternList.Nil)
@@ -8385,8 +8397,8 @@
       (match (compiler-backend-emit-phi-edge-copies
         (compiler-backend-phi-group-cycle-assignments)
         (compiler-backend-phi-group-cycle-blocks)
-        "join"
-        "back"
+        (compiler-ir-label "join")
+        (compiler-ir-label "back")
         (compiler-backend-register-group-test-index)
         4
         ""
@@ -8425,13 +8437,13 @@
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
         (compiler-ir-block
-          "join"
+          (compiler-ir-label "join")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               1
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 0)
-                "entry"
+                (compiler-ir-label "entry")
                 CompilerIrPhiInputList.Nil)
               ty)
             CompilerIrInstrList.Nil))
@@ -8446,8 +8458,8 @@
       (compiler-backend-emit-phi-edge-copies
         CompilerRegAssignmentList.Nil
         blocks
-        "join"
-        "entry"
+        (compiler-ir-label "join")
+        (compiler-ir-label "entry")
         (compiler-backend-register-group-test-index)
         2
         ""
@@ -8478,8 +8490,8 @@
         (match (compiler-backend-emit-phi-edge-copies
           (compiler-backend-phi-f64-cycle-assignments)
           (compiler-backend-phi-f64-cycle-blocks)
-          "join"
-          "back"
+          (compiler-ir-label "join")
+          (compiler-ir-label "back")
           (compiler-backend-program-index-build
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
@@ -8504,8 +8516,8 @@
         (match (compiler-backend-emit-phi-edge-copies
           (compiler-backend-phi-f64-cycle-assignments)
           (compiler-backend-phi-f64-cycle-blocks)
-          "join"
-          "back"
+          (compiler-ir-label "join")
+          (compiler-ir-label "back")
           (compiler-backend-program-index-build
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
@@ -8525,8 +8537,8 @@
         (match (compiler-backend-emit-phi-edge-copies
           (compiler-backend-phi-f32-three-cycle-assignments)
           (compiler-backend-phi-f32-three-cycle-blocks)
-          "join"
-          "back"
+          (compiler-ir-label "join")
+          (compiler-ir-label "back")
           (compiler-backend-program-index-build
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
@@ -8546,8 +8558,8 @@
         (match (compiler-backend-emit-phi-edge-copies
           (compiler-backend-phi-f64-spill-cycle-assignments)
           (compiler-backend-phi-f64-cycle-blocks)
-          "join"
-          "back"
+          (compiler-ir-label "join")
+          (compiler-ir-label "back")
           (compiler-backend-program-index-build
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
@@ -8566,8 +8578,8 @@
         (match (compiler-backend-emit-phi-edge-copies
           (compiler-backend-phi-group-f64-cycle-assignments)
           (compiler-backend-phi-group-f64-cycle-blocks)
-          "join"
-          "back"
+          (compiler-ir-label "join")
+          (compiler-ir-label "back")
           (compiler-backend-register-group-f64-test-index)
           4
           ""
@@ -9184,7 +9196,7 @@
             4
             (compiler-ir-block-cons
               (compiler-ir-block
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-instr-cons instr CompilerIrInstrList.Nil))
               CompilerIrBlockList.Nil))
           CompilerIrFunctionList.Nil)
@@ -9203,12 +9215,15 @@
     0
     (compiler-ir-switch-case-cons
       0
-      "zero"
+      (compiler-ir-label "zero")
       (compiler-ir-switch-case-cons
         1
-        "one"
-        (compiler-ir-switch-case-cons 2 "two" CompilerIrSwitchCaseList.Nil)))
-    "other"))
+        (compiler-ir-label "one")
+        (compiler-ir-switch-case-cons
+          2
+          (compiler-ir-label "two")
+          CompilerIrSwitchCaseList.Nil)))
+    (compiler-ir-label "other")))
 
 (define (compiler-backend-switch-test-program) : CompilerIrProgram
   (CompilerIrProgram.Program
@@ -9221,34 +9236,34 @@
         1
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (compiler-backend-switch-test-instr)
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "zero"
+              (compiler-ir-label "zero")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "one"
+                (compiler-ir-label "one")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
                   CompilerIrInstrList.Nil))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "two"
+                  (compiler-ir-label "two")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
                       (CompilerIrMaybeValue.Some (CompilerIrValue.I64 2)))
                     CompilerIrInstrList.Nil))
                 (compiler-ir-block-cons
                   (compiler-ir-block
-                    "other"
+                    (compiler-ir-label "other")
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Return
                         (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
@@ -9260,23 +9275,26 @@
 (define (compiler-backend-total-switch-test-cases) : CompilerIrSwitchCaseList
   (compiler-ir-switch-case-cons
     0
-    "zero"
+    (compiler-ir-label "zero")
     (compiler-ir-switch-case-cons
       1
-      "one"
+      (compiler-ir-label "one")
       (compiler-ir-switch-case-cons
         2
-        "two"
+        (compiler-ir-label "two")
         (compiler-ir-switch-case-cons
           3
-          "three"
+          (compiler-ir-label "three")
           (compiler-ir-switch-case-cons
             4
-            "four"
-            (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil)))))))
+            (compiler-ir-label "four")
+            (compiler-ir-switch-case-cons
+              5
+              (compiler-ir-label "five")
+              CompilerIrSwitchCaseList.Nil)))))))
 
 (define (compiler-backend-total-switch-return-block
-  [label : String]
+  [label : i64]
   [value : i64]
   [rest : CompilerIrBlockList]) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -9290,7 +9308,7 @@
 
 (define (compiler-backend-total-switch-trap-test-block) : CompilerIrBlock
   (compiler-ir-block
-    "match_total_trap"
+    (compiler-ir-label "match_total_trap")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
@@ -9298,37 +9316,37 @@
         (CompilerIrCallArgs.Nil)
         (AstType.Unit))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "match_total_trap")
+        (CompilerIrInstr.Jump (compiler-ir-label "match_total_trap"))
         CompilerIrInstrList.Nil))))
 
 (define (compiler-backend-total-switch-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Switch
           (CompilerIrValue.Var 0)
           0
           (compiler-backend-total-switch-test-cases)
-          "match_total_trap")
+          (compiler-ir-label "match_total_trap"))
         CompilerIrInstrList.Nil))
     (compiler-backend-total-switch-return-block
-      "zero"
+      (compiler-ir-label "zero")
       0
       (compiler-backend-total-switch-return-block
-        "one"
+        (compiler-ir-label "one")
         1
         (compiler-backend-total-switch-return-block
-          "two"
+          (compiler-ir-label "two")
           2
           (compiler-backend-total-switch-return-block
-            "three"
+            (compiler-ir-label "three")
             3
             (compiler-backend-total-switch-return-block
-              "four"
+              (compiler-ir-label "four")
               4
               (compiler-backend-total-switch-return-block
-                "five"
+                (compiler-ir-label "five")
                 5
                 (compiler-ir-block-cons
                   (compiler-backend-total-switch-trap-test-block)
@@ -9485,37 +9503,37 @@
         1
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Switch
                 (CompilerIrValue.Var 0)
                 4
                 (compiler-ir-switch-case-cons
                   4
-                  "four"
+                  (compiler-ir-label "four")
                   (compiler-ir-switch-case-cons
                     5
-                    "five"
+                    (compiler-ir-label "five")
                     CompilerIrSwitchCaseList.Nil))
-                "other")
+                (compiler-ir-label "other"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "four"
+              (compiler-ir-label "four")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.I64 4)))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "five"
+                (compiler-ir-label "five")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 5)))
                   CompilerIrInstrList.Nil))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "other"
+                  (compiler-ir-label "other")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
                       (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -9552,19 +9570,19 @@
         1
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Switch
                 (CompilerIrValue.Var 0)
                 0
                 (compiler-ir-switch-case-cons
                   0
-                  "zero"
+                  (compiler-ir-label "zero")
                   (compiler-ir-switch-case-cons
                     2
-                    "two"
+                    (compiler-ir-label "two")
                     CompilerIrSwitchCaseList.Nil))
-                "other")
+                (compiler-ir-label "other"))
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil))
       CompilerIrFunctionList.Nil)
@@ -9590,29 +9608,29 @@
         2
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Switch
                 (CompilerIrValue.Var 0)
                 0
                 (compiler-ir-switch-case-cons
                   0
-                  "join"
+                  (compiler-ir-label "join")
                   (compiler-ir-switch-case-cons
                     1
-                    "join"
+                    (compiler-ir-label "join")
                     CompilerIrSwitchCaseList.Nil))
-                "join")
+                (compiler-ir-label "join"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "join"
+              (compiler-ir-label "join")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Phi
                   1
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.I64 1)
-                    "entry"
+                    (compiler-ir-label "entry")
                     CompilerIrPhiInputList.Nil)
                   (AstType.I64))
                 (compiler-ir-instr-cons
@@ -11769,7 +11787,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.VectorLoad
             0
@@ -11890,7 +11908,7 @@
   [want : String]) : bool
   (match (compiler-backend-emit-avx512-tail-mask
     "_tl_tail"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-backend-avx512-tail-mask-assignments)
     0
     index
@@ -11903,7 +11921,7 @@
 (define (compiler-backend-avx512-tail-mask-dynamic-zero-ok?) : bool
   (match (compiler-backend-emit-avx512-tail-mask
     "_tl_tail"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-backend-avx512-tail-mask-assignments)
     0
     (CompilerIrValue.Var 1)
@@ -12291,7 +12309,7 @@
     20
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-backend-avx512-mask-spill-tails
           0
           (compiler-backend-avx512-mask-spill-reduces
@@ -12386,7 +12404,7 @@
       3
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Splat 0 (CompilerIrValue.I64 7) 4 (AstType.I64))
             (compiler-ir-instr-cons
@@ -12834,7 +12852,7 @@
         0
         (compiler-ir-phi-input-cons
           (CompilerIrValue.F64 (compiler-backend-test-f64-bits "1.0"))
-          "entry"
+          (compiler-ir-label "entry")
           CompilerIrPhiInputList.Nil)
         (AstType.I64))]
     [program : CompilerIrProgram
@@ -12848,13 +12866,13 @@
             4
             (compiler-ir-block-cons
               (compiler-ir-block
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "join")
+                  (CompilerIrInstr.Jump (compiler-ir-label "join"))
                   CompilerIrInstrList.Nil))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "join"
+                  (compiler-ir-label "join")
                   (compiler-ir-instr-cons
                     phi
                     (compiler-ir-instr-cons
@@ -12936,7 +12954,7 @@
         "_tl_test"
         (ci.intern "test")
         CompilerIrBlockList.Nil
-        "entry"
+        (compiler-ir-label "entry")
         CompilerRegAssignmentList.Nil
         vars
         CompilerRegVarTypeList.Nil
@@ -13061,7 +13079,7 @@
       compiler-backend-emergency-restore-suppressed]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
@@ -13073,7 +13091,7 @@
         "_tl_test"
         (ci.intern "test")
         blocks
-        "entry"
+        (compiler-ir-label "entry")
         assignments
         vars
         CompilerRegVarTypeList.Nil
@@ -14099,7 +14117,7 @@
       (CompilerIrInstr.BoundsCheck
         (CompilerIrValue.Var 1)
         (CompilerIrValue.Var 2)
-        "bounds_ok")
+        (compiler-ir-label "bounds_ok"))
       "    jb .L_tl_test_bounds_ok\n")))
 
 (define (compiler-backend-scalar-load-scratch-ok?) : bool
@@ -14518,7 +14536,10 @@
                 (CompilerIrValue.Var 6)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 7) "eq" "ne")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 7)
+                  (compiler-ir-label "eq")
+                  (compiler-ir-label "ne"))
                 CompilerIrInstrList.Nil))))))
     CompilerRegAssignmentList.Nil
     9)
@@ -15121,7 +15142,7 @@
                   CompilerIrInstrList.Nil))))))]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -15328,7 +15349,7 @@
       (compiler-backend-gep-load-multi-emergency-instrs)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -15438,7 +15459,7 @@
           CompilerIrInstrList.Nil))]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -15535,7 +15556,7 @@
                 CompilerIrInstrList.Nil)))))]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -15611,7 +15632,7 @@
     (and
       (match (compiler-backend-emit-cast
         "_tl_test"
-        "entry"
+        (compiler-ir-label "entry")
         reg-src
         6
         (CompilerIrValue.Var 5)
@@ -15626,7 +15647,7 @@
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
         "_tl_test"
-        "entry"
+        (compiler-ir-label "entry")
         stack-src
         6
         (CompilerIrValue.Var 5)
@@ -15938,7 +15959,7 @@
 (define (compiler-backend-gep-fold-test-blocks [second-use : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -16559,7 +16580,7 @@
   [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -16612,7 +16633,7 @@
   [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -16667,7 +16688,7 @@
 (define (compiler-backend-direct-int-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -16708,7 +16729,7 @@
 (define (compiler-backend-spill-int-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -16753,7 +16774,7 @@
 (define (compiler-backend-spill-u64-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -16806,7 +16827,7 @@
 (define (compiler-backend-direct-float-to-int-cast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -16849,7 +16870,7 @@
 (define (compiler-backend-spill-float-to-int-cast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -16896,7 +16917,7 @@
 (define (compiler-backend-spill-int-cast-home-ok?) : bool
   (match (compiler-backend-emit-cast
     "test_cast"
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -18884,8 +18905,8 @@
       CompilerRegAssignmentList.Nil)
     "bool_branch"
     (CompilerIrValue.Var 0)
-    "yes"
-    "no"
+    (compiler-ir-label "yes")
+    (compiler-ir-label "no")
     (CompilerBackendMaybeLabel.No))
     [(ResultCompilerBackend.Ok reg-asm)
       (match (compiler-backend-emit-branch
@@ -18894,8 +18915,8 @@
           CompilerRegAssignmentList.Nil)
         "bool_branch"
         (CompilerIrValue.Var 0)
-        "yes"
-        "no"
+        (compiler-ir-label "yes")
+        (compiler-ir-label "no")
         (CompilerBackendMaybeLabel.No))
         [(ResultCompilerBackend.Ok spill-asm)
           (and
@@ -18934,8 +18955,8 @@
       (CompilerIrValue.Var 0)
       (CompilerIrValue.I64 10)
       (AstType.I64)
-      "yes"
-      "no"
+      (compiler-ir-label "yes")
+      (compiler-ir-label "no")
       (CompilerBackendMaybeLabel.No))
       [(ResultCompilerBackend.Ok reg-asm)
         (match (compiler-backend-emit-compare-branch
@@ -18945,8 +18966,8 @@
           (CompilerIrValue.Var 2)
           (CompilerIrValue.Var 1)
           (AstType.I64)
-          "yes"
-          "no"
+          (compiler-ir-label "yes")
+          (compiler-ir-label "no")
           (CompilerBackendMaybeLabel.No))
           [(ResultCompilerBackend.Ok stack-asm)
             (and
@@ -19689,7 +19710,7 @@
     [count : i64 (compiler-ir-instr-list-count instrs)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -19904,7 +19925,7 @@
     [count : i64 (compiler-ir-instr-list-count instrs)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -20102,7 +20123,7 @@
 
 (define (compiler-backend-checked-trap-entry-block) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         0
@@ -20111,12 +20132,15 @@
         (CompilerIrValue.I64 0)
         (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "div_trap" "div_ok")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "div_trap")
+          (compiler-ir-label "div_ok"))
         CompilerIrInstrList.Nil))))
 
 (define (compiler-backend-checked-trap-div-block) : CompilerIrBlock
   (compiler-ir-block
-    "div_trap"
+    (compiler-ir-label "div_trap")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
@@ -20124,12 +20148,12 @@
         (CompilerIrCallArgs.Nil)
         (AstType.Unit))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "div_ok")
+        (CompilerIrInstr.Jump (compiler-ir-label "div_ok"))
         CompilerIrInstrList.Nil))))
 
 (define (compiler-backend-checked-trap-div-ok-block) : CompilerIrBlock
   (compiler-ir-block
-    "div_ok"
+    (compiler-ir-label "div_ok")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         2
@@ -20154,13 +20178,13 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Branch
               (CompilerIrValue.Var 4)
-              "shift_trap"
-              "shift_ok")
+              (compiler-ir-label "shift_trap")
+              (compiler-ir-label "shift_ok"))
             CompilerIrInstrList.Nil))))))
 
 (define (compiler-backend-checked-trap-shift-block) : CompilerIrBlock
   (compiler-ir-block
-    "shift_trap"
+    (compiler-ir-label "shift_trap")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         5
@@ -20168,12 +20192,12 @@
         (CompilerIrCallArgs.Nil)
         (AstType.Unit))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "shift_ok")
+        (CompilerIrInstr.Jump (compiler-ir-label "shift_ok"))
         CompilerIrInstrList.Nil))))
 
 (define (compiler-backend-checked-trap-shift-ok-block) : CompilerIrBlock
   (compiler-ir-block
-    "shift_ok"
+    (compiler-ir-label "shift_ok")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         6
@@ -20437,7 +20461,7 @@
         1
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 0
@@ -20446,18 +20470,21 @@
                 (CompilerIrValue.Global (ci.intern "g_cap"))
                 (AstType.Bool))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "full" "ok")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 0)
+                  (compiler-ir-label "full")
+                  (compiler-ir-label "ok"))
                 CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "full"
+              (compiler-ir-label "full")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "ok"
+                (compiler-ir-label "ok")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
@@ -21303,7 +21330,7 @@
         CompilerIrInstrList.Nil)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -21831,7 +21858,7 @@
         0
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
@@ -21845,7 +21872,7 @@
           0
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.I64 2)))
@@ -22143,7 +22170,7 @@
     [count : i64 (compiler-ir-instr-list-count instrs)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [_ctx : unit
       (begin
@@ -23295,7 +23322,7 @@
 (define (compiler-backend-scratch-vreg-call-target-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.CallIndirectC
           2
@@ -23324,7 +23351,7 @@
 (define (compiler-backend-scratch-vreg-tail-target-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.TailCallIndirect
           (CompilerIrValue.Var 0)
@@ -23347,23 +23374,26 @@
 (define (compiler-backend-scratch-vreg-switch-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Switch
           (CompilerIrValue.Var 0)
           4
           (compiler-ir-switch-case-cons
             4
-            "four"
-            (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil))
-          "other")
+            (compiler-ir-label "four")
+            (compiler-ir-switch-case-cons
+              5
+              (compiler-ir-label "five")
+              CompilerIrSwitchCaseList.Nil))
+          (compiler-ir-label "other"))
         CompilerIrInstrList.Nil))
     CompilerIrBlockList.Nil))
 
 (define (compiler-backend-scratch-vreg-c-abi-return-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.CallCAbiStoreResult
           (box
@@ -23391,19 +23421,19 @@
 (define (compiler-backend-scratch-vreg-bounds-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "ok")
+          (compiler-ir-label "ok"))
         CompilerIrInstrList.Nil))
     CompilerIrBlockList.Nil))
 
 (define (compiler-backend-scratch-vreg-memory-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.CopyBytes
           (CompilerIrValue.Var 0)
@@ -23422,7 +23452,7 @@
 (define (compiler-backend-scratch-vreg-fused-sibling-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Gep
           2
@@ -23463,7 +23493,7 @@
 (define (compiler-backend-scratch-vreg-float-load-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 0 (CompilerIrValue.Var 1) (AstType.F64))
         CompilerIrInstrList.Nil))
@@ -23472,7 +23502,7 @@
 (define (compiler-backend-scratch-vreg-float-store-ptr-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.StorePtr
           (CompilerIrValue.Var 0)
@@ -23484,7 +23514,7 @@
 (define (compiler-backend-scratch-vreg-float-store-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Store
           (ci.intern "scratch_float_global")
@@ -23503,7 +23533,7 @@
 (define (compiler-backend-scratch-vreg-float-arith-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           0
@@ -23517,7 +23547,7 @@
 (define (compiler-backend-scratch-vreg-float-compare-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           0
@@ -23531,7 +23561,7 @@
 (define (compiler-backend-scratch-vreg-float-unop-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.UnOp
           0
@@ -23544,7 +23574,7 @@
 (define (compiler-backend-scratch-vreg-float-arith-return-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           0
@@ -23561,7 +23591,7 @@
 (define (compiler-backend-scratch-vreg-float-compare-return-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           0
@@ -23631,7 +23661,7 @@
 (define (compiler-backend-scratch-vreg-splat-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Splat 1 (CompilerIrValue.Var 0) 4 (AstType.I64))
         CompilerIrInstrList.Nil))
@@ -23640,7 +23670,7 @@
 (define (compiler-backend-scratch-vreg-reduce-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.VectorReduce
           1
@@ -23654,7 +23684,7 @@
 (define (compiler-backend-scratch-vreg-prefix-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (ir-instr-vector-prefix
           2
@@ -23696,7 +23726,7 @@
 (define (compiler-backend-scratch-vreg-cast-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Cast
           1
@@ -23709,7 +23739,7 @@
 (define (compiler-backend-scratch-vreg-cast-gp-only-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Cast
           1
@@ -23722,7 +23752,7 @@
 (define (compiler-backend-scratch-vreg-bitcast-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Bitcast
           1
@@ -23735,7 +23765,7 @@
 (define (compiler-backend-scratch-vreg-float-mov-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
         CompilerIrInstrList.Nil))
@@ -23776,7 +23806,7 @@
     [ty : AstType (AstType.Struct (ci.intern "ScratchMixedAggregate"))]
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Pack
             2
@@ -23792,7 +23822,7 @@
 (define (compiler-backend-scratch-vreg-aggregate-gp-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Pack
           2
@@ -23821,7 +23851,7 @@
           1
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Pack
                   0
@@ -23850,7 +23880,7 @@
 (define (compiler-backend-scratch-vreg-copy-xmm-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.CopyBytes
           (CompilerIrValue.Var 0)
@@ -23862,7 +23892,7 @@
 (define (compiler-backend-scratch-vreg-copy-xmm-exact-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.CopyBytes
           (CompilerIrValue.Var 0)
@@ -23874,7 +23904,7 @@
 (define (compiler-backend-scratch-vreg-c-memory-test-blocks [name : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Call
           1
@@ -23892,7 +23922,7 @@
   [with-marker : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.CallIndirectC
           1
@@ -23911,19 +23941,19 @@
 (define (compiler-backend-scratch-vreg-phi-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "join")
+        (CompilerIrInstr.Jump (compiler-ir-label "join"))
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "join"
+        (compiler-ir-label "join")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             0
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               CompilerIrPhiInputList.Nil)
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -23931,7 +23961,7 @@
               1
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 0)
-                "entry"
+                (compiler-ir-label "entry")
                 CompilerIrPhiInputList.Nil)
               (AstType.I64))
             CompilerIrInstrList.Nil)))
@@ -23940,19 +23970,19 @@
 (define (compiler-backend-scratch-vreg-float-phi-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "join")
+        (CompilerIrInstr.Jump (compiler-ir-label "join"))
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "join"
+        (compiler-ir-label "join")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             0
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               CompilerIrPhiInputList.Nil)
             (AstType.F64))
           (compiler-ir-instr-cons
@@ -23960,7 +23990,7 @@
               1
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 0)
-                "entry"
+                (compiler-ir-label "entry")
                 CompilerIrPhiInputList.Nil)
               (AstType.F64))
             (compiler-ir-instr-cons
@@ -23970,7 +24000,7 @@
                 2
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 3)
-                  "entry"
+                  (compiler-ir-label "entry")
                   CompilerIrPhiInputList.Nil)
                 (AstType.F64))
               CompilerIrInstrList.Nil))))
@@ -23979,28 +24009,31 @@
 (define (compiler-backend-scratch-vreg-float-phi-branch-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "join" "back")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 4)
+          (compiler-ir-label "join")
+          (compiler-ir-label "back"))
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "back"
+        (compiler-ir-label "back")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "join")
+          (CompilerIrInstr.Jump (compiler-ir-label "join"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "join"
+          (compiler-ir-label "join")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               0
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 1)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 0)
-                  "back"
+                  (compiler-ir-label "back")
                   CompilerIrPhiInputList.Nil))
               (AstType.F64))
             (compiler-ir-instr-cons
@@ -24008,10 +24041,10 @@
                 1
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 0)
-                  "entry"
+                  (compiler-ir-label "entry")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 1)
-                    "back"
+                    (compiler-ir-label "back")
                     CompilerIrPhiInputList.Nil))
                 (AstType.F64))
               (compiler-ir-instr-cons
@@ -24019,10 +24052,10 @@
                   2
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 3)
-                    "entry"
+                    (compiler-ir-label "entry")
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.Var 3)
-                      "back"
+                      (compiler-ir-label "back")
                       CompilerIrPhiInputList.Nil))
                   (AstType.F64))
                 CompilerIrInstrList.Nil))))
@@ -24567,8 +24600,8 @@
               (match (compiler-backend-emit-phi-edge-copies
                 phi-stage-assignments
                 (compiler-backend-phi-same-home-blocks)
-                "join"
-                "entry"
+                (compiler-ir-label "join")
+                (compiler-ir-label "entry")
                 index
                 2
                 "%r15"
@@ -24578,8 +24611,8 @@
                   (match (compiler-backend-emit-phi-edge-copies
                     cycle-assignments
                     (compiler-backend-phi-cycle-blocks)
-                    "join"
-                    "back"
+                    (compiler-ir-label "join")
+                    (compiler-ir-label "back")
                     index
                     2
                     "%r14"
@@ -24703,7 +24736,7 @@
                             (CompilerIrValue.Var 0)
                             (CompilerIrValue.Global
                               (ci.intern "scratch_length"))
-                            "ok"
+                            (compiler-ir-label "ok")
                             (compiler-backend-runtime-helper-full-plan)
                             CompilerIrFunctionList.Nil
                             CompilerIrExternList.Nil
@@ -26085,7 +26118,7 @@
         (compiler-backend-scratch-vreg-float-mov-test-assignments)]
       (match (compiler-backend-emit-cast
         "test_cast"
-        "entry"
+        (compiler-ir-label "entry")
         cast-assignments
         1
         (CompilerIrValue.Var 0)
@@ -26098,7 +26131,7 @@
         [(ResultCompilerBackend.Ok cast-asm)
           (match (compiler-backend-emit-cast
             "test_cast_gp"
-            "entry"
+            (compiler-ir-label "entry")
             gp-only-assignments
             1
             (CompilerIrValue.Var 0)
@@ -26505,7 +26538,7 @@
     6
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             2
@@ -26514,26 +26547,29 @@
             (CompilerIrValue.Var 1)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "preheader" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 2)
+              (compiler-ir-label "preheader")
+              (compiler-ir-label "exit"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "preheader"
+          (compiler-ir-label "preheader")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 3
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 0)
-                  "preheader"
+                  (compiler-ir-label "preheader")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 4)
-                    "loop"
+                    (compiler-ir-label "loop")
                     CompilerIrPhiInputList.Nil))
                 (AstType.I64))
               (compiler-ir-instr-cons
@@ -26553,12 +26589,12 @@
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Branch
                       (CompilerIrValue.Var 5)
-                      "loop"
-                      "exit")
+                      (compiler-ir-label "loop")
+                      (compiler-ir-label "exit"))
                     CompilerIrInstrList.Nil)))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return (CompilerIrMaybeValue.No))
                 CompilerIrInstrList.Nil))
@@ -26607,20 +26643,22 @@
                       (match (compiler-ir-instr-seq-ref instrs 1)
                         [(CompilerIrInstr.Branch _ yes no)
                           (and
-                            (string.eq yes "entry__shrinkwrap_save")
-                            (string.eq no "entry__shrinkwrap_bare0"))]
+                            (= yes (compiler-ir-label "entry__shrinkwrap_save"))
+                            (= no (compiler-ir-label "entry__shrinkwrap_bare0")))]
                         [_ false])])
                   (match (compiler-ir-block-seq-ref seq 4)
                     [(CompilerIrBlock.Block label instrs)
                       (and
-                        (string.eq label "loop")
+                        (= label (compiler-ir-label "loop"))
                         (match (compiler-ir-instr-seq-ref instrs 0)
                           [(CompilerIrInstr.Phi _ inputs _)
                             (match (compiler-ir-phi-input-list-force-cons
                               inputs)
                               [(CompilerIrPhiInputList.Cons value input-label _)
                                 (and
-                                  (string.eq input-label "preheader")
+                                  (=
+                                    input-label
+                                    (compiler-ir-label "preheader"))
                                   (match value
                                     [(CompilerIrValue.Var id) (= id 0)]
                                     [_ false]))]
@@ -26759,7 +26797,7 @@
 (define (compiler-backend-scavenge-loop-live-through-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 8) (AstType.I64))
         (compiler-ir-instr-cons
@@ -26767,11 +26805,11 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "header")
+              (CompilerIrInstr.Jump (compiler-ir-label "header"))
               CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "header"
+        (compiler-ir-label "header")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             2
@@ -26780,11 +26818,14 @@
             (CompilerIrValue.Var 0)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 2)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Gep
               3
@@ -26794,11 +26835,11 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "header")
+                (CompilerIrInstr.Jump (compiler-ir-label "header"))
                 CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 6
@@ -26903,7 +26944,7 @@
 (define (compiler-backend-scratch-vreg-scalar-div-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -26989,7 +27030,7 @@
 (define (compiler-backend-scratch-vreg-scalar-shift-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -27027,7 +27068,7 @@
 (define (compiler-backend-scratch-vreg-scalar-return-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -27063,7 +27104,7 @@
 (define (compiler-backend-scratch-vreg-scalar-control-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -27072,7 +27113,10 @@
           (CompilerIrValue.Var 1)
           (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "yes" "no")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 2)
+            (compiler-ir-label "yes")
+            (compiler-ir-label "no"))
           CompilerIrInstrList.Nil)))
     CompilerIrBlockList.Nil))
 
@@ -27119,7 +27163,7 @@
 (define (compiler-backend-scratch-vreg-select-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (ir-instr-select
           3
@@ -27327,8 +27371,8 @@
             assignments
             "scratch_control"
             (CompilerIrValue.Global (ci.intern "scratch_condition"))
-            "yes"
-            "no"
+            (compiler-ir-label "yes")
+            (compiler-ir-label "no")
             fallthrough
             "%r14")
           "    testq %r14, %r14\n")
@@ -27340,8 +27384,8 @@
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
             (AstType.I64)
-            "yes"
-            "no"
+            (compiler-ir-label "yes")
+            (compiler-ir-label "no")
             fallthrough
             "%r14"
             "%r15")
@@ -27354,8 +27398,8 @@
             (CompilerIrValue.Global (ci.intern "scratch_lhs"))
             (CompilerIrValue.Global (ci.intern "scratch_rhs"))
             (AstType.I64)
-            "yes"
-            "no"
+            (compiler-ir-label "yes")
+            (compiler-ir-label "no")
             fallthrough
             "%r14"
             "%r14")
@@ -27369,8 +27413,8 @@
               (CompilerIrValue.Global (ci.intern "scratch_lhs"))
               (CompilerIrValue.Global (ci.intern "scratch_rhs"))
               (AstType.I64)
-              "yes"
-              "no"
+              (compiler-ir-label "yes")
+              (compiler-ir-label "no")
               fallthrough
               "%r14"
               "%r14")
@@ -27406,8 +27450,8 @@
             (CompilerIrBinOp.Eq)
             (CompilerIrValue.Var 1)
             (AstType.I64)
-            "yes"
-            "no"
+            (compiler-ir-label "yes")
+            (compiler-ir-label "no")
             fallthrough
             "%r14"
             "%r15")
@@ -27422,8 +27466,8 @@
             (CompilerIrBinOp.Eq)
             (CompilerIrValue.Var 1)
             (AstType.I64)
-            "yes"
-            "no"
+            (compiler-ir-label "yes")
+            (compiler-ir-label "no")
             fallthrough
             "%r14"
             "%r15")

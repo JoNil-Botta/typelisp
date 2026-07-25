@@ -10,6 +10,9 @@
 (import stdlib.string)
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as reg_string_i64_map)
+
+;; Block labels are interned ids, so their maps are integer-keyed (refs #5718).
+(import (hashmap.hashmap i64 i64) as reg_label_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
 (import "compiler_abi.tl")
 (import "compiler_liveness.tl")
@@ -19,6 +22,12 @@
 (defenum CompilerRegStringList
   (Nil)
   (Cons String (Box CompilerRegStringList)))
+
+;; Block labels are interned ids, so they need their own list rather than
+;; sharing the register-name list (refs #5718).
+(defenum CompilerRegLabelList
+  (Nil)
+  (Cons i64 (Box CompilerRegLabelList)))
 
 ;; Width is an instruction property, not a physical-register identity.  Keep
 ;; the allocator-facing scalar/vector spellings below (they still carry the
@@ -375,14 +384,14 @@
 
 (defenum CompilerRegColdCallCandidate
   (NoCandidate)
-  (Candidate i64 String))
+  (Candidate i64 i64))
 
 ;; Form (a) early-exit shrink wrapping is also an IR rewrite before scalar
 ;; allocation. These per-function results accompany the returned function;
 ;; empty labels mean the input was unchanged. Backend emission is sequential,
 ;; including its FPO retry, so the state is reset by every rewrite call.
-(define compiler-reg-early-exit-saving-label : String
-  "")
+(define compiler-reg-early-exit-saving-label : i64
+  -1)
 (define compiler-reg-early-exit-bare-label : String
   "")
 (define compiler-reg-early-exit-prefix-count : i64
@@ -426,8 +435,8 @@
 
 (defenum CompilerRegEdgeCopy
   (Copy
-    String
-    String
+    i64
+    i64
     i64
     i64
     AstType
@@ -459,16 +468,10 @@
 ;; plan (already multi-block aware) places boundary copies at the region edges.
 (defenum CompilerRegLoopSplitCandidate
   (NoCandidate)
-  (Candidate
-    i64
-    CompilerRegStringList
-    AstType
-    String
-    CompilerRegEdgeCopySeq
-    i64))
+  (Candidate i64 CompilerRegLabelList AstType String CompilerRegEdgeCopySeq i64))
 
 (defenum CompilerRegLoopSplitRewriteResult
-  (Result CompilerRegCallSaveRewrite String))
+  (Result CompilerRegCallSaveRewrite i64))
 
 ;; Result of the eviction-aware register pick (below): a candidate register `r`
 ;; together with the strictly-lower-weight var to evict (re-spill) so `r` becomes
@@ -2764,7 +2767,7 @@
 
 (define (compiler-reg-live-intervals-find-afters
   [liveness : CompilerFunctionLiveness]
-  [label : String]) : CompilerLiveInstrSetVec
+  [label : i64]) : CompilerLiveInstrSetVec
   (match (compiler-live-function-find-block liveness label)
     [(CompilerLiveMaybeBlock.Some live-block)
       (compiler-live-block-instr-after live-block)]
@@ -3255,7 +3258,7 @@
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-block-live-out-by-label
   [liveness : CompilerFunctionLiveness]
-  [label : String]) : CompilerLiveI64Set
+  [label : i64]) : CompilerLiveI64Set
   (match (compiler-live-function-find-block liveness label)
     [(CompilerLiveMaybeBlock.Some lb)
       (match lb
@@ -3325,7 +3328,7 @@
   [inputs : CompilerIrPhiInputList]
   [live-out : CompilerLiveI64Set]
   [instrs : CompilerIrInstrSeq]
-  [block-label : String]) : bool
+  [block-label : i64]) : bool
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) true]
     [(CompilerIrPhiInputList.Array seq)
@@ -3340,7 +3343,7 @@
           [(CompilerIrValue.Var var)
             (if (compiler-live-set-contains? live-out var)
               (and
-                (string.eq predecessor block-label)
+                (= predecessor block-label)
                 (compiler-reg-instr-seq-defines-var? instrs var)
                 (not (compiler-reg-instr-seq-non-phi-uses-var? instrs var)))
               true)]
@@ -3355,7 +3358,7 @@
   [instrs : CompilerIrInstrSeq]
   [live-out : CompilerLiveI64Set]
   [self-loop : bool]
-  [block-label : String]
+  [block-label : i64]
   [mask : (Array i64)]) : unit
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -3548,11 +3551,11 @@
 
 (define (compiler-reg-bits-build-rows-from-array!
   [blocks : (Array CompilerLiveBlock)]
-  [idmap : reg_string_i64_map.Map]
+  [idmap : reg_label_i64_map.Map]
   [use-rows : (Array i64)]
   [def-rows : (Array i64)]
   [words : i64]
-  [index : i64]) : reg_string_i64_map.Map
+  [index : i64]) : reg_label_i64_map.Map
   (if (>= index (array-length blocks))
     idmap
     (match (array-ref blocks index)
@@ -3560,7 +3563,7 @@
         (begin
           (compiler-reg-set->row! uses use-rows (* index words))
           (compiler-reg-set->row! defs def-rows (* index words))
-          (reg_string_i64_map.insert-ref! (&mut idmap) label index)
+          (reg_label_i64_map.insert-ref! (&mut idmap) label index)
           (compiler-reg-bits-build-rows-from-array!
             blocks
             idmap
@@ -3604,22 +3607,22 @@
   [live-out : (Array i64)]
   [live-in : (Array i64)]
   [succs : CompilerLiveLabelSet]
-  [idmap : reg_string_i64_map.Map]
+  [idmap : reg_label_i64_map.Map]
   [b : i64]
   [words : i64]) : unit
   (match succs
     [(CompilerLiveLabelSet.Nil) unit]
     [(CompilerLiveLabelSet.Cons label rest)
       (begin
-        (match (reg_string_i64_map.get (& idmap) label)
-          [(reg_string_i64_map.LookupFound idx)
+        (match (reg_label_i64_map.get (& idmap) label)
+          [(reg_label_i64_map.LookupFound idx)
             (compiler-reg-bits-or-row!
               live-out
               (* b words)
               live-in
               (* idx words)
               words)]
-          [(reg_string_i64_map.LookupMissing) unit])
+          [(reg_label_i64_map.LookupMissing) unit])
         (compiler-reg-bits-or-succs!
           live-out
           live-in
@@ -3659,7 +3662,7 @@
 
 (define (compiler-reg-bits-iterate!
   [arr : (Array CompilerLiveBlock)]
-  [idmap : reg_string_i64_map.Map]
+  [idmap : reg_label_i64_map.Map]
   [words : i64]
   [use-rows : (Array i64)]
   [live-in : (Array i64)]
@@ -3702,7 +3705,7 @@
 
 (define (compiler-reg-bits-fixpoint!
   [arr : (Array CompilerLiveBlock)]
-  [idmap : reg_string_i64_map.Map]
+  [idmap : reg_label_i64_map.Map]
   [count : i64]
   [words : i64]
   [use-rows : (Array i64)]
@@ -3901,10 +3904,10 @@
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
           (let
-            [idmap : reg_string_i64_map.Map
+            [idmap : reg_label_i64_map.Map
               (compiler-reg-bits-build-rows-from-array!
                 live-blocks
-                (reg_string_i64_map.with-capacity
+                (reg_label_i64_map.with-capacity
                   (compiler-reg-bits-map-capacity count))
                 use-rows
                 def-rows
@@ -4462,7 +4465,7 @@
 (define (compiler-reg-call-live-instr-seq
   [instrs : CompilerIrInstrSeq]
   [liveness : CompilerFunctionLiveness]
-  [label : String]
+  [label : i64]
   [start-index : i64]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
@@ -8421,52 +8424,52 @@
 
 (define (compiler-reg-loop-depth-block-ids
   [blocks : CompilerIrBlockList]
-  [ids : reg_string_i64_map.Map]
-  [index : i64]) : reg_string_i64_map.Map
+  [ids : reg_label_i64_map.Map]
+  [index : i64]) : reg_label_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) ids]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
           (begin
-            (reg_string_i64_map.insert-ref! (&mut ids) label index)
+            (reg_label_i64_map.insert-ref! (&mut ids) label index)
             (compiler-reg-loop-depth-block-ids (box-get rest) ids (+ index 1)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-depth-block-ids-seq seq ids index)]))
 
 (define (compiler-reg-loop-depth-block-ids-seq
   [seq : CompilerIrBlockSeq]
-  [ids : reg_string_i64_map.Map]
-  [index : i64]) : reg_string_i64_map.Map
+  [ids : reg_label_i64_map.Map]
+  [index : i64]) : reg_label_i64_map.Map
   (let
     [count : i64 (compiler-ir-block-seq-count seq)]
     [i : i64 index]
-    [out : reg_string_i64_map.Map ids]
+    [out : reg_label_i64_map.Map ids]
     (begin
       (while (< i count)
         (match (compiler-ir-block-seq-ref seq i)
           [(CompilerIrBlock.Block label _)
-            (reg_string_i64_map.insert-ref! (&mut out) label i)])
+            (reg_label_i64_map.insert-ref! (&mut out) label i)])
         (set! i (+ i 1)))
       out)))
 
 (define (compiler-reg-loop-depth-record-succ!
   [loop-ends : (Array i64)]
-  [ids : reg_string_i64_map.Map]
+  [ids : reg_label_i64_map.Map]
   [source-id : i64]
-  [label : String]) : unit
-  (match (reg_string_i64_map.get (& ids) label)
-    [(reg_string_i64_map.LookupFound target-id)
+  [label : i64]) : unit
+  (match (reg_label_i64_map.get (& ids) label)
+    [(reg_label_i64_map.LookupFound target-id)
       (if (and (>= target-id 0) (<= target-id source-id))
         (if (> source-id (array-ref loop-ends target-id))
           (array-set! loop-ends target-id source-id)
           unit)
         unit)]
-    [(reg_string_i64_map.LookupMissing) unit]))
+    [(reg_label_i64_map.LookupMissing) unit]))
 
 (define (compiler-reg-loop-depth-record-succs!
   [loop-ends : (Array i64)]
-  [ids : reg_string_i64_map.Map]
+  [ids : reg_label_i64_map.Map]
   [source-id : i64]
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
@@ -8482,7 +8485,7 @@
 
 (define (compiler-reg-loop-depth-record-blocks!
   [blocks : CompilerIrBlockList]
-  [ids : reg_string_i64_map.Map]
+  [ids : reg_label_i64_map.Map]
   [loop-ends : (Array i64)]
   [index : i64]) : unit
   (match blocks
@@ -8504,7 +8507,7 @@
 
 (define (compiler-reg-loop-depth-record-blocks-seq!
   [seq : CompilerIrBlockSeq]
-  [ids : reg_string_i64_map.Map]
+  [ids : reg_label_i64_map.Map]
   [loop-ends : (Array i64)]
   [index : i64]) : unit
   (let
@@ -8552,11 +8555,10 @@
     [count : i64 (compiler-ir-block-list-count blocks)]
     [depths : (Array i64) (array.make-array i64 count)]
     [loop-ends : (Array i64) (array.make-array i64 count)]
-    [ids : reg_string_i64_map.Map
+    [ids : reg_label_i64_map.Map
       (compiler-reg-loop-depth-block-ids
         blocks
-        (reg_string_i64_map.with-capacity
-          (compiler-reg-bits-map-capacity count))
+        (reg_label_i64_map.with-capacity (compiler-reg-bits-map-capacity count))
         0)]
     (begin
       (compiler-reg-fill-i64-array depths 0)
@@ -9222,36 +9224,52 @@
   (struct-get copies len))
 
 (define (compiler-reg-region-label-map-from
-  [labels : CompilerRegStringList]
-  [out : reg_string_i64_map.Map]) : reg_string_i64_map.Map
+  [labels : CompilerRegLabelList]
+  [out : reg_label_i64_map.Map]) : reg_label_i64_map.Map
   (match labels
-    [(CompilerRegStringList.Nil) out]
-    [(CompilerRegStringList.Cons label rest)
+    [(CompilerRegLabelList.Nil) out]
+    [(CompilerRegLabelList.Cons label rest)
       (begin
-        (reg_string_i64_map.insert-ref! (&mut out) label 1)
+        (reg_label_i64_map.insert-ref! (&mut out) label 1)
         (compiler-reg-region-label-map-from (box-get rest) out))]))
 
-(define (compiler-reg-region-label-map [labels : CompilerRegStringList]) : reg_string_i64_map.Map
+(define (compiler-reg-region-label-map [labels : CompilerRegLabelList]) : reg_label_i64_map.Map
   (compiler-reg-region-label-map-from
     labels
-    (reg_string_i64_map.with-capacity
-      (compiler-reg-bits-map-capacity (compiler-reg-string-list-count labels)))))
+    (reg_label_i64_map.with-capacity
+      (compiler-reg-bits-map-capacity (compiler-reg-label-list-count labels)))))
+
+(define (compiler-reg-label-list-contains?
+  [labels : CompilerRegLabelList]
+  [want : i64]) : bool
+  (match labels
+    [(CompilerRegLabelList.Nil) false]
+    [(CompilerRegLabelList.Cons head rest)
+      (if (= head want)
+        true
+        (compiler-reg-label-list-contains? (box-get rest) want))]))
+
+(define (compiler-reg-label-list-count [labels : CompilerRegLabelList]) : i64
+  (match labels
+    [(CompilerRegLabelList.Nil) 0]
+    [(CompilerRegLabelList.Cons _ rest)
+      (+ 1 (compiler-reg-label-list-count (box-get rest)))]))
 
 (define (compiler-reg-region-label?
-  [region : reg_string_i64_map.Map]
-  [label : String]) : bool
-  (match (reg_string_i64_map.get (& region) label)
-    [(reg_string_i64_map.LookupFound _) true]
-    [(reg_string_i64_map.LookupMissing) false]))
+  [region : reg_label_i64_map.Map]
+  [label : i64]) : bool
+  (match (reg_label_i64_map.get (& region) label)
+    [(reg_label_i64_map.LookupFound _) true]
+    [(reg_label_i64_map.LookupMissing) false]))
 
-(define (compiler-reg-edge-copy-live-block-label [block : CompilerLiveBlock]) : String
+(define (compiler-reg-edge-copy-live-block-label [block : CompilerLiveBlock]) : i64
   (match block
     [(CompilerLiveBlock.Block label _ _ _ _ _ _) label]))
 
 (define (compiler-reg-edge-copy-increment-pred!
   [liveness : CompilerFunctionLiveness]
   [pred-counts : (Array i64)]
-  [label : String]) : unit
+  [label : i64]) : unit
   (let
     [index : i64 (compiler-live-function-block-index liveness label)]
     (if (>= index 0)
@@ -9300,19 +9318,17 @@
       (compiler-reg-edge-copy-count-preds-blocks! liveness blocks pred-counts 0)
       pred-counts)))
 
-(define (compiler-reg-edge-copy-refusal
-  [from-label : String]
-  [to-label : String]) : String
+(define (compiler-reg-edge-copy-refusal [from-label : i64] [to-label : i64]) : String
   (string.concat5
     "regalloc: edge copy from "
-    from-label
+    (compiler-ir-label-text from-label)
     " to "
-    to-label
+    (compiler-ir-label-text to-label)
     " needs critical-edge splitting"))
 
 (define (compiler-reg-edge-copy-placement-for
-  [from-label : String]
-  [to-label : String]
+  [from-label : i64]
+  [to-label : i64]
   [from-succs : i64]
   [to-preds : i64]) : CompilerRegEdgeCopyPlacementResult
   (cond
@@ -9356,16 +9372,16 @@
   [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : reg_string_i64_map.Map]
+  [region : reg_label_i64_map.Map]
   [from-block : CompilerLiveBlock]
-  [from-label : String]
+  [from-label : i64]
   [from-inside : bool]
   [from-succs : i64]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
   [members : CompilerLiveI64Set]
-  [to-label : String]
+  [to-label : i64]
   [acc : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyPlan
   (let
     [to-index : i64 (compiler-live-function-block-index liveness to-label)]
@@ -9424,16 +9440,16 @@
       (CompilerRegEdgeCopyPlan.Refused
         (string.concat3
           "regalloc: edge copy target block not found: "
-          to-label
+          (compiler-ir-label-text to-label)
           "")))))
 
 (define (compiler-reg-edge-copy-boundary-succs
   [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : reg_string_i64_map.Map]
+  [region : reg_label_i64_map.Map]
   [from-block : CompilerLiveBlock]
-  [from-label : String]
+  [from-label : i64]
   [from-inside : bool]
   [from-succs : i64]
   [stack-var : i64]
@@ -9483,7 +9499,7 @@
   [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : reg_string_i64_map.Map]
+  [region : reg_label_i64_map.Map]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
@@ -9494,7 +9510,7 @@
     (CompilerRegEdgeCopyPlan.Plan acc)
     (let
       [block : CompilerLiveBlock (array-ref blocks index)]
-      [label : String (compiler-reg-edge-copy-live-block-label block)]
+      [label : i64 (compiler-reg-edge-copy-live-block-label block)]
       [succs : CompilerLiveLabelSet (compiler-reg-live-block-succs block)]
       (match (compiler-reg-edge-copy-boundary-succs
         liveness
@@ -9528,7 +9544,7 @@
 
 (define (compiler-reg-edge-copy-plan-for-region-group-with-liveness
   [liveness : CompilerFunctionLiveness]
-  [region-labels : CompilerRegStringList]
+  [region-labels : CompilerRegLabelList]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
@@ -9543,7 +9559,7 @@
 
 (define (compiler-reg-edge-copy-plan-for-region-with-liveness
   [liveness : CompilerFunctionLiveness]
-  [region-labels : CompilerRegStringList]
+  [region-labels : CompilerRegLabelList]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]) : CompilerRegEdgeCopyPlan
@@ -9557,7 +9573,7 @@
 
 (define (compiler-reg-edge-copy-plan-for-region-members
   [func : CompilerIrFunction]
-  [region-labels : CompilerRegStringList]
+  [region-labels : CompilerRegLabelList]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
@@ -9572,7 +9588,7 @@
 
 (define (compiler-reg-edge-copy-plan-for-region-members-with-liveness
   [liveness : CompilerFunctionLiveness]
-  [region-labels : CompilerRegStringList]
+  [region-labels : CompilerRegLabelList]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
@@ -9599,7 +9615,7 @@
     [(CompilerRegEdgeCopy.Copy _ _ src dst ty _ _)
       (CompilerIrInstr.Mov dst (CompilerIrValue.Var src) ty)]))
 
-(define (compiler-reg-edge-copy-target-label [copy : CompilerRegEdgeCopy]) : String
+(define (compiler-reg-edge-copy-target-label [copy : CompilerRegEdgeCopy]) : i64
   (match copy
     [(CompilerRegEdgeCopy.Copy from-label to-label _ _ _ _ placement)
       (match placement
@@ -9669,12 +9685,12 @@
       (CompilerRegEdgeCopyRewrite.Refused
         (string.concat3
           "regalloc: edge copy insertion block not found: "
-          (compiler-reg-edge-copy-target-label copy)
+          (compiler-ir-label-text (compiler-reg-edge-copy-target-label copy))
           ""))]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
-          (if (string.eq label (compiler-reg-edge-copy-target-label copy))
+          (if (= label (compiler-reg-edge-copy-target-label copy))
             (CompilerRegEdgeCopyRewrite.Rewrite
               (compiler-ir-block-cons
                 (compiler-reg-edge-copy-insert-in-block block copy)
@@ -9692,7 +9708,7 @@
           (array.make-array CompilerIrBlock count)]
         [i : i64 0]
         [found : bool false]
-        [target : String (compiler-reg-edge-copy-target-label copy)]
+        [target : i64 (compiler-reg-edge-copy-target-label copy)]
         (begin
           (while (< i count)
             (let
@@ -9703,7 +9719,7 @@
                   i
                   (match block
                     [(CompilerIrBlock.Block label _)
-                      (if (and (not found) (string.eq label target))
+                      (if (and (not found) (= label target))
                         (begin
                           (set! found true)
                           (compiler-reg-edge-copy-insert-in-block block copy))
@@ -9715,7 +9731,7 @@
             (CompilerRegEdgeCopyRewrite.Refused
               (string.concat3
                 "regalloc: edge copy insertion block not found: "
-                target
+                (compiler-ir-label-text target)
                 "")))))]))
 
 (define (compiler-reg-edge-copy-apply
@@ -9819,7 +9835,7 @@
 ;; (no benefit) and, more importantly, would normally be phi-carried (step 2).
 (define (compiler-reg-loop-split-self-loop?
   [block : CompilerLiveBlock]
-  [region-label : String]) : bool
+  [region-label : i64]) : bool
   (compiler-live-label-set-contains?
     (compiler-reg-live-block-succs block)
     region-label))
@@ -9994,7 +10010,7 @@
 ;; placed/refused by the edge-copy planner.
 (define (compiler-reg-loop-split-phi-carried-candidate?
   [block : CompilerLiveBlock]
-  [region-label : String]
+  [region-label : i64]
   [instrs : CompilerIrInstrSeq]
   [var : i64]
   [parents : (Array i64)]) : bool
@@ -10276,7 +10292,7 @@
 
 (define (compiler-reg-loop-split-region-remap-blocks
   [blocks : CompilerIrBlockList]
-  [region : reg_string_i64_map.Map]
+  [region : reg_label_i64_map.Map]
   [remap : (Array i64)]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
@@ -10526,7 +10542,7 @@
 ;; predecessor to it, and relabel h's phi inputs from that predecessor to the
 ;; preheader (a pass-through, value-preserving).
 ;; ---------------------------------------------------------------------------
-(define (compiler-reg-preheader-block-label [block : CompilerIrBlock]) : String
+(define (compiler-reg-preheader-block-label [block : CompilerIrBlock]) : i64
   (match block
     [(CompilerIrBlock.Block label _) label]))
 
@@ -10535,7 +10551,7 @@
 
 (define (compiler-reg-preheader-succ-contains?
   [block : CompilerIrBlock]
-  [label : String]) : bool
+  [label : i64]) : bool
   (compiler-live-label-set-contains?
     (compiler-live-block-successors block)
     label))
@@ -10562,11 +10578,10 @@
   [count : i64]) : (Array i64)
   (let
     [loop-ends : (Array i64) (array.make-array i64 count)]
-    [ids : reg_string_i64_map.Map
+    [ids : reg_label_i64_map.Map
       (compiler-reg-loop-depth-block-ids
         blocks
-        (reg_string_i64_map.with-capacity
-          (compiler-reg-bits-map-capacity count))
+        (reg_label_i64_map.with-capacity (compiler-reg-bits-map-capacity count))
         0)]
     (begin
       (compiler-reg-fill-i64-array loop-ends (- 0 1))
@@ -10578,11 +10593,10 @@
   [count : i64]) : (Array i64)
   (let
     [loop-ends : (Array i64) (array.make-array i64 count)]
-    [ids : reg_string_i64_map.Map
+    [ids : reg_label_i64_map.Map
       (compiler-reg-loop-depth-block-ids-seq
         seq
-        (reg_string_i64_map.with-capacity
-          (compiler-reg-bits-map-capacity count))
+        (reg_label_i64_map.with-capacity (compiler-reg-bits-map-capacity count))
         0)]
     (begin
       (compiler-reg-fill-i64-array loop-ends (- 0 1))
@@ -10596,7 +10610,7 @@
   [orig : (Array CompilerIrBlock)]
   [h : i64]
   [le : i64]
-  [h-label : String]
+  [h-label : i64]
   [n : i64]
   [p : i64]
   [found : i64]) : i64
@@ -10624,16 +10638,17 @@
 (define (compiler-reg-preheader-pred-for-header
   [orig : (Array CompilerIrBlock)]
   [loop-ends : (Array i64)]
-  [ids : reg_string_i64_map.Map]
+  [ids : reg_label_i64_map.Map]
   [h : i64]
-  [h-label : String]) : i64
+  [h-label : i64]) : i64
   (if (or
     (<= h 0)
     (>= h (array-length loop-ends))
     (< (array-ref loop-ends h) h)
-    (reg_string_i64_map.contains?
+    (reg_label_i64_map.contains?
       (& ids)
-      (str_cat.str-cat h-label ".preheader")))
+      (compiler-ir-label
+        (str_cat.str-cat (compiler-ir-label-text h-label) ".preheader"))))
     (- 0 1)
     (let
       [le : i64 (array-ref loop-ends h)]
@@ -10659,18 +10674,19 @@
 ;; block doing the redirect (`pred-index`) is that header's single out-of-loop
 ;; predecessor, retarget to the header's preheader label; else unchanged.
 (define (compiler-reg-preheader-subst-label
-  [ids : reg_string_i64_map.Map]
+  [ids : reg_label_i64_map.Map]
   [header-pred : (Array i64)]
   [pred-index : i64]
-  [s : String]) : String
-  (match (reg_string_i64_map.get (& ids) s)
-    [(reg_string_i64_map.LookupFound h-idx)
+  [s : i64]) : i64
+  (match (reg_label_i64_map.get (& ids) s)
+    [(reg_label_i64_map.LookupFound h-idx)
       (if (and
         (< h-idx (array-length header-pred))
         (= (array-ref header-pred h-idx) pred-index))
-        (str_cat.str-cat s ".preheader")
+        (compiler-ir-label
+          (str_cat.str-cat (compiler-ir-label-text s) ".preheader"))
         s)]
-    [(reg_string_i64_map.LookupMissing) s]))
+    [(reg_label_i64_map.LookupMissing) s]))
 
 (define (compiler-reg-preheader-list-replace-last
   [instrs : CompilerIrInstrList]
@@ -10690,7 +10706,7 @@
 ;; target that is a preheader-getting header whose single out-of-loop
 ;; predecessor is this block.
 (define (compiler-reg-preheader-redirect-block
-  [ids : reg_string_i64_map.Map]
+  [ids : reg_label_i64_map.Map]
   [header-pred : (Array i64)]
   [block : CompilerIrBlock]
   [index : i64]) : CompilerIrBlock
@@ -10703,11 +10719,11 @@
           (match (compiler-ir-instr-seq-ref instrs (- c 1))
             [(CompilerIrInstr.Branch cond t f)
               (let
-                [nt : String
+                [nt : i64
                   (compiler-reg-preheader-subst-label ids header-pred index t)]
-                [nf : String
+                [nf : i64
                   (compiler-reg-preheader-subst-label ids header-pred index f)]
-                (if (and (string.eq nt t) (string.eq nf f))
+                (if (and (= nt t) (= nf f))
                   block
                   (CompilerIrBlock.Block
                     label
@@ -10721,8 +10737,8 @@
 ;; (the value is unchanged -- the preheader is a pass-through).
 (define (compiler-reg-preheader-relabel-phi-inputs
   [inputs : CompilerIrPhiInputList]
-  [pred-label : String]
-  [ph-label : String]) : CompilerIrPhiInputList
+  [pred-label : i64]
+  [ph-label : i64]) : CompilerIrPhiInputList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) CompilerIrPhiInputList.Nil]
     [(CompilerIrPhiInputList.Array seq)
@@ -10733,7 +10749,7 @@
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-phi-input-cons
         value
-        (if (string.eq label pred-label)
+        (if (= label pred-label)
           ph-label
           label)
         (compiler-reg-preheader-relabel-phi-inputs
@@ -10743,8 +10759,8 @@
 
 (define (compiler-reg-preheader-relabel-instr-list
   [instrs : CompilerIrInstrList]
-  [pred-label : String]
-  [ph-label : String]) : CompilerIrInstrList
+  [pred-label : i64]
+  [ph-label : i64]) : CompilerIrInstrList
   (match instrs
     [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
     [(CompilerIrInstrList.Cons instr rest)
@@ -10766,8 +10782,8 @@
 
 (define (compiler-reg-preheader-relabel-header
   [block : CompilerIrBlock]
-  [pred-label : String]
-  [ph-label : String]) : CompilerIrBlock
+  [pred-label : i64]
+  [ph-label : i64]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       (CompilerIrBlock.Block
@@ -10783,7 +10799,7 @@
 ;; (with the header's phi inputs relabeled from the predecessor to it).
 (define (compiler-reg-preheader-rewrite
   [orig : (Array CompilerIrBlock)]
-  [ids : reg_string_i64_map.Map]
+  [ids : reg_label_i64_map.Map]
   [header-pred : (Array i64)]
   [blocks : CompilerIrBlockList]
   [index : i64]) : CompilerIrBlockList
@@ -10806,9 +10822,11 @@
             (- 0 1))]
         (if (>= pred 0)
           (let
-            [h-label : String (compiler-reg-preheader-block-label block)]
-            [ph-label : String (str_cat.str-cat h-label ".preheader")]
-            [pred-label : String
+            [h-label : i64 (compiler-reg-preheader-block-label block)]
+            [ph-label : i64
+              (compiler-ir-label
+                (str_cat.str-cat (compiler-ir-label-text h-label) ".preheader"))]
+            [pred-label : i64
               (compiler-reg-preheader-block-label (array-ref orig pred))]
             (compiler-ir-block-cons
               (compiler-ir-block
@@ -10847,10 +10865,13 @@
                   out
                   (if (>= pred 0)
                     (let
-                      [h-label : String
-                        (compiler-reg-preheader-block-label block)]
-                      [ph-label : String (str_cat.str-cat h-label ".preheader")]
-                      [pred-label : String
+                      [h-label : i64 (compiler-reg-preheader-block-label block)]
+                      [ph-label : i64
+                        (compiler-ir-label
+                          (str_cat.str-cat
+                            (compiler-ir-label-text h-label)
+                            ".preheader"))]
+                      [pred-label : i64
                         (compiler-reg-preheader-block-label
                           (array-ref orig pred))]
                       (compiler-ir-block-cons
@@ -10877,7 +10898,7 @@
 ;; exists).
 (define (compiler-reg-loop-split-splice-preheader
   [blocks : CompilerIrBlockList]
-  [header-label : String]) : CompilerIrBlockList
+  [header-label : i64]) : CompilerIrBlockList
   (let
     [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
     [count : i64 (compiler-ir-block-seq-count seq)]
@@ -10885,10 +10906,10 @@
       blocks
       (let
         [orig : (Array CompilerIrBlock) (struct-get seq slots)]
-        [ids : reg_string_i64_map.Map
+        [ids : reg_label_i64_map.Map
           (compiler-reg-loop-depth-block-ids-seq
             seq
-            (reg_string_i64_map.with-capacity
+            (reg_label_i64_map.with-capacity
               (compiler-reg-bits-map-capacity count))
             0)]
         [loop-ends : (Array i64)
@@ -10896,8 +10917,8 @@
         [header-pred : (Array i64) (array.make-array i64 count)]
         (begin
           (compiler-reg-fill-i64-array header-pred (- 0 1))
-          (match (reg_string_i64_map.get (& ids) header-label)
-            [(reg_string_i64_map.LookupFound h)
+          (match (reg_label_i64_map.get (& ids) header-label)
+            [(reg_label_i64_map.LookupFound h)
               (let
                 [pred : i64
                   (compiler-reg-preheader-pred-for-header
@@ -10916,13 +10937,13 @@
                       blocks
                       0))
                   blocks))]
-            [(reg_string_i64_map.LookupMissing) blocks]))))))
+            [(reg_label_i64_map.LookupMissing) blocks]))))))
 
 (define (compiler-reg-loop-split-try-var
   [_abi : CompilerRegTargetAbi]
   [_func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]
-  [region-label : String]
+  [region-label : i64]
   [block : CompilerLiveBlock]
   [instrs : CompilerIrInstrSeq]
   [region-start : i64]
@@ -11001,10 +11022,10 @@
               (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
                 [(CompilerRegMaybeType.Some ty)
                   (let
-                    [labels : CompilerRegStringList
-                      (compiler-reg-string-cons
+                    [labels : CompilerRegLabelList
+                      (CompilerRegLabelList.Cons
                         region-label
-                        CompilerRegStringList.Nil)]
+                        (box CompilerRegLabelList.Nil))]
                     [mentions : i64
                       (if phi-carried?
                         (compiler-reg-loop-split-mention-count-group
@@ -11119,7 +11140,7 @@
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]
-  [region-label : String]
+  [region-label : i64]
   [block : CompilerLiveBlock]
   [instrs : CompilerIrInstrSeq]
   [region-start : i64]
@@ -11428,7 +11449,7 @@
   [blocks : CompilerIrBlockList]
   [vars : i64]
   [stack-var : i64]
-  [region-labels : CompilerRegStringList]
+  [region-labels : CompilerRegLabelList]
   [ty : AstType]
   [reg : String]
   [copies : CompilerRegEdgeCopySeq]
@@ -11439,7 +11460,7 @@
     ;; The region is the candidate's block-label list (one label for the
     ;; single-block paths -- byte-identical to the prior single-label map -- or the
     ;; whole natural loop for the multi-block phi-carried homing).
-    [region-map : reg_string_i64_map.Map
+    [region-map : reg_label_i64_map.Map
       (compiler-reg-region-label-map region-labels)]
     ;; The new region-resident var (id `vars`) takes the register. When this
     ;; candidate evicted a lower-weight var to free that register, also override
@@ -11537,13 +11558,14 @@
 (define (compiler-reg-loop-phi-mb-region-labels
   [block-array : (Array CompilerIrBlock)]
   [idx : i64]
-  [end-idx : i64]) : CompilerRegStringList
+  [end-idx : i64]) : CompilerRegLabelList
   (if (or (> idx end-idx) (>= idx (array-length block-array)))
-    CompilerRegStringList.Nil
-    (compiler-reg-string-cons
+    CompilerRegLabelList.Nil
+    (CompilerRegLabelList.Cons
       (match (array-ref block-array idx)
         [(CompilerIrBlock.Block label _) label])
-      (compiler-reg-loop-phi-mb-region-labels block-array (+ idx 1) end-idx))))
+      (box
+        (compiler-reg-loop-phi-mb-region-labels block-array (+ idx 1) end-idx)))))
 
 ;; Any call/syscall in region blocks [s..e]? (caller-saved candidates are only safe
 ;; when none clobbers them across the loop.)
@@ -11581,7 +11603,7 @@
   [h : i64]
   [end-idx : i64]
   [header-instrs : CompilerIrInstrSeq]
-  [region-labels : CompilerRegStringList]
+  [region-labels : CompilerRegLabelList]
   [region-start : i64]
   [region-end : i64]
   [depth : i64]
@@ -11688,7 +11710,7 @@
   [h : i64]
   [end-idx : i64]
   [header-instrs : CompilerIrInstrSeq]
-  [region-labels : CompilerRegStringList]
+  [region-labels : CompilerRegLabelList]
   [region-start : i64]
   [region-end : i64]
   [depth : i64]
@@ -11924,7 +11946,7 @@
   (if (not (compiler-reg-scalar-full-intervals? func))
     (CompilerRegLoopSplitRewriteResult.Result
       (compiler-reg-loop-split-noop blocks vars)
-      "")
+      (compiler-ir-label-none))
     (let
       [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
       ;; Every candidate class (single-block self-loop/read-only, single-block
@@ -11935,7 +11957,7 @@
       (if (not (compiler-reg-depths-have-loop? depths 0))
         (CompilerRegLoopSplitRewriteResult.Result
           (compiler-reg-loop-split-noop blocks vars)
-          "")
+          (compiler-ir-label-none))
         (let
           [liveness-handle : CompilerRegLivenessHandle
             (compiler-reg-liveness-handle-make func false)]
@@ -11963,7 +11985,7 @@
   (if (<= fuel 0)
     (CompilerRegLoopSplitRewriteResult.Result
       (compiler-reg-loop-split-noop blocks vars)
-      "")
+      (compiler-ir-label-none))
     (let
       [liveness : CompilerFunctionLiveness
         (struct-get liveness-handle baseline)]
@@ -12151,7 +12173,7 @@
 (define (compiler-reg-loop-split-refused-try-var
   [_func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]
-  [region-label : String]
+  [region-label : i64]
   [block : CompilerLiveBlock]
   [instrs : CompilerIrInstrSeq]
   [region-start : i64]
@@ -12166,7 +12188,7 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
-  [merged-roots : CompilerLiveI64Set]) : String
+  [merged-roots : CompilerLiveI64Set]) : i64
   (let
     ;; SplitKit step 2: phi-carried single-block self-loop refused only by a
     ;; critical ENTRY edge is unblocked by a dedicated preheader, just like the
@@ -12200,10 +12222,10 @@
               (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
                 [(CompilerRegMaybeType.Some ty)
                   (let
-                    [labels : CompilerRegStringList
-                      (compiler-reg-string-cons
+                    [labels : CompilerRegLabelList
+                      (CompilerRegLabelList.Cons
                         region-label
-                        CompilerRegStringList.Nil)]
+                        (box CompilerRegLabelList.Nil))]
                     [region-intervals : CompilerRegIntervalList
                       (compiler-reg-loop-split-region-interval
                         vars
@@ -12225,7 +12247,8 @@
                         ty))
                       ;; A plan (not refused) means the existing rounds already
                       ;; handle this var -- not a preheader case.
-                      [(CompilerRegEdgeCopyPlan.Plan _) ""]
+                      [(CompilerRegEdgeCopyPlan.Plan _)
+                        (compiler-ir-label-none)]
                       ;; Refused = critical entry edge. Homeable iff a register is
                       ;; free over the region; if so a preheader unblocks it.
                       [(CompilerRegEdgeCopyPlan.Refused _)
@@ -12236,16 +12259,16 @@
                           region-intervals
                           var)
                           [(CompilerRegMaybeString.Some _) region-label]
-                          [(CompilerRegMaybeString.No) ""])]))]
-                [(CompilerRegMaybeType.No) ""])]
-            [_ ""])]
-        [(CompilerRegMaybeLocation.No) ""])
-      "")))
+                          [(CompilerRegMaybeString.No) (compiler-ir-label-none)])]))]
+                [(CompilerRegMaybeType.No) (compiler-ir-label-none)])]
+            [_ (compiler-ir-label-none)])]
+        [(CompilerRegMaybeLocation.No) (compiler-ir-label-none)])
+      (compiler-ir-label-none))))
 
 (define (compiler-reg-loop-split-refused-select-var
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]
-  [region-label : String]
+  [region-label : i64]
   [block : CompilerLiveBlock]
   [instrs : CompilerIrInstrSeq]
   [region-start : i64]
@@ -12259,11 +12282,11 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
-  [merged-roots : CompilerLiveI64Set]) : String
+  [merged-roots : CompilerLiveI64Set]) : i64
   (if (>= var vars)
-    ""
+    (compiler-ir-label-none)
     (let
-      [r : String
+      [r : i64
         (compiler-reg-loop-split-refused-try-var
           func
           liveness
@@ -12282,7 +12305,7 @@
           group-vars
           parents
           merged-roots)]
-      (if (string.eq r "")
+      (if (= r (compiler-ir-label-none))
         (compiler-reg-loop-split-refused-select-var
           func
           liveness
@@ -12317,9 +12340,9 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
-  [merged-roots : CompilerLiveI64Set]) : String
+  [merged-roots : CompilerLiveI64Set]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) ""]
+    [(CompilerIrBlockList.Nil) (compiler-ir-label-none)]
     [(CompilerIrBlockList.Cons ir-block rest)
       (match ir-block
         [(CompilerIrBlock.Block label instrs)
@@ -12344,7 +12367,7 @@
                 (compiler-reg-live-block-succs
                   (array-ref live-blocks block-index))))
               (let
-                [r : String
+                [r : i64
                   (compiler-reg-loop-split-refused-select-var
                     func
                     liveness
@@ -12363,7 +12386,7 @@
                     group-vars
                     parents
                     merged-roots)]
-                (if (string.eq r "")
+                (if (= r (compiler-ir-label-none))
                   (compiler-reg-loop-split-refused-select-blocks
                     func
                     (box-get rest)
@@ -12426,7 +12449,7 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
-  [merged-roots : CompilerLiveI64Set]) : String
+  [merged-roots : CompilerLiveI64Set]) : i64
   (compiler-reg-loop-split-refused-select-blocks-seq-from
     func
     seq
@@ -12459,9 +12482,9 @@
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
-  [index : i64]) : String
+  [index : i64]) : i64
   (if (>= index (compiler-ir-block-seq-count seq))
-    ""
+    (compiler-ir-label-none)
     (match (compiler-ir-block-seq-ref seq index)
       [(CompilerIrBlock.Block label instrs)
         (let
@@ -12485,7 +12508,7 @@
               (compiler-reg-live-block-succs
                 (array-ref live-blocks block-index))))
             (let
-              [r : String
+              [r : i64
                 (compiler-reg-loop-split-refused-select-var
                   func
                   liveness
@@ -12504,7 +12527,7 @@
                   group-vars
                   parents
                   merged-roots)]
-              (if (string.eq r "")
+              (if (= r (compiler-ir-label-none))
                 (compiler-reg-loop-split-refused-select-blocks-seq-from
                   func
                   seq
@@ -12594,7 +12617,7 @@
                 ;; No var homed this round. Before giving up, use the refused
                 ;; preheader label found during the same liveness pass as the
                 ;; candidate search.
-                (if (string.eq refused-header "")
+                (if (= refused-header (compiler-ir-label-none))
                   (CompilerRegCallSaveRewrite.Rewrite
                     blocks
                     in-vars
@@ -12843,13 +12866,14 @@
                 [_ false]))]
           [_ false]))]))
 
-(define (compiler-reg-early-exit-framed-label [label : String]) : String
-  (string.append label "__shrinkwrap_framed"))
+(define (compiler-reg-early-exit-framed-label [label : i64]) : i64
+  (compiler-ir-label
+    (string.append (compiler-ir-label-text label) "__shrinkwrap_framed")))
 
 (define (compiler-reg-early-exit-bare-label-at
   [prefix : String]
   [states : (Array i64)]
-  [index : i64]) : String
+  [index : i64]) : i64
   (let
     [i : i64 0]
     [ordinal : i64 0]
@@ -12860,17 +12884,17 @@
             (set! ordinal (+ ordinal 1))
             unit)
           (set! i (+ i 1))))
-      (string.append prefix (string.int->string ordinal)))))
+      (compiler-ir-label (string.append prefix (string.int->string ordinal))))))
 
 ;; mode 0 is the initial prefix, 1 is the ordinary body, and 2 is a framed
 ;; guard clone. Only terminators change, preserving all variable identities.
 (define (compiler-reg-early-exit-target
   [seq : CompilerIrBlockSeq]
   [states : (Array i64)]
-  [target : String]
+  [target : i64]
   [mode : i64]
-  [saving-label : String]
-  [bare-prefix : String]) : String
+  [saving-label : i64]
+  [bare-prefix : String]) : i64
   (let
     [index : i64 (compiler-reg-cold-call-find-label seq target)]
     (if (< index 0)
@@ -12898,7 +12922,7 @@
   [states : (Array i64)]
   [block : CompilerIrBlock]
   [mode : i64]
-  [saving-label : String]
+  [saving-label : i64]
   [bare-prefix : String]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -12969,7 +12993,7 @@
 (define (compiler-reg-early-exit-target-is-guard?
   [seq : CompilerIrBlockSeq]
   [states : (Array i64)]
-  [target : String]) : bool
+  [target : i64]) : bool
   (let
     [index : i64 (compiler-reg-cold-call-find-label seq target)]
     (and (>= index 0) (= (array-ref states index) 1))))
@@ -13024,7 +13048,7 @@
 (define (compiler-reg-early-exit-label-collision?
   [seq : CompilerIrBlockSeq]
   [states : (Array i64)]
-  [saving-label : String]
+  [saving-label : i64]
   [bare-prefix : String]) : bool
   (let
     [i : i64 0]
@@ -13035,8 +13059,10 @@
           [(CompilerIrBlock.Block label _)
             (begin
               (if (or
-                (string.eq label saving-label)
-                (compiler-reg-string-prefix? label bare-prefix))
+                (= label saving-label)
+                (compiler-reg-string-prefix?
+                  (compiler-ir-label-text label)
+                  bare-prefix))
                 (set! collision true)
                 unit)
               (if (and
@@ -13065,7 +13091,7 @@
 (define (compiler-reg-early-exit-shrinkwrap-function
   [func : CompilerIrFunction]) : CompilerIrFunction
   (begin
-    (set! compiler-reg-early-exit-saving-label "")
+    (set! compiler-reg-early-exit-saving-label (compiler-ir-label-none))
     (set! compiler-reg-early-exit-bare-label "")
     (set! compiler-reg-early-exit-prefix-count 0)
     (match func
@@ -13167,7 +13193,7 @@
                                 [side : i64 0]
                                 (while (and valid (< side 2))
                                   (let
-                                    [target : String
+                                    [target : i64
                                       (if (= side 0)
                                         on-true
                                         on-false)]
@@ -13231,10 +13257,15 @@
                   (match (compiler-ir-block-seq-ref seq 0)
                     [(CompilerIrBlock.Block entry-label _)
                       (let
-                        [saving-label : String
-                          (string.append entry-label "__shrinkwrap_save")]
+                        [saving-label : i64
+                          (compiler-ir-label
+                            (string.append
+                              (compiler-ir-label-text entry-label)
+                              "__shrinkwrap_save"))]
                         [bare-prefix : String
-                          (string.append entry-label "__shrinkwrap_bare")]
+                          (string.append
+                            (compiler-ir-label-text entry-label)
+                            "__shrinkwrap_bare")]
                         [framed-count : i64
                           (if (compiler-reg-early-exit-needs-framed-clones?
                             seq
@@ -13436,7 +13467,7 @@
     [b : i64 0]
     [clobbers : i64 0]
     [candidate : i64 (- 0 1)]
-    [join : String ""]
+    [join : i64 (compiler-ir-label-none)]
     (begin
       (while (< b (compiler-ir-block-seq-count seq))
         (begin
@@ -13464,20 +13495,20 @@
         (CompilerRegColdCallCandidate.Candidate candidate join)
         CompilerRegColdCallCandidate.NoCandidate))))
 
-(define (compiler-reg-cold-call-block-label [block : CompilerIrBlock]) : String
+(define (compiler-reg-cold-call-block-label [block : CompilerIrBlock]) : i64
   (match block
     [(CompilerIrBlock.Block label _) label]))
 
 (define (compiler-reg-cold-call-find-label
   [seq : CompilerIrBlockSeq]
-  [label : String]) : i64
+  [label : i64]) : i64
   (let
     [i : i64 0]
     [found : i64 (- 0 1)]
     (begin
       (while (and (< i (compiler-ir-block-seq-count seq)) (< found 0))
         (begin
-          (if (string.eq
+          (if (=
             (compiler-reg-cold-call-block-label
               (compiler-ir-block-seq-ref seq i))
             label)
@@ -13488,7 +13519,7 @@
 
 (define (compiler-reg-cold-call-predecessor-count
   [seq : CompilerIrBlockSeq]
-  [label : String]
+  [label : i64]
   [excluded : i64]) : i64
   (let
     [i : i64 0]
@@ -13550,7 +13581,7 @@
   [blocks : CompilerIrBlockList]
   [seq : CompilerIrBlockSeq]
   [call-block : i64]
-  [join-label : String]) : bool
+  [join-label : i64]) : bool
   (let
     [join-block : i64 (compiler-reg-cold-call-find-label seq join-label)]
     [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
@@ -13560,7 +13591,7 @@
         depths
         join-block
         (array.make-array bool (compiler-ir-block-seq-count seq)))]
-    [call-label : String
+    [call-label : i64
       (compiler-reg-cold-call-block-label
         (compiler-ir-block-seq-ref seq call-block))]
     (and
@@ -14786,10 +14817,12 @@
 
 (cfg
   regalloc-census
-  (define (compiler-reg-call-span-census-row [label : String] [bucket : i64]) : String
+  (define (compiler-reg-call-span-census-row
+    [bucket-name : String]
+    [bucket : i64]) : String
     (string.concat5
       "regalloc-call-span-census|"
-      label
+      bucket-name
       "|"
       (string.int->string
         (compiler-reg-call-span-census-count
@@ -23433,8 +23466,8 @@
   [_assignments : CompilerRegAssignmentList]
   [_types : CompilerRegVarTypeList]
   [_instr : CompilerIrInstr]
-  [_phi-targets : CompilerRegStringList]
-  [_phi-xmm-targets : CompilerRegStringList]
+  [_phi-targets : CompilerRegLabelList]
+  [_phi-xmm-targets : CompilerRegLabelList]
   [_binop-return : bool]) : i64
   (cfg
     scratch-vreg
@@ -23478,18 +23511,18 @@
       [(CompilerIrInstr.Pack _ _ _) 2]
       [(CompilerIrInstr.Word _ _ _ _) 1]
       [(CompilerIrInstr.Jump target)
-        (if (compiler-reg-string-list-contains? _phi-targets target)
-          (if (compiler-reg-string-list-contains? _phi-xmm-targets target)
+        (if (compiler-reg-label-list-contains? _phi-targets target)
+          (if (compiler-reg-label-list-contains? _phi-xmm-targets target)
             3
             2)
           0)]
       [(CompilerIrInstr.Branch condition true-label false-label)
         (if (or
-          (compiler-reg-string-list-contains? _phi-targets true-label)
-          (compiler-reg-string-list-contains? _phi-targets false-label))
+          (compiler-reg-label-list-contains? _phi-targets true-label)
+          (compiler-reg-label-list-contains? _phi-targets false-label))
           (if (or
-            (compiler-reg-string-list-contains? _phi-xmm-targets true-label)
-            (compiler-reg-string-list-contains? _phi-xmm-targets false-label))
+            (compiler-reg-label-list-contains? _phi-xmm-targets true-label)
+            (compiler-reg-label-list-contains? _phi-xmm-targets false-label))
             4
             3)
           (if (compiler-reg-scratch-value-direct? _assignments condition)
@@ -23676,8 +23709,8 @@
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
   [instrs : CompilerIrInstrSeq]
-  [phi-targets : CompilerRegStringList]
-  [phi-xmm-targets : CompilerRegStringList]
+  [phi-targets : CompilerRegLabelList]
+  [phi-xmm-targets : CompilerRegLabelList]
   [count : i64]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -23707,8 +23740,8 @@
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
   [blocks : CompilerIrBlockList]
-  [phi-targets : CompilerRegStringList]
-  [phi-xmm-targets : CompilerRegStringList]
+  [phi-targets : CompilerRegLabelList]
+  [phi-xmm-targets : CompilerRegLabelList]
   [count : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) count]
@@ -24242,29 +24275,29 @@
 
 (define (compiler-reg-scratch-phi-targets-block-seq-from
   [blocks : CompilerIrBlockSeq]
-  [index : i64]) : CompilerRegStringList
+  [index : i64]) : CompilerRegLabelList
   (if (>= index (compiler-ir-block-seq-count blocks))
-    CompilerRegStringList.Nil
+    CompilerRegLabelList.Nil
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block label instrs)
         (let
-          [tail : CompilerRegStringList
+          [tail : CompilerRegLabelList
             (compiler-reg-scratch-phi-targets-block-seq-from blocks (+ index 1))]
           (if (compiler-reg-scratch-seq-starts-with-phi? instrs)
-            (compiler-reg-string-cons label tail)
+            (CompilerRegLabelList.Cons label (box tail))
             tail))])))
 
-(define (compiler-reg-scratch-phi-targets-blocks [blocks : CompilerIrBlockList]) : CompilerRegStringList
+(define (compiler-reg-scratch-phi-targets-blocks [blocks : CompilerIrBlockList]) : CompilerRegLabelList
   (match blocks
-    [(CompilerIrBlockList.Nil) CompilerRegStringList.Nil]
+    [(CompilerIrBlockList.Nil) CompilerRegLabelList.Nil]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
           (let
-            [tail : CompilerRegStringList
+            [tail : CompilerRegLabelList
               (compiler-reg-scratch-phi-targets-blocks (box-get rest))]
             (if (compiler-reg-scratch-seq-starts-with-phi? instrs)
-              (compiler-reg-string-cons label tail)
+              (CompilerRegLabelList.Cons label (box tail))
               tail))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-scratch-phi-targets-block-seq-from seq 0)]))
@@ -24283,32 +24316,32 @@
 
 (define (compiler-reg-scratch-phi-xmm-targets-block-seq-from
   [blocks : CompilerIrBlockSeq]
-  [index : i64]) : CompilerRegStringList
+  [index : i64]) : CompilerRegLabelList
   (if (>= index (compiler-ir-block-seq-count blocks))
-    CompilerRegStringList.Nil
+    CompilerRegLabelList.Nil
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block label instrs)
         (let
-          [tail : CompilerRegStringList
+          [tail : CompilerRegLabelList
             (compiler-reg-scratch-phi-xmm-targets-block-seq-from
               blocks
               (+ index 1))]
           (if (compiler-reg-scratch-seq-has-float-phi-from? instrs 0)
-            (compiler-reg-string-cons label tail)
+            (CompilerRegLabelList.Cons label (box tail))
             tail))])))
 
 (define (compiler-reg-scratch-phi-xmm-targets-blocks
-  [blocks : CompilerIrBlockList]) : CompilerRegStringList
+  [blocks : CompilerIrBlockList]) : CompilerRegLabelList
   (match blocks
-    [(CompilerIrBlockList.Nil) CompilerRegStringList.Nil]
+    [(CompilerIrBlockList.Nil) CompilerRegLabelList.Nil]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
           (let
-            [tail : CompilerRegStringList
+            [tail : CompilerRegLabelList
               (compiler-reg-scratch-phi-xmm-targets-blocks (box-get rest))]
             (if (compiler-reg-scratch-seq-has-float-phi-from? instrs 0)
-              (compiler-reg-string-cons label tail)
+              (CompilerRegLabelList.Cons label (box tail))
               tail))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-scratch-phi-xmm-targets-block-seq-from seq 0)]))
@@ -25452,8 +25485,8 @@
   [assignments : CompilerRegAssignmentList]
   [var-types : CompilerRegVarTypeList]
   [instrs : CompilerIrInstrSeq]
-  [phi-targets : CompilerRegStringList]
-  [phi-xmm-targets : CompilerRegStringList]
+  [phi-targets : CompilerRegLabelList]
+  [phi-xmm-targets : CompilerRegLabelList]
   [instruction-start : i64]
   [item-start : i64]
   [scratch-base : i64]
@@ -25530,8 +25563,8 @@
   [assignments : CompilerRegAssignmentList]
   [var-types : CompilerRegVarTypeList]
   [blocks : CompilerIrBlockList]
-  [phi-targets : CompilerRegStringList]
-  [phi-xmm-targets : CompilerRegStringList]
+  [phi-targets : CompilerRegLabelList]
+  [phi-xmm-targets : CompilerRegLabelList]
   [instruction-start : i64]
   [item-start : i64]
   [scratch-base : i64]
@@ -26497,9 +26530,9 @@
     (match _func
       [(CompilerIrFunction.Function _ _ _ _ blocks)
         (let
-          [phi-targets : CompilerRegStringList
+          [phi-targets : CompilerRegLabelList
             (compiler-reg-scratch-phi-targets-blocks blocks)]
-          [phi-xmm-targets : CompilerRegStringList
+          [phi-xmm-targets : CompilerRegLabelList
             (compiler-reg-scratch-phi-xmm-targets-blocks blocks)]
           [scratch-count : i64
             (compiler-reg-scratch-vreg-count-blocks
@@ -27933,13 +27966,16 @@
 (define (compiler-reg-switch-scratch-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Switch
           (CompilerIrValue.Var 0)
           1
-          (compiler-ir-switch-case-cons 1 "one" CompilerIrSwitchCaseList.Nil)
-          "other")
+          (compiler-ir-switch-case-cons
+            1
+            (compiler-ir-label "one")
+            CompilerIrSwitchCaseList.Nil)
+          (compiler-ir-label "other"))
         CompilerIrInstrList.Nil))
     CompilerIrBlockList.Nil))
 
@@ -28004,12 +28040,12 @@
 (define (compiler-reg-bounds-scratch-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.I64 8)
-          "ok")
+          (compiler-ir-label "ok"))
         CompilerIrInstrList.Nil))
     CompilerIrBlockList.Nil))
 
@@ -28079,7 +28115,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.CopyBytes
             (CompilerIrValue.Var 0)
@@ -28125,7 +28161,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 42) (AstType.I64))
           (compiler-ir-instr-cons
@@ -28144,18 +28180,18 @@
 (define (compiler-reg-early-scratch-nontarget-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.I64 8)
-          "ok")
+          (compiler-ir-label "ok"))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Switch
             (CompilerIrValue.Var 0)
             1
             CompilerIrSwitchCaseList.Nil
-            "other")
+            (compiler-ir-label "other"))
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               1
@@ -28512,7 +28548,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -28539,7 +28575,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov
             0
@@ -28569,7 +28605,7 @@
     8
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -28651,7 +28687,7 @@
     5
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov
             0
@@ -28715,7 +28751,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 9) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -28743,7 +28779,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov
             0
@@ -28774,7 +28810,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -28809,7 +28845,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov
             0
@@ -28844,7 +28880,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -28906,7 +28942,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.CallIndirect
             3
@@ -28946,7 +28982,7 @@
         6
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.CallIndirect
                 5
@@ -28973,7 +29009,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (ir-instr-call-cabi-store-result
             (CompilerIrValue.Var 0)
@@ -28997,7 +29033,7 @@
     7
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov
             1
@@ -29047,13 +29083,13 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "body")
+          (CompilerIrInstr.Jump (compiler-ir-label "body"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               1
@@ -29075,7 +29111,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29092,7 +29128,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 41) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29119,7 +29155,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Alloc 0 (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29146,21 +29182,21 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "join"
+          (compiler-ir-label "join")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               1
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 0)
-                "entry"
+                (compiler-ir-label "entry")
                 CompilerIrPhiInputList.Nil)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
@@ -29177,24 +29213,24 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               1
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 0)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 2)
-                  "body"
+                  (compiler-ir-label "body")
                   CompilerIrPhiInputList.Nil))
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
@@ -29205,18 +29241,18 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Branch
                   (CompilerIrValue.Bool false)
-                  "body"
-                  "exit")
+                  (compiler-ir-label "body")
+                  (compiler-ir-label "exit"))
                 CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "body"
+            (compiler-ir-label "body")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
@@ -29236,22 +29272,22 @@
     6
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               0
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 0)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 3)
-                  "loop"
+                  (compiler-ir-label "loop")
                   CompilerIrPhiInputList.Nil))
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
@@ -29259,10 +29295,10 @@
                 1
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.I64 0)
-                  "entry"
+                  (compiler-ir-label "entry")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 4)
-                    "loop"
+                    (compiler-ir-label "loop")
                     CompilerIrPhiInputList.Nil))
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
@@ -29295,15 +29331,15 @@
                         (CompilerIrInstr.Branch
                           (CompilerIrValue.Var 5)
                           (if loop-first
-                            "loop"
-                            "exit")
+                            (compiler-ir-label "loop")
+                            (compiler-ir-label "exit"))
                           (if loop-first
-                            "exit"
-                            "loop"))
+                            (compiler-ir-label "exit")
+                            (compiler-ir-label "loop")))
                         CompilerIrInstrList.Nil))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -29326,7 +29362,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 40) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29357,7 +29393,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 40) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29393,7 +29429,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 40) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29424,7 +29460,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 40) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29499,7 +29535,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29532,7 +29568,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29564,7 +29600,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29596,7 +29632,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29633,7 +29669,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29666,7 +29702,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 9) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29693,7 +29729,7 @@
     6
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -29756,7 +29792,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.VectorLoad
             0
@@ -29809,7 +29845,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.VectorLoad
             0
@@ -29843,7 +29879,7 @@
     5
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Splat 0 (CompilerIrValue.I64 0) 8 (AstType.I64))
           (compiler-ir-instr-cons
@@ -29893,7 +29929,7 @@
     5
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.TailMask
             0
@@ -30216,7 +30252,7 @@
     7
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
@@ -30415,7 +30451,7 @@
         (AstType.Unit)
         8
         (compiler-ir-block-cons
-          (compiler-ir-block "entry" instrs)
+          (compiler-ir-block (compiler-ir-label "entry") instrs)
           CompilerIrBlockList.Nil)))))
 
 (define (compiler-reg-scalar-zero-call-caller-saved-ok?) : bool
@@ -31679,7 +31715,7 @@
       6
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Alloc 0 big)
             (compiler-ir-instr-cons
@@ -31892,7 +31928,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.VectorLoad
             0

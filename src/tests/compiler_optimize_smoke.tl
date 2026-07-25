@@ -62,7 +62,7 @@
     [(CompilerIrSwitchCaseList.Array seq) (struct-get seq len)]))
 
 (define (opt-switch-entry-base [blocks : CompilerIrBlockList]) : i64
-  (match (opt-cfg-find-block blocks "entry")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "entry"))
     [(OptMaybeBlock.No) (- 0 1)]
     [(OptMaybeBlock.Some block)
       (match block
@@ -74,7 +74,7 @@
             (- 0 1))])]))
 
 (define (opt-switch-entry-case-count [blocks : CompilerIrBlockList]) : i64
-  (match (opt-cfg-find-block blocks "entry")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "entry"))
     [(OptMaybeBlock.No) 0]
     [(OptMaybeBlock.Some block)
       (match block
@@ -86,17 +86,17 @@
               [_ 0])
             0)])]))
 
-(define (opt-switch-entry-default-label [blocks : CompilerIrBlockList]) : String
-  (match (opt-cfg-find-block blocks "entry")
-    [(OptMaybeBlock.No) ""]
+(define (opt-switch-entry-default-label [blocks : CompilerIrBlockList]) : i64
+  (match (opt-cfg-find-block blocks (compiler-ir-label "entry"))
+    [(OptMaybeBlock.No) (compiler-ir-label-none)]
     [(OptMaybeBlock.Some block)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (if (= (compiler-ir-instr-seq-count instrs) 1)
             (match (compiler-ir-instr-seq-ref instrs 0)
               [(CompilerIrInstr.Switch _ _ _ default-label) default-label]
-              [_ ""])
-            "")])]))
+              [_ (compiler-ir-label-none)])
+            (compiler-ir-label-none))])]))
 
 (define (opt-switch-test-params) : CompilerIrParamList
   (compiler-ir-param-cons
@@ -112,11 +112,11 @@
     blocks))
 
 (define (opt-switch-test-compare-block
-  [label : String]
+  [label : i64]
   [tag : i64]
   [eq-var : i64]
-  [arm-label : String]
-  [next-label : String]) : CompilerIrBlock
+  [arm-label : i64]
+  [next-label : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
@@ -134,11 +134,11 @@
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-switch-test-extra-compare-block
-  [label : String]
+  [label : i64]
   [tag : i64]
   [eq-var : i64]
-  [arm-label : String]
-  [next-label : String]) : CompilerIrBlock
+  [arm-label : i64]
+  [next-label : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
@@ -157,7 +157,7 @@
             next-label)
           (CompilerIrInstrList.Nil))))))
 
-(define (opt-switch-test-return-block [label : String] [value : i64]) : CompilerIrBlock
+(define (opt-switch-test-return-block [label : i64] [value : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
@@ -168,11 +168,11 @@
 ;; Head block whose compare+branch trails an unconditional prefix instruction:
 ;; the chain pass must keep the prefix ahead of the emitted Switch.
 (define (opt-switch-test-prefix-compare-block
-  [label : String]
+  [label : i64]
   [tag : i64]
   [eq-var : i64]
-  [arm-label : String]
-  [next-label : String]) : CompilerIrBlock
+  [arm-label : i64]
+  [next-label : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
@@ -210,14 +210,14 @@
           (opt-switch-case-list-count cases)]
         [_ 0])]))
 
-(define (opt-switch-test-block-tail-default [block : CompilerIrBlock]) : String
+(define (opt-switch-test-block-tail-default [block : CompilerIrBlock]) : i64
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (match (compiler-ir-instr-seq-ref
         instrs
         (- (compiler-ir-instr-seq-count instrs) 1))
         [(CompilerIrInstr.Switch _ _ _ default-label) default-label]
-        [_ ""])]))
+        [_ (compiler-ir-label-none)])]))
 
 (define (opt-switch-test-block-starts-with-mov? [block : CompilerIrBlock]) : bool
   (match block
@@ -229,14 +229,14 @@
 (define (opt-switch-test-cases-have?
   [cases : CompilerIrSwitchCaseList]
   [want-tag : i64]
-  [want-label : String]) : bool
+  [want-label : i64]) : bool
   (match (compiler-ir-switch-case-list-force-cons cases)
     [(CompilerIrSwitchCaseList.Nil) false]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case tag label)
           (if (= tag want-tag)
-            (string.eq label want-label)
+            (= label want-label)
             (opt-switch-test-cases-have? (box-get rest) want-tag want-label))])]
     [(CompilerIrSwitchCaseList.Array seq)
       (opt-switch-test-cases-have?
@@ -247,7 +247,7 @@
 (define (opt-switch-test-block-tail-has-case?
   [block : CompilerIrBlock]
   [tag : i64]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (match (compiler-ir-instr-seq-ref
@@ -259,7 +259,7 @@
 
 (define (opt-switch-test-total-trap-ok?
   [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -272,7 +272,7 @@
                 (= name cbi.compiler-builtin-id-tl-oob-abort)]
               [_ false])
             (match (compiler-ir-instr-seq-ref instrs 1)
-              [(CompilerIrInstr.Jump target) (string.eq target label)]
+              [(CompilerIrInstr.Jump target) (= target label)]
               [_ false]))])]))
 
 (define (opt-switch-test-chain-blocks
@@ -280,68 +280,120 @@
   [tag1 : i64]
   [tag2 : i64]
   [tag3 : i64]
-  [default-label : String]) : CompilerIrBlockList
+  [default-label : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-switch-test-compare-block "entry" tag0 1 "case0" "cmp1")
+    (opt-switch-test-compare-block
+      (compiler-ir-label "entry")
+      tag0
+      1
+      (compiler-ir-label "case0")
+      (compiler-ir-label "cmp1"))
     (compiler-ir-block-cons
-      (opt-switch-test-return-block "case0" 10)
+      (opt-switch-test-return-block (compiler-ir-label "case0") 10)
       (compiler-ir-block-cons
-        (opt-switch-test-compare-block "cmp1" tag1 2 "case1" "cmp2")
+        (opt-switch-test-compare-block
+          (compiler-ir-label "cmp1")
+          tag1
+          2
+          (compiler-ir-label "case1")
+          (compiler-ir-label "cmp2"))
         (compiler-ir-block-cons
-          (opt-switch-test-return-block "case1" 11)
+          (opt-switch-test-return-block (compiler-ir-label "case1") 11)
           (compiler-ir-block-cons
-            (opt-switch-test-compare-block "cmp2" tag2 3 "case2" "cmp3")
+            (opt-switch-test-compare-block
+              (compiler-ir-label "cmp2")
+              tag2
+              3
+              (compiler-ir-label "case2")
+              (compiler-ir-label "cmp3"))
             (compiler-ir-block-cons
-              (opt-switch-test-return-block "case2" 12)
+              (opt-switch-test-return-block (compiler-ir-label "case2") 12)
               (compiler-ir-block-cons
                 (opt-switch-test-compare-block
-                  "cmp3"
+                  (compiler-ir-label "cmp3")
                   tag3
                   4
-                  "case3"
+                  (compiler-ir-label "case3")
                   default-label)
                 (compiler-ir-block-cons
-                  (opt-switch-test-return-block "case3" 13)
+                  (opt-switch-test-return-block (compiler-ir-label "case3") 13)
                   (compiler-ir-block-cons
                     (opt-switch-test-return-block default-label 99)
                     (CompilerIrBlockList.Nil)))))))))))
 
 (define (opt-switch-test-short-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-switch-test-compare-block "entry" 0 1 "case0" "cmp1")
+    (opt-switch-test-compare-block
+      (compiler-ir-label "entry")
+      0
+      1
+      (compiler-ir-label "case0")
+      (compiler-ir-label "cmp1"))
     (compiler-ir-block-cons
-      (opt-switch-test-return-block "case0" 10)
+      (opt-switch-test-return-block (compiler-ir-label "case0") 10)
       (compiler-ir-block-cons
-        (opt-switch-test-compare-block "cmp1" 1 2 "case1" "cmp2")
+        (opt-switch-test-compare-block
+          (compiler-ir-label "cmp1")
+          1
+          2
+          (compiler-ir-label "case1")
+          (compiler-ir-label "cmp2"))
         (compiler-ir-block-cons
-          (opt-switch-test-return-block "case1" 11)
+          (opt-switch-test-return-block (compiler-ir-label "case1") 11)
           (compiler-ir-block-cons
-            (opt-switch-test-compare-block "cmp2" 2 3 "case2" "fallback")
+            (opt-switch-test-compare-block
+              (compiler-ir-label "cmp2")
+              2
+              3
+              (compiler-ir-label "case2")
+              (compiler-ir-label "fallback"))
             (compiler-ir-block-cons
-              (opt-switch-test-return-block "case2" 12)
+              (opt-switch-test-return-block (compiler-ir-label "case2") 12)
               (compiler-ir-block-cons
-                (opt-switch-test-return-block "fallback" 99)
+                (opt-switch-test-return-block (compiler-ir-label "fallback") 99)
                 (CompilerIrBlockList.Nil)))))))))
 
 (define (opt-switch-test-extra-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-switch-test-extra-compare-block "entry" 0 1 "case0" "cmp1")
+    (opt-switch-test-extra-compare-block
+      (compiler-ir-label "entry")
+      0
+      1
+      (compiler-ir-label "case0")
+      (compiler-ir-label "cmp1"))
     (compiler-ir-block-cons
-      (opt-switch-test-return-block "case0" 10)
+      (opt-switch-test-return-block (compiler-ir-label "case0") 10)
       (compiler-ir-block-cons
-        (opt-switch-test-compare-block "cmp1" 1 2 "case1" "cmp2")
+        (opt-switch-test-compare-block
+          (compiler-ir-label "cmp1")
+          1
+          2
+          (compiler-ir-label "case1")
+          (compiler-ir-label "cmp2"))
         (compiler-ir-block-cons
-          (opt-switch-test-return-block "case1" 11)
+          (opt-switch-test-return-block (compiler-ir-label "case1") 11)
           (compiler-ir-block-cons
-            (opt-switch-test-compare-block "cmp2" 2 3 "case2" "cmp3")
+            (opt-switch-test-compare-block
+              (compiler-ir-label "cmp2")
+              2
+              3
+              (compiler-ir-label "case2")
+              (compiler-ir-label "cmp3"))
             (compiler-ir-block-cons
-              (opt-switch-test-return-block "case2" 12)
+              (opt-switch-test-return-block (compiler-ir-label "case2") 12)
               (compiler-ir-block-cons
-                (opt-switch-test-compare-block "cmp3" 3 4 "case3" "fallback")
+                (opt-switch-test-compare-block
+                  (compiler-ir-label "cmp3")
+                  3
+                  4
+                  (compiler-ir-label "case3")
+                  (compiler-ir-label "fallback"))
                 (compiler-ir-block-cons
-                  (opt-switch-test-return-block "case3" 13)
+                  (opt-switch-test-return-block (compiler-ir-label "case3") 13)
                   (compiler-ir-block-cons
-                    (opt-switch-test-return-block "fallback" 99)
+                    (opt-switch-test-return-block
+                      (compiler-ir-label "fallback")
+                      99)
                     (CompilerIrBlockList.Nil)))))))))))
 
 (define (opt-switch-test-prefix-blocks
@@ -349,28 +401,43 @@
   [tag1 : i64]
   [tag2 : i64]
   [tag3 : i64]
-  [default-label : String]) : CompilerIrBlockList
+  [default-label : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-switch-test-prefix-compare-block "entry" tag0 1 "case0" "cmp1")
+    (opt-switch-test-prefix-compare-block
+      (compiler-ir-label "entry")
+      tag0
+      1
+      (compiler-ir-label "case0")
+      (compiler-ir-label "cmp1"))
     (compiler-ir-block-cons
-      (opt-switch-test-return-block "case0" 10)
+      (opt-switch-test-return-block (compiler-ir-label "case0") 10)
       (compiler-ir-block-cons
-        (opt-switch-test-compare-block "cmp1" tag1 2 "case1" "cmp2")
+        (opt-switch-test-compare-block
+          (compiler-ir-label "cmp1")
+          tag1
+          2
+          (compiler-ir-label "case1")
+          (compiler-ir-label "cmp2"))
         (compiler-ir-block-cons
-          (opt-switch-test-return-block "case1" 11)
+          (opt-switch-test-return-block (compiler-ir-label "case1") 11)
           (compiler-ir-block-cons
-            (opt-switch-test-compare-block "cmp2" tag2 3 "case2" "cmp3")
+            (opt-switch-test-compare-block
+              (compiler-ir-label "cmp2")
+              tag2
+              3
+              (compiler-ir-label "case2")
+              (compiler-ir-label "cmp3"))
             (compiler-ir-block-cons
-              (opt-switch-test-return-block "case2" 12)
+              (opt-switch-test-return-block (compiler-ir-label "case2") 12)
               (compiler-ir-block-cons
                 (opt-switch-test-compare-block
-                  "cmp3"
+                  (compiler-ir-label "cmp3")
                   tag3
                   4
-                  "case3"
+                  (compiler-ir-label "case3")
                   default-label)
                 (compiler-ir-block-cons
-                  (opt-switch-test-return-block "case3" 13)
+                  (opt-switch-test-return-block (compiler-ir-label "case3") 13)
                   (compiler-ir-block-cons
                     (opt-switch-test-return-block default-label 99)
                     (CompilerIrBlockList.Nil)))))))))))
@@ -378,9 +445,9 @@
 ;; Head block whose dispatch is a bare zero-test branch (`Eq tag, 0` folded
 ;; onto the tag var), again trailing an unconditional prefix instruction.
 (define (opt-switch-test-bare-branch-block
-  [label : String]
-  [arm-label : String]
-  [next-label : String]) : CompilerIrBlock
+  [label : i64]
+  [arm-label : i64]
+  [next-label : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
@@ -389,35 +456,53 @@
         (CompilerIrInstr.Branch (CompilerIrValue.Var 0) next-label arm-label)
         (CompilerIrInstrList.Nil)))))
 
-(define (opt-switch-test-bare-blocks [default-label : String]) : CompilerIrBlockList
+(define (opt-switch-test-bare-blocks [default-label : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-switch-test-bare-branch-block "entry" "case0" "cmp1")
+    (opt-switch-test-bare-branch-block
+      (compiler-ir-label "entry")
+      (compiler-ir-label "case0")
+      (compiler-ir-label "cmp1"))
     (compiler-ir-block-cons
-      (opt-switch-test-return-block "case0" 10)
+      (opt-switch-test-return-block (compiler-ir-label "case0") 10)
       (compiler-ir-block-cons
-        (opt-switch-test-compare-block "cmp1" 1 2 "case1" "cmp2")
+        (opt-switch-test-compare-block
+          (compiler-ir-label "cmp1")
+          1
+          2
+          (compiler-ir-label "case1")
+          (compiler-ir-label "cmp2"))
         (compiler-ir-block-cons
-          (opt-switch-test-return-block "case1" 11)
+          (opt-switch-test-return-block (compiler-ir-label "case1") 11)
           (compiler-ir-block-cons
-            (opt-switch-test-compare-block "cmp2" 2 3 "case2" "cmp3")
+            (opt-switch-test-compare-block
+              (compiler-ir-label "cmp2")
+              2
+              3
+              (compiler-ir-label "case2")
+              (compiler-ir-label "cmp3"))
             (compiler-ir-block-cons
-              (opt-switch-test-return-block "case2" 12)
+              (opt-switch-test-return-block (compiler-ir-label "case2") 12)
               (compiler-ir-block-cons
-                (opt-switch-test-compare-block "cmp3" 3 4 "case3" default-label)
+                (opt-switch-test-compare-block
+                  (compiler-ir-label "cmp3")
+                  3
+                  4
+                  (compiler-ir-label "case3")
+                  default-label)
                 (compiler-ir-block-cons
-                  (opt-switch-test-return-block "case3" 13)
+                  (opt-switch-test-return-block (compiler-ir-label "case3") 13)
                   (compiler-ir-block-cons
                     (opt-switch-test-return-block default-label 99)
                     (CompilerIrBlockList.Nil)))))))))))
 
 ;; Compare block testing an explicit compare var (for copy-resolution tests).
 (define (opt-switch-test-compare-block-var
-  [label : String]
+  [label : i64]
   [cmp-var : i64]
   [tag : i64]
   [eq-var : i64]
-  [arm-label : String]
-  [next-label : String]) : CompilerIrBlock
+  [arm-label : i64]
+  [next-label : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
@@ -438,10 +523,10 @@
 ;; middle compares read the match-scrutinee COPY (block-local copy propagation
 ;; rewrites same-block operands only). The chain must resolve both through the
 ;; head prefix's Mov to one logical index var.
-(define (opt-switch-test-copy-head-blocks [default-label : String]) : CompilerIrBlockList
+(define (opt-switch-test-copy-head-blocks [default-label : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 9 (CompilerIrValue.Var 0) (AstType.I64))
         (compiler-ir-instr-cons
@@ -452,28 +537,43 @@
             (CompilerIrValue.I64 0)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 1) "case0" "cmp1")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 1)
+              (compiler-ir-label "case0")
+              (compiler-ir-label "cmp1"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
-      (opt-switch-test-return-block "case0" 10)
+      (opt-switch-test-return-block (compiler-ir-label "case0") 10)
       (compiler-ir-block-cons
-        (opt-switch-test-compare-block-var "cmp1" 9 1 2 "case1" "cmp2")
+        (opt-switch-test-compare-block-var
+          (compiler-ir-label "cmp1")
+          9
+          1
+          2
+          (compiler-ir-label "case1")
+          (compiler-ir-label "cmp2"))
         (compiler-ir-block-cons
-          (opt-switch-test-return-block "case1" 11)
+          (opt-switch-test-return-block (compiler-ir-label "case1") 11)
           (compiler-ir-block-cons
-            (opt-switch-test-compare-block-var "cmp2" 9 2 3 "case2" "cmp3")
+            (opt-switch-test-compare-block-var
+              (compiler-ir-label "cmp2")
+              9
+              2
+              3
+              (compiler-ir-label "case2")
+              (compiler-ir-label "cmp3"))
             (compiler-ir-block-cons
-              (opt-switch-test-return-block "case2" 12)
+              (opt-switch-test-return-block (compiler-ir-label "case2") 12)
               (compiler-ir-block-cons
                 (opt-switch-test-compare-block-var
-                  "cmp3"
+                  (compiler-ir-label "cmp3")
                   9
                   3
                   4
-                  "case3"
+                  (compiler-ir-label "case3")
                   default-label)
                 (compiler-ir-block-cons
-                  (opt-switch-test-return-block "case3" 13)
+                  (opt-switch-test-return-block (compiler-ir-label "case3") 13)
                   (compiler-ir-block-cons
                     (opt-switch-test-return-block default-label 99)
                     (CompilerIrBlockList.Nil)))))))))))
@@ -481,7 +581,7 @@
 (define (compiler-optimize-switch-form-self-test) : i64
   (let
     [dense-source : CompilerIrBlockList
-      (opt-switch-test-chain-blocks 2 0 1 3 "fallback")]
+      (opt-switch-test-chain-blocks 2 0 1 3 (compiler-ir-label "fallback"))]
     [dense : CompilerIrFunction
       (opt-switch-form-function (opt-switch-test-function dense-source))]
     [dense-blocks : CompilerIrBlockList (opt-function-blocks dense)]
@@ -491,60 +591,68 @@
     [sparse : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function
-          (opt-switch-test-chain-blocks 0 1 3 4 "fallback")))]
+          (opt-switch-test-chain-blocks 0 1 3 4 (compiler-ir-label "fallback"))))]
     [duplicate : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function
-          (opt-switch-test-chain-blocks 0 1 1 2 "fallback")))]
+          (opt-switch-test-chain-blocks 0 1 1 2 (compiler-ir-label "fallback"))))]
     [extra : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-extra-blocks)))]
     [prefix : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function
-          (opt-switch-test-prefix-blocks 2 0 1 3 "fallback")))]
+          (opt-switch-test-prefix-blocks 2 0 1 3 (compiler-ir-label "fallback"))))]
     [prefix-blocks : CompilerIrBlockList (opt-function-blocks prefix)]
     [prefix-twice : CompilerIrFunction (opt-switch-form-function prefix)]
     [prefix-entry : CompilerIrBlock
-      (match (opt-cfg-find-block prefix-blocks "entry")
-        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+      (match (opt-cfg-find-block prefix-blocks (compiler-ir-label "entry"))
+        [(OptMaybeBlock.No)
+          (opt-switch-test-return-block (compiler-ir-label "missing") 0)]
         [(OptMaybeBlock.Some block) block])]
     [bare : CompilerIrFunction
       (opt-switch-form-function
-        (opt-switch-test-function (opt-switch-test-bare-blocks "fallback")))]
+        (opt-switch-test-function
+          (opt-switch-test-bare-blocks (compiler-ir-label "fallback"))))]
     [bare-blocks : CompilerIrBlockList (opt-function-blocks bare)]
     [bare-entry : CompilerIrBlock
-      (match (opt-cfg-find-block bare-blocks "entry")
-        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+      (match (opt-cfg-find-block bare-blocks (compiler-ir-label "entry"))
+        [(OptMaybeBlock.No)
+          (opt-switch-test-return-block (compiler-ir-label "missing") 0)]
         [(OptMaybeBlock.Some block) block])]
     [copy-head : CompilerIrFunction
       (opt-switch-form-function
-        (opt-switch-test-function (opt-switch-test-copy-head-blocks "fallback")))]
+        (opt-switch-test-function
+          (opt-switch-test-copy-head-blocks (compiler-ir-label "fallback"))))]
     [copy-head-blocks : CompilerIrBlockList (opt-function-blocks copy-head)]
     [copy-head-entry : CompilerIrBlock
-      (match (opt-cfg-find-block copy-head-blocks "entry")
-        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+      (match (opt-cfg-find-block copy-head-blocks (compiler-ir-label "entry"))
+        [(OptMaybeBlock.No)
+          (opt-switch-test-return-block (compiler-ir-label "missing") 0)]
         [(OptMaybeBlock.Some block) block])]
-    [total-final-label : String "match_total_enum_default.4"]
-    [total-trap-label : String "match_total_trap__entry"]
+    [total-final-label : i64 (compiler-ir-label "match_total_enum_default.4")]
+    [total-trap-label : i64 (compiler-ir-label "match_total_trap__entry")]
     [total : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function
           (opt-switch-test-chain-blocks 0 1 2 3 total-final-label)))]
     [total-blocks : CompilerIrBlockList (opt-function-blocks total)]
     [total-entry : CompilerIrBlock
-      (match (opt-cfg-find-block total-blocks "entry")
-        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+      (match (opt-cfg-find-block total-blocks (compiler-ir-label "entry"))
+        [(OptMaybeBlock.No)
+          (opt-switch-test-return-block (compiler-ir-label "missing") 0)]
         [(OptMaybeBlock.Some block) block])]
     [total-late : CompilerIrFunction (opt-late-total-switch-function total)]
     [total-late-blocks : CompilerIrBlockList (opt-function-blocks total-late)]
     [total-late-entry : CompilerIrBlock
-      (match (opt-cfg-find-block total-late-blocks "entry")
-        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+      (match (opt-cfg-find-block total-late-blocks (compiler-ir-label "entry"))
+        [(OptMaybeBlock.No)
+          (opt-switch-test-return-block (compiler-ir-label "missing") 0)]
         [(OptMaybeBlock.Some block) block])]
     [total-twice : CompilerIrFunction
       (opt-late-total-switch-function total-late)]
-    [marked-sparse-final-label : String "match_total_enum_default.sparse"]
+    [marked-sparse-final-label : i64
+      (compiler-ir-label "match_total_enum_default.sparse")]
     [marked-sparse : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function
@@ -560,11 +668,13 @@
       [(not (= (opt-switch-entry-base dense-blocks) 0)) 2]
       [(not (= (opt-switch-entry-case-count dense-blocks) 4)) 3]
       [(not
-          (string.eq (opt-switch-entry-default-label dense-blocks) "fallback"))
+          (=
+            (opt-switch-entry-default-label dense-blocks)
+            (compiler-ir-label "fallback")))
         4]
-      [(opt-block-list-has-label? dense-blocks "cmp1") 5]
-      [(opt-block-list-has-label? dense-blocks "cmp2") 6]
-      [(opt-block-list-has-label? dense-blocks "cmp3") 7]
+      [(opt-block-list-has-label? dense-blocks (compiler-ir-label "cmp1")) 5]
+      [(opt-block-list-has-label? dense-blocks (compiler-ir-label "cmp2")) 6]
+      [(opt-block-list-has-label? dense-blocks (compiler-ir-label "cmp3")) 7]
       [(not (opt-verify-ok? (opt-verify-function dense))) 8]
       [(not (= (opt-count-switch-blocks (opt-function-blocks short)) 0)) 9]
       [(not (= (opt-count-switch-blocks (opt-function-blocks sparse)) 0)) 10]
@@ -578,13 +688,13 @@
       [(not (= (opt-switch-test-block-tail-base prefix-entry) 0)) 16]
       [(not (= (opt-switch-test-block-tail-case-count prefix-entry) 4)) 17]
       [(not
-          (string.eq
+          (=
             (opt-switch-test-block-tail-default prefix-entry)
-            "fallback"))
+            (compiler-ir-label "fallback")))
         18]
       [(not (opt-switch-test-block-starts-with-mov? prefix-entry)) 19]
-      [(opt-block-list-has-label? prefix-blocks "cmp1") 20]
-      [(opt-block-list-has-label? prefix-blocks "cmp2") 21]
+      [(opt-block-list-has-label? prefix-blocks (compiler-ir-label "cmp1")) 20]
+      [(opt-block-list-has-label? prefix-blocks (compiler-ir-label "cmp2")) 21]
       [(not (opt-verify-ok? (opt-verify-function prefix))) 22]
       ;; Idempotence: rerunning the pass must not rewrite the rewritten head.
       [(not (= (opt-count-switch-blocks (opt-function-blocks prefix-twice)) 1))
@@ -595,7 +705,9 @@
       [(not (= (opt-switch-test-block-tail-base bare-entry) 0)) 25]
       [(not (= (opt-switch-test-block-tail-case-count bare-entry) 4)) 26]
       [(not
-          (string.eq (opt-switch-test-block-tail-default bare-entry) "fallback"))
+          (=
+            (opt-switch-test-block-tail-default bare-entry)
+            (compiler-ir-label "fallback")))
         27]
       [(not (opt-switch-test-block-starts-with-mov? bare-entry)) 28]
       [(not (opt-verify-ok? (opt-verify-function bare))) 29]
@@ -605,9 +717,9 @@
       [(not (= (opt-switch-test-block-tail-base copy-head-entry) 0)) 31]
       [(not (= (opt-switch-test-block-tail-case-count copy-head-entry) 4)) 32]
       [(not
-          (string.eq
+          (=
             (opt-switch-test-block-tail-default copy-head-entry)
-            "fallback"))
+            (compiler-ir-label "fallback")))
         33]
       [(not (opt-switch-test-block-starts-with-mov? copy-head-entry)) 34]
       [(not (opt-verify-ok? (opt-verify-function copy-head))) 35]
@@ -618,9 +730,7 @@
       [(not (= (opt-switch-test-block-tail-base total-entry) 0)) 37]
       [(not (= (opt-switch-test-block-tail-case-count total-entry) 4)) 38]
       [(not
-          (string.eq
-            (opt-switch-test-block-tail-default total-entry)
-            total-final-label))
+          (= (opt-switch-test-block-tail-default total-entry) total-final-label))
         39]
       [(opt-block-list-has-label? total-blocks total-trap-label) 40]
       [(not (= (opt-count-switch-blocks total-late-blocks) 1)) 41]
@@ -633,7 +743,7 @@
             total-final-label))
         45]
       [(not
-          (string.eq
+          (=
             (opt-switch-test-block-tail-default total-late-entry)
             total-trap-label))
         46]
@@ -647,7 +757,7 @@
       [(not (= (opt-count-switch-blocks marked-sparse-blocks) 0)) 50]
       [(opt-block-list-has-label?
           marked-sparse-blocks
-          "match_total_trap__entry")
+          (compiler-ir-label "match_total_trap__entry"))
         51]
       [else 42])))
 
@@ -750,7 +860,7 @@
   [offset : CompilerIrValue]
   [slot-ty : AstType]
   [index : CompilerIrValue]
-  [label : String]
+  [label : i64]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.Gep ptr-var object offset slot-ty)
@@ -784,7 +894,7 @@
     offset
     slot-ty
     (CompilerIrValue.Var 0)
-    "bounds_ok.0"
+    (compiler-ir-label "bounds_ok.0")
     (smoke-bounds-object-length-check-fragment
       20
       21
@@ -793,7 +903,7 @@
       offset
       slot-ty
       (CompilerIrValue.Var 0)
-      "bounds_ok.1"
+      (compiler-ir-label "bounds_ok.1")
       (CompilerIrInstrList.Nil))))
 
 (define (smoke-bounds-object-call-barrier) : CompilerIrInstrList
@@ -805,7 +915,7 @@
     (CompilerIrValue.I64 1)
     (AstType.I64)
     (CompilerIrValue.Var 0)
-    "bounds_ok.0"
+    (compiler-ir-label "bounds_ok.0")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         30
@@ -820,7 +930,7 @@
         (CompilerIrValue.I64 1)
         (AstType.I64)
         (CompilerIrValue.Var 0)
-        "bounds_ok.1"
+        (compiler-ir-label "bounds_ok.1")
         (CompilerIrInstrList.Nil)))))
 
 ;; Element-store survival: a `StorePtr` whose target is the object's tracked
@@ -837,7 +947,7 @@
     (CompilerIrValue.I64 1)
     (AstType.I64)
     (CompilerIrValue.Var 0)
-    "bounds_ok.0"
+    (compiler-ir-label "bounds_ok.0")
     (compiler-ir-instr-cons
       (CompilerIrInstr.StorePtr store-ptr (CompilerIrValue.I64 7) (AstType.I64))
       (smoke-bounds-object-length-check-fragment
@@ -848,7 +958,7 @@
         (CompilerIrValue.I64 1)
         (AstType.I64)
         (CompilerIrValue.Var 0)
-        "bounds_ok.1"
+        (compiler-ir-label "bounds_ok.1")
         (CompilerIrInstrList.Nil)))))
 
 (define (smoke-object-bounds-self-test) : i64
@@ -903,7 +1013,7 @@
 
 (define (smoke-range-bce-entry [with-nonnegative : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Gep
         3
@@ -923,15 +1033,18 @@
                 (CompilerIrValue.I64 0)
                 (AstType.Bool))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 14) "lt" "exit")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 14)
+                  (compiler-ir-label "lt")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "lt")
+              (CompilerIrInstr.Jump (compiler-ir-label "lt"))
               (CompilerIrInstrList.Nil))))))))
 
 (define (smoke-range-bce-lt [op : CompilerIrBinOp] [length-var : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "lt"
+    (compiler-ir-label "lt")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         15
@@ -940,12 +1053,15 @@
         (CompilerIrValue.Var length-var)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 15) "body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 15)
+          (compiler-ir-label "body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (smoke-range-bce-body) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (opt-loop-bce-string-test-ref-instrs
       2
       30
@@ -956,7 +1072,7 @@
 
 (define (smoke-range-bce-redefined-body) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 (- 0 1)) (AstType.I64))
       (opt-loop-bce-string-test-ref-instrs
@@ -1041,7 +1157,7 @@
 
 (define (smoke-ssa-iv-bce-entry) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Gep
         3
@@ -1051,7 +1167,7 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 1 (CompilerIrValue.Var 3) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "header")
+          (CompilerIrInstr.Jump (compiler-ir-label "header"))
           (CompilerIrInstrList.Nil))))))
 
 (define (smoke-ssa-iv-bce-header
@@ -1060,16 +1176,16 @@
   [op : CompilerIrBinOp]
   [upper-var : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Phi
         0
         (compiler-ir-phi-input-cons
           start
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var next-var)
-            "body"
+            (compiler-ir-label "body")
             (CompilerIrPhiInputList.Nil)))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -1080,7 +1196,10 @@
           (CompilerIrValue.Var upper-var)
           (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 4)
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit"))
           (CompilerIrInstrList.Nil))))))
 
 (define (smoke-ssa-iv-bce-body
@@ -1091,7 +1210,7 @@
   [with-call : bool]
   [redefine-index : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (let
       [tail : CompilerIrInstrList
         (opt-loop-bce-string-test-ref-instrs
@@ -1105,7 +1224,7 @@
               (CompilerIrValue.I64 step)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "header")
+              (CompilerIrInstr.Jump (compiler-ir-label "header"))
               (CompilerIrInstrList.Nil))))]
       [after-call : CompilerIrInstrList
         (if with-call
@@ -1271,7 +1390,7 @@
 
 (define (smoke-nonlength-guard-header [op : CompilerIrBinOp]) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         43
@@ -1280,12 +1399,15 @@
         (CompilerIrValue.Var 40)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 43) "body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 43)
+          (compiler-ir-label "body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (smoke-nonlength-guard-body [object-var : i64] [redefine-bound : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (let
       [tail : CompilerIrInstrList
         (opt-loop-bce-string-test-ref-instrs
@@ -1389,7 +1511,7 @@
                 (CompilerIrInstr.BoundsCheck
                   (CompilerIrValue.Var (+ base 5))
                   (CompilerIrValue.Var (+ base 4))
-                  "str_bounds_ok")
+                  (compiler-ir-label "str_bounds_ok"))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Gep
                     (+ base 6)
@@ -1405,7 +1527,7 @@
 
 (define (smoke-additive-entry [with-nonnegative : bool] [upper-offset : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Gep
         3
@@ -1434,16 +1556,16 @@
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Branch
                     (CompilerIrValue.Var 42)
-                    "header"
-                    "exit")
+                    (compiler-ir-label "header")
+                    (compiler-ir-label "exit"))
                   (CompilerIrInstrList.Nil)))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "header")
+                (CompilerIrInstr.Jump (compiler-ir-label "header"))
                 (CompilerIrInstrList.Nil)))))))))
 
 (define (smoke-additive-header [op : CompilerIrBinOp] [upper-var : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         43
@@ -1452,12 +1574,15 @@
         (CompilerIrValue.Var upper-var)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 43) "body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 43)
+          (compiler-ir-label "body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (smoke-additive-body [offset : i64] [redefine-index : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (let
       [tail : CompilerIrInstrList
         (compiler-ir-instr-cons
@@ -1519,7 +1644,7 @@
 
 (define (smoke-additive-wrap-risk-entry) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
@@ -1543,12 +1668,15 @@
               (CompilerIrValue.I64 0)
               (AstType.Bool))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 42) "header" "exit")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 42)
+                (compiler-ir-label "header")
+                (compiler-ir-label "exit"))
               (CompilerIrInstrList.Nil))))))))
 
 (define (smoke-additive-wrap-risk-header) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         43
@@ -1557,12 +1685,15 @@
         (CompilerIrValue.Var 40)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 43) "body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 43)
+          (compiler-ir-label "body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (smoke-additive-wrap-risk-body) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         50
@@ -1574,7 +1705,7 @@
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 50)
           (CompilerIrValue.Var 1)
-          "bounds_ok")
+          (compiler-ir-label "bounds_ok"))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 50)))
@@ -1621,10 +1752,10 @@
       [(not (= off-by-one 1)) 8]
       [else 42])))
 
-(define (smoke-heavy-pass-large-label [index : i64]) : String
-  (string.append "b" (string.int->string index)))
+(define (smoke-heavy-pass-large-label [index : i64]) : i64
+  (compiler-ir-label (string.append "b" (string.int->string index))))
 
-(define (smoke-heavy-pass-large-jump-block [index : i64] [next : String]) : CompilerIrBlock
+(define (smoke-heavy-pass-large-jump-block [index : i64] [next : i64]) : CompilerIrBlock
   (compiler-ir-block
     (smoke-heavy-pass-large-label index)
     (compiler-ir-instr-cons
@@ -1633,7 +1764,7 @@
 
 (define (smoke-heavy-pass-large-exit-block) : CompilerIrBlock
   (compiler-ir-block
-    "exit"
+    (compiler-ir-label "exit")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         3
@@ -1655,14 +1786,14 @@
       (smoke-heavy-pass-large-jump-block
         index
         (if (= index last)
-          "exit"
+          (compiler-ir-label "exit")
           (smoke-heavy-pass-large-label (+ index 1))))
       (smoke-heavy-pass-large-tail-blocks (+ index 1) last))))
 
 (define (smoke-heavy-pass-large-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -1897,24 +2028,24 @@
       42)
     42))
 
-(define (smoke-inline-phi-header [latch-label : String]) : CompilerIrInstr
+(define (smoke-inline-phi-header [latch-label : i64]) : CompilerIrInstr
   (CompilerIrInstr.Phi
     1
     (compiler-ir-phi-input-cons
       (CompilerIrValue.I64 0)
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-phi-input-cons
         (CompilerIrValue.Var 0)
         latch-label
         CompilerIrPhiInputList.Nil))
     (AstType.I64)))
 
-(define (smoke-inline-phi-exit [latch-label : String]) : CompilerIrInstr
+(define (smoke-inline-phi-exit [latch-label : i64]) : CompilerIrInstr
   (CompilerIrInstr.Phi
     2
     (compiler-ir-phi-input-cons
       (CompilerIrValue.Var 1)
-      "header"
+      (compiler-ir-label "header")
       (compiler-ir-phi-input-cons
         (CompilerIrValue.Var 0)
         latch-label
@@ -1931,37 +2062,37 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "header")
+          (CompilerIrInstr.Jump (compiler-ir-label "header"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "header"
+          (compiler-ir-label "header")
           (compiler-ir-instr-cons
-            (smoke-inline-phi-header "latch")
+            (smoke-inline-phi-header (compiler-ir-label "latch"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Bool true)
-                "latch"
-                "exit")
+                (compiler-ir-label "latch")
+                (compiler-ir-label "exit"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "latch"
+            (compiler-ir-label "latch")
             (compiler-ir-instr-cons
               call
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Branch
                   (CompilerIrValue.Bool true)
-                  "header"
-                  "exit")
+                  (compiler-ir-label "header")
+                  (compiler-ir-label "exit"))
                 CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
-                (smoke-inline-phi-exit "latch")
+                (smoke-inline-phi-exit (compiler-ir-label "latch"))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
@@ -1990,15 +2121,15 @@
     5
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (smoke-inline-phi-callee-mov)
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "exit")
+            (CompilerIrInstr.Jump (compiler-ir-label "exit"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
@@ -2030,7 +2161,7 @@
       CompilerIrFunctionList.Nil)))
 
 (define (smoke-inline-phi-loop-repaired? [blocks : CompilerIrBlockList]) : bool
-  (match (opt-cfg-find-block blocks "header")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "header"))
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some header)
       (match header
@@ -2039,10 +2170,11 @@
             [(CompilerIrInstr.Phi _ inputs _)
               (if (opt-phi-input-list-eq
                 inputs
-                (match (smoke-inline-phi-header "inl.latch.0.cont")
+                (match (smoke-inline-phi-header
+                  (compiler-ir-label "inl.latch.0.cont"))
                   [(CompilerIrInstr.Phi _ expected _) expected]
                   [_ CompilerIrPhiInputList.Nil]))
-                (match (opt-cfg-find-block blocks "exit")
+                (match (opt-cfg-find-block blocks (compiler-ir-label "exit"))
                   [(OptMaybeBlock.No) false]
                   [(OptMaybeBlock.Some exit)
                     (match exit
@@ -2051,7 +2183,8 @@
                           [(CompilerIrInstr.Phi _ exit-inputs _)
                             (opt-phi-input-list-eq
                               exit-inputs
-                              (match (smoke-inline-phi-exit "inl.latch.0.cont")
+                              (match (smoke-inline-phi-exit
+                                (compiler-ir-label "inl.latch.0.cont"))
                                 [(CompilerIrInstr.Phi _ expected _) expected]
                                 [_ CompilerIrPhiInputList.Nil]))]
                           [_ false])])])
@@ -2084,8 +2217,10 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [call : CompilerIrInstr (smoke-inline-phi-call symbols)]
-    [header-phi : CompilerIrInstr (smoke-inline-phi-header "latch")]
-    [exit-phi : CompilerIrInstr (smoke-inline-phi-exit "latch")]
+    [header-phi : CompilerIrInstr
+      (smoke-inline-phi-header (compiler-ir-label "latch"))]
+    [exit-phi : CompilerIrInstr
+      (smoke-inline-phi-exit (compiler-ir-label "latch"))]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
@@ -2103,8 +2238,9 @@
     [result-mov : CompilerIrInstr
       (CompilerIrInstr.Mov 0 (CompilerIrValue.Var 3) (AstType.I64))]
     [repaired-header : CompilerIrInstr
-      (smoke-inline-phi-header "inl.latch.0.cont")]
-    [repaired-exit : CompilerIrInstr (smoke-inline-phi-exit "inl.latch.0.cont")]
+      (smoke-inline-phi-header (compiler-ir-label "inl.latch.0.cont"))]
+    [repaired-exit : CompilerIrInstr
+      (smoke-inline-phi-exit (compiler-ir-label "inl.latch.0.cont"))]
     (match (opt-inline-program-functions-with-spans
       (smoke-inline-phi-functions symbols)
       2
@@ -2202,22 +2338,22 @@
     8
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "header")
+          (CompilerIrInstr.Jump (compiler-ir-label "header"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "header"
+          (compiler-ir-label "header")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               2
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 0)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 6)
-                  "merge"
+                  (compiler-ir-label "merge")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -2228,11 +2364,14 @@
                 (CompilerIrValue.I64 0)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "then" "else")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 5)
+                  (compiler-ir-label "then")
+                  (compiler-ir-label "else"))
                 (CompilerIrInstrList.Nil)))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "then"
+            (compiler-ir-label "then")
             (if computed-arm?
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
@@ -2242,20 +2381,20 @@
                   (CompilerIrValue.I64 1)
                   (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "merge")
+                  (CompilerIrInstr.Jump (compiler-ir-label "merge"))
                   (CompilerIrInstrList.Nil)))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstr.Jump (compiler-ir-label "merge"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "else"
+              (compiler-ir-label "else")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstr.Jump (compiler-ir-label "merge"))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "merge"
+                (compiler-ir-label "merge")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Phi
                     4
@@ -2263,10 +2402,10 @@
                       (if computed-arm?
                         (CompilerIrValue.Var 3)
                         (CompilerIrValue.Var 1))
-                      "then"
+                      (compiler-ir-label "then")
                       (compiler-ir-phi-input-cons
                         (CompilerIrValue.Var 1)
-                        "else"
+                        (compiler-ir-label "else")
                         (CompilerIrPhiInputList.Nil)))
                     (AstType.I64))
                   (compiler-ir-instr-cons
@@ -2286,12 +2425,12 @@
                       (compiler-ir-instr-cons
                         (CompilerIrInstr.Branch
                           (CompilerIrValue.Var 7)
-                          "header"
-                          "exit")
+                          (compiler-ir-label "header")
+                          (compiler-ir-label "exit"))
                         (CompilerIrInstrList.Nil))))))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "exit"
+                  (compiler-ir-label "exit")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
                       (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
@@ -2365,7 +2504,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             1

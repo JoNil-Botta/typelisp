@@ -149,12 +149,12 @@
 (define (compiler-ir-smoke-block-list-label-at?
   [blocks : CompilerIrBlockList]
   [index : i64]
-  [want : String]) : bool
+  [want : i64]) : bool
   (match (compiler-ir-block-list-force-cons blocks)
     [(CompilerIrBlockList.Cons block rest)
       (if (= index 0)
         (match block
-          [(CompilerIrBlock.Block label _) (string.eq label want)])
+          [(CompilerIrBlock.Block label _) (= label want)])
         (compiler-ir-smoke-block-list-label-at? (box-get rest) (- index 1) want))]
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Array _) false]))
@@ -362,7 +362,7 @@
     [blocks : CompilerIrBlockList
       (compiler-ir-block-list-compact
         (compiler-ir-block-cons
-          (compiler-ir-block "entry" entry-instrs)
+          (compiler-ir-block (compiler-ir-label "entry") entry-instrs)
           CompilerIrBlockList.Nil))]
     [first : CompilerIrFunction
       (CompilerIrFunction.Function
@@ -405,11 +405,11 @@
 (define (compiler-ir-smoke-reversed-compaction-ok?) : bool
   (let
     [first-block : CompilerIrBlock
-      (compiler-ir-block "first" CompilerIrInstrList.Nil)]
+      (compiler-ir-block (compiler-ir-label "first") CompilerIrInstrList.Nil)]
     [second-block : CompilerIrBlock
-      (compiler-ir-block "second" CompilerIrInstrList.Nil)]
+      (compiler-ir-block (compiler-ir-label "second") CompilerIrInstrList.Nil)]
     [third-block : CompilerIrBlock
-      (compiler-ir-block "third" CompilerIrInstrList.Nil)]
+      (compiler-ir-block (compiler-ir-label "third") CompilerIrInstrList.Nil)]
     [reversed-blocks : CompilerIrBlockList
       (compiler-ir-block-cons
         third-block
@@ -453,11 +453,26 @@
       (compiler-ir-function-list-compact-reversed compact-functions)]
     (and
       (= (compiler-ir-block-list-count compact-blocks) 3)
-      (compiler-ir-smoke-block-list-label-at? compact-blocks 0 "first")
-      (compiler-ir-smoke-block-list-label-at? compact-blocks 1 "second")
-      (compiler-ir-smoke-block-list-label-at? compact-blocks 2 "third")
-      (compiler-ir-smoke-block-list-label-at? array-reversed-blocks 0 "third")
-      (compiler-ir-smoke-block-list-label-at? array-reversed-blocks 2 "first")
+      (compiler-ir-smoke-block-list-label-at?
+        compact-blocks
+        0
+        (compiler-ir-label "first"))
+      (compiler-ir-smoke-block-list-label-at?
+        compact-blocks
+        1
+        (compiler-ir-label "second"))
+      (compiler-ir-smoke-block-list-label-at?
+        compact-blocks
+        2
+        (compiler-ir-label "third"))
+      (compiler-ir-smoke-block-list-label-at?
+        array-reversed-blocks
+        0
+        (compiler-ir-label "third"))
+      (compiler-ir-smoke-block-list-label-at?
+        array-reversed-blocks
+        2
+        (compiler-ir-label "first"))
       (= (compiler-ir-function-list-count compact-functions) 3)
       (compiler-ir-smoke-function-list-name-at?
         compact-functions
@@ -555,7 +570,7 @@
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 7)
             (CompilerIrValue.I64 10)
-            "ok")
+            (compiler-ir-label "ok"))
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               8

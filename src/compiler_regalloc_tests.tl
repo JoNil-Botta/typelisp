@@ -191,7 +191,7 @@
 ;; (combine (merge (remat-discounted weights)) (merge (raw weights))).
 (define (compiler-reg-edge-copy-plan-for-region
   [func : CompilerIrFunction]
-  [region-labels : CompilerRegStringList]
+  [region-labels : CompilerRegLabelList]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]) : CompilerRegEdgeCopyPlan
@@ -263,7 +263,7 @@
       5
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               2
@@ -274,19 +274,19 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Var 2)
-                "zero"
-                "guard_limit")
+                (compiler-ir-label "zero")
+                (compiler-ir-label "guard_limit"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "zero"
+            (compiler-ir-label "zero")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "guard_limit"
+              (compiler-ir-label "guard_limit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
                   3
@@ -295,18 +295,21 @@
                   (CompilerIrValue.Var 1)
                   (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Branch (CompilerIrValue.Var 3) "one" "body")
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 3)
+                    (compiler-ir-label "one")
+                    (compiler-ir-label "body"))
                   CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "one"
+                (compiler-ir-label "one")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
                   CompilerIrInstrList.Nil))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "body"
+                  (compiler-ir-label "body")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Call
                       4
@@ -314,7 +317,7 @@
                       CompilerIrCallArgs.Nil
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "entry")
+                      (CompilerIrInstr.Jump (compiler-ir-label "entry"))
                       CompilerIrInstrList.Nil)))
                 CompilerIrBlockList.Nil))))))))
 
@@ -336,39 +339,39 @@
               [_ false])
             (= (compiler-ir-block-seq-count seq) 10)
             (= compiler-reg-early-exit-prefix-count 4)
-            (string.eq
+            (=
               compiler-reg-early-exit-saving-label
-              "entry__shrinkwrap_save")
+              (compiler-ir-label "entry__shrinkwrap_save"))
             (string.eq
               compiler-reg-early-exit-bare-label
               "entry__shrinkwrap_bare")
             (match (compiler-ir-block-seq-ref seq 0)
               [(CompilerIrBlock.Block label instrs)
                 (and
-                  (string.eq label "entry")
+                  (= label (compiler-ir-label "entry"))
                   (match (compiler-ir-instr-seq-ref instrs 1)
                     [(CompilerIrInstr.Branch _ yes no)
                       (and
-                        (string.eq yes "entry__shrinkwrap_bare0")
-                        (string.eq no "guard_limit"))]
+                        (= yes (compiler-ir-label "entry__shrinkwrap_bare0"))
+                        (= no (compiler-ir-label "guard_limit")))]
                     [_ false]))])
             (match (compiler-ir-block-seq-ref seq 1)
               [(CompilerIrBlock.Block label instrs)
                 (and
-                  (string.eq label "guard_limit")
+                  (= label (compiler-ir-label "guard_limit"))
                   (match (compiler-ir-instr-seq-ref instrs 1)
                     [(CompilerIrInstr.Branch _ yes no)
                       (and
-                        (string.eq yes "entry__shrinkwrap_bare1")
-                        (string.eq no "entry__shrinkwrap_save"))]
+                        (= yes (compiler-ir-label "entry__shrinkwrap_bare1"))
+                        (= no (compiler-ir-label "entry__shrinkwrap_save")))]
                     [_ false]))])
             (match (compiler-ir-instr-seq-ref body 1)
               [(CompilerIrInstr.Jump target)
-                (string.eq target "entry__shrinkwrap_framed")]
+                (= target (compiler-ir-label "entry__shrinkwrap_framed"))]
               [_ false])
             (match (compiler-ir-block-seq-ref seq 7)
               [(CompilerIrBlock.Block label _)
-                (string.eq label "guard_limit__shrinkwrap_framed")])))])))
+                (= label (compiler-ir-label "guard_limit__shrinkwrap_framed"))])))])))
 
 (cfg
   test
@@ -384,7 +387,7 @@
       4
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               2
@@ -393,17 +396,20 @@
               (CompilerIrValue.Var 1)
               (AstType.F64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "equal" "failure")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 2)
+                (compiler-ir-label "equal")
+                (compiler-ir-label "failure"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "equal"
+            (compiler-ir-label "equal")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return CompilerIrMaybeValue.No)
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "failure"
+              (compiler-ir-label "failure")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   3
@@ -427,7 +433,7 @@
               (compiler-live-ir-block-list-to-seq blocks))
             3)
           (= compiler-reg-early-exit-prefix-count 0)
-          (string.eq compiler-reg-early-exit-saving-label "")
+          (not (compiler-ir-label-some? compiler-reg-early-exit-saving-label))
           (string.eq compiler-reg-early-exit-bare-label ""))])))
 
 (cfg
@@ -446,16 +452,16 @@
       6
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Branch
               (CompilerIrValue.Bool false)
-              "cold"
-              "bypass")
+              (compiler-ir-label "cold")
+              (compiler-ir-label "bypass"))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "cold"
+            (compiler-ir-label "cold")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 3
@@ -463,17 +469,17 @@
                 (CompilerIrCallArgs.Nil)
                 (AstType.Unit))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "bypass"
+              (compiler-ir-label "bypass")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "join"
+                (compiler-ir-label "join")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
                     4
@@ -489,20 +495,20 @@
                       (CompilerIrValue.Var 2)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                       CompilerIrInstrList.Nil))))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "loop"
+                  (compiler-ir-label "loop")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Branch
                       (CompilerIrValue.Bool false)
-                      "loop"
-                      "exit")
+                      (compiler-ir-label "loop")
+                      (compiler-ir-label "exit"))
                     CompilerIrInstrList.Nil))
                 (compiler-ir-block-cons
                   (compiler-ir-block
-                    "exit"
+                    (compiler-ir-label "exit")
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Return
                         (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
@@ -575,7 +581,8 @@
                 2
                 8)
               (match (compiler-ir-instr-seq-ref instrs 7)
-                [(CompilerIrInstr.Jump target) (string.eq target "join")]
+                [(CompilerIrInstr.Jump target)
+                  (= target (compiler-ir-label "join"))]
                 [_ false])
               (compiler-reg-location-register?
                 (match plan
@@ -613,7 +620,7 @@
       3
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
               (compiler-ir-test-symbol "pa")
@@ -650,7 +657,7 @@
       3
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
               (compiler-ir-test-symbol "fa")
@@ -696,7 +703,7 @@
           5
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   4
@@ -759,7 +766,7 @@
           (AstType.Unit)
           8
           (compiler-ir-block-cons
-            (compiler-ir-block "entry" instrs)
+            (compiler-ir-block (compiler-ir-label "entry") instrs)
             CompilerIrBlockList.Nil))))))
 
 (cfg
@@ -911,7 +918,7 @@
           (AstType.Unit)
           13
           (compiler-ir-block-cons
-            (compiler-ir-block "entry" instrs)
+            (compiler-ir-block (compiler-ir-label "entry") instrs)
             CompilerIrBlockList.Nil))))))
 
 (cfg
@@ -926,7 +933,7 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
@@ -953,7 +960,7 @@
         2
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) ty)
               (compiler-ir-instr-cons
@@ -978,7 +985,7 @@
       3
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               2
@@ -1016,7 +1023,7 @@
       3
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               2
@@ -1096,7 +1103,7 @@
       4
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               1
@@ -1161,7 +1168,7 @@
       6
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               3
@@ -1232,7 +1239,7 @@
       8
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -1308,7 +1315,7 @@
       4
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               3
@@ -1568,7 +1575,7 @@
           6
           (compiler-ir-block-cons
             (compiler-ir-block
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   5
@@ -1683,7 +1690,7 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -1726,7 +1733,7 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -2005,7 +2012,7 @@
           (AstType.Unit)
           7
           (compiler-ir-block-cons
-            (compiler-ir-block "entry" instrs)
+            (compiler-ir-block (compiler-ir-label "entry") instrs)
             CompilerIrBlockList.Nil))))))
 
 (cfg
@@ -2214,7 +2221,7 @@
           (AstType.Unit)
           7
           (compiler-ir-block-cons
-            (compiler-ir-block "entry" instrs)
+            (compiler-ir-block (compiler-ir-label "entry") instrs)
             CompilerIrBlockList.Nil))))))
 
 (cfg
@@ -2246,7 +2253,7 @@
       7
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -2282,11 +2289,11 @@
                           6
                           (CompilerIrCallArgs.One (CompilerIrValue.I64 39)))
                         (compiler-ir-instr-cons
-                          (CompilerIrInstr.Jump "loop")
+                          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                           CompilerIrInstrList.Nil)))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
                 (compiler-ir-test-symbol "hot0")
@@ -2315,18 +2322,18 @@
                       (compiler-ir-instr-cons
                         (CompilerIrInstr.Branch
                           (CompilerIrValue.Bool false)
-                          "body"
-                          "exit")
+                          (compiler-ir-label "body")
+                          (compiler-ir-label "exit"))
                         CompilerIrInstrList.Nil)))))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "loop")
+                (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
                     (compiler-ir-test-symbol "cold1")
@@ -2624,12 +2631,12 @@
   test
   (define (compiler-reg-block-instr-list
     [blocks : CompilerIrBlockList]
-    [want-label : String]) : CompilerIrInstrList
+    [want-label : i64]) : CompilerIrInstrList
     (match blocks
       [(CompilerIrBlockList.Cons block rest)
         (match block
           [(CompilerIrBlock.Block label instrs)
-            (if (string.eq label want-label)
+            (if (= label want-label)
               (compiler-ir-instr-seq-to-list instrs)
               (compiler-reg-block-instr-list (box-get rest) want-label))])]
       [(CompilerIrBlockList.Array seq)
@@ -2643,7 +2650,7 @@
               (begin
                 (match (compiler-ir-block-seq-ref seq i)
                   [(CompilerIrBlock.Block label instrs)
-                    (if (string.eq label want-label)
+                    (if (= label want-label)
                       (begin
                         (set! out (compiler-ir-instr-seq-to-list instrs))
                         (set! found true))
@@ -2662,7 +2669,7 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -2693,7 +2700,7 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -2729,7 +2736,7 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -2756,7 +2763,7 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -2784,7 +2791,7 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -2806,7 +2813,7 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load
               0
@@ -2829,7 +2836,7 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Gep
               0
@@ -2853,7 +2860,7 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -2926,7 +2933,9 @@
                 extra-types)
               (let
                 [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten "entry")]
+                  (compiler-reg-block-instr-list
+                    rewritten
+                    (compiler-ir-label "entry"))]
                 [rewritten-plan : CompilerRegPlan
                   (compiler-reg-plan-with-call-save-rewrite
                     plan
@@ -2997,7 +3006,9 @@
                 _)
               (let
                 [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten "entry")]
+                  (compiler-reg-block-instr-list
+                    rewritten
+                    (compiler-ir-label "entry"))]
                 (and
                   (= out-vars vars)
                   (= (compiler-reg-assignment-count extra-assignments) 0)
@@ -3025,7 +3036,9 @@
                 _)
               (let
                 [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten "entry")]
+                  (compiler-reg-block-instr-list
+                    rewritten
+                    (compiler-ir-label "entry"))]
                 (and
                   (= out-vars vars)
                   (= (compiler-reg-assignment-count extra-assignments) 0)
@@ -3053,7 +3066,9 @@
                 _)
               (let
                 [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten "entry")]
+                  (compiler-reg-block-instr-list
+                    rewritten
+                    (compiler-ir-label "entry"))]
                 (and
                   (= out-vars vars)
                   (= (compiler-reg-assignment-count extra-assignments) 0)
@@ -3082,7 +3097,9 @@
                 _)
               (let
                 [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten "entry")]
+                  (compiler-reg-block-instr-list
+                    rewritten
+                    (compiler-ir-label "entry"))]
                 (and
                   (= out-vars (+ vars 1))
                   (= (compiler-reg-assignment-count extra-assignments) 1)
@@ -3115,7 +3132,9 @@
                 _)
               (let
                 [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten "entry")]
+                  (compiler-reg-block-instr-list
+                    rewritten
+                    (compiler-ir-label "entry"))]
                 (and
                   (= out-vars (+ vars 1))
                   (= (compiler-reg-assignment-count extra-assignments) 1)
@@ -3148,7 +3167,9 @@
                 _)
               (let
                 [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten "entry")]
+                  (compiler-reg-block-instr-list
+                    rewritten
+                    (compiler-ir-label "entry"))]
                 (and
                   (= out-vars (+ vars 1))
                   (= (compiler-reg-assignment-count extra-assignments) 1)
@@ -3183,7 +3204,9 @@
                 _)
               (let
                 [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten "entry")]
+                  (compiler-reg-block-instr-list
+                    rewritten
+                    (compiler-ir-label "entry"))]
                 (and
                   (= out-vars vars)
                   (= (compiler-reg-assignment-count extra-assignments) 0)
@@ -3199,7 +3222,7 @@
   (define (compiler-reg-call-spanning-rewrite-shape-label-ok?
     [func : CompilerIrFunction]
     [plan : CompilerRegPlan]
-    [label : String]) : bool
+    [label : i64]) : bool
     (match func
       [(CompilerIrFunction.Function _ _ _ vars blocks)
         (let
@@ -3337,7 +3360,7 @@
     (let
       [body-tail : CompilerIrInstrList
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "exit")
+          (CompilerIrInstr.Jump (compiler-ir-label "exit"))
           CompilerIrInstrList.Nil)]
       [body : CompilerIrInstrList
         (compiler-reg-call-spanning-defs-before
@@ -3350,15 +3373,15 @@
         8
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "body")
+              (CompilerIrInstr.Jump (compiler-ir-label "body"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
-            (compiler-ir-block "body" body)
+            (compiler-ir-block (compiler-ir-label "body") body)
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return CompilerIrMaybeValue.No)
                   CompilerIrInstrList.Nil))
@@ -3371,11 +3394,11 @@
       [entry : CompilerIrInstrList
         (compiler-reg-call-spanning-defs-before
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "body")
+            (CompilerIrInstr.Jump (compiler-ir-label "body"))
             CompilerIrInstrList.Nil))]
       [body-tail : CompilerIrInstrList
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "exit")
+          (CompilerIrInstr.Jump (compiler-ir-label "exit"))
           CompilerIrInstrList.Nil)]
       [body : CompilerIrInstrList
         (compiler-reg-call-spanning-call-before
@@ -3386,12 +3409,12 @@
         (AstType.Unit)
         8
         (compiler-ir-block-cons
-          (compiler-ir-block "entry" entry)
+          (compiler-ir-block (compiler-ir-label "entry") entry)
           (compiler-ir-block-cons
-            (compiler-ir-block "body" body)
+            (compiler-ir-block (compiler-ir-label "body") body)
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return CompilerIrMaybeValue.No)
                   CompilerIrInstrList.Nil))
@@ -3447,8 +3470,8 @@
   test
   (define (compiler-reg-edge-copy-list-has?
     [copies : CompilerRegEdgeCopySeq]
-    [from-label : String]
-    [to-label : String]
+    [from-label : i64]
+    [to-label : i64]
     [src : i64]
     [dst : i64]
     [want-pred-end : bool]) : bool
@@ -3470,8 +3493,8 @@
                   _
                   placement)
                 (if (and
-                  (string.eq found-from from-label)
-                  (string.eq found-to to-label)
+                  (= found-from from-label)
+                  (= found-to to-label)
                   (= found-src src)
                   (= found-dst dst)
                   (match placement
@@ -3493,18 +3516,18 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
               (CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "hot")
+              (CompilerIrInstr.Jump (compiler-ir-label "hot"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "hot"
+            (compiler-ir-label "hot")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -3516,8 +3539,10 @@
   (define (compiler-reg-edge-copy-linear-ok?) : bool
     (let
       [func : CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
-      [region : CompilerRegStringList
-        (compiler-reg-string-cons "hot" CompilerRegStringList.Nil)]
+      [region : CompilerRegLabelList
+        (CompilerRegLabelList.Cons
+          (compiler-ir-label "hot")
+          (box CompilerRegLabelList.Nil))]
       (match (compiler-reg-edge-copy-plan-for-region
         func
         region
@@ -3527,13 +3552,21 @@
         [(CompilerRegEdgeCopyPlan.Plan copies)
           (and
             (= (compiler-reg-edge-copy-list-count copies) 1)
-            (compiler-reg-edge-copy-list-has? copies "entry" "hot" 0 10 true)
+            (compiler-reg-edge-copy-list-has?
+              copies
+              (compiler-ir-label "entry")
+              (compiler-ir-label "hot")
+              0
+              10
+              true)
             (match func
               [(CompilerIrFunction.Function _ _ _ _ blocks)
                 (match (compiler-reg-edge-copy-apply blocks copies)
                   [(CompilerRegEdgeCopyRewrite.Rewrite rewritten)
                     (compiler-reg-instr-list-has-mov-var?
-                      (compiler-reg-block-instr-list rewritten "entry")
+                      (compiler-reg-block-instr-list
+                        rewritten
+                        (compiler-ir-label "entry"))
                       10
                       0)]
                   [(CompilerRegEdgeCopyRewrite.Refused _) false])]))]
@@ -3549,38 +3582,38 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
               (CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Bool false)
-                "body"
-                "exit")
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
                   (compiler-ir-test-symbol "sink")
                   (CompilerIrValue.Var 0)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "loop")
+                  (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                   CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -3592,8 +3625,10 @@
   (define (compiler-reg-edge-copy-backedge-ok?) : bool
     (let
       [func : CompilerIrFunction (compiler-reg-edge-copy-backedge-function)]
-      [region : CompilerRegStringList
-        (compiler-reg-string-cons "body" CompilerRegStringList.Nil)]
+      [region : CompilerRegLabelList
+        (CompilerRegLabelList.Cons
+          (compiler-ir-label "body")
+          (box CompilerRegLabelList.Nil))]
       (match (compiler-reg-edge-copy-plan-for-region
         func
         region
@@ -3603,15 +3638,29 @@
         [(CompilerRegEdgeCopyPlan.Plan copies)
           (and
             (= (compiler-reg-edge-copy-list-count copies) 2)
-            (compiler-reg-edge-copy-list-has? copies "loop" "body" 0 10 false)
-            (compiler-reg-edge-copy-list-has? copies "body" "loop" 10 0 true)
+            (compiler-reg-edge-copy-list-has?
+              copies
+              (compiler-ir-label "loop")
+              (compiler-ir-label "body")
+              0
+              10
+              false)
+            (compiler-reg-edge-copy-list-has?
+              copies
+              (compiler-ir-label "body")
+              (compiler-ir-label "loop")
+              10
+              0
+              true)
             (match func
               [(CompilerIrFunction.Function _ _ _ _ blocks)
                 (match (compiler-reg-edge-copy-apply blocks copies)
                   [(CompilerRegEdgeCopyRewrite.Rewrite rewritten)
                     (let
                       [body : CompilerIrInstrList
-                        (compiler-reg-block-instr-list rewritten "body")]
+                        (compiler-reg-block-instr-list
+                          rewritten
+                          (compiler-ir-label "body"))]
                       (and
                         (compiler-reg-instr-list-has-mov-var? body 10 0)
                         (compiler-reg-instr-list-has-mov-var? body 0 10)))]
@@ -3628,31 +3677,34 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
               (CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Bool false) "hot" "cold")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool false)
+                (compiler-ir-label "hot")
+                (compiler-ir-label "cold"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "other"
+            (compiler-ir-label "other")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "hot")
+              (CompilerIrInstr.Jump (compiler-ir-label "hot"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "hot"
+              (compiler-ir-label "hot")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "cold"
+                (compiler-ir-label "cold")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -3663,8 +3715,10 @@
   test
   (define (compiler-reg-edge-copy-critical-refusal-ok?) : bool
     (let
-      [region : CompilerRegStringList
-        (compiler-reg-string-cons "hot" CompilerRegStringList.Nil)]
+      [region : CompilerRegLabelList
+        (CompilerRegLabelList.Cons
+          (compiler-ir-label "hot")
+          (box CompilerRegLabelList.Nil))]
       (match (compiler-reg-edge-copy-plan-for-region
         (compiler-reg-edge-copy-critical-function)
         region
@@ -3730,27 +3784,27 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
               (CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Bool false)
-                "body"
-                "exit")
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
                   (compiler-ir-test-symbol "hot0")
@@ -3762,11 +3816,11 @@
                     (CompilerIrValue.Var 0)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "loop")
+                    (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                     CompilerIrInstrList.Nil))))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -3783,7 +3837,7 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -3795,20 +3849,20 @@
                 (CompilerIrValue.I64 11)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "loop")
+                (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                 CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Bool false)
-                "body"
-                "exit")
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
                   (compiler-ir-test-symbol "hot0")
@@ -3830,11 +3884,11 @@
                         (CompilerIrValue.Var 1)
                         (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
-                        (CompilerIrInstr.Jump "loop")
+                        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                         CompilerIrInstrList.Nil))))))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -3851,38 +3905,38 @@
       1
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
               (CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Bool false)
-                "body"
-                "exit")
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
                   (compiler-ir-test-symbol "hot0")
                   (CompilerIrValue.Var 0)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "loop")
+                  (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                   CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -3899,33 +3953,33 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
               (CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Bool false)
-                "body"
-                "exit")
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Phi
                   1
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 0)
-                    "loop"
+                    (compiler-ir-label "loop")
                     CompilerIrPhiInputList.Nil)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
@@ -3939,11 +3993,11 @@
                       (CompilerIrValue.Var 0)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                       CompilerIrInstrList.Nil)))))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -3975,7 +4029,9 @@
                   _)
                 (let
                   [body : CompilerIrInstrList
-                    (compiler-reg-block-instr-list rewritten "body")]
+                    (compiler-reg-block-instr-list
+                      rewritten
+                      (compiler-ir-label "body"))]
                   [rewritten-plan : CompilerRegPlan
                     (compiler-reg-plan-with-call-save-rewrite plan rewrite)]
                   [rewritten-assignments : CompilerRegAssignmentList
@@ -4024,7 +4080,9 @@
                   _)
                 (let
                   [body : CompilerIrInstrList
-                    (compiler-reg-block-instr-list rewritten "body")]
+                    (compiler-reg-block-instr-list
+                      rewritten
+                      (compiler-ir-label "body"))]
                   [rewritten-plan : CompilerRegPlan
                     (compiler-reg-plan-with-call-save-rewrite plan rewrite)]
                   [rewritten-assignments : CompilerRegAssignmentList
@@ -4123,7 +4181,7 @@
       5
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -4156,7 +4214,7 @@
                       (CompilerIrValue.Var 1)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                       CompilerIrInstrList.Nil)))))))
         CompilerIrBlockList.Nil))))
 
@@ -4215,7 +4273,7 @@
       6
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
@@ -4499,8 +4557,10 @@
   (define (compiler-reg-liveness-handle-ok?) : bool
     (let
       [func : CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
-      [region : CompilerRegStringList
-        (compiler-reg-string-cons "hot" CompilerRegStringList.Nil)]
+      [region : CompilerRegLabelList
+        (CompilerRegLabelList.Cons
+          (compiler-ir-label "hot")
+          (box CompilerRegLabelList.Nil))]
       (begin
         (compiler-reg-liveness-census-reset!)
         (let
@@ -4539,28 +4599,28 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
               (CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 1
                 (CompilerIrPhiInputList.Cons
                   (CompilerIrValue.Var 0)
-                  "entry"
+                  (compiler-ir-label "entry")
                   (box
                     (CompilerIrPhiInputList.Cons
                       (CompilerIrValue.Var 1)
-                      "loop"
+                      (compiler-ir-label "loop")
                       (box CompilerIrPhiInputList.Nil))))
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons

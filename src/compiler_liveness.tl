@@ -107,8 +107,17 @@
 (define (compiler-live-set-words [set : CompilerLiveI64Set]) : (Array i64)
   (struct-get set words))
 
-(define (compiler-live-set-empty) : CompilerLiveI64Set
+;; Every empty set is the same value: the word array has length zero, so no
+;; index is in range and nothing can ever be written into it. Handing out one
+;; shared instance is therefore indistinguishable from allocating a fresh one,
+;; and it removes an allocation from a function called throughout liveness --
+;; call-edge attribution puts 318,627,090 Ir of `tl_alloc` behind this one
+;; caller in an opt2 self-compile.
+(define compiler-live-set-empty-value : CompilerLiveI64Set
   (CompilerLiveI64Set (make-array i64 0)))
+
+(define (compiler-live-set-empty) : CompilerLiveI64Set
+  compiler-live-set-empty-value)
 
 (define (compiler-live-set-word-count [set : CompilerLiveI64Set]) : i64
   (array-length (compiler-live-set-words set)))

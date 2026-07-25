@@ -170,6 +170,13 @@ run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.
 run_gate "build provenance helper self-tests" scripts/verify-build-provenance.sh
+# Help text lives in src/main.tl and option parsing in src/<name>_cli_core.tl,
+# so a flag can be added without the text moving. The existing CLI gates assert
+# that help output exists, not that it matches what the parser accepts.
+run_gate \
+    "CLI help surface" \
+    scripts/check-cli-help-surface.sh \
+    --self-test
 # The tlci host callback ops are additive ABI constants dispatched by number
 # through a `cond`; nothing in the type system rejects two constants sharing a
 # value, and branches adding ops in different regions of the file merge without

@@ -802,6 +802,41 @@
 (define tlci-host-callback-op-value-i64 : i64
   247)
 
+;; Comptime string scanning over a String session local (refs #5701). The
+;; scanner bodies bind a String once -- from `comptime.expr-string-value` or
+;; `type-key` -- and then walk it, so all three read the local by slot the way
+;; ops 227/228 read a destructured `ExprList`, instead of routing every step
+;; through a stack push. local-string-length answers the byte length as data and
+;; local-string-ref the byte at `b` as data, both with a negative
+;; malformed-request sentinel; local-string-slice pushes the `[b, b+c)` range as
+;; the generated comptime String `comptime.string-slice` yields.
+;; expr-string-from-value pops a comptime String and pushes the string-literal
+;; expression `comptime.expr-string` builds, carrying the popped value's own
+;; intern id so a template embeds exactly the text interpretation would.
+;; Deliberately not ops 110/111: those name a stack-shaped `string-length` /
+;; `string-ref` pair that no producer emits, and giving them local-slot
+;; semantics would leave the stack forms unnameable. Additive ABI v1 ops.
+;;
+;; Numbered from 252 rather than the next free slot: #5712 was open first and
+;; claims 245, 247 and 248, and two branches adding ops in different regions of
+;; this file merge without a textual conflict, so the overlap would only surface
+;; as a red `scripts/check-tlci-op-numbers.sh` on whichever landed second.
+(define tlci-host-callback-op-local-string-length : i64
+  252)
+(define tlci-host-callback-op-local-string-ref : i64
+  253)
+(define tlci-host-callback-op-local-string-slice : i64
+  254)
+(define tlci-host-callback-op-expr-string-from-value : i64
+  255)
+
+;; operand-expr-string? answers 1/0 as data for "operand `a` is a string
+;; literal expression", the `comptime.expr-string?` guard every literal-template
+;; macro opens with, with the same negative malformed-request sentinel as the
+;; other operand probes. Additive ABI v1 op. Refs #5701.
+(define tlci-host-callback-op-operand-expr-string? : i64
+  256)
+
 ;; Composite type templates (refs #5605). `embedded-native-template-type-ops`
 ;; rendered only `AstType.Var` and scalars, which is what actually kept the
 ;; `stdlib.text_buf_family` generators and `stdlib.vector_slice/slice` on the
@@ -809,7 +844,11 @@
 ;; `(MutPtr i64)`, `(& text str)` and `(&mut buf TextBuf)`, not any missing
 ;; expression node kind. Each op pops the element/inner type value and pushes
 ;; the wrapper, so a nested annotation builds bottom-up like an expression
-;; template does. Numbered above the #5700 pair that took 247/248. type-ptr and type-ref select mutability with immediate `a`;
+;; template does. type-ptr, type-box and type-dyn-array sit at 249-251, immediately above
+;; the #5700 pair that took 247/248; type-array and type-ref are at 257/258
+;; because #5701 landed 252-256 while this branch was in review, and two
+;; branches adding ops in different regions of this file merge without a
+;; textual conflict. type-ptr and type-ref select mutability with immediate `a`;
 ;; type-array takes its element count in `a`; type-ref takes the lifetime name
 ;; in `b`/`c`. Additive ABI v1 ops.
 (define tlci-host-callback-op-type-ptr : i64
@@ -819,9 +858,9 @@
 (define tlci-host-callback-op-type-dyn-array : i64
   251)
 (define tlci-host-callback-op-type-array : i64
-  252)
+  257)
 (define tlci-host-callback-op-type-ref : i64
-  253)
+  258)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

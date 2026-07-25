@@ -40,6 +40,10 @@ jobs:
         shell: bash
         run: scripts/check-implementation-languages.sh
 
+      - name: Check .gitignore covers toolchain output
+        shell: bash
+        run: scripts/check-gitignore.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

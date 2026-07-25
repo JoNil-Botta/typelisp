@@ -8,7 +8,7 @@ benchmark/c-scalar/array_sum	1651021946
 benchmark/typelisp/borrowed_disjoint_store	1300000261
 benchmark/c/borrowed_disjoint_store	1400001545
 benchmark/c-scalar/borrowed_disjoint_store	1400001545
-benchmark/typelisp/hashmap_churn	4454546
+benchmark/typelisp/hashmap_churn	4400438
 benchmark/c/hashmap_churn	4316283
 benchmark/c-scalar/hashmap_churn	4369269
 benchmark/typelisp/hashmap_get	210591712
@@ -32,4 +32,4 @@ benchmark/c-scalar/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1478429669
 benchmark/c/spmd_reduce	1693815306
 benchmark/c-scalar/spmd_reduce	3381322973
-self_compile/compile_cli_opt1	54660709850
+self_compile/compile_cli_opt1	54652759358

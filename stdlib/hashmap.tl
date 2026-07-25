@@ -228,7 +228,8 @@
               ;; capacity, making the masked initial cursor in bounds.
               [cap : i64 (array_ops.length (struct-get map slots))]
               [hash : i64 (* key 6364136223846793005)]
-              [cursor : i64 (bit-and hash (- cap 1))]
+              [mask : i64 (- cap 1)]
+              [cursor : i64 (bit-and hash mask)]
               [start : i64 cursor]
               [first : i64 -1]
               (begin
@@ -284,18 +285,17 @@
                                 (- (struct-get map deleted) 1))
                               (return unit))))]
                       [GeneratedHashmapSlot.Tombstone
-                        (let
-                          [next : i64 (+ cursor 1)]
-                          (begin
-                            (if (< first 0)
-                              (set! first cursor)
-                              unit)
-                            (set!
-                              cursor
-                              (if (>= next cap)
-                                0
-                                next))
-                            unit))]
+                        (begin
+                          (if (< first 0)
+                            (set! first cursor)
+                            unit)
+                          ;; Wrap by masking rather than comparing. The capacity
+                          ;; is a positive power of two -- the same invariant the
+                          ;; masked initial cursor above already relies on -- so
+                          ;; for `next` in [1, cap] the mask maps `cap` to 0 and
+                          ;; leaves every smaller value alone. One `and` replaces
+                          ;; a compare and an unpredictable branch.
+                          (set! cursor (bit-and (+ cursor 1) mask)))]
                       [(GeneratedHashmapSlot.Occupied existing _ _)
                         (if (= existing key)
                           (let
@@ -314,15 +314,7 @@
                               (unsafe
                                 (ptr-write! (ptr-offset slot 3) hash))
                               (return unit)))
-                          (let
-                            [next : i64 (+ cursor 1)]
-                            (begin
-                              (set!
-                                cursor
-                                (if (>= next cap)
-                                  0
-                                  next))
-                              unit)))])
+                          (set! cursor (bit-and (+ cursor 1) mask)))])
                     ;; Map values may be shallow-copied while sharing their
                     ;; slot descriptor. Preserve the prior Full-table behavior
                     ;; for a stale copied len without a per-probe counter.

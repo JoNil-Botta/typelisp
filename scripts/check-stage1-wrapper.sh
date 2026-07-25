@@ -518,6 +518,12 @@ EOF
     # user-facing one. Do not "fix" it by deleting the case: it is the only
     # end-to-end proof that a package's emitted .tlci dispatches its macros
     # natively, and it caught a real producer bug in #5712.
+    #
+    # That acceptance is enforced rather than only described (#5778): this gate
+    # has a 26000ms cap in scripts/check-ci-timing-budgets.sh and is denylisted
+    # in scripts/analyze-ci-timing-trends.sh, so the trend report no longer
+    # re-raises it. Adding another case of this weight here moves the measured
+    # row, so change the cap in the same commit rather than after CI says so.
     # cli-gate-case stage1-wrapper-package-tlci-native-verify wrapper run_capture
     run_capture package-tlci-native-verify \
         "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \

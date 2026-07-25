@@ -797,6 +797,41 @@
 ;; Refs #5700.
 (define tlci-host-callback-op-value-i64 : i64
   247)
+
+;; Comptime string scanning over a String session local (refs #5701). The
+;; scanner bodies bind a String once -- from `comptime.expr-string-value` or
+;; `type-key` -- and then walk it, so all three read the local by slot the way
+;; ops 227/228 read a destructured `ExprList`, instead of routing every step
+;; through a stack push. local-string-length answers the byte length as data and
+;; local-string-ref the byte at `b` as data, both with a negative
+;; malformed-request sentinel; local-string-slice pushes the `[b, b+c)` range as
+;; the generated comptime String `comptime.string-slice` yields.
+;; expr-string-from-value pops a comptime String and pushes the string-literal
+;; expression `comptime.expr-string` builds, carrying the popped value's own
+;; intern id so a template embeds exactly the text interpretation would.
+;; Deliberately not ops 110/111: those name a stack-shaped `string-length` /
+;; `string-ref` pair that no producer emits, and giving them local-slot
+;; semantics would leave the stack forms unnameable. Additive ABI v1 ops.
+;;
+;; Numbered from 252 rather than the next free slot: #5712 was open first and
+;; claims 245, 247 and 248, and two branches adding ops in different regions of
+;; this file merge without a textual conflict, so the overlap would only surface
+;; as a red `scripts/check-tlci-op-numbers.sh` on whichever landed second.
+(define tlci-host-callback-op-local-string-length : i64
+  252)
+(define tlci-host-callback-op-local-string-ref : i64
+  253)
+(define tlci-host-callback-op-local-string-slice : i64
+  254)
+(define tlci-host-callback-op-expr-string-from-value : i64
+  255)
+
+;; operand-expr-string? answers 1/0 as data for "operand `a` is a string
+;; literal expression", the `comptime.expr-string?` guard every literal-template
+;; macro opens with, with the same negative malformed-request sentinel as the
+;; other operand probes. Additive ABI v1 op. Refs #5701.
+(define tlci-host-callback-op-operand-expr-string? : i64
+  256)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

@@ -359,6 +359,24 @@
       (CompilerCtfeMaybeExprList.Some items)]
     [_ (CompilerCtfeMaybeExprList.None)]))
 
+;; Comptime String text held in a session local, for the scanner ops that read
+;; a bound template or type key by slot. `live` is checked by the caller, which
+;; distinguishes an out-of-range slot from a slot holding a non-String value.
+;; Refs #5701.
+(defenum CompilerCtfeMaybeString
+  (Some String)
+  (None))
+
+(define (compiler-comptime-host-local-string [slot : i64]) : CompilerCtfeMaybeString
+  (if (or
+    (< slot 0)
+    (>= slot compiler-comptime-host-locals-cap)
+    (not (array-ref compiler-comptime-host-locals-live slot)))
+    (CompilerCtfeMaybeString.None)
+    (match (array-ref compiler-comptime-host-locals slot)
+      [(CompilerCtfeValue.String text _) (CompilerCtfeMaybeString.Some text)]
+      [_ (CompilerCtfeMaybeString.None)])))
+
 ;; The pools that own an operand's expression nodes: a captured operand keeps
 ;; its caller pools, every other value reads the session pools. Refs #5602.
 (define (compiler-comptime-host-value-pools [value : CompilerCtfeValue]) : AstNodePoolContext
@@ -1879,6 +1897,14 @@
             (compiler-comptime-host-push!
               (CompilerCtfeValue.String (intern-str string-id) string-id))]
           [_ tlci-host-callback-status-bad-request]))]
+    ;; The `comptime.expr-string?` guard, answering the same 1/0-as-data the
+    ;; interpreted inspector answers for an Expr operand. Refs #5701.
+    [(= operation tlci-host-callback-op-operand-expr-string?)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        -3
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Literal (AstLiteral.String _)) 1]
+          [_ 0]))]
     [(= operation tlci-host-callback-op-operand-expr-int?)
       (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
         -3
@@ -1968,6 +1994,58 @@
           [(AstExpr.Var name-id)
             (compiler-comptime-host-push!
               (ctfe-generated-string-value (intern-str name-id)))]
+          [_ tlci-host-callback-status-bad-request]))]
+    ;; Comptime string scanning over a String session local (refs #5701). The
+    ;; two data probes mirror `ctfe-eval-string-length-call` and
+    ;; `ctfe-eval-string-ref-call`: length is total, and an out-of-bounds index
+    ;; is the interpreted diagnostic's native counterpart, a malformed request
+    ;; rather than a silently clamped byte.
+    [(= operation tlci-host-callback-op-local-string-length)
+      (match (compiler-comptime-host-local-string arg-a)
+        [(CompilerCtfeMaybeString.Some text) (string.string-length text)]
+        [(CompilerCtfeMaybeString.None) -3])]
+    [(= operation tlci-host-callback-op-local-string-ref)
+      (match (compiler-comptime-host-local-string arg-a)
+        [(CompilerCtfeMaybeString.Some text)
+          (if (or (< arg-b 0) (>= arg-b (string.string-length text)))
+            -3
+            (cast (string.string-ref text arg-b) : i64))]
+        [(CompilerCtfeMaybeString.None) -3])]
+    ;; The `[b, b+c)` byte range as the generated comptime String value
+    ;; `ctfe-eval-comptime-string-slice-call` yields, with the same bounds
+    ;; contract.
+    [(= operation tlci-host-callback-op-local-string-slice)
+      (match (compiler-comptime-host-local-string arg-a)
+        [(CompilerCtfeMaybeString.Some text)
+          (if (or
+            (< arg-b 0)
+            (< _arg-c 0)
+            (> (+ arg-b _arg-c) (string.string-length text)))
+            tlci-host-callback-status-bad-request
+            (compiler-comptime-host-push!
+              (ctfe-generated-string-value (string.substring text arg-b _arg-c))))]
+        [(CompilerCtfeMaybeString.None) tlci-host-callback-status-bad-request])]
+    ;; expr-string-from-value: pop a comptime String and push the string
+    ;; literal expression `ctfe-eval-expr-string-call` builds -- the popped
+    ;; value's own intern id and the `String` expression type, so a template
+    ;; embeds exactly the literal interpretation would.
+    [(= operation tlci-host-callback-op-expr-string-from-value)
+      (if (< compiler-comptime-host-stack-len 1)
+        tlci-host-callback-status-bad-request
+        (match (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))
+          [(CompilerCtfeValue.String _ string-id)
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-push!
+                (ctfe-syntax-expr-push
+                  (ctfe-env-empty-with-pools
+                    (array-ref compiler-comptime-host-pools 0))
+                  (AstExpr.Literal (AstLiteral.String string-id))
+                  (AstType.String))))]
           [_ tlci-host-callback-status-bad-request]))]
     [(= operation tlci-host-callback-op-expr-int-from-data)
       (compiler-comptime-host-push!
@@ -2279,22 +2357,34 @@
         (begin
           (when
             (and
-              (not (= operation tlci-host-callback-op-operand-type-kind-eq))
-              (not
-                (= operation tlci-host-callback-op-operand-expr-type-kind-eq))
-              (not (= operation tlci-host-callback-op-operand-type-key-eq))
-              (not (= operation tlci-host-callback-op-expr-list-length))
-              (not (= operation tlci-host-callback-op-string-eq))
-              (not (= operation tlci-host-callback-op-array-length))
-              (not (= operation tlci-host-callback-op-array-dynamic?))
-              (not (= operation tlci-host-callback-op-operand-expr-call?))
-              (not (= operation tlci-host-callback-op-operand-expr-int?))
-              (not (= operation tlci-host-callback-op-operand-expr-var?))
-              (not (= operation tlci-host-callback-op-operand-expr-int-value))
-              (not (= operation tlci-host-callback-op-local-expr-list-length))
+              (not (compiler-comptime-host-data-operation? operation))
               (not (= status tlci-host-callback-status-ok)))
             (set! compiler-comptime-host-session-status status))
           status)))))
+
+;; The data-returning operations: their result *is* the answer -- 1/0, an item
+;; count, a byte length, a byte value -- and a negative value is their
+;; malformed-request sentinel, so a non-zero return must not be mistaken for a
+;; failed status. Missing an entry here is silent and total: the first such
+;; call latches its own answer as the session status, and every later callback
+;; in the transformer returns that number instead of doing anything.
+(define (compiler-comptime-host-data-operation? [operation : i64]) : bool
+  (or
+    (= operation tlci-host-callback-op-operand-type-kind-eq)
+    (= operation tlci-host-callback-op-operand-expr-type-kind-eq)
+    (= operation tlci-host-callback-op-operand-type-key-eq)
+    (= operation tlci-host-callback-op-expr-list-length)
+    (= operation tlci-host-callback-op-string-eq)
+    (= operation tlci-host-callback-op-array-length)
+    (= operation tlci-host-callback-op-array-dynamic?)
+    (= operation tlci-host-callback-op-operand-expr-call?)
+    (= operation tlci-host-callback-op-operand-expr-int?)
+    (= operation tlci-host-callback-op-operand-expr-var?)
+    (= operation tlci-host-callback-op-operand-expr-int-value)
+    (= operation tlci-host-callback-op-local-expr-list-length)
+    (= operation tlci-host-callback-op-operand-expr-string?)
+    (= operation tlci-host-callback-op-local-string-length)
+    (= operation tlci-host-callback-op-local-string-ref)))
 
 ;; Real host callback table for production dispatch: the invoke slot carries
 ;; the address of the compiler-owned dispatcher. The abort slot keeps the

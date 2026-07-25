@@ -2671,6 +2671,13 @@
     "multi-block versioning full pipeline"))
 
 (test
+  unroll-store-free-simd-body
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-self-test)
+    42
+    "16x unrolling remaps every admitted store-free SIMD instruction"))
+
+(test
   unroll-versioned-multiblock-quicksort-shape
   (test.assert-i64-eq
     (compiler-optimize-unroll-mb-self-test)

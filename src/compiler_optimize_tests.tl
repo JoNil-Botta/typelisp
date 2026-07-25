@@ -16172,6 +16172,229 @@
             (CompilerIrInstrList.Nil)))
         (CompilerIrBlockList.Nil)))))
 
+(define (opt-unroll-vector-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "n" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "base" (AstType.I64) 1)
+      (CompilerIrParamList.Nil))))
+
+;; A canonical counted reduction whose store-free body covers every SIMD form
+;; admitted by the straight-line unroller. Dependencies deliberately chain
+;; through the vector forms so clone remapping must be correct.
+(define (opt-unroll-vector-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "body")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "body"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            2
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.I64 0)
+              "entry"
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 13)
+                "body"
+                (CompilerIrPhiInputList.Nil)))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              3
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 0)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 12)
+                  "body"
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.LaneId 4 4 (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Splat
+                  5
+                  (CompilerIrValue.Var 2)
+                  4
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.VectorLoad
+                    6
+                    (CompilerIrValue.Var 1)
+                    (CompilerIrValue.Var 2)
+                    4
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (ir-instr-vector-bin-op
+                      7
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 6)
+                      (CompilerIrValue.Var 4)
+                      4
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (ir-instr-vector-compare
+                        8
+                        (CompilerIrBinOp.Lt)
+                        (CompilerIrValue.Var 7)
+                        (CompilerIrValue.Var 5)
+                        4
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.MaskBinOp
+                          9
+                          (CompilerIrMaskBinOp.And)
+                          (CompilerIrValue.Var 8)
+                          (CompilerIrValue.Var 8)
+                          4)
+                        (compiler-ir-instr-cons
+                          (ir-instr-select
+                            10
+                            (CompilerIrValue.Var 9)
+                            (CompilerIrValue.Var 7)
+                            (CompilerIrValue.Var 6)
+                            4
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.VectorReduce
+                              11
+                              (CompilerIrVectorReduceOp.Sum)
+                              (CompilerIrValue.Var 10)
+                              4
+                              (AstType.I64))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.BinOp
+                                12
+                                (CompilerIrBinOp.Add)
+                                (CompilerIrValue.Var 3)
+                                (CompilerIrValue.Var 11)
+                                (AstType.I64))
+                              (compiler-ir-instr-cons
+                                (CompilerIrInstr.BinOp
+                                  13
+                                  (CompilerIrBinOp.Add)
+                                  (CompilerIrValue.Var 2)
+                                  (CompilerIrValue.I64 1)
+                                  (AstType.I64))
+                                (compiler-ir-instr-cons
+                                  (CompilerIrInstr.BinOp
+                                    14
+                                    (CompilerIrBinOp.Lt)
+                                    (CompilerIrValue.Var 13)
+                                    (CompilerIrValue.Var 0)
+                                    (AstType.Bool))
+                                  (compiler-ir-instr-cons
+                                    (CompilerIrInstr.Branch
+                                      (CompilerIrValue.Var 14)
+                                      "body"
+                                      "exit")
+                                    (CompilerIrInstrList.Nil))))))))))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+;; The SPMD lowerer keeps vectors mutable instead of placing them in SSA phis.
+;; After loop rotation its gang loop is one self-loop block with the next
+;; vector index already computed on entry, then a `mov/add/le` latch.
+(define (opt-unroll-mutable-vector-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 0) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Splat 3 (CompilerIrValue.I64 0) 4 (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.I64 4)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                5
+                (CompilerIrBinOp.Le)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.Var 0)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "body" "exit")
+                (CompilerIrInstrList.Nil)))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "body"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.VectorLoad
+            6
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            4
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (ir-instr-vector-bin-op
+              7
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 6)
+              (CompilerIrValue.Var 3)
+              4
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (ir-instr-vector-bin-op
+                3
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.Var 7)
+                4
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 4) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    4
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 2)
+                    (CompilerIrValue.I64 4)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      5
+                      (CompilerIrBinOp.Le)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.Var 0)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Branch
+                        (CompilerIrValue.Var 5)
+                        "body"
+                        "exit")
+                      (CompilerIrInstrList.Nil)))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.VectorReduce
+              8
+              (CompilerIrVectorReduceOp.Sum)
+              (CompilerIrValue.Var 3)
+              4
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
+              (CompilerIrInstrList.Nil))))
+        (CompilerIrBlockList.Nil)))))
+
 (define (opt-unroll-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
     (opt-test-symbol "unroll_fixture")
@@ -16179,6 +16402,22 @@
     (AstType.I64)
     7
     blocks))
+
+(define (opt-unroll-vector-test-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "unroll_vector_fixture")
+    (opt-unroll-vector-test-params)
+    (AstType.I64)
+    15
+    (opt-unroll-vector-test-blocks)))
+
+(define (opt-unroll-mutable-vector-test-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "unroll_mutable_vector_fixture")
+    (opt-unroll-vector-test-params)
+    (AstType.I64)
+    9
+    (opt-unroll-mutable-vector-test-blocks)))
 
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -16197,6 +16436,38 @@
               [(CompilerIrBinOp.Add) 1]
               [_ 0])]
           [_ 0])))))
+
+(define (opt-unroll-test-count-vector-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-unroll-test-count-vector-instr-seq
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.LaneId _ _ _) 1]
+          [(CompilerIrInstr.Splat _ _ _ _) 1]
+          [(CompilerIrInstr.VectorBinOp _) 1]
+          [(CompilerIrInstr.VectorReduce _ _ _ _ _) 1]
+          [(CompilerIrInstr.VectorCompare _) 1]
+          [(CompilerIrInstr.MaskBinOp _ _ _ _ _) 1]
+          [(CompilerIrInstr.Select _) 1]
+          [(CompilerIrInstr.VectorLoad _ _ _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-unroll-test-count-vector-in-block
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-unroll-test-count-vector-instr-seq instrs 0 0)])]))
 
 (define (opt-unroll-test-count-add-in-block
   [blocks : CompilerIrBlockList]
@@ -16218,6 +16489,13 @@
       (opt-unroll-function
         (opt-unroll-test-function (opt-unroll-test-blocks 2)))]
     [nonunit : CompilerIrBlockList (opt-function-blocks nonunit-func)]
+    [vector-func : CompilerIrFunction
+      (opt-unroll-function (opt-unroll-vector-test-function))]
+    [vector-out : CompilerIrBlockList (opt-function-blocks vector-func)]
+    [mutable-vector-func : CompilerIrFunction
+      (opt-unroll-function (opt-unroll-mutable-vector-test-function))]
+    [mutable-vector-out : CompilerIrBlockList
+      (opt-function-blocks mutable-vector-func)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function func))) 1]
       ;; entry, guard, unrolled body, remainder loop, exit.
@@ -16229,6 +16507,36 @@
       ;; Bounds-check labels must remain unique at the sixteen-copy factor.
       [(not (string.eq (opt-unroll-copy-suffix 15) "__u15")) 5]
       [(string.eq (opt-unroll-copy-suffix 3) (opt-unroll-copy-suffix 15)) 6]
+      [(not (opt-verify-ok? (opt-verify-function vector-func))) 7]
+      [(not (= (compiler-ir-block-list-count vector-out) 5)) 8]
+      ;; Eight admitted SIMD instructions across all sixteen body copies.
+      [(not
+          (=
+            (opt-unroll-test-count-vector-in-block
+              vector-out
+              "body__unroll_body")
+            128))
+        9]
+      ;; Store-bearing SIMD loops remain outside this unroller.
+      [(opt-unroll-body-instr-ok?
+          (ir-instr-vector-store
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.Var 10)
+            4
+            (AstType.I64)))
+        10]
+      [(not (opt-verify-ok? (opt-verify-final-function mutable-vector-func)))
+        11]
+      [(not (= (compiler-ir-block-list-count mutable-vector-out) 6)) 12]
+      ;; Three vector instructions across all sixteen mutable body copies.
+      [(not
+          (=
+            (opt-unroll-test-count-vector-in-block
+              mutable-vector-out
+              "body__unroll_body")
+            48))
+        13]
       [else 42])))
 
 ;; --- bounds-check loop versioning self-test ------------------------------------

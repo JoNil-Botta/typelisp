@@ -769,6 +769,17 @@
   243)
 (define tlci-host-callback-op-expr-array-data : i64
   244)
+
+;; The literal text of a string-literal `Expr` operand, pushed as the comptime
+;; String value the interpreted `comptime.expr-string-value` yields -- the same
+;; `(CompilerCtfeValue.String (intern-str id) id)` identity, so a downstream
+;; `expr-var`/`string-append` sees exactly what interpretation gave it. A
+;; non-literal operand is a bad request, matching the interpreted error rather
+;; than silently yielding empty text. This is the single most common first
+;; blocker in the embedded census (5 shells across #5626, #5701 and #5606).
+;; Additive ABI v1 op.
+(define tlci-host-callback-op-operand-expr-string-value : i64
+  246)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

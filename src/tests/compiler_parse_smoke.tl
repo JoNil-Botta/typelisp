@@ -2,6 +2,11 @@
 (import "../compiler_parse_core.tl")
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import stdlib.vector)
+
+;; Same generated family the shipped diagnostic module instantiates, so the
+;; multi-edit fixture below reuses that identity rather than adding one.
+(import (vector.vector CompilerDiagnosticTextEdit core) as diag_text_edit_vec)
 
 (define (compiler-parse-test-decl-origin-start-ok?
   [origin : CompilerParseMaybeDeclSpan]
@@ -249,12 +254,11 @@
   [first : CompilerDiagnosticTextEdit]
   [second : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
   (let
-    [slots : (Array CompilerDiagnosticTextEdit)
-      (make-array CompilerDiagnosticTextEdit 2)]
+    [items : diag_text_edit_vec.Vec (diag_text_edit_vec.with-capacity 2)]
     (begin
-      (array-set! slots 0 first)
-      (array-set! slots 1 second)
-      (CompilerDiagnosticTextEditSeq slots 2))))
+      (diag_text_edit_vec.push (&mut items) first)
+      (diag_text_edit_vec.push (&mut items) second)
+      (CompilerDiagnosticTextEditSeq items))))
 
 (define (compiler-diagnostic-fix-model-ok?) : bool
   (let
@@ -279,11 +283,11 @@
         (CompilerDiagnosticSpan "new.tl" 4 5 4 6))]
     [fixes : CompilerDiagnosticFixSeq (compiler-diagnostic-fixes moved)]
     (and
-      (= (struct-get (compiler-diagnostic-fixes plain) len) 0)
-      (= (struct-get fixes len) 1)
+      (= (compiler-diagnostic-fix-seq-len (compiler-diagnostic-fixes plain)) 0)
+      (= (compiler-diagnostic-fix-seq-len fixes) 1)
       (let
         [copied-fix : CompilerDiagnosticFix
-          (array-ref (struct-get fixes slots) 0)]
+          (compiler-diagnostic-fix-seq-ref fixes 0)]
         [edits : CompilerDiagnosticTextEditSeq
           (compiler-diagnostic-fix-edits copied-fix)]
         (and
@@ -293,12 +297,12 @@
           (match (compiler-diagnostic-fix-applicability copied-fix)
             [CompilerDiagnosticMachineApplicable true]
             [_ false])
-          (= (struct-get edits len) 2)
+          (= (compiler-diagnostic-text-edit-seq-len edits) 2)
           (let
             [first : CompilerDiagnosticTextEdit
-              (array-ref (struct-get edits slots) 0)]
+              (compiler-diagnostic-text-edit-seq-ref edits 0)]
             [second : CompilerDiagnosticTextEdit
-              (array-ref (struct-get edits slots) 1)]
+              (compiler-diagnostic-text-edit-seq-ref edits 1)]
             [first-span : CompilerDiagnosticSpan
               (compiler-diagnostic-text-edit-span first)]
             [second-span : CompilerDiagnosticSpan
@@ -343,8 +347,12 @@
               (CompilerDiagnosticSpan "" 1 4 1 7)
               "right"))))]
     (and
-      (= (struct-get (compiler-diagnostic-fixes unknown) len) 0)
-      (= (struct-get (compiler-diagnostic-fixes overlap) len) 0))))
+      (=
+        (compiler-diagnostic-fix-seq-len (compiler-diagnostic-fixes unknown))
+        0)
+      (=
+        (compiler-diagnostic-fix-seq-len (compiler-diagnostic-fixes overlap))
+        0))))
 
 (define (compiler-diagnostic-unicode-byte-edit-ok?) : bool
   (let

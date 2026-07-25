@@ -77,10 +77,10 @@
           [diag : CompilerDiagnostic (box-get diag-box)]
           [fixes : CompilerDiagnosticFixSeq (compiler-diagnostic-fixes diag)]
           (and
-            (= (struct-get fixes len) 1)
+            (= (compiler-diagnostic-fix-seq-len fixes) 1)
             (let
               [fix : CompilerDiagnosticFix
-                (array-ref (struct-get fixes slots) 0)]
+                (compiler-diagnostic-fix-seq-ref fixes 0)]
               [edits : CompilerDiagnosticTextEditSeq
                 (compiler-diagnostic-fix-edits fix)]
               (and
@@ -90,10 +90,10 @@
                 (match (compiler-diagnostic-fix-applicability fix)
                   [CompilerDiagnosticMachineApplicable true]
                   [_ false])
-                (= (struct-get edits len) 1)
+                (= (compiler-diagnostic-text-edit-seq-len edits) 1)
                 (let
                   [edit : CompilerDiagnosticTextEdit
-                    (array-ref (struct-get edits slots) 0)]
+                    (compiler-diagnostic-text-edit-seq-ref edits 0)]
                   [span : CompilerDiagnosticSpan
                     (compiler-diagnostic-text-edit-span edit)]
                   (and
@@ -120,7 +120,10 @@
     "(define (main) : i64 (begin (print 1) 0))")
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (= (struct-get (compiler-diagnostic-fixes (box-get diag)) len) 0)]))
+      (=
+        (compiler-diagnostic-fix-seq-len
+          (compiler-diagnostic-fixes (box-get diag)))
+        0)]))
 
 (define (main) : i64
   (begin

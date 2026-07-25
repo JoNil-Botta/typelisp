@@ -3,6 +3,7 @@
 (import token)
 (import "compiler_ast_types.tl")
 (import stdlib.string)
+(import stdlib.vector)
 
 (defenum CompilerDiagnosticLevel
   (CompilerDiagnosticError)
@@ -46,18 +47,24 @@
   (span CompilerDiagnosticSpan)
   (replacement String))
 
+(import (vector.vector CompilerDiagnosticTextEdit core) as diag_text_edit_vec)
+
+;: Ordered edits of one fix. Every producer rebuilds the sequence, so the
+;: wrapper stays a persistent value even though the vector below it appends.
 (defstruct CompilerDiagnosticTextEditSeq
-  (slots (Array CompilerDiagnosticTextEdit))
-  (len i64))
+  (items diag_text_edit_vec.Vec))
 
 (defstruct CompilerDiagnosticFix
   (title String)
   (applicability CompilerDiagnosticApplicability)
   (edits CompilerDiagnosticTextEditSeq))
 
+(import (vector.vector CompilerDiagnosticFix core) as diag_fix_vec)
+
+;: Ordered fixes of one diagnostic, newest first. `with-fix` builds a fresh
+;: right-sized vector so two branches off one diagnostic never share storage.
 (defstruct CompilerDiagnosticFixSeq
-  (slots (Array CompilerDiagnosticFix))
-  (len i64))
+  (items diag_fix_vec.Vec))
 
 (defstruct CompilerDiagnostic
   (message String)
@@ -168,6 +175,26 @@
 (define (compiler-diagnostic-fix-edits [fix : CompilerDiagnosticFix]) : CompilerDiagnosticTextEditSeq
   (struct-get fix edits))
 
+(define (compiler-diagnostic-text-edit-seq-len
+  [edits : CompilerDiagnosticTextEditSeq]) : i64
+  (diag_text_edit_vec.len (& (struct-get edits items))))
+
+(define (compiler-diagnostic-text-edit-seq-ref
+  [edits : CompilerDiagnosticTextEditSeq]
+  [index : i64]) : CompilerDiagnosticTextEdit
+  (array-ref (diag_text_edit_vec.slots (& (struct-get edits items))) index))
+
+(define (compiler-diagnostic-fix-seq-empty) : CompilerDiagnosticFixSeq
+  (CompilerDiagnosticFixSeq (diag_fix_vec.with-capacity 0)))
+
+(define (compiler-diagnostic-fix-seq-len [fixes : CompilerDiagnosticFixSeq]) : i64
+  (diag_fix_vec.len (& (struct-get fixes items))))
+
+(define (compiler-diagnostic-fix-seq-ref
+  [fixes : CompilerDiagnosticFixSeq]
+  [index : i64]) : CompilerDiagnosticFix
+  (array-ref (diag_fix_vec.slots (& (struct-get fixes items))) index))
+
 (define (compiler-diagnostic-new
   [message : String]
   [level : CompilerDiagnosticLevel]
@@ -186,7 +213,7 @@
     help
     secondary
     notes
-    (CompilerDiagnosticFixSeq (make-array CompilerDiagnosticFix 0) 0)))
+    (compiler-diagnostic-fix-seq-empty)))
 
 (define (compiler-diagnostic-copy-maybe-string
   [value : CompilerDiagnosticMaybeString]) : CompilerDiagnosticMaybeString
@@ -231,20 +258,18 @@
 (define (compiler-diagnostic-copy-text-edit-list
   [edits : CompilerDiagnosticTextEditSeq]) : CompilerDiagnosticTextEditSeq
   (let
-    [count : i64 (struct-get edits len)]
-    [src : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
-    [dst : (Array CompilerDiagnosticTextEdit)
-      (make-array CompilerDiagnosticTextEdit count)]
+    [count : i64 (compiler-diagnostic-text-edit-seq-len edits)]
+    [dst : diag_text_edit_vec.Vec (diag_text_edit_vec.with-capacity count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            dst
-            index
-            (compiler-diagnostic-copy-text-edit (array-ref src index)))
+          (diag_text_edit_vec.push
+            (&mut dst)
+            (compiler-diagnostic-copy-text-edit
+              (compiler-diagnostic-text-edit-seq-ref edits index)))
           (set! index (+ index 1))))
-      (CompilerDiagnosticTextEditSeq dst count))))
+      (CompilerDiagnosticTextEditSeq dst))))
 
 (define (compiler-diagnostic-copy-fix [fix : CompilerDiagnosticFix]) : CompilerDiagnosticFix
   (CompilerDiagnosticFix
@@ -254,20 +279,18 @@
 
 (define (compiler-diagnostic-copy-fix-list [fixes : CompilerDiagnosticFixSeq]) : CompilerDiagnosticFixSeq
   (let
-    [count : i64 (struct-get fixes len)]
-    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
-    [dst : (Array CompilerDiagnosticFix)
-      (make-array CompilerDiagnosticFix count)]
+    [count : i64 (compiler-diagnostic-fix-seq-len fixes)]
+    [dst : diag_fix_vec.Vec (diag_fix_vec.with-capacity count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            dst
-            index
-            (compiler-diagnostic-copy-fix (array-ref src index)))
+          (diag_fix_vec.push
+            (&mut dst)
+            (compiler-diagnostic-copy-fix
+              (compiler-diagnostic-fix-seq-ref fixes index)))
           (set! index (+ index 1))))
-      (CompilerDiagnosticFixSeq dst count))))
+      (CompilerDiagnosticFixSeq dst))))
 
 (define (compiler-diagnostic-copy [diag : CompilerDiagnostic]) : CompilerDiagnostic
   (CompilerDiagnostic
@@ -363,7 +386,7 @@
 (define (compiler-diagnostic-edit-overlaps-rest?
   [diagnostic-path : String]
   [edit : CompilerDiagnosticTextEdit]
-  [slots : (Array CompilerDiagnosticTextEdit)]
+  [edits : CompilerDiagnosticTextEditSeq]
   [count : i64]
   [start : i64]) : bool
   (let
@@ -375,7 +398,7 @@
           (if (compiler-diagnostic-edit-overlaps?
             diagnostic-path
             edit
-            (array-ref slots cursor))
+            (compiler-diagnostic-text-edit-seq-ref edits cursor))
             (set! found true)
             unit)
           (set! cursor (+ cursor 1))))
@@ -385,14 +408,14 @@
   [diagnostic-path : String]
   [edits : CompilerDiagnosticTextEditSeq]) : bool
   (let
-    [count : i64 (struct-get edits len)]
-    [slots : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [count : i64 (compiler-diagnostic-text-edit-seq-len edits)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
         (let
-          [edit : CompilerDiagnosticTextEdit (array-ref slots index)]
+          [edit : CompilerDiagnosticTextEdit
+            (compiler-diagnostic-text-edit-seq-ref edits index)]
           (begin
             (if (and
               (compiler-diagnostic-span-valid-for-edit? (struct-get edit span))
@@ -400,7 +423,7 @@
                 (compiler-diagnostic-edit-overlaps-rest?
                   diagnostic-path
                   edit
-                  slots
+                  edits
                   count
                   (+ index 1))))
               unit
@@ -415,7 +438,7 @@
     [edits : CompilerDiagnosticTextEditSeq (struct-get fix edits)]
     (and
       (> (string.string-length (struct-get fix title)) 0)
-      (> (struct-get edits len) 0)
+      (> (compiler-diagnostic-text-edit-seq-len edits) 0)
       (compiler-diagnostic-edit-list-valid? diagnostic-path edits))))
 
 (define (compiler-diagnostic-repath-text-edit
@@ -439,38 +462,35 @@
   [edits : CompilerDiagnosticTextEditSeq]
   [path : String]) : CompilerDiagnosticTextEditSeq
   (let
-    [count : i64 (struct-get edits len)]
-    [src : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
-    [dst : (Array CompilerDiagnosticTextEdit)
-      (make-array CompilerDiagnosticTextEdit count)]
+    [count : i64 (compiler-diagnostic-text-edit-seq-len edits)]
+    [dst : diag_text_edit_vec.Vec (diag_text_edit_vec.with-capacity count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set!
-            dst
-            index
-            (compiler-diagnostic-repath-text-edit (array-ref src index) path))
+          (diag_text_edit_vec.push
+            (&mut dst)
+            (compiler-diagnostic-repath-text-edit
+              (compiler-diagnostic-text-edit-seq-ref edits index)
+              path))
           (set! index (+ index 1))))
-      (CompilerDiagnosticTextEditSeq dst count))))
+      (CompilerDiagnosticTextEditSeq dst))))
 
 (define (compiler-diagnostic-repath-fix-list
   [fixes : CompilerDiagnosticFixSeq]
   [path : String]) : CompilerDiagnosticFixSeq
   (let
-    [count : i64 (struct-get fixes len)]
-    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
-    [dst : (Array CompilerDiagnosticFix)
-      (make-array CompilerDiagnosticFix count)]
+    [count : i64 (compiler-diagnostic-fix-seq-len fixes)]
+    [dst : diag_fix_vec.Vec (diag_fix_vec.with-capacity count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
-          [fix : CompilerDiagnosticFix (array-ref src index)]
+          [fix : CompilerDiagnosticFix
+            (compiler-diagnostic-fix-seq-ref fixes index)]
           (begin
-            (array-set!
-              dst
-              index
+            (diag_fix_vec.push
+              (&mut dst)
               (CompilerDiagnosticFix
                 (struct-get fix title)
                 (struct-get fix applicability)
@@ -478,7 +498,7 @@
                   (struct-get fix edits)
                   path)))
             (set! index (+ index 1)))))
-      (CompilerDiagnosticFixSeq dst count))))
+      (CompilerDiagnosticFixSeq dst))))
 
 (define (compiler-diagnostic-simple
   [path : String]
@@ -689,11 +709,10 @@
 (define (compiler-diagnostic-text-edit-single
   [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
   (let
-    [slots : (Array CompilerDiagnosticTextEdit)
-      (make-array CompilerDiagnosticTextEdit 1)]
+    [items : diag_text_edit_vec.Vec (diag_text_edit_vec.with-capacity 1)]
     (begin
-      (array-set! slots 0 edit)
-      (CompilerDiagnosticTextEditSeq slots 1))))
+      (diag_text_edit_vec.push (&mut items) edit)
+      (CompilerDiagnosticTextEditSeq items))))
 
 (define (compiler-diagnostic-fix-new
   [title : String]
@@ -701,24 +720,25 @@
   [edits : CompilerDiagnosticTextEditSeq]) : CompilerDiagnosticFix
   (CompilerDiagnosticFix title applicability edits))
 
-;; Copies into a right-sized array rather than appending in place: `with-fix` is
-;; a persistent update, so the source diagnostic must keep its own fix list.
+;; Builds a fresh right-sized vector rather than appending in place: `with-fix`
+;; is a persistent update, so the source diagnostic must keep its own fix list
+;; and two branches off one diagnostic must never share backing storage.
 (define (compiler-diagnostic-fix-prepend
   [fix : CompilerDiagnosticFix]
   [fixes : CompilerDiagnosticFixSeq]) : CompilerDiagnosticFixSeq
   (let
-    [count : i64 (struct-get fixes len)]
-    [src : (Array CompilerDiagnosticFix) (struct-get fixes slots)]
-    [dst : (Array CompilerDiagnosticFix)
-      (make-array CompilerDiagnosticFix (+ count 1))]
+    [count : i64 (compiler-diagnostic-fix-seq-len fixes)]
+    [dst : diag_fix_vec.Vec (diag_fix_vec.with-capacity (+ count 1))]
     [index : i64 0]
     (begin
-      (array-set! dst 0 fix)
+      (diag_fix_vec.push (&mut dst) fix)
       (while (< index count)
         (begin
-          (array-set! dst (+ index 1) (array-ref src index))
+          (diag_fix_vec.push
+            (&mut dst)
+            (compiler-diagnostic-fix-seq-ref fixes index))
           (set! index (+ index 1))))
-      (CompilerDiagnosticFixSeq dst (+ count 1)))))
+      (CompilerDiagnosticFixSeq dst))))
 
 ;; Fix attachment is the validation boundary: generated/unknown 0:0 spans,
 ;; reversed spans, empty edit sets, and overlapping half-open edits are not

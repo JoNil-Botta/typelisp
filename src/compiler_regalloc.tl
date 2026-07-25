@@ -7996,25 +7996,52 @@
         kind)
         [(CompilerRegCallScan.Scan _ set) set])]))
 
+;; "Does any set bit of `bits` land strictly inside (start, end) once offset by
+;; `var-base`?" The bit positions satisfying `start < var-base + i < end` form a
+;; contiguous run, so the whole question is one mask test instead of a walk over
+;; the set bits.
+;;
+;; The mask is clamped to positions 0..31 because `compiler-reg-low-bit-index32`
+;; only ever reported indices in that range: it masks its argument to
+;; `0xffffffff` and answers 31 when the low word is empty. A word carrying bits
+;; above position 31 therefore tested index 31 in the original loop, which is
+;; reproduced here by folding that case into bit 31 of the effective word rather
+;; than assuming callers never pass one.
+(define (compiler-reg-call-word-range-mask [low-bit : i64] [high-bit : i64]) : i64
+  (shl (- (shl 1 (+ (- high-bit low-bit) 1)) 1) low-bit))
+
 (define (compiler-reg-call-word-in-range?
   [bits : i64]
   [var-base : i64]
   [start : i64]
   [end : i64]) : bool
-  (if (= bits 0)
-    false
-    (let
-      [i : i64 (compiler-reg-low-bit-index32 bits)]
-      [c : i64 (+ var-base i)]
-      (if (if (< start c)
-        (< c end)
-        false)
-        true
-        (compiler-reg-call-word-in-range?
-          (bit-and bits (- bits 1))
-          var-base
-          start
-          end)))))
+  (let
+    [low : i64 (bit-and bits 0xffffffff)]
+    [effective : i64
+      (if (= bits low)
+        low
+        (bit-or low 0x80000000))]
+    (if (= effective 0)
+      false
+      (let
+        [lo : i64 (- (+ start 1) var-base)]
+        [hi : i64 (- (- end 1) var-base)]
+        [low-bit : i64
+          (if (< lo 0)
+            0
+            lo)]
+        [high-bit : i64
+          (if (> hi 31)
+            31
+            hi)]
+        (if (> low-bit high-bit)
+          false
+          (not
+            (=
+              (bit-and
+                effective
+                (compiler-reg-call-word-range-mask low-bit high-bit))
+              0)))))))
 
 (cfg
   (any regalloc-census test)

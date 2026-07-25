@@ -220,6 +220,13 @@
         ;; The native entry count is an upper bound on coverage: a native entry
         ;; may still route single arms back to the interpreter. Report the arm
         ;; sites separately so #5596's zero-fallback goal is measurable.
+        ;; Per-shell reasons on stderr, one `identity<TAB>reason` line each, so
+        ;; a family's real blocker is read out of the producer instead of
+        ;; inferred from an AST histogram -- which mis-predicted the residue
+        ;; twice (#5605, #5600). stdout keeps exactly the two lines the gates
+        ;; match on. Refs #5596.
+        (io.print-error
+          (array-ref embedded-stdlib-tlci-native-report-reasons 0))
         (io.print-string
           (str-cat
             "embedded stdlib tlci: coverage native-entries="

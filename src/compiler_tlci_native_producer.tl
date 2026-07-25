@@ -236,6 +236,105 @@
 
 ;: Entries that compiled natively but still contain at least one interpreted
 ;: arm site.
+;; Why the last body compiled fell back to a registration shell. The producer
+;; decides eligibility across a dozen return points and, until now, said only
+;; "shell" -- so every remaining #5596 family was investigated by inferring the
+;; blocker from an AST histogram, which mis-predicted the residue twice
+;; (#5605, #5600). The reason is recorded where the decision is actually made
+;; and reported per identity, and it never reaches generated text, so images
+;; stay byte-identical. Refs #5596.
+(define embedded-native-fallback-reason : (Array String)
+  (make-array ""))
+
+;; Per-identity shell reasons for this image, one `identity<TAB>reason` line
+;; each. The build tool prints them on request; nothing here reaches generated
+;; text, so the image stays byte-identical either way.
+(define embedded-stdlib-tlci-native-report-reasons : (Array String)
+  (make-array ""))
+
+(define (embedded-native-fallback-reason-reset!) : unit
+  (array-set! embedded-native-fallback-reason 0 ""))
+
+;; First writer wins: the outermost walker that gives up would otherwise
+;; overwrite the specific inner construct that actually failed.
+(define (embedded-native-fallback-reason-note! [reason : String]) : unit
+  (let
+    [current : String (array-ref embedded-native-fallback-reason 0)]
+    [empty : bool (= (string.string-length current) 0)]
+    (when empty (array-set! embedded-native-fallback-reason 0 reason))))
+
+;; The source-level spelling of an expression node, for the reason string.
+(define (embedded-native-expr-kind-name [e : AstExpr]) : String
+  (match e
+    [(AstExpr.Ann _ _) "ann"]
+    [(AstExpr.Cast _ _) "cast"]
+    [(AstExpr.Try _) "try"]
+    [(AstExpr.Tuple _) "tuple"]
+    [(AstExpr.TupleRef _ _) "tuple-ref"]
+    [(AstExpr.Init _) "init"]
+    [(AstExpr.Lambda _) "lambda"]
+    [(AstExpr.DynArray _) "dyn-array"]
+    [(AstExpr.Array _) "array"]
+    [(AstExpr.ArrayTake _ _ _) "array-take"]
+    [(AstExpr.BoxTake _) "box-take"]
+    [(AstExpr.BoxSet _ _) "box-set"]
+    [(AstExpr.IntToPtr _ _) "int->ptr"]
+    [(AstExpr.PtrAddrOf _) "ptr-addr-of"]
+    [(AstExpr.PtrNull _) "ptr-null"]
+    [(AstExpr.PtrNullCheck _) "ptr-null?"]
+    [(AstExpr.PtrCast _ _) "ptr-cast"]
+    [(AstExpr.StringRef _ _) "string-ref"]
+    [(AstExpr.StringFromBytes _ _) "string-from-bytes"]
+    [(AstExpr.Comptime _) "comptime"]
+    [(AstExpr.Quote _) "quote"]
+    [(AstExpr.Quasiquote _) "quasiquote"]
+    [(AstExpr.UnquoteSplicing _) "unquote-splicing"]
+    [(AstExpr.Unquote _) "unquote"]
+    [(AstExpr.Break) "break"]
+    [(AstExpr.Continue) "continue"]
+    [(AstExpr.Return _) "return"]
+    [(AstExpr.WithRegion _ _) "with-arena"]
+    [(AstExpr.WithResource _) "with"]
+    [(AstExpr.WithScratch _) "with-scratch"]
+    [(AstExpr.WithEscape _ _) "with-escape"]
+    [(AstExpr.InArena _ _) "in-arena"]
+    [(AstExpr.Foreach _) "foreach"]
+    [(AstExpr.SpmdReduce _) "spmd-reduce"]
+    [(AstExpr.SpmdScan _) "spmd-scan"]
+    [(AstExpr.Unsafe _) "unsafe"]
+    [(AstExpr.Literal (AstLiteral.Float _)) "float-literal"]
+    [(AstExpr.Literal _) "literal"]
+    ;; Kinds the walkers do support are named too: reaching a give-up point on
+    ;; one of these means the construct is supported in some positions and not
+    ;; in the one that failed, which is the more useful thing to report.
+    [(AstExpr.If _ _ _) "if"]
+    [(AstExpr.Match _) "match"]
+    [(AstExpr.Let _) "let"]
+    [(AstExpr.Begin _) "begin"]
+    [(AstExpr.Call _ _) "call"]
+    [(AstExpr.Var _) "var"]
+    [(AstExpr.Set _ _) "set!"]
+    [(AstExpr.While _ _) "while"]
+    [(AstExpr.Binary _ _ _) "binary"]
+    [(AstExpr.Unary _ _) "unary"]
+    [(AstExpr.Borrow _ _ _) "borrow"]
+    [(AstExpr.StructGet _ _) "struct-get"]
+    [(AstExpr.StructSet _ _ _) "struct-set!"]
+    [(AstExpr.BracketClause _) "bracket-clause"]
+    [(AstExpr.ArrayRef _ _) "array-ref"]
+    [(AstExpr.ArraySet _ _ _) "array-set!"]
+    [(AstExpr.ArrayPush _ _) "array-push!"]
+    [(AstExpr.ArrayData _) "array-data"]
+    [(AstExpr.StringData _) "string-data"]
+    [(AstExpr.Box _) "box"]
+    [(AstExpr.BoxGet _) "box-get"]
+    [(AstExpr.PtrRead _) "ptr-read"]
+    [(AstExpr.PtrWrite _ _) "ptr-write!"]
+    [(AstExpr.PtrOffset _ _) "ptr-offset"]
+    [(AstExpr.PtrToInt _) "ptr->int"]
+    [(AstExpr.MakeArray _ _) "make-array"]
+    [_ "unclassified"]))
+
 (define embedded-stdlib-tlci-native-report-partial-count : (Array i64)
   (make-array 0))
 
@@ -1251,7 +1350,14 @@
                 (begin
                   (embedded-native-template-push! ops ops-count 185 "0" "0" "0")
                   (+ size-opened 2)))))))]
-    [_ -1]))
+    [_
+      (begin
+        (embedded-native-fallback-reason-note!
+          (str-cat
+            "template-node:"
+            (embedded-native-expr-kind-name
+              (embedded-stdlib-tlci-unwrap-expr node))))
+        -1)]))
 
 ;; Emit ops building one template argument/expression list: expr-list-empty,
 ;; then per item either list-append of a pushed template value or expr-splice
@@ -1896,9 +2002,20 @@
                         index-text
                         "0")
                       1)))]
-              [else -1]))]
+              [else
+                (begin
+                  (embedded-native-fallback-reason-note!
+                    (str-cat "computed-call:" head))
+                  -1)]))]
         [_ -1])]
-    [_ -1]))
+    [_
+      (begin
+        (embedded-native-fallback-reason-note!
+          (str-cat
+            "computed-node:"
+            (embedded-native-expr-kind-name
+              (embedded-stdlib-tlci-unwrap-expr node))))
+        -1)]))
 
 ;: The generated i64 text of a canonical int literal, a compile-time data
 ;: local, or their sums and differences; "" for anything else. Refs #5617.
@@ -3127,7 +3244,26 @@
 ;; Unified native body compiler: a type-kind match, a computed list-length
 ;; if, or a linear template/fold/plain body. Returns "" when the body stays
 ;; an interpreted-fallback shell.
+;; Last-resort reason: when every body compiler declines and none of them
+;; recorded why, name the body's own shape so the report says something more
+;; useful than "unreported". The body-level compilers (let/match/if) each have
+;; several give-up points; this catches all of them at one place. Refs #5596.
 (define (embedded-native-body-code
+  [params : (& params AstMacroParamList)]
+  [body-node : i64]) : String
+  (let
+    [text : String (embedded-native-body-code-inner params body-node)]
+    (begin
+      (when
+        (= (string.string-length text) 0)
+        (embedded-native-fallback-reason-note!
+          (str-cat
+            "body-shape:"
+            (embedded-native-expr-kind-name
+              (embedded-stdlib-tlci-unwrap-expr body-node)))))
+      text)))
+
+(define (embedded-native-body-code-inner
   [params : (& params AstMacroParamList)]
   [body-node : i64]) : String
   (let
@@ -3180,6 +3316,8 @@
     [native-count : i64 0]
     [partial-count : i64 0]
     [interpreted-arms : i64 0]
+    [_reasons-reset : unit
+      (array-set! embedded-stdlib-tlci-native-report-reasons 0 "")]
     (begin
       (while (< index count)
         (let
@@ -3189,6 +3327,7 @@
             (if (>= slot 0)
               (begin
                 (embedded-native-locals-reset!)
+                (embedded-native-fallback-reason-reset!)
                 (embedded-native-body-code
                   (&
                     (struct-get
@@ -3206,13 +3345,28 @@
                 " [image-ctx : i64] [host : i64] [session : i64]"
                 " [operands : i64] [count : i64] [result : i64]) : i64\n"))
             (if (string.eq body-text "")
-              (set!
-                out
-                (str-cat
+              (begin
+                (let
+                  [reason : String
+                    (array-ref embedded-native-fallback-reason 0)]
+                  (array-set!
+                    embedded-stdlib-tlci-native-report-reasons
+                    0
+                    (str-cat
+                      (array-ref embedded-stdlib-tlci-native-report-reasons 0)
+                      (array-ref names index)
+                      "\t"
+                      (if (= (string.string-length reason) 0)
+                        "unreported"
+                        reason)
+                      "\n")))
+                (set!
                   out
-                  "  (if (= count -"
-                  (string.int->string (+ index 2))
-                  ") 1 0))\n"))
+                  (str-cat
+                    out
+                    "  (if (= count -"
+                    (string.int->string (+ index 2))
+                    ") 1 0))\n")))
               (let
                 [arm-sites : i64
                   (embedded-native-count-occurrences

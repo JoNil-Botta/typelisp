@@ -12119,25 +12119,22 @@
     tail))
 
 (define (opt-global-copy-facts-from-blocks
-  [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]
+  [block-id : i64]
   [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
   (match blocks
     [(CompilerIrBlockList.Nil) tail]
     [(CompilerIrBlockList.Cons block rest)
       (let
         [rest-facts : OptGlobalCopyFacts
-          (opt-global-copy-facts-from-blocks doms (box-get rest) tail)]
+          (opt-global-copy-facts-from-blocks (box-get rest) (+ block-id 1) tail)]
         (match block
-          [(CompilerIrBlock.Block label instrs)
-            (opt-global-copy-facts-from-instr-seq
-              (opt-global-block-id doms label)
-              instrs
-              rest-facts)]))]
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-global-copy-facts-from-instr-seq block-id instrs rest-facts)]))]
     [(CompilerIrBlockList.Array seq)
       (opt-global-copy-facts-from-blocks
-        doms
         (compiler-ir-block-seq-to-list seq)
+        block-id
         tail)]))
 
 (define (opt-global-copy-facts-max-dst
@@ -12261,26 +12258,29 @@
         next-tail))))
 
 (define (opt-global-pack-word-facts-from-blocks
-  [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]
+  [block-id : i64]
   [tail : OptGlobalPackWordFacts]) : OptGlobalPackWordFacts
   (match blocks
     [(CompilerIrBlockList.Nil) tail]
     [(CompilerIrBlockList.Cons block rest)
       (let
         [rest-facts : OptGlobalPackWordFacts
-          (opt-global-pack-word-facts-from-blocks doms (box-get rest) tail)]
+          (opt-global-pack-word-facts-from-blocks
+            (box-get rest)
+            (+ block-id 1)
+            tail)]
         (match block
-          [(CompilerIrBlock.Block label instrs)
+          [(CompilerIrBlock.Block _ instrs)
             (opt-global-pack-word-facts-from-instr-seq-from
-              (opt-global-block-id doms label)
+              block-id
               (struct-get instrs slots)
               (- (struct-get instrs len) 1)
               rest-facts)]))]
     [(CompilerIrBlockList.Array seq)
       (opt-global-pack-word-facts-from-blocks
-        doms
         (compiler-ir-block-seq-to-list seq)
+        block-id
         tail)]))
 
 (define (opt-global-pack-word-facts-max-group
@@ -12946,12 +12946,11 @@
   [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
   [uses : (Array i64)]
-  [block-label : String]
+  [block-id : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [index : i64 (- (struct-get instrs len) 1)]
-    [block-id : i64 (opt-global-block-id doms block-label)]
     [out : CompilerIrInstrList (CompilerIrInstrList.Nil)]
     (begin
       (while (>= index 0)
@@ -12971,12 +12970,15 @@
           (set! index (- index 1))))
       out)))
 
+;; Every rewrite in this pass keeps the block sequence -- only block contents
+;; change -- so the walk position stays the id `doms`'s index assigned.
 (define (opt-global-copy-blocks
   [facts : OptGlobalCopyFactTable]
   [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
   [uses : (Array i64)]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]
+  [block-id : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -12990,16 +12992,23 @@
                 pack-facts
                 doms
                 uses
-                label
+                block-id
                 instrs))
-            (opt-global-copy-blocks facts pack-facts doms uses (box-get rest)))])]
+            (opt-global-copy-blocks
+              facts
+              pack-facts
+              doms
+              uses
+              (box-get rest)
+              (+ block-id 1)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-global-copy-blocks
         facts
         pack-facts
         doms
         uses
-        (compiler-ir-block-seq-to-list seq))]))
+        (compiler-ir-block-seq-to-list seq)
+        block-id)]))
 
 (define (opt-global-expr-facts-from-instr-seq-from
   [block-id : i64]
@@ -13038,25 +13047,22 @@
     tail))
 
 (define (opt-global-expr-facts-from-blocks
-  [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]
+  [block-id : i64]
   [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
   (match blocks
     [(CompilerIrBlockList.Nil) tail]
     [(CompilerIrBlockList.Cons block rest)
       (let
         [rest-facts : OptGlobalExprFacts
-          (opt-global-expr-facts-from-blocks doms (box-get rest) tail)]
+          (opt-global-expr-facts-from-blocks (box-get rest) (+ block-id 1) tail)]
         (match block
-          [(CompilerIrBlock.Block label instrs)
-            (opt-global-expr-facts-from-instr-seq
-              (opt-global-block-id doms label)
-              instrs
-              rest-facts)]))]
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-global-expr-facts-from-instr-seq block-id instrs rest-facts)]))]
     [(CompilerIrBlockList.Array seq)
       (opt-global-expr-facts-from-blocks
-        doms
         (compiler-ir-block-seq-to-list seq)
+        block-id
         tail)]))
 
 (define (opt-global-fact-bucket-capacity [count : i64]) : i64
@@ -13267,11 +13273,11 @@
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [block-label : String]
+  [block-id : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [index : i64 (- (struct-get instrs len) 1)]
-    [block-id : i64 (opt-global-block-id doms block-label)]
     [out : CompilerIrInstrList (CompilerIrInstrList.Nil)]
     (begin
       (while (>= index 0)
@@ -13294,7 +13300,8 @@
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [all-blocks : CompilerIrBlockList]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]
+  [block-id : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -13309,14 +13316,20 @@
               block
               (compiler-ir-block
                 label
-                (opt-global-cse-instr-seq facts doms label instrs)))
-            (opt-global-cse-blocks facts doms all-blocks (box-get rest)))])]
+                (opt-global-cse-instr-seq facts doms label block-id instrs)))
+            (opt-global-cse-blocks
+              facts
+              doms
+              all-blocks
+              (box-get rest)
+              (+ block-id 1)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-global-cse-blocks
         facts
         doms
         all-blocks
-        (compiler-ir-block-seq-to-list seq))]))
+        (compiler-ir-block-seq-to-list seq)
+        block-id)]))
 
 (define (opt-global-value-number-blocks-with-context
   [context : OptCfgContext]
@@ -13325,31 +13338,31 @@
   (let
     [doms : OptDomInfo (struct-get context doms)]
     [copy-fact-list : OptGlobalCopyFacts
-      (opt-global-copy-facts-from-blocks doms blocks (OptGlobalCopyFacts.Nil))]
+      (opt-global-copy-facts-from-blocks blocks 0 (OptGlobalCopyFacts.Nil))]
     [copy-facts : OptGlobalCopyFactTable
       (opt-global-copy-table-from-facts copy-fact-list)]
     [pack-word-fact-list : OptGlobalPackWordFacts
       (opt-global-pack-word-facts-from-blocks
-        doms
         blocks
+        0
         (OptGlobalPackWordFacts.Nil))]
     [pack-word-facts : OptGlobalPackWordFactTable
       (opt-global-pack-word-table-from-facts pack-word-fact-list)]
     [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
     [copied : CompilerIrBlockList
-      (opt-global-copy-blocks copy-facts pack-word-facts doms uses blocks)]
+      (opt-global-copy-blocks copy-facts pack-word-facts doms uses blocks 0)]
     [expr-fact-list : OptGlobalExprFacts
-      (opt-global-expr-facts-from-blocks doms copied (OptGlobalExprFacts.Nil))]
+      (opt-global-expr-facts-from-blocks copied 0 (OptGlobalExprFacts.Nil))]
     [expr-facts : OptGlobalExprFactTable
       (opt-global-expr-table-from-facts expr-fact-list)]
     [cse : CompilerIrBlockList
-      (opt-global-cse-blocks expr-facts doms copied copied)]
+      (opt-global-cse-blocks expr-facts doms copied copied 0)]
     [cse-copy-fact-list : OptGlobalCopyFacts
-      (opt-global-copy-facts-from-blocks doms cse (OptGlobalCopyFacts.Nil))]
+      (opt-global-copy-facts-from-blocks cse 0 (OptGlobalCopyFacts.Nil))]
     [cse-copy-facts : OptGlobalCopyFactTable
       (opt-global-copy-table-from-facts cse-copy-fact-list)]
     [cse-uses : (Array i64) (opt-collect-blocks-uses-array frame cse)]
-    (opt-global-copy-blocks cse-copy-facts pack-word-facts doms cse-uses cse)))
+    (opt-global-copy-blocks cse-copy-facts pack-word-facts doms cse-uses cse 0)))
 
 (define (opt-global-value-number-function-with-context
   [context : OptCfgContext]
@@ -28648,30 +28661,27 @@
       (opt-loop-bce-block-results-fill-empty! out (+ index 1)))))
 
 (define (opt-loop-bce-materialize-blocks
-  [doms : OptDomInfo]
   [out : (Array OptLoopBceBlockResult)]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]
+  [block-id : i64]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block label _)
-          (let
-            [block-id : i64 (opt-global-block-id doms label)]
-            [material : CompilerIrBlock
-              (if (and (>= block-id 0) (< block-id (array-length out)))
-                (match (array-ref out block-id)
-                  [(OptLoopBceBlockResult.SomeBlock rewritten) rewritten]
-                  [(OptLoopBceBlockResult.NoBlock) block])
-                block)]
-            (compiler-ir-block-cons
-              material
-              (opt-loop-bce-materialize-blocks doms out (box-get rest))))])]
+      (let
+        [material : CompilerIrBlock
+          (if (< block-id (array-length out))
+            (match (array-ref out block-id)
+              [(OptLoopBceBlockResult.SomeBlock rewritten) rewritten]
+              [(OptLoopBceBlockResult.NoBlock) block])
+            block)]
+        (compiler-ir-block-cons
+          material
+          (opt-loop-bce-materialize-blocks out (box-get rest) (+ block-id 1))))]
     [(CompilerIrBlockList.Array seq)
       (opt-loop-bce-materialize-blocks
-        doms
         out
-        (compiler-ir-block-seq-to-list seq))]))
+        (compiler-ir-block-seq-to-list seq)
+        block-id)]))
 
 (define (opt-loop-bce-rewrite-id
   [summaries : OptLoopBceSummaries]
@@ -28812,7 +28822,7 @@
                 (opt-loop-bce-initial-state))
               unit)]
           [(option_i64.None) unit])
-        (opt-loop-bce-materialize-blocks doms out blocks)))))
+        (opt-loop-bce-materialize-blocks out blocks 0)))))
 
 (define (opt-loop-bce-state-propagate-guard
   [state : OptLoopBceState]

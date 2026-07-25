@@ -218,18 +218,19 @@ Options:
 
 (define (cli-test-help-text) : String
   "Usage:
-    typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
-    typelisp test --check --batch <inputs.txt> [--target <target>] [--stdlib-root <dir>...] [--prefix-cache-stats]
+    typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+    typelisp test [--check] --batch <inputs.txt> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--prefix-cache-stats]
 
 Summary:
     Run or typecheck inline `(test ...)` declarations.
 
 Options:
     --check                        Typecheck inline tests without running them
-    --batch <file>                 Read newline-separated inline-test input paths for --check
+    --batch <file>                 Read newline-separated inline-test input paths; runs them unless --check
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
     --target <target>              linux-x86_64 or windows-x86_64
+    --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select selfhost test harness optimization
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
@@ -293,6 +294,7 @@ Summary:
 REPL Commands:
     .help                          Show REPL command help
     .type <expr>                   Print the inferred type without running code
+    .load <file>                   Load declarations from a source file
     .exit                          Exit the REPL
 ")
 

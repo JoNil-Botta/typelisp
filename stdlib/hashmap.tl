@@ -228,7 +228,8 @@
               ;; capacity, making the masked initial cursor in bounds.
               [cap : i64 (array_ops.length (struct-get map slots))]
               [hash : i64 (* key 6364136223846793005)]
-              [cursor : i64 (bit-and hash (- cap 1))]
+              [mask : i64 (- cap 1)]
+              [cursor : i64 (bit-and hash mask)]
               [start : i64 cursor]
               [first : i64 -1]
               (begin
@@ -284,18 +285,17 @@
                                 (- (struct-get map deleted) 1))
                               (return unit))))]
                       [GeneratedHashmapSlot.Tombstone
-                        (let
-                          [next : i64 (+ cursor 1)]
-                          (begin
-                            (if (< first 0)
-                              (set! first cursor)
-                              unit)
-                            (set!
-                              cursor
-                              (if (>= next cap)
-                                0
-                                next))
-                            unit))]
+                        (begin
+                          (if (< first 0)
+                            (set! first cursor)
+                            unit)
+                          ;; Wrap by masking rather than comparing. The capacity
+                          ;; is a positive power of two -- the same invariant the
+                          ;; masked initial cursor above already relies on -- so
+                          ;; for `next` in [1, cap] the mask maps `cap` to 0 and
+                          ;; leaves every smaller value alone. One `and` replaces
+                          ;; a compare and an unpredictable branch.
+                          (set! cursor (bit-and (+ cursor 1) mask)))]
                       [(GeneratedHashmapSlot.Occupied existing _ _)
                         (if (= existing key)
                           (let
@@ -314,15 +314,7 @@
                               (unsafe
                                 (ptr-write! (ptr-offset slot 3) hash))
                               (return unit)))
-                          (let
-                            [next : i64 (+ cursor 1)]
-                            (begin
-                              (set!
-                                cursor
-                                (if (>= next cap)
-                                  0
-                                  next))
-                              unit)))])
+                          (set! cursor (bit-and (+ cursor 1) mask)))])
                     ;; Map values may be shallow-copied while sharing their
                     ;; slot descriptor. Preserve the prior Full-table behavior
                     ;; for a stale copied len without a per-probe counter.
@@ -605,28 +597,49 @@
             [fresh : (Array GeneratedHashmapSlot)
               (array_ops.make-array GeneratedHashmapSlot new-capacity)]
             [scan : i64 0]
-            [mask : i64 (- new-capacity 1)]
+            ;; Read the capacity back off `fresh` and mask with that, under an
+            ;; explicit `cap >= 1` guard. `array_ops.length fresh` is
+            ;; `new-capacity` by construction, so the arithmetic is unchanged --
+            ;; but it gives the optimizer ONE value serving as both the mask base
+            ;; and the bound on every `array-ref fresh`, which is what lets it
+            ;; prove `hash & (cap - 1)` is in range and drop the probe-loop
+            ;; bounds checks. Masking only bounds the index when `cap >= 1`
+            ;; (at `cap = 0` the mask is -1 and masking bounds nothing), so the
+            ;; guard is what makes the proof available rather than decoration.
+            [cap : i64 (array_ops.length fresh)]
+            [mask : i64 (- cap 1)]
             (begin
-              (while (< scan old-capacity)
-                (begin
-                  (match (array-ref (struct-get map slots) scan)
-                    [(GeneratedHashmapSlot.Occupied key value hash)
-                      (let
-                        [index : i64 (bit-and hash mask)]
-                        (begin
-                          (while (match (array-ref fresh index)
-                            [GeneratedHashmapSlot.Empty false]
-                            [_ true])
-                            (set! index (bit-and (+ index 1) mask)))
-                          (array-set!
-                            fresh
-                            index
-                            (GeneratedHashmapSlot.Occupied
-                              ,key-copy
-                              ,value-copy
-                              hash))))]
-                    [_ unit])
-                  (set! scan (+ scan 1))))
+              (if (>= cap 1)
+                ;; Bind the old slot array once and take the scan bound off that
+                ;; binding, so the loop guard and the bounds check on
+                ;; `array-ref old-slots scan` compare against the SAME value.
+                ;; Read off the map separately they are two loads of one field,
+                ;; and nothing can relate the guard to the check.
+                (let
+                  [old-slots : (& map (Array GeneratedHashmapSlot))
+                    (& (struct-get map slots))]
+                  [old-count : i64 (array_ops.length old-slots)]
+                  (while (< scan old-count)
+                    (begin
+                      (match (array-ref old-slots scan)
+                        [(GeneratedHashmapSlot.Occupied key value hash)
+                          (let
+                            [index : i64 (bit-and hash mask)]
+                            (begin
+                              (while (match (array-ref fresh index)
+                                [GeneratedHashmapSlot.Empty false]
+                                [_ true])
+                                (set! index (bit-and (+ index 1) mask)))
+                              (array-set!
+                                fresh
+                                index
+                                (GeneratedHashmapSlot.Occupied
+                                  ,key-copy
+                                  ,value-copy
+                                  hash))))]
+                        [_ unit])
+                      (set! scan (+ scan 1)))))
+                unit)
               (set! (struct-get map slots) fresh)
               (set! (struct-get map deleted) 0))))
         (define (needs-grow? [map : (&mut map Map)]) : bool

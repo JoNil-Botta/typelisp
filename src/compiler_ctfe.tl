@@ -11,6 +11,7 @@
 (cfg (any test selfhost-compile-manifest) (import stdlib.hashmap))
 (import (hashmap.hashmap i64 i64) as ctfe_key_map)
 (import stdlib.array)
+(import stdlib.vector)
 (import stdlib.byte_buf_core)
 (import "compiler_ast_types.tl")
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
@@ -698,9 +699,10 @@
 (define (ctfe-type-info-box-source-type) : AstType
   (ast-ty-box (ctfe-type-info-source-type)))
 
+(import (vector.vector CompilerCtfeValue core) as ctfe_value_vec)
+
 (defstruct CtfeValueSeq
-  (slots (Array CompilerCtfeValue))
-  (len i64))
+  (items ctfe_value_vec.Vec))
 
 (defenum CtfeMaybeSyntaxPools
   (None)
@@ -9012,15 +9014,12 @@
 ;; have no CTFE representation; this covers scalar values and the public
 ;; stdlib.comptime syntax pseudo-values backed by CompilerCtfeValue.Expr/CompilerCtfeValue.ExprList.
 (define (ctfe-value-seq-with-capacity [capacity : i64]) : CtfeValueSeq
-  (CtfeValueSeq (array.make-array CompilerCtfeValue capacity) 0))
+  (CtfeValueSeq (ctfe_value_vec.with-capacity capacity)))
 
-(define (ctfe-value-seq-push [items : CtfeValueSeq] [value : CompilerCtfeValue]) : CtfeValueSeq
-  (let
-    [n : i64 (struct-get items len)]
-    [slots : (Array CompilerCtfeValue) (struct-get items slots)]
-    (begin
-      (array-set! slots n value)
-      (CtfeValueSeq slots (+ n 1)))))
+(define (ctfe-value-seq-push [seq : CtfeValueSeq] [value : CompilerCtfeValue]) : CtfeValueSeq
+  (begin
+    (ctfe_value_vec.push (&mut (struct-get seq items)) value)
+    seq))
 
 (define (ctfe-value-list1 [a : CompilerCtfeValue]) : CtfeValueSeq
   (ctfe-value-seq-push (ctfe-value-seq-with-capacity 1) a))
@@ -9106,13 +9105,14 @@
   [values : CtfeValueSeq]
   [env : CtfeEnv]) : CtfePatternMatch
   (if (>= index (struct-get patterns len))
-    (if (= index (struct-get values len))
+    (if (= index (ctfe_value_vec.len (& (struct-get values items))))
       (CtfePatternMatch.Matched env)
       (CtfePatternMatch.No))
-    (if (>= index (struct-get values len))
+    (if (>= index (ctfe_value_vec.len (& (struct-get values items))))
       (CtfePatternMatch.No)
       (let
-        [value : CompilerCtfeValue (array.ref (struct-get values slots) index)]
+        [value : CompilerCtfeValue
+          (array.ref (ctfe_value_vec.slots (& (struct-get values items))) index)]
         (match (ctfe-match-pattern
           (ast-pattern-list-get patterns index (ast-pattern-fallback))
           value

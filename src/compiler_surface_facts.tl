@@ -3,6 +3,7 @@
 (import compiler_surface_binary as binary)
 (import compiler_surface_identity as surface_identity)
 (import stdlib.arena)
+(import stdlib.vector)
 
 ;; lint-allow: unused-import -- used by compiler-surface-producer builds.
 (import stdlib.byte_buf_core)
@@ -36,53 +37,22 @@
   (root-key i64)
   (call-index i64))
 
+(import (vector.vector SurfaceCloneObservation core) as clone_observation_vec)
+
 (defstruct SurfaceCloneObservationSeq
-  (slots (Array SurfaceCloneObservation))
-  (len i64))
+  (items clone_observation_vec.Vec))
 
+;; Recording installs the observation buffer while its owning arena is current,
+;; so both the initial backing array and every later doubling stay in that
+;; arena. The initial capacity matches the first growth step the hand-rolled
+;; buffer used.
 (define (surface-clone-observation-seq-empty) : SurfaceCloneObservationSeq
-  (SurfaceCloneObservationSeq (make-array SurfaceCloneObservation 0) 0))
-
-(define (surface-clone-observation-copy-range!
-  [dst : (&mut dst (Array SurfaceCloneObservation))]
-  [src : (& src (Array SurfaceCloneObservation))]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (array-set! dst index (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (surface-clone-observation-seq-grow!
-  [seq : (&mut seq SurfaceCloneObservationSeq)]) : unit
-  (let
-    [count : i64 (struct-get seq len)]
-    [bigger : (Array SurfaceCloneObservation)
-      (make-array
-        SurfaceCloneObservation
-        (if (< count 1)
-          16
-          (* count 2)))]
-    (begin
-      (surface-clone-observation-copy-range!
-        (&mut bigger)
-        (& (struct-get seq slots))
-        count)
-      (set! (struct-get seq slots) bigger))))
+  (SurfaceCloneObservationSeq (clone_observation_vec.with-capacity 16)))
 
 (define (surface-clone-observation-seq-push!
   [seq : (&mut seq SurfaceCloneObservationSeq)]
   [observation : SurfaceCloneObservation]) : unit
-  (begin
-    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
-      unit
-      (surface-clone-observation-seq-grow! seq))
-    (let
-      [index : i64 (struct-get seq len)]
-      (begin
-        (array-set! (struct-get seq slots) index observation)
-        (set! (struct-get seq len) (+ index 1))))))
+  (clone_observation_vec.push (&mut (struct-get seq items)) observation))
 
 (define surface-typecheck-facts-magic : i64
   6073461667468337970)
@@ -195,17 +165,23 @@
   [summary-externs : i64]) : SurfaceTypecheckFacts
   (let
     [count : i64
-      (struct-get surface-typecheck-facts-recording-observations len)]
+      (clone_observation_vec.len
+        (& (struct-get surface-typecheck-facts-recording-observations items)))]
     [decl-keys : (Array i64) (make-array i64 count)]
     [root-keys : (Array i64) (make-array i64 count)]
     [call-indices : (Array i64) (make-array i64 count)]
     [index : i64 0]
-    [slots : (Array SurfaceCloneObservation)
-      (struct-get surface-typecheck-facts-recording-observations slots)]
     (begin
       (while (< index count)
         (let
-          [observation : SurfaceCloneObservation (array-ref slots index)]
+          [observation : SurfaceCloneObservation
+            (array-ref
+              (clone_observation_vec.slots
+                (&
+                  (struct-get
+                    surface-typecheck-facts-recording-observations
+                    items)))
+              index)]
           (begin
             (array-set! decl-keys index (struct-get observation decl-key))
             (array-set! root-keys index (struct-get observation root-key))

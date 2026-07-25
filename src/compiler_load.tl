@@ -249,9 +249,10 @@
     AstDeclModuleList
     sym_i64_env.SymI64Env))
 
+(import (vector.vector i64 core) as load_id_vec)
+
 (defstruct CompilerLoadInternIdSeq
-  (slots (Array i64))
-  (len i64))
+  (items load_id_vec.Vec))
 
 (defstruct CompilerLoadPreludeCacheKey
   (root-ids CompilerLoadInternIdSeq)
@@ -1376,8 +1377,8 @@
   [left : CompilerLoadInternIdSeq]
   [right : CompilerLoadInternIdSeq]) : bool
   (let
-    [count : i64 (struct-get left len)]
-    [same : bool (= count (struct-get right len))]
+    [count : i64 (load_id_vec.len (& (struct-get left items)))]
+    [same : bool (= count (load_id_vec.len (& (struct-get right items))))]
     [index : i64 0]
     (begin
       (while (and same (< index count))
@@ -1385,24 +1386,28 @@
           (set!
             same
             (=
-              (array-ref (struct-get left slots) index)
-              (array-ref (struct-get right slots) index)))
+              (array-ref (load_id_vec.slots (& (struct-get left items))) index)
+              (array-ref (load_id_vec.slots (& (struct-get right items))) index)))
           (set! index (+ index 1))))
       same)))
 
 ;; The copy runs under whichever arena the caller made current, so the cached
-;; key's ids land in the same long-lived arena the cons spine used to.
+;; key's ids land in the same long-lived arena the cons spine used to. The
+;; destination is right-sized up front, so the generated vector never grows and
+;; every id stays in that one arena.
 (define (compiler-load-intern-id-seq-copy [ids : CompilerLoadInternIdSeq]) : CompilerLoadInternIdSeq
   (let
-    [count : i64 (struct-get ids len)]
-    [slots : (Array i64) (array.make-array i64 count)]
+    [count : i64 (load_id_vec.len (& (struct-get ids items)))]
+    [out : load_id_vec.Vec (load_id_vec.with-capacity count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (array-ref (struct-get ids slots) index))
+          (load_id_vec.push
+            (&mut out)
+            (array-ref (load_id_vec.slots (& (struct-get ids items))) index))
           (set! index (+ index 1))))
-      (CompilerLoadInternIdSeq slots count))))
+      (CompilerLoadInternIdSeq out))))
 
 (define (compiler-load-prelude-cache-key-equal?
   [left : CompilerLoadPreludeCacheKey]
@@ -1583,7 +1588,7 @@
       (if (< index count)
         (- count index)
         0)]
-    [slots : (Array i64) (array.make-array i64 len)]
+    [ids : load_id_vec.Vec (load_id_vec.with-capacity len)]
     [cursor : i64 0]
     (begin
       (while (< cursor len)
@@ -1592,9 +1597,9 @@
             (compiler-load-normalize-path
               (svec.get (& roots) (+ index cursor) ""))]
           (begin
-            (array-set! slots cursor (compiler-load-source-path-id root))
+            (load_id_vec.push (&mut ids) (compiler-load-source-path-id root))
             (set! cursor (+ cursor 1)))))
-      (CompilerLoadInternIdSeq slots len))))
+      (CompilerLoadInternIdSeq ids))))
 
 (define (compiler-load-session-state-runtime-prelude-cache-key
   [state : CompilerLoadSessionState]
@@ -13539,10 +13544,11 @@
   (alias String)
   (path String))
 
+(import (vector.vector CompilerPkgDep core) as pkg_dep_vec)
+
 ;: Alias->path dependency list from a parsed manifest, in manifest order.
 (defstruct CompilerPkgDepList
-  (slots (Array CompilerPkgDep))
-  (len i64))
+  (items pkg_dep_vec.Vec))
 
 ;: Package dependencies preserve manifest order for deterministic builds while
 ;: indexing aliases for duplicate detection and `pkg:<alias>/...` resolution.
@@ -13613,53 +13619,49 @@
 
 ;: Count the dependencies in a parsed list.
 (define (compiler-pkg-dep-list-count [deps : CompilerPkgDepList]) : i64
-  (struct-get deps len))
+  (pkg_dep_vec.len (& (struct-get deps items))))
 
 (define (compiler-pkg-dep-list-at [deps : CompilerPkgDepList] [index : i64]) : CompilerPkgDep
-  (array-ref (struct-get deps slots) index))
+  (array-ref (pkg_dep_vec.slots (& (struct-get deps items))) index))
 
 (define (compiler-pkg-dep-list-empty) : CompilerPkgDepList
-  (CompilerPkgDepList (array.make-array CompilerPkgDep 0) 0))
+  (CompilerPkgDepList (pkg_dep_vec.with-capacity 0)))
 
 (define (compiler-pkg-dep-list-copy-into
-  [dst : (Array CompilerPkgDep)]
-  [src : CompilerPkgDepList]
-  [dst-offset : i64]) : unit
+  [dst : (&mut dst pkg_dep_vec.Vec)]
+  [src : CompilerPkgDepList]) : unit
   (let
-    [n : i64 (struct-get src len)]
+    [n : i64 (compiler-pkg-dep-list-count src)]
     [index : i64 0]
     (while (< index n)
       (begin
-        (array-set!
-          dst
-          (+ dst-offset index)
-          (array-ref (struct-get src slots) index))
+        (pkg_dep_vec.push dst (compiler-pkg-dep-list-at src index))
         (set! index (+ index 1))))))
 
-;: Append `dep`. Every push right-sizes a fresh array, so callers that keep
+;: Append `dep`. Every push right-sizes a fresh vector, so callers that keep
 ;: extending the same list from several branches never share a buffer.
 (define (compiler-pkg-dep-list-push
   [deps : CompilerPkgDepList]
   [dep : CompilerPkgDep]) : CompilerPkgDepList
   (let
     [n : i64 (compiler-pkg-dep-list-count deps)]
-    [slots : (Array CompilerPkgDep) (array.make-array CompilerPkgDep (+ n 1))]
+    [out : pkg_dep_vec.Vec (pkg_dep_vec.with-capacity (+ n 1))]
     (begin
-      (compiler-pkg-dep-list-copy-into slots deps 0)
-      (array-set! slots n dep)
-      (CompilerPkgDepList slots (+ n 1)))))
+      (compiler-pkg-dep-list-copy-into (&mut out) deps)
+      (pkg_dep_vec.push (&mut out) dep)
+      (CompilerPkgDepList out))))
 
-;: Prepend `dep`, right-sizing a fresh array like `compiler-pkg-dep-list-push`.
+;: Prepend `dep`, right-sizing a fresh vector like `compiler-pkg-dep-list-push`.
 (define (compiler-pkg-dep-list-cons
   [dep : CompilerPkgDep]
   [deps : CompilerPkgDepList]) : CompilerPkgDepList
   (let
     [n : i64 (compiler-pkg-dep-list-count deps)]
-    [slots : (Array CompilerPkgDep) (array.make-array CompilerPkgDep (+ n 1))]
+    [out : pkg_dep_vec.Vec (pkg_dep_vec.with-capacity (+ n 1))]
     (begin
-      (array-set! slots 0 dep)
-      (compiler-pkg-dep-list-copy-into slots deps 1)
-      (CompilerPkgDepList slots (+ n 1)))))
+      (pkg_dep_vec.push (&mut out) dep)
+      (compiler-pkg-dep-list-copy-into (&mut out) deps)
+      (CompilerPkgDepList out))))
 
 (define (compiler-pkg-deps-empty) : CompilerPkgDeps
   (CompilerPkgDeps (compiler-pkg-dep-list-empty)))
@@ -15797,7 +15799,7 @@
       (compiler-load-session-state-program-admission-record state-a program-key)]
     [prelude-key : CompilerLoadPreludeCacheKey
       (CompilerLoadPreludeCacheKey
-        (CompilerLoadInternIdSeq (array.make-array i64 0) 0)
+        (CompilerLoadInternIdSeq (load_id_vec.new))
         cfgs)]
     [_store-prelude : unit
       (compiler-load-session-state-runtime-prelude-cache-store

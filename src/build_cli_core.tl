@@ -171,10 +171,9 @@
 
 ;; DFS call stack used only for cycle diagnostics. Pushes follow recursion
 ;; depth and siblings keep the shallower stack alive, so each descent
-;; right-sizes a fresh array rather than sharing one growable buffer.
+;; right-sizes a fresh vector rather than sharing one growable buffer.
 (defstruct BuildPackagePathSeq
-  (slots (Array String))
-  (len i64))
+  (items cli_svec.Vec))
 
 (defstruct BuildPackageWorkerConfig
   (manifest-path String)
@@ -2300,25 +2299,28 @@
   [paths : BuildPackagePathSeq]
   [path : String]) : BuildPackagePathSeq
   (let
-    [count : i64 (struct-get paths len)]
-    [slots : (Array String) (make-array String (+ count 1))]
+    [count : i64 (cli_svec.len (& (struct-get paths items)))]
+    [out : cli_svec.Vec (cli_svec.with-capacity (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set! slots index (array-ref (struct-get paths slots) index))
+          (cli_svec.push
+            (&mut out)
+            (array-ref (cli_svec.slots (& (struct-get paths items))) index))
           (set! index (+ index 1))))
-      (array-set! slots count path)
-      (BuildPackagePathSeq slots (+ count 1)))))
+      (cli_svec.push (&mut out) path)
+      (BuildPackagePathSeq out))))
 
 (define (build-package-path-seq-render [paths : BuildPackagePathSeq]) : String
   (let
     [out : String ""]
     [index : i64 0]
     (begin
-      (while (< index (struct-get paths len))
+      (while (< index (cli_svec.len (& (struct-get paths items))))
         (let
-          [path : String (array-ref (struct-get paths slots) index)]
+          [path : String
+            (array-ref (cli_svec.slots (& (struct-get paths items))) index)]
           (begin
             (set!
               out
@@ -2540,7 +2542,7 @@
         (build-package-graph-node-vec-new))]
     [stack : BuildPackagePathSeq
       (build-package-path-seq-push
-        (BuildPackagePathSeq (make-array String 0) 0)
+        (BuildPackagePathSeq (cli_svec.with-capacity 0))
         root-path)]
     (match (build-package-graph-add-deps
       root-dir

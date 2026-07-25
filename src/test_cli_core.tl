@@ -2212,10 +2212,11 @@
             1)]))
     0))
 
+(import (vector.vector i64 core) as tltest_cfg_value_vec)
+
 (defstruct TltestCfgNames
-  (slots (Array String))
-  (values (Array i64))
-  (len i64))
+  (slots cli_svec.Vec)
+  (values tltest_cfg_value_vec.Vec))
 
 (define (tltest-cfg-env-count [cfgs : sym_i64_env.SymI64Env]) : i64
   (match cfgs
@@ -2225,30 +2226,30 @@
 
 (define (tltest-cfg-names-fill!
   [cfgs : sym_i64_env.SymI64Env]
-  [slots : (Array String)]
-  [values : (Array i64)]
-  [index : i64]) : unit
+  [slots : (&mut slots cli_svec.Vec)]
+  [values : (&mut values tltest_cfg_value_vec.Vec)]) : unit
   (match cfgs
     [(sym_i64_env.SymI64Nil) unit]
     [(sym_i64_env.SymI64Bind key value rest)
       (begin
-        (array-set! slots index (compiler-cfg-name key))
-        (array-set! values index value)
-        (tltest-cfg-names-fill! (box-get rest) slots values (+ index 1)))]))
+        (cli_svec.push slots (compiler-cfg-name key))
+        (tltest_cfg_value_vec.push values value)
+        (tltest-cfg-names-fill! (box-get rest) slots values))]))
 
 (define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
   (let
     [count : i64 (tltest-cfg-env-count cfgs)]
-    [slots : (Array String) (make-array String count)]
-    [values : (Array i64) (make-array i64 count)]
+    [slots : cli_svec.Vec (cli_svec.with-capacity count)]
+    [values : tltest_cfg_value_vec.Vec
+      (tltest_cfg_value_vec.with-capacity count)]
     (begin
-      (tltest-cfg-names-fill! cfgs slots values 0)
-      (TltestCfgNames slots values count))))
+      (tltest-cfg-names-fill! cfgs (&mut slots) (&mut values))
+      (TltestCfgNames slots values))))
 
 (define (tltest-cfg-names-to-env [names : TltestCfgNames]) : sym_i64_env.SymI64Env
   (let
     [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
-    [index : i64 (struct-get names len)]
+    [index : i64 (cli_svec.len (& (struct-get names slots)))]
     (begin
       (while (> index 0)
         (begin
@@ -2257,8 +2258,10 @@
             env
             (compiler-cfg-bind
               env
-              (array-ref (struct-get names slots) index)
-              (array-ref (struct-get names values) index)))))
+              (array-ref (cli_svec.slots (& (struct-get names slots))) index)
+              (array-ref
+                (tltest_cfg_value_vec.slots (& (struct-get names values)))
+                index)))))
       env)))
 
 (define (tltest-inline-typecheck-package-sources-from

@@ -377,6 +377,15 @@
       [(CompilerCtfeValue.String text _) (CompilerCtfeMaybeString.Some text)]
       [_ (CompilerCtfeMaybeString.None)])))
 
+;; Public CTFE String arguments also accept inspected Name values; this is how
+;; reflection names flow through ordinary string helpers on the interpreted
+;; route. Refs #5626.
+(define (compiler-comptime-host-value-string [value : CompilerCtfeValue]) : CompilerCtfeMaybeString
+  (match value
+    [(CompilerCtfeValue.String text _) (CompilerCtfeMaybeString.Some text)]
+    [(CompilerCtfeValue.Name text _) (CompilerCtfeMaybeString.Some text)]
+    [_ (CompilerCtfeMaybeString.None)]))
+
 ;; The pools that own an operand's expression nodes: a captured operand keeps
 ;; its caller pools, every other value reads the session pools. Refs #5602.
 (define (compiler-comptime-host-value-pools [value : CompilerCtfeValue]) : AstNodePoolContext
@@ -460,6 +469,50 @@
               (- compiler-comptime-host-stack-len 2))
             (compiler-comptime-host-push!
               (CompilerCtfeValue.Expr node (AstType.Expr)))))))))
+
+;; Build a computed struct projection from an already-resolved opaque syntax
+;; identity. Source-name identities are not sign-constrained, so callers must
+;; discriminate the value variant rather than treating a negative id as an
+;; error sentinel. Refs #5626.
+(define (compiler-comptime-host-build-struct-get-from-id!
+  [target-node : i64]
+  [name-id : i64]) : i64
+  (begin
+    (set!
+      compiler-comptime-host-stack-len
+      (- compiler-comptime-host-stack-len 2))
+    (compiler-comptime-host-push!
+      (CompilerCtfeValue.Expr
+        (ast-expr-struct-get-id-with-pools
+          (array-ref compiler-comptime-host-pools 0)
+          target-node
+          name-id)
+        (AstType.Expr)))))
+
+;; Resolve a computed String/Name identity the same way the interpreted
+;; pattern-variant builder does, then consume its payload list.
+(define (compiler-comptime-host-build-pattern-variant-from-name!
+  [text : String]
+  [name-id : i64]
+  [payloads-value : CompilerCtfeValue]) : i64
+  (match payloads-value
+    [(CompilerCtfeValue.PatternList payloads)
+      (let
+        [env : CtfeEnv
+          (ctfe-env-empty-with-pools (array-ref compiler-comptime-host-pools 0))]
+        (begin
+          (set!
+            compiler-comptime-host-stack-len
+            (- compiler-comptime-host-stack-len 2))
+          (compiler-comptime-host-push!
+            (CompilerCtfeValue.Pattern
+              (ast-pat-variant-id
+                (ctfe-string-syntax-name-id
+                  (ctfe-env-source-names env)
+                  text
+                  name-id)
+                payloads)))))]
+    [_ tlci-host-callback-status-bad-request]))
 
 ;; Decode the scalar AstType ordinal a native image passes for type-scalar.
 ;; The producer and consumer are always the same source-bound binary, so the
@@ -1540,10 +1593,10 @@
             (array-ref
               compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 2))]
-          (match left-value
-            [(CompilerCtfeValue.String left-text _)
-              (match right-value
-                [(CompilerCtfeValue.String right-text _)
+          (match (compiler-comptime-host-value-string left-value)
+            [(CompilerCtfeMaybeString.Some left-text)
+              (match (compiler-comptime-host-value-string right-value)
+                [(CompilerCtfeMaybeString.Some right-text)
                   (begin
                     (set!
                       compiler-comptime-host-stack-len
@@ -1551,8 +1604,10 @@
                     (compiler-comptime-host-push!
                       (ctfe-generated-string-value
                         (string.append left-text right-text))))]
-                [_ tlci-host-callback-status-bad-request])]
-            [_ tlci-host-callback-status-bad-request])))]
+                [(CompilerCtfeMaybeString.None)
+                  tlci-host-callback-status-bad-request])]
+            [(CompilerCtfeMaybeString.None)
+              tlci-host-callback-status-bad-request])))]
     ;; Pattern construction, mirroring the interpreted quote's pattern rebuild:
     ;; variant names pass through unmarked while Var/Binding names carry the
     ;; template-source mark.
@@ -1668,23 +1723,18 @@
             (array-ref
               compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 2))]
-          [name-id : i64
-            (match name-value
-              [(CompilerCtfeValue.Name _ id) id]
-              [(CompilerCtfeValue.String _ id) id]
-              [_ -1])]
-          (if (< name-id 0)
-            tlci-host-callback-status-bad-request
-            (match payloads-value
-              [(CompilerCtfeValue.PatternList payloads)
-                (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
-                    (CompilerCtfeValue.Pattern
-                      (ast-pat-variant-id name-id payloads))))]
-              [_ tlci-host-callback-status-bad-request]))))]
+          (match name-value
+            [(CompilerCtfeValue.Name text name-id)
+              (compiler-comptime-host-build-pattern-variant-from-name!
+                text
+                name-id
+                payloads-value)]
+            [(CompilerCtfeValue.String text string-id)
+              (compiler-comptime-host-build-pattern-variant-from-name!
+                text
+                string-id
+                payloads-value)]
+            [_ tlci-host-callback-status-bad-request])))]
     [(= operation tlci-host-callback-op-match-arm-list-cons-from-values)
       (if (< compiler-comptime-host-stack-len 2)
         tlci-host-callback-status-bad-request
@@ -1931,24 +1981,25 @@
               compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 2))]
           [target-node : i64 (compiler-comptime-host-value-node target-value)]
-          [name-id : i64
-            (match name-value
-              [(CompilerCtfeValue.Name _ id) id]
-              [(CompilerCtfeValue.String _ id) id]
-              [_ -1])]
-          (if (or (< target-node 0) (< name-id 0))
+          (if (< target-node 0)
             tlci-host-callback-status-bad-request
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 2))
-              (compiler-comptime-host-push!
-                (CompilerCtfeValue.Expr
-                  (ast-expr-struct-get-id-with-pools
-                    (array-ref compiler-comptime-host-pools 0)
+            (match name-value
+              [(CompilerCtfeValue.Name _ name-id)
+                (compiler-comptime-host-build-struct-get-from-id!
+                  target-node
+                  name-id)]
+              [(CompilerCtfeValue.String text string-id)
+                (let
+                  [env : CtfeEnv
+                    (ctfe-env-empty-with-pools
+                      (array-ref compiler-comptime-host-pools 0))]
+                  (compiler-comptime-host-build-struct-get-from-id!
                     target-node
-                    name-id)
-                  (AstType.Expr)))))))]
+                    (ctfe-string-syntax-name-id
+                      (ctfe-env-source-names env)
+                      text
+                      string-id)))]
+              [_ tlci-host-callback-status-bad-request]))))]
     ;; array-set!: pop the value, index, and target expressions and push the
     ;; node the parser produces.
     [(= operation tlci-host-callback-op-expr-array-set)

@@ -409,6 +409,34 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-name? "beta")
+            ;; Interpreted String arguments accept reflected Name values too:
+            ;; this exact `"." + field-name` shape is used by struct hashing.
+            (=
+              (comptime-host-smoke-invoke
+                tlci-host-callback-op-string-value
+                (comptime-host-smoke-name-ptr ".")
+                1)
+              0)
+            (=
+              (comptime-host-smoke-invoke
+                tlci-host-callback-op-push-operand
+                0
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
+                tlci-host-callback-op-struct-field-name
+                0
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
+                tlci-host-callback-op-string-append
+                0
+                0)
+              0)
+            (comptime-host-smoke-commit-result!)
+            (comptime-host-smoke-result-name? ".alpha")
             (=
               (comptime-host-smoke-invoke
                 tlci-host-callback-op-push-operand

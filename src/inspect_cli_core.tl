@@ -54,40 +54,62 @@ Summary:
     (string.int->string bytes)
     "\n"))
 
-(define (tlci-inspect-spmd-specializations [items : TlciSpmdSpecializationList]) : String
-  (match items
-    [(TlciSpmdSpecializationList.Nil) ""]
-    [(TlciSpmdSpecializationList.Cons item rest)
-      (str_cat.str-cat
-        "    specialization: abi="
-        (struct-get item abi)
-        " backend="
-        (struct-get item backend)
-        " lanes="
-        (string.int->string (struct-get item lanes))
-        " args="
-        (struct-get item args)
-        " result="
-        (struct-get item result)
-        " index-param="
-        (string.int->string (struct-get item index-param))
-        " symbol="
-        (struct-get item symbol)
-        "\n"
-        (tlci-inspect-spmd-specializations (box-get rest)))]))
+(define (tlci-inspect-spmd-specializations [items : TlciSpmdSpecializations]) : String
+  (let
+    [count : i64 (tlci-spmd-specializations-len items)]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index count)
+        (let
+          [item : TlciSpmdSpecialization
+            (tlci-spmd-specializations-ref items index)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                "    specialization: abi="
+                (struct-get item abi)
+                " backend="
+                (struct-get item backend)
+                " lanes="
+                (string.int->string (struct-get item lanes))
+                " args="
+                (struct-get item args)
+                " result="
+                (struct-get item result)
+                " index-param="
+                (string.int->string (struct-get item index-param))
+                " symbol="
+                (struct-get item symbol)
+                "\n"))
+            (set! index (+ index 1)))))
+      out)))
 
-(define (tlci-inspect-spmd-callables [items : TlciSpmdCallableList]) : String
-  (match items
-    [(TlciSpmdCallableList.Nil) ""]
-    [(TlciSpmdCallableList.Cons item rest)
-      (str_cat.str-cat
-        "  helper: name="
-        (struct-get item name)
-        " signature="
-        (struct-get item signature)
-        "\n"
-        (tlci-inspect-spmd-specializations (struct-get item specializations))
-        (tlci-inspect-spmd-callables (box-get rest)))]))
+(define (tlci-inspect-spmd-callables [items : TlciSpmdCallables]) : String
+  (let
+    [count : i64 (tlci-spmd-callables-len items)]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index count)
+        (let
+          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                "  helper: name="
+                (struct-get item name)
+                " signature="
+                (struct-get item signature)
+                "\n"
+                (tlci-inspect-spmd-specializations
+                  (struct-get item specializations))))
+            (set! index (+ index 1)))))
+      out)))
 
 (define (tlci-inspect-spmd-section [metadata : TlciMetadata]) : String
   (if (string.eq (struct-get metadata version) tlci-metadata-version-v2)

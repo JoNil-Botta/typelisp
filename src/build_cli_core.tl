@@ -3220,51 +3220,110 @@
 
 (define (build-package-tlci-metadata
   [manifest : CompilerPkgManifest]
-  [callables : TlciSpmdCallableList]) : TlciMetadata
-  (match callables
-    [(TlciSpmdCallableList.Nil)
-      (tlci-make-metadata
-        "v1"
-        (struct-get manifest name)
-        (struct-get manifest version))]
-    [(TlciSpmdCallableList.Cons _ _)
-      (tlci-make-metadata-v2
-        (struct-get manifest name)
-        (struct-get manifest version)
-        callables)]))
+  [callables : TlciSpmdCallables]) : TlciMetadata
+  (if (= (tlci-spmd-callables-len callables) 0)
+    (tlci-make-metadata
+      "v1"
+      (struct-get manifest name)
+      (struct-get manifest version))
+    (tlci-make-metadata-v2
+      (struct-get manifest name)
+      (struct-get manifest version)
+      callables)))
 
 (defstruct BuildPackageTlciCallableCollector
-  (items TlciSpmdCallableList)
+  (items TlciSpmdCallables)
   (error String))
 
+;; Ordered insert that drops an exact duplicate. Rebuild the consumed input
+;; into one right-sized dense sequence at the located slot.
 (define (build-package-tlci-specialization-insert
   [item : TlciSpmdSpecialization]
-  [items : TlciSpmdSpecializationList]) : TlciSpmdSpecializationList
-  (match items
-    [(TlciSpmdSpecializationList.Nil)
-      (tlci-spmd-specialization-list-cons item items)]
-    [(TlciSpmdSpecializationList.Cons head rest)
-      (let
-        [order : i64 (tlci-spmd-specialization-compare item head)]
-        (cond
-          [(< order 0) (tlci-spmd-specialization-list-cons item items)]
-          [(= order 0) items]
-          [else
-            (tlci-spmd-specialization-list-cons
-              head
-              (build-package-tlci-specialization-insert item (box-get rest)))]))]))
+  [items : TlciSpmdSpecializations]) : TlciSpmdSpecializations
+  (let
+    [count : i64 (tlci-spmd-specializations-len items)]
+    [position : i64 count]
+    [scan : i64 0]
+    [duplicate : bool false]
+    (begin
+      (while (< scan count)
+        (let
+          [order : i64
+            (tlci-spmd-specialization-compare
+              item
+              (tlci-spmd-specializations-ref items scan))]
+          (cond
+            [(= order 0)
+              (begin
+                (set! duplicate true)
+                (set! scan count))]
+            [(< order 0)
+              (begin
+                (set! position scan)
+                (set! scan count))]
+            [else (set! scan (+ scan 1))])))
+      (if duplicate
+        items
+        (let
+          [dst : TlciSpmdSpecializations
+            (tlci-spmd-specializations-with-capacity (+ count 1))]
+          [cursor : i64 0]
+          (begin
+            (while (< cursor position)
+              (begin
+                (set!
+                  dst
+                  (tlci-spmd-specializations-push
+                    dst
+                    (tlci-spmd-specializations-ref items cursor)))
+                (set! cursor (+ cursor 1))))
+            (set! dst (tlci-spmd-specializations-push dst item))
+            (while (< cursor count)
+              (begin
+                (set!
+                  dst
+                  (tlci-spmd-specializations-push
+                    dst
+                    (tlci-spmd-specializations-ref items cursor)))
+                (set! cursor (+ cursor 1))))
+            dst))))))
 
 (define (build-package-tlci-callable-insert
   [item : TlciSpmdCallable]
-  [items : TlciSpmdCallableList]) : TlciSpmdCallableList
-  (match items
-    [(TlciSpmdCallableList.Nil) (tlci-spmd-callable-list-cons item items)]
-    [(TlciSpmdCallableList.Cons head rest)
-      (if (< (tlci-spmd-callable-compare item head) 0)
-        (tlci-spmd-callable-list-cons item items)
-        (tlci-spmd-callable-list-cons
-          head
-          (build-package-tlci-callable-insert item (box-get rest))))]))
+  [items : TlciSpmdCallables]) : TlciSpmdCallables
+  (let
+    [count : i64 (tlci-spmd-callables-len items)]
+    [position : i64 count]
+    [scan : i64 0]
+    [dst : TlciSpmdCallables (tlci-spmd-callables-with-capacity (+ count 1))]
+    [cursor : i64 0]
+    (begin
+      (while (< scan count)
+        (if (<
+          (tlci-spmd-callable-compare item (tlci-spmd-callables-ref items scan))
+          0)
+          (begin
+            (set! position scan)
+            (set! scan count))
+          (set! scan (+ scan 1))))
+      (while (< cursor position)
+        (begin
+          (set!
+            dst
+            (tlci-spmd-callables-push
+              dst
+              (tlci-spmd-callables-ref items cursor)))
+          (set! cursor (+ cursor 1))))
+      (set! dst (tlci-spmd-callables-push dst item))
+      (while (< cursor count)
+        (begin
+          (set!
+            dst
+            (tlci-spmd-callables-push
+              dst
+              (tlci-spmd-callables-ref items cursor)))
+          (set! cursor (+ cursor 1))))
+      dst)))
 
 (define (build-package-tlci-backend [mode : CompilerBackendMode]) : CompilerIrSpmdBackend
   (match mode
@@ -3281,7 +3340,7 @@
   [index : i64]
   [limit : i64]
   [backend : CompilerIrSpmdBackend]
-  [out : TlciSpmdSpecializationList]) : TlciSpmdSpecializationList
+  [out : TlciSpmdSpecializations]) : TlciSpmdSpecializations
   (if (or (>= index limit) (>= index (ast-spmd-specialization-list-len items)))
     out
     (let
@@ -3366,7 +3425,7 @@
         0
         count
         backend
-        TlciSpmdSpecializationList.Nil))))
+        (tlci-spmd-specializations-empty)))))
 
 (cfg
   test
@@ -3423,47 +3482,46 @@
           [ordinary-metadata : TlciMetadata
             (build-package-tlci-metadata
               (build-package-graph-test-manifest "pkg")
-              TlciSpmdCallableList.Nil)]
+              (tlci-spmd-callables-empty))]
+          [emitted : TlciSpmdSpecializations
+            (struct-get callable specializations)]
           (and
             (string.eq (struct-get ordinary-metadata version) "v1")
-            (match (struct-get ordinary-metadata spmd-callables)
-              [(TlciSpmdCallableList.Nil) true]
-              [_ false])
+            (=
+              (tlci-spmd-callables-len
+                (struct-get ordinary-metadata spmd-callables))
+              0)
             (string.eq (struct-get callable name) "pkg/helper")
             (string.eq (struct-get callable signature) "(-> i64 i64 i64)")
-            (match (struct-get callable specializations)
-              [(TlciSpmdSpecializationList.Cons item rest)
-                (and
-                  (string.eq (struct-get item abi) "spmd-call-v1")
-                  (string.eq (struct-get item backend) "scalar")
-                  (= (struct-get item lanes) 1)
-                  (string.eq (struct-get item args) "uv")
-                  (string.eq (struct-get item result) "v")
-                  (= (struct-get item index-param) 1)
-                  (string.eq
-                    (struct-get item symbol)
-                    (compiler-backend-user-symbol-id
-                      (ci.intern-generated-canonical-name
-                        (lower-spmd-package-symbol
-                          "pkg"
-                          "pkg/helper"
-                          "(-> i64 i64 i64)"
-                          (AstType.I64)
-                          CompilerIrSpmdBackend.Scalar
-                          1
-                          "uv"
-                          "v"
-                          1))))
-                  (match (box-get rest)
-                    [(TlciSpmdSpecializationList.Cons next tail)
-                      (and
-                        (string.eq (struct-get next args) "vu")
-                        (= (struct-get next index-param) 0)
-                        (match (box-get tail)
-                          [(TlciSpmdSpecializationList.Nil) true]
-                          [_ false]))]
-                    [_ false]))]
-              [_ false])))))))
+            (= (tlci-spmd-specializations-len emitted) 2)
+            (let
+              [item : TlciSpmdSpecialization
+                (tlci-spmd-specializations-ref emitted 0)]
+              [next : TlciSpmdSpecialization
+                (tlci-spmd-specializations-ref emitted 1)]
+              (and
+                (string.eq (struct-get item abi) "spmd-call-v1")
+                (string.eq (struct-get item backend) "scalar")
+                (= (struct-get item lanes) 1)
+                (string.eq (struct-get item args) "uv")
+                (string.eq (struct-get item result) "v")
+                (= (struct-get item index-param) 1)
+                (string.eq
+                  (struct-get item symbol)
+                  (compiler-backend-user-symbol-id
+                    (ci.intern-generated-canonical-name
+                      (lower-spmd-package-symbol
+                        "pkg"
+                        "pkg/helper"
+                        "(-> i64 i64 i64)"
+                        (AstType.I64)
+                        CompilerIrSpmdBackend.Scalar
+                        1
+                        "uv"
+                        "v"
+                        1))))
+                (string.eq (struct-get next args) "vu")
+                (= (struct-get next index-param) 0)))))))))
 
 (cfg
   test
@@ -3496,28 +3554,30 @@
             (box second-classes)
             AstSpmdResultClass.Uniform
             -1))
-        (match (struct-get
-          (build-package-tlci-callable
-            "pkg"
-            "pkg"
-            helper-id
-            (ast-param-cons
-              (ast-param-id x-id (AstType.I64) false)
-              (ast-param-list-new))
-            (AstType.I64)
-            specializations
-            (CompilerBackendMode.Scalar))
-          specializations)
-          [(TlciSpmdSpecializationList.Cons item rest)
-            (and
-              (= (struct-get item lanes) 1)
-              (string.eq (struct-get item args) "u")
-              (string.eq (struct-get item result) "u")
-              (= (struct-get item index-param) -1)
-              (match (box-get rest)
-                [(TlciSpmdSpecializationList.Nil) true]
-                [_ false]))]
-          [_ false])))))
+        (let
+          [emitted : TlciSpmdSpecializations
+            (struct-get
+              (build-package-tlci-callable
+                "pkg"
+                "pkg"
+                helper-id
+                (ast-param-cons
+                  (ast-param-id x-id (AstType.I64) false)
+                  (ast-param-list-new))
+                (AstType.I64)
+                specializations
+                (CompilerBackendMode.Scalar))
+              specializations)]
+          (and
+            (= (tlci-spmd-specializations-len emitted) 1)
+            (let
+              [item : TlciSpmdSpecialization
+                (tlci-spmd-specializations-ref emitted 0)]
+              (and
+                (= (struct-get item lanes) 1)
+                (string.eq (struct-get item args) "u")
+                (string.eq (struct-get item result) "u")
+                (= (struct-get item index-param) -1)))))))))
 
 (cfg
   test
@@ -3940,7 +4000,7 @@
   [paths : AstDeclPathList]) : BuildPackageTlciCallableCollector
   (match (package-source-discover-for "build" manifest-path true)
     [(ResultPackageSourceSet.Err message)
-      (BuildPackageTlciCallableCollector TlciSpmdCallableList.Nil message)]
+      (BuildPackageTlciCallableCollector (tlci-spmd-callables-empty) message)]
     [(ResultPackageSourceSet.Ok source-set)
       (let
         [owned-sources : build_string_i64_map.Map
@@ -3953,7 +4013,7 @@
           (struct-get manifest name)
           mode
           owned-sources
-          (BuildPackageTlciCallableCollector TlciSpmdCallableList.Nil "")))]))
+          (BuildPackageTlciCallableCollector (tlci-spmd-callables-empty) "")))]))
 
 (define (build-package-tlci-image
   [metadata : TlciMetadata]

@@ -58397,7 +58397,7 @@
             (cobj.compiler-object-data-record-list-ref records index)]
           (match record
             [(cobj.CompilerObjectDataRecord.Label found)
-              (if (= found label)
+              (if (string.eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))

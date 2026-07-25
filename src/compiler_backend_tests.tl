@@ -5086,7 +5086,7 @@
       (compiler-backend-register-group-test-index)]
     (match (compiler-backend-emit-mov assignments 1 src ty index 4 "")
       [(ResultCompilerBackend.Err diag)
-        (= (compiler-diagnostic-message (box-get diag)) want)]
+        (string.eq (compiler-diagnostic-message (box-get diag)) want)]
       [(ResultCompilerBackend.Ok _) false])))
 
 (define (compiler-backend-register-group-call-arg-error-ok?) : bool
@@ -9152,7 +9152,7 @@
 (define (compiler-backend-error-ok? [src : String] [want : String]) : bool
   (match (compiler-backend-emit-source src)
     [(ResultCompilerBackend.Err message)
-      (= (compiler-diagnostic-message (box-get message)) want)]
+      (string.eq (compiler-diagnostic-message (box-get message)) want)]
     [(ResultCompilerBackend.Ok _) false]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
@@ -11915,7 +11915,7 @@
     end-value
     lanes
     (compiler-diagnostic-at-start "" ""))
-    [(ResultCompilerBackend.Ok asm) (= asm want)]
+    [(ResultCompilerBackend.Ok asm) (string.eq asm want)]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-tail-mask-dynamic-zero-ok?) : bool
@@ -11982,7 +11982,7 @@
     (CompilerIrValue.Var 0)
     lanes
     (compiler-diagnostic-at-start "" ""))
-    [(ResultCompilerBackend.Ok asm) (= asm want)]
+    [(ResultCompilerBackend.Ok asm) (string.eq asm want)]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-mask-not-shortens-ok?) : bool
@@ -12019,7 +12019,7 @@
     (CompilerIrValue.Var 0)
     8
     (compiler-diagnostic-at-start "" ""))
-    [(ResultCompilerBackend.Ok asm) (= asm want)]
+    [(ResultCompilerBackend.Ok asm) (string.eq asm want)]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-mask-binop-same-registers-ok?) : bool
@@ -12063,7 +12063,7 @@
     (CompilerIrValue.Var 0)
     lanes
     (compiler-diagnostic-at-start "" ""))
-    [(ResultCompilerBackend.Ok asm) (= asm want)]
+    [(ResultCompilerBackend.Ok asm) (string.eq asm want)]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-mask-reduce-ok?) : bool
@@ -12514,7 +12514,7 @@
     lanes
     elem-ty
     (compiler-diagnostic-at-start "" ""))
-    [(ResultCompilerBackend.Ok asm) (= asm want)]
+    [(ResultCompilerBackend.Ok asm) (string.eq asm want)]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-vector-binop-emits?
@@ -12531,7 +12531,7 @@
     lanes
     elem-ty
     (compiler-diagnostic-at-start "" ""))
-    [(ResultCompilerBackend.Ok asm) (= asm want)]
+    [(ResultCompilerBackend.Ok asm) (string.eq asm want)]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-vector-binop-diagnostic?
@@ -12549,7 +12549,7 @@
     elem-ty
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Err diag)
-      (= (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerBackend.Ok _) false]))
 
 (define (compiler-backend-avx512-vector-binop-diagnostic?
@@ -12567,7 +12567,7 @@
     elem-ty
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Err diag)
-      (= (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerBackend.Ok _) false]))
 
 (define (compiler-backend-vector-bitwise-binop-ok?) : bool

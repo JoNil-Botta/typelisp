@@ -129,6 +129,65 @@
 (define (compiler-diagnostic-code-typecheck) : String
   "E0200")
 
+;; Per-kind typecheck codes (refs #5668). `E0200` stays as the code for a
+;; typecheck error whose kind has not been classified yet, so nothing that
+;; already renders loses a code.
+;;
+;; These are append-only. Once a code is published a user's bug report quoting
+;; it has to keep meaning the same thing, so a number is never renumbered and a
+;; retired number is never reused -- add the next free one instead.
+;;
+;; Why these are derived from the message rather than set where the error is
+;; raised: a typecheck error travels as `ResultTcType.Err <String>`, so at the
+;; raise site there is no diagnostic to attach a code to, and the kind is only
+;; recoverable from the canonical message text. The classification therefore
+;; happens at the single point where a typecheck error becomes a diagnostic
+;; (`tc-canonical-diagnostic`). The cost of that is real: rewording a mapped
+;; message silently drops it back to `E0200`, which is why every row in
+;; `compiler-diagnostic-code-for-typecheck-message` is pinned by a self-test.
+(define (compiler-diagnostic-code-typecheck-unbound-name) : String
+  "E0201")
+
+(define (compiler-diagnostic-code-typecheck-arity-mismatch) : String
+  "E0202")
+
+(define (compiler-diagnostic-code-typecheck-non-exhaustive-match) : String
+  "E0203")
+
+(define (compiler-diagnostic-code-typecheck-unknown-struct-field) : String
+  "E0204")
+
+(define (compiler-diagnostic-code-typecheck-region-escape) : String
+  "E0205")
+
+(define (compiler-diagnostic-code-typecheck-type-mismatch) : String
+  "E0206")
+
+;; Ordered, first match wins. `arity mismatch` is tested before `type mismatch`
+;; so a call-arity error is not absorbed by the broader mismatch rule if the two
+;; phrasings ever overlap.
+(define (compiler-diagnostic-code-for-typecheck-message [message : String]) : String
+  (cond
+    [(string.contains (& message) "arity mismatch")
+      (compiler-diagnostic-code-typecheck-arity-mismatch)]
+    [(string.contains (& message) "type mismatch")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "unbound name")
+      (compiler-diagnostic-code-typecheck-unbound-name)]
+    ;; Both spellings are live in the typechecker: `match missing arm for ...`
+    ;; is what the exhaustiveness check emits per missing variant, while
+    ;; `non-exhaustive match` is used by the scalar/wildcard path. They are one
+    ;; kind to a user, so they share a code.
+    [(string.contains (& message) "match missing arm")
+      (compiler-diagnostic-code-typecheck-non-exhaustive-match)]
+    [(string.contains (& message) "non-exhaustive match")
+      (compiler-diagnostic-code-typecheck-non-exhaustive-match)]
+    [(string.contains (& message) "unknown struct field")
+      (compiler-diagnostic-code-typecheck-unknown-struct-field)]
+    [(string.contains (& message) "cannot escape")
+      (compiler-diagnostic-code-typecheck-region-escape)]
+    [else (compiler-diagnostic-code-typecheck)]))
+
 (define (compiler-diagnostic-code-or-empty [diag : CompilerDiagnostic]) : String
   (match (compiler-diagnostic-code diag)
     [(CompilerDiagnosticSomeString code) code]
@@ -1231,6 +1290,65 @@
       (string.eq (compiler-diagnostic-code-or-empty uncoded) "")
       (string.eq (compiler-diagnostic-code-or-empty coded) "E1234"))))
 
+;; Pin every classifier row against a real message from the typechecker, using
+;; the exact wording the compiler emits. The classifier keys on message text, so
+;; without this a reword or a message added to the wrong family silently falls
+;; back to `E0200` and the code stops distinguishing anything -- a regression no
+;; other test would see. Also pins that an unrecognised kind still gets `E0200`,
+;; because losing a code entirely would be worse than an imprecise one.
+(define (compiler-diagnostic-typecheck-code-kind-is?
+  [message : String]
+  [expected : String]) : bool
+  (string.eq (compiler-diagnostic-code-for-typecheck-message message) expected))
+
+(define (compiler-diagnostic-typecheck-code-kinds-ok?) : bool
+  (and
+    (and
+      (and
+        (compiler-diagnostic-typecheck-code-kind-is?
+          "typecheck: unbound name io/print-line"
+          (compiler-diagnostic-code-typecheck-unbound-name))
+        (compiler-diagnostic-typecheck-code-kind-is?
+          "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments"
+          (compiler-diagnostic-code-typecheck-arity-mismatch)))
+      (and
+        (compiler-diagnostic-typecheck-code-kind-is?
+          "typecheck: pattern arity mismatch"
+          (compiler-diagnostic-code-typecheck-arity-mismatch))
+        (compiler-diagnostic-typecheck-code-kind-is?
+          "typecheck: annotation type mismatch: expected i64, found bool"
+          (compiler-diagnostic-code-typecheck-type-mismatch))))
+    (and
+      (and
+        ;; The wording the exhaustiveness check actually emits. Pinning the
+        ;; other spelling alone let this rule pass while never firing on a real
+        ;; compile, which is how the first version of this shipped E0200 for a
+        ;; missing match arm.
+        (and
+          (compiler-diagnostic-typecheck-code-kind-is?
+            "typecheck: match missing arm for variant Err"
+            (compiler-diagnostic-code-typecheck-non-exhaustive-match))
+          (compiler-diagnostic-typecheck-code-kind-is?
+            "typecheck: non-exhaustive match"
+            (compiler-diagnostic-code-typecheck-non-exhaustive-match)))
+        (compiler-diagnostic-typecheck-code-kind-is?
+          "typecheck: unknown struct field len"
+          (compiler-diagnostic-code-typecheck-unknown-struct-field)))
+      (and
+        (compiler-diagnostic-typecheck-code-kind-is?
+          "typecheck: region-tagged value cannot escape its arena"
+          (compiler-diagnostic-code-typecheck-region-escape))
+        (and
+          ;; unclassified kinds keep the generic code
+          (compiler-diagnostic-typecheck-code-kind-is?
+            "typecheck: nominal type not found Foo"
+            (compiler-diagnostic-code-typecheck))
+          ;; the six codes must be distinct from each other and from E0200
+          (not
+            (string.eq
+              (compiler-diagnostic-code-typecheck-arity-mismatch)
+              (compiler-diagnostic-code-typecheck-type-mismatch))))))))
+
 (define (compiler-diagnostic-self-test) : i64
   (begin
     (unless (compiler-diagnostic-render-ok?) (return 1))
@@ -1246,4 +1364,5 @@
     (unless (compiler-diagnostic-end-span-ok?) (return 4))
     (unless (compiler-diagnostic-metadata-ok?) (return 4))
     (unless (compiler-diagnostic-code-or-empty-ok?) (return 4))
+    (unless (compiler-diagnostic-typecheck-code-kinds-ok?) (return 5))
     42))

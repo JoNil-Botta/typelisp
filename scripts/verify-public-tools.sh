@@ -1127,9 +1127,9 @@ assert_stdout_empty
 assert_contains "$err" "region-tagged value"
 assert_contains "$err" "cannot escape with-arena"
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
-    assert_contains "$err" "error[E0200]"
+    assert_contains "$err" "error[E0205]"
 else
-    assert_contains "$err" "error[E0200]"
+    assert_contains "$err" "error[E0205]"
     assert_contains "$err" "4 |   (with-arena r (int->string 41)))"
     assert_contains "$err" "|                 ^^^^^^^^^^^^^^^"
     assert_contains "$err" "= help: use with-escape to clone one supported result out of \`r\`"
@@ -1152,7 +1152,7 @@ assert_stdout_empty
 assert_contains "$err" "region-tagged value"
 assert_contains "$err" "cannot escape with-arena 'inner'"
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
-    assert_contains "$err" "error[E0200]"
+    assert_contains "$err" "error[E0205]"
 fi
 
 cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
@@ -1185,7 +1185,7 @@ assert_stdout_empty
 assert_contains "$err" "region-tagged value"
 assert_contains "$err" "cannot escape with-arena 'inner'"
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
-    assert_contains "$err" "error[E0200]"
+    assert_contains "$err" "error[E0205]"
 fi
 
 cat > "$CLI_MATRIX/numeric-cast-matrix.tl" <<'EOF'
@@ -2477,7 +2477,7 @@ assert_stdout_empty
 assert_contains "$err" "doc tests failed"
 assert_contains "$err" "was expected to pass"
 if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
-    assert_contains "$err" "error[E0200]"
+    assert_contains "$err" "error[E0206]"
 fi
 assert_doctest_temp_cleaned "$WORKDIR/docs_bad.tl"
 

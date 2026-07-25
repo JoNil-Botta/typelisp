@@ -8678,11 +8678,27 @@
 (define (compiler-backend-frame-size [vars : i64]) : i64
   (compiler-backend-round-up-16 (* vars 8)))
 
+;; Set by the two helpers below, the only spellings of an %rbp-relative frame
+;; reference the emitter produces. The frame size is computed after the body and
+;; the parameter spills are emitted (the same ordering the emergency/cycle-temp
+;; flags rely on), so a function that never names a slot can drop its slot
+;; region. Planning-time calls set it too, which costs the optimization but
+;; never correctness.
+(define compiler-backend-frame-slot-referenced : bool
+  false)
+
+(define (compiler-backend-frame-slot-referenced-reset!) : unit
+  (set! compiler-backend-frame-slot-referenced false))
+
 (define (compiler-backend-slot [var-id : i64]) : String
-  (string.append (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)"))
+  (begin
+    (set! compiler-backend-frame-slot-referenced true)
+    (string.append (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)")))
 
 (define (compiler-backend-frame-offset [offset : i64]) : String
-  (string.append (string.int->string offset) "(%rbp)"))
+  (begin
+    (set! compiler-backend-frame-slot-referenced true)
+    (string.append (string.int->string offset) "(%rbp)")))
 
 (define (compiler-backend-plan-uses-reg?
   [assignments : CompilerRegAssignmentList]
@@ -9066,14 +9082,29 @@
 ;; ABSOLUTE address as the rbp world, so the rebase bias is unchanged. The
 ;; matching epilogue (`addq $(frame+8), %rsp`) is produced by the rebase
 ;; pass's `leave` rewrite.
+;; The `+8` in the no-CSR FPO prologue exists only to keep call alignment (the
+;; total displacement D % 16 == 8). A function that makes no call has nothing to
+;; align for, and one that never names a frame slot has nothing for the rebase
+;; pass to bias, so its stack adjustment is dead weight and both the prologue
+;; sub and the epilogue fold disappear. Set per function, just before the rebase.
+(define compiler-backend-fpo-bare-frame : bool
+  false)
+
+(define (compiler-backend-fpo-no-push-sub [frame : i64]) : i64
+  (compiler-backend-rsp-rebase-push-sub frame 0))
+
 (define (compiler-backend-emit-function-entry-fpo
   [symbol : String]
   [frame : i64]) : String
-  (str_cat.str-cat
-    symbol
-    ":\n    subq $"
-    (string.int->string (+ frame 8))
-    ", %rsp\n"))
+  (let
+    [sub : i64 (compiler-backend-fpo-no-push-sub frame)]
+    (if (= sub 0)
+      (str_cat.str-cat symbol ":\n" "")
+      (str_cat.str-cat
+        symbol
+        ":\n    subq $"
+        (string.int->string sub)
+        ", %rsp\n"))))
 
 ;; GAP1: push-style FPO prologue -- the plan-saved CSRs are pushed (slot-idx
 ;; order r12..rbp; the pop-run epilogue pops the reverse) and the subq shrinks
@@ -9969,7 +10000,7 @@
 
 (define (compiler-backend-emergency-reg-save-asm [reg : String] [offset : i64]) : String
   (let
-    [slot : String (str-cat (int->string offset) "(%rbp)")]
+    [slot : String (compiler-backend-frame-offset offset)]
     (if (>= (compiler-reg-xmm-family-index reg) 0)
       (match compiler-backend-current-mode
         [(CompilerBackendMode.Scalar)
@@ -9994,7 +10025,7 @@
   [reg : String]
   [offset : i64]) : String
   (let
-    [slot : String (str-cat (int->string offset) "(%rbp)")]
+    [slot : String (compiler-backend-frame-offset offset)]
     (if (>= (compiler-reg-xmm-family-index reg) 0)
       (match compiler-backend-current-mode
         [(CompilerBackendMode.Scalar)
@@ -13349,11 +13380,8 @@
         vars)
         [(ResultCompilerBackend.Ok dst)
           (compiler-backend-emit-group-word-copy
-            (str_cat.str-cat
-              (int->string
-                (compiler-backend-incoming-stack-arg-offset target stack-idx))
-              "(%rbp)"
-              "")
+            (compiler-backend-frame-offset
+              (compiler-backend-incoming-stack-arg-offset target stack-idx))
             dst
             sse?)]
         [(ResultCompilerBackend.Err message)
@@ -18047,6 +18075,45 @@
           (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")))]
     [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
 
+;; The three-operand form for `dst = lhs OP imm` when the destination is not the
+;; source's home: `add` is `leaq K(src), dst` and `sub` is the same instruction
+;; with the displacement negated, which replaces a `mov` + arithmetic pair. Only
+;; a displacement that still encodes as imm32 qualifies (i64 MIN has no
+;; negation, so it falls out here).
+(define (compiler-backend-binop-immediate-lea-asm
+  [op : CompilerIrBinOp]
+  [lhs-reg : String]
+  [dst-home : String]
+  [imm : String]
+  [rhs : CompilerIrValue]) : CompilerBackendMaybeAsm
+  (match op
+    [(CompilerIrBinOp.Add)
+      (CompilerBackendMaybeAsm.Some
+        (str_cat.str-cat
+          "    leaq "
+          (compiler-backend-immediate-displacement imm)
+          "("
+          lhs-reg
+          "), "
+          dst-home
+          "\n"))]
+    [(CompilerIrBinOp.Sub)
+      (match (compiler-backend-value-as-i64 rhs)
+        [(option_i64.Some value)
+          (if (compiler-backend-imm32? (- 0 value))
+            (CompilerBackendMaybeAsm.Some
+              (str_cat.str-cat
+                "    leaq "
+                (string.int->string (- 0 value))
+                "("
+                lhs-reg
+                "), "
+                dst-home
+                "\n"))
+            (CompilerBackendMaybeAsm.No))]
+        [(option_i64.None) (CompilerBackendMaybeAsm.No)])]
+    [_ (CompilerBackendMaybeAsm.No)]))
+
 (define (compiler-backend-emit-binop-direct-immediate
   [assignments : CompilerRegAssignmentList]
   [dst-home : String]
@@ -18066,7 +18133,7 @@
         [_ false]))
       (ResultCompilerBackend.Ok
         (compiler-backend-mul-immediate-direct-asm lhs-reg dst-home imm rhs))
-      (if (and
+      (match (if (and
         (not (string.eq lhs-reg ""))
         ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
         ;; reference and silently rebased by the FPO rsp-rebase pass
@@ -18074,41 +18141,34 @@
         (not (string.eq lhs-reg "%rbp"))
         (not (string.eq lhs-reg dst-home))
         (not (string.eq imm "$0"))
-        (= (compiler-backend-type-size ty) 8)
-        (match op
-          [(CompilerIrBinOp.Add) true]
-          [_ false]))
-        (ResultCompilerBackend.Ok
-          (str_cat.str-cat
-            "    leaq "
-            (compiler-backend-immediate-displacement imm)
-            "("
-            lhs-reg
-            "), "
-            dst-home
-            "\n"))
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          lhs
-          dst-home)
-          [(ResultCompilerBackend.Ok lhs-asm)
-            ;; op-asm bound to a local (behavior-neutral) so the seed
-            ;; typechecker resolves the string.append operand without a
-            ;; spurious match-arm mismatch.
-            (let
-              [op-asm : String
-                (match (compiler-backend-binop-immediate-direct-reg-asm
-                  mnem
-                  op
-                  ty
-                  imm
-                  dst-home
-                  (compiler-backend-value-integer-zero? rhs))
-                  [(CompilerBackendMaybeAsm.Some asm) asm]
-                  [(CompilerBackendMaybeAsm.No) ""])]
-              (ResultCompilerBackend.Ok (string.append lhs-asm op-asm)))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)])))))
+        (= (compiler-backend-type-size ty) 8))
+        (compiler-backend-binop-immediate-lea-asm op lhs-reg dst-home imm rhs)
+        (CompilerBackendMaybeAsm.No))
+        [(CompilerBackendMaybeAsm.Some lea-asm)
+          (ResultCompilerBackend.Ok lea-asm)]
+        [(CompilerBackendMaybeAsm.No)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            lhs
+            dst-home)
+            [(ResultCompilerBackend.Ok lhs-asm)
+              ;; op-asm bound to a local (behavior-neutral) so the seed
+              ;; typechecker resolves the string.append operand without a
+              ;; spurious match-arm mismatch.
+              (let
+                [op-asm : String
+                  (match (compiler-backend-binop-immediate-direct-reg-asm
+                    mnem
+                    op
+                    ty
+                    imm
+                    dst-home
+                    (compiler-backend-value-integer-zero? rhs))
+                    [(CompilerBackendMaybeAsm.Some asm) asm]
+                    [(CompilerBackendMaybeAsm.No) ""])]
+                (ResultCompilerBackend.Ok (string.append lhs-asm op-asm)))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]))))
 
 (define (compiler-backend-binop-direct-immediate-ok?
   [mnem : String]
@@ -28097,10 +28157,8 @@
 (define (compiler-backend-tail-final-stack-slot
   [target : CompilerBackendTarget]
   [stack-idx : i64]) : String
-  (string.append
-    (string.int->string
-      (compiler-backend-incoming-stack-arg-offset target stack-idx))
-    "(%rbp)"))
+  (compiler-backend-frame-offset
+    (compiler-backend-incoming-stack-arg-offset target stack-idx)))
 
 (define (compiler-backend-emit-direct-tail-stack-call-arg
   [target : CompilerBackendTarget]
@@ -33652,10 +33710,8 @@
   (let
     [target-idx : i64 compiler-backend-emergency-pending-count]
     [target-slot : String
-      (str-cat
-        (int->string (compiler-backend-emergency-reg-offset target-idx))
-        "(%rbp)"
-        "")]
+      (compiler-backend-frame-offset
+        (compiler-backend-emergency-reg-offset target-idx))]
     [_reserve-target-slot : unit
       (if (< compiler-backend-emergency-used-count (+ target-idx 1))
         (set! compiler-backend-emergency-used-count (+ target-idx 1))
@@ -41770,13 +41826,10 @@
                 (ResultCompilerBackend.Ok
                   (let
                     [addr : String
-                      (str_cat.str-cat
-                        (int->string
-                          (compiler-backend-incoming-stack-arg-offset
-                            target
-                            stack-idx))
-                        "(%rbp)"
-                        "")]
+                      (compiler-backend-frame-offset
+                        (compiler-backend-incoming-stack-arg-offset
+                          target
+                          stack-idx))]
                     (if is-float
                       (compiler-backend-emit-load-float-address-to-var
                         assignments
@@ -42006,13 +42059,10 @@
                     (ResultCompilerBackend.Ok
                       (let
                         [addr : String
-                          (str_cat.str-cat
-                            (int->string
-                              (compiler-backend-incoming-stack-arg-offset
-                                target
-                                stack-idx))
-                            "(%rbp)"
-                            "")]
+                          (compiler-backend-frame-offset
+                            (compiler-backend-incoming-stack-arg-offset
+                              target
+                              stack-idx))]
                         [exclude-n : i64
                           (compiler-backend-param-register-exclude-count
                             all-params
@@ -44466,11 +44516,13 @@
 ;; the total displacement (8n + S) % 16 == 8 (frame is a 16-multiple), i.e.
 ;; the same call alignment as the no-push `subq $(frame+8)`.
 (define (compiler-backend-rsp-rebase-push-sub [frame : i64] [push-count : i64]) : i64
-  (+
-    frame
-    (if (= (bit-and push-count 1) 1)
-      0
-      8)))
+  (if (and compiler-backend-fpo-bare-frame (= push-count 0))
+    0
+    (+
+      frame
+      (if (= (bit-and push-count 1) 1)
+        0
+        8))))
 
 ;; The popq run restoring the pushed CSRs: highest slot idx first (lowest
 ;; address = last pushed), matching the existing pop-run epilogue order.
@@ -44650,6 +44702,20 @@
     compiler-backend-rsp-rebase-no-push
     0
     0))
+
+;; True when any block holds a call or syscall: such a function keeps the FPO
+;; alignment adjustment.
+(define (compiler-backend-blocks-have-call? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (compiler-reg-loop-split-seq-has-call-or-syscall? instrs)
+            true
+            (compiler-backend-blocks-have-call? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-blocks-have-call? (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-rsp-rebase-full
   [text : String]
@@ -44877,7 +44943,10 @@
                                                 "")
                                               nl))))
                                       (let
-                                        [amount : i64 (+ (+ frame 8) delta)]
+                                        [amount : i64
+                                          (if compiler-backend-fpo-bare-frame
+                                            delta
+                                            (+ (+ frame 8) delta))]
                                         (if (< amount 0)
                                           (set! ok false)
                                           (if (= amount 0)
@@ -47442,6 +47511,10 @@
               (set!
                 compiler-backend-current-phi-targets
                 (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
+            ;; Must precede the parameter spills: those store incoming registers
+            ;; into frame slots, and their references have to count.
+            [_frame-slot-flag : unit
+              (compiler-backend-frame-slot-referenced-reset!)]
             (match (if identity-tail-forwarder?
               (ResultCompilerBackend.Ok "")
               (if (compiler-backend-spmd-private-function? name)
@@ -47585,10 +47658,21 @@
                                       (compiler-backend-frame-slots-emergency-max
                                         slot-vars
                                         has-group-vars)
-                                      (compiler-backend-frame-slots-with-groups
-                                        slot-vars
-                                        assignments
-                                        has-group-vars))
+                                      ;; Nothing named a frame slot: the slot
+                                      ;; region is dead. Leaf helpers stop paying
+                                      ;; sub/add for a frame they never touch.
+                                      ;; Outgoing stack args are %rsp-relative
+                                      ;; and stay accounted separately below.
+                                      (if (or
+                                        compiler-backend-frame-slot-referenced
+                                        (> outgoing-frame-space 0)
+                                        (compiler-backend-blocks-have-call?
+                                          emit-blocks-list))
+                                        (compiler-backend-frame-slots-with-groups
+                                          slot-vars
+                                          assignments
+                                          has-group-vars)
+                                        0))
                                     compiler-backend-const-hoist-frame-count))
                                 outgoing-frame-space)
                               dynamic-frame-extra)]
@@ -47707,6 +47791,17 @@
                                     (compiler-backend-plan-uses-win64-xmm-callee-regs?
                                       assignments)))
                                 (= (bit-and push-count 1) 1)))]
+                          [_fpo-bare : unit
+                            (set!
+                              compiler-backend-fpo-bare-frame
+                              (and
+                                fpo-attempt
+                                (= push-count 0)
+                                (= frame 0)
+                                (not compiler-backend-frame-slot-referenced)
+                                (not
+                                  (compiler-backend-blocks-have-call?
+                                    emit-blocks-list))))]
                           [rebased : String
                             (compiler-backend-rsp-rebase-full
                               post-prologue

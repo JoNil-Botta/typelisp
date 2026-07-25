@@ -6644,6 +6644,7 @@
       (opt-bounds-dom-blocks-with-context
         (opt-cfg-context-build blocks)
         (opt-bounds-dom-test-params)
+        8
         blocks)]
     [after : i64 (opt-count-bounds-blocks after-blocks)]
     (cond

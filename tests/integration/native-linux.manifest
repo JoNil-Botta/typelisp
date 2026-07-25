@@ -238,6 +238,7 @@ stdlib_eq_aggregate|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl
 stdlib_hash_generated|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl
 stdlib_serialize_json|tests/integration/stdlib_serialize_json.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl serialize_enum_fixture.tl
+tlci_native_template_nodes|tests/integration/tlci_native_template_nodes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/math.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl
 stdlib_serialize|tests/integration/stdlib_serialize.tl|42|-|-|stdlib/comptime.tl stdlib/option.tl stdlib/result.tl stdlib/serialize.tl stdlib/string.tl serialize_toy_format.tl serialize_enum_fixture.tl
 stdlib_byte_copy|tests/integration/stdlib_byte_copy.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/io.tl
 stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl

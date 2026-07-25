@@ -711,6 +711,22 @@
   227)
 (define tlci-host-callback-op-local-expr-list-nth : i64
   228)
+
+;; Remaining binder-free template node kinds (refs #5605): expr-return,
+;; expr-box, and expr-box-get each pop one expression and push the node the
+;; parser produces for `(return e)`, `(box e)`, and `(box-get e)`;
+;; expr-float-literal pushes a float literal carrying the caller bytes, which
+;; are the literal's exact source text (the interpreted quote preserves float
+;; spelling verbatim). All are additive ABI v1 ops -- the embedded image and
+;; its consumer are always the same source-bound binary.
+(define tlci-host-callback-op-expr-return : i64
+  229)
+(define tlci-host-callback-op-expr-box : i64
+  230)
+(define tlci-host-callback-op-expr-box-get : i64
+  231)
+(define tlci-host-callback-op-expr-float-literal : i64
+  232)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

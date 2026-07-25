@@ -258,7 +258,8 @@
 ;; result; returns false when the dispatch errors or commits no result. The
 ;; `check` selector picks the result assertion: 0 = flat call template, 1 =
 ;; nested call template, 2 = literal argument pack, 3 = identity body, 4 =
-;; quasiquoted plain symbol.
+;; quasiquoted plain symbol, 5 = match template, 6 = repeated set!, 7 =
+;; struct-set!/box/box-get/return places.
 ;; The `gen` fixture's computed module name: `(begin (module ,module-name)
 ;; ...)` with the let-computed string append resolved by the host.
 (define (producer-test-gen-result-ok? [pools : AstNodePoolContext]) : bool
@@ -695,6 +696,72 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; The `places` fixture covers the template node kinds the json/serialize hooks
+;; need: `(set! (struct-get ...) <float literal>)`, `(box ...)`, `(box-get ...)`,
+;; and `(return ...)`. Refs #5605.
+(define (producer-test-places-result-ok?
+  [pools : AstNodePoolContext]
+  [operand : i64]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Match match-box)
+          (match (box-get match-box)
+            [(AstMatch.Match _ arms)
+              (and
+                (= (struct-get arms len) 2)
+                (match (array-ref (struct-get arms slots) 0)
+                  [(AstMatchArm.Arm _ body)
+                    (match (ast-node-pool-context-expr-get pools body)
+                      [(AstExpr.Begin items)
+                        (and
+                          (= (ast-expr-list-len (& items)) 2)
+                          (match (ast-node-pool-context-expr-get
+                            pools
+                            (ast-expr-list-get (& items) 0 -1))
+                            [(AstExpr.StructSet target field value)
+                              (and
+                                (= field (ci.intern "len"))
+                                (match (ast-node-pool-context-expr-get
+                                  pools
+                                  target)
+                                  [(AstExpr.Var name)
+                                    (= name (producer-test-name-id "inner"))]
+                                  [_ false])
+                                (match (ast-node-pool-context-expr-get
+                                  pools
+                                  value)
+                                  [(AstExpr.Literal (AstLiteral.Float text))
+                                    (string.eq text "1.5")]
+                                  [_ false]))]
+                            [_ false])
+                          (match (ast-node-pool-context-expr-get
+                            pools
+                            (ast-expr-list-get (& items) 1 -1))
+                            [(AstExpr.BoxGet boxed)
+                              (match (ast-node-pool-context-expr-get
+                                pools
+                                boxed)
+                                [(AstExpr.Box inner)
+                                  (match (ast-node-pool-context-expr-get
+                                    pools
+                                    inner)
+                                    [(AstExpr.Var name)
+                                      (= name (producer-test-name-id "inner"))]
+                                    [_ false])]
+                                [_ false])]
+                            [_ false]))]
+                      [_ false])]
+                  [_ false])
+                (match (array-ref (struct-get arms slots) 1)
+                  [(AstMatchArm.Arm _ body)
+                    (match (ast-node-pool-context-expr-get pools body)
+                      [(AstExpr.Return inner) (= inner operand)]
+                      [_ false])]
+                  [_ false]))])]
+        [_ false])]
+    [_ false]))
+
 (define (producer-test-dispatch-shape?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]
@@ -737,7 +804,8 @@
                   [(= check 3) (producer-test-operand-result-ok? operand)]
                   [(= check 4) (producer-test-var-result-ok? pools expected)]
                   [(= check 5) (producer-test-classify-result-ok? pools)]
-                  [else (producer-test-twice-result-ok? pools)]))])]
+                  [(= check 6) (producer-test-twice-result-ok? pools)]
+                  [else (producer-test-places-result-ok? pools operand)]))])]
         (begin
           (compiler-comptime-host-session-close!)
           ok)))))
@@ -990,7 +1058,7 @@
 (define (producer-test-package-native-image-ok?) : bool
   (let
     [source : String
-      "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr `(return ,value))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n(defmacro (catlike [args : String ...]) : String (match (comptime.expr-list-length args) [0 `\"\"] [1 (comptime.expr-list-nth args 0)] [2 `(concat2 ,(comptime.expr-list-nth args 0) ,(comptime.expr-list-nth args 1))] [n `(concat-all (pack (__args ,@args) ,(comptime.expr-int n)))]))\n(defmacro (pushlike [carrier : Expr] [piece : Expr]) : Expr (match carrier [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)] [_ carrier]))\n(defmacro (finishlike [carrier : Expr]) : Expr (match carrier [(comptime.Expr.Call _ pieces) `(joined ,@pieces)] [_ `\"\"]))\n(defmacro (kindfull [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [\"f64\" `(kind-f64 ,value)]))\n(defmacro (kindly [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ (comptime.comptime-error \"kindly: unsupported\")]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n"]
+      "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.Var n) value] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n(defmacro (catlike [args : String ...]) : String (match (comptime.expr-list-length args) [0 `\"\"] [1 (comptime.expr-list-nth args 0)] [2 `(concat2 ,(comptime.expr-list-nth args 0) ,(comptime.expr-list-nth args 1))] [n `(concat-all (pack (__args ,@args) ,(comptime.expr-int n)))]))\n(defmacro (pushlike [carrier : Expr] [piece : Expr]) : Expr (match carrier [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)] [_ carrier]))\n(defmacro (finishlike [carrier : Expr]) : Expr (match carrier [(comptime.Expr.Call _ pieces) `(joined ,@pieces)] [_ `\"\"]))\n(defmacro (kindfull [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [\"f64\" `(kind-f64 ,value)]))\n(defmacro (kindly [T : type] [value : Expr]) : Expr (match (type-kind T) [\"i64\" `(kind-i64 ,value)] [_ (comptime.comptime-error \"kindly: unsupported\")]))\n(defmacro (places [value : Expr]) : Expr `(match ,value [(Some inner) (begin (set! (struct-get inner len) 1.5) (box-get (box inner)))] [_ (return ,value)]))\n(defmacro (foldlike [carrier : Expr] [acc : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match carrier [(comptime.Expr.Call _ elems) (if (>= i (comptime.expr-list-length elems)) acc `(foldlike ,carrier (step ,acc ,(comptime.expr-list-nth elems i)) ,(comptime.expr-int (+ i 1))))] [_ acc])] [_ acc]))\n"]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -1025,13 +1093,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 18)
-                              (= (struct-get captures len) 18)
+                              (= (array-length name-array) 19)
+                              (= (struct-get captures len) 19)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                17)
+                                18)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-partial-count
@@ -1088,6 +1156,12 @@
                                 "package.macros/twice"
                                 "value"
                                 6
+                                "")
+                              (producer-test-dispatch-shape?
+                                (& loaded)
+                                "package.macros/places"
+                                "value"
+                                7
                                 "")
                               (producer-test-dispatch-shape?
                                 (& loaded)

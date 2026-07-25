@@ -7,9 +7,10 @@ set -eu
 # Builds the static stdlib/API and language-reference HTML site via
 # tools/doc-site/doc_site.tl, runs the
 # in-memory smoke driver, and validates the on-disk output contract: required
-# pages/assets exist, every local link resolves, every in-page/cross-page anchor
-# target exists, and pages reference the stylesheet. Escaping and manifest-count
-# behavior is asserted authoritatively by tools/doc-site/doc_site_smoke.tl.
+# pages/assets exist, every top-level stdlib module has exactly one page, every
+# local link resolves, every in-page/cross-page anchor target exists, and pages
+# reference the stylesheet. Escaping and manifest duplicate/emptiness behavior is
+# asserted authoritatively by tools/doc-site/doc_site_smoke.tl.
 #
 # It drives the published/staged selfhost
 # compiler. CI runs it on pull requests and default-branch pushes WITHOUT
@@ -292,6 +293,30 @@ hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)
 
 stdlib_pages=$(find "$SITE" -maxdepth 1 -type f -name 'stdlib-*.html' | wc -l)
 [ "$stdlib_pages" -ge 1 ] || fail "no stdlib-*.html module pages were generated"
+
+# Completeness (#5689): every top-level stdlib module has a published page and
+# no published page is stale. The pages are derived from
+# tools/doc-site/doc_site_stdlib_manifest.tl, so comparing them against stdlib/
+# pins that manifest too. Module names separate words with `_`; page names use
+# `-`.
+EXPECTED_STDLIB_PAGES="$WORK/.stdlib-pages.expected"
+ACTUAL_STDLIB_PAGES="$WORK/.stdlib-pages.actual"
+find stdlib -maxdepth 1 -type f -name '*.tl' \
+    | sed 's|^stdlib/||; s|\.tl$||' \
+    | tr '_' '-' \
+    | sed 's|^|stdlib-|; s|$|.html|' \
+    | LC_ALL=C sort > "$EXPECTED_STDLIB_PAGES"
+[ -s "$EXPECTED_STDLIB_PAGES" ] || fail "found no stdlib/*.tl modules to publish"
+find "$SITE" -maxdepth 1 -type f -name 'stdlib-*.html' \
+    | sed "s|^$SITE/||" \
+    | LC_ALL=C sort > "$ACTUAL_STDLIB_PAGES"
+if ! cmp -s "$EXPECTED_STDLIB_PAGES" "$ACTUAL_STDLIB_PAGES"; then
+    echo "docs-site stdlib pages do not match stdlib/ (-expected +published):" >&2
+    diff -u "$EXPECTED_STDLIB_PAGES" "$ACTUAL_STDLIB_PAGES" >&2 || true
+    fail "update tools/doc-site/doc_site_stdlib_manifest.tl so every stdlib module is published"
+fi
+expected_stdlib_modules=$(wc -l < "$EXPECTED_STDLIB_PAGES" | tr -d ' ')
+echo "[doc-site] published all $expected_stdlib_modules top-level stdlib module(s)"
 
 # Validate every local link and anchor across all generated pages.
 pages=$(find "$SITE" -maxdepth 1 -type f -name '*.html')

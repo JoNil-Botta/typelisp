@@ -8,13 +8,13 @@ benchmark/c-scalar/array_sum	1651021946
 benchmark/typelisp/borrowed_disjoint_store	1300000261
 benchmark/c/borrowed_disjoint_store	1400001545
 benchmark/c-scalar/borrowed_disjoint_store	1400001545
-benchmark/typelisp/hashmap_churn	4514898
+benchmark/typelisp/hashmap_churn	4347086
 benchmark/c/hashmap_churn	4316283
 benchmark/c-scalar/hashmap_churn	4369269
 benchmark/typelisp/hashmap_get	210591712
 benchmark/c/hashmap_get	209671160
 benchmark/c-scalar/hashmap_get	209671160
-benchmark/typelisp/hashmap_grow	2055358
+benchmark/typelisp/hashmap_grow	1957053
 benchmark/c/hashmap_grow	1934687
 benchmark/c-scalar/hashmap_grow	1983833
 benchmark/typelisp/hashmap_insert	36908252
@@ -32,4 +32,4 @@ benchmark/c-scalar/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1478413867
 benchmark/c/spmd_reduce	1693815306
 benchmark/c-scalar/spmd_reduce	3381322973
-self_compile/compile_cli_opt1	54637572510
+self_compile/compile_cli_opt1	54643684579

@@ -75,6 +75,21 @@ separate scripts inventory in
 [#5173](https://github.com/JoNil-Botta/typelisp/issues/5173) tracks which
 existing scripts are enduring gates versus archived one-off experiments.
 
+### Extensionless build output
+
+Not every output lands under `target/`: `typelisp compile foo.tl` writes
+`foo.s` beside the source, and `typelisp build foo.tl` writes the executable
+there too — `foo.exe` on Windows, and an extensionless `foo` on Linux. Git has
+no glob for "name without an extension", so `.gitignore` ignores extensionless
+files repo-wide and re-includes dotted names, keeping an ordinary in-tree build
+out of `git status` on both hosts.
+
+The consequence is that a **new extensionless file to track needs a one-line
+negation in `.gitignore`**. `git add` refuses ignored paths with an explicit
+hint, so this surfaces immediately rather than silently.
+`scripts/check-gitignore.sh` gates both directions: generated paths stay
+ignored, and `.gitignore` never shadows a tracked file.
+
 ## No Syntax Aliases Rule
 
 **When you change language syntax, do not add an alias or a second parser path

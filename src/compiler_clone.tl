@@ -258,6 +258,19 @@
     names
     (clone-name-key-id-in-module module-id name-id)))
 
+;; A bare nominal spelled inside a module can still be the enclosing program's
+;; root-module type: generated families (`stdlib.vector`, `stdlib.hashmap`, ...)
+;; splice their element type's unqualified name into declarations that live in
+;; their own namespace. Only unqualified, undotted, interned names seen from a
+;; non-root module may fall back to the root key.
+(define (clone-name-root-fallback-eligible? [module-id : i64] [name-id : i64]) : bool
+  (not
+    (or
+      (clone-module-id-root? module-id)
+      (>= name-id (ci.intern-capacity))
+      (and (>= name-id 0) (ci.intern-qualified? name-id))
+      (and (>= name-id 0) (ci.intern-dotted? name-id)))))
+
 (define (clone-name-set-contains-resolved-nominal-id?
   [names : CloneNameSet]
   [module-id : i64]
@@ -266,13 +279,32 @@
     names
     (clone-type-name-resolve-id names module-id name-id))
     true
-    (if (or
-      (clone-module-id-root? module-id)
-      (>= name-id (ci.intern-capacity))
-      (and (>= name-id 0) (ci.intern-qualified? name-id))
-      (and (>= name-id 0) (ci.intern-dotted? name-id)))
-      false
-      (clone-name-set-contains-id? names (clone-name-key-id name-id)))))
+    (if (clone-name-root-fallback-eligible? module-id name-id)
+      (clone-name-set-contains-id? names (clone-name-key-id name-id))
+      false)))
+
+;; Resolve a nominal to the key the clone-able set actually accepted it under.
+;; The root walk has to agree with `clone-name-set-contains-resolved-nominal-id?`
+;; here: a generated module names its element type unqualified inside its own
+;; namespace, so the module-qualified key misses and the declaring root key is
+;; the one that carries the helper. Without this the element type is admitted as
+;; clone-able but never collected as a root, and lowering the generated helper's
+;; element clone fails with `missing generated clone helper for <Element>`.
+(define (clone-root-nominal-key-id
+  [able : CloneNameSet]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (let
+    [resolved : i64 (clone-type-name-resolve-id able module-id name-id)]
+    (if (clone-name-set-contains-id? able resolved)
+      resolved
+      (if (clone-name-root-fallback-eligible? module-id name-id)
+        (let
+          [root-key : i64 (clone-name-key-id name-id)]
+          (if (clone-name-set-contains-id? able root-key)
+            root-key
+            resolved))
+        resolved))))
 
 (define (clone-name-list-cons-id [key-id : i64] [rest : CloneNameList]) : CloneNameList
   (CloneNameList.ConsId
@@ -911,21 +943,21 @@
         decls
         able
         roots
-        (clone-type-name-resolve-id able module-id name))]
+        (clone-root-nominal-key-id able module-id name))]
     [(AstType.Enum name)
       (clone-root-add-name
         pools
         decls
         able
         roots
-        (clone-type-name-resolve-id able module-id name))]
+        (clone-root-nominal-key-id able module-id name))]
     [(AstType.Struct name)
       (clone-root-add-name
         pools
         decls
         able
         roots
-        (clone-type-name-resolve-id able module-id name))]
+        (clone-root-nominal-key-id able module-id name))]
     [_ roots]))
 
 (define (clone-root-expand

@@ -1,0 +1,16 @@
+# Flags a command's parser accepts that its `--help` deliberately does not list.
+#
+# scripts/check-cli-help-surface.sh compares the `"--flag"` literals in each
+# src/<name>_cli_core.tl against the matching cli-<name>-help-text block in
+# src/main.tl, and fails on any parsed flag that is neither documented nor
+# listed here. Adding a user-facing flag therefore requires documenting it;
+# adding an internal one requires saying so here, with a reason.
+#
+# command<TAB>flag<TAB>reason
+build	--direct	internal: bypasses the manifest path when the driver re-enters itself
+build	--package-worker	internal: subprocess protocol for building one dependency package
+build	--package-doctest-worker	internal: subprocess protocol for one package's doctests
+build	--resolved-dep	internal: passes an already-resolved dependency path to a worker
+build	--version	handled by the root CLI, not a build option
+compile	--help	the help flag itself, not an option the help text lists
+run	--direct	internal: bypasses the manifest path when the driver re-enters itself

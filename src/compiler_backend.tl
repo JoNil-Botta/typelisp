@@ -1330,33 +1330,12 @@
 (define (compiler-backend-source-span-index-add
   [entries : CompilerSourceSpansEntryList]
   [map : backend_string_i64_map.Map]
-  [values : (Array CompilerMaybeSourceSpan)]
-  [index : i64]) : backend_string_i64_map.Map
-  (match entries
-    [(CompilerSourceSpansEntryList.Nil) map]
-    [(CompilerSourceSpansEntryList.Cons entry rest)
-      (match entry
-        [(CompilerSourceSpansEntry.Entry name span)
-          (if (backend_string_i64_map.contains? (& map) name)
-            (compiler-backend-source-span-index-add
-              (box-get rest)
-              map
-              values
-              index)
-            (begin
-              (backend_string_i64_map.insert-ref! (&mut map) name index)
-              (array-set! values index (CompilerMaybeSourceSpan.Some span))
-              (compiler-backend-source-span-index-add
-                (box-get rest)
-                map
-                values
-                (+ index 1))))])]
-    [(CompilerSourceSpansEntryList.Array seq)
-      (compiler-backend-source-span-index-add-array
-        (struct-get seq slots)
-        (- (struct-get seq len) 1)
-        map
-        values)]))
+  [values : (Array CompilerMaybeSourceSpan)]) : backend_string_i64_map.Map
+  (compiler-backend-source-span-index-add-array
+    (struct-get entries slots)
+    (- (struct-get entries len) 1)
+    map
+    values))
 
 (define (compiler-backend-source-span-index-add-array
   [slots : (Array CompilerSourceSpansEntry)]
@@ -1395,8 +1374,7 @@
             (compiler-backend-source-span-index-add
               entries
               (backend_string_i64_map.with-capacity (+ (* count 2) 16))
-              values
-              0)
+              values)
             values)))]))
 
 (define (compiler-backend-source-span-index-lookup

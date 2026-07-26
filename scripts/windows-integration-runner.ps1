@@ -2,15 +2,30 @@
 windows-integration-runner.ps1 - serial native-process runner for the Windows
 integration manifest.
 
-The request file is UTF-8, one tab-separated request per line:
+The request file is a NUL-delimited UTF-8 field stream:
 
-  label<TAB>exe64<TAB>stdout64<TAB>stderr64<TAB>exit64<TAB>arg64,arg64,...
+  tlwinq2<NUL>
+  label<NUL>exe<NUL>stdout<NUL>stderr<NUL>exit-file<NUL>
+  expected-exit<NUL>expected-stdout<NUL>expected-stderr<NUL>
+  argument-count<NUL>argument...<NUL>
 
-Each path and argument is UTF-8 base64 encoded so the queue does not depend on
-shell quoting or path punctuation. Empty arguments use `~`; an empty argument
-vector uses `-`. The result file is UTF-8 tab-separated:
+NUL cannot occur in a Windows path or process argument, so Git Bash can append
+each already-split value with its `printf` builtin without launching base64/tr
+helpers or depending on shell quoting, whitespace, path punctuation, or
+newlines. `expected-exit` is `-` for a request that should only be captured.
+
+The result file is UTF-8 tab-separated:
 
   label<TAB>ok|launch-failed<TAB>exit-code<TAB>error64<TAB>elapsed-ms
+
+The assertion file is UTF-8 tab-separated:
+
+  label<TAB>status<TAB>exit-code<TAB>expected-exit<TAB>error64<TAB>run-ms<TAB>
+  assert-ms<TAB>exit-match<TAB>stdout-match<TAB>stderr-match
+
+Expected and actual streams are normalized and compared in-process. Their
+normalized `.cmp` files are materialized on a mismatch so the shell harness
+can print its existing unified diff without paying that I/O for passing cases.
 
 The runner deliberately handles a launch failure as one result and continues
 with later queued requests. That preserves per-case attribution without
@@ -26,6 +41,9 @@ param(
     [string]$ResultPath,
 
     [Parameter(Mandatory = $true)]
+    [string]$AssertionPath,
+
+    [Parameter(Mandatory = $true)]
     [string]$SummaryPath
 )
 
@@ -34,35 +52,71 @@ $ErrorActionPreference = "Stop"
 
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
 
-function Decode-QueueField {
-    param([string]$Value)
-
-    return $Utf8.GetString([System.Convert]::FromBase64String($Value))
-}
-
 function Encode-QueueField {
     param([string]$Value)
 
     return [System.Convert]::ToBase64String($Utf8.GetBytes($Value))
 }
 
-function Decode-QueueArguments {
-    param([string]$Value)
+function Read-NullDelimitedUtf8Fields {
+    param([string]$Path)
 
-    if ([string]::IsNullOrEmpty($Value) -or $Value -eq "-") {
-        return @()
-    }
-
-    $decoded = @()
-    foreach ($part in $Value.Split(',')) {
-        if ($part -eq "~") {
-            $decoded += ""
-        }
-        else {
-            $decoded += Decode-QueueField $part
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $fields = New-Object System.Collections.Generic.List[string]
+    $start = 0
+    for ($index = 0; $index -lt $bytes.Length; $index += 1) {
+        if ($bytes[$index] -eq 0) {
+            $length = $index - $start
+            $fields.Add($Utf8.GetString($bytes, $start, $length))
+            $start = $index + 1
         }
     }
-    return $decoded
+    if ($start -ne $bytes.Length) {
+        throw "Windows integration request is missing its final NUL delimiter"
+    }
+    return $fields.ToArray()
+}
+
+function Get-NormalizedStreamBytes {
+    param([string]$Path)
+
+    $source = [System.IO.File]::ReadAllBytes($Path)
+    $carriageReturns = 0
+    foreach ($value in $source) {
+        if ($value -eq 13) {
+            $carriageReturns += 1
+        }
+    }
+    if ($carriageReturns -eq 0) {
+        return ,$source
+    }
+
+    $normalized = New-Object byte[] ($source.Length - $carriageReturns)
+    $target = 0
+    foreach ($value in $source) {
+        if ($value -ne 13) {
+            $normalized[$target] = $value
+            $target += 1
+        }
+    }
+    return ,$normalized
+}
+
+function Test-ByteArraysEqual {
+    param(
+        [byte[]]$Left,
+        [byte[]]$Right
+    )
+
+    if ($Left.Length -ne $Right.Length) {
+        return $false
+    }
+    for ($index = 0; $index -lt $Left.Length; $index += 1) {
+        if ($Left[$index] -ne $Right[$index]) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function ConvertTo-WindowsCommandLineArgument {
@@ -143,43 +197,79 @@ $resultDirectory = [System.IO.Path]::GetDirectoryName($ResultPath)
 if (-not [string]::IsNullOrEmpty($resultDirectory)) {
     [System.IO.Directory]::CreateDirectory($resultDirectory) | Out-Null
 }
+$assertionDirectory = [System.IO.Path]::GetDirectoryName($AssertionPath)
+if (-not [string]::IsNullOrEmpty($assertionDirectory)) {
+    [System.IO.Directory]::CreateDirectory($assertionDirectory) | Out-Null
+}
 $summaryDirectory = [System.IO.Path]::GetDirectoryName($SummaryPath)
 if (-not [string]::IsNullOrEmpty($summaryDirectory)) {
     [System.IO.Directory]::CreateDirectory($summaryDirectory) | Out-Null
 }
 
-$requestLines = [System.IO.File]::ReadAllLines($RequestPath, $Utf8)
+$requestFields = @(Read-NullDelimitedUtf8Fields $RequestPath)
+if ($requestFields.Count -eq 0 -or $requestFields[0] -ne "tlwinq2") {
+    throw "invalid Windows integration request header"
+}
 $resultWriter = New-Object System.IO.StreamWriter -ArgumentList @(
     $ResultPath,
     $false,
     $Utf8
 )
+$resultWriter.NewLine = "`n"
+$assertionWriter = New-Object System.IO.StreamWriter -ArgumentList @(
+    $AssertionPath,
+    $false,
+    $Utf8
+)
+$assertionWriter.NewLine = "`n"
 $totalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $requestCount = 0
 $childStarts = 0
 $launchFailures = 0
+$assertionCount = 0
+$resultProcessStopwatch = New-Object System.Diagnostics.Stopwatch
+$assertTotalStopwatch = New-Object System.Diagnostics.Stopwatch
+$cursor = 1
 
 try {
-    foreach ($line in $requestLines) {
-        if ([string]::IsNullOrWhiteSpace($line)) {
-            continue
+    while ($cursor -lt $requestFields.Count) {
+        if (($requestFields.Count - $cursor) -lt 9) {
+            throw "truncated Windows integration runner request at field $cursor"
         }
 
-        $fields = $line.Split([char]9)
-        if ($fields.Count -ne 6) {
-            throw "invalid Windows integration runner request (expected 6 fields): $line"
-        }
-
-        $label = $fields[0]
+        $label = $requestFields[$cursor]
+        $exe = $requestFields[$cursor + 1]
+        $stdout = $requestFields[$cursor + 2]
+        $stderr = $requestFields[$cursor + 3]
+        $exitFile = $requestFields[$cursor + 4]
+        $expectedExit = $requestFields[$cursor + 5]
+        $expectedStdout = $requestFields[$cursor + 6]
+        $expectedStderr = $requestFields[$cursor + 7]
+        $argumentCountText = $requestFields[$cursor + 8]
+        $cursor += 9
         if ($label -notmatch '^[A-Za-z0-9_]+$') {
             throw "invalid Windows integration runner label: $label"
         }
-
-        $exe = Decode-QueueField $fields[1]
-        $stdout = Decode-QueueField $fields[2]
-        $stderr = Decode-QueueField $fields[3]
-        $exitFile = Decode-QueueField $fields[4]
-        $arguments = @(Decode-QueueArguments $fields[5])
+        $argumentCount = 0
+        if (
+            -not [int]::TryParse(
+                $argumentCountText,
+                [System.Globalization.NumberStyles]::None,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [ref]$argumentCount
+            ) -or
+            $argumentCount -lt 0
+        ) {
+            throw "invalid argument count for Windows integration request '$label'"
+        }
+        if (($requestFields.Count - $cursor) -lt $argumentCount) {
+            throw "truncated argument vector for Windows integration request '$label'"
+        }
+        $arguments = @()
+        for ($argumentIndex = 0; $argumentIndex -lt $argumentCount; $argumentIndex += 1) {
+            $arguments += $requestFields[$cursor + $argumentIndex]
+        }
+        $cursor += $argumentCount
         $requestCount += 1
 
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -258,6 +348,7 @@ try {
         }
 
         $stopwatch.Stop()
+        $resultProcessStopwatch.Start()
         $encodedError = Encode-QueueField $errorMessage
         if ([string]::IsNullOrEmpty($encodedError)) {
             $encodedError = "~"
@@ -270,22 +361,82 @@ try {
                 $encodedError,
                 $stopwatch.ElapsedMilliseconds
         ))
-        $resultWriter.Flush()
+        $resultProcessStopwatch.Stop()
+
+        if ($expectedExit -ne "-") {
+            $assertionStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $assertTotalStopwatch.Start()
+            $exitMatches = $status -eq "ok" -and $exitCode -eq $expectedExit
+            $stdoutMatches = $false
+            $stderrMatches = $false
+            if ($status -eq "ok") {
+                $expectedStdoutBytes = Get-NormalizedStreamBytes $expectedStdout
+                $actualStdoutBytes = Get-NormalizedStreamBytes $stdout
+                $expectedStderrBytes = Get-NormalizedStreamBytes $expectedStderr
+                $actualStderrBytes = Get-NormalizedStreamBytes $stderr
+                $stdoutMatches = Test-ByteArraysEqual `
+                    ([byte[]]$expectedStdoutBytes) `
+                    ([byte[]]$actualStdoutBytes)
+                $stderrMatches = Test-ByteArraysEqual `
+                    ([byte[]]$expectedStderrBytes) `
+                    ([byte[]]$actualStderrBytes)
+                if (-not $stdoutMatches) {
+                    [System.IO.File]::WriteAllBytes(
+                        "$expectedStdout.cmp",
+                        [byte[]]$expectedStdoutBytes
+                    )
+                    [System.IO.File]::WriteAllBytes(
+                        "$stdout.cmp",
+                        [byte[]]$actualStdoutBytes
+                    )
+                }
+                if (-not $stderrMatches) {
+                    [System.IO.File]::WriteAllBytes(
+                        "$expectedStderr.cmp",
+                        [byte[]]$expectedStderrBytes
+                    )
+                    [System.IO.File]::WriteAllBytes(
+                        "$stderr.cmp",
+                        [byte[]]$actualStderrBytes
+                    )
+                }
+            }
+            $assertionStopwatch.Stop()
+            $assertTotalStopwatch.Stop()
+            $assertionCount += 1
+            $assertionWriter.WriteLine((
+                "{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}`t{7}`t{8}`t{9}" -f
+                    $label,
+                    $status,
+                    $exitCode,
+                    $expectedExit,
+                    $encodedError,
+                    $stopwatch.ElapsedMilliseconds,
+                    $assertionStopwatch.ElapsedMilliseconds,
+                    $(if ($exitMatches) { 1 } else { 0 }),
+                    $(if ($stdoutMatches) { 1 } else { 0 }),
+                    $(if ($stderrMatches) { 1 } else { 0 })
+            ))
+        }
     }
 }
 finally {
     $resultWriter.Dispose()
+    $assertionWriter.Dispose()
 }
 
 $totalStopwatch.Stop()
-[System.IO.File]::WriteAllLines(
+[System.IO.File]::WriteAllText(
     $SummaryPath,
-    @(
+    (@(
         "requests=$requestCount",
         "child_starts=$childStarts",
         "launch_failures=$launchFailures",
+        "assertions=$assertionCount",
+        "result_process_ms=$($resultProcessStopwatch.ElapsedMilliseconds)",
+        "assert_ms=$($assertTotalStopwatch.ElapsedMilliseconds)",
         "elapsed_ms=$($totalStopwatch.ElapsedMilliseconds)"
-    ),
+    ) -join "`n") + "`n",
     $Utf8
 )
 

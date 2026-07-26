@@ -155,13 +155,14 @@ fi
 #
 # The three tiers exist so a failure names a layer instead of a symptom. Tier 1
 # crosses the raw call bridge with no host callback. Tier 2 adds real host
-# callbacks over one session and one set of operands built before the loop, and
+# callbacks over one persistent set of pools/operands built before the loop,
+# with the fresh per-invocation host session required by SPEC 5.17.1.1, and
 # audits the count, operand, cookie and stack state the callbacks read after
 # every dispatch -- the argument integrity #5460's status-1 sentinel actually
 # implicates. Tier 3 runs the same entry but captures pools and pushes a fresh
-# operand each iteration, so it adds the session/pool cycling on top. All three
-# run above the observed threshold and on both hosts regardless of the
-# production route gate, which Windows still disables for #5460.
+# operand each iteration, so it adds pool/operand cycling on top. All three run
+# above the observed threshold and on both hosts regardless of the production
+# route gate, which Windows still disables for #5460.
 STRESS_ITERATIONS=${TYPELISP_TLCI_STRESS_ITERATIONS:-25000}
 for STRESS_TIER in 1 2 3; do
     STRESS_PROGRESS="$WORKDIR/stress-tier$STRESS_TIER.txt"

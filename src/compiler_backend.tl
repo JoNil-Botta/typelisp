@@ -12,6 +12,9 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
+(import compiler_backend_object_target as object_target)
+(import compiler_backend_object_target_linux as object_linux)
+(import compiler_backend_object_target_windows as object_windows)
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
 (import compiler_object as cobj)
@@ -51678,256 +51681,16 @@
           (ResultCompilerBackendBuffer.Err
             (box (compiler-diagnostic-at-start "" message))))])))
 
-(defstruct CompilerBackendObjectParts
-  (text cobj.CompilerObjectX64InstrBuilder)
-  (data cobj.CompilerObjectDataRecordBuilder)
-  (rodata cobj.CompilerObjectDataRecordBuilder)
-  (bss cobj.CompilerObjectDataRecordBuilder)
-  (pdata cobj.CompilerObjectDataRecordBuilder)
-  (xdata cobj.CompilerObjectDataRecordBuilder)
-  (symbols cobj.CompilerObjectSymbolBuilder)
-  (relocations cobj.CompilerObjectRelocationBuilder))
-
-(define (compiler-backend-object-parts-empty) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (cobj.compiler-object-instr-builder-new)
-    (cobj.compiler-object-data-record-builder-new)
-    (cobj.compiler-object-data-record-builder-new)
-    (cobj.compiler-object-data-record-builder-new)
-    (cobj.compiler-object-data-record-builder-new)
-    (cobj.compiler-object-data-record-builder-new)
-    (cobj.compiler-object-symbol-builder-new)
-    (cobj.compiler-object-relocation-builder-new)))
-
-(define (compiler-backend-object-add-text
-  [parts : CompilerBackendObjectParts]
-  [instr : cobj.CompilerObjectX64Instr]) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (cobj.compiler-object-instr-builder-push (struct-get parts text) instr)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
-
-(define (compiler-backend-object-add-data
-  [parts : CompilerBackendObjectParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (struct-get parts text)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts data)
-      record)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
-
-(define (compiler-backend-object-add-rodata
-  [parts : CompilerBackendObjectParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts rodata)
-      record)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
-
-(define (compiler-backend-object-add-bss
-  [parts : CompilerBackendObjectParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts bss)
-      record)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
-
-(define (compiler-backend-object-add-pdata
-  [parts : CompilerBackendObjectParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts pdata)
-      record)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
-
-(define (compiler-backend-object-add-xdata
-  [parts : CompilerBackendObjectParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (cobj.compiler-object-data-record-builder-push
-      (struct-get parts xdata)
-      record)
-    (struct-get parts symbols)
-    (struct-get parts relocations)))
-
-(define (compiler-backend-object-add-symbol
-  [parts : CompilerBackendObjectParts]
-  [name : String]
-  [binding : cobj.CompilerObjectSymbolBinding]
-  [kind : cobj.CompilerObjectSymbolKind]
-  [section : cobj.CompilerObjectMaybeSection]) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (cobj.compiler-object-symbol-builder-push
-      (struct-get parts symbols)
-      (cobj.CompilerObjectSymbol.Symbol name binding kind section))
-    (struct-get parts relocations)))
-
-(define (compiler-backend-object-add-relocation
-  [parts : CompilerBackendObjectParts]
-  [section : cobj.CompilerObjectSectionKind]
-  [site : String]
-  [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]) : CompilerBackendObjectParts
-  (CompilerBackendObjectParts
-    (struct-get parts text)
-    (struct-get parts data)
-    (struct-get parts rodata)
-    (struct-get parts bss)
-    (struct-get parts pdata)
-    (struct-get parts xdata)
-    (struct-get parts symbols)
-    (cobj.compiler-object-relocation-builder-push
-      (struct-get parts relocations)
-      (cobj.CompilerObjectRelocation.Relocation section site kind target))))
-
-(define (compiler-backend-object-symbol-local-section
-  [parts : CompilerBackendObjectParts]
-  [name : String]
-  [section : cobj.CompilerObjectSectionKind]
-  [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-symbol
-    parts
-    name
-    (cobj.CompilerObjectSymbolBinding.Local)
-    kind
-    (cobj.CompilerObjectMaybeSection.Some section)))
-
-(define (compiler-backend-object-symbol-export-section
-  [parts : CompilerBackendObjectParts]
-  [name : String]
-  [section : cobj.CompilerObjectSectionKind]
-  [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-symbol
-    parts
-    name
-    (cobj.CompilerObjectSymbolBinding.Export)
-    kind
-    (cobj.CompilerObjectMaybeSection.Some section)))
-
-(define (compiler-backend-object-symbol-extern
-  [parts : CompilerBackendObjectParts]
-  [name : String]
-  [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-symbol
-    parts
-    name
-    (cobj.CompilerObjectSymbolBinding.Extern)
-    kind
-    (cobj.CompilerObjectMaybeSection.No)))
-
-(define (compiler-backend-object-symbol-extern-once
-  [parts : CompilerBackendObjectParts]
-  [name : String]
-  [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectParts
-  (if (cobj.compiler-object-symbol-builder-contains?
-    (struct-get parts symbols)
-    name
-    (cobj.CompilerObjectSymbolBinding.Extern)
-    kind)
-    parts
-    (compiler-backend-object-symbol-extern parts name kind)))
-
-(define (compiler-backend-object-add-text-relocation
-  [parts : CompilerBackendObjectParts]
-  [site : String]
-  [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-relocation
-    parts
-    (cobj.CompilerObjectSectionKind.Text)
-    site
-    kind
-    target))
-
-(define (compiler-backend-object-add-data-relocation
-  [parts : CompilerBackendObjectParts]
-  [site : String]
-  [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-relocation
-    parts
-    (cobj.CompilerObjectSectionKind.Data)
-    site
-    kind
-    target))
-
-(define (compiler-backend-object-add-rodata-relocation
-  [parts : CompilerBackendObjectParts]
-  [site : String]
-  [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-relocation
-    parts
-    (cobj.CompilerObjectSectionKind.Rodata)
-    site
-    kind
-    target))
-
-(define (compiler-backend-object-add-pdata-relocation
-  [parts : CompilerBackendObjectParts]
-  [site : String]
-  [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-relocation
-    parts
-    (cobj.CompilerObjectSectionKind.Pdata)
-    site
-    kind
-    target))
-
 (define (compiler-backend-object-value-ref
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
-  [value : CompilerIrValue]) : CompilerBackendObjectParts
+  [value : CompilerIrValue]) : object_target.CompilerBackendObjectTargetParts
   (match value
     [(CompilerIrValue.Global name)
       (let
         [symbol : String (compiler-backend-user-symbol-id name)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.RipValue)
@@ -51936,8 +51699,8 @@
     [(CompilerIrValue.GlobalAddr name)
       (let
         [symbol : String (compiler-backend-user-symbol-id name)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.RipAddress)
@@ -51946,8 +51709,8 @@
     [(CompilerIrValue.String text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.RipAddress)
@@ -51956,8 +51719,8 @@
     [(CompilerIrValue.Bytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.RipAddress)
@@ -51966,8 +51729,8 @@
     [(CompilerIrValue.F64 bits)
       (let
         [symbol : String (compiler-backend-f64-label bits)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.RipValue)
@@ -51978,8 +51741,8 @@
         [symbol : String
           (compiler-backend-closure-descriptor-label
             (compiler-ir-symbol-text name))]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.RipAddress)
@@ -51988,16 +51751,16 @@
     [_ parts]))
 
 (define (compiler-backend-object-value-ref-with-type
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [value : CompilerIrValue]
-  [ty : AstType]) : CompilerBackendObjectParts
+  [ty : AstType]) : object_target.CompilerBackendObjectTargetParts
   (match value
     [(CompilerIrValue.F64 bits)
       (let
         [symbol : String (compiler-backend-float-label ty bits)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.RipValue)
@@ -52006,10 +51769,10 @@
     [_ (compiler-backend-object-value-ref parts site value)]))
 
 (define (compiler-backend-object-call-args
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [args : CompilerIrCallArgs]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (compiler-backend-call-args-count args))
     parts
     (compiler-backend-object-call-args
@@ -52022,9 +51785,9 @@
       (+ index 1))))
 
 (define (compiler-backend-object-spmd-call-args
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
-  [args : CompilerIrSpmdCallArgList]) : CompilerBackendObjectParts
+  [args : CompilerIrSpmdCallArgList]) : object_target.CompilerBackendObjectTargetParts
   (match args
     [(CompilerIrSpmdCallArgList.Nil) parts]
     [(CompilerIrSpmdCallArgList.Cons arg rest)
@@ -52036,7 +51799,7 @@
             (box-get rest))])]
     [(CompilerIrSpmdCallArgList.Array seq)
       (let
-        [out : CompilerBackendObjectParts parts]
+        [out : object_target.CompilerBackendObjectTargetParts parts]
         [i : i64 0]
         [count : i64 (struct-get seq len)]
         [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
@@ -52050,9 +51813,9 @@
           out))]))
 
 (define (compiler-backend-object-value-list-ref
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
-  [values : CompilerIrValueList]) : CompilerBackendObjectParts
+  [values : CompilerIrValueList]) : object_target.CompilerBackendObjectTargetParts
   (match values
     [(CompilerIrValueList.Nil) parts]
     [(CompilerIrValueList.Array seq)
@@ -52089,11 +51852,11 @@
   (byte_buf_core.byte-buf-builder-finish-string out))
 
 (define (compiler-backend-object-add-nonempty-bytes
-  [parts : CompilerBackendObjectParts]
-  [bytes : String]) : CompilerBackendObjectParts
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [bytes : String]) : object_target.CompilerBackendObjectTargetParts
   (if (= (string.string-length bytes) 0)
     parts
-    (compiler-backend-object-add-text
+    (object_target.compiler-backend-object-add-text
       parts
       (cobj.CompilerObjectX64Instr.Bytes bytes))))
 
@@ -52272,10 +52035,10 @@
       (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-leave-ret-bytes) : String
-  (compiler-backend-object-bytes-from-hex "c9c3"))
+  (object_target.compiler-backend-object-bytes-from-hex "c9c3"))
 
 (define (compiler-backend-object-zero-eax-bytes) : String
-  (compiler-backend-object-bytes-from-hex "31c0"))
+  (object_target.compiler-backend-object-bytes-from-hex "31c0"))
 
 (define (compiler-backend-object-rsp-imm-bytes [opcode : i64] [value : i64]) : String
   (let
@@ -52376,29 +52139,30 @@
     [size : i64 (compiler-backend-type-size ty)]
     [signed : bool (compiler-backend-type-signed? ty)]
     (cond
-      [(= size 8) (compiler-backend-object-bytes-from-hex "488b00")]
+      [(= size 8)
+        (object_target.compiler-backend-object-bytes-from-hex "488b00")]
       [(= size 4)
         (if signed
-          (compiler-backend-object-bytes-from-hex "486300")
-          (compiler-backend-object-bytes-from-hex "8b00"))]
+          (object_target.compiler-backend-object-bytes-from-hex "486300")
+          (object_target.compiler-backend-object-bytes-from-hex "8b00"))]
       [(= size 2)
         (if signed
-          (compiler-backend-object-bytes-from-hex "480fbf00")
-          (compiler-backend-object-bytes-from-hex "0fb700"))]
+          (object_target.compiler-backend-object-bytes-from-hex "480fbf00")
+          (object_target.compiler-backend-object-bytes-from-hex "0fb700"))]
       [(= size 1)
         (if signed
-          (compiler-backend-object-bytes-from-hex "480fbe00")
-          (compiler-backend-object-bytes-from-hex "0fb600"))]
-      [else (compiler-backend-object-bytes-from-hex "488b00")])))
+          (object_target.compiler-backend-object-bytes-from-hex "480fbe00")
+          (object_target.compiler-backend-object-bytes-from-hex "0fb600"))]
+      [else (object_target.compiler-backend-object-bytes-from-hex "488b00")])))
 
 (define (compiler-backend-object-leave-bytes) : String
-  (compiler-backend-object-bytes-from-hex "c9"))
+  (object_target.compiler-backend-object-bytes-from-hex "c9"))
 
 (define (compiler-backend-object-load-value-to-reg
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [value : CompilerIrValue]
-  [reg : String]) : CompilerBackendObjectParts
+  [reg : String]) : object_target.CompilerBackendObjectTargetParts
   (match value
     [(CompilerIrValue.Var id)
       (compiler-backend-object-add-nonempty-bytes
@@ -52455,11 +52219,11 @@
     [(CompilerIrValue.RuntimeGlobal _) parts]))
 
 (define (compiler-backend-object-load-value-to-reg-with-type
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [value : CompilerIrValue]
   [ty : AstType]
-  [reg : String]) : CompilerBackendObjectParts
+  [reg : String]) : object_target.CompilerBackendObjectTargetParts
   (match value
     [(CompilerIrValue.F64 _)
       (compiler-backend-object-add-nonempty-bytes
@@ -52468,19 +52232,19 @@
     [_ (compiler-backend-object-load-value-to-reg parts site value reg)]))
 
 (define (compiler-backend-object-store-reg-to-var
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [dst : i64]
-  [reg : String]) : CompilerBackendObjectParts
+  [reg : String]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-add-nonempty-bytes
     parts
     (compiler-backend-object-store-slot-bytes dst reg)))
 
 (define (compiler-backend-object-move-value-to-var
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
   [src : CompilerIrValue]
-  [ty : AstType]) : CompilerBackendObjectParts
+  [ty : AstType]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-store-reg-to-var
     (compiler-backend-object-load-value-to-reg-with-type
       parts
@@ -52497,10 +52261,10 @@
     (+ compiler-backend-current-slot-vars var)))
 
 (define (compiler-backend-object-load-group-word-to-reg
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [var : i64]
   [word-index : i64]
-  [reg : String]) : CompilerBackendObjectParts
+  [reg : String]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-add-nonempty-bytes
     parts
     (compiler-backend-object-load-rbp-disp-bytes
@@ -52509,10 +52273,10 @@
       reg)))
 
 (define (compiler-backend-object-store-reg-to-group-word
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [var : i64]
   [word-index : i64]
-  [reg : String]) : CompilerBackendObjectParts
+  [reg : String]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-add-nonempty-bytes
     parts
     (compiler-backend-object-store-slot-bytes
@@ -52520,10 +52284,10 @@
       reg)))
 
 (define (compiler-backend-object-move-group-value-to-var
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
-  [src : CompilerIrValue]) : CompilerBackendObjectParts
+  [src : CompilerIrValue]) : object_target.CompilerBackendObjectTargetParts
   (match src
     [(CompilerIrValue.Var src-var)
       (compiler-backend-object-store-reg-to-group-word
@@ -52546,10 +52310,10 @@
     [_ (compiler-backend-object-value-ref parts site src)]))
 
 (define (compiler-backend-object-pack-to-var
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
-  [words : CompilerIrValueList]) : CompilerBackendObjectParts
+  [words : CompilerIrValueList]) : object_target.CompilerBackendObjectTargetParts
   (match (compiler-ir-value-list-force-cons words)
     [(CompilerIrValueList.Cons word0 rest0)
       (match (compiler-ir-value-list-force-cons (box-get rest0))
@@ -52575,11 +52339,11 @@
     [_ (compiler-backend-object-value-list-ref parts site words)]))
 
 (define (compiler-backend-object-word-to-var
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
   [src : CompilerIrValue]
-  [word-index : i64]) : CompilerBackendObjectParts
+  [word-index : i64]) : object_target.CompilerBackendObjectTargetParts
   (match src
     [(CompilerIrValue.Var src-var)
       (compiler-backend-object-store-reg-to-var
@@ -52593,11 +52357,11 @@
     [_ (compiler-backend-object-value-ref parts site src)]))
 
 (define (compiler-backend-object-load-ptr-to-var
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
   [src : CompilerIrValue]
-  [ty : AstType]) : CompilerBackendObjectParts
+  [ty : AstType]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-store-reg-to-var
     (compiler-backend-object-add-nonempty-bytes
       (compiler-backend-object-load-value-to-reg parts site src "%rax")
@@ -52634,20 +52398,20 @@
       (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-add-r8-rax-bytes) : String
-  (compiler-backend-object-bytes-from-hex "4c01c0"))
+  (object_target.compiler-backend-object-bytes-from-hex "4c01c0"))
 
 (define (compiler-backend-object-gep-to-var
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
-  [elem-ty : AstType]) : CompilerBackendObjectParts
+  [elem-ty : AstType]) : object_target.CompilerBackendObjectTargetParts
   (let
     [elem-size : i64 (compiler-backend-type-size elem-ty)]
-    [with-base : CompilerBackendObjectParts
+    [with-base : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-load-value-to-reg parts site base "%rax")]
-    [with-offset : CompilerBackendObjectParts
+    [with-offset : object_target.CompilerBackendObjectTargetParts
       (match offset
         [(CompilerIrValue.I64 n)
           (let
@@ -52685,7 +52449,7 @@
       (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-switch-indirect-jump-bytes) : String
-  (compiler-backend-object-bytes-from-hex "49ff24c3"))
+  (object_target.compiler-backend-object-bytes-from-hex "49ff24c3"))
 
 (define (compiler-backend-object-switch-entry-label
   [table-label : String]
@@ -52695,11 +52459,11 @@
     (string.int->string index)))
 
 (define (compiler-backend-object-switch-table-cases
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [label-scope : String]
   [table-label : String]
   [cases : CompilerIrSwitchCaseList]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (match cases
     [(CompilerIrSwitchCaseList.Nil) parts]
     [(CompilerIrSwitchCaseList.Cons case rest)
@@ -52710,9 +52474,9 @@
               (compiler-backend-object-switch-entry-label table-label index)]
             [target : String (compiler-backend-asm-label label-scope label)]
             (compiler-backend-object-switch-table-cases
-              (compiler-backend-object-add-rodata
-                (compiler-backend-object-add-rodata-relocation
-                  (compiler-backend-object-add-rodata
+              (object_target.compiler-backend-object-add-rodata
+                (object_target.compiler-backend-object-add-rodata-relocation
+                  (object_target.compiler-backend-object-add-rodata
                     parts
                     (cobj.CompilerObjectDataRecord.Label entry-label))
                   entry-label
@@ -52732,17 +52496,17 @@
         index)]))
 
 (define (compiler-backend-object-switch-table
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [label-scope : String]
   [current-label : i64]
-  [cases : CompilerIrSwitchCaseList]) : CompilerBackendObjectParts
+  [cases : CompilerIrSwitchCaseList]) : object_target.CompilerBackendObjectTargetParts
   (let
     [table-label : String
       (compiler-backend-switch-table-label label-scope current-label)]
     (compiler-backend-object-switch-table-cases
-      (compiler-backend-object-add-rodata
-        (compiler-backend-object-add-rodata
-          (compiler-backend-object-symbol-local-section
+      (object_target.compiler-backend-object-add-rodata
+        (object_target.compiler-backend-object-add-rodata
+          (object_target.compiler-backend-object-symbol-local-section
             parts
             table-label
             (cobj.CompilerObjectSectionKind.Rodata)
@@ -52755,7 +52519,7 @@
       0)))
 
 (define (compiler-backend-object-switch-dispatch
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [function-symbol : String]
   [label-scope : String]
   [current-label : i64]
@@ -52763,64 +52527,64 @@
   [base : i64]
   [case-count : i64]
   [default-label : i64]
-  [total-switch : bool]) : CompilerBackendObjectParts
+  [total-switch : bool]) : object_target.CompilerBackendObjectTargetParts
   (let
     [default-symbol : String
       (compiler-backend-asm-label label-scope default-label)]
     [table-label : String
       (compiler-backend-switch-table-label label-scope current-label)]
-    [with-index : CompilerBackendObjectParts
+    [with-index : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-load-value-to-reg
         parts
         function-symbol
         index
         "%rax")]
-    [with-base : CompilerBackendObjectParts
+    [with-base : object_target.CompilerBackendObjectTargetParts
       (if (= base 0)
         with-index
-        (compiler-backend-object-add-text
+        (object_target.compiler-backend-object-add-text
           with-index
           (cobj.CompilerObjectX64Instr.Bytes
             (compiler-backend-object-sub-imm32-rax-bytes base))))]
-    [with-cmp : CompilerBackendObjectParts
+    [with-cmp : object_target.CompilerBackendObjectTargetParts
       (if total-switch
         with-base
-        (compiler-backend-object-add-text
+        (object_target.compiler-backend-object-add-text
           with-base
           (cobj.CompilerObjectX64Instr.Bytes
             (compiler-backend-object-cmp-imm32-rax-bytes (- case-count 1)))))]
-    [with-ja : CompilerBackendObjectParts
+    [with-ja : object_target.CompilerBackendObjectTargetParts
       (if total-switch
         with-cmp
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             with-cmp
             function-symbol
             (cobj.CompilerObjectRelocationKind.Branch)
             default-symbol)
           (cobj.CompilerObjectX64Instr.Ja default-symbol)))]
-    [with-table : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-relocation
+    [with-table : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        (object_target.compiler-backend-object-add-text-relocation
           with-ja
           function-symbol
           (cobj.CompilerObjectRelocationKind.RipAddress)
           table-label)
         (cobj.CompilerObjectX64Instr.LoadRipAddressR11 table-label))]
-    (compiler-backend-object-add-text
+    (object_target.compiler-backend-object-add-text
       with-table
       (cobj.CompilerObjectX64Instr.Bytes
         (compiler-backend-object-switch-indirect-jump-bytes)))))
 
 (define (compiler-backend-object-switch
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [function-symbol : String]
   [label-scope : String]
   [current-label : i64]
   [index : CompilerIrValue]
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
-  [default-label : i64]) : CompilerBackendObjectParts
+  [default-label : i64]) : object_target.CompilerBackendObjectTargetParts
   (let
     ;; Decide before the table walker consumes its case-list cursor.
     [total-switch : bool
@@ -52843,56 +52607,78 @@
 
 (define (compiler-backend-object-binop-bytes [op : CompilerIrBinOp]) : String
   (match op
-    [(CompilerIrBinOp.Add) (compiler-backend-object-bytes-from-hex "4c01c0")]
-    [(CompilerIrBinOp.Sub) (compiler-backend-object-bytes-from-hex "4c29c0")]
-    [(CompilerIrBinOp.Mul) (compiler-backend-object-bytes-from-hex "490fafc0")]
+    [(CompilerIrBinOp.Add)
+      (object_target.compiler-backend-object-bytes-from-hex "4c01c0")]
+    [(CompilerIrBinOp.Sub)
+      (object_target.compiler-backend-object-bytes-from-hex "4c29c0")]
+    [(CompilerIrBinOp.Mul)
+      (object_target.compiler-backend-object-bytes-from-hex "490fafc0")]
     [(CompilerIrBinOp.Eq)
-      (compiler-backend-object-bytes-from-hex "4c39c00f94c0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c39c00f94c0480fb6c0")]
     [(CompilerIrBinOp.Ne)
-      (compiler-backend-object-bytes-from-hex "4c39c00f95c0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c39c00f95c0480fb6c0")]
     [(CompilerIrBinOp.Lt)
-      (compiler-backend-object-bytes-from-hex "4c39c00f9cc0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c39c00f9cc0480fb6c0")]
     [(CompilerIrBinOp.Le)
-      (compiler-backend-object-bytes-from-hex "4c39c00f9ec0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c39c00f9ec0480fb6c0")]
     [(CompilerIrBinOp.Gt)
-      (compiler-backend-object-bytes-from-hex "4c39c00f9fc0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c39c00f9fc0480fb6c0")]
     [(CompilerIrBinOp.Ge)
-      (compiler-backend-object-bytes-from-hex "4c39c00f9dc0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c39c00f9dc0480fb6c0")]
     [(CompilerIrBinOp.BitTestEq)
-      (compiler-backend-object-bytes-from-hex "4c85c00f94c0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c85c00f94c0480fb6c0")]
     [(CompilerIrBinOp.BitTestNe)
-      (compiler-backend-object-bytes-from-hex "4c85c00f95c0480fb6c0")]
-    [(CompilerIrBinOp.And) (compiler-backend-object-bytes-from-hex "4c21c0")]
-    [(CompilerIrBinOp.Or) (compiler-backend-object-bytes-from-hex "4c09c0")]
-    [(CompilerIrBinOp.BitAnd) (compiler-backend-object-bytes-from-hex "4c21c0")]
-    [(CompilerIrBinOp.BitOr) (compiler-backend-object-bytes-from-hex "4c09c0")]
-    [(CompilerIrBinOp.BitXor) (compiler-backend-object-bytes-from-hex "4c31c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c85c00f95c0480fb6c0")]
+    [(CompilerIrBinOp.And)
+      (object_target.compiler-backend-object-bytes-from-hex "4c21c0")]
+    [(CompilerIrBinOp.Or)
+      (object_target.compiler-backend-object-bytes-from-hex "4c09c0")]
+    [(CompilerIrBinOp.BitAnd)
+      (object_target.compiler-backend-object-bytes-from-hex "4c21c0")]
+    [(CompilerIrBinOp.BitOr)
+      (object_target.compiler-backend-object-bytes-from-hex "4c09c0")]
+    [(CompilerIrBinOp.BitXor)
+      (object_target.compiler-backend-object-bytes-from-hex "4c31c0")]
     [_ ""]))
 
 (define (compiler-backend-object-zero-compare-bytes [op : CompilerIrBinOp]) : String
   (match op
     [(CompilerIrBinOp.Eq)
-      (compiler-backend-object-bytes-from-hex "4c85c00f94c0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c85c00f94c0480fb6c0")]
     [(CompilerIrBinOp.Ne)
-      (compiler-backend-object-bytes-from-hex "4c85c00f95c0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c85c00f95c0480fb6c0")]
     [(CompilerIrBinOp.Lt)
-      (compiler-backend-object-bytes-from-hex "4c85c00f9cc0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c85c00f9cc0480fb6c0")]
     [(CompilerIrBinOp.Le)
-      (compiler-backend-object-bytes-from-hex "4c85c00f9ec0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c85c00f9ec0480fb6c0")]
     [(CompilerIrBinOp.Gt)
-      (compiler-backend-object-bytes-from-hex "4c85c00f9fc0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c85c00f9fc0480fb6c0")]
     [(CompilerIrBinOp.Ge)
-      (compiler-backend-object-bytes-from-hex "4c85c00f9dc0480fb6c0")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4c85c00f9dc0480fb6c0")]
     [_ ""]))
 
 (define (compiler-backend-object-binop
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [ty : AstType]) : CompilerBackendObjectParts
+  [ty : AstType]) : object_target.CompilerBackendObjectTargetParts
   (let
     [op-bytes : String
       (if (match rhs
@@ -52921,12 +52707,12 @@
         "%rax"))))
 
 (define (compiler-backend-object-scalar-select
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
   [condition : CompilerIrValue]
   [on-true : CompilerIrValue]
-  [on-false : CompilerIrValue]) : CompilerBackendObjectParts
+  [on-false : CompilerIrValue]) : object_target.CompilerBackendObjectTargetParts
   ;; Object emission keeps scalar vars in frame homes, so fixed temporaries are
   ;; safe here: false -> rax, true -> r8, condition -> r11, then cmovne.
   (compiler-backend-object-store-reg-to-var
@@ -52940,7 +52726,7 @@
         site
         condition
         "%r11")
-      (compiler-backend-object-bytes-from-hex "4d85db490f45c0"))
+      (object_target.compiler-backend-object-bytes-from-hex "4d85db490f45c0"))
     dst
     "%rax"))
 
@@ -52977,22 +52763,22 @@
           (* 8 (compiler-backend-object-call-stack-word-count target args))))]))
 
 (define (compiler-backend-object-call-stack-arg
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [site : String]
   [value : CompilerIrValue]
-  [stack-index : i64]) : CompilerBackendObjectParts
+  [stack-index : i64]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-add-nonempty-bytes
     (compiler-backend-object-load-value-to-reg parts site value "%rax")
     (compiler-backend-object-store-rax-rsp-bytes
       (compiler-backend-outgoing-stack-arg-offset target stack-index))))
 
 (define (compiler-backend-object-call-arg-moves
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [site : String]
   [args : CompilerIrCallArgs]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (compiler-backend-call-args-count args))
     parts
     (if (>= index (compiler-backend-object-call-reg-count target))
@@ -53022,16 +52808,16 @@
         (+ index 1)))))
 
 (define (compiler-backend-object-direct-call
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [site : String]
   [symbol : String]
-  [args : CompilerIrCallArgs]) : CompilerBackendObjectParts
+  [args : CompilerIrCallArgs]) : object_target.CompilerBackendObjectTargetParts
   (let
     [space : i64 (compiler-backend-object-call-space target args)]
     (compiler-backend-object-add-nonempty-bytes
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-relocation
+      (object_target.compiler-backend-object-add-text
+        (object_target.compiler-backend-object-add-text-relocation
           (compiler-backend-object-call-arg-moves
             (compiler-backend-object-add-nonempty-bytes
               parts
@@ -53047,10 +52833,10 @@
       (compiler-backend-object-add-rsp-bytes space))))
 
 (define (compiler-backend-object-param-spills
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
-  [int-index : i64]) : CompilerBackendObjectParts
+  [int-index : i64]) : object_target.CompilerBackendObjectTargetParts
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) parts]
     [(CompilerIrParamList.Array seq)
@@ -53203,10 +52989,10 @@
         0)]))
 
 (define (compiler-backend-object-emit-phi-copies-stage
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [copies : CompilerBackendPhiCopySeq]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (struct-get copies len))
     parts
     (match (compiler-backend-phi-copy-seq-rev-ref copies index)
@@ -53233,9 +53019,9 @@
               (+ index 1))])])))
 
 (define (compiler-backend-object-emit-phi-copies-store
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [copies : CompilerBackendPhiCopySeq]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (struct-get copies len))
     parts
     (match (compiler-backend-phi-copy-seq-rev-ref copies index)
@@ -53251,9 +53037,9 @@
           (+ index 1))])))
 
 (define (compiler-backend-object-emit-phi-copies
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
-  [copies : CompilerBackendPhiCopySeq]) : CompilerBackendObjectParts
+  [copies : CompilerBackendPhiCopySeq]) : object_target.CompilerBackendObjectTargetParts
   (let
     [count : i64 (compiler-backend-object-phi-copy-list-count copies)]
     (if (= count 0)
@@ -53272,7 +53058,7 @@
         (compiler-backend-object-add-rsp-bytes (* count 8))))))
 
 (define (compiler-backend-object-instr
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
@@ -53280,7 +53066,7 @@
   [blocks : CompilerIrBlockList]
   [instr : CompilerIrInstr]
   [plan : CompilerBackendRuntimePlan]
-  [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match instr
     [(CompilerIrInstr.Mov dst src ty)
       (if (compiler-backend-copy-group? program-index ty dst src)
@@ -53290,7 +53076,7 @@
       (compiler-backend-object-binop parts function dst op lhs rhs ty)]
     [(CompilerIrInstr.UnOp dst op src ty)
       (let
-        [with-src : CompilerBackendObjectParts
+        [with-src : object_target.CompilerBackendObjectTargetParts
           (compiler-backend-object-value-ref-with-type parts function src ty)]
         (if (and
           (compiler-backend-f64-type? ty)
@@ -53298,7 +53084,7 @@
             [(CompilerIrUnOp.Neg) true]
             [_ false]))
           (compiler-backend-object-store-reg-to-var
-            (compiler-backend-object-add-rip-instr
+            (object_target.compiler-backend-object-add-rip-instr
               with-src
               function
               (cobj.CompilerObjectRelocationKind.RipValue)
@@ -53341,7 +53127,7 @@
         [space : i64 (compiler-backend-object-call-space target args)]
         (compiler-backend-object-store-reg-to-var
           (compiler-backend-object-add-nonempty-bytes
-            (compiler-backend-object-add-text
+            (object_target.compiler-backend-object-add-text
               (compiler-backend-object-load-value-to-reg
                 (compiler-backend-object-call-arg-moves
                   (compiler-backend-object-add-nonempty-bytes
@@ -53390,8 +53176,8 @@
       (let
         [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             (compiler-backend-object-add-nonempty-bytes
               (compiler-backend-object-call-arg-moves
                 parts
@@ -53407,8 +53193,8 @@
     [(CompilerIrInstr.Store name value ty)
       (let
         [symbol : String (compiler-backend-user-symbol-id name)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             (compiler-backend-object-value-ref-with-type
               parts
               function
@@ -53421,8 +53207,8 @@
     [(CompilerIrInstr.Jump target)
       (let
         [symbol : String (compiler-backend-asm-label label-scope target)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-add-text-relocation
             (compiler-backend-object-emit-phi-copies
               parts
               function
@@ -53456,9 +53242,9 @@
         (if (and
           (compiler-backend-object-phi-copy-list-nil? true-copies)
           (compiler-backend-object-phi-copy-list-nil? false-copies))
-          (compiler-backend-object-add-text
-            (compiler-backend-object-add-text-relocation
-              (compiler-backend-object-add-text-relocation
+          (object_target.compiler-backend-object-add-text
+            (object_target.compiler-backend-object-add-text-relocation
+              (object_target.compiler-backend-object-add-text-relocation
                 (compiler-backend-object-value-ref parts function cond)
                 function
                 (cobj.CompilerObjectRelocationKind.Branch)
@@ -53482,19 +53268,19 @@
                   (str_cat.str-cat
                     (compiler-ir-label-text current-label)
                     ".phif")))]
-            (compiler-backend-object-add-text
-              (compiler-backend-object-add-text-relocation
+            (object_target.compiler-backend-object-add-text
+              (object_target.compiler-backend-object-add-text-relocation
                 (compiler-backend-object-emit-phi-copies
-                  (compiler-backend-object-add-text
-                    (compiler-backend-object-symbol-local-section
-                      (compiler-backend-object-add-text
-                        (compiler-backend-object-add-text-relocation
+                  (object_target.compiler-backend-object-add-text
+                    (object_target.compiler-backend-object-symbol-local-section
+                      (object_target.compiler-backend-object-add-text
+                        (object_target.compiler-backend-object-add-text-relocation
                           (compiler-backend-object-emit-phi-copies
-                            (compiler-backend-object-add-text
-                              (compiler-backend-object-symbol-local-section
-                                (compiler-backend-object-add-text
-                                  (compiler-backend-object-add-text-relocation
-                                    (compiler-backend-object-add-text-relocation
+                            (object_target.compiler-backend-object-add-text
+                              (object_target.compiler-backend-object-symbol-local-section
+                                (object_target.compiler-backend-object-add-text
+                                  (object_target.compiler-backend-object-add-text-relocation
+                                    (object_target.compiler-backend-object-add-text-relocation
                                       (compiler-backend-object-value-ref
                                         parts
                                         function
@@ -53726,7 +53512,7 @@
             _
             elem-ty)
           (let
-            [with-low : CompilerBackendObjectParts
+            [with-low : object_target.CompilerBackendObjectTargetParts
               (compiler-backend-object-value-ref
                 (compiler-backend-object-value-ref-with-type
                   parts
@@ -53735,7 +53521,7 @@
                   elem-ty)
                 function
                 selector-low)]
-            [with-high : CompilerBackendObjectParts
+            [with-high : object_target.CompilerBackendObjectTargetParts
               (match selector-high
                 [(CompilerIrMaybeValue.Some value)
                   (compiler-backend-object-value-ref with-low function value)]
@@ -53791,7 +53577,7 @@
         default-label)]))
 
 (define (compiler-backend-object-instr-seq
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
@@ -53800,7 +53586,7 @@
   [instrs : CompilerIrInstrSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (compiler-ir-instr-seq-count instrs))
     parts
     (compiler-backend-object-instr-seq
@@ -53825,13 +53611,13 @@
       (+ index 1))))
 
 (define (compiler-backend-object-blocks
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [function-symbol : String]
   [label-scope : String]
   [blocks : CompilerIrBlockList]
   [plan : CompilerBackendRuntimePlan]
-  [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match blocks
     [(CompilerIrBlockList.Nil) parts]
     [(CompilerIrBlockList.Cons block rest)
@@ -53842,8 +53628,8 @@
               (compiler-backend-asm-label label-scope label)]
             (compiler-backend-object-blocks
               (compiler-backend-object-instr-seq
-                (compiler-backend-object-add-text
-                  (compiler-backend-object-symbol-local-section
+                (object_target.compiler-backend-object-add-text
+                  (object_target.compiler-backend-object-symbol-local-section
                     parts
                     block-label
                     (cobj.CompilerObjectSectionKind.Text)
@@ -53876,14 +53662,14 @@
         0)]))
 
 (define (compiler-backend-object-block-seq
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [function-symbol : String]
   [label-scope : String]
   [blocks : CompilerIrBlockSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (compiler-ir-block-seq-count blocks))
     parts
     (match (compiler-ir-block-seq-ref blocks index)
@@ -53892,8 +53678,8 @@
           [block-label : String (compiler-backend-asm-label label-scope label)]
           (compiler-backend-object-block-seq
             (compiler-backend-object-instr-seq
-              (compiler-backend-object-add-text
-                (compiler-backend-object-symbol-local-section
+              (object_target.compiler-backend-object-add-text
+                (object_target.compiler-backend-object-symbol-local-section
                   parts
                   block-label
                   (cobj.CompilerObjectSectionKind.Text)
@@ -53917,11 +53703,11 @@
             (+ index 1)))])))
 
 (define (compiler-backend-object-functions
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
   [plan : CompilerBackendRuntimePlan]
-  [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match functions
     [(CompilerIrFunctionList.Nil) parts]
     [(CompilerIrFunctionList.Cons func rest)
@@ -53945,12 +53731,12 @@
                 (compiler-backend-group-vars-enable!
                   groups
                   (compiler-live-set-empty)))]
-            [emitted : CompilerBackendObjectParts
+            [emitted : object_target.CompilerBackendObjectTargetParts
               (compiler-backend-object-blocks
                 (compiler-backend-object-param-spills
                   (compiler-backend-object-add-nonempty-bytes
-                    (compiler-backend-object-add-text
-                      (compiler-backend-object-symbol-export-section
+                    (object_target.compiler-backend-object-add-text
+                      (object_target.compiler-backend-object-symbol-export-section
                         parts
                         symbol
                         (cobj.CompilerObjectSectionKind.Text)
@@ -53988,12 +53774,12 @@
         0)]))
 
 (define (compiler-backend-object-function-seq
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (compiler-ir-function-seq-count functions))
     parts
     (match (compiler-ir-function-seq-ref functions index)
@@ -54016,12 +53802,12 @@
               (compiler-backend-group-vars-enable!
                 groups
                 (compiler-live-set-empty)))]
-          [emitted : CompilerBackendObjectParts
+          [emitted : object_target.CompilerBackendObjectTargetParts
             (compiler-backend-object-blocks
               (compiler-backend-object-param-spills
                 (compiler-backend-object-add-nonempty-bytes
-                  (compiler-backend-object-add-text
-                    (compiler-backend-object-symbol-export-section
+                  (object_target.compiler-backend-object-add-text
+                    (object_target.compiler-backend-object-symbol-export-section
                       parts
                       symbol
                       (cobj.CompilerObjectSectionKind.Text)
@@ -54052,39 +53838,39 @@
             (+ index 1)))])))
 
 (define (compiler-backend-object-global-value
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [ty : AstType]
-  [value : CompilerIrValue]) : CompilerBackendObjectParts
+  [value : CompilerIrValue]) : object_target.CompilerBackendObjectTargetParts
   (match value
     [(CompilerIrValue.I64 n)
-      (compiler-backend-object-add-data
+      (object_target.compiler-backend-object-add-data
         parts
         (cobj.CompilerObjectDataRecord.I64 n))]
     [(CompilerIrValue.Bool b)
-      (compiler-backend-object-add-data
+      (object_target.compiler-backend-object-add-data
         parts
         (cobj.CompilerObjectDataRecord.I64
           (if b
             1
             0)))]
     [(CompilerIrValue.Char c)
-      (compiler-backend-object-add-data
+      (object_target.compiler-backend-object-add-data
         parts
         (cobj.CompilerObjectDataRecord.I64 (compiler-backend-char-code c)))]
     [(CompilerIrValue.Unit)
-      (compiler-backend-object-add-data
+      (object_target.compiler-backend-object-add-data
         parts
         (cobj.CompilerObjectDataRecord.I64 0))]
     [(CompilerIrValue.F64 bits)
-      (compiler-backend-object-add-data
+      (object_target.compiler-backend-object-add-data
         parts
         (compiler-backend-float-object-data ty bits))]
     [(CompilerIrValue.String text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
-        (compiler-backend-object-add-data
-          (compiler-backend-object-add-data-relocation
+        (object_target.compiler-backend-object-add-data
+          (object_target.compiler-backend-object-add-data-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.Abs64)
@@ -54093,8 +53879,8 @@
     [(CompilerIrValue.Bytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
-        (compiler-backend-object-add-data
-          (compiler-backend-object-add-data-relocation
+        (object_target.compiler-backend-object-add-data
+          (object_target.compiler-backend-object-add-data-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.Abs64)
@@ -54103,8 +53889,8 @@
     [(CompilerIrValue.Global name)
       (let
         [symbol : String (compiler-backend-user-symbol-id name)]
-        (compiler-backend-object-add-data
-          (compiler-backend-object-add-data-relocation
+        (object_target.compiler-backend-object-add-data
+          (object_target.compiler-backend-object-add-data-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.Abs64)
@@ -54113,8 +53899,8 @@
     [(CompilerIrValue.GlobalAddr name)
       (let
         [symbol : String (compiler-backend-user-symbol-id name)]
-        (compiler-backend-object-add-data
-          (compiler-backend-object-add-data-relocation
+        (object_target.compiler-backend-object-add-data
+          (object_target.compiler-backend-object-add-data-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.Abs64)
@@ -54125,8 +53911,8 @@
         [symbol : String
           (compiler-backend-closure-descriptor-label
             (compiler-ir-symbol-text name))]
-        (compiler-backend-object-add-data
-          (compiler-backend-object-add-data-relocation
+        (object_target.compiler-backend-object-add-data
+          (object_target.compiler-backend-object-add-data-relocation
             parts
             site
             (cobj.CompilerObjectRelocationKind.Abs64)
@@ -54135,9 +53921,9 @@
     [_ parts]))
 
 (define (compiler-backend-object-globals
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
-  [globals : CompilerIrGlobalList]) : CompilerBackendObjectParts
+  [globals : CompilerIrGlobalList]) : object_target.CompilerBackendObjectTargetParts
   (match globals
     [(CompilerIrGlobalList.Nil) parts]
     [(CompilerIrGlobalList.Cons global rest)
@@ -54147,9 +53933,9 @@
             [symbol : String (compiler-backend-user-symbol-id name)]
             (compiler-backend-object-globals
               (if (compiler-backend-runtime-global? ty value)
-                (compiler-backend-object-add-bss
-                  (compiler-backend-object-add-bss
-                    (compiler-backend-object-symbol-export-section
+                (object_target.compiler-backend-object-add-bss
+                  (object_target.compiler-backend-object-add-bss
+                    (object_target.compiler-backend-object-symbol-export-section
                       parts
                       symbol
                       (cobj.CompilerObjectSectionKind.Bss)
@@ -54157,8 +53943,8 @@
                     (cobj.CompilerObjectDataRecord.Label symbol))
                   (cobj.CompilerObjectDataRecord.Zero 8))
                 (compiler-backend-object-global-value
-                  (compiler-backend-object-add-data
-                    (compiler-backend-object-symbol-export-section
+                  (object_target.compiler-backend-object-add-data
+                    (object_target.compiler-backend-object-symbol-export-section
                       parts
                       symbol
                       (cobj.CompilerObjectSectionKind.Data)
@@ -54176,9 +53962,9 @@
         (compiler-ir-global-seq-to-list seq))]))
 
 (define (compiler-backend-object-strings
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [strings : BackendStringSeq]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (struct-get strings len))
     parts
     (let
@@ -54186,15 +53972,15 @@
       [data-symbol : String (compiler-backend-string-data-label text)]
       [fat-symbol : String (compiler-backend-string-fat-label text)]
       (compiler-backend-object-strings
-        (compiler-backend-object-add-rodata
-          (compiler-backend-object-add-rodata
-            (compiler-backend-object-add-rodata
-              (compiler-backend-object-add-rodata-relocation
-                (compiler-backend-object-add-rodata
-                  (compiler-backend-object-symbol-local-section
-                    (compiler-backend-object-add-rodata
-                      (compiler-backend-object-add-rodata
-                        (compiler-backend-object-symbol-local-section
+        (object_target.compiler-backend-object-add-rodata
+          (object_target.compiler-backend-object-add-rodata
+            (object_target.compiler-backend-object-add-rodata
+              (object_target.compiler-backend-object-add-rodata-relocation
+                (object_target.compiler-backend-object-add-rodata
+                  (object_target.compiler-backend-object-symbol-local-section
+                    (object_target.compiler-backend-object-add-rodata
+                      (object_target.compiler-backend-object-add-rodata
+                        (object_target.compiler-backend-object-symbol-local-section
                           parts
                           data-symbol
                           (cobj.CompilerObjectSectionKind.Rodata)
@@ -54215,9 +54001,9 @@
         (+ index 1)))))
 
 (define (compiler-backend-object-bytes
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [items : BackendStringSeq]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (struct-get items len))
     parts
     (let
@@ -54225,16 +54011,16 @@
       [data-symbol : String (compiler-backend-bytes-data-label bytes)]
       [fat-symbol : String (compiler-backend-bytes-fat-label bytes)]
       (compiler-backend-object-bytes
-        (compiler-backend-object-add-data
-          (compiler-backend-object-add-data
-            (compiler-backend-object-add-data
-              (compiler-backend-object-add-data
-                (compiler-backend-object-add-data-relocation
-                  (compiler-backend-object-add-data
-                    (compiler-backend-object-add-data
-                      (compiler-backend-object-add-data
-                        (compiler-backend-object-symbol-local-section
-                          (compiler-backend-object-symbol-local-section
+        (object_target.compiler-backend-object-add-data
+          (object_target.compiler-backend-object-add-data
+            (object_target.compiler-backend-object-add-data
+              (object_target.compiler-backend-object-add-data
+                (object_target.compiler-backend-object-add-data-relocation
+                  (object_target.compiler-backend-object-add-data
+                    (object_target.compiler-backend-object-add-data
+                      (object_target.compiler-backend-object-add-data
+                        (object_target.compiler-backend-object-symbol-local-section
+                          (object_target.compiler-backend-object-symbol-local-section
                             parts
                             data-symbol
                             (cobj.CompilerObjectSectionKind.Data)
@@ -54258,18 +54044,18 @@
         (+ index 1)))))
 
 (define (compiler-backend-object-floats
-  [parts : CompilerBackendObjectParts]
-  [floats : BackendFloatList]) : CompilerBackendObjectParts
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [floats : BackendFloatList]) : object_target.CompilerBackendObjectTargetParts
   (match floats
     [(BackendFloatList.Nil) parts]
     [(BackendFloatList.Cons ty bits rest)
       (let
         [symbol : String (compiler-backend-float-label ty bits)]
         (compiler-backend-object-floats
-          (compiler-backend-object-add-rodata
-            (compiler-backend-object-add-rodata
-              (compiler-backend-object-add-rodata
-                (compiler-backend-object-symbol-local-section
+          (object_target.compiler-backend-object-add-rodata
+            (object_target.compiler-backend-object-add-rodata
+              (object_target.compiler-backend-object-add-rodata
+                (object_target.compiler-backend-object-symbol-local-section
                   parts
                   symbol
                   (cobj.CompilerObjectSectionKind.Rodata)
@@ -54283,16 +54069,16 @@
           (box-get rest)))]))
 
 (define (compiler-backend-object-f64-sign-bit
-  [parts : CompilerBackendObjectParts]
-  [enabled : bool]) : CompilerBackendObjectParts
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [enabled : bool]) : object_target.CompilerBackendObjectTargetParts
   (if enabled
     (let
       [symbol : String (compiler-backend-f64-sign-bit-label)]
-      (compiler-backend-object-add-rodata
-        (compiler-backend-object-add-rodata
-          (compiler-backend-object-add-rodata
-            (compiler-backend-object-add-rodata
-              (compiler-backend-object-symbol-local-section
+      (object_target.compiler-backend-object-add-rodata
+        (object_target.compiler-backend-object-add-rodata
+          (object_target.compiler-backend-object-add-rodata
+            (object_target.compiler-backend-object-add-rodata
+              (object_target.compiler-backend-object-symbol-local-section
                 parts
                 symbol
                 (cobj.CompilerObjectSectionKind.Rodata)
@@ -54304,10 +54090,10 @@
     parts))
 
 (define (compiler-backend-object-closure-descriptors
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [names : BackendSymbolSeq]
   [index : i64]
-  [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
+  [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (struct-get names len))
     parts
     (let
@@ -54319,13 +54105,13 @@
       (compiler-backend-object-closure-descriptors
         (match (compiler-backend-index-signature program-index name)
           [(CompilerBackendMaybeSignature.Some _ _)
-            (compiler-backend-object-add-rodata
-              (compiler-backend-object-add-rodata
-                (compiler-backend-object-add-rodata-relocation
-                  (compiler-backend-object-add-rodata
-                    (compiler-backend-object-add-rodata
-                      (compiler-backend-object-symbol-local-section
-                        (compiler-backend-object-symbol-local-section
+            (object_target.compiler-backend-object-add-rodata
+              (object_target.compiler-backend-object-add-rodata
+                (object_target.compiler-backend-object-add-rodata-relocation
+                  (object_target.compiler-backend-object-add-rodata
+                    (object_target.compiler-backend-object-add-rodata
+                      (object_target.compiler-backend-object-symbol-local-section
+                        (object_target.compiler-backend-object-symbol-local-section
                           parts
                           descriptor
                           (cobj.CompilerObjectSectionKind.Rodata)
@@ -54346,11 +54132,11 @@
         program-index))))
 
 (define (compiler-backend-object-externs
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
-  [referenced-functions : BackendSymbolSeq]) : CompilerBackendObjectParts
+  [referenced-functions : BackendSymbolSeq]) : object_target.CompilerBackendObjectTargetParts
   (match externs
     [(CompilerIrExternList.Nil) parts]
     [(CompilerIrExternList.Cons item rest)
@@ -54372,7 +54158,7 @@
                 referenced-functions
                 name-id
                 link-symbol-id))
-              (compiler-backend-object-symbol-extern
+              (object_target.compiler-backend-object-symbol-extern
                 parts
                 (compiler-backend-link-symbol-id link-symbol-id plan)
                 (cobj.CompilerObjectSymbolKind.Function))
@@ -54475,17 +54261,17 @@
     (compiler-backend-fixed-fault-symbol-id? name-id)))
 
 (define (compiler-backend-object-runtime-symbols
-  [parts : CompilerBackendObjectParts]
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [plan : CompilerBackendRuntimePlan]
   [names : BackendStringSeq]
-  [index : i64]) : CompilerBackendObjectParts
+  [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (struct-get names len))
     parts
     (let
       [name : String (array-ref (struct-get names slots) index)]
       (compiler-backend-object-runtime-symbols
         (if (compiler-backend-object-runtime-symbol-provided? plan name)
-          (compiler-backend-object-symbol-local-section
+          (object_target.compiler-backend-object-symbol-local-section
             parts
             name
             (cobj.CompilerObjectSectionKind.Text)
@@ -54495,671 +54281,25 @@
         names
         (+ index 1)))))
 
-(define (compiler-backend-object-hex-value [c : char]) : i64
-  (cond
-    [(and (>= c '0') (<= c '9')) (- (cast c : i64) (cast '0' : i64))]
-    [(and (>= c 'a') (<= c 'f')) (+ 10 (- (cast c : i64) (cast 'a' : i64)))]
-    [(and (>= c 'A') (<= c 'F')) (+ 10 (- (cast c : i64) (cast 'A' : i64)))]
-    [else 0]))
-
-(define (compiler-backend-object-bytes-from-hex [hex : String]) : String
-  (let
-    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    [i : i64 0]
-    [n : i64 (string.string-length hex)]
-    (begin
-      (while (< (+ i 1) n)
-        (let
-          [hi : i64
-            (compiler-backend-object-hex-value (string.string-ref hex i))]
-          [lo : i64
-            (compiler-backend-object-hex-value (string.string-ref hex (+ i 1)))]
-          (begin
-            (byte_buf_core.byte-buf-builder-push
-              (&mut out)
-              (cast (+ (* hi 16) lo) : u8))
-            (set! i (+ i 2)))))
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
-
-(define (compiler-backend-object-windows-chkstk-bytes) : String
-  (compiler-backend-object-bytes-from-hex
-    "51504889c1488d4424104881f9001000007212482d00100000c600004881e900100000ebe54829c8c600005859c3"))
-
-(define (compiler-backend-object-windows-setup-pre-getcmd-bytes) : String
-  (compiler-backend-object-bytes-from-hex "554889e55341544155415641574883ec28"))
-
-(define (compiler-backend-object-windows-setup-after-getcmd-bytes) : String
-  (compiler-backend-object-bytes-from-hex
-    "4889c34d31e442803c2300740549ffc4ebf4498d4c24014883ec20"))
-
-(define (compiler-backend-object-windows-setup-after-boot1-bytes) : String
-  (compiler-backend-object-bytes-from-hex
-    "4883c4204989c54831c94c39e17d0d8a040b4188440d0048ffc1ebee43c64425000048c7c1080800004883ec20"))
-
-(define (compiler-backend-object-windows-setup-after-boot2-pre-store-bytes) : String
-  (compiler-backend-object-bytes-from-hex
-    "4883c4204989c64d31ff4c89eb8a033c0074513c20750548ffc3ebf14981ffff0000007d3f4b891cfe49ffc74531c98a033c00742f3c2275154183f1014889d98a4101880148ffc13c0075f4ebe13c20750d4585c97508c6030048ffc3ebae48ffc3ebcb4bc704fe00000000"))
-
-(define (compiler-backend-object-windows-setup-epilogue-bytes) : String
-  (compiler-backend-object-bytes-from-hex "4883c428415f415e415d415c5b5dc3"))
-
-(define (compiler-backend-object-windows-add-rdx-rax-bytes) : String
-  (compiler-backend-object-bytes-from-hex "4801d0"))
-
-(define (compiler-backend-object-windows-ret-bytes) : String
-  (compiler-backend-object-bytes-from-hex "c3"))
-
-(define (compiler-backend-object-tlci-entry-bytes
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    (compiler-backend-object-bytes-from-hex
-      "4889c84889d14c89c24883ec28ffd04883c428c3")
-    (compiler-backend-object-bytes-from-hex
-      "4889f84889f74889d64883ec08ffd04883c408c3")))
-
-(define (compiler-backend-object-tlci-macro-entry-bytes
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    (compiler-backend-object-bytes-from-hex
-      "4889c84889d14c89c24d89c84c8b4c24284c8b5424304c8b5c24384883ec384c895424204c895c2428ffd04883c438c3")
-    (compiler-backend-object-bytes-from-hex
-      "4889f84889f74889d64889ca4c89c14d89c84c8b4c24084883ec08ffd04883c408c3")))
-
-(define (compiler-backend-object-windows-entry-gs-clear-bytes) : String
-  (compiler-backend-object-bytes-from-hex "6548c704252800000000000000"))
-
-(define (compiler-backend-object-windows-entry-xdata-bytes) : String
-  (let
-    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      ;; UNWIND_INFO: version 1, 4-byte prolog, one UWOP_ALLOC_SMALL(40).
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x01 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x04 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x01 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x04 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x42 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
-
-(define compiler-backend-object-windows-manifest-label : String
-  ".L_tl_manifest")
-(define compiler-backend-object-windows-rsrc-data-label : String
-  ".L_tl_rsrc_data")
-(define compiler-backend-object-windows-utf8-manifest : String
-  "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\r\n  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n    <windowsSettings>\r\n      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>\r\n    </windowsSettings>\r\n  </application>\r\n</assembly>\r\n")
-
-(define (compiler-backend-object-windows-manifest-resource-records) : cobj.CompilerObjectDataRecordList
-  (let
-    [records0 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-with-capacity 9)]
-    [records1 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records0
-        (cobj.CompilerObjectDataRecord.Label ".L_tl_rsrc_base"))]
-    [records2 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records1
-        (cobj.CompilerObjectDataRecord.Bytes
-          (compiler-backend-object-bytes-from-hex
-            "000000000000000000000000000001001800000018000080000000000000000000000000000001000100000030000080000000000000000000000000000001000904000048000000")))]
-    [records3 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records2
-        (cobj.CompilerObjectDataRecord.Label
-          compiler-backend-object-windows-rsrc-data-label))]
-    [records4 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records3
-        (cobj.CompilerObjectDataRecord.SymbolRva32
-          compiler-backend-object-windows-manifest-label))]
-    [records5 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records4
-        ;; Manifest size is 376 bytes (0x178), followed by codepage/reserved zeros.
-        (cobj.CompilerObjectDataRecord.Bytes
-          (compiler-backend-object-bytes-from-hex "780100000000000000000000")))]
-    [records6 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records5
-        (cobj.CompilerObjectDataRecord.Align 4))]
-    [records7 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records6
-        (cobj.CompilerObjectDataRecord.Label
-          compiler-backend-object-windows-manifest-label))]
-    [records8 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records7
-        (cobj.CompilerObjectDataRecord.Bytes
-          compiler-backend-object-windows-utf8-manifest))]
-    [records9 : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-push
-        records8
-        (cobj.CompilerObjectDataRecord.Label ".L_tl_manifest_end"))]
-    (cobj.compiler-object-data-record-builder-finish records9)))
-
-(define (compiler-backend-object-add-windows-entry-data
-  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
-  (let
-    [with-argc-symbol : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-local-section
-        parts
-        ".L_tl_argc"
-        (cobj.CompilerObjectSectionKind.Data)
-        (cobj.CompilerObjectSymbolKind.Data))]
-    [with-argc : CompilerBackendObjectParts
-      (compiler-backend-object-add-data
-        (compiler-backend-object-add-data
-          with-argc-symbol
-          (cobj.CompilerObjectDataRecord.Label ".L_tl_argc"))
-        (cobj.CompilerObjectDataRecord.I64 0))]
-    [with-argv-symbol : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-local-section
-        with-argc
-        ".L_tl_argv"
-        (cobj.CompilerObjectSectionKind.Data)
-        (cobj.CompilerObjectSymbolKind.Data))]
-    [with-argv : CompilerBackendObjectParts
-      (compiler-backend-object-add-data
-        (compiler-backend-object-add-data
-          with-argv-symbol
-          (cobj.CompilerObjectDataRecord.Label ".L_tl_argv"))
-        (cobj.CompilerObjectDataRecord.I64 0))]
-    [with-boot-off-symbol : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-local-section
-        with-argv
-        "tl_boot_off"
-        (cobj.CompilerObjectSectionKind.Bss)
-        (cobj.CompilerObjectSymbolKind.Data))]
-    [with-boot-off : CompilerBackendObjectParts
-      (compiler-backend-object-add-bss
-        (compiler-backend-object-add-bss
-          (compiler-backend-object-add-bss
-            with-boot-off-symbol
-            (cobj.CompilerObjectDataRecord.Align 8))
-          (cobj.CompilerObjectDataRecord.Label "tl_boot_off"))
-        (cobj.CompilerObjectDataRecord.Zero 8))]
-    [with-boot-pool-symbol : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-local-section
-        with-boot-off
-        "tl_boot_pool"
-        (cobj.CompilerObjectSectionKind.Bss)
-        (cobj.CompilerObjectSymbolKind.Data))]
-    (compiler-backend-object-add-bss
-      (compiler-backend-object-add-bss
-        with-boot-pool-symbol
-        (cobj.CompilerObjectDataRecord.Label "tl_boot_pool"))
-      (cobj.CompilerObjectDataRecord.Zero 524288))))
-
-(define (compiler-backend-object-add-text-bytes
-  [parts : CompilerBackendObjectParts]
-  [bytes : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-text
-    parts
-    (cobj.CompilerObjectX64Instr.Bytes bytes)))
-
-(define (compiler-backend-object-add-call-instr
-  [parts : CompilerBackendObjectParts]
-  [site : String]
-  [target : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-text
-    (compiler-backend-object-add-text-relocation
-      parts
-      site
-      (cobj.CompilerObjectRelocationKind.Call)
-      target)
-    (cobj.CompilerObjectX64Instr.Call target)))
-
-(define (compiler-backend-object-add-tlci-entry-runtime-text
-  [parts : CompilerBackendObjectParts]
+(define (compiler-backend-object-image-for-target
+  [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
-  [macro-entry : bool]) : CompilerBackendObjectParts
-  (let
-    [with-image-entry : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        (compiler-backend-object-add-text
-          parts
-          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
-        (compiler-backend-object-tlci-entry-bytes target))]
-    (if macro-entry
-      (compiler-backend-object-add-text-bytes
-        (compiler-backend-object-add-text
-          with-image-entry
-          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
-        (compiler-backend-object-tlci-macro-entry-bytes target))
-      with-image-entry)))
-
-(define (compiler-backend-object-linux-exit-bytes) : String
-  (compiler-backend-object-bytes-from-hex "4889c748c7c03c0000000f05"))
-
-(define (compiler-backend-object-add-linux-entry
-  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
-  (let
-    [entry : String "_tl_start"]
-    [with-symbol : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-export-section
-        parts
-        entry
-        (cobj.CompilerObjectSectionKind.Text)
-        (cobj.CompilerObjectSymbolKind.Function))]
-    [with-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        with-symbol
-        (cobj.CompilerObjectX64Instr.Label entry))]
-    [with-main-call : CompilerBackendObjectParts
-      (compiler-backend-object-add-call-instr with-label entry "main")]
-    (compiler-backend-object-add-text-bytes
-      with-main-call
-      (compiler-backend-object-linux-exit-bytes))))
-
-(define (compiler-backend-object-add-rip-instr
-  [parts : CompilerBackendObjectParts]
-  [site : String]
-  [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]
-  [instr : cobj.CompilerObjectX64Instr]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-text
-    (compiler-backend-object-add-text-relocation parts site kind target)
-    instr))
-
-(define (compiler-backend-object-add-windows-runtime-text
-  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
-  (let
-    [with-symbols : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-extern-once
-        (compiler-backend-object-symbol-local-section
-          (compiler-backend-object-symbol-local-section
-            (compiler-backend-object-symbol-local-section
-              parts
-              "__chkstk"
-              (cobj.CompilerObjectSectionKind.Text)
-              (cobj.CompilerObjectSymbolKind.Runtime))
-            "tl_setup_argv"
-            (cobj.CompilerObjectSectionKind.Text)
-            (cobj.CompilerObjectSymbolKind.Runtime))
-          ".L_tl_boot_alloc"
-          (cobj.CompilerObjectSectionKind.Text)
-          (cobj.CompilerObjectSymbolKind.Runtime))
-        "GetCommandLineA"
-        (cobj.CompilerObjectSymbolKind.Function))]
-    [with-chkstk-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        with-symbols
-        (cobj.CompilerObjectX64Instr.Label "__chkstk"))]
-    [with-chkstk : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        with-chkstk-label
-        (compiler-backend-object-windows-chkstk-bytes))]
-    [with-setup-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        with-chkstk
-        (cobj.CompilerObjectX64Instr.Label "tl_setup_argv"))]
-    [with-setup-pre : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        with-setup-label
-        (compiler-backend-object-windows-setup-pre-getcmd-bytes))]
-    [with-getcmd-call : CompilerBackendObjectParts
-      (compiler-backend-object-add-call-instr
-        with-setup-pre
-        "tl_setup_argv"
-        "GetCommandLineA")]
-    [with-after-getcmd : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        with-getcmd-call
-        (compiler-backend-object-windows-setup-after-getcmd-bytes))]
-    [with-boot1-call : CompilerBackendObjectParts
-      (compiler-backend-object-add-call-instr
-        with-after-getcmd
-        "tl_setup_argv"
-        ".L_tl_boot_alloc")]
-    [with-after-boot1 : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        with-boot1-call
-        (compiler-backend-object-windows-setup-after-boot1-bytes))]
-    [with-boot2-call : CompilerBackendObjectParts
-      (compiler-backend-object-add-call-instr
-        with-after-boot1
-        "tl_setup_argv"
-        ".L_tl_boot_alloc")]
-    [with-after-boot2 : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        with-boot2-call
-        (compiler-backend-object-windows-setup-after-boot2-pre-store-bytes))]
-    [with-argc-store : CompilerBackendObjectParts
-      (compiler-backend-object-add-rip-instr
-        with-after-boot2
-        "tl_setup_argv"
-        (cobj.CompilerObjectRelocationKind.RipAddress)
-        ".L_tl_argc"
-        (cobj.CompilerObjectX64Instr.StoreR15Rip ".L_tl_argc"))]
-    [with-argv-store : CompilerBackendObjectParts
-      (compiler-backend-object-add-rip-instr
-        with-argc-store
-        "tl_setup_argv"
-        (cobj.CompilerObjectRelocationKind.RipAddress)
-        ".L_tl_argv"
-        (cobj.CompilerObjectX64Instr.StoreR14Rip ".L_tl_argv"))]
-    [with-setup-end : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        with-argv-store
-        (compiler-backend-object-windows-setup-epilogue-bytes))]
-    [with-boot-public-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        with-setup-end
-        (cobj.CompilerObjectX64Instr.Label "tl_alloc"))]
-    [with-boot-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        with-boot-public-label
-        (cobj.CompilerObjectX64Instr.Label ".L_tl_boot_alloc"))]
-    [with-boot-off-load : CompilerBackendObjectParts
-      (compiler-backend-object-add-rip-instr
-        with-boot-label
-        ".L_tl_boot_alloc"
-        (cobj.CompilerObjectRelocationKind.RipValue)
-        "tl_boot_off"
-        (cobj.CompilerObjectX64Instr.LoadRip "tl_boot_off"))]
-    [with-boot-pool-lea : CompilerBackendObjectParts
-      (compiler-backend-object-add-rip-instr
-        with-boot-off-load
-        ".L_tl_boot_alloc"
-        (cobj.CompilerObjectRelocationKind.RipAddress)
-        "tl_boot_pool"
-        (cobj.CompilerObjectX64Instr.LoadRipAddressRdx "tl_boot_pool"))]
-    [with-add-base : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        with-boot-pool-lea
-        (compiler-backend-object-windows-add-rdx-rax-bytes))]
-    [with-boot-off-add : CompilerBackendObjectParts
-      (compiler-backend-object-add-rip-instr
-        with-add-base
-        ".L_tl_boot_alloc"
-        (cobj.CompilerObjectRelocationKind.RipAddress)
-        "tl_boot_off"
-        (cobj.CompilerObjectX64Instr.AddRcxRip "tl_boot_off"))]
-    (compiler-backend-object-add-text-bytes
-      with-boot-off-add
-      (compiler-backend-object-windows-ret-bytes))))
-
-(define (compiler-backend-object-add-windows-entry-text
-  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
-  (let
-    [entry : String "_tl_start"]
-    [entry-end : String ".L_tl_start_end"]
-    [with-symbols : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-extern-once
-        (compiler-backend-object-symbol-local-section
-          (compiler-backend-object-symbol-export-section
-            parts
-            entry
-            (cobj.CompilerObjectSectionKind.Text)
-            (cobj.CompilerObjectSymbolKind.Function))
-          entry-end
-          (cobj.CompilerObjectSectionKind.Text)
-          (cobj.CompilerObjectSymbolKind.Function))
-        "ExitProcess"
-        (cobj.CompilerObjectSymbolKind.Function))]
-    [with-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        with-symbols
-        (cobj.CompilerObjectX64Instr.Label entry))]
-    [with-sub : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        with-label
-        (cobj.CompilerObjectX64Instr.SubRspImm8 40))]
-    [with-setup-call : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-relocation
-          with-sub
-          entry
-          (cobj.CompilerObjectRelocationKind.Call)
-          "tl_setup_argv")
-        (cobj.CompilerObjectX64Instr.Call "tl_setup_argv"))]
-    [with-gs-clear : CompilerBackendObjectParts
-      (compiler-backend-object-add-text-bytes
-        with-setup-call
-        (compiler-backend-object-windows-entry-gs-clear-bytes))]
-    [with-argc : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-relocation
-          with-gs-clear
-          entry
-          (cobj.CompilerObjectRelocationKind.RipValue)
-          ".L_tl_argc")
-        (cobj.CompilerObjectX64Instr.MovRcxRip ".L_tl_argc"))]
-    [with-argv : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-relocation
-          with-argc
-          entry
-          (cobj.CompilerObjectRelocationKind.RipValue)
-          ".L_tl_argv")
-        (cobj.CompilerObjectX64Instr.MovRdxRip ".L_tl_argv"))]
-    [with-main-call : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-relocation
-          with-argv
-          entry
-          (cobj.CompilerObjectRelocationKind.Call)
-          "main")
-        (cobj.CompilerObjectX64Instr.Call "main"))]
-    [with-move-exit-code : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        with-main-call
-        (cobj.CompilerObjectX64Instr.MovRcxRax))]
-    [with-exit-call : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-relocation
-          with-move-exit-code
-          entry
-          (cobj.CompilerObjectRelocationKind.Call)
-          "ExitProcess")
-        (cobj.CompilerObjectX64Instr.Call "ExitProcess"))]
-    (compiler-backend-object-add-text
-      with-exit-call
-      (cobj.CompilerObjectX64Instr.Label entry-end))))
-
-(define (compiler-backend-object-add-windows-entry-unwind
-  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
-  (let
-    [xdata-label : String ".L_tl_start_xdata"]
-    [pdata-begin : String ".L_tl_start_pdata_begin"]
-    [pdata-end : String ".L_tl_start_pdata_end"]
-    [pdata-unwind : String ".L_tl_start_pdata_unwind"]
-    [with-xdata-symbol : CompilerBackendObjectParts
-      (compiler-backend-object-symbol-local-section
-        parts
-        xdata-label
-        (cobj.CompilerObjectSectionKind.Xdata)
-        (cobj.CompilerObjectSymbolKind.Data))]
-    [with-xdata : CompilerBackendObjectParts
-      (compiler-backend-object-add-xdata
-        (compiler-backend-object-add-xdata
-          with-xdata-symbol
-          (cobj.CompilerObjectDataRecord.Label xdata-label))
-        (cobj.CompilerObjectDataRecord.Bytes
-          (compiler-backend-object-windows-entry-xdata-bytes)))]
-    [with-pdata-begin : CompilerBackendObjectParts
-      (compiler-backend-object-add-pdata
-        (compiler-backend-object-add-pdata-relocation
-          (compiler-backend-object-add-pdata
-            with-xdata
-            (cobj.CompilerObjectDataRecord.Label pdata-begin))
-          pdata-begin
-          (cobj.CompilerObjectRelocationKind.Addr32Nb)
-          "_tl_start")
-        (cobj.CompilerObjectDataRecord.SymbolRva32 "_tl_start"))]
-    [with-pdata-end : CompilerBackendObjectParts
-      (compiler-backend-object-add-pdata
-        (compiler-backend-object-add-pdata-relocation
-          (compiler-backend-object-add-pdata
-            with-pdata-begin
-            (cobj.CompilerObjectDataRecord.Label pdata-end))
-          pdata-end
-          (cobj.CompilerObjectRelocationKind.Addr32Nb)
-          ".L_tl_start_end")
-        (cobj.CompilerObjectDataRecord.SymbolRva32 ".L_tl_start_end"))]
-    (compiler-backend-object-add-pdata
-      (compiler-backend-object-add-pdata-relocation
-        (compiler-backend-object-add-pdata
-          with-pdata-end
-          (cobj.CompilerObjectDataRecord.Label pdata-unwind))
-        pdata-unwind
-        (cobj.CompilerObjectRelocationKind.Addr32Nb)
-        xdata-label)
-      (cobj.CompilerObjectDataRecord.SymbolRva32 xdata-label))))
-
-(define (compiler-backend-object-add-windows-entry
-  [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-windows-entry-unwind
-    (compiler-backend-object-add-windows-entry-text
-      (compiler-backend-object-add-windows-runtime-text
-        (compiler-backend-object-add-windows-entry-data parts)))))
-
-(define (compiler-backend-object-entry-symbols
-  [parts : CompilerBackendObjectParts]
-  [target : CompilerBackendTarget]
-  [emit-entry : bool]
-  [crt-entry : bool]) : CompilerBackendObjectParts
-  (if emit-entry
-    (match target
-      [(CompilerBackendTarget.Linux)
-        (if crt-entry
-          parts
-          (compiler-backend-object-add-linux-entry parts))]
-      [(CompilerBackendTarget.Windows)
-        (if crt-entry
-          parts
-          (compiler-backend-object-add-windows-entry parts))])
-    parts))
-
-(define (compiler-backend-object-image-sections
-  [parts : CompilerBackendObjectParts]
-  [target : CompilerBackendTarget]
-  [emit-entry : bool]
-  [crt-entry : bool]) : cobj.CompilerObjectSectionList
-  (let
-    [empty-data : cobj.CompilerObjectDataRecordList
-      (cobj.compiler-object-data-record-builder-finish
-        (cobj.compiler-object-data-record-builder-with-capacity 1))]
-    [empty-instrs : cobj.CompilerObjectX64InstrList
-      (cobj.compiler-object-instr-builder-finish
-        (cobj.compiler-object-instr-builder-with-capacity 1))]
-    [text-instrs : cobj.CompilerObjectX64InstrList
-      (cobj.compiler-object-instr-builder-finish (struct-get parts text))]
-    [data-records : cobj.CompilerObjectDataRecordList
-      (cobj.compiler-object-data-record-builder-finish (struct-get parts data))]
-    [rodata-records : cobj.CompilerObjectDataRecordList
-      (cobj.compiler-object-data-record-builder-finish
-        (struct-get parts rodata))]
-    [bss-records : cobj.CompilerObjectDataRecordList
-      (cobj.compiler-object-data-record-builder-finish (struct-get parts bss))]
-    [pdata-records : cobj.CompilerObjectDataRecordList
-      (cobj.compiler-object-data-record-builder-finish (struct-get parts pdata))]
-    [xdata-records : cobj.CompilerObjectDataRecordList
-      (cobj.compiler-object-data-record-builder-finish (struct-get parts xdata))]
-    [sections0 : cobj.CompilerObjectSectionBuilder
-      (cobj.compiler-object-section-builder-with-capacity 7)]
-    [sections1 : cobj.CompilerObjectSectionBuilder
-      (cobj.compiler-object-section-builder-push
-        sections0
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Text)
-          empty-data
-          text-instrs))]
-    [sections2 : cobj.CompilerObjectSectionBuilder
-      (cobj.compiler-object-section-builder-push
-        sections1
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Data)
-          data-records
-          empty-instrs))]
-    [sections3 : cobj.CompilerObjectSectionBuilder
-      (cobj.compiler-object-section-builder-push
-        sections2
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Rodata)
-          rodata-records
-          empty-instrs))]
-    [sections4 : cobj.CompilerObjectSectionBuilder
-      (cobj.compiler-object-section-builder-push
-        sections3
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Bss)
-          bss-records
-          empty-instrs))]
-    (match target
-      [(CompilerBackendTarget.Linux)
-        (cobj.compiler-object-section-builder-finish sections4)]
-      [(CompilerBackendTarget.Windows)
-        (let
-          [sections5 : cobj.CompilerObjectSectionBuilder
-            (cobj.compiler-object-section-builder-push
-              sections4
-              (cobj.CompilerObjectSection.Section
-                (cobj.CompilerObjectSectionKind.Pdata)
-                pdata-records
-                empty-instrs))]
-          [sections6 : cobj.CompilerObjectSectionBuilder
-            (cobj.compiler-object-section-builder-push
-              sections5
-              (cobj.CompilerObjectSection.Section
-                (cobj.CompilerObjectSectionKind.Xdata)
-                xdata-records
-                empty-instrs))]
-          [sections7 : cobj.CompilerObjectSectionBuilder
-            (cobj.compiler-object-section-builder-push
-              sections6
-              (cobj.CompilerObjectSection.Section
-                (cobj.CompilerObjectSectionKind.Rsrc)
-                (if (and emit-entry (not crt-entry))
-                  (compiler-backend-object-windows-manifest-resource-records)
-                  empty-data)
-                empty-instrs))]
-          (cobj.compiler-object-section-builder-finish sections7))])))
-
-(define (compiler-backend-object-image-symbols
-  [parts : CompilerBackendObjectParts]
-  [emit-manifest-resource : bool]) : cobj.CompilerObjectSymbolList
-  (cobj.compiler-object-symbol-builder-finish
-    (if emit-manifest-resource
-      (cobj.compiler-object-symbol-builder-push
-        (struct-get parts symbols)
-        (cobj.CompilerObjectSymbol.Symbol
-          compiler-backend-object-windows-manifest-label
-          (cobj.CompilerObjectSymbolBinding.Local)
-          (cobj.CompilerObjectSymbolKind.Data)
-          (cobj.CompilerObjectMaybeSection.Some
-            (cobj.CompilerObjectSectionKind.Rsrc))))
-      (struct-get parts symbols))))
-
-(define (compiler-backend-object-image-relocations
-  [parts : CompilerBackendObjectParts]
-  [emit-manifest-resource : bool]) : cobj.CompilerObjectRelocationList
-  (cobj.compiler-object-relocation-builder-finish
-    (if emit-manifest-resource
-      (cobj.compiler-object-relocation-builder-push
-        (struct-get parts relocations)
-        (cobj.CompilerObjectRelocation.Relocation
-          (cobj.CompilerObjectSectionKind.Rsrc)
-          compiler-backend-object-windows-rsrc-data-label
-          (cobj.CompilerObjectRelocationKind.Addr32Nb)
-          compiler-backend-object-windows-manifest-label))
-      (struct-get parts relocations))))
-
-(define (compiler-backend-object-image-from-parts
-  [parts : CompilerBackendObjectParts]
-  [target : CompilerBackendTarget]
+  [macro-entry : bool]
   [emit-entry : bool]
   [crt-entry : bool]) : cobj.CompilerObjectImage
-  (let
-    [emit-manifest-resource : bool
-      (and emit-entry (not crt-entry) (compiler-backend-target-windows? target))]
-    (cobj.CompilerObjectImage
-      (compiler-backend-object-image-sections parts target emit-entry crt-entry)
-      (compiler-backend-object-image-symbols parts emit-manifest-resource)
-      (compiler-backend-object-image-relocations parts emit-manifest-resource))))
+  (match target
+    [(CompilerBackendTarget.Linux)
+      (object_linux.compiler-backend-object-target-linux-image
+        parts
+        macro-entry
+        emit-entry
+        crt-entry)]
+    [(CompilerBackendTarget.Windows)
+      (object_windows.compiler-backend-object-target-windows-image
+        parts
+        macro-entry
+        emit-entry
+        crt-entry)]))
 
 (define (compiler-backend-object-image-after-index
   [program : CompilerIrProgram]
@@ -55187,52 +54327,44 @@
       (compiler-backend-program-collections-uses-f64-neg? collections)]
     [runtime-index : CompilerBackendRuntimeIndex
       (compiler-backend-runtime-index entry-functions externs)]
-    [seed : CompilerBackendObjectParts
-      (compiler-backend-object-entry-symbols
-        (compiler-backend-object-add-tlci-entry-runtime-text
-          (compiler-backend-object-runtime-symbols
-            (compiler-backend-object-externs
-              (compiler-backend-object-f64-sign-bit
-                (compiler-backend-object-floats
-                  (compiler-backend-object-bytes
-                    (compiler-backend-object-strings
-                      (compiler-backend-object-closure-descriptors
-                        (compiler-backend-object-globals
-                          (compiler-backend-object-functions
-                            (compiler-backend-object-parts-empty)
-                            target
-                            entry-functions
-                            plan
-                            program-index)
-                          target
-                          globals)
-                        closure-names
-                        0
+    [seed : object_target.CompilerBackendObjectTargetParts
+      (compiler-backend-object-runtime-symbols
+        (compiler-backend-object-externs
+          (compiler-backend-object-f64-sign-bit
+            (compiler-backend-object-floats
+              (compiler-backend-object-bytes
+                (compiler-backend-object-strings
+                  (compiler-backend-object-closure-descriptors
+                    (compiler-backend-object-globals
+                      (compiler-backend-object-functions
+                        (object_target.compiler-backend-object-parts-empty)
+                        target
+                        entry-functions
+                        plan
                         program-index)
-                      strings
-                      0)
-                    bytes
-                    0)
-                  floats)
-                uses-f64-neg)
-              externs
-              plan
-              runtime-index
-              closure-names)
-            plan
-            (compiler-backend-object-runtime-symbols-list)
-            0)
-          target
-          (compiler-backend-runtime-tail-tlci-macro-entry?
-            (compiler-backend-runtime-plan-tail plan)))
-        target
-        emit-entry
-        crt-entry)]
-    (compiler-backend-object-image-from-parts
-      (compiler-backend-object-add-bss
-        seed
-        (cobj.CompilerObjectDataRecord.Zero 0))
+                      target
+                      globals)
+                    closure-names
+                    0
+                    program-index)
+                  strings
+                  0)
+                bytes
+                0)
+              floats)
+            uses-f64-neg)
+          externs
+          plan
+          runtime-index
+          closure-names)
+        plan
+        (compiler-backend-object-runtime-symbols-list)
+        0)]
+    (compiler-backend-object-image-for-target
+      seed
       target
+      (compiler-backend-runtime-tail-tlci-macro-entry?
+        (compiler-backend-runtime-plan-tail plan))
       emit-entry
       crt-entry)))
 

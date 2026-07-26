@@ -5,6 +5,9 @@
 (import compiler_object as cobj)
 (import compiler_object_coff as coff)
 (import compiler_object_elf as elf)
+(import compiler_backend_object_target as object_target)
+(import compiler_backend_object_target_linux as object_linux)
+(import compiler_backend_object_target_windows as object_windows)
 (import "compiler_backend.tl")
 (import "compiler_lower_tests.tl")
 (import compiler_backend_runtime_common as runtime_common)
@@ -1347,22 +1350,20 @@
               "tl_alloc")
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (compiler-backend-object-bytes-from-hex "554889e5"))
+              (object_target.compiler-backend-object-bytes-from-hex "554889e5"))
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (compiler-backend-object-bytes-from-hex "c9c3"))
+              (object_target.compiler-backend-object-bytes-from-hex "c9c3"))
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (compiler-backend-object-linux-exit-bytes)))
+              (object_linux.compiler-backend-object-exit-bytes)))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-tlci-entry-bytes
-              (CompilerBackendTarget.Linux)))
+            (object_linux.compiler-backend-object-tlci-entry-bytes))
           (not
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (compiler-backend-object-tlci-macro-entry-bytes
-                (CompilerBackendTarget.Linux))))
+              (object_linux.compiler-backend-object-tlci-macro-entry-bytes)))
           (cobj.compiler-object-relocation-list-contains?
             relocs
             (cobj.CompilerObjectRelocationKind.Abs64)
@@ -1377,22 +1378,23 @@
 (define (compiler-backend-object-tlci-macro-entry-gate-ok?) : bool
   (let
     [expected : String
-      (compiler-backend-object-tlci-macro-entry-bytes
-        (CompilerBackendTarget.Linux))]
+      (object_linux.compiler-backend-object-tlci-macro-entry-bytes)]
     [enabled : cobj.CompilerObjectX64InstrList
       (cobj.compiler-object-instr-builder-finish
         (struct-get
-          (compiler-backend-object-add-tlci-entry-runtime-text
-            (compiler-backend-object-parts-empty)
-            (CompilerBackendTarget.Linux)
+          (object_target.compiler-backend-object-add-tlci-entry-runtime-text
+            (object_target.compiler-backend-object-parts-empty)
+            (object_linux.compiler-backend-object-tlci-entry-bytes)
+            expected
             true)
           text))]
     [disabled : cobj.CompilerObjectX64InstrList
       (cobj.compiler-object-instr-builder-finish
         (struct-get
-          (compiler-backend-object-add-tlci-entry-runtime-text
-            (compiler-backend-object-parts-empty)
-            (CompilerBackendTarget.Linux)
+          (object_target.compiler-backend-object-add-tlci-entry-runtime-text
+            (object_target.compiler-backend-object-parts-empty)
+            (object_linux.compiler-backend-object-tlci-entry-bytes)
+            expected
             false)
           text))]
     (and
@@ -1424,16 +1426,16 @@
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-bytes-from-hex "4883ec08"))
+            (object_target.compiler-backend-object-bytes-from-hex "4883ec08"))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-bytes-from-hex "4889442400"))
+            (object_target.compiler-backend-object-bytes-from-hex "4889442400"))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-bytes-from-hex "488b442400"))
+            (object_target.compiler-backend-object-bytes-from-hex "488b442400"))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-bytes-from-hex "4883c408"))))]
+            (object_target.compiler-backend-object-bytes-from-hex "4883c408"))))]
     [(ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-pic-source) : String
@@ -1565,10 +1567,12 @@
     [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
     [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
     [relocs : cobj.CompilerObjectRelocationList (struct-get image relocations)]
-    [manifest : String compiler-backend-object-windows-utf8-manifest]
+    [manifest : String object_windows.compiler-backend-object-utf8-manifest]
     [manifest-size : i64 (string.string-length manifest)]
-    [manifest-label : String compiler-backend-object-windows-manifest-label]
-    [rsrc-data-label : String compiler-backend-object-windows-rsrc-data-label]
+    [manifest-label : String
+      object_windows.compiler-backend-object-manifest-label]
+    [rsrc-data-label : String
+      object_windows.compiler-backend-object-rsrc-data-label]
     [manifest-offset : i64
       (coff.compiler-object-coff-section-label-offset
         image
@@ -1932,10 +1936,10 @@
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-bytes-from-hex "488b00"))
+            (object_target.compiler-backend-object-bytes-from-hex "488b00"))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-bytes-from-hex "488945"))))]
+            (object_target.compiler-backend-object-bytes-from-hex "488945"))))]
     [(ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-windows-object-stack-param-spill-ok?) : bool
@@ -1951,10 +1955,10 @@
         (backend-and4
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-bytes-from-hex "4889442420"))
+            (object_target.compiler-backend-object-bytes-from-hex "4889442420"))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (compiler-backend-object-bytes-from-hex "488b4530"))
+            (object_target.compiler-backend-object-bytes-from-hex "488b4530"))
           true
           true))]
     [(ResultCompilerBackendObject.Err _) false]))
@@ -5604,9 +5608,10 @@
         (CompilerBackendTarget.Windows)
         8192)]
     [direct : String
-      (compiler-backend-object-bytes-from-hex "554889e54881ec00200000")]
+      (object_target.compiler-backend-object-bytes-from-hex
+        "554889e54881ec00200000")]
     [probed : String
-      (compiler-backend-object-bytes-from-hex
+      (object_target.compiler-backend-object-bytes-from-hex
         "554889e54881ec00100000830c24004881ec00100000")]
     (and (string.eq linux direct) (string.eq windows probed))))
 
@@ -5943,9 +5948,9 @@
         (compiler-ir-value-cons
           (CompilerIrValue.F64 (compiler-backend-test-f64-bits "6.25"))
           CompilerIrValueList.Nil))]
-    [packed : CompilerBackendObjectParts
+    [packed : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-instr
-        (compiler-backend-object-parts-empty)
+        (object_target.compiler-backend-object-parts-empty)
         (CompilerBackendTarget.Linux)
         "main"
         "main"
@@ -5954,7 +5959,7 @@
         (CompilerIrInstr.Pack 0 values ty)
         plan
         index)]
-    [worded : CompilerBackendObjectParts
+    [worded : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-instr
         packed
         (CompilerBackendTarget.Linux)

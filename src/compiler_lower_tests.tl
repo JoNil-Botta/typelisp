@@ -1080,7 +1080,13 @@
   (Empty)
   (Tombstone)
   (Occupied i64 i64 i64))
+(defstruct Pair
+  (left i64)
+  (right i64))
 (define (copy-slot [dst : (MutPtr Slot)] [src : (Ptr Slot)]) : unit
+  (unsafe
+    (ptr-write! dst (ptr-read src))))
+(define (copy-pair [dst : (MutPtr Pair)] [src : (Ptr Pair)]) : unit
   (unsafe
     (ptr-write! dst (ptr-read src))))
 (define (main) : i64 0)")
@@ -9953,7 +9959,9 @@
         [(CompilerIrProgram.Program _ functions _)
           (and
             (= (lower-test-function-copy-bytes-count functions "copy-slot") 1)
-            (= (lower-test-function-store-ptr-count functions "copy-slot") 0))])]
+            (= (lower-test-function-store-ptr-count functions "copy-slot") 0)
+            (= (lower-test-function-copy-bytes-count functions "copy-pair") 0)
+            (= (lower-test-function-store-ptr-count functions "copy-pair") 2))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-string-length-ok?) : bool

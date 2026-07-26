@@ -2228,6 +2228,40 @@
     stdlib-roots
     cfgs))
 
+(define (compiler-typecheck-smoke-qualified-macro-kind-list-ok?) : bool
+  (let
+    [provider : String "target/tc_macro_kind_provider.tl"]
+    [entry : String "target/tc_macro_kind_entry.tl"]
+    [roots : svec.Vec (svec.new)]
+    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
+    (begin
+      (io.write-file
+        provider
+        "(module tc.macro_kind.provider)
+(defmacro (emit [T : type (:kind i64 u8 struct)]) : Decls
+  `(define (made) : i64 1))
+(defmacro (family [T : type (:kind i64 u8 struct)]) : Module
+  `(begin
+    (module generated.macro_kind.family)
+    (define (answer) : i64 41)))")
+      (io.write-file
+        entry
+        "(defstruct Ball (x i64))
+(import
+  \"tc_macro_kind_provider.tl\"
+  module tc.macro_kind.provider
+  as provider)
+(provider.emit Ball)
+(import (provider.family Ball) as family)
+(define (main) : i64 (+ (made) (family.answer)))")
+      (compiler-typecheck-reset-load-session!)
+      (let
+        [ok : bool
+          (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs)]
+        (begin
+          (compiler-typecheck-reset-load-session!)
+          ok)))))
+
 (define (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?) : bool
   (let
     [dep : String "target/tc_prefix_local_dep.tl"]
@@ -4823,6 +4857,9 @@
     (unless
       (compiler-typecheck-smoke-prefix-cache-cfg-isolation-ok?)
       (io.panic "typecheck: prefix cache cfg smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-qualified-macro-kind-list-ok?)
+      (io.panic "typecheck: qualified macro kind-list smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?)
       (io.panic "typecheck: prefix cache local module smoke failed"))

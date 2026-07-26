@@ -297,9 +297,11 @@ use.
   the strategy's `extra-decls` hook. Current serializers cover primitive roots,
   fixed-array roots, dynamic-array roots, struct roots, module-backed enum roots,
   nested structs, arrays, enum values, and tuples within supported roots. Enums
-  reuse object and sequence hooks as `{ tag: String, payload: [...] }`. Direct
-  struct enum payloads, generated option/result family enum reflection, tuple
-  roots remain follow-ups.
+  reuse object and sequence hooks as `{ tag: String, payload: [...] }`, with
+  payload elements in declaration order. Direct struct payloads and generated
+  option/result families serialize as ordinary concrete nominal enums. The JSON
+  strategy deterministically emits `tag` before `payload`. Tuple values are
+  supported recursively; tuple roots remain a follow-up.
   Strategy hooks own object and sequence representation, decode diagnostics, and
   helper aliases. The checked toy format exercises the hook contract, and
   `json.tl` provides the JSON integration strategy.

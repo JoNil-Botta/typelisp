@@ -52,9 +52,11 @@
 ;# should produce a value expression of the requested field type. Sequence decode
 ;# hooks report the source length and individual encoded elements; the generated
 ;# module allocates and fills the fixed or dynamic output array. Enums are encoded
-;# as an object with a string `tag` field and a sequence `payload` field. Direct
-;# struct enum payloads, generated option/result family enum reflection, and tuple
-;# roots remain follow-ups.
+;# as an object with a string `tag` field followed by a sequence `payload` field;
+;# payload elements stay in declaration order. Direct struct payloads and
+;# generated option/result families are handled as ordinary concrete nominal
+;# enums. Tuples are supported recursively inside supported roots; tuple roots
+;# remain a follow-up.
 (import stdlib.comptime)
 (import stdlib.string)
 

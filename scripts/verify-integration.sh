@@ -6,9 +6,9 @@ set -eu
 # The runner builds each listed TypeLisp program to a native executable, runs it
 # outside the Rust test harness, and checks exit code, stdout, and stderr. Linux
 # uses the explicit compile -> as -> ld flow; Windows Git Bash/MSYS/Cygwin uses
-# host-default typelisp build plus one native-process queue runner so full
-# Windows exit values and byte streams survive without a PowerShell launch per
-# manifest case.
+# bounded native-link and persistent execution queues so independent links can
+# overlap while full Windows exit values and byte streams survive without a
+# PowerShell launch per manifest case.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -181,7 +181,18 @@ tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
 
 WINDOWS_RUNNER_WIN=
 WINDOWS_LEGACY_RUNNER_WIN=
+WINDOWS_LINKER_WIN=
+WINDOWS_LLD_LINK_WIN=
 WINDOWS_WORKDIR_WIN=
+WINDOWS_LINK_REQUEST=
+WINDOWS_LINK_REQUEST_WIN=
+WINDOWS_LINK_RESULTS=
+WINDOWS_LINK_RESULTS_WIN=
+WINDOWS_LINK_SUMMARY=
+WINDOWS_LINK_SUMMARY_WIN=
+WINDOWS_LINK_RUNNER_STDOUT=
+WINDOWS_LINK_RUNNER_STDERR=
+WINDOWS_LINK_CASES=
 WINDOWS_QUEUE=
 WINDOWS_QUEUE_WIN=
 WINDOWS_RESULTS=
@@ -193,11 +204,17 @@ WINDOWS_SUMMARY_WIN=
 WINDOWS_RUNNER_STDOUT=
 WINDOWS_RUNNER_STDERR=
 WINDOWS_QUEUED_CASES=
+WINDOWS_LINK_REQUESTS=0
 WINDOWS_MANIFEST_QUEUED=0
 WINDOWS_QUEUE_REQUESTS=0
 WINDOWS_MANIFEST_COMPILE_MS=0
 WINDOWS_MANIFEST_ASSEMBLE_MS=0
 WINDOWS_MANIFEST_LINK_MS=0
+WINDOWS_MANIFEST_LINK_WALL_MS=0
+WINDOWS_MANIFEST_LINK_HELPER_MS=0
+WINDOWS_MANIFEST_LINK_PREP_MS=0
+WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS=0
+WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS=0
 WINDOWS_MANIFEST_QUEUE_PREP_MS=0
 WINDOWS_MANIFEST_RUN_MS=0
 WINDOWS_MANIFEST_RESULT_PROCESS_MS=0
@@ -207,17 +224,45 @@ WINDOWS_MANIFEST_COMPILES=0
 WINDOWS_MANIFEST_ASSEMBLES=0
 WINDOWS_MANIFEST_LINKS=0
 WINDOWS_MANIFEST_ASSERTS=0
+WINDOWS_LINK_POWERSHELL_STARTS=0
 WINDOWS_MANIFEST_POWERSHELL_STARTS=0
 WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=0
 WINDOWS_DIRECT_POWERSHELL_STARTS=0
 WINDOWS_DIRECT_CYGPATH_CONVERSIONS=0
 WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS=0
 WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=0
+# Five native-Windows samples over the 355-case manifest (#5817) put jobs=4 at
+# p10/median/p90 3.577/4.050/4.742s. Jobs=8 had a faster median but a worse
+# 5.446s p90 and substantially more summed child time, so four is the
+# conservative CI default. Set TYPELISP_WINDOWS_LINK_JOBS=1 for serial debugging
+# or override it up to 64 for host-specific measurements.
+WINDOWS_LINK_JOBS=${TYPELISP_WINDOWS_LINK_JOBS:-4}
 
 if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
+    case "$WINDOWS_LINK_JOBS" in
+        "" | *[!0-9]* | 0)
+            echo "TYPELISP_WINDOWS_LINK_JOBS must be an integer from 1 to 64" >&2
+            exit 2
+            ;;
+    esac
+    if [ "$WINDOWS_LINK_JOBS" -gt 64 ]; then
+        echo "TYPELISP_WINDOWS_LINK_JOBS must be an integer from 1 to 64" >&2
+        exit 2
+    fi
     WINDOWS_RUNNER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-runner.ps1")
     WINDOWS_LEGACY_RUNNER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-legacy-runner.ps1")
+    WINDOWS_LINKER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-linker.ps1")
+    WINDOWS_LLD_LINK_WIN=$(cygpath -aw "$(command -v lld-link)")
     WINDOWS_WORKDIR_WIN=$(cygpath -aw "$WORKDIR")
+    WINDOWS_LINK_REQUEST="$WORKDIR/windows-integration-links.requests"
+    WINDOWS_LINK_REQUEST_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration-links.requests"
+    WINDOWS_LINK_RESULTS="$WORKDIR/windows-integration-links.results"
+    WINDOWS_LINK_RESULTS_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration-links.results"
+    WINDOWS_LINK_SUMMARY="$WORKDIR/windows-integration-links.summary"
+    WINDOWS_LINK_SUMMARY_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration-links.summary"
+    WINDOWS_LINK_RUNNER_STDOUT="$WORKDIR/windows-integration-linker.stdout"
+    WINDOWS_LINK_RUNNER_STDERR="$WORKDIR/windows-integration-linker.stderr"
+    WINDOWS_LINK_CASES="$WORKDIR/windows-integration-links.cases"
     WINDOWS_QUEUE="$WORKDIR/windows-integration.requests"
     WINDOWS_QUEUE_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration.requests"
     WINDOWS_RESULTS="$WORKDIR/windows-integration.results"
@@ -229,12 +274,14 @@ if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     WINDOWS_RUNNER_STDOUT="$WORKDIR/windows-integration-runner.stdout"
     WINDOWS_RUNNER_STDERR="$WORKDIR/windows-integration-runner.stderr"
     WINDOWS_QUEUED_CASES="$WORKDIR/windows-integration.queued"
+    printf 'tlwinlink1\000' > "$WINDOWS_LINK_REQUEST"
+    : > "$WINDOWS_LINK_CASES"
     printf 'tlwinq2\000' > "$WINDOWS_QUEUE"
     : > "$WINDOWS_QUEUED_CASES"
-    # The queue runner and its work root are the only manifest-run path
-    # conversions. Linked inputs/outputs are constructed from validated case
-    # names below, avoiding the former four launch conversions per case.
-    WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=2
+    # The two queue helpers, lld-link, and their common work root are the only
+    # manifest path conversions. Per-case inputs/outputs are constructed from
+    # validated case names below.
+    WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=4
     WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=1
 fi
 
@@ -389,7 +436,6 @@ compile_windows_c_deps() {
     _build_stdout=$3
     _build_stderr=$4
     _case_dir_win=$5
-    _objs=
 
     for _dep in $(deps_or_empty "$_deps"); do
         case "$_dep" in
@@ -405,12 +451,12 @@ compile_windows_c_deps() {
                     >> "$_build_stdout" 2>> "$_build_stderr"; then
                     return 1
                 fi
-                _objs="${_objs:+$_objs }$_case_dir_win\\$_base.native.obj"
+                # One path per line lets the link-plan builder preserve a
+                # checkout root containing spaces without re-parsing argv.
+                printf '%s\n' "$_case_dir_win\\$_base.native.obj"
                 ;;
         esac
     done
-
-    printf '%s\n' "$_objs"
 }
 
 # Integration cases that are not Windows-applicable in this manifest
@@ -667,6 +713,78 @@ windows_queue_manifest_case() {
     WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 1))
 }
 
+windows_link_queue_append_request() {
+    _link_queue=$1
+    _link_label=$2
+    _link_exe=$3
+    _link_output=$4
+    _link_stdout=$5
+    _link_stderr=$6
+    shift 6
+    if [ ! -s "$_link_queue" ]; then
+        printf 'tlwinlink1\000' > "$_link_queue"
+    fi
+    printf '%s\000' \
+        "$_link_label" \
+        "$_link_exe" \
+        "$_link_output" \
+        "$_link_stdout" \
+        "$_link_stderr" \
+        "$#" \
+        "$@" >> "$_link_queue"
+}
+
+windows_queue_manifest_link() {
+    _link_name=$1
+    _link_obj_win=$2
+    _link_native_objs=$3
+    _link_bin_win=$4
+    _link_build_stdout_win=$5
+    _link_build_stderr_win=$6
+    _link_want=$7
+    _link_stdout_spec=$8
+    _link_stderr_spec=$9
+    shift 9
+    _link_runtime_args=$1
+
+    ci_timing_set_now_ms
+    _link_prepare_started=$CI_TIMING_NOW_MS
+    set -- -NOLOGO "$_link_obj_win"
+    _link_saved_ifs=$IFS
+    IFS='
+'
+    for _link_native_obj in $_link_native_objs; do
+        set -- "$@" "$_link_native_obj"
+    done
+    IFS=$_link_saved_ifs
+    set -- "$@" \
+        "-OUT:$_link_bin_win" \
+        -SUBSYSTEM:CONSOLE \
+        -STACK:268435456 \
+        -ENTRY:_tl_start \
+        -NODEFAULTLIB \
+        kernel32.lib
+    windows_link_queue_append_request \
+        "$WINDOWS_LINK_REQUEST" \
+        "$_link_name" \
+        "$WINDOWS_LLD_LINK_WIN" \
+        "$_link_bin_win" \
+        "$_link_build_stdout_win" \
+        "$_link_build_stderr_win" \
+        "$@"
+    printf '%s|%s|%s|%s|%s\n' \
+        "$_link_name" \
+        "$_link_want" \
+        "$_link_stdout_spec" \
+        "$_link_stderr_spec" \
+        "$_link_runtime_args" >> "$WINDOWS_LINK_CASES"
+    ci_timing_set_now_ms
+    _link_prepare_finished=$CI_TIMING_NOW_MS
+    WINDOWS_MANIFEST_LINK_PREP_MS=$((WINDOWS_MANIFEST_LINK_PREP_MS + _link_prepare_finished - _link_prepare_started))
+    WINDOWS_LINK_REQUESTS=$((WINDOWS_LINK_REQUESTS + 1))
+    WINDOWS_MANIFEST_LINKS=$((WINDOWS_MANIFEST_LINKS + 1))
+}
+
 windows_timed_compile() {
     ci_timing_set_now_ms
     _started=$CI_TIMING_NOW_MS
@@ -692,22 +810,6 @@ windows_timed_assemble() {
     WINDOWS_MANIFEST_ASSEMBLE_MS=$((WINDOWS_MANIFEST_ASSEMBLE_MS + _elapsed))
     WINDOWS_MANIFEST_ASSEMBLES=$((WINDOWS_MANIFEST_ASSEMBLES + 1))
     ci_timing_record_elapsed "$name" assemble "$_elapsed" "$_status"
-    return "$_status"
-}
-
-windows_timed_link() {
-    ci_timing_set_now_ms
-    _started=$CI_TIMING_NOW_MS
-    set +e
-    lld-link "$@"
-    _status=$?
-    set -e
-    ci_timing_set_now_ms
-    _finished=$CI_TIMING_NOW_MS
-    _elapsed=$((_finished - _started))
-    WINDOWS_MANIFEST_LINK_MS=$((WINDOWS_MANIFEST_LINK_MS + _elapsed))
-    WINDOWS_MANIFEST_LINKS=$((WINDOWS_MANIFEST_LINKS + 1))
-    ci_timing_record_elapsed "$name" link "$_elapsed" "$_status"
     return "$_status"
 }
 
@@ -1785,6 +1887,185 @@ assert_manifest_case() {
     fi
 }
 
+windows_run_manifest_links() {
+    WINDOWS_LINK_POWERSHELL_STARTS=1
+    ci_timing_set_now_ms
+    _link_helper_started=$CI_TIMING_NOW_MS
+    set +e
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_LINKER_WIN" \
+        -RequestPath "$WINDOWS_LINK_REQUEST_WIN" \
+        -ResultPath "$WINDOWS_LINK_RESULTS_WIN" \
+        -SummaryPath "$WINDOWS_LINK_SUMMARY_WIN" \
+        -Jobs "$WINDOWS_LINK_JOBS" \
+        > "$WINDOWS_LINK_RUNNER_STDOUT" 2> "$WINDOWS_LINK_RUNNER_STDERR"
+    _link_helper_status=$?
+    set -e
+    ci_timing_set_now_ms
+    _link_helper_finished=$CI_TIMING_NOW_MS
+    WINDOWS_MANIFEST_LINK_HELPER_MS=$((_link_helper_finished - _link_helper_started))
+    if [ "$_link_helper_status" -ne 0 ]; then
+        echo "FAIL: Windows integration link scheduler failed" >&2
+        show_stream_if_nonempty stdout "$WINDOWS_LINK_RUNNER_STDOUT"
+        show_stream_if_nonempty stderr "$WINDOWS_LINK_RUNNER_STDERR"
+        return 1
+    fi
+
+    WINDOWS_LINK_SUMMARY_REQUESTS=
+    WINDOWS_LINK_SUMMARY_CHILD_STARTS=
+    WINDOWS_LINK_SUMMARY_LAUNCH_FAILURES=
+    WINDOWS_LINK_SUMMARY_FAILED_PROCESSES=
+    WINDOWS_LINK_SUMMARY_MISSING_OUTPUTS=
+    WINDOWS_LINK_SUMMARY_JOBS=
+    WINDOWS_LINK_SUMMARY_PEAK_CONCURRENCY=
+    WINDOWS_LINK_SUMMARY_CHILD_MS=
+    WINDOWS_LINK_SUMMARY_RESULT_PROCESS_MS=
+    WINDOWS_LINK_SUMMARY_ELAPSED_MS=
+    while IFS='=' read -r _link_summary_key _link_summary_value || [ -n "$_link_summary_key" ]; do
+        case "$_link_summary_key" in
+            requests) WINDOWS_LINK_SUMMARY_REQUESTS=$_link_summary_value ;;
+            child_starts) WINDOWS_LINK_SUMMARY_CHILD_STARTS=$_link_summary_value ;;
+            launch_failures) WINDOWS_LINK_SUMMARY_LAUNCH_FAILURES=$_link_summary_value ;;
+            failed_processes) WINDOWS_LINK_SUMMARY_FAILED_PROCESSES=$_link_summary_value ;;
+            missing_outputs) WINDOWS_LINK_SUMMARY_MISSING_OUTPUTS=$_link_summary_value ;;
+            jobs) WINDOWS_LINK_SUMMARY_JOBS=$_link_summary_value ;;
+            peak_concurrency) WINDOWS_LINK_SUMMARY_PEAK_CONCURRENCY=$_link_summary_value ;;
+            child_ms) WINDOWS_LINK_SUMMARY_CHILD_MS=$_link_summary_value ;;
+            result_process_ms) WINDOWS_LINK_SUMMARY_RESULT_PROCESS_MS=$_link_summary_value ;;
+            elapsed_ms) WINDOWS_LINK_SUMMARY_ELAPSED_MS=$_link_summary_value ;;
+        esac
+    done < "$WINDOWS_LINK_SUMMARY"
+    for _link_summary_required in \
+        "$WINDOWS_LINK_SUMMARY_REQUESTS" \
+        "$WINDOWS_LINK_SUMMARY_CHILD_STARTS" \
+        "$WINDOWS_LINK_SUMMARY_LAUNCH_FAILURES" \
+        "$WINDOWS_LINK_SUMMARY_FAILED_PROCESSES" \
+        "$WINDOWS_LINK_SUMMARY_MISSING_OUTPUTS" \
+        "$WINDOWS_LINK_SUMMARY_JOBS" \
+        "$WINDOWS_LINK_SUMMARY_PEAK_CONCURRENCY" \
+        "$WINDOWS_LINK_SUMMARY_CHILD_MS" \
+        "$WINDOWS_LINK_SUMMARY_RESULT_PROCESS_MS" \
+        "$WINDOWS_LINK_SUMMARY_ELAPSED_MS"; do
+        if [ -z "$_link_summary_required" ]; then
+            echo "FAIL: Windows integration link scheduler wrote an incomplete summary" >&2
+            return 1
+        fi
+    done
+    if [ "$WINDOWS_LINK_SUMMARY_REQUESTS" -ne "$WINDOWS_LINK_REQUESTS" ]; then
+        echo "FAIL: Windows integration linker returned $WINDOWS_LINK_SUMMARY_REQUESTS results for $WINDOWS_LINK_REQUESTS requests" >&2
+        return 1
+    fi
+    if [ "$WINDOWS_LINK_SUMMARY_JOBS" -ne "$WINDOWS_LINK_JOBS" ]; then
+        echo "FAIL: Windows integration linker used $WINDOWS_LINK_SUMMARY_JOBS jobs, expected $WINDOWS_LINK_JOBS" >&2
+        return 1
+    fi
+
+    WINDOWS_MANIFEST_LINK_MS=$WINDOWS_LINK_SUMMARY_CHILD_MS
+    WINDOWS_MANIFEST_LINK_WALL_MS=$WINDOWS_LINK_SUMMARY_ELAPSED_MS
+    WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS=$WINDOWS_LINK_SUMMARY_RESULT_PROCESS_MS
+    ci_timing_record_elapsed windows-manifest link-plan "$WINDOWS_MANIFEST_LINK_PREP_MS" 0
+    ci_timing_record_elapsed windows-manifest link-helper "$WINDOWS_MANIFEST_LINK_HELPER_MS" 0
+    ci_timing_record_elapsed windows-manifest link-scheduler "$WINDOWS_MANIFEST_LINK_WALL_MS" 0
+    ci_timing_record_elapsed windows-manifest link-result-process "$WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS" 0
+}
+
+windows_process_manifest_link_results() {
+    ci_timing_set_now_ms
+    _link_attribution_started=$CI_TIMING_NOW_MS
+    _link_result_rows=0
+    _link_result_structure_ok=1
+    exec 3< "$WINDOWS_LINK_RESULTS"
+    while IFS='|' read -r \
+        _link_case \
+        _link_want \
+        _link_stdout_spec \
+        _link_stderr_spec \
+        _link_runtime_args || [ -n "$_link_case" ]; do
+        [ -n "$_link_case" ] || continue
+        if ! IFS="$(printf '\t')" read -r \
+            _link_result_label \
+            _link_status \
+            _link_exit \
+            _link_error \
+            _link_elapsed \
+            _link_command <&3; then
+            echo "FAIL: Windows integration link results ended before $_link_case" >&2
+            _link_result_structure_ok=0
+            break
+        fi
+        _link_result_rows=$((_link_result_rows + 1))
+        if [ "$_link_result_label" != "$_link_case" ]; then
+            echo "FAIL: Windows integration link result order changed: expected $_link_case, got $_link_result_label" >&2
+            _link_result_structure_ok=0
+            break
+        fi
+
+        case "$_link_status" in
+            ok) _link_timing_status=0 ;;
+            failed) _link_timing_status=$_link_exit ;;
+            *) _link_timing_status=1 ;;
+        esac
+        ci_timing_record_elapsed \
+            "$_link_case" \
+            link \
+            "$_link_elapsed" \
+            "$_link_timing_status"
+
+        if [ "$_link_status" = ok ]; then
+            if [ ! -f "$WORKDIR/$_link_case/$_link_case.exe" ]; then
+                echo "FAIL: $_link_case link result omitted its executable" >&2
+                failed=$((failed + 1))
+                ran=$((ran + 1))
+                continue
+            fi
+            windows_queue_manifest_case \
+                "$_link_case" \
+                "$_link_want" \
+                "$_link_stdout_spec" \
+                "$_link_stderr_spec" \
+                "$_link_runtime_args"
+            continue
+        fi
+
+        _link_decoded_error=$(windows_queue_decode "$_link_error")
+        _link_decoded_command=$(windows_queue_decode "$_link_command")
+        echo "FAIL: $_link_case link status=$_link_status exit=$_link_exit" >&2
+        echo "  command: $_link_decoded_command" >&2
+        if [ -n "$_link_decoded_error" ]; then
+            echo "  error: $_link_decoded_error" >&2
+        fi
+        show_compile_stream_diagnostic \
+            stdout \
+            "$WORKDIR/$_link_case/$_link_case.build.stdout"
+        show_compile_stream_diagnostic \
+            stderr \
+            "$WORKDIR/$_link_case/$_link_case.build.stderr"
+        failed=$((failed + 1))
+        ran=$((ran + 1))
+    done < "$WINDOWS_LINK_CASES"
+
+    if [ "$_link_result_structure_ok" -eq 1 ] && IFS= read -r _link_extra_result <&3; then
+        echo "FAIL: Windows integration linker returned an unexpected extra result" >&2
+        _link_result_structure_ok=0
+    fi
+    exec 3<&-
+    if [ "$_link_result_structure_ok" -ne 1 ]; then
+        return 1
+    fi
+    if [ "$_link_result_rows" -ne "$WINDOWS_LINK_REQUESTS" ]; then
+        echo "FAIL: Windows integration linker attributed $_link_result_rows of $WINDOWS_LINK_REQUESTS requests" >&2
+        return 1
+    fi
+
+    ci_timing_set_now_ms
+    _link_attribution_finished=$CI_TIMING_NOW_MS
+    WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS=$((_link_attribution_finished - _link_attribution_started))
+    ci_timing_record_elapsed \
+        windows-manifest \
+        link-attribution \
+        "$WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS" \
+        0
+}
+
 windows_enqueue_missing_launch_self_test() {
     WINDOWS_RUNNER_MISSING_LABEL=windows_runner_missing_executable
     _dir="$WORKDIR/windows-runner-self-test"
@@ -2058,8 +2339,10 @@ windows_print_manifest_summary() {
     echo "  process starts: legacy powershell=$WINDOWS_MANIFEST_QUEUED, queued powershell=$WINDOWS_MANIFEST_POWERSHELL_STARTS, child executables=$WINDOWS_SUMMARY_CHILD_STARTS"
     echo "  queue encoding helper processes: 0"
     echo "  cygpath conversions: legacy launch-path lower bound=$_legacy_launch_cygpath, queued manifest=$WINDOWS_MANIFEST_CYGPATH_CONVERSIONS"
+    echo "  links: requests=$WINDOWS_LINK_SUMMARY_REQUESTS child_starts=$WINDOWS_LINK_SUMMARY_CHILD_STARTS launch_failures=$WINDOWS_LINK_SUMMARY_LAUNCH_FAILURES failed=$WINDOWS_LINK_SUMMARY_FAILED_PROCESSES missing_outputs=$WINDOWS_LINK_SUMMARY_MISSING_OUTPUTS"
+    echo "  link scheduler: jobs=$WINDOWS_LINK_SUMMARY_JOBS peak=$WINDOWS_LINK_SUMMARY_PEAK_CONCURRENCY wall_ms=$WINDOWS_MANIFEST_LINK_WALL_MS child_ms=$WINDOWS_MANIFEST_LINK_MS powershell=$WINDOWS_LINK_POWERSHELL_STARTS"
     echo "  queue: requests=$WINDOWS_SUMMARY_REQUESTS launch_failures=$WINDOWS_SUMMARY_LAUNCH_FAILURES elapsed_ms=$WINDOWS_SUMMARY_ELAPSED_MS"
-    echo "  phase_ms: compile=$WINDOWS_MANIFEST_COMPILE_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS link=$WINDOWS_MANIFEST_LINK_MS queue_prepare=$WINDOWS_MANIFEST_QUEUE_PREP_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
+    echo "  phase_ms: compile=$WINDOWS_MANIFEST_COMPILE_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS link_child_sum=$WINDOWS_MANIFEST_LINK_MS link_scheduler=$WINDOWS_MANIFEST_LINK_WALL_MS link_helper=$WINDOWS_MANIFEST_LINK_HELPER_MS link_plan=$WINDOWS_MANIFEST_LINK_PREP_MS link_result_process=$WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS link_attribution=$WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS queue_prepare=$WINDOWS_MANIFEST_QUEUE_PREP_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
     echo "  phase_counts: compile=$WINDOWS_MANIFEST_COMPILES assemble=$WINDOWS_MANIFEST_ASSEMBLES link=$WINDOWS_MANIFEST_LINKS assert=$WINDOWS_MANIFEST_ASSERTS"
     echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
 }
@@ -2291,6 +2574,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         case_dir_win="$WINDOWS_WORKDIR_WIN\\$name"
         obj_win="$case_dir_win\\$name.o"
         bin_win="$case_dir_win\\$name.exe"
+        build_stdout_win="$case_dir_win\\$name.build.stdout"
+        build_stderr_win="$case_dir_win\\$name.build.stderr"
         # Stdlib comes from the embedded payload unless the case opted into
         # the on-disk layout (stage-stdlib), matching the staged copies.
         if [ -s "$asm" ]; then
@@ -2342,19 +2627,13 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             ran=$((ran + 1))
             continue
         fi
-        # shellcheck disable=SC2086
-        if ! windows_timed_link -NOLOGO "$obj_win" $native_objs "-OUT:$bin_win" \
-            -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
-            >> "$build_stdout" 2>> "$build_stderr"; then
-            echo "FAIL: $name link failed" >&2
-            show_build_streams "$build_stdout" "$build_stderr"
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
-        fi
-        # shellcheck disable=SC2086
-        windows_queue_manifest_case \
+        windows_queue_manifest_link \
             "$name" \
+            "$obj_win" \
+            "$native_objs" \
+            "$bin_win" \
+            "$build_stdout_win" \
+            "$build_stderr_win" \
             "$want" \
             "$stdout_spec" \
             "$expected_stderr_spec" \
@@ -2466,6 +2745,15 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         "$case_dir" \
         "$run_shell_stderr"
 done < "$NORMALIZED_MANIFEST"
+
+if [ "$HOST_OS" = windows ] && [ "$WINDOWS_LINK_REQUESTS" -gt 0 ]; then
+    if ! windows_run_manifest_links; then
+        exit 1
+    fi
+    if ! windows_process_manifest_link_results; then
+        exit 1
+    fi
+fi
 
 if [ "$HOST_OS" = windows ] && [ "$WINDOWS_MANIFEST_QUEUED" -gt 0 ]; then
     if ! windows_run_manifest_queue; then

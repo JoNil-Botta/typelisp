@@ -2715,6 +2715,72 @@
     [(CompilerIrBlockList.Array seq)
       (opt-dce-block-list-array items (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-dce-copy-used-from!
+  [source : (Array i64)]
+  [out : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-length source))
+    unit
+    (begin
+      (array-set! out index (array-ref source index))
+      (opt-dce-copy-used-from! source out (+ index 1)))))
+
+(define (opt-dce-copy-used [source : (Array i64)]) : (Array i64)
+  (let
+    [out : (Array i64) (array.make-array i64 (array-length source))]
+    (begin
+      (opt-dce-copy-used-from! source out 0)
+      out)))
+
+;; Exact dry run of the backward DCE walk. It mutates only the copied use-count
+;; array, including cascading decrements, and allocates no replacement IR.
+(define (opt-dce-instr-seq-array-has-dead!
+  [items : (Array i64)]
+  [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 (- count 1)]
+    [changed : bool false]
+    (begin
+      (while (>= index 0)
+        (let
+          [instr : CompilerIrInstr (array-ref slots index)]
+          (begin
+            (if (opt-instr-dead-array? items slots count index instr)
+              (begin
+                (set! changed true)
+                (opt-uncount-instr-uses-array items instr))
+              unit)
+            (set! index (- index 1)))))
+      changed)))
+
+(define (opt-dce-blocks-array-have-dead!
+  [items : (Array i64)]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [block-changed : bool
+              (opt-dce-instr-seq-array-has-dead! items instrs)]
+            (or
+              block-changed
+              (opt-dce-blocks-array-have-dead! items (box-get rest))))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-dce-blocks-array-have-dead!
+        items
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-dce-block-list-array-pass
+  [items : (Array i64)]
+  [blocks : CompilerIrBlockList]) : OptBlockListPassResult
+  (if (opt-dce-blocks-array-have-dead! (opt-dce-copy-used items) blocks)
+    (OptBlockListPassResult.Result (opt-dce-block-list-array items blocks) true)
+    (OptBlockListPassResult.Result blocks false)))
+
 (define (opt-dce-block-seq-array-in-place!
   [items : (Array i64)]
   [seq : CompilerIrBlockSeq]) : unit
@@ -4078,18 +4144,26 @@
     [(CompilerIrBlockList.Array seq)
       (opt-aggregate-sroa-blocks candidates (compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-aggregate-sroa-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-aggregate-sroa-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
         [candidates : opt_aggregate_candidate_vec.Vec
           (opt-aggregate-allocation-candidates-function func)]
-        (CompilerIrFunction.Function
-          name
-          params
-          ret-ty
-          frame
-          (opt-aggregate-sroa-blocks candidates blocks)))]))
+        (if (= (opt_aggregate_candidate_vec.len (& candidates)) 0)
+          (OptFunctionPassResult.Result func false)
+          (OptFunctionPassResult.Result
+            (CompilerIrFunction.Function
+              name
+              params
+              ret-ty
+              frame
+              (opt-aggregate-sroa-blocks candidates blocks))
+            true)))]))
+
+(define (opt-aggregate-sroa-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-aggregate-sroa-function-pass func)
+    [(OptFunctionPassResult.Result next _) next]))
 
 ;; --- block-local common subexpression elimination ---------------------------
 ;;
@@ -8798,6 +8872,19 @@
 
 (defenum OptBlockCtxResult
   (Result CompilerIrBlockList OptCfgContext bool))
+
+;; Uniform changed-result carriers. Function-level passes all return
+;; OptFunctionPassResult; lower-level helpers use the carrier matching their
+;; payload. An unchanged result must carry the exact input value so callers can
+;; preserve identity without rebuilding enclosing IR.
+(defenum OptFunctionPassResult
+  (Result CompilerIrFunction bool))
+
+(defenum OptBlockListPassResult
+  (Result CompilerIrBlockList bool))
+
+(defenum OptBlockPassResult
+  (Result CompilerIrBlock bool))
 
 (define (opt-cfg-context-all-blocks-reachable? [context : OptCfgContext]) : bool
   (let
@@ -14348,9 +14435,6 @@
 ;; whose only successor is the loop header. This pass creates that block for
 ;; conservative natural loops and falls back to the original function if the
 ;; verifier rejects the result.
-(defenum OptLoopPreheadersResult
-  (Result CompilerIrBlockList bool))
-
 (defenum OptLoopPreheadersPhiRewriteResult
   (Result CompilerIrPhiInputList bool))
 
@@ -14779,9 +14863,9 @@
 (define (opt-loop-preheaders-synthesize-loop
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
-  [loop : OptNaturalLoop]) : OptLoopPreheadersResult
+  [loop : OptNaturalLoop]) : OptBlockListPassResult
   (match (opt-natural-loop-preheader loop)
-    [(OptLoopPreheader.Some _) (OptLoopPreheadersResult.Result blocks false)]
+    [(OptLoopPreheader.Some _) (OptBlockListPassResult.Result blocks false)]
     [(OptLoopPreheader.No)
       (let
         [header : i64 (opt-natural-loop-header loop)]
@@ -14809,28 +14893,28 @@
                 header
                 outside
                 preheader)]
-            (OptLoopPreheadersResult.Result
+            (OptBlockListPassResult.Result
               (opt-loop-preheaders-insert-before-header
                 rewritten
                 header
                 preheader)
               true))
-          (OptLoopPreheadersResult.Result blocks false)))]))
+          (OptBlockListPassResult.Result blocks false)))]))
 
 (define (opt-loop-preheaders-synthesize-loops
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
-  [loops : OptNaturalLoopList]) : OptLoopPreheadersResult
+  [loops : OptNaturalLoopList]) : OptBlockListPassResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptLoopPreheadersResult.Result blocks false)]
+    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-loop-preheaders-synthesize-loop blocks context loop)
-        [(OptLoopPreheadersResult.Result next changed)
+        [(OptBlockListPassResult.Result next changed)
           (if changed
-            (OptLoopPreheadersResult.Result next true)
+            (OptBlockListPassResult.Result next true)
             (opt-loop-preheaders-synthesize-loops blocks context (box-get rest)))])]))
 
-(define (opt-loop-preheaders-blocks-once [blocks : CompilerIrBlockList]) : OptLoopPreheadersResult
+(define (opt-loop-preheaders-blocks-once [blocks : CompilerIrBlockList]) : OptBlockListPassResult
   (let
     [context : OptCfgContext (opt-cfg-context-build blocks)]
     (opt-loop-preheaders-synthesize-loops
@@ -14840,7 +14924,7 @@
 
 (define (opt-loop-preheaders-blocks-once-with-context
   [context : OptCfgContext]
-  [blocks : CompilerIrBlockList]) : OptLoopPreheadersResult
+  [blocks : CompilerIrBlockList]) : OptBlockListPassResult
   ;; `context` must be valid for `blocks` (the caller's pipeline context).
   (opt-loop-preheaders-synthesize-loops
     blocks
@@ -14852,16 +14936,16 @@
   [context : OptCfgContext]
   [remaining : i64]
   [any-changed : bool]
-  [first-round? : bool]) : OptLoopPreheadersResult
+  [first-round? : bool]) : OptBlockListPassResult
   ;; The first round reuses the pipeline's CFG context (valid for `blocks`);
   ;; only rounds after an actual synthesis (which rewrote the CFG) pay for a
   ;; fresh context build.
   (if (<= remaining 0)
-    (OptLoopPreheadersResult.Result blocks any-changed)
+    (OptBlockListPassResult.Result blocks any-changed)
     (match (if first-round?
       (opt-loop-preheaders-blocks-once-with-context context blocks)
       (opt-loop-preheaders-blocks-once blocks))
-      [(OptLoopPreheadersResult.Result next changed)
+      [(OptBlockListPassResult.Result next changed)
         (if changed
           (opt-loop-preheaders-blocks-fixed-result
             next
@@ -14869,7 +14953,7 @@
             (- remaining 1)
             true
             false)
-          (OptLoopPreheadersResult.Result next any-changed))])))
+          (OptBlockListPassResult.Result next any-changed))])))
 
 (define (opt-loop-preheaders-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match (opt-loop-preheaders-blocks-fixed-result
@@ -14878,7 +14962,7 @@
     (+ 1 (compiler-ir-block-list-count blocks))
     false
     true)
-    [(OptLoopPreheadersResult.Result next _) next]))
+    [(OptBlockListPassResult.Result next _) next]))
 
 (define (opt-loop-preheaders-function-with-context-result
   [context : OptCfgContext]
@@ -14895,7 +14979,7 @@
             (+ 1 (compiler-ir-block-list-count blocks))
             false
             true)
-            [(OptLoopPreheadersResult.Result next-blocks preheaders-changed?)
+            [(OptBlockListPassResult.Result next-blocks preheaders-changed?)
               (if (not preheaders-changed?)
                 ;; No preheader was synthesized: the input context still
                 ;; describes the unchanged CFG, so skip the context rebuild
@@ -14943,9 +15027,6 @@
 (defenum OptLoopRotationHeader
   (No)
   (Header CompilerIrInstrList))
-
-(defenum OptLoopRotationResult
-  (Result CompilerIrBlockList bool))
 
 (define (opt-loop-rotation-header-count
   [loops : OptNaturalLoopList]
@@ -15127,21 +15208,21 @@
   [header : i64]
   [preheader : i64]
   [latch : i64]
-  [guard : CompilerIrInstrList]) : OptLoopRotationResult
+  [guard : CompilerIrInstrList]) : OptBlockListPassResult
   (let
     [next : CompilerIrBlockList
       (opt-loop-rotation-rewrite-blocks blocks header preheader latch guard)]
     (if (and
       (opt-cfg-block-labels-unique? next)
       (opt-cfg-successor-targets-known? next))
-      (OptLoopRotationResult.Result next true)
-      (OptLoopRotationResult.Result blocks false))))
+      (OptBlockListPassResult.Result next true)
+      (OptBlockListPassResult.Result blocks false))))
 
 (define (opt-loop-rotation-loop
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
   [loops : OptNaturalLoopList]
-  [loop : OptNaturalLoop]) : OptLoopRotationResult
+  [loop : OptNaturalLoop]) : OptBlockListPassResult
   (let
     [header : i64 (opt-natural-loop-header loop)]
     [latch : i64 (opt-natural-loop-latch loop)]
@@ -15149,7 +15230,7 @@
     [preds : OptLabelSet
       (opt-pred-map-lookup (struct-get context pred-map) header)]
     (match (opt-natural-loop-preheader loop)
-      [(OptLoopPreheader.No) (OptLoopRotationResult.Result blocks false)]
+      [(OptLoopPreheader.No) (OptBlockListPassResult.Result blocks false)]
       [(OptLoopPreheader.Some preheader)
         (if (and
           (= (opt-loop-rotation-header-count loops header) 1)
@@ -15160,7 +15241,7 @@
           (opt-loop-rotation-edge-compatible? blocks latch header))
           (match (opt-loop-rotation-header-shape blocks header body)
             [(OptLoopRotationHeader.No)
-              (OptLoopRotationResult.Result blocks false)]
+              (OptBlockListPassResult.Result blocks false)]
             [(OptLoopRotationHeader.Header guard)
               (opt-loop-rotation-apply-guard
                 blocks
@@ -15168,20 +15249,20 @@
                 preheader
                 latch
                 guard)])
-          (OptLoopRotationResult.Result blocks false))])))
+          (OptBlockListPassResult.Result blocks false))])))
 
 (define (opt-loop-rotation-loops
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
   [loops : OptNaturalLoopList]
-  [remaining : OptNaturalLoopList]) : OptLoopRotationResult
+  [remaining : OptNaturalLoopList]) : OptBlockListPassResult
   (match remaining
-    [(OptNaturalLoopList.Nil) (OptLoopRotationResult.Result blocks false)]
+    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-loop-rotation-loop blocks context loops loop)
-        [(OptLoopRotationResult.Result next changed)
+        [(OptBlockListPassResult.Result next changed)
           (if changed
-            (OptLoopRotationResult.Result next true)
+            (OptBlockListPassResult.Result next true)
             (opt-loop-rotation-loops blocks context loops (box-get rest)))])]))
 
 ;; The step already builds a CFG context for `blocks`. Carry it out so the
@@ -15197,13 +15278,13 @@
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context blocks context)]
     (match (opt-loop-rotation-loops blocks context loops loops)
-      [(OptLoopRotationResult.Result next changed)
+      [(OptBlockListPassResult.Result next changed)
         (OptLoopRotationCtxResult.Result next changed context)])))
 
-(define (opt-loop-rotation-blocks-once [blocks : CompilerIrBlockList]) : OptLoopRotationResult
+(define (opt-loop-rotation-blocks-once [blocks : CompilerIrBlockList]) : OptBlockListPassResult
   (match (opt-loop-rotation-blocks-once-result blocks)
     [(OptLoopRotationCtxResult.Result next changed _)
-      (OptLoopRotationResult.Result next changed)]))
+      (OptBlockListPassResult.Result next changed)]))
 
 (define (opt-loop-rotation-blocks-fixed-result
   [blocks : CompilerIrBlockList]
@@ -16084,9 +16165,6 @@
 ;; any loop actually hoisted. When nothing changed the caller can skip the
 ;; rewritten-CFG context rebuild and post-pass verify -- the input context
 ;; stays valid for the unchanged function.
-(defenum OptLicmLoopApplyResult
-  (Result CompilerIrBlockList bool))
-
 (defstruct OptLicmStoreSummary
   (call-or-unknown? bool)
   (header-or-unknown-store? bool)
@@ -17662,7 +17740,7 @@
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
-  [loop : OptNaturalLoop]) : OptLicmLoopApplyResult
+  [loop : OptNaturalLoop]) : OptBlockListPassResult
   (match (opt-natural-loop-preheader loop)
     [(OptLoopPreheader.Some preheader)
       (let
@@ -17748,14 +17826,14 @@
                     (OptCopyEnv.Nil))]
                 (match dedup-env
                   [(OptCopyEnv.Nil)
-                    (OptLicmLoopApplyResult.Result
+                    (OptBlockListPassResult.Result
                       (opt-licm-insert-preheader-blocks
                         preheader
                         hoisted
                         (opt-licm-replace-body-blocks blocks filtered-body))
                       true)]
                   [_
-                    (OptLicmLoopApplyResult.Result
+                    (OptBlockListPassResult.Result
                       (opt-licm-insert-preheader-blocks
                         preheader
                         (opt-licm-subst-instr-list dedup-env hoisted)
@@ -17763,8 +17841,8 @@
                           blocks
                           (opt-licm-subst-body-blocks dedup-env filtered-body)))
                       true)]))
-              (OptLicmLoopApplyResult.Result blocks false))]))]
-    [(OptLoopPreheader.No) (OptLicmLoopApplyResult.Result blocks false)]))
+              (OptBlockListPassResult.Result blocks false))]))]
+    [(OptLoopPreheader.No) (OptBlockListPassResult.Result blocks false)]))
 
 (define (opt-licm-apply-loops
   [sources : opt_i64_i64_map.Map]
@@ -17772,9 +17850,9 @@
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
   [loops : OptNaturalLoopList]
-  [blocks : CompilerIrBlockList]) : OptLicmLoopApplyResult
+  [blocks : CompilerIrBlockList]) : OptBlockListPassResult
   (match loops
-    [(OptNaturalLoopList.Nil) (OptLicmLoopApplyResult.Result blocks false)]
+    [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-licm-apply-loop
         sources
@@ -17783,7 +17861,7 @@
         direct-call-clean
         blocks
         loop)
-        [(OptLicmLoopApplyResult.Result loop-blocks loop-changed)
+        [(OptBlockListPassResult.Result loop-blocks loop-changed)
           (match (opt-licm-apply-loops
             sources
             types
@@ -17791,8 +17869,8 @@
             direct-call-clean
             (box-get rest)
             loop-blocks)
-            [(OptLicmLoopApplyResult.Result rest-blocks rest-changed)
-              (OptLicmLoopApplyResult.Result
+            [(OptBlockListPassResult.Result rest-blocks rest-changed)
+              (OptBlockListPassResult.Result
                 rest-blocks
                 (or loop-changed rest-changed))])])]))
 
@@ -17802,7 +17880,7 @@
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
   [loops : OptNaturalLoopList]
-  [blocks : CompilerIrBlockList]) : OptLicmLoopApplyResult
+  [blocks : CompilerIrBlockList]) : OptBlockListPassResult
   (opt-licm-apply-loops sources types provenance direct-call-clean loops blocks))
 
 (define (opt-licm-function-with-context-result-and-direct-call-clean
@@ -17843,7 +17921,7 @@
                     direct-call-clean
                     loops
                     blocks)
-                    [(OptLicmLoopApplyResult.Result
+                    [(OptBlockListPassResult.Result
                         hoisted-blocks
                         licm-changed?)
                       (if (not licm-changed?)
@@ -19867,12 +19945,6 @@
   (No)
   (Some CompilerIrInstrSeq i64 CompilerIrInstr bool))
 
-(defenum OptBoolBranchFuseResult
-  (Result CompilerIrBlockList bool))
-
-(defenum OptBoolBranchFunctionResult
-  (Result CompilerIrFunction bool))
-
 (define (opt-bool-branch-compare-op? [op : CompilerIrBinOp]) : bool
   (compiler-ir-binop-compare? op))
 
@@ -21163,9 +21235,9 @@
 (define (opt-bool-branch-fuse-blocks-raw
   [blocks : CompilerIrBlockList]
   [frame : i64]
-  [remaining : i64]) : OptBoolBranchFuseResult
+  [remaining : i64]) : OptBlockListPassResult
   (if (<= remaining 0)
-    (OptBoolBranchFuseResult.Result blocks false)
+    (OptBlockListPassResult.Result blocks false)
     (let
       [index : OptCfgIndex (opt-cfg-index-build blocks)]
       [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
@@ -21174,14 +21246,14 @@
           (opt-cfg-simplify-blocks blocks)
           frame
           (- remaining 1))
-          [(OptBoolBranchFuseResult.Result next _)
-            (OptBoolBranchFuseResult.Result next true)])
-        (OptBoolBranchFuseResult.Result blocks false)))))
+          [(OptBlockListPassResult.Result next _)
+            (OptBlockListPassResult.Result next true)])
+        (OptBlockListPassResult.Result blocks false)))))
 
 (define (opt-bool-branch-fuse-blocks
   [blocks : CompilerIrBlockList]
   [frame : i64]
-  [remaining : i64]) : OptBoolBranchFuseResult
+  [remaining : i64]) : OptBlockListPassResult
   (opt-bool-branch-fuse-blocks-raw
     (opt-bool-branch-clone-blocks blocks)
     frame
@@ -21216,20 +21288,20 @@
 (define (opt-bool-branch-function-with-context-result
   [context : OptCfgContext]
   [verified? : bool]
-  [func : CompilerIrFunction]) : OptBoolBranchFunctionResult
+  [func : CompilerIrFunction]) : OptFunctionPassResult
   ;; The block pass mutates instruction sequences, so it always works on a deep
   ;; block/instruction clone. A failed post-pass verify can therefore return the
   ;; byte-for-byte input function instead of retaining a partial edge rewrite.
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (not (opt-bool-branch-blocks-have-candidate? blocks))
-        (OptBoolBranchFunctionResult.Result func false)
+        (OptFunctionPassResult.Result func false)
         (match (opt-verify-gate verified? func context)
           [(ResultCompilerOptimizeVerify.Err _)
-            (OptBoolBranchFunctionResult.Result func false)]
+            (OptFunctionPassResult.Result func false)]
           [(ResultCompilerOptimizeVerify.Ok)
             (match (opt-bool-branch-fuse-blocks blocks frame 16)
-              [(OptBoolBranchFuseResult.Result next-blocks changed)
+              [(OptBlockListPassResult.Result next-blocks changed)
                 (if changed
                   (let
                     [next : CompilerIrFunction
@@ -21243,10 +21315,10 @@
                       (opt-cfg-context-build next-blocks)]
                     (match (opt-verify-function-with-context next next-context)
                       [(ResultCompilerOptimizeVerify.Ok)
-                        (OptBoolBranchFunctionResult.Result next true)]
+                        (OptFunctionPassResult.Result next true)]
                       [(ResultCompilerOptimizeVerify.Err _)
-                        (OptBoolBranchFunctionResult.Result func false)]))
-                  (OptBoolBranchFunctionResult.Result func false))])]))]))
+                        (OptFunctionPassResult.Result func false)]))
+                  (OptFunctionPassResult.Result func false))])]))]))
 
 (define (opt-bool-branch-chain-instrs-define-root-and?
   [instrs : CompilerIrInstrSeq]
@@ -21324,14 +21396,14 @@
 (define (opt-bool-branch-chain-function-with-context-result
   [context : OptCfgContext]
   [verified? : bool]
-  [func : CompilerIrFunction]) : OptBoolBranchFunctionResult
+  [func : CompilerIrFunction]) : OptFunctionPassResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (not (opt-bool-branch-chain-blocks-have-candidate? blocks))
-        (OptBoolBranchFunctionResult.Result func false)
+        (OptFunctionPassResult.Result func false)
         (match (opt-verify-gate verified? func context)
           [(ResultCompilerOptimizeVerify.Err _)
-            (OptBoolBranchFunctionResult.Result func false)]
+            (OptFunctionPassResult.Result func false)]
           [(ResultCompilerOptimizeVerify.Ok)
             (match (opt-bool-branch-chain-blocks-raw
               (opt-bool-branch-clone-blocks blocks)
@@ -21351,10 +21423,10 @@
                       (opt-cfg-context-build next-blocks)]
                     (match (opt-verify-function-with-context next next-context)
                       [(ResultCompilerOptimizeVerify.Ok)
-                        (OptBoolBranchFunctionResult.Result next true)]
+                        (OptFunctionPassResult.Result next true)]
                       [(ResultCompilerOptimizeVerify.Err _)
-                        (OptBoolBranchFunctionResult.Result func false)]))
-                  (OptBoolBranchFunctionResult.Result func false))])]))]))
+                        (OptFunctionPassResult.Result func false)]))
+                  (OptFunctionPassResult.Result func false))])]))]))
 
 ;; --- sparse conditional constant propagation -------------------------------
 ;;
@@ -22646,9 +22718,6 @@
           (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
           (opt-cfg-simplify-blocks blocks))])))
 
-(defenum OptFunctionPassResult
-  (Result CompilerIrFunction bool))
-
 (defenum OptSwitchIndexTag
   (No)
   (Some i64 i64))
@@ -23624,7 +23693,10 @@
 
 (define (opt-switch-form-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match (opt-switch-form-function-pass func)
-    [(OptFunctionPassResult.Result next _) next]))
+    [(OptFunctionPassResult.Result next changed)
+      (if changed
+        next
+        func)]))
 
 (define (optimize-function-max-iterations) : i64
   2)
@@ -24163,16 +24235,10 @@
     (- (compiler-ir-instr-seq-count instrs) 1)
     CompilerIrInstrList.Nil))
 
-;; A rewritten block carries the changed flag up to the dominator walk: when
-;; no instruction in the block changed, the original block (and its original
-;; instruction array) is reused untouched.
-(defenum OptGvnRewriteResult
-  (Result CompilerIrBlock bool))
-
 (define (opt-gvn-rewrite-block
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
-  [block : CompilerIrBlock]) : OptGvnRewriteResult
+  [block : CompilerIrBlock]) : OptBlockPassResult
   (match block
     [(CompilerIrBlock.Block label instrs)
       (if (opt-gvn-seq-rewrite-changed?
@@ -24180,12 +24246,12 @@
         sources
         instrs
         (- (compiler-ir-instr-seq-count instrs) 1))
-        (OptGvnRewriteResult.Result
+        (OptBlockPassResult.Result
           (compiler-ir-block
             label
             (opt-gvn-rewrite-instr-seq table sources instrs))
           true)
-        (OptGvnRewriteResult.Result block false))]))
+        (OptBlockPassResult.Result block false))]))
 
 (define (opt-gvn-dom-children [doms : OptDomInfo]) : OptCfgCsr
   (let
@@ -24251,9 +24317,9 @@
                 (match (if (or
                   (opt-induction-switch-arm? index blocks label instrs)
                   (opt-bool-branch-chain-check-block? label instrs))
-                  (OptGvnRewriteResult.Result block false)
+                  (OptBlockPassResult.Result block false)
                   (opt-gvn-rewrite-block table sources block))
-                  [(OptGvnRewriteResult.Result rewritten block-changed)
+                  [(OptBlockPassResult.Result rewritten block-changed)
                     (begin
                       (if block-changed
                         (array-set!
@@ -30220,31 +30286,68 @@
     [(CompilerIrBlockList.Array seq)
       (optimize-block-seq-hs hs entry-label seed-facts scan-work seq)]))
 
+(define (optimize-block-list-has-work?
+  [scan-work : (Array i64)]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-block-scan-skippable? scan-work block)
+        (optimize-block-list-has-work? scan-work (box-get rest))
+        true)]
+    [(CompilerIrBlockList.Array seq)
+      (optimize-block-list-has-work?
+        scan-work
+        (compiler-ir-block-seq-to-list seq))]))
+
 ;; GAP4: the header-typed handle set feeds gep classification; build it from
 ;; the whole function so the block-local pass sees params and cross-block defs.
 ;; The scan work array is one uninitialized frame-sized scratch per call:
 ;; generation stamps reset it per block in O(1), and stale bytes can only ever
 ;; over-report "maybe" (safe), never skip a firing block.
+(define (optimize-block-list-for-function-pass
+  [frame : i64]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptBlockListPassResult
+  (let
+    [scan-work : (Array i64) (array.make-array i64 frame)]
+    (if (not (optimize-block-list-has-work? scan-work blocks))
+      (OptBlockListPassResult.Result blocks false)
+      (let
+        [hs : OptLoadHeaderSet
+          (opt-load-header-set-from-function-with-size params blocks frame)]
+        [entry-label : i64 (opt-cfg-entry-label blocks)]
+        [seed-facts : OptAliasFacts (opt-alias-seed-params params)]
+        [next : CompilerIrBlockList
+          (match blocks
+            [(CompilerIrBlockList.Array seq)
+              (optimize-block-seq-hs-dense
+                hs
+                entry-label
+                seed-facts
+                scan-work
+                frame
+                seq)]
+            [_
+              (optimize-block-list-hs
+                hs
+                entry-label
+                seed-facts
+                scan-work
+                blocks)])]
+        [changed : bool (not (opt-block-list-eq blocks next))]
+        (OptBlockListPassResult.Result
+          (if changed
+            next
+            blocks)
+          changed)))))
+
 (define (optimize-block-list-for-function
   [frame : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (let
-    [hs : OptLoadHeaderSet
-      (opt-load-header-set-from-function-with-size params blocks frame)]
-    [entry-label : i64 (opt-cfg-entry-label blocks)]
-    [seed-facts : OptAliasFacts (opt-alias-seed-params params)]
-    [scan-work : (Array i64) (array.make-array i64 frame)]
-    (match blocks
-      [(CompilerIrBlockList.Array seq)
-        (optimize-block-seq-hs-dense
-          hs
-          entry-label
-          seed-facts
-          scan-work
-          frame
-          seq)]
-      [_ (optimize-block-list-hs hs entry-label seed-facts scan-work blocks)])))
+  (match (optimize-block-list-for-function-pass frame params blocks)
+    [(OptBlockListPassResult.Result next _) next]))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (optimize-block-list-hs
@@ -39130,20 +39233,20 @@
         out
         (compiler-ir-instr-cons (compiler-ir-instr-seq-ref instrs index) out)))))
 
-(define (opt-cmp-sink-block [block : CompilerIrBlock]) : CompilerIrBlock
+(define (opt-cmp-sink-block-pass [block : CompilerIrBlock]) : OptBlockPassResult
   (match block
     [(CompilerIrBlock.Block label instrs)
       (let
         [count : i64 (compiler-ir-instr-seq-count instrs)]
         (if (< count 3)
-          block
+          (OptBlockPassResult.Result block false)
           (match (compiler-ir-instr-seq-ref instrs (- count 1))
             [(CompilerIrInstr.Branch (CompilerIrValue.Var cond-var) _ _)
               (let
                 [def-index : i64
                   (opt-cmp-sink-find-compare instrs cond-var (- count 2))]
                 (if (or (< def-index 0) (= def-index (- count 2)))
-                  block
+                  (OptBlockPassResult.Result block false)
                   (match (compiler-ir-instr-seq-ref instrs def-index)
                     [(CompilerIrInstr.BinOp _ _ lhs rhs _)
                       (if (opt-cmp-sink-clear?
@@ -39153,30 +39256,46 @@
                         cond-var
                         lhs
                         rhs)
-                        (compiler-ir-block
-                          label
-                          (opt-cmp-sink-move-onto
-                            instrs
-                            def-index
-                            (- count 2)
-                            (compiler-ir-instr-cons
-                              (compiler-ir-instr-seq-ref instrs def-index)
+                        (OptBlockPassResult.Result
+                          (compiler-ir-block
+                            label
+                            (opt-cmp-sink-move-onto
+                              instrs
+                              def-index
+                              (- count 2)
                               (compiler-ir-instr-cons
-                                (compiler-ir-instr-seq-ref instrs (- count 1))
-                                CompilerIrInstrList.Nil))))
-                        block)]
-                    [_ block])))]
-            [_ block])))]))
+                                (compiler-ir-instr-seq-ref instrs def-index)
+                                (compiler-ir-instr-cons
+                                  (compiler-ir-instr-seq-ref instrs (- count 1))
+                                  CompilerIrInstrList.Nil))))
+                          true)
+                        (OptBlockPassResult.Result block false))]
+                    [_ (OptBlockPassResult.Result block false)])))]
+            [_ (OptBlockPassResult.Result block false)])))]))
+
+(define (opt-cmp-sink-blocks-pass [blocks : CompilerIrBlockList]) : OptBlockListPassResult
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptBlockListPassResult.Result blocks false)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match (opt-cmp-sink-block-pass block)
+        [(OptBlockPassResult.Result next-block block-changed)
+          (match (opt-cmp-sink-blocks-pass (box-get rest))
+            [(OptBlockListPassResult.Result next-rest rest-changed)
+              (if (or block-changed rest-changed)
+                (OptBlockListPassResult.Result
+                  (compiler-ir-block-cons next-block next-rest)
+                  true)
+                (OptBlockListPassResult.Result blocks false))])])]
+    [(CompilerIrBlockList.Array seq)
+      (match (opt-cmp-sink-blocks-pass (compiler-ir-block-seq-to-list seq))
+        [(OptBlockListPassResult.Result next changed)
+          (if changed
+            (OptBlockListPassResult.Result next true)
+            (OptBlockListPassResult.Result blocks false))])]))
 
 (define (opt-cmp-sink-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match blocks
-    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
-    [(CompilerIrBlockList.Cons block rest)
-      (compiler-ir-block-cons
-        (opt-cmp-sink-block block)
-        (opt-cmp-sink-blocks (box-get rest)))]
-    [(CompilerIrBlockList.Array seq)
-      (opt-cmp-sink-blocks (compiler-ir-block-seq-to-list seq))]))
+  (match (opt-cmp-sink-blocks-pass blocks)
+    [(OptBlockListPassResult.Result next _) next]))
 
 ;; --- single-predecessor successor sinking ----------------------------------
 ;;
@@ -41222,7 +41341,7 @@
                 [_ false]))]
           [_ false])))))
 
-(define (opt-if-convert-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-if-convert-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame original)
       (let
@@ -41243,7 +41362,7 @@
                       unit)
                     (set! read (+ read 1))))
                 (if (not changed)
-                  func
+                  (OptFunctionPassResult.Result func false)
                   (let
                     [next : CompilerIrFunction
                       (CompilerIrFunction.Function
@@ -41253,9 +41372,15 @@
                         frame
                         (opt-cfg-simplify-blocks blocks))]
                     (match (opt-verify-function next)
-                      [(ResultCompilerOptimizeVerify.Ok) next]
-                      [(ResultCompilerOptimizeVerify.Err _) func])))))]
-          [_ func]))]))
+                      [(ResultCompilerOptimizeVerify.Ok)
+                        (OptFunctionPassResult.Result next true)]
+                      [(ResultCompilerOptimizeVerify.Err _)
+                        (OptFunctionPassResult.Result func false)])))))]
+          [_ (OptFunctionPassResult.Result func false)]))]))
+
+(define (opt-if-convert-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-if-convert-function-pass func)
+    [(OptFunctionPassResult.Result next _) next]))
 
 (define (optimize-function-once-with-summaries
   [func : CompilerIrFunction]
@@ -41285,6 +41410,11 @@
           [const-global-blocks : CompilerIrBlockList
             (opt-const-divisor-rewrite-summary-blocks summaries blocks)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
+          [fold-result : OptBlockListPassResult
+            (optimize-block-list-for-function-pass
+              frame
+              params
+              const-global-blocks)]
           [folded : CompilerIrBlockList
             (compiler-opt-debug-observe-blocks
               "fold"
@@ -41292,16 +41422,22 @@
               params
               ret-ty
               frame
-              (optimize-block-list-for-function
-                frame
-                params
-                const-global-blocks))]
+              (match fold-result
+                [(OptBlockListPassResult.Result next _) next]))]
+          [fold-changed : bool
+            (match fold-result
+              [(OptBlockListPassResult.Result _ changed) changed])]
           [_p-fold : unit
             (cfg
               compile-profile
               (compiler-opt-profile-pass-finish "fold" name _t-fold)
               unit)]
           [_t-affine : i64 (cfg compile-profile (profile.now-ms) 0)]
+          [affine-candidate? : bool (opt-affine-blocks-have-candidate? folded)]
+          [affine-input : CompilerIrBlockList
+            (if (and affine-candidate? (not fold-changed))
+              (compiler-ir-clone-block-list folded)
+              folded)]
           [affine : CompilerIrBlockList
             (compiler-opt-debug-observe-blocks
               "affine"
@@ -41309,7 +41445,9 @@
               params
               ret-ty
               frame
-              (opt-affine-fold-blocks frame folded))]
+              (if affine-candidate?
+                (opt-affine-fold-blocks frame affine-input)
+                folded))]
           [_p-affine : unit
             (cfg
               compile-profile
@@ -41540,7 +41678,7 @@
                           (if (opt-bool-branch-blocks-have-candidate? sccp)
                             (opt-cfg-context-build sccp)
                             (opt-cfg-context-empty)))]
-                      [bool-branch-result : OptBoolBranchFunctionResult
+                      [bool-branch-result : OptFunctionPassResult
                         (opt-bool-branch-function-with-context-result
                           bool-branch-context
                           false
@@ -41553,12 +41691,11 @@
                           ret-ty
                           ssa-frame
                           (match bool-branch-result
-                            [(OptBoolBranchFunctionResult.Result f _)
+                            [(OptFunctionPassResult.Result f _)
                               (opt-function-blocks f)]))]
                       [bool-branch-changed : bool
                         (match bool-branch-result
-                          [(OptBoolBranchFunctionResult.Result _ changed)
-                            changed])]
+                          [(OptFunctionPassResult.Result _ changed) changed])]
                       [_p-bool-branch : unit
                         (cfg
                           compile-profile
@@ -42059,7 +42196,7 @@
                           ret-ty
                           successor-sink-frame
                           successor-sink)]
-                      [bool-branch-late-result : OptBoolBranchFunctionResult
+                      [bool-branch-late-result : OptFunctionPassResult
                         (if run-heavy?
                           (opt-bool-branch-chain-function-with-context-result
                             (if (opt-bool-branch-chain-blocks-have-candidate?
@@ -42068,12 +42205,12 @@
                               (opt-cfg-context-empty))
                             false
                             bool-branch-late-input)
-                          (OptBoolBranchFunctionResult.Result
+                          (OptFunctionPassResult.Result
                             bool-branch-late-input
                             false))]
                       [bool-branch-late-function : CompilerIrFunction
                         (match bool-branch-late-result
-                          [(OptBoolBranchFunctionResult.Result f _) f])]
+                          [(OptFunctionPassResult.Result f _) f])]
                       [bool-branch-late : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           "bool_branch_late"
@@ -42097,6 +42234,8 @@
                         (opt-collect-blocks-uses-array
                           bool-branch-late-frame
                           bool-branch-late)]
+                      [dce-result : OptBlockListPassResult
+                        (opt-dce-block-list-array-pass used bool-branch-late)]
                       [dced : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           "dce"
@@ -42104,7 +42243,8 @@
                           params
                           ret-ty
                           bool-branch-late-frame
-                          (opt-dce-block-list-array used bool-branch-late))]
+                          (match dce-result
+                            [(OptBlockListPassResult.Result next _) next]))]
                       [_p-dce : unit
                         (cfg
                           compile-profile
@@ -42218,22 +42358,36 @@
   (let
     [next : CompilerIrFunction
       (optimize-function-once-with-summaries func summaries)]
-    (OptFunctionPassResult.Result next (not (opt-function-eq func next)))))
+    [changed : bool (not (opt-function-eq func next))]
+    (OptFunctionPassResult.Result
+      (if changed
+        next
+        func)
+      changed)))
+
+(define (optimize-function-fixed-pass-with-summaries
+  [func : CompilerIrFunction]
+  [remaining : i64]
+  [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
+  (if (<= remaining 0)
+    (OptFunctionPassResult.Result func false)
+    (match (optimize-function-pass-with-summaries func summaries)
+      [(OptFunctionPassResult.Result next changed)
+        (if changed
+          (match (optimize-function-fixed-pass-with-summaries
+            next
+            (- remaining 1)
+            summaries)
+            [(OptFunctionPassResult.Result fixed _)
+              (OptFunctionPassResult.Result fixed true)])
+          (OptFunctionPassResult.Result func false))])))
 
 (define (optimize-function-fixed-with-summaries
   [func : CompilerIrFunction]
   [remaining : i64]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
-  (if (<= remaining 0)
-    func
-    (match (optimize-function-pass-with-summaries func summaries)
-      [(OptFunctionPassResult.Result next changed)
-        (if changed
-          (optimize-function-fixed-with-summaries
-            next
-            (- remaining 1)
-            summaries)
-          next)])))
+  (match (optimize-function-fixed-pass-with-summaries func remaining summaries)
+    [(OptFunctionPassResult.Result next _) next]))
 
 (define (optimize-function-fixed [func : CompilerIrFunction] [remaining : i64]) : CompilerIrFunction
   (optimize-function-fixed-with-summaries
@@ -42241,10 +42395,16 @@
     remaining
     (opt-loop-bce-empty-summaries)))
 
+(define (opt-if-convert-final-pass [func : CompilerIrFunction]) : OptFunctionPassResult
+  (match (opt-if-convert-function-pass func)
+    [(OptFunctionPassResult.Result next changed)
+      (OptFunctionPassResult.Result
+        (compiler-opt-debug-observe-function "if_convert" next)
+        changed)]))
+
 (define (opt-if-convert-final [func : CompilerIrFunction]) : CompilerIrFunction
-  (compiler-opt-debug-observe-function
-    "if_convert"
-    (opt-if-convert-function func)))
+  (match (opt-if-convert-final-pass func)
+    [(OptFunctionPassResult.Result next _) next]))
 
 (define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
   (opt-if-convert-final
@@ -42255,23 +42415,43 @@
 ;; quality "ship" build). The old four-level scheme (with a redundant -fast level
 ;; between 0 and the cheap level) was collapsed: old level 2 became level 1 and
 ;; old level 3 became level 2.
-(define (optimize-function-with-level-and-summaries
+(define (optimize-function-with-level-and-summaries-pass
   [func : CompilerIrFunction]
   [level : i64]
-  [summaries : OptLoopBceSummaries]) : CompilerIrFunction
+  [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
   (if (= level 0)
-    func
+    (OptFunctionPassResult.Result func false)
     (if (= level 1)
       ;; Keep the documented cheap self-compile path cheap.  The final
       ;; if-conversion boundary performs CFG and natural-loop analysis and is
       ;; reserved for the release-quality level below; compare/test lowering
       ;; remains part of this single optimizer pass.
-      (optimize-function-once-level2-with-summaries func summaries)
-      (opt-if-convert-final
-        (optimize-function-fixed-with-summaries
-          func
-          (optimize-function-max-iterations)
-          summaries)))))
+      (let
+        [next : CompilerIrFunction
+          (optimize-function-once-level2-with-summaries func summaries)]
+        [changed : bool (not (opt-function-eq func next))]
+        (OptFunctionPassResult.Result
+          (if changed
+            next
+            func)
+          changed))
+      (match (optimize-function-fixed-pass-with-summaries
+        func
+        (optimize-function-max-iterations)
+        summaries)
+        [(OptFunctionPassResult.Result fixed fixed-changed)
+          (match (opt-if-convert-final-pass fixed)
+            [(OptFunctionPassResult.Result final if-convert-changed)
+              (OptFunctionPassResult.Result
+                final
+                (or fixed-changed if-convert-changed))])]))))
+
+(define (optimize-function-with-level-and-summaries
+  [func : CompilerIrFunction]
+  [level : i64]
+  [summaries : OptLoopBceSummaries]) : CompilerIrFunction
+  (match (optimize-function-with-level-and-summaries-pass func level summaries)
+    [(OptFunctionPassResult.Result next _) next]))
 
 (define (optimize-function-with-level [func : CompilerIrFunction] [level : i64]) : CompilerIrFunction
   (optimize-function-with-level-and-summaries
@@ -42482,7 +42662,9 @@
 
 ;; Optimize one function inside `scratch`, compact its blocks there, then escape
 ;; the result by deep-cloning it into the enclosing arena and rewinding `scratch`
-;; for reuse.
+;; for reuse. Even a no-op function must cross this ownership boundary: the
+;; optimizer input belongs to the lower-IR arena, which is released before the
+;; backend consumes the optimized program.
 (define (optimize-function-escaping-with-summaries
   [func : CompilerIrFunction]
   [level : i64]
@@ -42498,8 +42680,8 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [_t-body : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [body : CompilerIrFunction
-          (optimize-function-with-level-and-summaries func level summaries)]
+        [body-result : OptFunctionPassResult
+          (optimize-function-with-level-and-summaries-pass func level summaries)]
         [_profile-body : unit
           (cfg
             compile-profile
@@ -42508,49 +42690,52 @@
               level
               _profile-name
               _t-body))]
-        [_t-compact : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [optimized : CompilerIrFunction
-          (compiler-ir-function-compact-blocks body)]
-        [_profile-compact : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-escape-finish
-              "compact"
-              level
-              _profile-name
-              _t-compact))]
-        [scratch-head : i64 (arena.tl_arena_current)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          (let
-            [_t-clone : i64 (cfg compile-profile (profile.now-ms) 0)]
-            [escaped : CompilerIrFunction
-              (compiler-ir-clone-function optimized)]
-            [_profile-clone : unit
-              (cfg
-                compile-profile
-                (compiler-opt-profile-escape-finish
-                  "clone"
-                  level
-                  _profile-name
-                  _t-clone))]
-            [new-enclosing : i64 (arena.tl_arena_current)]
-            [_t-restore : i64 (cfg compile-profile (profile.now-ms) 0)]
-            [_restore : unit
-              (unsafe
-                (arena.tl_arena_set scratch-head)
-                (arena.tl_region_reset mark)
-                (arena.tl_arena_set new-enclosing))]
-            [_profile-restore : unit
-              (cfg
-                compile-profile
-                (compiler-opt-profile-escape-finish
-                  "restore"
-                  level
-                  _profile-name
-                  _t-restore))]
-            escaped))))))
+        (match body-result
+          [(OptFunctionPassResult.Result body _)
+            (let
+              [_t-compact : i64 (cfg compile-profile (profile.now-ms) 0)]
+              [optimized : CompilerIrFunction
+                (compiler-ir-function-compact-blocks body)]
+              [_profile-compact : unit
+                (cfg
+                  compile-profile
+                  (compiler-opt-profile-escape-finish
+                    "compact"
+                    level
+                    _profile-name
+                    _t-compact))]
+              [scratch-head : i64 (arena.tl_arena_current)]
+              (begin
+                (unsafe
+                  (arena.tl_arena_set enclosing))
+                (let
+                  [_t-clone : i64 (cfg compile-profile (profile.now-ms) 0)]
+                  [escaped : CompilerIrFunction
+                    (compiler-ir-clone-function optimized)]
+                  [_profile-clone : unit
+                    (cfg
+                      compile-profile
+                      (compiler-opt-profile-escape-finish
+                        "clone"
+                        level
+                        _profile-name
+                        _t-clone))]
+                  [new-enclosing : i64 (arena.tl_arena_current)]
+                  [_t-restore : i64 (cfg compile-profile (profile.now-ms) 0)]
+                  [_restore : unit
+                    (unsafe
+                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_region_reset mark)
+                      (arena.tl_arena_set new-enclosing))]
+                  [_profile-restore : unit
+                    (cfg
+                      compile-profile
+                      (compiler-opt-profile-escape-finish
+                        "restore"
+                        level
+                        _profile-name
+                        _t-restore))]
+                  escaped)))])))))
 
 (defenum OptMaybeFunction
   (No)

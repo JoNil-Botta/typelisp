@@ -1825,8 +1825,25 @@
 
 (define (compiler-optimize-aggregate-sroa-self-test) : i64
   (let
+    [positive-result : OptFunctionPassResult
+      (opt-aggregate-sroa-function-pass
+        (opt-spans-function (opt-aggregate-positive-instrs)))]
+    [positive-changed : bool
+      (match positive-result
+        [(OptFunctionPassResult.Result _ changed) changed])]
+    [noop-result : OptFunctionPassResult
+      (opt-aggregate-sroa-function-pass
+        (opt-spans-function
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
+            CompilerIrInstrList.Nil)))]
+    [noop-changed : bool
+      (match noop-result
+        [(OptFunctionPassResult.Result _ changed) changed])]
     [positive : CompilerIrInstrList
-      (opt-aggregate-sroa-test-instrs (opt-aggregate-positive-instrs))]
+      (match positive-result
+        [(OptFunctionPassResult.Result func _) (opt-function-first-instrs func)])]
     [repeated : CompilerIrInstrList
       (opt-aggregate-sroa-test-instrs (opt-aggregate-repeated-load-instrs))]
     [overwritten : CompilerIrInstrList
@@ -1840,21 +1857,23 @@
     [branched : CompilerIrBlockList
       (opt-aggregate-sroa-test-blocks (opt-aggregate-branch-load-blocks))]
     (cond
-      [(not (= (opt-count-load-dst-instrs positive 5) 0)) 1]
-      [(not (= (opt-mov-dst-i64-value positive 5 -1) 10)) 2]
-      [(not (= (opt-count-load-dst-instrs repeated 4) 0)) 3]
-      [(not (= (opt-count-load-dst-instrs repeated 6) 0)) 4]
-      [(not (= (opt-count-mov-i64-value repeated 10) 2)) 5]
-      [(not (= (opt-count-load-dst-instrs overwritten 4) 0)) 6]
-      [(not (= (opt-mov-dst-i64-value overwritten 4 -1) 20)) 7]
-      [(not (= (opt-count-mov-i64-value overwritten 10) 0)) 8]
-      [(not (= (opt-count-load-dst-instrs barrier 4) 1)) 9]
-      [(not (= (opt-count-mov-i64-value barrier 10) 0)) 10]
-      [(not (= (opt-count-load-dst-instrs escaped 4) 1)) 11]
-      [(not (= (opt-count-mov-i64-value escaped 10) 0)) 12]
-      [(not (= (opt-count-load-dst-instrs array-typed 4) 1)) 13]
-      [(not (= (opt-count-load-dst-blocks branched 4) 1)) 14]
-      [(not (= (opt-count-mov-i64-value-blocks branched 10) 0)) 15]
+      [(not positive-changed) 1]
+      [noop-changed 2]
+      [(not (= (opt-count-load-dst-instrs positive 5) 0)) 3]
+      [(not (= (opt-mov-dst-i64-value positive 5 -1) 10)) 4]
+      [(not (= (opt-count-load-dst-instrs repeated 4) 0)) 5]
+      [(not (= (opt-count-load-dst-instrs repeated 6) 0)) 6]
+      [(not (= (opt-count-mov-i64-value repeated 10) 2)) 7]
+      [(not (= (opt-count-load-dst-instrs overwritten 4) 0)) 8]
+      [(not (= (opt-mov-dst-i64-value overwritten 4 -1) 20)) 9]
+      [(not (= (opt-count-mov-i64-value overwritten 10) 0)) 10]
+      [(not (= (opt-count-load-dst-instrs barrier 4) 1)) 11]
+      [(not (= (opt-count-mov-i64-value barrier 10) 0)) 12]
+      [(not (= (opt-count-load-dst-instrs escaped 4) 1)) 13]
+      [(not (= (opt-count-mov-i64-value escaped 10) 0)) 14]
+      [(not (= (opt-count-load-dst-instrs array-typed 4) 1)) 15]
+      [(not (= (opt-count-load-dst-blocks branched 4) 1)) 16]
+      [(not (= (opt-count-mov-i64-value-blocks branched 10) 0)) 17]
       [else 42])))
 
 (define (opt-count-cast-instrs [instrs : CompilerIrInstrList]) : i64
@@ -2260,7 +2279,34 @@
   (let
     [instrs : CompilerIrInstrList (opt-self-test-instrs)]
     [optimized : CompilerIrInstrList (opt-fold-instrs (OptConstEnv.Nil) instrs)]
+    [fold-fire-result : OptBlockListPassResult
+      (optimize-block-list-for-function-pass
+        8
+        CompilerIrParamList.Nil
+        (compiler-ir-block-cons
+          (compiler-ir-block (compiler-ir-label "entry") instrs)
+          CompilerIrBlockList.Nil))]
+    [fold-noop-result : OptBlockListPassResult
+      (optimize-block-list-for-function-pass
+        1
+        CompilerIrParamList.Nil
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "entry")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil))]
     (begin
+      (compiler-optimize-self-test-require!
+        "fold pass reports a real rewrite"
+        (match fold-fire-result
+          [(OptBlockListPassResult.Result _ changed) changed]))
+      (compiler-optimize-self-test-require!
+        "fold pass reports and reuses a no-op"
+        (match fold-noop-result
+          [(OptBlockListPassResult.Result _ changed) (not changed)]))
       (compiler-optimize-self-test-require-i64!
         "constant-fold input arithmetic count"
         (opt-count-arith-instrs instrs)
@@ -2961,15 +3007,39 @@
       (opt-instr-dead?
         (opt_i64_i64_map.with-capacity 4)
         (CompilerIrInstr.Word 3 (CompilerIrValue.Var 2) 0 (AstType.I64)))]
+    [dead-blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
+        CompilerIrBlockList.Nil)]
+    [dead-result : OptBlockListPassResult
+      (opt-dce-block-list-array-pass
+        (opt-collect-blocks-uses-array 8 dead-blocks)
+        dead-blocks)]
+    [live-blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block (compiler-ir-label "entry") cleaned)
+        CompilerIrBlockList.Nil)]
+    [live-result : OptBlockListPassResult
+      (opt-dce-block-list-array-pass
+        (opt-collect-blocks-uses-array 8 live-blocks)
+        live-blocks)]
     [alloc-tests : i64 (compiler-optimize-dce-alloc-self-test)]
     (cond
-      [(not (opt-used-contains used 1)) 0]
-      [(opt-used-contains used 0) 1]
-      [(not (= (compiler-ir-instr-list-count instrs) 4)) 2]
-      [(not (= (compiler-ir-instr-list-count cleaned) 2)) 3]
-      [(not (= (compiler-ir-instr-list-count again) 2)) 4]
-      [(not unused-word-dead) 5]
-      [(not (= alloc-tests 42)) 6]
+      [(not
+          (match dead-result
+            [(OptBlockListPassResult.Result _ changed) changed]))
+        1]
+      [(not
+          (match live-result
+            [(OptBlockListPassResult.Result _ changed) (not changed)]))
+        2]
+      [(not (opt-used-contains used 1)) 3]
+      [(opt-used-contains used 0) 4]
+      [(not (= (compiler-ir-instr-list-count instrs) 4)) 5]
+      [(not (= (compiler-ir-instr-list-count cleaned) 2)) 6]
+      [(not (= (compiler-ir-instr-list-count again) 2)) 7]
+      [(not unused-word-dead) 8]
+      [(not (= alloc-tests 42)) 9]
       [else 42])))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
@@ -4408,22 +4478,30 @@
 ;; Returns 42 only when the movable compare lands right before the branch and
 ;; the operand-clobbering one stays at index 0.
 (define (compiler-optimize-cmp-sink-self-test) : i64
-  (match (opt-cmp-sink-blocks (opt-cmp-sink-test-blocks))
-    [(CompilerIrBlockList.Cons moved _)
-      (match (opt-cmp-sink-blocks (opt-cmp-sink-blocked-test-blocks))
-        [(CompilerIrBlockList.Cons stayed _)
-          (begin
-            (unless
-              (opt-instr-compare-dst?
-                (opt-block-instr-at moved (- (opt-block-instr-count moved) 2))
-                5)
-              (return 1))
-            (unless
-              (opt-instr-compare-dst? (opt-block-instr-at stayed 0) 5)
-              (return 2))
-            42)]
-        [_ 3])]
-    [_ 4]))
+  (match (opt-cmp-sink-blocks-pass (opt-cmp-sink-test-blocks))
+    [(OptBlockListPassResult.Result moved-blocks moved-changed)
+      (match moved-blocks
+        [(CompilerIrBlockList.Cons moved _)
+          (match (opt-cmp-sink-blocks-pass (opt-cmp-sink-blocked-test-blocks))
+            [(OptBlockListPassResult.Result stayed-blocks stayed-changed)
+              (match stayed-blocks
+                [(CompilerIrBlockList.Cons stayed _)
+                  (begin
+                    (unless moved-changed (return 1))
+                    (when stayed-changed (return 2))
+                    (unless
+                      (opt-instr-compare-dst?
+                        (opt-block-instr-at
+                          moved
+                          (- (opt-block-instr-count moved) 2))
+                        5)
+                      (return 3))
+                    (unless
+                      (opt-instr-compare-dst? (opt-block-instr-at stayed 0) 5)
+                      (return 4))
+                    42)]
+                [_ 5])])]
+        [_ 6])]))
 
 (define (opt-successor-sink-test-function
   [name : String]
@@ -13163,7 +13241,7 @@
     16
     blocks))
 
-(define (opt-bool-branch-chain-test-run [mode : i64]) : OptBoolBranchFunctionResult
+(define (opt-bool-branch-chain-test-run [mode : i64]) : OptFunctionPassResult
   (let
     [blocks : CompilerIrBlockList (opt-bool-branch-chain-test-blocks mode)]
     [func : CompilerIrFunction (opt-bool-branch-chain-test-function blocks)]
@@ -21203,7 +21281,7 @@
         (optimize-function (opt-cfg-test-function (opt-cfg-trap-path-blocks))))]
     [fallthrough-blocks : CompilerIrBlockList
       (opt-cfg-simplify-blocks (opt-cfg-fallthrough-prune-blocks))]
-    [bool-branch-result : OptBoolBranchFuseResult
+    [bool-branch-result : OptBlockListPassResult
       (opt-bool-branch-fuse-blocks
         (opt-bool-branch-test-blocks
           (CompilerIrInstr.BinOp
@@ -21217,11 +21295,11 @@
         16)]
     [bool-branch-blocks : CompilerIrBlockList
       (match bool-branch-result
-        [(OptBoolBranchFuseResult.Result blocks _) blocks])]
+        [(OptBlockListPassResult.Result blocks _) blocks])]
     [bool-branch-changed : bool
       (match bool-branch-result
-        [(OptBoolBranchFuseResult.Result _ changed) changed])]
-    [call-branch-result : OptBoolBranchFuseResult
+        [(OptBlockListPassResult.Result _ changed) changed])]
+    [call-branch-result : OptBlockListPassResult
       (opt-bool-branch-fuse-blocks
         (opt-bool-branch-test-blocks
           (CompilerIrInstr.Call
@@ -21234,11 +21312,11 @@
         16)]
     [call-branch-blocks : CompilerIrBlockList
       (match call-branch-result
-        [(OptBoolBranchFuseResult.Result blocks _) blocks])]
+        [(OptBlockListPassResult.Result blocks _) blocks])]
     [call-branch-changed : bool
       (match call-branch-result
-        [(OptBoolBranchFuseResult.Result _ changed) changed])]
-    [reused-branch-result : OptBoolBranchFuseResult
+        [(OptBlockListPassResult.Result _ changed) changed])]
+    [reused-branch-result : OptBlockListPassResult
       (opt-bool-branch-fuse-blocks
         (opt-bool-branch-test-blocks
           (CompilerIrInstr.BinOp
@@ -21252,82 +21330,82 @@
         16)]
     [reused-branch-blocks : CompilerIrBlockList
       (match reused-branch-result
-        [(OptBoolBranchFuseResult.Result blocks _) blocks])]
+        [(OptBlockListPassResult.Result blocks _) blocks])]
     [reused-branch-changed : bool
       (match reused-branch-result
-        [(OptBoolBranchFuseResult.Result _ changed) changed])]
+        [(OptBlockListPassResult.Result _ changed) changed])]
     [constant-phi-source : CompilerIrBlockList
       (opt-bool-branch-constant-phi-blocks)]
     [constant-phi-function : CompilerIrFunction
       (opt-bool-branch-constant-test-function constant-phi-source)]
-    [constant-phi-result : OptBoolBranchFunctionResult
+    [constant-phi-result : OptFunctionPassResult
       (opt-bool-branch-function-with-context-result
         (opt-cfg-context-build constant-phi-source)
         false
         constant-phi-function)]
     [constant-phi-optimized : CompilerIrFunction
       (match constant-phi-result
-        [(OptBoolBranchFunctionResult.Result func _) func])]
+        [(OptFunctionPassResult.Result func _) func])]
     [constant-phi-changed : bool
       (match constant-phi-result
-        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
+        [(OptFunctionPassResult.Result _ changed) changed])]
     [constant-phi-blocks : CompilerIrBlockList
       (opt-function-blocks constant-phi-optimized)]
     [nonconstant-phi-source : CompilerIrBlockList
       (opt-bool-branch-nonconstant-phi-blocks)]
     [nonconstant-phi-function : CompilerIrFunction
       (opt-bool-branch-constant-test-function nonconstant-phi-source)]
-    [nonconstant-phi-result : OptBoolBranchFunctionResult
+    [nonconstant-phi-result : OptFunctionPassResult
       (opt-bool-branch-function-with-context-result
         (opt-cfg-context-build nonconstant-phi-source)
         false
         nonconstant-phi-function)]
     [nonconstant-phi-optimized : CompilerIrFunction
       (match nonconstant-phi-result
-        [(OptBoolBranchFunctionResult.Result func _) func])]
+        [(OptFunctionPassResult.Result func _) func])]
     [nonconstant-phi-changed : bool
       (match nonconstant-phi-result
-        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
+        [(OptFunctionPassResult.Result _ changed) changed])]
     [multi-phi-source : CompilerIrBlockList (opt-bool-branch-multi-phi-blocks)]
     [multi-phi-function : CompilerIrFunction
       (opt-bool-branch-constant-test-function multi-phi-source)]
-    [multi-phi-result : OptBoolBranchFunctionResult
+    [multi-phi-result : OptFunctionPassResult
       (opt-bool-branch-function-with-context-result
         (opt-cfg-context-build multi-phi-source)
         false
         multi-phi-function)]
     [multi-phi-optimized : CompilerIrFunction
       (match multi-phi-result
-        [(OptBoolBranchFunctionResult.Result func _) func])]
+        [(OptFunctionPassResult.Result func _) func])]
     [multi-phi-changed : bool
       (match multi-phi-result
-        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
-    [and-chain-result : OptBoolBranchFunctionResult
+        [(OptFunctionPassResult.Result _ changed) changed])]
+    [and-chain-result : OptFunctionPassResult
       (opt-bool-branch-chain-test-run 0)]
     [and-chain-function : CompilerIrFunction
       (match and-chain-result
-        [(OptBoolBranchFunctionResult.Result func _) func])]
+        [(OptFunctionPassResult.Result func _) func])]
     [and-chain-blocks : CompilerIrBlockList
       (opt-function-blocks and-chain-function)]
     [and-chain-changed : bool
       (match and-chain-result
-        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
-    [and-chain-reused-result : OptBoolBranchFunctionResult
+        [(OptFunctionPassResult.Result _ changed) changed])]
+    [and-chain-reused-result : OptFunctionPassResult
       (opt-bool-branch-chain-test-run 1)]
     [and-chain-reused-function : CompilerIrFunction
       (match and-chain-reused-result
-        [(OptBoolBranchFunctionResult.Result func _) func])]
+        [(OptFunctionPassResult.Result func _) func])]
     [and-chain-reused-changed : bool
       (match and-chain-reused-result
-        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
-    [and-chain-or-result : OptBoolBranchFunctionResult
+        [(OptFunctionPassResult.Result _ changed) changed])]
+    [and-chain-or-result : OptFunctionPassResult
       (opt-bool-branch-chain-test-run 2)]
     [and-chain-or-function : CompilerIrFunction
       (match and-chain-or-result
-        [(OptBoolBranchFunctionResult.Result func _) func])]
+        [(OptFunctionPassResult.Result func _) func])]
     [and-chain-or-changed : bool
       (match and-chain-or-result
-        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
+        [(OptFunctionPassResult.Result _ changed) changed])]
     (begin
       (unless (= (compiler-ir-block-list-count constant-if) 2) (return 1))
       (unless

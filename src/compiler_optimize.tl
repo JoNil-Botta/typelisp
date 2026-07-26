@@ -5694,14 +5694,17 @@
   [b : CompilerIrInstrSeq]
   [index : i64]
   [count : i64]) : bool
-  (if (>= index count)
-    true
-    (and
-      (opt-instr-eq
-        type-segment-bases
-        (compiler-ir-instr-seq-ref a index)
-        (compiler-ir-instr-seq-ref b index))
-      (opt-instr-seq-eq-from type-segment-bases a b (+ index 1) count))))
+  (let
+    [cursor : i64 index]
+    (begin
+      (while (< cursor count)
+        (if (opt-instr-eq
+          type-segment-bases
+          (compiler-ir-instr-seq-ref a cursor)
+          (compiler-ir-instr-seq-ref b cursor))
+          (set! cursor (+ cursor 1))
+          (return false)))
+      true)))
 
 (define (opt-instr-seq-eq
   [type-segment-bases : i64]
@@ -22373,7 +22376,10 @@
               acc))])]))
 
 (defenum OptSccpState
-  (State OptCfgIndex (Array bool) OptSccpEnv bool))
+  ;; The type segment-bases scalar belongs to this analysis instance. Carrying
+  ;; it in the already-threaded state keeps SCCP isolated without adding a
+  ;; redundant argument to every per-instruction lattice bind.
+  (State OptCfgIndex (Array bool) OptSccpEnv bool i64))
 
 (define (opt-sccp-value-eq
   [type-segment-bases : i64]
@@ -22452,12 +22458,11 @@
         env)]))
 
 (define (opt-sccp-state-bind
-  [type-segment-bases : i64]
   [state : OptSccpState]
   [var : i64]
   [value : OptSccpValue]) : OptSccpState
   (match state
-    [(OptSccpState.State cfg-index executable env changed)
+    [(OptSccpState.State cfg-index executable env changed type-segment-bases)
       (let
         [old : OptSccpValue (opt-sccp-env-lookup env var)]
         [merged : OptSccpValue (opt-sccp-join type-segment-bases old value)]
@@ -22467,11 +22472,12 @@
             cfg-index
             executable
             (opt-sccp-env-set env var merged)
-            true)))]))
+            true
+            type-segment-bases)))]))
 
 (define (opt-sccp-state-mark-executable [state : OptSccpState] [label : i64]) : OptSccpState
   (match state
-    [(OptSccpState.State cfg-index executable env changed)
+    [(OptSccpState.State cfg-index executable env changed type-segment-bases)
       (match (opt-cfg-index-id cfg-index label)
         [(option_i64.Some id)
           (if (and (>= id 0) (< id (array-length executable)))
@@ -22479,14 +22485,19 @@
               state
               (begin
                 (array-set! executable id true)
-                (OptSccpState.State cfg-index executable env true)))
+                (OptSccpState.State
+                  cfg-index
+                  executable
+                  env
+                  true
+                  type-segment-bases)))
             state)]
         [(option_i64.None) state])]))
 
 (define (opt-sccp-state-reset-changed [state : OptSccpState]) : OptSccpState
   (match state
-    [(OptSccpState.State cfg-index executable env _)
-      (OptSccpState.State cfg-index executable env false)]))
+    [(OptSccpState.State cfg-index executable env _ type-segment-bases)
+      (OptSccpState.State cfg-index executable env false type-segment-bases)]))
 
 (define (opt-sccp-immediate [value : CompilerIrValue] [ty : AstType]) : OptSccpValue
   (match (opt-normalize-const value (opt-default-immediate-type value ty))
@@ -22499,7 +22510,7 @@
   [value : CompilerIrValue]
   [ty : AstType]) : OptSccpValue
   (match state
-    [(OptSccpState.State _ _ env _)
+    [(OptSccpState.State _ _ env _ _)
       (match value
         [(CompilerIrValue.Var id) (opt-sccp-env-lookup env id)]
         [_ (opt-sccp-immediate value ty)])]))
@@ -22557,7 +22568,7 @@
   [pred : i64]
   [ty : AstType]) : OptSccpValue
   (match state
-    [(OptSccpState.State cfg-index executable _ _)
+    [(OptSccpState.State cfg-index executable _ _ _)
       (match (opt-cfg-index-id cfg-index pred)
         [(option_i64.Some pred-id)
           (if (and
@@ -22631,14 +22642,9 @@
   [instr : CompilerIrInstr]) : OptSccpState
   (match instr
     [(CompilerIrInstr.Mov dst value ty)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (opt-sccp-value state value ty))]
+      (opt-sccp-state-bind state dst (opt-sccp-value state value ty))]
     [(CompilerIrInstr.Cast dst src from-ty to-ty)
       (opt-sccp-state-bind
-        type-segment-bases
         state
         dst
         (opt-sccp-fold-cast-value
@@ -22646,14 +22652,9 @@
           from-ty
           to-ty))]
     [(CompilerIrInstr.Bitcast dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
       (opt-sccp-state-bind
-        type-segment-bases
         state
         dst
         (opt-sccp-fold-binop-value
@@ -22664,13 +22665,11 @@
           ty))]
     [(CompilerIrInstr.UnOp dst op value ty)
       (opt-sccp-state-bind
-        type-segment-bases
         state
         dst
         (opt-sccp-fold-unop-value op (opt-sccp-value state value ty) ty))]
     [(CompilerIrInstr.Phi dst inputs ty)
       (opt-sccp-state-bind
-        type-segment-bases
         state
         dst
         (opt-sccp-phi-value type-segment-bases state inputs ty))]
@@ -22678,214 +22677,90 @@
     [(CompilerIrInstr.Branch cond true-label false-label)
       (opt-sccp-mark-branch-targets state cond true-label false-label)]
     [(CompilerIrInstr.Alloc dst _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.AddrOf dst _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Gep dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Load dst _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.EntryArgc dst)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.EntryArgv dst)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.EntryEnvp dst)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.CpuId dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Xgetbv dst _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Syscall dst _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.LaneId dst _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Splat dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
-          (opt-sccp-state-bind
-            type-segment-bases
-            state
-            dst
-            (OptSccpValue.Overdefined))])]
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
-          (opt-sccp-state-bind
-            type-segment-bases
-            state
-            dst
-            (OptSccpValue.Overdefined))])]
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
-          (opt-sccp-state-bind
-            type-segment-bases
-            state
-            dst
-            (OptSccpValue.Overdefined))])]
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.MaskNot dst _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.MaskReduce dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
-          (opt-sccp-state-bind
-            type-segment-bases
-            state
-            dst
-            (OptSccpValue.Overdefined))])]
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
-          (opt-sccp-state-bind
-            type-segment-bases
-            state
-            dst
-            (OptSccpValue.Overdefined))])]
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
-          (opt-sccp-state-bind
-            type-segment-bases
-            state
-            dst
-            (OptSccpValue.Overdefined))])]
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
-          (opt-sccp-state-bind
-            type-segment-bases
-            state
-            dst
-            (OptSccpValue.Overdefined))])]
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.TailMask dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Call dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.CallIndirect dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.CallIndirectC dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
           (match result
             [(CompilerIrSpmdCallResult.Unit) state]
             [(CompilerIrSpmdCallResult.Value dst _ _)
-              (opt-sccp-state-bind
-                type-segment-bases
-                state
-                dst
-                (OptSccpValue.Overdefined))])])]
+              (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])])]
     ;; Register-group dsts: bind Overdefined like loads/calls. Falling
     ;; into the wildcard left them OptSccpValue.Unknown forever, so a branch on a
     ;; Word-extracted enum tag marked NO successor executable and SCCP folded
     ;; match arms away at -O2 (stale-constant miscompile).
     [(CompilerIrInstr.Pack dst _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Word dst _ _ _)
-      (opt-sccp-state-bind
-        type-segment-bases
-        state
-        dst
-        (OptSccpValue.Overdefined))]
+      (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
     [(CompilerIrInstr.Switch _ _ cases default-label)
       (opt-sccp-mark-switch-targets
         (opt-sccp-state-mark-executable state default-label)
@@ -22920,7 +22795,7 @@
   [block : CompilerIrBlock]
   [block-id : i64]) : OptSccpState
   (match state
-    [(OptSccpState.State _ executable _ _)
+    [(OptSccpState.State _ executable _ _ _)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (if (and
@@ -22965,6 +22840,7 @@
             (opt-sccp-env-set env id (OptSccpValue.Overdefined)))])]))
 
 (define (opt-sccp-initial-state
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSccpState
@@ -22987,7 +22863,8 @@
       (struct-get context index)
       executable-flags
       (opt-sccp-env-from-params params (opt-sccp-env-make (+ max-var 1)))
-      true)))
+      true
+      type-segment-bases)))
 
 ;; Frame-sized variant: var ids are dense below the function's frame field
 ;; (the lowerer's next-var counter, the same invariant regalloc relies on),
@@ -22996,6 +22873,7 @@
 ;; lookups return Unknown either way, so sizing by frame is
 ;; behavior-identical to sizing by the whole-function max-var walks.
 (define (opt-sccp-initial-state-with-frame
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [frame : i64]) : OptSccpState
@@ -23016,7 +22894,8 @@
       (struct-get context index)
       executable-flags
       (opt-sccp-env-from-params params (opt-sccp-env-make frame))
-      true)))
+      true
+      type-segment-bases)))
 
 (define (opt-sccp-analyze-fixed
   [type-segment-bases : i64]
@@ -23033,7 +22912,7 @@
           blocks
           0)]
       (match next
-        [(OptSccpState.State _ _ _ changed)
+        [(OptSccpState.State _ _ _ changed _)
           (if changed
             (opt-sccp-analyze-fixed
               type-segment-bases
@@ -23050,7 +22929,7 @@
   (opt-sccp-analyze-fixed
     type-segment-bases
     blocks
-    (opt-sccp-initial-state context params blocks)
+    (opt-sccp-initial-state type-segment-bases context params blocks)
     (+
       (+ (compiler-ir-block-list-count blocks) 8)
       (* 2 (compiler-ir-block-list-instruction-count blocks)))))
@@ -23064,7 +22943,7 @@
   (opt-sccp-analyze-fixed
     type-segment-bases
     blocks
-    (opt-sccp-initial-state-with-frame context params frame)
+    (opt-sccp-initial-state-with-frame type-segment-bases context params frame)
     (+
       (+ (compiler-ir-block-list-count blocks) 8)
       (* 2 (compiler-ir-block-list-instruction-count blocks)))))
@@ -23612,7 +23491,7 @@
   (let
     [context : OptCfgContext (opt-cfg-context-build blocks)]
     (match (opt-sccp-analyze type-segment-bases context params blocks)
-      [(OptSccpState.State _ _ env _)
+      [(OptSccpState.State _ _ env _ _)
         (if (opt-sccp-env-any-const? env 0)
           (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
           ;; No constants bound anywhere: the rewrite is the identity, so
@@ -23625,7 +23504,7 @@
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   (match (opt-sccp-analyze type-segment-bases context params blocks)
-    [(OptSccpState.State _ _ env _)
+    [(OptSccpState.State _ _ env _ _)
       (if (opt-sccp-env-any-const? env 0)
         (opt-cfg-simplify-blocks-with-context-result
           (OptBlockCtxResult.Result
@@ -23666,7 +23545,7 @@
     params
     blocks
     frame)
-    [(OptSccpState.State _ _ env _)
+    [(OptSccpState.State _ _ env _ _)
       (if (opt-sccp-env-any-const? env 0)
         (OptBlockCtxResult.Result
           (opt-sccp-rewrite-blocks env blocks)
@@ -23692,7 +23571,7 @@
       params
       blocks
       frame)
-      [(OptSccpState.State _ _ env _)
+      [(OptSccpState.State _ _ env _ _)
         (if (opt-sccp-env-any-const? env 0)
           (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
           (opt-cfg-simplify-blocks blocks))])))
@@ -55297,16 +55176,21 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    set
-    (opt-load-header-set-add-instr-seq-from
-      type-segment-bases
-      instrs
-      (+ index 1)
-      (opt-load-header-set-add-instr
-        type-segment-bases
-        set
-        (compiler-ir-instr-seq-ref instrs index)))))
+  (let
+    [cursor : i64 index]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [work : OptLoadHeaderSet set]
+    (begin
+      (while (< cursor count)
+        (begin
+          (set!
+            work
+            (opt-load-header-set-add-instr
+              type-segment-bases
+              work
+              (compiler-ir-instr-seq-ref instrs cursor)))
+          (set! cursor (+ cursor 1))))
+      work)))
 
 (define (opt-load-header-set-add-block-seq
   [type-segment-bases : i64]

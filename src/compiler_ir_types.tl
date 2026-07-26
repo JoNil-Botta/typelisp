@@ -2826,14 +2826,17 @@
   [dst : (Array CompilerIrInstr)]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [cursor : i64 index]
     (begin
-      (array-set!
-        dst
-        index
-        (compiler-ir-clone-instr pools (array-ref src index)))
-      (compiler-ir-clone-instr-seq-fill pools src dst (+ index 1) count))))
+      (while (< cursor count)
+        (begin
+          (array-set!
+            dst
+            cursor
+            (compiler-ir-clone-instr pools (array-ref src cursor)))
+          (set! cursor (+ cursor 1))))
+      unit)))
 
 (define (compiler-ir-clone-instr-seq
   [pools : AstNodePoolContext]

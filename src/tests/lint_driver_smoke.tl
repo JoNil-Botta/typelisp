@@ -509,7 +509,7 @@
   (let
     [BadLocal : i64 BadParam]
     ((lambda ([BadLambda : i64]) : i64 BadLambda) BadLocal)))
-(defmacro (BadMacro [BadMacroParam : Expr]) : Expr BadMacroParam)
+(defmacro (BadMacro [BadMacroParam : Expr] [T : type]) : Expr BadMacroParam)
 (defdispatch BadDispatch
   (scalar BadFunction)
   (avx2 BadFunction)
@@ -524,6 +524,7 @@
   (begin
     (match (Some 1)
       [(Some BadPattern) BadPattern]
+      [(Some Choice.None) 0]
       [None 0])
     (foreach ([BadIndex : i64 0 n]) unit)
     (spmd-reduce sum ([BadReduce : i64 0 n]) 0 BadReduce)
@@ -543,7 +544,7 @@
 
 (define (lint-driver-smoke-name-case-suppressed-source) : String
   ";; lint-allow: global-name-case
-(define bad-global : i64 1)
+(define BadGlobal : i64 1)
 ;; lint-allow: type-name-case
 (defstruct bad-type (field i64))
 ;; lint-allow: function-name-case
@@ -560,7 +561,7 @@
 (import pkg.data as BadAlias)
 ("
     "test BadTest unit)
-(defmacro (builder [t : type]) : Module
+(defmacro (builder [T : type]) : Module
   `(begin
     (module generated.Bad)
     (define BadGenerated : i64 1)))"))
@@ -1656,6 +1657,8 @@
             (lint-name-case-kebab? "ready?")
             (lint-name-case-kebab? "mutate!")
             (lint-name-case-kebab? "int->string")
+            (lint-name-case-kebab? "sha-256")
+            (lint-name-case-kebab? "u16-7")
             (lint-name-case-kebab? "+")
             (lint-name-case-kebab? "name2")
             (not (lint-name-case-kebab? "Bad"))
@@ -1676,14 +1679,11 @@
         82]
       [(not
           (and
-            (lint-name-case-screaming-kebab? "GOOD")
-            (lint-name-case-screaming-kebab? "GOOD-NAME")
-            (lint-name-case-screaming-kebab? "ABI2")
-            (not (lint-name-case-screaming-kebab? "Good"))
-            (not (lint-name-case-screaming-kebab? "GOOD_NAME"))
-            (not (lint-name-case-screaming-kebab? "-GOOD"))
-            (not (lint-name-case-screaming-kebab? "GOOD--NAME"))
-            (not (lint-name-case-screaming-kebab? "2GOOD"))))
+            (lint-name-case-type-operand? "T")
+            (lint-name-case-type-operand? "value-type")
+            (lint-name-case-type-operand? "_T")
+            (not (lint-name-case-type-operand? "ValueType"))
+            (not (lint-name-case-type-operand? "__T"))))
         83]
       [(not
           (and
@@ -1701,8 +1701,8 @@
               (lint-name-case-kebab-suggestion "BadFunction" false)
               "bad-function")
             (string.eq
-              (lint-name-case-screaming-suggestion "badGlobal")
-              "BAD-GLOBAL")
+              (lint-name-case-kebab-suggestion "BadGlobal" false)
+              "bad-global")
             (string.eq
               (lint-name-case-upper-camel-suggestion "bad-type")
               "BadType")))
@@ -1712,7 +1712,7 @@
             (selfhost-lint-findings-rule-count
               findings
               (lint-rule-global-name-case-id))
-            2))
+            1))
         86]
       [(not
           (=

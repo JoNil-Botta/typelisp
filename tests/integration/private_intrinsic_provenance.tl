@@ -3,24 +3,31 @@
 
 ;; These caller-owned definitions must shadow direct calls without capturing
 ;; identically spelled intrinsic calls in the imported provider's bodies.
+;; lint-allow: function-name-case -- intrinsic provenance fixture
 (define (__tl_float_sqrt [value : i64]) : i64
   value)
 
+;; lint-allow: function-name-case -- intrinsic provenance fixture
 (define (__tl_float_to_bits [value : i64]) : i64
   (+ value 1))
 
+;; lint-allow: function-name-case -- intrinsic provenance fixture
 (define (__tl_float_from_bits [value : i64]) : i64
   (+ value 2))
 
+;; lint-allow: function-name-case -- intrinsic provenance fixture
 (define (__tl_string_length [value : i64]) : i64
   (+ value 3))
 
+;; lint-allow: function-name-case -- intrinsic provenance fixture
 (define (__tl_string_ref [value : i64] [index : i64]) : i64
   (+ value index))
 
+;; lint-allow: function-name-case -- intrinsic provenance fixture
 (define (__tl_string_eq [left : i64] [right : i64]) : i64
   (+ left right))
 
+;; lint-allow: function-name-case -- intrinsic provenance fixture
 (define (__tl_string_to_int [value : i64]) : i64
   (+ value 4))
 

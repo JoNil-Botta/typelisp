@@ -111,6 +111,14 @@ origin (the `with-region` → `with-arena` convergence).
 
 ## Before Submitting
 
+Use kebab-case for top-level values, functions, macros, parameters, and local
+binders. Struct and enum types use UpperCamelCase. Descriptive operands declared
+as `type` use kebab-case; one-letter type variables may use conventional
+uppercase names such as `T`. A single leading `_` is allowed for an
+intentionally unused parameter or local. Keep ABI-constrained or mechanically
+generated spellings only when necessary, and put a targeted `lint-allow`
+directive at the declaration.
+
 Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
 `scripts/fetch-stage0.sh`, then:
 

@@ -589,12 +589,19 @@ compile, run, and compare exit/stdout/stderr on Linux). `typelisp doc
 input.tl -o output.md` renders Markdown docs for the entry file and its
 import graph; `--manifest-path` documents a package.
 
+TypeLisp names follow the project-wide convention: top-level values,
+functions, macros, parameters, and local binders use kebab-case; struct and enum
+types use UpperCamelCase. Macro operands declared as `type` also use
+descriptive kebab-case, while one-letter type variables may use the conventional
+uppercase spelling such as `T`. One leading `_` marks an intentionally unused
+parameter or local. ABI-constrained and generated spellings require a targeted
+lint suppression at their declaration.
+
 `typelisp lint` includes staged migration rules such as
 `--deprecated-string-concat`, `--redundant-function-name`, and
-`--prefer-dotted-field`. `--name-case` checks top-level values as
-SCREAMING-KEBAB-CASE, functions/macros and local binders as kebab-case, and
-struct/enum types as UpperCamelCase. Dead-code lint treats library packages as external
-API roots and reports unreachable declarations in `bin` packages.
+`--prefer-dotted-field`. `--name-case` enforces those naming conventions.
+Dead-code lint treats library packages as external API roots and reports
+unreachable declarations in `bin` packages.
 
 ## Self-hosting and bootstrap
 

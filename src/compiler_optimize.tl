@@ -54218,7 +54218,7 @@
         (opt-scratch-blocker-none? blocker))]))
 
 (define (opt-scratch-report-blocked?
-  [type-segment-bases : i64]
+  [_type-segment-bases : i64]
   [report : OptScratchScopeReport]
   [expected-allocs : i64]
   [expected-bytes : i64]

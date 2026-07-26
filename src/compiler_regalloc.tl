@@ -8009,7 +8009,7 @@
 ;; time scavenge freeness self-check is the soundness net. caller-clobber-instr?
 ;; stays true for Pack (remat conservatism), same split as bounds checks.
 (define (compiler-reg-backend-clobber-point-instr?
-  [type-segment-bases : i64]
+  [_type-segment-bases : i64]
   [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.BoundsCheck _ _ _) false]
@@ -23787,7 +23787,7 @@
       [_ false])))
 
 (define (compiler-reg-scratch-vreg-slots
-  [type-segment-bases : i64]
+  [_type-segment-bases : i64]
   [_abi : CompilerRegTargetAbi]
   [_assignments : CompilerRegAssignmentList]
   [_types : CompilerRegVarTypeList]
@@ -24000,7 +24000,7 @@
           0)]
       [(CompilerIrInstr.Cast dst src from-ty to-ty)
         (compiler-reg-scratch-cast-slot-count
-          type-segment-bases
+          _type-segment-bases
           _assignments
           dst
           src
@@ -27057,7 +27057,7 @@
             assignments))))))
 
 (define (compiler-reg-plan-with-scratch-vreg-result
-  [type-segment-bases : i64]
+  [_type-segment-bases : i64]
   [_abi : CompilerRegTargetAbi]
   [_func : CompilerIrFunction]
   [plan : CompilerRegPlan]
@@ -27073,7 +27073,7 @@
             (compiler-reg-scratch-phi-xmm-targets-blocks blocks)]
           [scratch-count : i64
             (compiler-reg-scratch-vreg-count-blocks
-              type-segment-bases
+              _type-segment-bases
               _abi
               (compiler-reg-plan-assignments plan)
               (compiler-reg-plan-types plan)
@@ -27155,7 +27155,7 @@
                         (struct-get base-type-info items)
                         0)
                       (compiler-reg-scratch-fill-blocks!
-                        type-segment-bases
+                        _type-segment-bases
                         _abi
                         scratch-policy
                         (compiler-reg-plan-assignments plan)

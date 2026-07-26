@@ -122,6 +122,26 @@
     [(ResultCompilerCheck.Err diag)
       (= (struct-get (compiler-diagnostic-fixes (box-get diag)) len) 0)]))
 
+(define (compiler-check-duplicate-type-location-ok?) : bool
+  (let
+    [path : String "tests/duplicate_type_location.tl"]
+    [source : String
+      "(defstruct Point (x i64))
+(defstruct Point (y i64))
+(define (main) : i64 0)"]
+    (match (compiler-check-source path source)
+      [(ResultCompilerCheck.Ok _) false]
+      [(ResultCompilerCheck.Err diag-box)
+        (let
+          [diag : CompilerDiagnostic (box-get diag-box)]
+          (and
+            (string.eq
+              (compiler-diagnostic-message diag)
+              "symbols: duplicate type declaration Point")
+            (string.eq (compiler-diagnostic-path diag) path)
+            (= (compiler-diagnostic-line diag) 2)
+            (= (compiler-diagnostic-col diag) 1)))])))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -130,6 +150,7 @@
           (= (compiler-check-self-test) 42)
           (compiler-check-near-miss-fix-ok?)
           (compiler-check-import-help-not-machine-fix-ok?)
+          (compiler-check-duplicate-type-location-ok?)
           (compiler-check-semantic-index-ok?))
         42]
       [else 1])))

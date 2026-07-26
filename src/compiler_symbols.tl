@@ -113,18 +113,28 @@
       (compiler-symbols-decl-maybe-span (box-get inner-box))]
     [_ CompilerSymbolsMaybeSpan.No]))
 
-(define (compiler-symbols-note-last-error! [decl : AstDecl] [path : String]) : unit
+(define (compiler-symbols-note-last-error!
+  [origin-key : i64]
+  [origin-slot : i64]
+  [decl : AstDecl]
+  [path : String]) : unit
   (begin
     (set! compiler-symbols-last-error-path path)
-    (match (compiler-symbols-decl-maybe-span decl)
-      [(CompilerSymbolsMaybeSpan.Some span)
+    (match (compiler-parse-decl-origin-span-key-slot origin-key origin-slot)
+      [(CompilerParseMaybeDeclSpan.Some span)
         (begin
           (set! compiler-symbols-last-error-span span)
           (set! compiler-symbols-last-error-has-span true))]
-      [(CompilerSymbolsMaybeSpan.No)
-        (begin
-          (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
-          (set! compiler-symbols-last-error-has-span false))])))
+      [(CompilerParseMaybeDeclSpan.None)
+        (match (compiler-symbols-decl-maybe-span decl)
+          [(CompilerSymbolsMaybeSpan.Some span)
+            (begin
+              (set! compiler-symbols-last-error-span span)
+              (set! compiler-symbols-last-error-has-span true))]
+          [(CompilerSymbolsMaybeSpan.No)
+            (begin
+              (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
+              (set! compiler-symbols-last-error-has-span false))])])))
 
 (define (compiler-symbols-last-error-diagnostic [message : String]) : CompilerDiagnostic
   (if compiler-symbols-last-error-has-span
@@ -2653,11 +2663,17 @@
   [index : i64]
   [module-id : i64]) : ResultCompilerSymbols
   (let
+    ;; The list-step match moves the cursor before its arm runs. Preserve the
+    ;; original storage identity and track the source slot independently so a
+    ;; declaration failure can still recover that declaration's cold origin.
+    [decl-origin-key : i64 (compiler-parse-decl-list-storage-key (& decls))]
+    [decl-origin-offset : i64 (struct-get decls offset)]
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-symbols : CompilerSymbols symbols]
     [cur-dotted-modules : sym_i64_env.SymI64Env dotted-modules]
     [cur-index : i64 index]
+    [cur-position : i64 0]
     [cur-module-id : i64 module-id]
     [result : ResultCompilerSymbols
       (ResultCompilerSymbols.Err "symbols: internal decls walk")]
@@ -2692,27 +2708,33 @@
                 [(AstDecl.Import decl-meta _)
                   (begin
                     (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
+                    (set! cur-paths rest-paths)
+                    (set! cur-position (+ cur-position 1)))]
                 [(AstDecl.IncludeStr _ _)
                   (begin
                     (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
+                    (set! cur-paths rest-paths)
+                    (set! cur-position (+ cur-position 1)))]
                 [(AstDecl.IncludeStrComptime _ _)
                   (begin
                     (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
+                    (set! cur-paths rest-paths)
+                    (set! cur-position (+ cur-position 1)))]
                 [(AstDecl.IncludeStrLzss _ _)
                   (begin
                     (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
+                    (set! cur-paths rest-paths)
+                    (set! cur-position (+ cur-position 1)))]
                 [(AstDecl.IncludeBin _ _)
                   (begin
                     (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
+                    (set! cur-paths rest-paths)
+                    (set! cur-position (+ cur-position 1)))]
                 [(AstDecl.Module next-module)
                   (begin
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths)
+                    (set! cur-position (+ cur-position 1))
                     (set! cur-module-id next-module))]
                 [(AstDecl.ModuleBody name body-box)
                   (let
@@ -2739,6 +2761,7 @@
                         (begin
                           (set! cur-decls rest)
                           (set! cur-paths rest-paths)
+                          (set! cur-position (+ cur-position 1))
                           (set! cur-symbols next-symbols)
                           (set! cur-index (+ cur-index body-count)))]
                       [(ResultCompilerSymbols.Err message)
@@ -2748,7 +2771,8 @@
                 [(AstDecl.Test _ _ _)
                   (begin
                     (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
+                    (set! cur-paths rest-paths)
+                    (set! cur-position (+ cur-position 1)))]
                 [_
                   (match (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
                     cur-symbols
@@ -2760,12 +2784,20 @@
                     decl-path)
                     [(CompilerSomeString message)
                       (begin
-                        (compiler-symbols-note-last-error! decl decl-path)
+                        (compiler-symbols-note-last-error!
+                          decl-origin-key
+                          (+ decl-origin-offset cur-position)
+                          decl
+                          decl-path)
                         (set! result (ResultCompilerSymbols.Err message))
                         (set! done true))]
                     [CompilerNoString
                       (begin
-                        (compiler-symbols-note-last-error! decl decl-path)
+                        (compiler-symbols-note-last-error!
+                          decl-origin-key
+                          (+ decl-origin-offset cur-position)
+                          decl
+                          decl-path)
                         (compiler-symbols-index-decl!
                           cur-symbols
                           decl
@@ -2805,6 +2837,7 @@
                             (begin
                               (set! cur-decls rest)
                               (set! cur-paths rest-paths)
+                              (set! cur-position (+ cur-position 1))
                               (set! cur-symbols next-symbols)
                               (set! cur-index (+ cur-index 1)))]
                           [(ResultCompilerSymbols.Err message)

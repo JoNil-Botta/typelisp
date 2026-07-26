@@ -59944,15 +59944,19 @@
     (let
       [count : i64 (ast-decl-list-len (& items))]
       [slots : (Array AstDecl) (array.make-array AstDecl (+ reserve count))]
+      [reserved : AstDeclList (AstDeclList slots reserve count true)]
       (begin
         (ast-decl-list-copy-to
-          (&mut slots)
+          (&mut (struct-get reserved slots))
           (& (struct-get items slots))
           (struct-get items offset)
           reserve
           0
           count)
-        (AstDeclList slots reserve count true)))))
+        ;; Macro expansion reports diagnostics against this copied spine, so
+        ;; keep each source declaration's cold parser-origin record reachable.
+        (compiler-parse-decl-origin-register-list-aliases! (& reserved) 0 items)
+        reserved))))
 
 (define (macro-decl-list-append-from
   [out : (&mut out AstDeclList)]

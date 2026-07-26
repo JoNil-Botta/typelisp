@@ -6768,8 +6768,8 @@
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
     (compiler-backend-emit-instrs
-      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
         "_tl_test"
         (ci.intern "test")
@@ -6919,8 +6919,8 @@
         compiler-backend-long-block-instr-count
         blocks)]
     (match (compiler-backend-emit-instrs
-      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
         "_tl_test"
         (ci.intern "test")
@@ -8141,8 +8141,8 @@
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
     (compiler-backend-emit-instrs
-      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
         "_tl_test"
         (ci.intern "test")
@@ -8407,8 +8407,8 @@
     [blocks : CompilerIrBlockList (compiler-backend-mov-phi-copy-blocks)]
     [use-counts : (Array i64) (compiler-backend-function-use-counts 3 blocks)]
     (match (compiler-backend-emit-instrs
-      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
         "_tl_test"
         (ci.intern "test")
@@ -13200,8 +13200,8 @@
         (set! compiler-backend-emit-instrs-continue-pending false)
         (set! compiler-backend-identity-tail-forwarder-active false))]
     (match (compiler-backend-emit-instr
-      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
         "_tl_test"
         (ci.intern "test")
@@ -13339,8 +13339,8 @@
     [_addr-forward : unit
       (compiler-backend-addr-of-forwarding-enable! vars blocks use-counts)]
     (match (compiler-backend-emit-instrs
-      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
         "_tl_test"
         (ci.intern "test")

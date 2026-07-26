@@ -708,6 +708,7 @@
 ;; stream. This context is the family-sized handoff that can become a field of
 ;; the per-job backend state tracked by #4963.
 (defstruct CompilerBackendEmissionContext
+  (type-segment-bases i64)
   (target CompilerBackendTarget)
   (function String)
   (source-function i64)
@@ -36018,7 +36019,6 @@
               (CompilerBackendSwitchValidation.Err message)]))])))
 
 (define (compiler-backend-emit-instr
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]) : ResultCompilerBackend
@@ -36087,7 +36087,7 @@
     (match instr
       [(CompilerIrInstr.Mov dst src ty)
         (match (compiler-backend-emit-mov
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -36118,13 +36118,16 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Gep dst base offset elem-ty)
         (match (compiler-backend-emit-gep
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           base
           offset
           elem-ty
-          (compiler-backend-gep-fold-next! type-segment-bases offset elem-ty)
+          (compiler-backend-gep-fold-next!
+            ctx.type-segment-bases
+            offset
+            elem-ty)
           planned-scratch0
           planned-scratch1)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
@@ -36136,7 +36139,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Load dst src ty)
         (match (compiler-backend-emit-load-instr
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -36152,7 +36155,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.StorePtr dst src ty)
         (match (compiler-backend-emit-store-ptr
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -36169,7 +36172,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.CopyBytes dst src size)
         (match (compiler-backend-emit-copy-bytes
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -36212,7 +36215,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Cast dst src from-ty to-ty)
         (match (compiler-backend-emit-cast
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.function
           ctx.current-label
           ctx.assignments
@@ -36233,7 +36236,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
         (match (compiler-backend-emit-bitcast
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -36251,7 +36254,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.BinOp dst op lhs rhs ty)
         (match (compiler-backend-emit-binop-with-plan
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.types
           ctx.global-types
           ctx.assignments
@@ -36289,7 +36292,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.LaneId dst lanes elem-ty)
         (compiler-backend-emit-vector-lane-id
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.function
           ctx.current-label
           ctx.assignments
@@ -36299,7 +36302,7 @@
           instr-diag)]
       [(CompilerIrInstr.Splat dst value lanes elem-ty)
         (compiler-backend-emit-vector-splat
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           value
@@ -36318,7 +36321,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-binop
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.assignments
               dst
               op
@@ -36349,7 +36352,7 @@
               instr-diag)])]
       [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
         (compiler-backend-emit-vector-reduce
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           op
@@ -36369,7 +36372,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-compare
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.assignments
               dst
               op
@@ -36380,7 +36383,7 @@
               instr-diag)])]
       [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
         (compiler-backend-emit-mask-binop
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           op
@@ -36390,7 +36393,7 @@
           instr-diag)]
       [(CompilerIrInstr.MaskNot dst src lanes)
         (compiler-backend-emit-mask-not
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -36398,7 +36401,7 @@
           instr-diag)]
       [(CompilerIrInstr.MaskReduce dst op src lanes)
         (compiler-backend-emit-mask-reduce
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           op
@@ -36415,7 +36418,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-select
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.assignments
               dst
               mask
@@ -36429,7 +36432,7 @@
               instr-diag)])]
       [(CompilerIrInstr.VectorLoad dst base index lanes elem-ty)
         (compiler-backend-emit-vector-load
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           base
@@ -36448,7 +36451,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-store
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.assignments
               base
               index
@@ -36468,7 +36471,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-predicated-store
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.function
               ctx.current-label
               ctx.assignments
@@ -36491,7 +36494,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-predicated-load
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.function
               ctx.current-label
               ctx.assignments
@@ -36515,7 +36518,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-gather-load
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.assignments
               dst
               base
@@ -36538,7 +36541,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-shuffle
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.target
               ctx.function
               ctx.current-label
@@ -36557,7 +36560,7 @@
               instr-diag)])]
       [(CompilerIrInstr.TailMask dst index len lanes)
         (compiler-backend-emit-tail-mask
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.function
           ctx.current-label
           ctx.assignments
@@ -36606,7 +36609,7 @@
               args
               result)
             (compiler-backend-emit-spmd-call
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.target
               name
               backend
@@ -36621,7 +36624,7 @@
               instr-diag)])]
       [(CompilerIrInstr.Call dst name args ty)
         (compiler-backend-emit-direct-call-with-arg-assignments
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.target
           ctx.function
           ctx.current-label
@@ -36641,7 +36644,7 @@
           instr-diag)]
       [(CompilerIrInstr.CallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.target
           dst
           func
@@ -36658,7 +36661,7 @@
           instr-diag)]
       [(CompilerIrInstr.CallIndirectC dst func args ty)
         (compiler-backend-emit-indirect-c-call
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.target
           dst
           func
@@ -36681,7 +36684,7 @@
               args
               slots)
             (compiler-backend-emit-c-abi-store-result-call
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.target
               base
               name
@@ -36705,7 +36708,7 @@
               args
               slots)
             (compiler-backend-emit-indirect-c-abi-store-result-call
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.target
               base
               func
@@ -36722,7 +36725,7 @@
               instr-diag)])]
       [(CompilerIrInstr.TailCall name args ty)
         (match (compiler-backend-emit-tail-call
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.target
           ctx.source-function
           ctx.blocks
@@ -36751,7 +36754,7 @@
           [addr : String
             (str_cat.str-cat (compiler-backend-user-symbol-id name) "(%rip)" "")]
           (if (compiler-backend-group-type?
-            type-segment-bases
+            ctx.type-segment-bases
             ctx.program-index
             ty)
             ;; Storing a register-group into a global writes both words
@@ -36759,13 +36762,13 @@
             (let
               [reg0 : String
                 (compiler-backend-group-return-reg
-                  type-segment-bases
+                  ctx.type-segment-bases
                   ctx.program-index
                   ty
                   0)]
               [reg1 : String
                 (compiler-backend-group-return-reg
-                  type-segment-bases
+                  ctx.type-segment-bases
                   ctx.program-index
                   ty
                   1)]
@@ -36780,7 +36783,7 @@
                   "+8(%rip)"
                   "")]
               (match (compiler-backend-emit-group-load
-                type-segment-bases
+                ctx.type-segment-bases
                 ctx.assignments
                 value
                 reg0
@@ -36797,7 +36800,7 @@
                           reg0
                           sym0
                           (compiler-backend-group-word-sse?
-                            type-segment-bases
+                            ctx.type-segment-bases
                             ctx.program-index
                             ty
                             0))
@@ -36805,7 +36808,7 @@
                           reg1
                           sym1
                           (compiler-backend-group-word-sse?
-                            type-segment-bases
+                            ctx.type-segment-bases
                             ctx.program-index
                             ty
                             1)))))]
@@ -36818,7 +36821,7 @@
             (let
               [no-exclude : (Array String) (array.make-array String 0)]
               (match (compiler-backend-emit-store-value-to-address
-                type-segment-bases
+                ctx.type-segment-bases
                 ctx.assignments
                 value
                 ty
@@ -36837,7 +36840,7 @@
                         instr-diag)))]))))]
       [(CompilerIrInstr.Jump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.source-function
           ctx.blocks
           target
@@ -36849,7 +36852,7 @@
           [(ResultCompilerBackend.Ok direct-return)
             (if (string.eq direct-return "")
               (match (compiler-backend-emit-phi-edge-copies
-                type-segment-bases
+                ctx.type-segment-bases
                 ctx.assignments
                 ctx.blocks
                 target
@@ -36887,7 +36890,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Branch cond true-label false-label)
         (match (compiler-backend-emit-branch-with-phi-copies-with-plan
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           ctx.function
           ctx.blocks
@@ -36910,7 +36913,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Return value)
         (match (compiler-backend-emit-return
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.source-function
           ctx.blocks
           value
@@ -36928,7 +36931,7 @@
       [(CompilerIrInstr.Phi _ _ _) (ResultCompilerBackend.Ok "")]
       [(CompilerIrInstr.Pack dst words ty)
         (compiler-backend-emit-pack
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           words
@@ -36940,7 +36943,7 @@
           instr-diag)]
       [(CompilerIrInstr.Word dst src index ty)
         (compiler-backend-emit-word
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -36951,7 +36954,7 @@
           instr-diag)]
       [(CompilerIrInstr.TailCallIndirect func args ty)
         (match (compiler-backend-emit-tail-indirect-call
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.target
           ctx.source-function
           ctx.blocks
@@ -36976,7 +36979,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Switch index base cases default-label)
         (match (compiler-backend-emit-switch
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.function
           ctx.current-label
           index
@@ -37683,7 +37686,6 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-instr-with-call-rax
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -37692,7 +37694,7 @@
   (let
     [arg-assignments : CompilerRegAssignmentList
       (compiler-backend-rax-call-arg-assignments
-        type-segment-bases
+        ctx.type-segment-bases
         ctx.assignments
         ctx.program-index
         rax-var
@@ -37705,7 +37707,7 @@
       (if (and
         (>= rax-var 0)
         (compiler-backend-rax-call-arg-eligible?
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.program-index
           rax-ty))
         rax-var
@@ -37735,7 +37737,7 @@
                   compiler-backend-rax-forward-pending-var
                   rax-forward-pending)
                 (compiler-backend-emit-direct-call-with-arg-assignments
-                  type-segment-bases
+                  ctx.type-segment-bases
                   ctx.target
                   ctx.function
                   ctx.current-label
@@ -37758,7 +37760,7 @@
             (begin
               (set! compiler-backend-rax-forward-pending-var -1)
               rax-forward-result))
-          (compiler-backend-emit-instr type-segment-bases ctx fallthrough instr))]
+          (compiler-backend-emit-instr ctx fallthrough instr))]
       [(CompilerIrInstr.CallIndirect dst func args ty)
         (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
           (let
@@ -37768,7 +37770,7 @@
                   compiler-backend-rax-forward-pending-var
                   rax-forward-pending)
                 (compiler-backend-emit-indirect-call-with-arg-assignments
-                  type-segment-bases
+                  ctx.type-segment-bases
                   ctx.target
                   dst
                   func
@@ -37791,8 +37793,8 @@
             (begin
               (set! compiler-backend-rax-forward-pending-var -1)
               rax-forward-result))
-          (compiler-backend-emit-instr type-segment-bases ctx fallthrough instr))]
-      [_ (compiler-backend-emit-instr type-segment-bases ctx fallthrough instr)])))
+          (compiler-backend-emit-instr ctx fallthrough instr))]
+      [_ (compiler-backend-emit-instr ctx fallthrough instr)])))
 
 (define (compiler-backend-call-rax-forwardable-instr?
   [type-segment-bases : i64]
@@ -37813,7 +37815,6 @@
       [_ false])))
 
 (define (compiler-backend-emit-instrs-after-emitted
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -37825,7 +37826,6 @@
     (match instr
       [(CompilerIrInstr.Call dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
-          type-segment-bases
           ctx
           fallthrough
           dst
@@ -37834,7 +37834,6 @@
           next-buf)]
       [(CompilerIrInstr.CallIndirect dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
-          type-segment-bases
           ctx
           fallthrough
           dst
@@ -37843,30 +37842,21 @@
           next-buf)]
       [(CompilerIrInstr.CallIndirectC dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
-          type-segment-bases
           ctx
           fallthrough
           dst
           ty
           rest
           next-buf)]
-      [_
-        (compiler-backend-emit-instrs
-          type-segment-bases
-          ctx
-          fallthrough
-          rest
-          next-buf)])))
+      [_ (compiler-backend-emit-instrs ctx fallthrough rest next-buf)])))
 
 (define (compiler-backend-emit-instrs-normal
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-instr
-    type-segment-bases
     ctx
     (match rest
       [(CompilerIrInstrList.Nil) fallthrough]
@@ -37874,7 +37864,6 @@
     instr)
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs-after-emitted
-        type-segment-bases
         ctx
         fallthrough
         instr
@@ -37884,7 +37873,6 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-fused-result-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [result : ResultCompilerBackend]
@@ -37893,7 +37881,6 @@
   (match result
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        type-segment-bases
         ctx
         fallthrough
         rest
@@ -37948,7 +37935,6 @@
     [(CompilerIrInstrList.Nil) false]))
 
 (define (compiler-backend-emit-instrs-materialize-rax
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
@@ -37956,7 +37942,6 @@
   [instrs : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (compiler-backend-emit-instrs
-    type-segment-bases
     ctx
     fallthrough
     instrs
@@ -37969,7 +37954,6 @@
         rax-ty))))
 
 (define (compiler-backend-emit-instrs-with-rax-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
@@ -38000,7 +37984,7 @@
               [keep-live : bool
                 (compiler-backend-var-single-use? ctx.use-counts dst)]
               (match (compiler-backend-emit-binop-with-rax-value
-                type-segment-bases
+                ctx.type-segment-bases
                 ctx.types
                 ctx.global-types
                 ctx.assignments
@@ -38034,7 +38018,6 @@
                 [(ResultCompilerBackend.Ok head)
                   (if keep-live
                     (compiler-backend-emit-instrs-with-rax
-                      type-segment-bases
                       ctx
                       fallthrough
                       dst
@@ -38044,7 +38027,6 @@
                         buf
                         (compiler-backend-emergency-wrap head)))
                     (compiler-backend-emit-instrs
-                      type-segment-bases
                       ctx
                       fallthrough
                       (box-get rest)
@@ -38054,7 +38036,6 @@
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))
             (compiler-backend-emit-instrs-materialize-rax
-              type-segment-bases
               ctx
               fallthrough
               rax-var
@@ -38065,7 +38046,6 @@
           (if (compiler-backend-branch-uses-var? src rax-var)
             (if (compiler-backend-var-single-use? ctx.use-counts dst)
               (compiler-backend-emit-instrs-with-rax
-                type-segment-bases
                 ctx
                 fallthrough
                 dst
@@ -38073,7 +38053,6 @@
                 (box-get rest)
                 buf)
               (compiler-backend-emit-instrs
-                type-segment-bases
                 ctx
                 fallthrough
                 (box-get rest)
@@ -38085,7 +38064,6 @@
                     "%rax"
                     ty))))
             (compiler-backend-emit-instrs-materialize-rax
-              type-segment-bases
               ctx
               fallthrough
               rax-var
@@ -38110,7 +38088,6 @@
                         ctx.vars
                         ctx.blocks))))
                 (compiler-backend-emit-instrs-materialize-rax
-                  type-segment-bases
                   ctx
                   fallthrough
                   rax-var
@@ -38119,7 +38096,6 @@
                   buf))]
             [(CompilerIrMaybeValue.No)
               (compiler-backend-emit-instrs-materialize-rax
-                type-segment-bases
                 ctx
                 fallthrough
                 rax-var
@@ -38128,7 +38104,6 @@
                 buf)])]
         [_
           (compiler-backend-emit-instrs-materialize-rax
-            type-segment-bases
             ctx
             fallthrough
             rax-var
@@ -38137,7 +38112,6 @@
             buf)])]))
 
 (define (compiler-backend-emit-instrs-with-call-rax-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
@@ -38148,13 +38122,12 @@
     [(CompilerIrInstrList.Nil) (ResultCompilerBackend.Ok (text_buf.render buf))]
     [(CompilerIrInstrList.Cons instr rest)
       (if (compiler-backend-call-rax-forwardable-instr?
-        type-segment-bases
+        ctx.type-segment-bases
         instr
         ctx.program-index
         rax-var
         rax-ty)
         (match (compiler-backend-emit-instr-with-call-rax
-          type-segment-bases
           ctx
           (match (box-get rest)
             [(CompilerIrInstrList.Nil) fallthrough]
@@ -38164,7 +38137,6 @@
           rax-ty)
           [(ResultCompilerBackend.Ok head)
             (compiler-backend-emit-instrs-after-emitted
-              type-segment-bases
               ctx
               fallthrough
               instr
@@ -38173,15 +38145,9 @@
               buf)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])
-        (compiler-backend-emit-instrs
-          type-segment-bases
-          ctx
-          fallthrough
-          instrs
-          buf))]))
+        (compiler-backend-emit-instrs ctx fallthrough instrs buf))]))
 
 (define (compiler-backend-emit-fused-compare-branch-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [dst : i64]
@@ -38194,7 +38160,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
-    type-segment-bases
+    ctx.type-segment-bases
     ctx.assignments
     ctx.function
     ctx.blocks
@@ -38226,7 +38192,6 @@
       2))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        type-segment-bases
         ctx
         fallthrough
         rest
@@ -38244,7 +38209,6 @@
               ""))))]))
 
 (define (compiler-backend-emit-fused-load-compare-branch-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [load-dst : i64]
@@ -38259,7 +38223,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
-    type-segment-bases
+    ctx.type-segment-bases
     ctx.assignments
     ctx.function
     ctx.blocks
@@ -38291,7 +38255,6 @@
       2))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        type-segment-bases
         ctx
         fallthrough
         rest
@@ -38309,7 +38272,6 @@
               ""))))]))
 
 (define (compiler-backend-emit-fused-not-branch-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [dst : i64]
@@ -38323,7 +38285,7 @@
   ;; source branch directly with reversed successors, including the matching
   ;; phi-edge copies, instead of materializing the inverted boolean.
   (match (compiler-backend-emit-branch-with-phi-copies-with-plan
-    type-segment-bases
+    ctx.type-segment-bases
     ctx.assignments
     ctx.function
     ctx.blocks
@@ -38348,7 +38310,6 @@
       2))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        type-segment-bases
         ctx
         fallthrough
         rest
@@ -38366,7 +38327,6 @@
               ""))))]))
 
 (define (compiler-backend-emit-fused-gep-load-compare-branch-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [gep-dst : i64]
@@ -38387,7 +38347,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
-    type-segment-bases
+    ctx.type-segment-bases
     ctx.assignments
     ctx.function
     ctx.blocks
@@ -38421,7 +38381,6 @@
       2))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        type-segment-bases
         ctx
         fallthrough
         rest
@@ -38597,7 +38556,6 @@
     (Box CompilerIrInstrList)))
 
 (define (compiler-backend-gep-load-pair-alu-divmod-store-probe
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [div-dst : i64]
   [src : String]
@@ -38615,7 +38573,7 @@
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (and
                         (compiler-backend-divmod-direct-gep-store?
-                          type-segment-bases
+                          ctx.type-segment-bases
                           ctx.assignments
                           div-dst
                           gep-dst
@@ -38647,7 +38605,6 @@
     (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)))
 
 (define (compiler-backend-emit-gep-load-pair-alu-divmod-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [mnem : String]
@@ -38704,7 +38661,6 @@
               (compiler-backend-var-register-home ctx.assignments div-dst)]
             [direct-store : CompilerBackendMaybeGepLoadPairAluDivmodStore
               (compiler-backend-gep-load-pair-alu-divmod-store-probe
-                type-segment-bases
                 ctx
                 div-dst
                 src
@@ -38720,7 +38676,7 @@
               (compiler-backend-var-single-use? ctx.use-counts alu-dst)
               (compiler-backend-branch-uses-var? div-lhs alu-dst)
               (compiler-backend-signed-literal-divmod-src-shape?
-                type-segment-bases
+                ctx.type-segment-bases
                 div-op
                 div-rhs
                 div-ty)
@@ -38791,7 +38747,6 @@
                       addr1)
                       [(ResultCompilerBackend.Ok pair-asm)
                         (match (compiler-backend-emit-instr
-                          type-segment-bases
                           ctx
                           (CompilerBackendMaybeLabel.No)
                           div-instr)
@@ -38810,7 +38765,6 @@
                                     compiler-backend-emit-current-count
                                     (- saved-count 6))
                                   (match (compiler-backend-emit-divmod-direct-gep-store
-                                    type-segment-bases
                                     ctx
                                     gep-dst
                                     store-base
@@ -38849,7 +38803,6 @@
                       saved1-reg))]
                 (CompilerBackendMaybeGepLoadPairAluDivmodEmission.Some
                   (compiler-backend-emit-fused-result-rest
-                    type-segment-bases
                     ctx
                     fallthrough
                     emitted
@@ -38864,7 +38817,6 @@
   (Some ResultCompilerBackend))
 
 (define (compiler-backend-emit-dynamic-gep-load-pair-alu-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [gep-fold-disp : i64]
@@ -38903,7 +38855,7 @@
                               ;; A displacement changes only the spelling of an
                               ;; already-valid SIB operand, never admission.
                               (match (compiler-backend-gep-load-pair-alu-probe
-                                type-segment-bases
+                                ctx.type-segment-bases
                                 ctx.assignments
                                 ctx.types
                                 ctx.global-types
@@ -38929,11 +38881,11 @@
                                   (let
                                     [gep-fold-disp2 : i64
                                       (compiler-backend-gep-fold-next!
-                                        type-segment-bases
+                                        ctx.type-segment-bases
                                         offset2
                                         elem-ty2)]
                                     (match (compiler-backend-gep-load-pair-alu-probe
-                                      type-segment-bases
+                                      ctx.type-segment-bases
                                       ctx.assignments
                                       ctx.types
                                       ctx.global-types
@@ -38957,7 +38909,6 @@
                                           addr1
                                           after-binop)
                                         (match (compiler-backend-emit-gep-load-pair-alu-divmod-rest
-                                          type-segment-bases
                                           ctx
                                           fallthrough
                                           mnem
@@ -38976,7 +38927,6 @@
                                           [(CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)
                                             (CompilerBackendMaybeGepLoadPairAluEmission.Some
                                               (compiler-backend-emit-fused-result-rest
-                                                type-segment-bases
                                                 ctx
                                                 fallthrough
                                                 (compiler-backend-emit-gep-load-pair-alu
@@ -39241,7 +39191,6 @@
               (ResultCompilerBackend.Err message)]))])))
 
 (define (compiler-backend-emit-fused-gep-load-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [_gep-dst : i64]
@@ -39256,7 +39205,7 @@
   ;; GAP8 ALU fold first: the probe is side-effect-free, so a rejection costs
   ;; nothing and falls through to the existing single/pair load fusion.
   (match (compiler-backend-gep-load-alu-probe
-    type-segment-bases
+    ctx.type-segment-bases
     ctx.assignments
     ctx.types
     ctx.global-types
@@ -39268,11 +39217,10 @@
     rest)
     [(CompilerBackendGepLoadAluFold.Some mnem alu-dst x after-binop)
       (compiler-backend-emit-fused-result-rest
-        type-segment-bases
         ctx
         fallthrough
         (compiler-backend-emit-gep-load-alu
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           mnem
           alu-dst
@@ -39285,7 +39233,6 @@
         buf)]
     [(CompilerBackendGepLoadAluFold.No)
       (match (compiler-backend-emit-dynamic-gep-load-pair-alu-rest
-        type-segment-bases
         ctx
         fallthrough
         gep-fold-disp
@@ -39299,7 +39246,6 @@
         [(CompilerBackendMaybeGepLoadPairAluEmission.Some result) result]
         [(CompilerBackendMaybeGepLoadPairAluEmission.No)
           (compiler-backend-emit-fused-gep-load-plain-rest
-            type-segment-bases
             ctx
             fallthrough
             _gep-dst
@@ -39313,7 +39259,6 @@
             buf)])]))
 
 (define (compiler-backend-emit-fused-gep-load-plain-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [_gep-dst : i64]
@@ -39354,7 +39299,7 @@
                               (not
                                 (and
                                   (compiler-backend-load-compare-type?
-                                    type-segment-bases
+                                    ctx.type-segment-bases
                                     load-ty2)
                                   (compiler-backend-var-single-use?
                                     ctx.use-counts
@@ -39370,11 +39315,11 @@
                                 ;; advance its ordinal before either pair path.
                                 [gep-fold-disp2 : i64
                                   (compiler-backend-gep-fold-next!
-                                    type-segment-bases
+                                    ctx.type-segment-bases
                                     offset2
                                     elem-ty2)]
                                 (match (compiler-backend-gep-load-pair-alu-probe
-                                  type-segment-bases
+                                  ctx.type-segment-bases
                                   ctx.assignments
                                   ctx.types
                                   ctx.global-types
@@ -39398,7 +39343,6 @@
                                       addr1
                                       after-binop)
                                     (compiler-backend-emit-fused-result-rest
-                                      type-segment-bases
                                       ctx
                                       fallthrough
                                       (compiler-backend-emit-gep-load-pair-alu
@@ -39411,11 +39355,10 @@
                                       buf)]
                                   [(CompilerBackendGepLoadPairAluFold.No)
                                     (compiler-backend-emit-fused-result-rest
-                                      type-segment-bases
                                       ctx
                                       fallthrough
                                       (compiler-backend-emit-load-from-gep-pair-planned
-                                        type-segment-bases
+                                        ctx.type-segment-bases
                                         ctx.assignments
                                         base
                                         offset
@@ -39459,11 +39402,10 @@
                                       (box-get after-load2)
                                       buf)]))
                               (compiler-backend-emit-fused-result-rest
-                                type-segment-bases
                                 ctx
                                 fallthrough
                                 (compiler-backend-emit-load-from-gep
-                                  type-segment-bases
+                                  ctx.type-segment-bases
                                   ctx.assignments
                                   load-dst
                                   base
@@ -39491,11 +39433,10 @@
                                 buf))]
                           [_
                             (compiler-backend-emit-fused-result-rest
-                              type-segment-bases
                               ctx
                               fallthrough
                               (compiler-backend-emit-load-from-gep
-                                type-segment-bases
+                                ctx.type-segment-bases
                                 ctx.assignments
                                 load-dst
                                 base
@@ -39523,11 +39464,10 @@
                               buf)])]
                       [_
                         (compiler-backend-emit-fused-result-rest
-                          type-segment-bases
                           ctx
                           fallthrough
                           (compiler-backend-emit-load-from-gep
-                            type-segment-bases
+                            ctx.type-segment-bases
                             ctx.assignments
                             load-dst
                             base
@@ -39552,11 +39492,10 @@
                           buf)])]
                   [(option_i64.None)
                     (compiler-backend-emit-fused-result-rest
-                      type-segment-bases
                       ctx
                       fallthrough
                       (compiler-backend-emit-load-from-gep
-                        type-segment-bases
+                        ctx.type-segment-bases
                         ctx.assignments
                         load-dst
                         base
@@ -39580,11 +39519,10 @@
                       rest
                       buf)])
                 (compiler-backend-emit-fused-result-rest
-                  type-segment-bases
                   ctx
                   fallthrough
                   (compiler-backend-emit-load-from-gep
-                    type-segment-bases
+                    ctx.type-segment-bases
                     ctx.assignments
                     load-dst
                     base
@@ -39609,11 +39547,10 @@
                   buf))]
             [_
               (compiler-backend-emit-fused-result-rest
-                type-segment-bases
                 ctx
                 fallthrough
                 (compiler-backend-emit-load-from-gep
-                  type-segment-bases
+                  ctx.type-segment-bases
                   ctx.assignments
                   load-dst
                   base
@@ -39638,11 +39575,10 @@
                 buf)])]
         [_
           (compiler-backend-emit-fused-result-rest
-            type-segment-bases
             ctx
             fallthrough
             (compiler-backend-emit-load-from-gep
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.assignments
               load-dst
               base
@@ -39667,11 +39603,10 @@
             buf)])]
     [(option_i64.None)
       (compiler-backend-emit-fused-result-rest
-        type-segment-bases
         ctx
         fallthrough
         (compiler-backend-emit-load-from-gep
-          type-segment-bases
+          ctx.type-segment-bases
           ctx.assignments
           load-dst
           base
@@ -39696,7 +39631,6 @@
         buf)]))
 
 (define (compiler-backend-emit-fused-gep-store-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [gep-dst : i64]
@@ -39709,7 +39643,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-to-gep
-    type-segment-bases
+    ctx.type-segment-bases
     ctx.assignments
     base
     offset
@@ -39732,7 +39666,6 @@
       1))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        type-segment-bases
         ctx
         fallthrough
         rest
@@ -39750,7 +39683,6 @@
               ""))))]))
 
 (define (compiler-backend-emit-fused-mov-trivial-phi-return-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [dst : i64]
@@ -39760,7 +39692,7 @@
   [after-jump : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-mov-trivial-phi-return-edge
-    type-segment-bases
+    ctx.type-segment-bases
     ctx.source-function
     ctx.blocks
     target-label
@@ -39775,7 +39707,7 @@
       (if (string.eq direct-return "")
         (if (compiler-backend-var-single-use? ctx.use-counts dst)
           (match (compiler-backend-emit-mov-phi-copy-edge
-            type-segment-bases
+            ctx.type-segment-bases
             ctx.assignments
             ctx.blocks
             target-label
@@ -39795,7 +39727,6 @@
             [(ResultCompilerBackend.Ok fused-copies)
               (if (string.eq fused-copies "")
                 (compiler-backend-emit-instrs-normal
-                  type-segment-bases
                   ctx
                   fallthrough
                   (CompilerIrInstr.Mov dst src ty)
@@ -39804,7 +39735,7 @@
                     after-jump)
                   buf)
                 (match (compiler-backend-emit-trivial-phi-return-edge
-                  type-segment-bases
+                  ctx.type-segment-bases
                   ctx.source-function
                   ctx.blocks
                   target-label
@@ -39815,7 +39746,6 @@
                   ctx.program-index)
                   [(ResultCompilerBackend.Ok plain-direct-return)
                     (compiler-backend-emit-instrs
-                      type-segment-bases
                       ctx
                       fallthrough
                       after-jump
@@ -39855,7 +39785,6 @@
                       ctx.func-diag
                       ""))))])
           (compiler-backend-emit-instrs-normal
-            type-segment-bases
             ctx
             fallthrough
             (CompilerIrInstr.Mov dst src ty)
@@ -39864,7 +39793,6 @@
               after-jump)
             buf))
         (compiler-backend-emit-instrs
-          type-segment-bases
           ctx
           fallthrough
           after-jump
@@ -40943,7 +40871,6 @@
                     "backend: non-retargetable divmod producer")))]))])))
 
 (define (compiler-backend-divmod-producer-feeds?
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [producer-dst : i64]
   [producer-op : CompilerIrBinOp]
@@ -40957,7 +40884,7 @@
   (and
     (compiler-backend-var-single-use? ctx.use-counts producer-dst)
     (compiler-backend-divmod-producer-retargetable?
-      type-segment-bases
+      ctx.type-segment-bases
       ctx.assignments
       producer-dst
       producer-op
@@ -40966,7 +40893,7 @@
       producer-ty)
     (compiler-backend-branch-uses-var? div-lhs producer-dst)
     (compiler-backend-signed-literal-divmod-src-shape?
-      type-segment-bases
+      ctx.type-segment-bases
       div-op
       div-rhs
       div-ty)))
@@ -41242,7 +41169,6 @@
 ;; only its assembly so the surrounding divmod bundle can own one emergency
 ;; save/restore region.
 (define (compiler-backend-emit-divmod-direct-gep-store
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [gep-dst : i64]
   [base : CompilerIrValue]
@@ -41257,9 +41183,9 @@
         (compiler-backend-instr-reserved-home-mask
           (CompilerIrInstr.Gep gep-dst base offset elem-ty)))]
     [gep-disp : i64
-      (compiler-backend-gep-fold-next! type-segment-bases offset elem-ty)]
+      (compiler-backend-gep-fold-next! ctx.type-segment-bases offset elem-ty)]
     (compiler-backend-emit-store-to-gep
-      type-segment-bases
+      ctx.type-segment-bases
       ctx.assignments
       base
       offset
@@ -41282,7 +41208,6 @@
         1))))
 
 (define (compiler-backend-emit-divmod-polish-continue
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [result : ResultCompilerBackend]
@@ -41291,7 +41216,6 @@
   (match result
     [(ResultCompilerBackend.Ok asm)
       (compiler-backend-emit-instrs
-        type-segment-bases
         ctx
         fallthrough
         rest
@@ -41299,7 +41223,6 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-divmod-result-gep-store-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [div-instr : CompilerIrInstr]
@@ -41324,7 +41247,6 @@
       (begin
         (compiler-backend-divmod-overrides-install! div-dst src -1 "")
         (match (compiler-backend-emit-instr
-          type-segment-bases
           ctx
           (CompilerBackendMaybeLabel.No)
           div-instr)
@@ -41340,7 +41262,6 @@
                     offset
                     0)]
                 (match (compiler-backend-emit-divmod-direct-gep-store
-                  type-segment-bases
                   ctx
                   gep-dst
                   base
@@ -41367,7 +41288,6 @@
           saved1-var
           saved1-reg))]
     (compiler-backend-emit-divmod-polish-continue
-      type-segment-bases
       ctx
       fallthrough
       result
@@ -41375,7 +41295,6 @@
       buf)))
 
 (define (compiler-backend-emit-steered-producer-divmod-plain-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [producer-instr : CompilerIrInstr]
@@ -41412,7 +41331,6 @@
             (begin
               (set! compiler-backend-emit-current-count (- saved-count 1))
               (match (compiler-backend-emit-instr
-                type-segment-bases
                 ctx
                 (CompilerBackendMaybeLabel.No)
                 div-instr)
@@ -41433,7 +41351,6 @@
           saved1-var
           saved1-reg))]
     (compiler-backend-emit-divmod-polish-continue
-      type-segment-bases
       ctx
       fallthrough
       result
@@ -41441,7 +41358,6 @@
       buf)))
 
 (define (compiler-backend-emit-steered-producer-divmod-gep-store-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [producer-instr : CompilerIrInstr]
@@ -41489,7 +41405,6 @@
             (begin
               (set! compiler-backend-emit-current-count (- saved-count 1))
               (match (compiler-backend-emit-instr
-                type-segment-bases
                 ctx
                 (CompilerBackendMaybeLabel.No)
                 div-instr)
@@ -41505,7 +41420,6 @@
                           offset
                           0)]
                       (match (compiler-backend-emit-divmod-direct-gep-store
-                        type-segment-bases
                         ctx
                         gep-dst
                         base
@@ -41536,7 +41450,6 @@
           saved1-var
           saved1-reg))]
     (compiler-backend-emit-divmod-polish-continue
-      type-segment-bases
       ctx
       fallthrough
       result
@@ -41544,7 +41457,6 @@
       buf)))
 
 (define (compiler-backend-emit-steered-producer-divmod-rest
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [producer-instr : CompilerIrInstr]
@@ -41567,7 +41479,7 @@
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (and
                         (compiler-backend-divmod-direct-gep-store?
-                          type-segment-bases
+                          ctx.type-segment-bases
                           ctx.assignments
                           div-dst
                           gep-dst
@@ -41583,7 +41495,6 @@
                           base
                           offset))
                         (compiler-backend-emit-steered-producer-divmod-gep-store-rest
-                          type-segment-bases
                           ctx
                           fallthrough
                           producer-instr
@@ -41600,7 +41511,6 @@
                           (box-get after-store)
                           buf)
                         (compiler-backend-emit-steered-producer-divmod-plain-rest
-                          type-segment-bases
                           ctx
                           fallthrough
                           producer-instr
@@ -41611,7 +41521,6 @@
                           buf))]
                     [_
                       (compiler-backend-emit-steered-producer-divmod-plain-rest
-                        type-segment-bases
                         ctx
                         fallthrough
                         producer-instr
@@ -41622,7 +41531,6 @@
                         buf)])]
                 [_
                   (compiler-backend-emit-steered-producer-divmod-plain-rest
-                    type-segment-bases
                     ctx
                     fallthrough
                     producer-instr
@@ -41632,7 +41540,6 @@
                     after-div
                     buf)])
               (compiler-backend-emit-steered-producer-divmod-plain-rest
-                type-segment-bases
                 ctx
                 fallthrough
                 producer-instr
@@ -41643,7 +41550,6 @@
                 buf))]
           [_
             (compiler-backend-emit-steered-producer-divmod-plain-rest
-              type-segment-bases
               ctx
               fallthrough
               producer-instr
@@ -41654,7 +41560,6 @@
               buf)])]
       [_
         (compiler-backend-emit-steered-producer-divmod-plain-rest
-          type-segment-bases
           ctx
           fallthrough
           producer-instr
@@ -41664,7 +41569,6 @@
           after-div
           buf)])
     (compiler-backend-emit-steered-producer-divmod-plain-rest
-      type-segment-bases
       ctx
       fallthrough
       producer-instr
@@ -41675,7 +41579,6 @@
       buf)))
 
 (define (compiler-backend-try-divmod-result-gep-store
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [div-instr : CompilerIrInstr]
@@ -41689,7 +41592,7 @@
   (if (and
     (compiler-backend-var-single-use? ctx.use-counts div-dst)
     (compiler-backend-signed-literal-divmod-src-shape?
-      type-segment-bases
+      ctx.type-segment-bases
       div-op
       div-rhs
       div-ty))
@@ -41703,7 +41606,7 @@
                   (match maybe-store
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (compiler-backend-divmod-direct-gep-store?
-                        type-segment-bases
+                        ctx.type-segment-bases
                         ctx.assignments
                         div-dst
                         gep-dst
@@ -41758,7 +41661,6 @@
                             offset)
                             (CompilerBackendMaybeDivmodPolish.Some
                               (compiler-backend-emit-divmod-result-gep-store-rest
-                                type-segment-bases
                                 ctx
                                 fallthrough
                                 div-instr
@@ -41782,7 +41684,6 @@
     (CompilerBackendMaybeDivmodPolish.No)))
 
 (define (compiler-backend-try-divmod-polish
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -41800,7 +41701,6 @@
           (match next
             [(CompilerIrInstr.BinOp div-dst div-op div-lhs div-rhs div-ty)
               (if (compiler-backend-divmod-producer-feeds?
-                type-segment-bases
                 ctx
                 producer-dst
                 producer-op
@@ -41848,7 +41748,6 @@
                       producer-dst)]
                   (CompilerBackendMaybeDivmodPolish.Some
                     (compiler-backend-emit-steered-producer-divmod-rest
-                      type-segment-bases
                       ctx
                       fallthrough
                       instr
@@ -41860,7 +41759,6 @@
                       (box-get after-div)
                       buf)))
                 (compiler-backend-try-divmod-result-gep-store
-                  type-segment-bases
                   ctx
                   fallthrough
                   instr
@@ -41873,7 +41771,6 @@
                   buf))]
             [_
               (compiler-backend-try-divmod-result-gep-store
-                type-segment-bases
                 ctx
                 fallthrough
                 instr
@@ -41886,7 +41783,6 @@
                 buf)])]
         [_
           (compiler-backend-try-divmod-result-gep-store
-            type-segment-bases
             ctx
             fallthrough
             instr
@@ -41900,7 +41796,6 @@
     [_ (CompilerBackendMaybeDivmodPolish.No)]))
 
 (define (compiler-backend-emit-load-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -41910,7 +41805,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if (and
-    (compiler-backend-load-compare-type? type-segment-bases load-ty)
+    (compiler-backend-load-compare-type? ctx.type-segment-bases load-ty)
     (compiler-backend-var-single-use? ctx.use-counts load-dst))
     (match rest
       [(CompilerIrInstrList.Cons next after-cmp)
@@ -41918,11 +41813,10 @@
           [(CompilerIrInstr.Load second-dst second-src second-ty)
             (if (compiler-backend-branch-uses-var? second-src load-dst)
               (compiler-backend-emit-fused-result-rest
-                type-segment-bases
                 ctx
                 fallthrough
                 (compiler-backend-emit-load-load
-                  type-segment-bases
+                  ctx.type-segment-bases
                   ctx.assignments
                   load-dst
                   ptr
@@ -41948,7 +41842,6 @@
                 (box-get after-cmp)
                 buf)
               (compiler-backend-emit-instrs-normal
-                type-segment-bases
                 ctx
                 fallthrough
                 instr
@@ -41972,7 +41865,6 @@
                     [(CompilerIrInstr.Branch cond true-label false-label)
                       (if (compiler-backend-branch-uses-var? cond cmp-dst)
                         (compiler-backend-emit-fused-load-compare-branch-rest
-                          type-segment-bases
                           ctx
                           fallthrough
                           load-dst
@@ -41987,7 +41879,6 @@
                           (box-get after-branch)
                           buf)
                         (compiler-backend-emit-instrs-normal
-                          type-segment-bases
                           ctx
                           fallthrough
                           instr
@@ -41995,7 +41886,6 @@
                           buf))]
                     [_
                       (compiler-backend-emit-instrs-normal
-                        type-segment-bases
                         ctx
                         fallthrough
                         instr
@@ -42003,45 +41893,23 @@
                         buf)])]
                 [_
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
                     rest
                     buf)])
               (compiler-backend-emit-instrs-normal
-                type-segment-bases
                 ctx
                 fallthrough
                 instr
                 rest
                 buf))]
           [_
-            (compiler-backend-emit-instrs-normal
-              type-segment-bases
-              ctx
-              fallthrough
-              instr
-              rest
-              buf)])]
-      [_
-        (compiler-backend-emit-instrs-normal
-          type-segment-bases
-          ctx
-          fallthrough
-          instr
-          rest
-          buf)])
-    (compiler-backend-emit-instrs-normal
-      type-segment-bases
-      ctx
-      fallthrough
-      instr
-      rest
-      buf)))
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+      [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)))
 
 (define (compiler-backend-emit-store-ptr-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -42063,7 +41931,9 @@
                   [disp : i64
                     (*
                       n
-                      (compiler-backend-type-size type-segment-bases elem-ty))]
+                      (compiler-backend-type-size
+                        ctx.type-segment-bases
+                        elem-ty))]
                   (if (compiler-backend-imm32? disp)
                     (match (box-get after-gep)
                       [(CompilerIrInstrList.Cons maybe-store after-store)
@@ -42071,11 +41941,10 @@
                           [(CompilerIrInstr.StorePtr dst value1 ty1)
                             (if (compiler-backend-branch-uses-var? dst gep-dst)
                               (compiler-backend-emit-fused-result-rest
-                                type-segment-bases
                                 ctx
                                 fallthrough
                                 (compiler-backend-emit-store-ptr-pair
-                                  type-segment-bases
+                                  ctx.type-segment-bases
                                   ctx.assignments
                                   ptr
                                   value0
@@ -42102,7 +41971,6 @@
                                 (box-get after-store)
                                 buf)
                               (compiler-backend-emit-instrs-normal
-                                type-segment-bases
                                 ctx
                                 fallthrough
                                 instr
@@ -42110,7 +41978,6 @@
                                 buf))]
                           [_
                             (compiler-backend-emit-instrs-normal
-                              type-segment-bases
                               ctx
                               fallthrough
                               instr
@@ -42118,14 +41985,12 @@
                               buf)])]
                       [_
                         (compiler-backend-emit-instrs-normal
-                          type-segment-bases
                           ctx
                           fallthrough
                           instr
                           rest
                           buf)])
                     (compiler-backend-emit-instrs-normal
-                      type-segment-bases
                       ctx
                       fallthrough
                       instr
@@ -42133,38 +41998,16 @@
                       buf)))]
               [(option_i64.None)
                 (compiler-backend-emit-instrs-normal
-                  type-segment-bases
                   ctx
                   fallthrough
                   instr
                   rest
                   buf)])
-            (compiler-backend-emit-instrs-normal
-              type-segment-bases
-              ctx
-              fallthrough
-              instr
-              rest
-              buf))]
-        [_
-          (compiler-backend-emit-instrs-normal
-            type-segment-bases
-            ctx
-            fallthrough
-            instr
-            rest
-            buf)])]
-    [_
-      (compiler-backend-emit-instrs-normal
-        type-segment-bases
-        ctx
-        fallthrough
-        instr
-        rest
-        buf)]))
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf))]
+        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
 
 (define (compiler-backend-emit-vector-load-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -42188,7 +42031,7 @@
                 bin-lanes
                 bin-elem-ty)
               (if (compiler-backend-vector-load-binop-foldable?
-                type-segment-bases
+                ctx.type-segment-bases
                 ctx.use-counts
                 load-dst
                 lanes
@@ -42205,11 +42048,10 @@
                   rhs)
                   [(CompilerBackendVectorMemFold.Some reg-value)
                     (compiler-backend-emit-fused-result-rest
-                      type-segment-bases
                       ctx
                       fallthrough
                       (compiler-backend-emit-vector-binop-memory-source
-                        type-segment-bases
+                        ctx.type-segment-bases
                         ctx.assignments
                         bin-dst
                         op
@@ -42234,38 +42076,21 @@
                       buf)]
                   [(CompilerBackendVectorMemFold.No)
                     (compiler-backend-emit-instrs-normal
-                      type-segment-bases
                       ctx
                       fallthrough
                       instr
                       rest
                       buf)])
                 (compiler-backend-emit-instrs-normal
-                  type-segment-bases
                   ctx
                   fallthrough
                   instr
                   rest
                   buf))])]
-        [_
-          (compiler-backend-emit-instrs-normal
-            type-segment-bases
-            ctx
-            fallthrough
-            instr
-            rest
-            buf)])]
-    [_
-      (compiler-backend-emit-instrs-normal
-        type-segment-bases
-        ctx
-        fallthrough
-        instr
-        rest
-        buf)]))
+        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
 
 (define (compiler-backend-emit-copy-bytes-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [dst : CompilerIrValue]
@@ -42279,11 +42104,10 @@
     [protect : (Array String)
       (compiler-backend-copy-run-protect-exclude ctx.assignments rest)]
     (compiler-backend-emit-fused-result-rest
-      type-segment-bases
       ctx
       fallthrough
       (compiler-backend-emit-copy-bytes-avoid
-        type-segment-bases
+        ctx.type-segment-bases
         ctx.assignments
         dst
         src
@@ -42314,7 +42138,6 @@
       buf)))
 
 (define (compiler-backend-emit-mov-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -42339,7 +42162,7 @@
                     (compiler-backend-var-single-use? ctx.use-counts cast-dst)
                     (compiler-backend-divmod-safe-literal? src bin-ty))
                     (match (compiler-backend-emit-binop
-                      type-segment-bases
+                      ctx.type-segment-bases
                       ctx.types
                       ctx.global-types
                       ctx.assignments
@@ -42350,7 +42173,6 @@
                       bin-ty)
                       [(ResultCompilerBackend.Ok binop-asm)
                         (compiler-backend-emit-instrs
-                          type-segment-bases
                           ctx
                           fallthrough
                           (box-get after-binop)
@@ -42358,7 +42180,6 @@
                       [(ResultCompilerBackend.Err message)
                         (ResultCompilerBackend.Err message)])
                     (compiler-backend-emit-instrs-normal
-                      type-segment-bases
                       ctx
                       fallthrough
                       instr
@@ -42366,7 +42187,6 @@
                       buf))]
                 [_
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -42374,7 +42194,6 @@
                     buf)])]
             [_
               (compiler-backend-emit-instrs-normal
-                type-segment-bases
                 ctx
                 fallthrough
                 instr
@@ -42388,7 +42207,7 @@
             (match (if (compiler-backend-var-single-use? ctx.use-counts dst)
               (ResultCompilerBackend.Ok "")
               (compiler-backend-emit-mov
-                type-segment-bases
+                ctx.type-segment-bases
                 ctx.assignments
                 dst
                 src
@@ -42398,7 +42217,7 @@
                 ""))
               [(ResultCompilerBackend.Ok prefix)
                 (match (compiler-backend-emit-binop
-                  type-segment-bases
+                  ctx.type-segment-bases
                   ctx.types
                   ctx.global-types
                   ctx.assignments
@@ -42409,7 +42228,6 @@
                   bin-ty)
                   [(ResultCompilerBackend.Ok binop-asm)
                     (compiler-backend-emit-instrs
-                      type-segment-bases
                       ctx
                       fallthrough
                       (box-get after-jump)
@@ -42420,16 +42238,9 @@
                     (ResultCompilerBackend.Err message)])]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])
-            (compiler-backend-emit-instrs-normal
-              type-segment-bases
-              ctx
-              fallthrough
-              instr
-              rest
-              buf))]
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf))]
         [(CompilerIrInstr.Jump target-label)
           (compiler-backend-emit-fused-mov-trivial-phi-return-rest
-            type-segment-bases
             ctx
             fallthrough
             dst
@@ -42445,7 +42256,7 @@
                 [(CompilerIrMaybeValue.Some value)
                   (if (compiler-backend-branch-uses-var? value dst)
                     (match (compiler-backend-emit-return
-                      type-segment-bases
+                      ctx.type-segment-bases
                       ctx.source-function
                       ctx.blocks
                       (CompilerIrMaybeValue.Some src)
@@ -42468,7 +42279,6 @@
                                 ctx.func-diag
                                 ""))))])
                     (compiler-backend-emit-instrs-normal
-                      type-segment-bases
                       ctx
                       fallthrough
                       instr
@@ -42476,7 +42286,6 @@
                       buf))]
                 [(CompilerIrMaybeValue.No)
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -42484,31 +42293,15 @@
                     buf)])]
             [_
               (compiler-backend-emit-instrs-normal
-                type-segment-bases
                 ctx
                 fallthrough
                 instr
                 rest
                 buf)])]
-        [_
-          (compiler-backend-emit-instrs-normal
-            type-segment-bases
-            ctx
-            fallthrough
-            instr
-            rest
-            buf)])]
-    [_
-      (compiler-backend-emit-instrs-normal
-        type-segment-bases
-        ctx
-        fallthrough
-        instr
-        rest
-        buf)]))
+        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
 
 (define (compiler-backend-emit-call-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -42528,10 +42321,10 @@
                 [(CompilerIrMaybeValue.Some value)
                   (if (and
                     (compiler-backend-branch-uses-var? value dst)
-                    (opt-type-eq type-segment-bases ty ctx.ret-ty))
+                    (opt-type-eq ctx.type-segment-bases ty ctx.ret-ty))
                     (compiler-backend-emit-terminator-into
                       (compiler-backend-emit-call-return
-                        type-segment-bases
+                        ctx.type-segment-bases
                         ctx.target
                         ctx.source-function
                         ctx.blocks
@@ -42556,7 +42349,6 @@
                           ""))
                       buf)
                     (compiler-backend-emit-instrs-normal
-                      type-segment-bases
                       ctx
                       fallthrough
                       instr
@@ -42564,7 +42356,6 @@
                       buf))]
                 [(CompilerIrMaybeValue.No)
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -42572,28 +42363,13 @@
                     buf)])]
             [_
               (compiler-backend-emit-instrs-normal
-                type-segment-bases
                 ctx
                 fallthrough
                 instr
                 rest
                 buf)])]
-        [_
-          (compiler-backend-emit-instrs-normal
-            type-segment-bases
-            ctx
-            fallthrough
-            instr
-            rest
-            buf)])]
-    [_
-      (compiler-backend-emit-instrs-normal
-        type-segment-bases
-        ctx
-        fallthrough
-        instr
-        rest
-        buf)]))
+        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
 
 ;; The `Gep` fusion cluster of `compiler-backend-emit-instrs-step`, extracted
 ;; unchanged (refs #5177). It is the peephole family that folds a single-use
@@ -42601,7 +42377,6 @@
 ;; copy, binop and the branch forms behind them -- so it is one cluster and
 ;; moves as one, matching the `mov`/`call`/`store-ptr` steps already split out.
 (define (compiler-backend-emit-gep-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
@@ -42621,7 +42396,7 @@
                 (if (compiler-backend-branch-uses-var? src gep-dst)
                   (if (and
                     (compiler-backend-load-compare-type?
-                      type-segment-bases
+                      ctx.type-segment-bases
                       load-ty)
                     (compiler-backend-var-single-use? ctx.use-counts load-dst))
                     (match (box-get after-load)
@@ -42652,12 +42427,11 @@
                                         cond
                                         cmp-dst)
                                         (compiler-backend-emit-fused-gep-load-compare-branch-rest
-                                          type-segment-bases
                                           ctx
                                           fallthrough
                                           gep-dst
                                           (compiler-backend-gep-fold-next!
-                                            type-segment-bases
+                                            ctx.type-segment-bases
                                             offset
                                             elem-ty)
                                           base
@@ -42674,12 +42448,11 @@
                                           (box-get after-branch)
                                           buf)
                                         (compiler-backend-emit-fused-gep-load-rest
-                                          type-segment-bases
                                           ctx
                                           fallthrough
                                           gep-dst
                                           (compiler-backend-gep-fold-next!
-                                            type-segment-bases
+                                            ctx.type-segment-bases
                                             offset
                                             elem-ty)
                                           base
@@ -42691,12 +42464,11 @@
                                           buf))]
                                     [_
                                       (compiler-backend-emit-fused-gep-load-rest
-                                        type-segment-bases
                                         ctx
                                         fallthrough
                                         gep-dst
                                         (compiler-backend-gep-fold-next!
-                                          type-segment-bases
+                                          ctx.type-segment-bases
                                           offset
                                           elem-ty)
                                         base
@@ -42708,12 +42480,11 @@
                                         buf)])]
                                 [_
                                   (compiler-backend-emit-fused-gep-load-rest
-                                    type-segment-bases
                                     ctx
                                     fallthrough
                                     gep-dst
                                     (compiler-backend-gep-fold-next!
-                                      type-segment-bases
+                                      ctx.type-segment-bases
                                       offset
                                       elem-ty)
                                     base
@@ -42724,12 +42495,11 @@
                                     (box-get after-load)
                                     buf)])
                               (compiler-backend-emit-fused-gep-load-rest
-                                type-segment-bases
                                 ctx
                                 fallthrough
                                 gep-dst
                                 (compiler-backend-gep-fold-next!
-                                  type-segment-bases
+                                  ctx.type-segment-bases
                                   offset
                                   elem-ty)
                                 base
@@ -42741,12 +42511,11 @@
                                 buf))]
                           [_
                             (compiler-backend-emit-fused-gep-load-rest
-                              type-segment-bases
                               ctx
                               fallthrough
                               gep-dst
                               (compiler-backend-gep-fold-next!
-                                type-segment-bases
+                                ctx.type-segment-bases
                                 offset
                                 elem-ty)
                               base
@@ -42758,12 +42527,11 @@
                               buf)])]
                       [_
                         (compiler-backend-emit-fused-gep-load-rest
-                          type-segment-bases
                           ctx
                           fallthrough
                           gep-dst
                           (compiler-backend-gep-fold-next!
-                            type-segment-bases
+                            ctx.type-segment-bases
                             offset
                             elem-ty)
                           base
@@ -42774,12 +42542,11 @@
                           (box-get after-load)
                           buf)])
                     (compiler-backend-emit-fused-gep-load-rest
-                      type-segment-bases
                       ctx
                       fallthrough
                       gep-dst
                       (compiler-backend-gep-fold-next!
-                        type-segment-bases
+                        ctx.type-segment-bases
                         offset
                         elem-ty)
                       base
@@ -42790,7 +42557,6 @@
                       (box-get after-load)
                       buf))
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -42799,12 +42565,11 @@
               [(CompilerIrInstr.StorePtr dst value store-ty)
                 (if (compiler-backend-branch-uses-var? dst gep-dst)
                   (compiler-backend-emit-fused-gep-store-rest
-                    type-segment-bases
                     ctx
                     fallthrough
                     gep-dst
                     (compiler-backend-gep-fold-next!
-                      type-segment-bases
+                      ctx.type-segment-bases
                       offset
                       elem-ty)
                     base
@@ -42815,7 +42580,6 @@
                     (box-get after-load)
                     buf)
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -42827,7 +42591,9 @@
                   (compiler-backend-imm32?
                     (*
                       n
-                      (compiler-backend-type-size type-segment-bases elem-ty))))
+                      (compiler-backend-type-size
+                        ctx.type-segment-bases
+                        elem-ty))))
                   (let
                     [protect-n : i64
                       (compiler-backend-copy-run-protect-count
@@ -42838,11 +42604,10 @@
                         ctx.assignments
                         (box-get after-load))]
                     (compiler-backend-emit-fused-result-rest
-                      type-segment-bases
                       ctx
                       fallthrough
                       (compiler-backend-emit-copy-bytes-from-gep-avoid
-                        type-segment-bases
+                        ctx.type-segment-bases
                         ctx.assignments
                         base
                         offset
@@ -42852,7 +42617,7 @@
                         protect
                         protect-n
                         (compiler-backend-gep-fold-next!
-                          type-segment-bases
+                          ctx.type-segment-bases
                           offset
                           elem-ty)
                         (compiler-backend-scratch-plan-register-ahead
@@ -42882,7 +42647,6 @@
                       (box-get after-load)
                       buf))
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -42890,39 +42654,31 @@
                     buf))]
               [_
                 (compiler-backend-emit-instrs-normal
-                  type-segment-bases
                   ctx
                   fallthrough
                   instr
                   rest
                   buf)])]
           [_
-            (compiler-backend-emit-instrs-normal
-              type-segment-bases
-              ctx
-              fallthrough
-              instr
-              rest
-              buf)])]
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
       [(option_i64.None)
         (match rest
           [(CompilerIrInstrList.Cons next after-gep)
             (match next
               [(CompilerIrInstr.Gep _ load-base load-offset _)
                 (compiler-backend-emit-fused-result-rest
-                  type-segment-bases
                   ctx
                   fallthrough
                   (if (compiler-backend-branch-uses-var? load-base gep-dst)
                     (compiler-backend-emit-gep
-                      type-segment-bases
+                      ctx.type-segment-bases
                       ctx.assignments
                       gep-dst
                       base
                       offset
                       elem-ty
                       (compiler-backend-gep-fold-next!
-                        type-segment-bases
+                        ctx.type-segment-bases
                         offset
                         elem-ty)
                       (compiler-backend-scratch-plan-register-ahead
@@ -42934,14 +42690,14 @@
                         0
                         1))
                     (compiler-backend-emit-gep-staged-avoid
-                      type-segment-bases
+                      ctx.type-segment-bases
                       ctx.assignments
                       gep-dst
                       base
                       offset
                       elem-ty
                       (compiler-backend-gep-fold-next!
-                        type-segment-bases
+                        ctx.type-segment-bases
                         offset
                         elem-ty)
                       (compiler-backend-value-scalar-register
@@ -42970,12 +42726,11 @@
                         [(CompilerIrInstr.StorePtr dst value store-ty)
                           (if (compiler-backend-branch-uses-var? dst ptr-var)
                             (compiler-backend-emit-fused-gep-store-rest
-                              type-segment-bases
                               ctx
                               fallthrough
                               gep-dst
                               (compiler-backend-gep-fold-next!
-                                type-segment-bases
+                                ctx.type-segment-bases
                                 offset
                                 elem-ty)
                               base
@@ -42986,7 +42741,6 @@
                               (box-get after-store)
                               buf)
                             (compiler-backend-emit-instrs-normal
-                              type-segment-bases
                               ctx
                               fallthrough
                               instr
@@ -42994,7 +42748,6 @@
                               buf))]
                         [_
                           (compiler-backend-emit-instrs-normal
-                            type-segment-bases
                             ctx
                             fallthrough
                             instr
@@ -43002,14 +42755,12 @@
                             buf)])]
                     [_
                       (compiler-backend-emit-instrs-normal
-                        type-segment-bases
                         ctx
                         fallthrough
                         instr
                         rest
                         buf)])
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -43018,12 +42769,11 @@
               [(CompilerIrInstr.Load load-dst src load-ty)
                 (if (compiler-backend-branch-uses-var? src gep-dst)
                   (compiler-backend-emit-fused-gep-load-rest
-                    type-segment-bases
                     ctx
                     fallthrough
                     gep-dst
                     (compiler-backend-gep-fold-next!
-                      type-segment-bases
+                      ctx.type-segment-bases
                       offset
                       elem-ty)
                     base
@@ -43034,7 +42784,6 @@
                     (box-get after-gep)
                     buf)
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -43043,12 +42792,11 @@
               [(CompilerIrInstr.StorePtr dst value store-ty)
                 (if (compiler-backend-branch-uses-var? dst gep-dst)
                   (compiler-backend-emit-fused-gep-store-rest
-                    type-segment-bases
                     ctx
                     fallthrough
                     gep-dst
                     (compiler-backend-gep-fold-next!
-                      type-segment-bases
+                      ctx.type-segment-bases
                       offset
                       elem-ty)
                     base
@@ -43059,7 +42807,6 @@
                     (box-get after-gep)
                     buf)
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -43077,11 +42824,10 @@
                         ctx.assignments
                         (box-get after-gep))]
                     (compiler-backend-emit-fused-result-rest
-                      type-segment-bases
                       ctx
                       fallthrough
                       (compiler-backend-emit-copy-bytes-from-gep-avoid
-                        type-segment-bases
+                        ctx.type-segment-bases
                         ctx.assignments
                         base
                         offset
@@ -43091,7 +42837,7 @@
                         protect
                         protect-n
                         (compiler-backend-gep-fold-next!
-                          type-segment-bases
+                          ctx.type-segment-bases
                           offset
                           elem-ty)
                         (compiler-backend-scratch-plan-register-ahead
@@ -43121,7 +42867,6 @@
                       (box-get after-gep)
                       buf))
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
@@ -43129,30 +42874,16 @@
                     buf))]
               [_
                 (compiler-backend-emit-instrs-normal
-                  type-segment-bases
                   ctx
                   fallthrough
                   instr
                   rest
                   buf)])]
           [_
-            (compiler-backend-emit-instrs-normal
-              type-segment-bases
-              ctx
-              fallthrough
-              instr
-              rest
-              buf)])])
-    (compiler-backend-emit-instrs-normal
-      type-segment-bases
-      ctx
-      fallthrough
-      instr
-      rest
-      buf)))
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])])
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)))
 
 (define (compiler-backend-emit-instrs-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instrs : CompilerIrInstrList]
@@ -43163,7 +42894,6 @@
       (match instr
         [(CompilerIrInstr.Mov dst src ty)
           (compiler-backend-emit-mov-step
-            type-segment-bases
             ctx
             fallthrough
             instr
@@ -43174,7 +42904,6 @@
             buf)]
         [(CompilerIrInstr.Call dst name args ty)
           (compiler-backend-emit-call-step
-            type-segment-bases
             ctx
             fallthrough
             instr
@@ -43186,7 +42915,6 @@
             buf)]
         [(CompilerIrInstr.StorePtr ptr value0 ty0)
           (compiler-backend-emit-store-ptr-step
-            type-segment-bases
             ctx
             fallthrough
             instr
@@ -43197,7 +42925,6 @@
             buf)]
         [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
           (compiler-backend-emit-gep-step
-            type-segment-bases
             ctx
             fallthrough
             instr
@@ -43209,7 +42936,6 @@
             buf)]
         [(CompilerIrInstr.CopyBytes dst src size)
           (compiler-backend-emit-copy-bytes-step
-            type-segment-bases
             ctx
             fallthrough
             dst
@@ -43219,7 +42945,6 @@
             buf)]
         [(CompilerIrInstr.VectorLoad load-dst base index lanes elem-ty)
           (compiler-backend-emit-vector-load-step
-            type-segment-bases
             ctx
             fallthrough
             instr
@@ -43232,7 +42957,6 @@
             buf)]
         [(CompilerIrInstr.Load load-dst ptr load-ty)
           (compiler-backend-emit-load-step
-            type-segment-bases
             ctx
             fallthrough
             instr
@@ -43259,7 +42983,7 @@
               dst
               (box-get rest)))
             (match (compiler-backend-emit-binop-to-rax
-              type-segment-bases
+              ctx.type-segment-bases
               ctx.types
               ctx.global-types
               ctx.assignments
@@ -43291,7 +43015,6 @@
                 4))
               [(ResultCompilerBackend.Ok head)
                 (compiler-backend-emit-instrs-with-rax
-                  type-segment-bases
                   ctx
                   fallthrough
                   dst
@@ -43323,7 +43046,7 @@
                               (if (compiler-backend-branch-uses-var? value dst)
                                 (compiler-backend-emit-terminator-into
                                   (compiler-backend-emit-binop-return-with-plan
-                                    type-segment-bases
+                                    ctx.type-segment-bases
                                     ctx.source-function
                                     ctx.blocks
                                     ctx.types
@@ -43361,7 +43084,6 @@
                                       4))
                                   buf)
                                 (compiler-backend-emit-instrs-normal
-                                  type-segment-bases
                                   ctx
                                   fallthrough
                                   instr
@@ -43369,7 +43091,6 @@
                                   buf))]
                             [(CompilerIrMaybeValue.No)
                               (compiler-backend-emit-instrs-normal
-                                type-segment-bases
                                 ctx
                                 fallthrough
                                 instr
@@ -43377,7 +43098,6 @@
                                 buf)])]
                         [_
                           (compiler-backend-emit-instrs-normal
-                            type-segment-bases
                             ctx
                             fallthrough
                             instr
@@ -43386,7 +43106,6 @@
                     [(CompilerIrInstr.Branch cond true-label false-label)
                       (if (compiler-backend-branch-uses-var? cond dst)
                         (compiler-backend-emit-fused-compare-branch-rest
-                          type-segment-bases
                           ctx
                           fallthrough
                           dst
@@ -43399,7 +43118,6 @@
                           (box-get after-branch)
                           buf)
                         (compiler-backend-emit-instrs-normal
-                          type-segment-bases
                           ctx
                           fallthrough
                           instr
@@ -43431,7 +43149,6 @@
                                   cond
                                   not-dst)
                                   (compiler-backend-emit-fused-compare-branch-rest
-                                    type-segment-bases
                                     ctx
                                     fallthrough
                                     dst
@@ -43444,7 +43161,6 @@
                                     (box-get after-not-branch)
                                     buf)
                                   (compiler-backend-emit-instrs-normal
-                                    type-segment-bases
                                     ctx
                                     fallthrough
                                     instr
@@ -43452,7 +43168,6 @@
                                     buf))]
                               [_
                                 (compiler-backend-emit-instrs-normal
-                                  type-segment-bases
                                   ctx
                                   fallthrough
                                   instr
@@ -43460,14 +43175,12 @@
                                   buf)])]
                           [_
                             (compiler-backend-emit-instrs-normal
-                              type-segment-bases
                               ctx
                               fallthrough
                               instr
                               (box-get rest)
                               buf)])
                         (compiler-backend-emit-instrs-normal
-                          type-segment-bases
                           ctx
                           fallthrough
                           instr
@@ -43475,7 +43188,6 @@
                           buf))]
                     [_
                       (compiler-backend-emit-instrs-normal
-                        type-segment-bases
                         ctx
                         fallthrough
                         instr
@@ -43483,14 +43195,12 @@
                         buf)])]
                 [_
                   (compiler-backend-emit-instrs-normal
-                    type-segment-bases
                     ctx
                     fallthrough
                     instr
                     (box-get rest)
                     buf)])
               (compiler-backend-emit-instrs-normal
-                type-segment-bases
                 ctx
                 fallthrough
                 instr
@@ -43506,7 +43216,6 @@
                   [(CompilerIrInstr.Branch cond true-label false-label)
                     (if (compiler-backend-branch-uses-var? cond dst)
                       (compiler-backend-emit-fused-not-branch-rest
-                        type-segment-bases
                         ctx
                         fallthrough
                         dst
@@ -43517,7 +43226,6 @@
                         (box-get after-branch)
                         buf)
                       (compiler-backend-emit-instrs-normal
-                        type-segment-bases
                         ctx
                         fallthrough
                         instr
@@ -43525,7 +43233,6 @@
                         buf))]
                   [_
                     (compiler-backend-emit-instrs-normal
-                      type-segment-bases
                       ctx
                       fallthrough
                       instr
@@ -43533,14 +43240,12 @@
                       buf)])]
               [_
                 (compiler-backend-emit-instrs-normal
-                  type-segment-bases
                   ctx
                   fallthrough
                   instr
                   (box-get rest)
                   buf)])
             (compiler-backend-emit-instrs-normal
-              type-segment-bases
               ctx
               fallthrough
               instr
@@ -43548,7 +43253,6 @@
               buf))]
         [_
           (compiler-backend-emit-instrs-normal
-            type-segment-bases
             ctx
             fallthrough
             instr
@@ -43556,7 +43260,6 @@
             buf)])]))
 
 (define (compiler-backend-emit-instrs-divmod-polish-step
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instrs : CompilerIrInstrList]
@@ -43564,7 +43267,6 @@
   (match instrs
     [(CompilerIrInstrList.Cons instr rest)
       (match (compiler-backend-try-divmod-polish
-        type-segment-bases
         ctx
         fallthrough
         instr
@@ -43572,19 +43274,8 @@
         buf)
         [(CompilerBackendMaybeDivmodPolish.Some result) result]
         [(CompilerBackendMaybeDivmodPolish.No)
-          (compiler-backend-emit-instrs-step
-            type-segment-bases
-            ctx
-            fallthrough
-            instrs
-            buf)])]
-    [_
-      (compiler-backend-emit-instrs-step
-        type-segment-bases
-        ctx
-        fallthrough
-        instrs
-        buf)]))
+          (compiler-backend-emit-instrs-step ctx fallthrough instrs buf)])]
+    [_ (compiler-backend-emit-instrs-step ctx fallthrough instrs buf)]))
 
 ;; Drift-proof per-instruction position for the scavenge coordinate. `post-base`
 ;; is the cumulative instruction count through the current block (accumulated per
@@ -43616,7 +43307,6 @@
     (compiler-backend-mode-avx2? backend-mode)))
 
 (define (compiler-backend-emit-instrs-loop
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [mode : CompilerBackendEmitInstrsMode]
@@ -43681,14 +43371,12 @@
               (match current-mode
                 [(CompilerBackendEmitInstrsMode.Normal)
                   (compiler-backend-emit-instrs-divmod-polish-step
-                    type-segment-bases
                     ctx
                     fallthrough
                     current-instrs
                     current-buf)]
                 [(CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
                   (compiler-backend-emit-instrs-with-rax-step
-                    type-segment-bases
                     ctx
                     fallthrough
                     rax-var
@@ -43697,7 +43385,6 @@
                     current-buf)]
                 [(CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
                   (compiler-backend-emit-instrs-with-call-rax-step
-                    type-segment-bases
                     ctx
                     fallthrough
                     rax-var
@@ -43725,7 +43412,6 @@
         (ResultCompilerBackend.Err diag-out)))))
 
 (define (compiler-backend-emit-instrs
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instrs : CompilerIrInstrList]
@@ -43736,7 +43422,6 @@
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
-      type-segment-bases
       ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.Normal)
@@ -43744,7 +43429,6 @@
       buf)))
 
 (define (compiler-backend-emit-instrs-with-call-rax
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
@@ -43757,7 +43441,6 @@
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
-      type-segment-bases
       ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
@@ -43765,7 +43448,6 @@
       buf)))
 
 (define (compiler-backend-emit-instrs-with-rax
-  [type-segment-bases : i64]
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
@@ -43778,7 +43460,6 @@
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
-      type-segment-bases
       ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
@@ -43810,8 +43491,8 @@
       (begin
         (set! compiler-backend-current-block-label label)
         (match (compiler-backend-emit-instrs
-          type-segment-bases
           (CompilerBackendEmissionContext
+            type-segment-bases
             target
             function
             source-function

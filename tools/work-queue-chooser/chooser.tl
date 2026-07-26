@@ -5,10 +5,9 @@
 ;# issues labeled `blocked`, and issues an open PR already claims (the issue
 ;# number appears as a 4+ digit run in a PR branch name or title -- an issue
 ;# someone is already working is not work to hand to a second agent), weights
-;# the rest (PR review = 45,
-;# ready-for-implementation = 10, research/triage = 1, +50 for a p0 label,
-;# +3 for a p1 label), uses system entropy to make a weighted pick, and prints
-;# one action line:
+;# the rest (PR review = 45; ready-for-implementation = 10 with +50 for p0
+;# and +3 for p1; research/triage = 1 with +6 for p0 and +3 for p1), uses
+;# system entropy to make a weighted pick, and prints one action line:
 ;#
 ;#   review pr #N: Title
 ;#   implement issue #N: Title
@@ -44,9 +43,13 @@
   10)
 (define research-weight : i64
   1)
-(define p0-priority-bonus : i64
+(define ready-p0-priority-bonus : i64
   50)
-(define p1-priority-bonus : i64
+(define ready-p1-priority-bonus : i64
+  3)
+(define triage-p0-priority-bonus : i64
+  6)
+(define triage-p1-priority-bonus : i64
   3)
 
 ;: When the snapshot holds more than this many open non-draft PRs, the review
@@ -247,12 +250,17 @@
           [_ (json.list-empty)])]
       [(json.JsonMissing) (json.list-empty)])))
 
-;: Return the priority bonus for a label list. p0 takes precedence over p1.
-(define (label-list-priority-bonus [labels : json.JsonSeq]) : i64
+;: Return the lane-specific priority bonus for a label list. p0 takes
+;: precedence over p1.
+(define (label-list-priority-bonus [labels : json.JsonSeq] [ready : bool]) : i64
   (if (label-list-has? labels "p0")
-    p0-priority-bonus
+    (if ready
+      ready-p0-priority-bonus
+      triage-p0-priority-bonus)
     (if (label-list-has? labels "p1")
-      p1-priority-bonus
+      (if ready
+        ready-p1-priority-bonus
+        triage-p1-priority-bonus)
       0)))
 
 ;: Build a PR candidate (kind = review, no labels considered).
@@ -327,7 +335,7 @@
   (let
     [labels : json.JsonSeq (issue-label-list item)]
     [ready : bool (label-list-has? labels "ready-for-implementation")]
-    [bonus : i64 (label-list-priority-bonus labels)]
+    [bonus : i64 (label-list-priority-bonus labels ready)]
     (if ready
       (Candidate
         kind-ready
@@ -610,28 +618,52 @@
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
-  chooser-p0-label-takes-precedence-over-p1
+  chooser-priority-order-is-lane-aware
   (let
     [text : String
-      "{\"prs\":[],\"issues\":[{\"number\":10,\"title\":\"Both priorities\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":11,\"title\":\"P1 only\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]}]}"]
+      "{\"prs\":[{\"number\":20,\"title\":\"Review\",\"statusCheckRollup\":[]}],\"issues\":[{\"number\":10,\"title\":\"Ready both\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":11,\"title\":\"Ready p0\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]},{\"number\":12,\"title\":\"Ready p1\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]},{\"number\":13,\"title\":\"Ready plain\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":14,\"title\":\"Triage both\",\"labels\":[{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":15,\"title\":\"Triage p0\",\"labels\":[{\"name\":\"p0\"}]},{\"number\":16,\"title\":\"Triage p1\",\"labels\":[{\"name\":\"p1\"}]},{\"number\":17,\"title\":\"Triage plain\",\"labels\":[]}]}"]
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
+          [review : i64 (struct-get (cand-nth cands 0) weight)]
+          [ready-both : i64 (struct-get (cand-nth cands 1) weight)]
+          [ready-p0 : i64 (struct-get (cand-nth cands 2) weight)]
+          [ready-p1 : i64 (struct-get (cand-nth cands 3) weight)]
+          [ready-plain : i64 (struct-get (cand-nth cands 4) weight)]
+          [triage-both : i64 (struct-get (cand-nth cands 5) weight)]
+          [triage-p0 : i64 (struct-get (cand-nth cands 6) weight)]
+          [triage-p1 : i64 (struct-get (cand-nth cands 7) weight)]
+          [triage-plain : i64 (struct-get (cand-nth cands 8) weight)]
           (begin
-            (if (= (cand-count cands) 2)
+            (if (= (cand-count cands) 9)
               unit
-              (io.panic "expected two issue candidates"))
-            (if (=
-              (struct-get (cand-nth cands 0) weight)
-              (+ implement-weight p0-priority-bonus))
+              (io.panic "expected one review and eight issue candidates"))
+            (if (= ready-both ready-p0)
               unit
-              (io.panic "issue with p0 and p1 should use p0 priority"))
-            (if (=
-              (struct-get (cand-nth cands 1) weight)
-              (+ implement-weight p1-priority-bonus))
+              (io.panic "ready p0 should take precedence over p1"))
+            (if (= triage-both triage-p0)
               unit
-              (io.panic "issue with only p1 should use p1 priority"))))]
+              (io.panic "triage p0 should take precedence over p1"))
+            (if (and (> ready-p0 ready-p1) (> ready-p1 ready-plain))
+              unit
+              (io.panic "ready priorities must order p0 above p1 above plain"))
+            (if (and (> triage-p0 triage-p1) (> triage-p1 triage-plain))
+              unit
+              (io.panic "triage priorities must order p0 above p1 above plain"))
+            (if (and
+              (> ready-p0 triage-p0)
+              (> ready-p1 triage-p1)
+              (> ready-plain triage-plain))
+              unit
+              (io.panic
+                "removing ready-for-implementation must lower every priority"))
+            (if (< triage-p0 review)
+              unit
+              (io.panic "even p0 triage must stay below PR review"))
+            (if (> ready-p0 review)
+              unit
+              (io.panic "ready p0 must retain its override above PR review"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test

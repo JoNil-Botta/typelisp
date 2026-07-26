@@ -6,8 +6,10 @@ set -eu
 # Benchmark metrics are exact. Each scalar TypeLisp benchmark is paired with
 # both auto-vectorized clang -O2 and scalar-fair clang -O2
 # -fno-vectorize/-fno-slp-vectorize rows. The self-compile metric carries a small
-# cross-runner tolerance because cachegrind counts differ between WSL and GitHub
-# hosted Linux runners even with fixed paths and a clean measured environment.
+# CI tolerance, but its absolute cachegrind count is not portable between local
+# WSL/Linux environments and GitHub-hosted Linux. Local comparisons therefore
+# report that row without gating it; reviewers measure branch deltas by running
+# measure-instruction-counts.sh on both trees on one host.
 #
 # That tolerance absorbs real drift as well as noise, and a tolerated result
 # never refreshes the baseline. Drift is therefore cumulative against a fixed
@@ -33,13 +35,18 @@ BENCHMARKS_ONLY=0
 SELF_COMPILE_ONLY=0
 SELF_TEST=0
 SEED_ARG=
+SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=0
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
+fi
 
 usage() {
     cat <<'EOF'
 usage: scripts/check-instruction-counts.sh [options] [typelisp-seed]
 
 Options:
-  --update-baseline    Regenerate the selected baseline TSV
+  --update-baseline    Regenerate the selected baseline TSV; selections that
+                       include self_compile are restricted to GitHub Actions
   --baseline FILE      Baseline TSV path (default: perf/insn-exec-baseline.tsv)
   --runs N             Cachegrind runs per metric (default: 1)
   --benchmarks LIST    Comma-separated benchmark names for the per-PR gate
@@ -204,6 +211,7 @@ function budget_used(delta, tolerance,    d) {
 BEGIN {
     print "metric | baseline | current | delta | pct | tolerance | status"
     stale = 0
+    unverified = 0
 }
 NR == FNR {
     if (FNR == 1 && $1 == "name") {
@@ -246,19 +254,25 @@ END {
         delta = (now + 0) - (base + 0)
         tolerance = tolerance_for(name, base)
         status = "ok"
-        if (delta > tolerance) {
-            status = "REGRESSION"
-            failed = 1
-        } else if (delta < -tolerance) {
-            status = "IMPROVEMENT"
-            failed = 1
-        } else if (delta != 0) {
-            status = "within-tolerance"
-        }
-        used = budget_used(delta, tolerance)
-        if (used >= stale_budget_pct) {
-            status = status " (" sprintf("%d", used) "% of tolerance)"
-            stale = 1
+        if (name == "self_compile/compile_cli_opt1" &&
+            self_compile_absolute_authoritative != 1) {
+            status = "local-absolute-unverified"
+            unverified = 1
+        } else {
+            if (delta > tolerance) {
+                status = "REGRESSION"
+                failed = 1
+            } else if (delta < -tolerance) {
+                status = "IMPROVEMENT"
+                failed = 1
+            } else if (delta != 0) {
+                status = "within-tolerance"
+            }
+            used = budget_used(delta, tolerance)
+            if (used >= stale_budget_pct) {
+                status = status " (" sprintf("%d", used) "% of tolerance)"
+                stale = 1
+            }
         }
         print name " | " base " | " now " | " signed(delta) " | " pct(delta, base + 0) " | " tolerance " | " status
     }
@@ -278,6 +292,13 @@ END {
         print "[ir-check] the accumulated total rather than its own cost. Refresh the row"
         print "[ir-check] against main before attributing a regression to a change. Refs #5641."
     }
+    if (unverified) {
+        print ""
+        print "[ir-check] local self_compile absolute counts are environment-specific and"
+        print "[ir-check] are not gated against the CI-owned baseline. Measure base and"
+        print "[ir-check] branch back to back on this host and compare their delta instead."
+        print "[ir-check] See perf/README.md. Refs #5757."
+    }
     exit failed ? 1 : 0
 }
 '
@@ -289,6 +310,7 @@ compare_counts() {
         -v self_compile_tolerance_ppm="$SELF_COMPILE_TOLERANCE_PPM" \
         -v benchmarks_only="$BENCHMARKS_ONLY" \
         -v self_compile_only="$SELF_COMPILE_ONLY" \
+        -v self_compile_absolute_authoritative="$SELF_COMPILE_ABSOLUTE_AUTHORITATIVE" \
         -v stale_budget_pct="$STALE_BUDGET_PCT" \
         "$IR_COMPARE_AWK" "$1" "$2"
 }
@@ -367,6 +389,60 @@ assert_baseline_refreshed() {
     fi
 }
 
+# The benchmark rows reproduce exactly across the supported local and CI
+# environments, but self_compile measures the complete compiler process and its
+# absolute count does not. Let local authors refresh benchmark selections while
+# keeping the CI-owned self_compile ratchet impossible to overwrite silently.
+assert_baseline_update_origin() {
+    _abuo_update=$1
+    _abuo_benchmarks_only=$2
+    _abuo_authoritative=$3
+    if [ "$_abuo_update" -eq 1 ] &&
+        [ "$_abuo_benchmarks_only" -eq 0 ] &&
+        [ "$_abuo_authoritative" -ne 1 ]; then
+        echo "[ir-check] refusing to update a self_compile baseline outside GitHub Actions" >&2
+        echo "[ir-check] its absolute count is environment-specific; local runs measure" >&2
+        echo "[ir-check] a delta between base and branch on the same host" >&2
+        echo "[ir-check] use --benchmarks-only for a local benchmark refresh; see perf/README.md" >&2
+        return 2
+    fi
+}
+
+# Merge only the rows selected for a partial refresh. In particular, a local
+# --benchmarks-only refresh must preserve the CI-owned self_compile row, just as
+# --self-compile-only already preserves every benchmark row.
+merge_baseline_rows() {
+    _mbr_current=$1
+    _mbr_baseline=$2
+    _mbr_output=$3
+    awk -F '\t' '
+    BEGIN { OFS = "\t" }
+    NR == FNR {
+        if (NF >= 2 && $1 != "name") {
+            if (!($1 in current)) {
+                current_order[++current_count] = $1
+            }
+            current[$1] = $2
+        }
+        next
+    }
+    $1 in current {
+        print $1, current[$1]
+        seen[$1] = 1
+        next
+    }
+    { print }
+    END {
+        for (i = 1; i <= current_count; i++) {
+            name = current_order[i]
+            if (!(name in seen)) {
+                print name, current[name]
+            }
+        }
+    }
+    ' "$_mbr_current" "$_mbr_baseline" > "$_mbr_output"
+}
+
 # Every TypeLisp benchmark row in a baseline must have both clang rows beside
 # it. Checking the *baseline* rather than the measurement is what keeps the hole
 # from reopening: a leg that stopped measuring scalar-fair rows, or a refresh
@@ -417,6 +493,9 @@ assert_scalar_fair_baseline() {
 self_test() {
     SELF_TEST_DIR=${TMPDIR:-/tmp}/ir-check-self-test.$$
     mkdir -p "$SELF_TEST_DIR"
+    # Exercise the CI gate semantics first. A separate case below pins the
+    # non-authoritative local rendering.
+    SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
     # 55356290376 is the committed self_compile baseline these cases were taken
     # against; 276781451 is its 0.5% tolerance.
     self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/base.tsv"
@@ -447,6 +526,53 @@ self_test() {
     self_test_case missing-row "$SELF_TEST_DIR/missing-row.tsv" \
         "missing-current" 1 no || _st_status=1
 
+    SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=0
+    set +e
+    _st_local_out=$(compare_counts \
+        "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/regressed.tsv" 2>&1)
+    _st_local_exit=$?
+    set -e
+    case "$_st_local_out" in
+        *"local-absolute-unverified"*"Measure base and"*"branch back to back"*) ;;
+        *)
+            echo "self-test local-unverified: missing local delta guidance" >&2
+            echo "$_st_local_out" >&2
+            _st_status=1
+            ;;
+    esac
+    if [ "$_st_local_exit" -ne 0 ]; then
+        echo "self-test local-unverified: exit $_st_local_exit, want 0" >&2
+        echo "$_st_local_out" >&2
+        _st_status=1
+    fi
+    SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
+
+    set +e
+    _st_update_out=$(assert_baseline_update_origin 1 0 0 2>&1)
+    _st_update_exit=$?
+    set -e
+    if [ "$_st_update_exit" -ne 2 ]; then
+        echo "self-test local-update: exit $_st_update_exit, want 2" >&2
+        echo "$_st_update_out" >&2
+        _st_status=1
+    fi
+    case "$_st_update_out" in
+        *"refusing to update a self_compile baseline"*) ;;
+        *)
+            echo "self-test local-update: missing refusal diagnostic" >&2
+            echo "$_st_update_out" >&2
+            _st_status=1
+            ;;
+    esac
+    if ! (assert_baseline_update_origin 1 1 0) >/dev/null 2>&1; then
+        echo "self-test benchmark-update: local benchmark refresh was rejected" >&2
+        _st_status=1
+    fi
+    if ! (assert_baseline_update_origin 1 0 1) >/dev/null 2>&1; then
+        echo "self-test ci-update: GitHub Actions self_compile refresh was rejected" >&2
+        _st_status=1
+    fi
+
     # The refresh guard: a baseline that was not actually rewritten must not
     # report success, which is the failure shape #5697 is about.
     printf 'self_compile/compile_cli_opt1\t1\n' \
@@ -467,6 +593,24 @@ self_test() {
     if ! (assert_baseline_refreshed "$SELF_TEST_DIR/refresh-written.tsv" \
         "$SELF_TEST_DIR/refresh-current.tsv") >/dev/null 2>&1; then
         echo "self-test refresh-written: a written baseline was rejected" >&2
+        _st_status=1
+    fi
+
+    printf 'name\tir_count\nself_compile/compile_cli_opt1\t10\nbenchmark/typelisp/a\t20\n' \
+        > "$SELF_TEST_DIR/merge-base.tsv"
+    printf 'benchmark/typelisp/a\t21\nbenchmark/c/a\t7\n' \
+        > "$SELF_TEST_DIR/merge-current.tsv"
+    merge_baseline_rows \
+        "$SELF_TEST_DIR/merge-current.tsv" \
+        "$SELF_TEST_DIR/merge-base.tsv" \
+        "$SELF_TEST_DIR/merge-result.tsv"
+    if ! awk -F '\t' '
+        $1 == "self_compile/compile_cli_opt1" && $2 == 10 { self = 1 }
+        $1 == "benchmark/typelisp/a" && $2 == 21 { tl = 1 }
+        $1 == "benchmark/c/a" && $2 == 7 { c = 1 }
+        END { exit self && tl && c ? 0 : 1 }
+    ' "$SELF_TEST_DIR/merge-result.tsv"; then
+        echo "self-test partial-refresh: selected rows did not merge while preserving self_compile" >&2
         _st_status=1
     fi
 
@@ -535,6 +679,11 @@ if [ "$BENCHMARKS_ONLY" -eq 1 ] && [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
     echo "--benchmarks-only and --self-compile-only are mutually exclusive" >&2
     exit 2
 fi
+
+assert_baseline_update_origin \
+    "$UPDATE_BASELINE" \
+    "$BENCHMARKS_ONLY" \
+    "$SELF_COMPILE_ABSOLUTE_AUTHORITATIVE"
 
 # Scalar-fair C rows are required of every benchmark leg, not of one baseline
 # file. This used to key off the baseline's *name*, which made the rows
@@ -666,33 +815,11 @@ NR == 1 { next }
 
 if [ "$UPDATE_BASELINE" -eq 1 ]; then
     mkdir -p "$(dirname -- "$BASELINE")"
-    if [ "$SELF_COMPILE_ONLY" -eq 1 ] && [ -f "$BASELINE" ]; then
-        # Rewrite only the self_compile row. benchmark/typelisp rows are
-        # deterministic and out of scope for a self-compile ratchet;
-        # benchmark/c and benchmark/c-scalar rows depend on the local clang
-        # version and must not absorb its noise.
-        awk -F '\t' '
-        BEGIN { OFS = "\t" }
-        NR == FNR {
-            if (NF >= 2 && $1 != "name") {
-                current[$1] = $2
-            }
-            next
-        }
-        $1 in current {
-            print $1, current[$1]
-            seen[$1] = 1
-            next
-        }
-        { print }
-        END {
-            for (name in current) {
-                if (!(name in seen)) {
-                    print name, current[name]
-                }
-            }
-        }
-        ' "$CURRENT" "$BASELINE" > "$BASELINE.tmp"
+    if [ -f "$BASELINE" ] &&
+        { [ "$SELF_COMPILE_ONLY" -eq 1 ] || [ "$BENCHMARKS_ONLY" -eq 1 ]; }; then
+        # Partial refreshes replace only selected rows. In particular, local
+        # benchmark refreshes preserve the CI-owned self_compile ratchet.
+        merge_baseline_rows "$CURRENT" "$BASELINE" "$BASELINE.tmp"
         mv "$BASELINE.tmp" "$BASELINE"
     else
         {

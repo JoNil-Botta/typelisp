@@ -3,11 +3,13 @@ set -eu
 
 # measure-instruction-counts.sh - local Linux cachegrind instruction counts.
 #
-# This is a deterministic measurement harness, not a CI gate. It measures the
-# full process under valgrind/cachegrind and records the `Ir` event (executed
+# This is a repeatable measurement harness, not a CI gate. It measures the full
+# process under valgrind/cachegrind and records the `Ir` event (executed
 # instructions) for TypeLisp benchmark binaries, their clang -O2 C baselines,
-# and for a compiler self-compile command. TypeLisp and self-compile rows retain
-# full-process measurement. C baselines start Cachegrind instrumentation at the
+# and for a compiler self-compile command. TypeLisp benchmark rows reproduce
+# across supported WSL/Linux and CI hosts. The full-process self_compile
+# absolute count is environment-specific; compare two trees back to back on one
+# host and use their delta. C baselines start Cachegrind instrumentation at the
 # C `main` boundary through benchmarks/cachegrind-region.c, excluding the
 # dynamically linked PIE startup path whose exact count varies across supported
 # local/CI loader environments.
@@ -270,6 +272,14 @@ fi
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
 }
+
+if [ "$SELF_TEST" -eq 0 ] &&
+    [ "$MEASURE_SELF_COMPILE" -eq 1 ] &&
+    [ "${GITHUB_ACTIONS:-}" != true ]; then
+    echo "[ir-count] note: local self_compile absolute counts are environment-specific" >&2
+    echo "[ir-count] measure base and branch back to back on this host and compare their delta" >&2
+    echo "[ir-count] the checked absolute baseline is owned by Linux CI; see perf/README.md" >&2
+fi
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR/bin" "$WORKDIR/logs"

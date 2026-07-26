@@ -26818,7 +26818,8 @@
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
-          (ast-type-strip-consuming-param
+          (ast-type-strip-consuming-param-with-pools
+            (tc-context-pools ctx)
             (ty-node-get
               (ast-type-list-get params index (ast-type-id-fallback))))]
         (if (tc-lifetime-subst-formal-inert? ctx want)
@@ -28967,7 +28968,8 @@
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
-          (ast-type-strip-consuming-param
+          (ast-type-strip-consuming-param-with-pools
+            (tc-context-pools ctx)
             (ty-node-get
               (ast-type-list-get params index (ast-type-id-fallback))))]
         (match (tc-call-effective-arg-expr ctx env arg want)
@@ -60319,15 +60321,19 @@
     (let
       [count : i64 (ast-decl-list-len (& items))]
       [slots : (Array AstDecl) (array.make-array AstDecl (+ reserve count))]
+      [reserved : AstDeclList (AstDeclList slots reserve count true)]
       (begin
         (ast-decl-list-copy-to
-          (&mut slots)
+          (&mut (struct-get reserved slots))
           (& (struct-get items slots))
           (struct-get items offset)
           reserve
           0
           count)
-        (AstDeclList slots reserve count true)))))
+        ;; Macro expansion reports diagnostics against this copied spine, so
+        ;; keep each source declaration's cold parser-origin record reachable.
+        (compiler-parse-decl-origin-register-list-aliases! (& reserved) 0 items)
+        reserved))))
 
 (define (macro-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -76517,7 +76523,8 @@
             out
             (AstParam.Param
               name
-              (ast-type-strip-consuming-param
+              (ast-type-strip-consuming-param-with-pools
+                (tc-context-pools ctx)
                 (tc-context-type-get
                   ctx
                   (ast-type-list-get types index (ast-type-id-fallback))))

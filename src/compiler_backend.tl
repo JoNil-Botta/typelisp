@@ -337,7 +337,7 @@
 ;;                orders of magnitude below 2^31 bytes and both halves stay
 ;;                non-negative, so the shifts never touch the sign bit.
 ;;  * `mnemonic`  mnemonic start in the low 32 bits, its length in the high 32.
-;;  * `flags`     the nine line predicates, one bit each.
+;;  * `flags`     the ten line predicates, one bit each.
 ;;  * `op-src-start` / `op-src-end` / `op-dst-start` the operand split. Only
 ;;                movq/zext lines split (the `has-operands` flag); the
 ;;                destination always runs to the line end, so it needs no field.
@@ -583,7 +583,10 @@
   (group-word-counts backend_string_i64_map.Map)
   ;; Aggregate type name -> bit mask of SSE-class words. Bit 0 marks
   ;; word0, bit 1 marks word1. A missing/zero mask means all INTEGER words.
-  (group-word-class-masks backend_string_i64_map.Map))
+  (group-word-class-masks backend_string_i64_map.Map)
+  ;; Explicit type-reader handle for this backend job. It is snapshotted from
+  ;; the job's pools once and then travels with the already-ubiquitous index.
+  (type-segment-bases i64))
 
 (defstruct CompilerBackendSourceSpanIndex
   (entries backend_i64_i64_map.Map)
@@ -759,6 +762,7 @@
 ;; stream. This context is the family-sized handoff that can become a field of
 ;; the per-job backend state tracked by #4963.
 (defstruct CompilerBackendEmissionContext
+  (type-segment-bases i64)
   (target CompilerBackendTarget)
   (function String)
   (source-function i64)
@@ -1526,6 +1530,7 @@
     [_ false]))
 
 (define (compiler-backend-avx2-shape-diagnostic
+  [type-segment-bases : i64]
   [instr-diag : CompilerDiagnostic]
   [elem-ty : AstType]
   [lanes : i64]) : ResultCompilerBackend
@@ -1537,7 +1542,7 @@
           "backend: unsupported AVX2 vector shape "
           (string.int->string lanes)
           " x "
-          (compiler-ir-type-name elem-ty))))))
+          (compiler-ir-type-name type-segment-bases elem-ty))))))
 
 (define compiler-backend-xmm-family-xmm : (Array String)
   (make-array
@@ -2053,6 +2058,16 @@
     [(AstType.F32) "vmovups"]
     [_ "vmovdqu"]))
 
+(define (compiler-backend-avx2-masked-move-mnemonic [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstType.I64) "vpmaskmovq"]
+    [(AstType.U64) "vpmaskmovq"]
+    [(AstType.F64) "vmaskmovpd"]
+    [(AstType.I32) "vpmaskmovd"]
+    [(AstType.U32) "vpmaskmovd"]
+    [(AstType.F32) "vmaskmovps"]
+    [_ ""]))
+
 (define (compiler-backend-avx2-vector-binop-mnemonic
   [op : CompilerIrBinOp]
   [elem-ty : AstType]) : String
@@ -2187,6 +2202,7 @@
   (compiler-backend-mem-base-address disp base-reg))
 
 (define (compiler-backend-simd-index-register-address
+  [type-segment-bases : i64]
   [base-reg : String]
   [index-reg : String]
   [elem-ty : AstType]) : String
@@ -2196,7 +2212,7 @@
     ","
     index-reg
     ","
-    (string.int->string (compiler-backend-type-size elem-ty))
+    (string.int->string (compiler-backend-type-size type-segment-bases elem-ty))
     ")"))
 
 (define (compiler-backend-simd-base-home
@@ -2246,6 +2262,7 @@
           (str_cat.str-cat "    movq " home ", " base-reg "\n"))))))
 
 (define (compiler-backend-emit-simd-indexed-address
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
@@ -2276,7 +2293,7 @@
                 base-asm
                 (compiler-backend-simd-offset-address
                   base-reg
-                  (* n (compiler-backend-type-size elem-ty)))))]
+                  (* n (compiler-backend-type-size type-segment-bases elem-ty)))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackendSimdIndexedAddress.Err message)])]
       [(option_i64.None)
@@ -2308,6 +2325,7 @@
                       (CompilerBackendSimdIndexedAddress
                         (string.append base-asm index-asm)
                         (compiler-backend-simd-index-register-address
+                          type-segment-bases
                           base-reg
                           index-reg
                           elem-ty)))]
@@ -2317,6 +2335,7 @@
                   (CompilerBackendSimdIndexedAddress
                     base-asm
                     (compiler-backend-simd-index-register-address
+                      type-segment-bases
                       base-reg
                       index-reg
                       elem-ty))))]
@@ -2324,6 +2343,7 @@
               (ResultCompilerBackendSimdIndexedAddress.Err message)]))])))
 
 (define (compiler-backend-emit-avx2-vector-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -2342,6 +2362,7 @@
       (compiler-backend-vector-spill-scratch "ymm" 0))
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
+          type-segment-bases
           assignments
           base
           index
@@ -2380,7 +2401,11 @@
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-stack-memory-operand
   [assignments : CompilerRegAssignmentList]
@@ -2600,6 +2625,7 @@
                 (ResultCompilerBackend.Err diag)])]))]))
 
 (define (compiler-backend-emit-avx2-splat
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]
@@ -2644,7 +2670,11 @@
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-avx2-i64-vector-mul
   [assignments : CompilerRegAssignmentList]
@@ -2793,6 +2823,7 @@
         (box (compiler-diagnostic-with-message instr-diag message)))]))
 
 (define (compiler-backend-emit-avx2-vector-binop
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -2887,9 +2918,14 @@
             [(ResultBackendVectorUse.Err message)
               (ResultCompilerBackend.Err
                 (box (compiler-diagnostic-with-message instr-diag message)))])]))
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-avx2-vector-binop-memory-source
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -2929,6 +2965,7 @@
                   (compiler-backend-vector-spill-scratch "ymm" 0))
                   [(ResultBackendReg.Ok dst-reg)
                     (match (compiler-backend-emit-simd-indexed-address
+                      type-segment-bases
                       assignments
                       base
                       index
@@ -2973,9 +3010,14 @@
           [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-avx2-vector-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
@@ -2997,6 +3039,7 @@
         (match value-use
           [(CompilerBackendVectorUse.Use value-asm value-reg)
             (match (compiler-backend-emit-simd-indexed-address
+              type-segment-bases
               assignments
               base
               index
@@ -3029,7 +3072,11 @@
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-avx512-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
   (match elem-ty
@@ -3046,6 +3093,7 @@
     [_ false]))
 
 (define (compiler-backend-avx512-shape-diagnostic
+  [type-segment-bases : i64]
   [instr-diag : CompilerDiagnostic]
   [elem-ty : AstType]
   [lanes : i64]) : ResultCompilerBackend
@@ -3057,7 +3105,7 @@
           "backend: unsupported AVX-512 vector shape "
           (string.int->string lanes)
           " x "
-          (compiler-ir-type-name elem-ty))))))
+          (compiler-ir-type-name type-segment-bases elem-ty))))))
 
 (define (compiler-backend-avx512-mask-value-reg
   [assignments : CompilerRegAssignmentList]
@@ -3654,6 +3702,7 @@
       avx2-buf)))
 
 (define (compiler-backend-emit-vector-lane-id
+  [type-segment-bases : i64]
   [_function : String]
   [_current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -3713,9 +3762,14 @@
         [(ResultBackendReg.Err message)
           (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))])
-      (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))))
+      (compiler-backend-avx512-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes))))
 
 (define (compiler-backend-emit-avx512-vector-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -3734,6 +3788,7 @@
       (compiler-backend-vector-spill-scratch "zmm" 0))
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
+          type-segment-bases
           assignments
           base
           index
@@ -3772,9 +3827,14 @@
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-avx512-splat
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]
@@ -3819,9 +3879,14 @@
       [(ResultBackendReg.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-vector-splat
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]
@@ -3832,6 +3897,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-splat
+      type-segment-bases
       assignments
       dst
       value
@@ -3841,6 +3907,7 @@
       planned-xmm
       instr-diag)
     (compiler-backend-emit-avx2-splat
+      type-segment-bases
       assignments
       dst
       value
@@ -3851,6 +3918,7 @@
       instr-diag)))
 
 (define (compiler-backend-emit-avx512-vector-binop
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -3927,9 +3995,14 @@
           [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-avx512-vector-binop-memory-source
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -3969,6 +4042,7 @@
                   (compiler-backend-vector-spill-scratch "zmm" 0))
                   [(ResultBackendReg.Ok dst-reg)
                     (match (compiler-backend-emit-simd-indexed-address
+                      type-segment-bases
                       assignments
                       base
                       index
@@ -4011,9 +4085,14 @@
           [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-avx512-vector-compare
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -4092,7 +4171,11 @@
           [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-avx2-mask-shape-ok? [lanes : i64]) : bool
   (or (= lanes 4) (= lanes 8) (= lanes 16) (= lanes 32)))
@@ -4340,6 +4423,7 @@
     [_ ""]))
 
 (define (compiler-backend-emit-avx2-vector-compare
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -4434,9 +4518,14 @@
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-vector-compare
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -4447,6 +4536,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-vector-compare
+      type-segment-bases
       assignments
       dst
       op
@@ -4456,6 +4546,7 @@
       elem-ty
       instr-diag)
     (compiler-backend-emit-avx512-vector-compare
+      type-segment-bases
       assignments
       dst
       op
@@ -4466,6 +4557,7 @@
       instr-diag)))
 
 (define (compiler-backend-emit-avx512-vector-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
@@ -4487,6 +4579,7 @@
         (match value-use
           [(CompilerBackendVectorUse.Use value-asm value-reg)
             (match (compiler-backend-emit-simd-indexed-address
+              type-segment-bases
               assignments
               base
               index
@@ -4519,9 +4612,14 @@
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-vector-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -4533,6 +4631,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-load
+      type-segment-bases
       assignments
       dst
       base
@@ -4543,6 +4642,7 @@
       planned-address-index
       instr-diag)
     (compiler-backend-emit-avx2-vector-load
+      type-segment-bases
       assignments
       dst
       base
@@ -4668,6 +4768,7 @@
       [(ResultCompilerBackend.Err diag) (ResultBackendGatherAdjust.Err diag)])))
 
 (define (compiler-backend-emit-avx2-gather-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -4687,7 +4788,11 @@
       (if dword
         (not (= lanes 8))
         (not (= lanes 4))))
-      (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)
+      (compiler-backend-avx2-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes)
       (match (compiler-backend-vector-dst-reg
         assignments
         dst
@@ -4696,6 +4801,7 @@
         (compiler-backend-vector-spill-scratch "ymm" 0))
         [(ResultBackendReg.Ok dst-reg)
           (match (compiler-backend-emit-simd-indexed-address
+            type-segment-bases
             assignments
             index-base
             (compiler-backend-gather-address-index index lane-offset)
@@ -4854,6 +4960,7 @@
             (box (compiler-diagnostic-with-message instr-diag message)))]))))
 
 (define (compiler-backend-emit-avx512-gather-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -4873,7 +4980,11 @@
       (if dword
         (not (= lanes 16))
         (not (= lanes 8))))
-      (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)
+      (compiler-backend-avx512-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes)
       (match (compiler-backend-vector-dst-reg
         assignments
         dst
@@ -4882,6 +4993,7 @@
         (compiler-backend-vector-spill-scratch "zmm" 0))
         [(ResultBackendReg.Ok dst-reg)
           (match (compiler-backend-emit-simd-indexed-address
+            type-segment-bases
             assignments
             index-base
             (compiler-backend-gather-address-index index lane-offset)
@@ -5006,6 +5118,7 @@
             (box (compiler-diagnostic-with-message instr-diag message)))]))))
 
 (define (compiler-backend-emit-gather-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -5019,6 +5132,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-gather-load
+      type-segment-bases
       assignments
       dst
       base
@@ -5031,6 +5145,7 @@
       planned-address-index
       instr-diag)
     (compiler-backend-emit-avx512-gather-load
+      type-segment-bases
       assignments
       dst
       base
@@ -5163,6 +5278,7 @@
           abort-label)))))
 
 (define (compiler-backend-emit-vector-shuffle
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [function : String]
   [current-label : i64]
@@ -5260,7 +5376,11 @@
         false
         program-index)]
     (if (not shape-ok)
-      (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)
+      (compiler-backend-avx2-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes)
       (if (or
         (and
           needs-high
@@ -5485,6 +5605,7 @@
               (box (compiler-diagnostic-with-message instr-diag message)))])))))
 
 (define (compiler-backend-emit-vector-binop
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -5495,6 +5616,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-binop
+      type-segment-bases
       assignments
       dst
       op
@@ -5504,6 +5626,7 @@
       elem-ty
       instr-diag)
     (compiler-backend-emit-avx2-vector-binop
+      type-segment-bases
       assignments
       dst
       op
@@ -5530,6 +5653,7 @@
       false)))
 
 (define (compiler-backend-emit-vector-binop-memory-source
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -5543,6 +5667,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-binop-memory-source
+      type-segment-bases
       assignments
       dst
       op
@@ -5555,6 +5680,7 @@
       planned-address-index
       instr-diag)
     (compiler-backend-emit-avx2-vector-binop-memory-source
+      type-segment-bases
       assignments
       dst
       op
@@ -5581,6 +5707,7 @@
       (CompilerBackendVectorMemFold.No))))
 
 (define (compiler-backend-vector-load-binop-foldable?
+  [type-segment-bases : i64]
   [use-counts : (Array i64)]
   [load-dst : i64]
   [load-lanes : i64]
@@ -5593,7 +5720,7 @@
   (and
     (compiler-backend-var-single-use? use-counts load-dst)
     (= load-lanes bin-lanes)
-    (opt-type-eq load-elem-ty bin-elem-ty)
+    (opt-type-eq type-segment-bases load-elem-ty bin-elem-ty)
     (compiler-backend-vector-binop-memory-source-supported?
       op
       bin-lanes
@@ -6559,6 +6686,7 @@
         "\n"))))
 
 (define (compiler-backend-emit-vector-reduce
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrVectorReduceOp]
@@ -6570,6 +6698,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-reduce
+      type-segment-bases
       assignments
       dst
       op
@@ -6580,6 +6709,7 @@
       planned-scratch-xmm
       instr-diag)
     (compiler-backend-emit-avx2-vector-reduce
+      type-segment-bases
       assignments
       dst
       op
@@ -6591,6 +6721,7 @@
       instr-diag)))
 
 (define (compiler-backend-emit-vector-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
@@ -6602,6 +6733,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-store
+      type-segment-bases
       assignments
       base
       index
@@ -6612,6 +6744,7 @@
       planned-address-index
       instr-diag)
     (compiler-backend-emit-avx2-vector-store
+      type-segment-bases
       assignments
       base
       index
@@ -6780,6 +6913,7 @@
               instr-diag)))])))
 
 (define (compiler-backend-emit-avx512-tail-mask
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -6789,7 +6923,11 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
-    (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.I64) lanes)
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (AstType.I64)
+      lanes)
     (match (compiler-backend-avx512-mask-dst-reg
       assignments
       dst
@@ -6863,6 +7001,7 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-predicated-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -6877,6 +7016,7 @@
     [(AstType.Bool) true]
     [_ false])
     (compiler-backend-emit-avx512-mask-load
+      type-segment-bases
       assignments
       dst
       base
@@ -6904,6 +7044,7 @@
                 (compiler-backend-vector-spill-scratch "zmm" 0))
                 [(ResultBackendReg.Ok dst-reg)
                   (match (compiler-backend-emit-simd-indexed-address
+                    type-segment-bases
                     assignments
                     base
                     index
@@ -6945,9 +7086,14 @@
         [(ResultBackendMaskUse.Err message)
           (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))])
-      (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))))
+      (compiler-backend-avx512-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes))))
 
 (define (compiler-backend-emit-avx512-predicated-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
@@ -6962,6 +7108,7 @@
     [(AstType.Bool) true]
     [_ false])
     (compiler-backend-emit-avx512-mask-store
+      type-segment-bases
       assignments
       base
       index
@@ -6992,6 +7139,7 @@
                   (match mask-use
                     [(CompilerBackendMaskUse.Use mask-asm mask-reg)
                       (match (compiler-backend-emit-simd-indexed-address
+                        type-segment-bases
                         assignments
                         base
                         index
@@ -7028,9 +7176,14 @@
         [(ResultBackendVectorUse.Err message)
           (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))])
-      (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))))
+      (compiler-backend-avx512-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        elem-ty
+        lanes))))
 
 (define (compiler-backend-emit-avx512-mask-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -7041,7 +7194,11 @@
   [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
-    (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.Bool) lanes)
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (AstType.Bool)
+      lanes)
     (match (compiler-backend-avx512-mask-dst-reg
       assignments
       dst
@@ -7058,6 +7215,7 @@
             (match mask-use
               [(CompilerBackendMaskUse.Use mask-asm mask-reg)
                 (match (compiler-backend-emit-simd-indexed-address
+                  type-segment-bases
                   assignments
                   base
                   index
@@ -7139,6 +7297,7 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-mask-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
@@ -7149,7 +7308,11 @@
   [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
-    (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.Bool) lanes)
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (AstType.Bool)
+      lanes)
     (match (compiler-backend-avx512-mask-register-use
       assignments
       value
@@ -7169,6 +7332,7 @@
                 (match mask-use
                   [(CompilerBackendMaskUse.Use mask-asm mask-reg)
                     (match (compiler-backend-emit-simd-indexed-address
+                      type-segment-bases
                       assignments
                       base
                       index
@@ -7344,6 +7508,7 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-mask-binop
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrMaskBinOp]
@@ -7352,7 +7517,11 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
-    (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.I64) lanes)
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (AstType.I64)
+      lanes)
     (if (or
       (compiler-backend-mask-value-spilled? assignments lhs)
       (compiler-backend-mask-value-spilled? assignments rhs)
@@ -7459,6 +7628,7 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-mask-not
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -7471,7 +7641,11 @@
     [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
     [mov-imm : String (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
     (if (= full-mask 0)
-      (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.I64) lanes)
+      (compiler-backend-avx512-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        (AstType.I64)
+        lanes)
       (if (or
         (compiler-backend-mask-value-spilled? assignments src)
         (compiler-backend-mask-dst-spilled? assignments dst))
@@ -7528,6 +7702,7 @@
               (box (compiler-diagnostic-with-message instr-diag message)))])))))
 
 (define (compiler-backend-emit-avx512-mask-reduce
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrMaskReduceOp]
@@ -7541,7 +7716,11 @@
     [kortest-op : String (compiler-backend-avx512-mask-kortest-mnemonic lanes)]
     [cmp-op : String (compiler-backend-avx512-mask-cmp-mnemonic lanes)]
     (if (= full-mask 0)
-      (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.I64) lanes)
+      (compiler-backend-avx512-shape-diagnostic
+        type-segment-bases
+        instr-diag
+        (AstType.I64)
+        lanes)
       (match (compiler-backend-avx512-mask-register-use
         assignments
         src
@@ -7603,6 +7782,7 @@
             (box (compiler-diagnostic-with-message instr-diag message)))]))))
 
 (define (compiler-backend-emit-avx512-select
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [mask : CompilerIrValue]
@@ -7788,7 +7968,11 @@
           [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-avx2-mask-binop-mnemonic [op : CompilerIrMaskBinOp]) : String
   (match op
@@ -7796,6 +7980,7 @@
     [(CompilerIrMaskBinOp.Or) "vpor"]))
 
 (define (compiler-backend-emit-avx2-mask-binop
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrMaskBinOp]
@@ -7804,7 +7989,11 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (not (compiler-backend-avx2-mask-shape-ok? lanes))
-    (compiler-backend-avx2-shape-diagnostic instr-diag (AstType.Bool) lanes)
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (AstType.Bool)
+      lanes)
     (match (compiler-backend-vector-register-use
       assignments
       lhs
@@ -7865,6 +8054,7 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-mask-binop
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrMaskBinOp]
@@ -7874,6 +8064,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-mask-binop
+      type-segment-bases
       assignments
       dst
       op
@@ -7882,6 +8073,7 @@
       lanes
       instr-diag)
     (compiler-backend-emit-avx512-mask-binop
+      type-segment-bases
       assignments
       dst
       op
@@ -7891,13 +8083,18 @@
       instr-diag)))
 
 (define (compiler-backend-emit-avx2-mask-not
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (not (compiler-backend-avx2-mask-shape-ok? lanes))
-    (compiler-backend-avx2-shape-diagnostic instr-diag (AstType.Bool) lanes)
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (AstType.Bool)
+      lanes)
     (match (compiler-backend-vector-register-use
       assignments
       src
@@ -7937,16 +8134,30 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-mask-not
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
-    (compiler-backend-emit-avx2-mask-not assignments dst src lanes instr-diag)
-    (compiler-backend-emit-avx512-mask-not assignments dst src lanes instr-diag)))
+    (compiler-backend-emit-avx2-mask-not
+      type-segment-bases
+      assignments
+      dst
+      src
+      lanes
+      instr-diag)
+    (compiler-backend-emit-avx512-mask-not
+      type-segment-bases
+      assignments
+      dst
+      src
+      lanes
+      instr-diag)))
 
 (define (compiler-backend-emit-avx2-mask-reduce
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrMaskReduceOp]
@@ -7954,7 +8165,11 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (not (compiler-backend-avx2-mask-shape-ok? lanes))
-    (compiler-backend-avx2-shape-diagnostic instr-diag (AstType.Bool) lanes)
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (AstType.Bool)
+      lanes)
     (match (compiler-backend-vector-register-use
       assignments
       src
@@ -7992,6 +8207,7 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-mask-reduce
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrMaskReduceOp]
@@ -8000,6 +8216,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-mask-reduce
+      type-segment-bases
       assignments
       dst
       op
@@ -8007,6 +8224,7 @@
       lanes
       instr-diag)
     (compiler-backend-emit-avx512-mask-reduce
+      type-segment-bases
       assignments
       dst
       op
@@ -8015,6 +8233,7 @@
       instr-diag)))
 
 (define (compiler-backend-emit-avx2-select
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [mask : CompilerIrValue]
@@ -8066,18 +8285,12 @@
                                     mask-asm
                                     false-asm
                                     true-asm
-                                    "    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpxor "
+                                    "    vpblendvb "
                                     mask-reg
-                                    ", %ymm1, %ymm1\n    vpand "
-                                    false-reg
-                                    ", %ymm1, %ymm1\n    vpand "
+                                    ", "
                                     true-reg
                                     ", "
-                                    mask-reg
-                                    ", "
-                                    dst-reg
-                                    "\n    vpor %ymm1, "
-                                    dst-reg
+                                    false-reg
                                     ", "
                                     dst-reg
                                     "\n"
@@ -8105,7 +8318,11 @@
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-load-value-asm
   [assignments : CompilerRegAssignmentList]
@@ -8116,6 +8333,7 @@
     [(ResultCompilerBackend.Err _) ""]))
 
 (define (compiler-backend-emit-scalar-select
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [condition : CompilerIrValue]
@@ -8146,7 +8364,7 @@
       ;; x86 conditional moves have no byte form.  Use the full GP home for
       ;; byte and Bool selects; all typed consumers observe the low byte.
       [cmov-ty : AstType
-        (if (= (compiler-backend-type-size ty) 1)
+        (if (= (compiler-backend-type-size type-segment-bases ty) 1)
           (AstType.U64)
           ty)]
       [result-reg : String
@@ -8178,10 +8396,13 @@
             "%r8"))]
       [conditional-operand : String
         (if (not (string.eq true-home ""))
-          (compiler-backend-sized-reg true-home cmov-ty)
+          (compiler-backend-sized-reg type-segment-bases true-home cmov-ty)
           (if (not (string.eq conditional-address ""))
             conditional-address
-            (compiler-backend-sized-reg conditional-reg cmov-ty)))]
+            (compiler-backend-sized-reg
+              type-segment-bases
+              conditional-reg
+              cmov-ty)))]
       [base-asm : String
         (compiler-backend-load-value-asm assignments on-false result-reg)]
       [conditional-asm : String
@@ -8217,11 +8438,12 @@
           "    cmovne "
           conditional-operand
           ", "
-          (compiler-backend-sized-reg result-reg cmov-ty)
+          (compiler-backend-sized-reg type-segment-bases result-reg cmov-ty)
           "\n"
           (compiler-backend-emit-store-var-with-plan assignments dst result-reg))))))
 
 (define (compiler-backend-emit-select
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [mask : CompilerIrValue]
@@ -8235,6 +8457,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= lanes 0)
     (compiler-backend-emit-scalar-select
+      type-segment-bases
       assignments
       dst
       mask
@@ -8247,6 +8470,7 @@
       instr-diag)
     (if (compiler-backend-current-mode-avx2?)
       (compiler-backend-emit-avx2-select
+        type-segment-bases
         assignments
         dst
         mask
@@ -8256,6 +8480,7 @@
         elem-ty
         instr-diag)
       (compiler-backend-emit-avx512-select
+        type-segment-bases
         assignments
         dst
         mask
@@ -8524,6 +8749,7 @@
         (str_cat.str-cat acc lane-asm)))))
 
 (define (compiler-backend-emit-avx2-predicated-load
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -8559,6 +8785,7 @@
               "%ymm14")
               [(ResultBackendReg.Ok dst-reg)
                 (match (compiler-backend-emit-simd-indexed-address
+                  type-segment-bases
                   assignments
                   base
                   index
@@ -8569,33 +8796,56 @@
                     (let
                       [addr-asm : String (struct-get addr-plan asm)]
                       [addr : String (struct-get addr-plan addr)]
-                      [lanes-asm : String
-                        (compiler-backend-avx2-predicated-load-lanes
-                          function
-                          current-label
-                          dst
-                          addr
-                          0
-                          lanes
-                          elem-ty
-                          "")]
-                      (ResultCompilerBackend.Ok
-                        (str_cat.str-cat
-                          mask-asm
-                          addr-asm
-                          "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n    vpmovmskb "
-                          mask-reg
-                          ", %r11d\n"
-                          lanes-asm
-                          "    vmovdqu (%rsp), "
-                          dst-reg
-                          "\n    addq $32, %rsp\n"
-                          (compiler-backend-vector-store-dst
-                            assignments
-                            dst
-                            "ymm"
-                            (AstType.I8)
-                            dst-reg))))]
+                      [masked-move : String
+                        (compiler-backend-avx2-masked-move-mnemonic elem-ty)]
+                      (if (string.eq masked-move "")
+                        (let
+                          [lanes-asm : String
+                            (compiler-backend-avx2-predicated-load-lanes
+                              function
+                              current-label
+                              dst
+                              addr
+                              0
+                              lanes
+                              elem-ty
+                              "")]
+                          (ResultCompilerBackend.Ok
+                            (str_cat.str-cat
+                              mask-asm
+                              addr-asm
+                              "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n    vpmovmskb "
+                              mask-reg
+                              ", %r11d\n"
+                              lanes-asm
+                              "    vmovdqu (%rsp), "
+                              dst-reg
+                              "\n    addq $32, %rsp\n"
+                              (compiler-backend-vector-store-dst
+                                assignments
+                                dst
+                                "ymm"
+                                (AstType.I8)
+                                dst-reg))))
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            mask-asm
+                            addr-asm
+                            "    "
+                            masked-move
+                            " "
+                            addr
+                            ", "
+                            mask-reg
+                            ", "
+                            dst-reg
+                            "\n"
+                            (compiler-backend-vector-store-dst
+                              assignments
+                              dst
+                              "ymm"
+                              elem-ty
+                              dst-reg)))))]
                   [(ResultCompilerBackendSimdIndexedAddress.Err message)
                     (ResultCompilerBackend.Err
                       (box
@@ -8608,9 +8858,14 @@
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-avx2-predicated-store
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -8639,6 +8894,7 @@
         (match mask-use
           [(CompilerBackendVectorUse.Use mask-asm mask-reg)
             (match (compiler-backend-emit-simd-indexed-address
+              type-segment-bases
               assignments
               base
               index
@@ -8700,28 +8956,47 @@
                       [(ResultBackendVectorUse.Ok value-use)
                         (match value-use
                           [(CompilerBackendVectorUse.Use value-asm value-reg)
-                            (ResultCompilerBackend.Ok
-                              (str_cat.str-cat
-                                value-asm
-                                mask-asm
-                                addr-asm
-                                "    subq $32, %rsp\n    vmovdqu "
-                                value-reg
-                                ", (%rsp)\n    vpmovmskb "
-                                mask-reg
-                                ", %r11d\n"
-                                (compiler-backend-avx2-predicated-store-lanes
-                                  function
-                                  current-label
-                                  (-
-                                    compiler-backend-emit-instr-post-base
-                                    compiler-backend-emit-current-count)
-                                  addr
-                                  0
-                                  lanes
-                                  elem-ty
-                                  "")
-                                "    addq $32, %rsp\n"))])]
+                            (let
+                              [masked-move : String
+                                (compiler-backend-avx2-masked-move-mnemonic
+                                  elem-ty)]
+                              (if (string.eq masked-move "")
+                                (ResultCompilerBackend.Ok
+                                  (str_cat.str-cat
+                                    value-asm
+                                    mask-asm
+                                    addr-asm
+                                    "    subq $32, %rsp\n    vmovdqu "
+                                    value-reg
+                                    ", (%rsp)\n    vpmovmskb "
+                                    mask-reg
+                                    ", %r11d\n"
+                                    (compiler-backend-avx2-predicated-store-lanes
+                                      function
+                                      current-label
+                                      (-
+                                        compiler-backend-emit-instr-post-base
+                                        compiler-backend-emit-current-count)
+                                      addr
+                                      0
+                                      lanes
+                                      elem-ty
+                                      "")
+                                    "    addq $32, %rsp\n"))
+                                (ResultCompilerBackend.Ok
+                                  (str_cat.str-cat
+                                    value-asm
+                                    mask-asm
+                                    addr-asm
+                                    "    "
+                                    masked-move
+                                    " "
+                                    value-reg
+                                    ", "
+                                    mask-reg
+                                    ", "
+                                    addr
+                                    "\n"))))])]
                       [(ResultBackendVectorUse.Err message)
                         (ResultCompilerBackend.Err
                           (box
@@ -8737,9 +9012,14 @@
       [(ResultBackendVectorUse.Err message)
         (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-predicated-load
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -8754,6 +9034,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-predicated-load
+      type-segment-bases
       function
       current-label
       assignments
@@ -8767,6 +9048,7 @@
       planned-address-index
       instr-diag)
     (compiler-backend-emit-avx512-predicated-load
+      type-segment-bases
       assignments
       dst
       base
@@ -8779,6 +9061,7 @@
       instr-diag)))
 
 (define (compiler-backend-emit-predicated-store
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -8793,6 +9076,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-predicated-store
+      type-segment-bases
       function
       current-label
       assignments
@@ -8806,6 +9090,7 @@
       planned-address-index
       instr-diag)
     (compiler-backend-emit-avx512-predicated-store
+      type-segment-bases
       assignments
       base
       index
@@ -8862,7 +9147,16 @@
         lanes
         (str_cat.str-cat acc lane-asm)))))
 
+(define (compiler-backend-avx2-qword-tail-mask-asm [dst-reg : String]) : String
+  (str_cat.str-cat
+    "    vmovq %r8, %xmm0\n    vpbroadcastq %xmm0, %ymm0\n    vpaddq "
+    (compiler-backend-avx2-i64-lane-id-label)
+    "(%rip), %ymm0, %ymm0\n    vmovq %r9, %xmm1\n    vpbroadcastq %xmm1, %ymm1\n    vpcmpgtq %ymm0, %ymm1, "
+    dst-reg
+    "\n"))
+
 (define (compiler-backend-emit-avx2-tail-mask
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -8872,7 +9166,11 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (not (compiler-backend-avx2-mask-shape-ok? lanes))
-    (compiler-backend-avx2-shape-diagnostic instr-diag (AstType.Bool) lanes)
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      (AstType.Bool)
+      lanes)
     (match (compiler-backend-vector-dst-reg
       assignments
       dst
@@ -8894,17 +9192,20 @@
                   (str_cat.str-cat
                     index-asm
                     end-asm
-                    "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n"
-                    (compiler-backend-avx2-tail-mask-fill-lanes
-                      function
-                      current-label
-                      dst
-                      0
-                      lanes
-                      "")
-                    "    vmovdqu (%rsp), "
-                    dst-reg
-                    "\n    addq $32, %rsp\n"
+                    (if (= lanes 4)
+                      (compiler-backend-avx2-qword-tail-mask-asm dst-reg)
+                      (str_cat.str-cat
+                        "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n"
+                        (compiler-backend-avx2-tail-mask-fill-lanes
+                          function
+                          current-label
+                          dst
+                          0
+                          lanes
+                          "")
+                        "    vmovdqu (%rsp), "
+                        dst-reg
+                        "\n    addq $32, %rsp\n"))
                     (compiler-backend-vector-store-dst
                       assignments
                       dst
@@ -8928,6 +9229,7 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-tail-mask
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -8938,6 +9240,7 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-tail-mask
+      type-segment-bases
       function
       current-label
       assignments
@@ -8947,6 +9250,7 @@
       lanes
       instr-diag)
     (compiler-backend-emit-avx512-tail-mask
+      type-segment-bases
       function
       current-label
       assignments
@@ -9493,6 +9797,7 @@
 ;; emission. Aggregate register groups are likewise left to the ordinary framed
 ;; path until their full ABI classifier can be represented here.
 (define (compiler-backend-shrinkwrap-incoming-fill!
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
   [int-index : i64]
@@ -9504,6 +9809,7 @@
     [(CompilerIrParamList.Nil) true]
     [(CompilerIrParamList.Array seq)
       (compiler-backend-shrinkwrap-incoming-fill!
+        type-segment-bases
         target
         (compiler-ir-param-seq-to-list seq)
         int-index
@@ -9514,7 +9820,7 @@
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var)
-          (if (compiler-backend-group-type? program-index ty)
+          (if (compiler-backend-group-type? type-segment-bases program-index ty)
             false
             (let
               [is-float : bool (compiler-backend-float-type? ty)]
@@ -9535,6 +9841,7 @@
                   float-index)]
               (if on-stack
                 (compiler-backend-shrinkwrap-incoming-fill!
+                  type-segment-bases
                   target
                   (box-get rest)
                   next-int
@@ -9558,6 +9865,7 @@
                         var
                         (CompilerRegLocation.Register reg))
                       (compiler-backend-shrinkwrap-incoming-fill!
+                        type-segment-bases
                         target
                         (box-get rest)
                         next-int
@@ -9568,6 +9876,7 @@
                   [(ResultBackendReg.Err _) false]))))])]))
 
 (define (compiler-backend-shrinkwrap-incoming-assignments
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
   [vars : i64]
@@ -9576,6 +9885,7 @@
     [table : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-make vars)]
     (if (compiler-backend-shrinkwrap-incoming-fill!
+      type-segment-bases
       target
       params
       0
@@ -9637,6 +9947,7 @@
 ;; be compare+branch or a bare return. Any drift returns "" and triggers the
 ;; existing unwrapped full-pipeline retry.
 (define (compiler-backend-shrinkwrap-prefix-asm
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
   [vars : i64]
@@ -9654,6 +9965,7 @@
     [selected : CompilerRegAssignmentList
       (if incoming?
         (compiler-backend-shrinkwrap-incoming-assignments
+          type-segment-bases
           target
           params
           vars
@@ -9716,6 +10028,7 @@
                                   selected
                                   rhs))
                                 (compiler-backend-emit-compare-branch
+                                  type-segment-bases
                                   selected
                                   function
                                   op
@@ -9757,6 +10070,7 @@
                             selected
                             maybe))
                           (compiler-backend-emit-return
+                            type-segment-bases
                             source-function
                             blocks
                             maybe
@@ -11142,7 +11456,7 @@
       (str_cat.str-cat "f" (string.int->string slot) "")]
     [(backend_i64_i64_map.LookupMissing) (compiler-backend-user-symbol-id name)]))
 
-(define (compiler-backend-type-size [ty : AstType]) : i64
+(define (compiler-backend-type-size [type-segment-bases : i64] [ty : AstType]) : i64
   (match ty
     [(AstType.I64) 8]
     [(AstType.U64) 8]
@@ -11170,7 +11484,9 @@
     [(AstType.Ref _ _) 8]
     [(AstType.MutRef _ _) 8]
     [(AstType.Region _ inner)
-      (compiler-backend-type-size (ast-node-pool-reader-type-get inner))]
+      (compiler-backend-type-size
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [(AstType.Enum _) 8]
     [(AstType.EnumArgs _ _) 8]
     [(AstType.Struct _) 8]
@@ -11181,7 +11497,9 @@
     [(AstType.Var _) 8]
     [(AstType.VarArgs _ _) 8]
     [(AstType.Consume inner)
-      (compiler-backend-type-size (ast-node-pool-reader-type-get inner))]))
+      (compiler-backend-type-size
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]))
 
 (define (compiler-backend-f64-type? [ty : AstType]) : bool
   (match ty
@@ -11479,34 +11797,43 @@
       (str-cat (compiler-backend-float-label ty bits) "(%rip)")]
     [_ ""]))
 
-(define (compiler-backend-float-bits-gp-reg [reg : String] [ty : AstType]) : String
-  (if (= (compiler-backend-type-size ty) 8)
+(define (compiler-backend-float-bits-gp-reg
+  [type-segment-bases : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (if (= (compiler-backend-type-size type-segment-bases ty) 8)
     reg
     (compiler-backend-reg-part reg 4)))
 
-(define (compiler-backend-float-bits-load-mnemonic [ty : AstType]) : String
-  (if (= (compiler-backend-type-size ty) 8)
+(define (compiler-backend-float-bits-load-mnemonic
+  [type-segment-bases : i64]
+  [ty : AstType]) : String
+  (if (= (compiler-backend-type-size type-segment-bases ty) 8)
     "movq"
     "movl"))
 
-(define (compiler-backend-float-bits-xmm-mnemonic [ty : AstType]) : String
-  (if (= (compiler-backend-type-size ty) 8)
+(define (compiler-backend-float-bits-xmm-mnemonic
+  [type-segment-bases : i64]
+  [ty : AstType]) : String
+  (if (= (compiler-backend-type-size type-segment-bases ty) 8)
     "movq"
     "movd"))
 
 (define (compiler-backend-emit-load-float-bits-to-gp
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [ty : AstType]
   [gp-reg : String]) : ResultCompilerBackend
   (let
     [xmm-reg : String (compiler-backend-float-value-register assignments value)]
-    [gp-part : String (compiler-backend-float-bits-gp-reg gp-reg ty)]
+    [gp-part : String
+      (compiler-backend-float-bits-gp-reg type-segment-bases gp-reg ty)]
     (if (not (string.eq xmm-reg ""))
       (ResultCompilerBackend.Ok
         (str-cat
           "    "
-          (compiler-backend-float-bits-xmm-mnemonic ty)
+          (compiler-backend-float-bits-xmm-mnemonic type-segment-bases ty)
           " "
           xmm-reg
           ", "
@@ -11519,7 +11846,7 @@
           (ResultCompilerBackend.Ok
             (str-cat
               "    "
-              (compiler-backend-float-bits-load-mnemonic ty)
+              (compiler-backend-float-bits-load-mnemonic type-segment-bases ty)
               " "
               mem
               ", "
@@ -11640,6 +11967,7 @@
             "backend: runtime-global marker used as an instruction value")))]))
 
 (define (compiler-backend-emit-load-typed-var-to-reg-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [id : i64]
   [ty : AstType]
@@ -11648,13 +11976,22 @@
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
-          (compiler-backend-emit-load-register-to-reg home ty reg)]
+          (compiler-backend-emit-load-register-to-reg
+            type-segment-bases
+            home
+            ty
+            reg)]
         ;; A whole register-group is loaded word-wise by the group
         ;; ABI paths; reaching the generic scalar load means word0's home.
         [(CompilerRegLocation.RegisterPair home _)
-          (compiler-backend-emit-load-register-to-reg home ty reg)]
+          (compiler-backend-emit-load-register-to-reg
+            type-segment-bases
+            home
+            ty
+            reg)]
         [(CompilerRegLocation.Spill offset)
           (compiler-backend-emit-load-memory-to-reg
+            type-segment-bases
             (compiler-backend-frame-offset offset)
             ty
             reg)]
@@ -11667,6 +12004,7 @@
             reg)])]
     [(CompilerRegMaybeLocation.No)
       (compiler-backend-emit-load-memory-to-reg
+        type-segment-bases
         (compiler-backend-slot id)
         ty
         reg)]))
@@ -11772,9 +12110,12 @@
     ""
     true))
 
-(define (compiler-backend-emit-load-memory [addr : String] [ty : AstType]) : String
+(define (compiler-backend-emit-load-memory
+  [type-segment-bases : i64]
+  [addr : String]
+  [ty : AstType]) : String
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     (cond
       [(= size 8) (str_cat.str-cat "    movq " addr ", %rax\n")]
       [(= size 4)
@@ -11858,11 +12199,12 @@
     [else (panic (string.append "backend: unsupported register part " reg))]))
 
 (define (compiler-backend-emit-load-memory-to-reg
+  [type-segment-bases : i64]
   [addr : String]
   [ty : AstType]
   [reg : String]) : String
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     (cond
       [(= size 8) (str_cat.str-cat "    movq " addr ", " reg "\n")]
       [(= size 4)
@@ -11885,11 +12227,12 @@
       [else ""])))
 
 (define (compiler-backend-emit-load-register-to-reg
+  [type-segment-bases : i64]
   [src-reg : String]
   [ty : AstType]
   [dst-reg : String]) : String
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     (cond
       [(= size 8)
         (if (string.eq src-reg dst-reg)
@@ -11939,15 +12282,19 @@
             "\n"))]
       [else ""])))
 
-(define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
-  (compiler-backend-emit-load-register-to-reg reg ty "%rax"))
+(define (compiler-backend-emit-load-register
+  [type-segment-bases : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (compiler-backend-emit-load-register-to-reg type-segment-bases reg ty "%rax"))
 
 (define (compiler-backend-emit-store-reg-to-memory
+  [type-segment-bases : i64]
   [addr : String]
   [reg : String]
   [ty : AstType]) : String
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     (cond
       [(= size 8) (str_cat.str-cat "    movq " reg ", " addr "\n")]
       [(= size 4)
@@ -11986,9 +12333,11 @@
     addr
     "\n"))
 
-(define (compiler-backend-store-immediate-mnemonic [ty : AstType]) : String
+(define (compiler-backend-store-immediate-mnemonic
+  [type-segment-bases : i64]
+  [ty : AstType]) : String
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     (cond
       [(= size 8) "movq"]
       [(= size 4) "movl"]
@@ -11997,6 +12346,7 @@
       [else ""])))
 
 (define (compiler-backend-emit-store-immediate-to-memory
+  [type-segment-bases : i64]
   [value : CompilerIrValue]
   [addr : String]
   [ty : AstType]) : CompilerBackendMaybeAsm
@@ -12005,7 +12355,8 @@
     (match (compiler-backend-immediate-operand value)
       [(CompilerBackendMaybeImmediate.Some imm)
         (let
-          [mnemonic : String (compiler-backend-store-immediate-mnemonic ty)]
+          [mnemonic : String
+            (compiler-backend-store-immediate-mnemonic type-segment-bases ty)]
           (if (string.eq mnemonic "")
             (CompilerBackendMaybeAsm.No)
             (CompilerBackendMaybeAsm.Some
@@ -12312,6 +12663,7 @@
     [_ ""]))
 
 (define (compiler-backend-emit-avx2-vector-reduce
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrVectorReduceOp]
@@ -12384,7 +12736,11 @@
           [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
-    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx2-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-avx512-vector-reduce-horizontal-asm
   [mnemonic : String]
@@ -12618,6 +12974,7 @@
     [_ ""]))
 
 (define (compiler-backend-emit-avx512-vector-reduce
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrVectorReduceOp]
@@ -12694,7 +13051,11 @@
           [(ResultBackendVectorUse.Err message)
             (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
-    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+    (compiler-backend-avx512-shape-diagnostic
+      type-segment-bases
+      instr-diag
+      elem-ty
+      lanes)))
 
 (define (compiler-backend-emit-store-typed-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -12769,6 +13130,7 @@
   (and (> (string.string-length dst) 0) (= (string.string-ref dst 0) '%')))
 
 (define (compiler-backend-emit-pack-word-immediate-store
+  [type-segment-bases : i64]
   [word : CompilerIrValue]
   [dst : String]
   [sse? : bool]) : CompilerBackendMaybeAsm
@@ -12776,7 +13138,11 @@
     (CompilerBackendMaybeAsm.No)
     (if (compiler-backend-pack-word-dst-register? dst)
       (compiler-backend-emit-load-immediate-to-reg word dst)
-      (compiler-backend-emit-store-immediate-to-memory word dst (AstType.I64)))))
+      (compiler-backend-emit-store-immediate-to-memory
+        type-segment-bases
+        word
+        dst
+        (AstType.I64)))))
 
 (define (compiler-backend-emit-load-pack-word-unless-immediate
   [assignments : CompilerRegAssignmentList]
@@ -12832,6 +13198,7 @@
     (compiler-backend-value-scalar-register assignments word)))
 
 (define (compiler-backend-emit-pack-words
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [w0 : CompilerIrValue]
   [w1 : CompilerIrValue]
@@ -12885,9 +13252,17 @@
               (compiler-backend-scavenge-reg-here scratch1-exclude 3 "%r9"))
             planned1)]
         [store0 : CompilerBackendMaybeAsm
-          (compiler-backend-emit-pack-word-immediate-store w0 dst0 sse0?)]
+          (compiler-backend-emit-pack-word-immediate-store
+            type-segment-bases
+            w0
+            dst0
+            sse0?)]
         [store1 : CompilerBackendMaybeAsm
-          (compiler-backend-emit-pack-word-immediate-store w1 dst1 sse1?)]
+          (compiler-backend-emit-pack-word-immediate-store
+            type-segment-bases
+            w1
+            dst1
+            sse1?)]
         (match (compiler-backend-emit-load-pack-word-unless-immediate
           assignments
           w0
@@ -12968,6 +13343,7 @@
       [(CompilerRegMaybeLocation.No) (compiler-backend-slot src)])))
 
 (define (compiler-backend-emit-pack
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [words : CompilerIrValueList]
@@ -12980,6 +13356,7 @@
   (match words
     [(CompilerIrValueList.Array seq)
       (compiler-backend-emit-pack
+        type-segment-bases
         assignments
         dst
         (compiler-ir-value-seq-to-list seq)
@@ -12993,6 +13370,7 @@
       (match (box-get rest0)
         [(CompilerIrValueList.Array seq)
           (compiler-backend-emit-pack
+            type-segment-bases
             assignments
             dst
             (compiler-ir-value-cons-linked
@@ -13007,14 +13385,23 @@
         [(CompilerIrValueList.Cons w1 _)
           (let
             [w0-sse : bool
-              (compiler-backend-group-word-sse? program-index ty 0)]
+              (compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                ty
+                0)]
             [w1-sse : bool
-              (compiler-backend-group-word-sse? program-index ty 1)]
+              (compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                ty
+                1)]
             (match (compiler-backend-emit-assignment-lookup assignments dst)
               [(CompilerRegMaybeLocation.Some location)
                 (match location
                   [(CompilerRegLocation.RegisterPair reg-a reg-b)
                     (compiler-backend-emit-pack-words
+                      type-segment-bases
                       assignments
                       w0
                       w1
@@ -13028,6 +13415,7 @@
                   [(CompilerRegLocation.Spill offset)
                     ;; spilled group: words at [offset] and [offset-8].
                     (compiler-backend-emit-pack-words
+                      type-segment-bases
                       assignments
                       w0
                       w1
@@ -13059,6 +13447,7 @@
                       vars)
                       [(ResultCompilerBackend.Ok dst1)
                         (compiler-backend-emit-pack-words
+                          type-segment-bases
                           assignments
                           w0
                           w1
@@ -13087,6 +13476,7 @@
 
 ;; Extract word `index` of a register-group value into `dst`'s home.
 (define (compiler-backend-emit-word
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -13126,7 +13516,7 @@
                     false
                     (if is-float
                       true
-                      (= (compiler-backend-type-size ty) 8)))
+                      (= (compiler-backend-type-size type-segment-bases ty) 8)))
                     (compiler-backend-emit-group-word-move
                       operand
                       dst-home
@@ -13235,6 +13625,7 @@
 ;; Load a group value's two words into `reg0`/`reg1` (for return -> rax:rdx
 ;; or an argument register pair). The value must be a group var.
 (define (compiler-backend-emit-group-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [reg0 : String]
@@ -13253,11 +13644,19 @@
                   (compiler-backend-emit-group-word-move
                     word0
                     reg0
-                    (compiler-backend-group-word-sse? program-index ty 0))
+                    (compiler-backend-group-word-sse?
+                      type-segment-bases
+                      program-index
+                      ty
+                      0))
                   (compiler-backend-emit-group-word-move
                     word1
                     reg1
-                    (compiler-backend-group-word-sse? program-index ty 1))))]
+                    (compiler-backend-group-word-sse?
+                      type-segment-bases
+                      program-index
+                      ty
+                      1))))]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)])]
         [(ResultCompilerBackend.Err message)
@@ -13272,6 +13671,7 @@
 ;; Store a group's two words FROM `reg0`/`reg1` into the group var's home
 ;; (for a call result captured in rax:rdx, or an incoming group parameter).
 (define (compiler-backend-emit-group-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [reg0 : String]
@@ -13288,28 +13688,42 @@
               (compiler-backend-emit-group-word-move
                 reg0
                 word0
-                (compiler-backend-group-word-sse? program-index ty 0))
+                (compiler-backend-group-word-sse?
+                  type-segment-bases
+                  program-index
+                  ty
+                  0))
               (compiler-backend-emit-group-word-move
                 reg1
                 word1
-                (compiler-backend-group-word-sse? program-index ty 1))))]
+                (compiler-backend-group-word-sse?
+                  type-segment-bases
+                  program-index
+                  ty
+                  1))))]
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackend.Err message)])]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-group-return-reg
+  [type-segment-bases : i64]
   [program-index : CompilerBackendProgramIndex]
   [ty : AstType]
   [word-index : i64]) : String
-  (if (compiler-backend-group-word-sse? program-index ty word-index)
+  (if (compiler-backend-group-word-sse?
+    type-segment-bases
+    program-index
+    ty
+    word-index)
     (if (and
       (= word-index 1)
-      (compiler-backend-group-word-sse? program-index ty 0))
+      (compiler-backend-group-word-sse? type-segment-bases program-index ty 0))
       "%xmm1"
       "%xmm0")
     (if (and
       (= word-index 1)
-      (not (compiler-backend-group-word-sse? program-index ty 0)))
+      (not
+        (compiler-backend-group-word-sse? type-segment-bases program-index ty 0)))
       "%rdx"
       "%rax")))
 
@@ -13317,11 +13731,13 @@
 ;; register may be any register free at this instruction; prefer the historical
 ;; %rdx staging register when it is free to keep common codegen unchanged.
 (define (compiler-backend-group-copy-reg1
+  [type-segment-bases : i64]
   [program-index : CompilerBackendProgramIndex]
   [ty : AstType]
   [reg0 : String]) : String
   (let
-    [abi-reg1 : String (compiler-backend-group-return-reg program-index ty 1)]
+    [abi-reg1 : String
+      (compiler-backend-group-return-reg type-segment-bases program-index ty 1)]
     (if (string.eq abi-reg1 "%rdx")
       (compiler-backend-scavenge-reg-here
         (compiler-backend-one-exclude reg0)
@@ -13339,6 +13755,7 @@
 ;; free. A true cross-word alias loads both words before either store; the
 ;; sequential case remains correct when scavenging must choose another register.
 (define (compiler-backend-emit-group-copy
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -13369,13 +13786,22 @@
                     [(ResultCompilerBackend.Ok dst1)
                       (let
                         [sse0? : bool
-                          (compiler-backend-group-word-sse? program-index ty 0)]
+                          (compiler-backend-group-word-sse?
+                            type-segment-bases
+                            program-index
+                            ty
+                            0)]
                         [sse1? : bool
-                          (compiler-backend-group-word-sse? program-index ty 1)]
+                          (compiler-backend-group-word-sse?
+                            type-segment-bases
+                            program-index
+                            ty
+                            1)]
                         [reg0 : String
                           (compiler-backend-group-copy-word-scratch sse0?)]
                         [reg1 : String
                           (compiler-backend-group-copy-reg1
+                            type-segment-bases
                             program-index
                             ty
                             reg0)]
@@ -13564,6 +13990,7 @@
             "backend: register-group call argument requires var operand")))]))
 
 (define (compiler-backend-emit-group-word-call-arg
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
@@ -13578,7 +14005,12 @@
   [program-index : CompilerBackendProgramIndex]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
-    [sse? : bool (compiler-backend-group-word-sse? program-index ty word-index)]
+    [sse? : bool
+      (compiler-backend-group-word-sse?
+        type-segment-bases
+        program-index
+        ty
+        word-index)]
     (if (compiler-backend-stack-call-arg-for-banks?
       target
       sse?
@@ -13625,6 +14057,7 @@
             (box (compiler-diagnostic-with-message func-diag message)))]))))
 
 (define (compiler-backend-emit-group-word-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [word-index : i64]
@@ -13638,10 +14071,15 @@
         (compiler-backend-emit-group-word-move
           reg
           operand
-          (compiler-backend-group-word-sse? program-index ty word-index)))]
+          (compiler-backend-group-word-sse?
+            type-segment-bases
+            program-index
+            ty
+            word-index)))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-group-word-param
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [var : i64]
@@ -13654,7 +14092,12 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
-    [sse? : bool (compiler-backend-group-word-sse? program-index ty word-index)]
+    [sse? : bool
+      (compiler-backend-group-word-sse?
+        type-segment-bases
+        program-index
+        ty
+        word-index)]
     (if (compiler-backend-stack-call-arg-for-banks?
       target
       sse?
@@ -13682,6 +14125,7 @@
         position)
         [(ResultBackendReg.Ok reg)
           (compiler-backend-emit-group-word-store
+            type-segment-bases
             assignments
             var
             word-index
@@ -13694,6 +14138,7 @@
             (box (compiler-diagnostic-at-start "" "backend: too many params")))]))))
 
 (define (compiler-backend-emit-load-typed-value-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [ty : AstType]
@@ -13723,15 +14168,22 @@
             (match location
               [(CompilerRegLocation.Register home)
                 (ResultCompilerBackend.Ok
-                  (compiler-backend-emit-load-register home ty))]
+                  (compiler-backend-emit-load-register
+                    type-segment-bases
+                    home
+                    ty))]
               ;; A whole register-group is loaded word-wise by the group
               ;; ABI paths; reaching the generic scalar load means word0's home.
               [(CompilerRegLocation.RegisterPair home _)
                 (ResultCompilerBackend.Ok
-                  (compiler-backend-emit-load-register home ty))]
+                  (compiler-backend-emit-load-register
+                    type-segment-bases
+                    home
+                    ty))]
               [(CompilerRegLocation.Spill offset)
                 (ResultCompilerBackend.Ok
                   (compiler-backend-emit-load-memory
+                    type-segment-bases
                     (compiler-backend-frame-offset offset)
                     ty))]
               ;; Rematerialise into %rax (this loader's implicit destination, as the
@@ -13743,10 +14195,14 @@
                   "%rax")])]
           [(CompilerRegMaybeLocation.No)
             (ResultCompilerBackend.Ok
-              (compiler-backend-emit-load-memory (compiler-backend-slot id) ty))])]
+              (compiler-backend-emit-load-memory
+                type-segment-bases
+                (compiler-backend-slot id)
+                ty))])]
       [(CompilerIrValue.Global name)
         (ResultCompilerBackend.Ok
           (compiler-backend-emit-load-memory
+            type-segment-bases
             (str_cat.str-cat
               (compiler-backend-global-symbol-index program-index name)
               "(%rip)"
@@ -13763,6 +14219,7 @@
       [_ (compiler-backend-emit-load-value-with-plan assignments value "%rax")])))
 
 (define (compiler-backend-emit-load-typed-value-to-reg-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [ty : AstType]
@@ -13790,6 +14247,7 @@
       [(CompilerIrValue.Var id)
         (ResultCompilerBackend.Ok
           (compiler-backend-emit-load-typed-var-to-reg-with-plan
+            type-segment-bases
             assignments
             id
             ty
@@ -13797,6 +14255,7 @@
       [(CompilerIrValue.Global name)
         (ResultCompilerBackend.Ok
           (compiler-backend-emit-load-memory-to-reg
+            type-segment-bases
             (str-cat
               (compiler-backend-global-symbol-index program-index name)
               "(%rip)"
@@ -14018,15 +14477,23 @@
       true
       (compiler-backend-value-float? types global-types rhs))))
 
-(define (compiler-backend-int-instruction-suffix [ty : AstType]) : String
+(define (compiler-backend-int-instruction-suffix
+  [type-segment-bases : i64]
+  [ty : AstType]) : String
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     (cond [(= size 1) "b"] [(= size 2) "w"] [(= size 4) "l"] [else "q"])))
 
-(define (compiler-backend-sized-reg [reg : String] [ty : AstType]) : String
-  (compiler-backend-reg-part reg (compiler-backend-type-size ty)))
+(define (compiler-backend-sized-reg
+  [type-segment-bases : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (compiler-backend-reg-part
+    reg
+    (compiler-backend-type-size type-segment-bases ty)))
 
 (define (compiler-backend-binop-reg-asm
+  [type-segment-bases : i64]
   [mnemonic : String]
   [ty : AstType]
   [rhs : String]
@@ -14035,12 +14502,13 @@
     (str_cat.str-cat
       "    "
       mnemonic
-      (compiler-backend-int-instruction-suffix ty)
+      (compiler-backend-int-instruction-suffix type-segment-bases ty)
       " "
       rhs)
     (str_cat.str-cat ", " lhs "\n")))
 
 (define (compiler-backend-binop-cmp-set-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [rhs : String]
   [lhs : String]
@@ -14050,7 +14518,7 @@
     [flags : String
       (str_cat.str-cat
         "    cmp"
-        (compiler-backend-int-instruction-suffix ty)
+        (compiler-backend-int-instruction-suffix type-segment-bases ty)
         " "
         rhs
         ", "
@@ -14070,13 +14538,14 @@
         "\n"))))
 
 (define (compiler-backend-binop-cmp-set-reg-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [rhs : String]
   [lhs : String]
   [setcc : String]
   [dst-reg : String]) : String
   (str_cat.str-cat
-    (compiler-backend-binop-cmp-reg-asm ty rhs lhs)
+    (compiler-backend-binop-cmp-reg-asm type-segment-bases ty rhs lhs)
     (str-cat
       "    "
       setcc
@@ -14095,22 +14564,29 @@
     [_ false]))
 
 (define (compiler-backend-binop-compare-flags-reg-asm
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [ty : AstType]
   [rhs : String]
   [lhs : String]) : String
   (if (compiler-backend-bit-test-op? op)
-    (compiler-backend-binop-reg-asm "test" ty rhs lhs)
-    (compiler-backend-binop-cmp-reg-asm ty rhs lhs)))
+    (compiler-backend-binop-reg-asm type-segment-bases "test" ty rhs lhs)
+    (compiler-backend-binop-cmp-reg-asm type-segment-bases ty rhs lhs)))
 
 (define (compiler-backend-binop-compare-set-reg-asm
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [ty : AstType]
   [rhs : String]
   [lhs : String]
   [dst-reg : String]) : String
   (str_cat.str-cat
-    (compiler-backend-binop-compare-flags-reg-asm op ty rhs lhs)
+    (compiler-backend-binop-compare-flags-reg-asm
+      type-segment-bases
+      op
+      ty
+      rhs
+      lhs)
     (str-cat
       "    "
       (compiler-backend-compare-setcc op ty)
@@ -14123,13 +14599,14 @@
       "\n")))
 
 (define (compiler-backend-binop-test-zero-reg-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [reg : String]
   [setcc : String]) : String
   (let
-    [lhs : String (compiler-backend-sized-reg reg ty)]
+    [lhs : String (compiler-backend-sized-reg type-segment-bases reg ty)]
     (str_cat.str-cat
-      (compiler-backend-binop-reg-asm "test" ty lhs lhs)
+      (compiler-backend-binop-reg-asm type-segment-bases "test" ty lhs lhs)
       (str-cat
         "    "
         setcc
@@ -14166,13 +14643,14 @@
     [_ ""]))
 
 (define (compiler-backend-binop-cmp-reg-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [rhs : String]
   [lhs : String]) : String
   (string.append
     (str_cat.str-cat
       "    cmp"
-      (compiler-backend-int-instruction-suffix ty)
+      (compiler-backend-int-instruction-suffix type-segment-bases ty)
       " "
       rhs
       ", ")
@@ -14188,9 +14666,11 @@
     (compiler-backend-emit-load-i64-immediate n reg)
     (str_cat.str-cat "    movabsq $" (string.int->string n) ", " reg "\n")))
 
-(define (compiler-backend-signed-min-value [ty : AstType]) : i64
+(define (compiler-backend-signed-min-value
+  [type-segment-bases : i64]
+  [ty : AstType]) : i64
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     (cond
       [(= size 1) (- 0 128)]
       [(= size 2) (- 0 32768)]
@@ -14198,15 +14678,18 @@
       [else (- (- 0 9223372036854775807) 1)])))
 
 (define (compiler-backend-div-zero-guard-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [divisor-reg : String]) : String
   (let
-    [rhs : String (compiler-backend-sized-reg divisor-reg ty)]
+    [rhs : String
+      (compiler-backend-sized-reg type-segment-bases divisor-reg ty)]
     (string.append
-      (compiler-backend-binop-reg-asm "test" ty rhs rhs)
+      (compiler-backend-binop-reg-asm type-segment-bases "test" ty rhs rhs)
       "    jne 1f\n    call tl_div_abort\n1:\n")))
 
 (define (compiler-backend-div-overflow-guard-asm-with-plan
+  [type-segment-bases : i64]
   [ty : AstType]
   [divisor-reg : String]
   [planned-min : String]
@@ -14231,51 +14714,68 @@
           neg-excl
           4
           "%r9")]
-      [lhs : String (compiler-backend-sized-reg "%rax" ty)]
-      [rhs : String (compiler-backend-sized-reg divisor-reg ty)]
-      [min-reg : String (compiler-backend-sized-reg min-full ty)]
-      [neg-one-reg : String (compiler-backend-sized-reg neg-full ty)]
+      [lhs : String (compiler-backend-sized-reg type-segment-bases "%rax" ty)]
+      [rhs : String
+        (compiler-backend-sized-reg type-segment-bases divisor-reg ty)]
+      [min-reg : String
+        (compiler-backend-sized-reg type-segment-bases min-full ty)]
+      [neg-one-reg : String
+        (compiler-backend-sized-reg type-segment-bases neg-full ty)]
       (string.append
         (compiler-backend-emit-load-i64-absolute
-          (compiler-backend-signed-min-value ty)
+          (compiler-backend-signed-min-value type-segment-bases ty)
           min-full)
         (string.append
-          (compiler-backend-binop-cmp-reg-asm ty min-reg lhs)
+          (compiler-backend-binop-cmp-reg-asm type-segment-bases ty min-reg lhs)
           (string.append
             "    jne 1f\n"
             (string.append
               (compiler-backend-emit-load-i64-absolute (- 0 1) neg-full)
               (string.append
-                (compiler-backend-binop-cmp-reg-asm ty neg-one-reg rhs)
+                (compiler-backend-binop-cmp-reg-asm
+                  type-segment-bases
+                  ty
+                  neg-one-reg
+                  rhs)
                 "    jne 1f\n    call tl_div_abort\n1:\n"))))))
     ""))
 
 (define (compiler-backend-div-overflow-guard-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [divisor-reg : String]) : String
-  (compiler-backend-div-overflow-guard-asm-with-plan ty divisor-reg "" ""))
+  (compiler-backend-div-overflow-guard-asm-with-plan
+    type-segment-bases
+    ty
+    divisor-reg
+    ""
+    ""))
 
 (define (compiler-backend-divmod-guard-asm-with-plan
+  [type-segment-bases : i64]
   [ty : AstType]
   [divisor-reg : String]
   [planned-min : String]
   [planned-neg : String]) : String
   (str-cat
-    (compiler-backend-div-zero-guard-asm ty divisor-reg)
+    (compiler-backend-div-zero-guard-asm type-segment-bases ty divisor-reg)
     (compiler-backend-div-overflow-guard-asm-with-plan
+      type-segment-bases
       ty
       divisor-reg
       planned-min
       planned-neg)))
 
 (define (compiler-backend-binop-divmod-core-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [want-remainder : bool]
   [divisor-reg : String]) : String
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     [signed : bool (compiler-backend-type-signed? ty)]
-    [divisor : String (compiler-backend-sized-reg divisor-reg ty)]
+    [divisor : String
+      (compiler-backend-sized-reg type-segment-bases divisor-reg ty)]
     (cond
       [(= size 1)
         (str_cat.str-cat
@@ -14311,6 +14811,7 @@
             ""))])))
 
 (define (compiler-backend-binop-divmod-asm-with-plan
+  [type-segment-bases : i64]
   [ty : AstType]
   [want-remainder : bool]
   [divisor-reg : String]
@@ -14318,17 +14819,24 @@
   [planned-neg : String]) : String
   (str-cat
     (compiler-backend-divmod-guard-asm-with-plan
+      type-segment-bases
       ty
       divisor-reg
       planned-min
       planned-neg)
-    (compiler-backend-binop-divmod-core-asm ty want-remainder divisor-reg)))
+    (compiler-backend-binop-divmod-core-asm
+      type-segment-bases
+      ty
+      want-remainder
+      divisor-reg)))
 
 (define (compiler-backend-binop-divmod-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [want-remainder : bool]
   [divisor-reg : String]) : String
   (compiler-backend-binop-divmod-asm-with-plan
+    type-segment-bases
     ty
     want-remainder
     divisor-reg
@@ -14848,12 +15356,14 @@
     [(CompilerIrBinOp.BitXor) true]
     [_ false]))
 
-(define (compiler-backend-const-hoist-instr-wide? [instr : CompilerIrInstr]) : bool
+(define (compiler-backend-const-hoist-instr-wide?
+  [type-segment-bases : i64]
+  [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.BinOp _ op _ rhs ty)
       (and
         (compiler-backend-const-hoist-wide-binop-op? op)
-        (= (compiler-backend-type-size ty) 8)
+        (= (compiler-backend-type-size type-segment-bases ty) 8)
         (match rhs
           [(CompilerIrValue.I64 n) (not (compiler-backend-imm32? n))]
           [_ false]))]
@@ -14863,14 +15373,16 @@
 ;; or 0 when it is not a hoist site. Div/mod returns its expansion's magic
 ;; value; ordinary 64-bit binops return a RHS literal that cannot use imm32.
 ;; Zero is never a candidate in either path.
-(define (compiler-backend-const-hoist-instr-constant [instr : CompilerIrInstr]) : i64
+(define (compiler-backend-const-hoist-instr-constant
+  [type-segment-bases : i64]
+  [instr : CompilerIrInstr]) : i64
   (match instr
     [(CompilerIrInstr.BinOp _ op _ rhs ty)
       (if (compiler-backend-const-hoist-divmod-op? op)
         (match (compiler-backend-value-as-i64 rhs)
           [(option_i64.Some n)
             (if (and
-              (= (compiler-backend-type-size ty) 8)
+              (= (compiler-backend-type-size type-segment-bases ty) 8)
               (compiler-backend-divmod-safe-literal-i64? n ty))
               (if (compiler-backend-type-signed? ty)
                 (compiler-backend-const-hoist-signed-magic n)
@@ -14879,7 +15391,7 @@
           [(option_i64.None) 0])
         (if (and
           (compiler-backend-const-hoist-wide-binop-op? op)
-          (= (compiler-backend-type-size ty) 8))
+          (= (compiler-backend-type-size type-segment-bases ty) 8))
           (match rhs
             [(CompilerIrValue.I64 n)
               (if (compiler-backend-imm32? n)
@@ -15172,6 +15684,7 @@
 
 ;; Cheap prescan: any constant-home candidate anywhere in the function?
 (define (compiler-backend-const-hoist-any-constant?
+  [type-segment-bases : i64]
   [orig : (Array CompilerIrBlock)]) : bool
   (let
     [n : i64 (array-length orig)]
@@ -15190,6 +15703,7 @@
                   (begin
                     (if (=
                       (compiler-backend-const-hoist-instr-constant
+                        type-segment-bases
                         (array-ref slots k))
                       0)
                       unit
@@ -15203,6 +15717,7 @@
 ;; Installs the site/injection globals and returns the synthetic occupancy
 ;; entries for the scavenge context.
 (define (compiler-backend-const-hoist-build!
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
@@ -15221,7 +15736,8 @@
           (match dense-blocks
             [(CompilerIrBlockList.Array seq) (struct-get seq slots)]
             [_ (array.make-array CompilerIrBlock 0)])]
-        (if (not (compiler-backend-const-hoist-any-constant? orig))
+        (if (not
+          (compiler-backend-const-hoist-any-constant? type-segment-bases orig))
           empty
           (let
             [ids : backend_label_i64_map.Map
@@ -15361,9 +15877,11 @@
                                                 (array-ref slots k)]
                                               [magic : i64
                                                 (compiler-backend-const-hoist-instr-constant
+                                                  type-segment-bases
                                                   instr)]
                                               [wide? : bool
                                                 (compiler-backend-const-hoist-instr-wide?
+                                                  type-segment-bases
                                                   instr)]
                                               [point : i64
                                                 (+ (array-ref points b) (* 2 k))]
@@ -16525,6 +17043,7 @@
       hoist)))
 
 (define (compiler-backend-constant-divmod-unguarded-asm
+  [type-segment-bases : i64]
   [n : i64]
   [ty : AstType]
   [want-remainder : bool]
@@ -16535,9 +17054,14 @@
         (compiler-backend-normalized-signed-immediate n ty)
         (cast (compiler-backend-normalized-unsigned-immediate n ty) : i64))
       scratch-reg)
-    (compiler-backend-binop-divmod-core-asm ty want-remainder scratch-reg)))
+    (compiler-backend-binop-divmod-core-asm
+      type-segment-bases
+      ty
+      want-remainder
+      scratch-reg)))
 
 (define (compiler-backend-constant-divmod-asm
+  [type-segment-bases : i64]
   [n : i64]
   [ty : AstType]
   [want-remainder : bool]
@@ -16548,9 +17072,10 @@
   (cond
     [(not (compiler-backend-divmod-safe-literal-i64? n ty))
       (CompilerBackendMaybeAsm.No)]
-    [(not (= (compiler-backend-type-size ty) 8))
+    [(not (= (compiler-backend-type-size type-segment-bases ty) 8))
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-constant-divmod-unguarded-asm
+          type-segment-bases
           n
           ty
           want-remainder
@@ -16570,6 +17095,7 @@
           [(CompilerBackendMaybeAsm.No)
             (CompilerBackendMaybeAsm.Some
               (compiler-backend-constant-divmod-unguarded-asm
+                type-segment-bases
                 n
                 ty
                 want-remainder
@@ -16598,12 +17124,14 @@
             [(CompilerBackendMaybeAsm.No)
               (CompilerBackendMaybeAsm.Some
                 (compiler-backend-constant-divmod-unguarded-asm
+                  type-segment-bases
                   n
                   ty
                   want-remainder
                   scratch-reg))])))]))
 
 (define (compiler-backend-constant-safe-divmod-asm
+  [type-segment-bases : i64]
   [n : i64]
   [ty : AstType]
   [want-remainder : bool]
@@ -16612,6 +17140,7 @@
   [mask-reg : String]
   [hoist : CompilerBackendConstHoistHome]) : CompilerBackendMaybeAsm
   (match (compiler-backend-constant-divmod-asm
+    type-segment-bases
     n
     ty
     want-remainder
@@ -16626,6 +17155,7 @@
         (= (compiler-backend-normalized-signed-immediate n ty) (- 0 1)))
         (CompilerBackendMaybeAsm.Some
           (compiler-backend-constant-divmod-unguarded-asm
+            type-segment-bases
             n
             ty
             want-remainder
@@ -16633,6 +17163,7 @@
         (CompilerBackendMaybeAsm.No))]))
 
 (define (compiler-backend-binop-literal-divmod-asm
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
@@ -16645,6 +17176,7 @@
       (match (compiler-backend-value-as-i64 rhs)
         [(option_i64.Some n)
           (compiler-backend-constant-divmod-asm
+            type-segment-bases
             n
             ty
             false
@@ -16657,6 +17189,7 @@
       (match (compiler-backend-value-as-i64 rhs)
         [(option_i64.Some n)
           (compiler-backend-constant-divmod-asm
+            type-segment-bases
             n
             ty
             true
@@ -16669,6 +17202,7 @@
       (match (compiler-backend-value-as-i64 rhs)
         [(option_i64.Some n)
           (compiler-backend-constant-safe-divmod-asm
+            type-segment-bases
             n
             ty
             false
@@ -16681,6 +17215,7 @@
       (match (compiler-backend-value-as-i64 rhs)
         [(option_i64.Some n)
           (compiler-backend-constant-safe-divmod-asm
+            type-segment-bases
             n
             ty
             true
@@ -16698,13 +17233,14 @@
     [_ false]))
 
 (define (compiler-backend-signed-literal-divmod-src-shape?
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
   (and
     (compiler-backend-const-hoist-divmod-op? op)
     (compiler-backend-type-signed? ty)
-    (= (compiler-backend-type-size ty) 8)
+    (= (compiler-backend-type-size type-segment-bases ty) 8)
     (match (compiler-backend-value-as-i64 rhs)
       [(option_i64.Some n)
         (and
@@ -16777,6 +17313,7 @@
 ;; this wrapper has the dividend in fixed %rax.  There is no saved-dividend +
 ;; sign-mask pair.  Unsigned and narrow paths retain their existing lowering.
 (define (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
@@ -16787,7 +17324,11 @@
   (let
     [hoist : CompilerBackendConstHoistHome (compiler-backend-const-hoist-here)]
     [hoist-reg : String (compiler-backend-magic-home-reg-name hoist)]
-    (if (compiler-backend-signed-literal-divmod-src-shape? op rhs ty)
+    (if (compiler-backend-signed-literal-divmod-src-shape?
+      type-segment-bases
+      op
+      rhs
+      ty)
       (let
         [needs-material : bool
           (compiler-backend-signed-literal-divmod-needs-material-reg?
@@ -16879,6 +17420,7 @@
               7)
             "%r9")]
         (compiler-backend-binop-literal-divmod-asm
+          type-segment-bases
           op
           rhs
           ty
@@ -16888,11 +17430,13 @@
           hoist)))))
 
 (define (compiler-backend-binop-literal-divmod-asm-dst
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
   [dst : i64]) : CompilerBackendMaybeAsm
   (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+    type-segment-bases
     op
     rhs
     ty
@@ -16905,6 +17449,7 @@
 ;; register is scavenged at the return point, so a pooled %r8 live across the fused
 ;; return is not clobbered by the constant-divmod sequence.
 (define (compiler-backend-binop-literal-divmod-asm-here-with-plan
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]
@@ -16915,7 +17460,11 @@
     ;; Tail-return position: never inside a hoisted loop region (a loop body
     ;; has no Ret), so no site lookup here.
     [hoist : CompilerBackendConstHoistHome (CompilerBackendNoConstHoistHome)]
-    (if (compiler-backend-signed-literal-divmod-src-shape? op rhs ty)
+    (if (compiler-backend-signed-literal-divmod-src-shape?
+      type-segment-bases
+      op
+      rhs
+      ty)
       (let
         [magic : String
           (if (compiler-backend-signed-literal-divmod-needs-material-reg?
@@ -16966,6 +17515,7 @@
             6
             "%r9")]
         (compiler-backend-binop-literal-divmod-asm
+          type-segment-bases
           op
           rhs
           ty
@@ -16975,18 +17525,36 @@
           hoist)))))
 
 (define (compiler-backend-binop-literal-divmod-asm-here
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]) : CompilerBackendMaybeAsm
-  (compiler-backend-binop-literal-divmod-asm-here-with-plan op rhs ty "" "" ""))
+  (compiler-backend-binop-literal-divmod-asm-here-with-plan
+    type-segment-bases
+    op
+    rhs
+    ty
+    ""
+    ""
+    ""))
 
-(define (compiler-backend-shift-count-width [ty : AstType]) : i64
-  (* (compiler-backend-type-size ty) 8))
+(define (compiler-backend-shift-count-width
+  [type-segment-bases : i64]
+  [ty : AstType]) : i64
+  (* (compiler-backend-type-size type-segment-bases ty) 8))
 
-(define (compiler-backend-shift-count-valid? [count : i64] [ty : AstType]) : bool
-  (and (>= count 0) (< count (compiler-backend-shift-count-width ty))))
+(define (compiler-backend-shift-count-valid?
+  [type-segment-bases : i64]
+  [count : i64]
+  [ty : AstType]) : bool
+  (and
+    (>= count 0)
+    (< count (compiler-backend-shift-count-width type-segment-bases ty))))
 
-(define (compiler-backend-shift-guard-asm [ty : AstType] [count-reg : String]) : String
+(define (compiler-backend-shift-guard-asm
+  [type-segment-bases : i64]
+  [ty : AstType]
+  [count-reg : String]) : String
   (string.append
     (str_cat.str-cat
       "    testq "
@@ -16996,7 +17564,7 @@
       "\n    jge 1f\n    call tl_shift_abort\n1:\n")
     (str_cat.str-cat
       "    cmpq $"
-      (int->string (compiler-backend-shift-count-width ty))
+      (int->string (compiler-backend-shift-count-width type-segment-bases ty))
       ", "
       count-reg
       "\n    jb 1f\n    call tl_shift_abort\n1:\n"
@@ -17004,6 +17572,7 @@
       "")))
 
 (define (compiler-backend-binop-shift-asm
+  [type-segment-bases : i64]
   [mnemonic : String]
   [ty : AstType]
   [lhs : String]
@@ -17016,18 +17585,19 @@
         ""
         (str_cat.str-cat "    movq " count-reg ", %rcx\n"))]
     (string.append
-      (compiler-backend-shift-guard-asm ty count-reg)
+      (compiler-backend-shift-guard-asm type-segment-bases ty count-reg)
       (string.append
         count-move
         (str_cat.str-cat
           "    "
           mnemonic
-          (compiler-backend-int-instruction-suffix ty)
+          (compiler-backend-int-instruction-suffix type-segment-bases ty)
           " %cl, "
           lhs
           "\n")))))
 
 (define (compiler-backend-binop-asm-with-plan
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [ty : AstType]
   [rhs-reg : String]
@@ -17035,18 +17605,23 @@
   [planned-min : String]
   [planned-neg : String]) : String
   (let
-    [lhs : String (compiler-backend-sized-reg staging-reg ty)]
-    [rhs : String (compiler-backend-sized-reg rhs-reg ty)]
-    [_suffix : String (compiler-backend-int-instruction-suffix ty)]
+    [lhs : String
+      (compiler-backend-sized-reg type-segment-bases staging-reg ty)]
+    [rhs : String (compiler-backend-sized-reg type-segment-bases rhs-reg ty)]
+    [_suffix : String
+      (compiler-backend-int-instruction-suffix type-segment-bases ty)]
     (match op
-      [(CompilerIrBinOp.Add) (compiler-backend-binop-reg-asm "add" ty rhs lhs)]
-      [(CompilerIrBinOp.Sub) (compiler-backend-binop-reg-asm "sub" ty rhs lhs)]
+      [(CompilerIrBinOp.Add)
+        (compiler-backend-binop-reg-asm type-segment-bases "add" ty rhs lhs)]
+      [(CompilerIrBinOp.Sub)
+        (compiler-backend-binop-reg-asm type-segment-bases "sub" ty rhs lhs)]
       [(CompilerIrBinOp.Mul)
-        (if (= (compiler-backend-type-size ty) 1)
+        (if (= (compiler-backend-type-size type-segment-bases ty) 1)
           (str-cat "    imulq " rhs-reg ", " staging-reg "\n")
-          (compiler-backend-binop-reg-asm "imul" ty rhs lhs))]
+          (compiler-backend-binop-reg-asm type-segment-bases "imul" ty rhs lhs))]
       [(CompilerIrBinOp.Div)
         (compiler-backend-binop-divmod-asm-with-plan
+          type-segment-bases
           ty
           false
           rhs-reg
@@ -17054,21 +17629,43 @@
           planned-neg)]
       [(CompilerIrBinOp.Mod)
         (compiler-backend-binop-divmod-asm-with-plan
+          type-segment-bases
           ty
           true
           rhs-reg
           planned-min
           planned-neg)]
       [(CompilerIrBinOp.SafeDiv)
-        (compiler-backend-binop-divmod-core-asm ty false rhs-reg)]
+        (compiler-backend-binop-divmod-core-asm
+          type-segment-bases
+          ty
+          false
+          rhs-reg)]
       [(CompilerIrBinOp.SafeMod)
-        (compiler-backend-binop-divmod-core-asm ty true rhs-reg)]
+        (compiler-backend-binop-divmod-core-asm
+          type-segment-bases
+          ty
+          true
+          rhs-reg)]
       [(CompilerIrBinOp.Eq)
-        (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete" staging-reg)]
+        (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
+          ty
+          rhs
+          lhs
+          "sete"
+          staging-reg)]
       [(CompilerIrBinOp.Ne)
-        (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne" staging-reg)]
+        (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
+          ty
+          rhs
+          lhs
+          "setne"
+          staging-reg)]
       [(CompilerIrBinOp.Lt)
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
           lhs
@@ -17078,6 +17675,7 @@
           staging-reg)]
       [(CompilerIrBinOp.Le)
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
           lhs
@@ -17087,6 +17685,7 @@
           staging-reg)]
       [(CompilerIrBinOp.Gt)
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
           lhs
@@ -17096,6 +17695,7 @@
           staging-reg)]
       [(CompilerIrBinOp.Ge)
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
           lhs
@@ -17104,20 +17704,41 @@
             "setge")
           staging-reg)]
       [(CompilerIrBinOp.BitTestEq)
-        (compiler-backend-binop-compare-set-reg-asm op ty rhs lhs staging-reg)]
+        (compiler-backend-binop-compare-set-reg-asm
+          type-segment-bases
+          op
+          ty
+          rhs
+          lhs
+          staging-reg)]
       [(CompilerIrBinOp.BitTestNe)
-        (compiler-backend-binop-compare-set-reg-asm op ty rhs lhs staging-reg)]
-      [(CompilerIrBinOp.And) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
-      [(CompilerIrBinOp.Or) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
+        (compiler-backend-binop-compare-set-reg-asm
+          type-segment-bases
+          op
+          ty
+          rhs
+          lhs
+          staging-reg)]
+      [(CompilerIrBinOp.And)
+        (compiler-backend-binop-reg-asm type-segment-bases "and" ty rhs lhs)]
+      [(CompilerIrBinOp.Or)
+        (compiler-backend-binop-reg-asm type-segment-bases "or" ty rhs lhs)]
       [(CompilerIrBinOp.BitAnd)
-        (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
-      [(CompilerIrBinOp.BitOr) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
+        (compiler-backend-binop-reg-asm type-segment-bases "and" ty rhs lhs)]
+      [(CompilerIrBinOp.BitOr)
+        (compiler-backend-binop-reg-asm type-segment-bases "or" ty rhs lhs)]
       [(CompilerIrBinOp.BitXor)
-        (compiler-backend-binop-reg-asm "xor" ty rhs lhs)]
+        (compiler-backend-binop-reg-asm type-segment-bases "xor" ty rhs lhs)]
       [(CompilerIrBinOp.Shl)
-        (compiler-backend-binop-shift-asm "shl" ty lhs rhs-reg)]
+        (compiler-backend-binop-shift-asm
+          type-segment-bases
+          "shl"
+          ty
+          lhs
+          rhs-reg)]
       [(CompilerIrBinOp.Shr)
         (compiler-backend-binop-shift-asm
+          type-segment-bases
           (if (compiler-backend-type-signed? ty)
             "sar"
             "shr")
@@ -17126,21 +17747,31 @@
           rhs-reg)])))
 
 (define (compiler-backend-binop-asm
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [ty : AstType]
   [rhs-reg : String]
   [staging-reg : String]) : String
-  (compiler-backend-binop-asm-with-plan op ty rhs-reg staging-reg "" ""))
+  (compiler-backend-binop-asm-with-plan
+    type-segment-bases
+    op
+    ty
+    rhs-reg
+    staging-reg
+    ""
+    ""))
 
 (define (compiler-backend-binop-test-zero-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [setcc : String]
   [staging-reg : String]
   [result-reg : String]) : String
   (let
-    [lhs : String (compiler-backend-sized-reg staging-reg ty)]
+    [lhs : String
+      (compiler-backend-sized-reg type-segment-bases staging-reg ty)]
     (string.append
-      (compiler-backend-binop-reg-asm "test" ty lhs lhs)
+      (compiler-backend-binop-reg-asm type-segment-bases "test" ty lhs lhs)
       (str_cat.str-cat
         "    "
         setcc
@@ -17153,6 +17784,7 @@
         "\n"))))
 
 (define (compiler-backend-binop-immediate-cmp-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [imm : String]
   [setcc : String]
@@ -17160,30 +17792,43 @@
   [result-reg : String]
   [rhs-zero? : bool]) : String
   (if rhs-zero?
-    (compiler-backend-binop-test-zero-asm ty setcc staging-reg result-reg)
+    (compiler-backend-binop-test-zero-asm
+      type-segment-bases
+      ty
+      setcc
+      staging-reg
+      result-reg)
     (compiler-backend-binop-cmp-set-asm
+      type-segment-bases
       ty
       imm
-      (compiler-backend-sized-reg staging-reg ty)
+      (compiler-backend-sized-reg type-segment-bases staging-reg ty)
       setcc
       result-reg)))
 
 (define (compiler-backend-binop-immediate-cmp-reg-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [imm : String]
   [setcc : String]
   [dst-reg : String]
   [rhs-zero? : bool]) : String
   (if rhs-zero?
-    (compiler-backend-binop-test-zero-reg-asm ty dst-reg setcc)
+    (compiler-backend-binop-test-zero-reg-asm
+      type-segment-bases
+      ty
+      dst-reg
+      setcc)
     (compiler-backend-binop-cmp-set-reg-asm
+      type-segment-bases
       ty
       imm
-      (compiler-backend-sized-reg dst-reg ty)
+      (compiler-backend-sized-reg type-segment-bases dst-reg ty)
       setcc
       dst-reg)))
 
 (define (compiler-backend-binop-immediate-shift-asm
+  [type-segment-bases : i64]
   [mnemonic : String]
   [ty : AstType]
   [imm : String]
@@ -17191,41 +17836,46 @@
   (let
     [count : i64
       (string.>int (string.substring imm 1 (- (string.string-length imm) 1)))]
-    (if (compiler-backend-shift-count-valid? count ty)
+    (if (compiler-backend-shift-count-valid? type-segment-bases count ty)
       (CompilerBackendMaybeAsm.Some
         (string.append
           (str_cat.str-cat
             "    "
             mnemonic
-            (compiler-backend-int-instruction-suffix ty)
+            (compiler-backend-int-instruction-suffix type-segment-bases ty)
             " "
             imm)
           (str_cat.str-cat
             ", "
-            (compiler-backend-sized-reg staging-reg ty)
+            (compiler-backend-sized-reg type-segment-bases staging-reg ty)
             "\n")))
       (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-binop-immediate-shift-reg-asm
+  [type-segment-bases : i64]
   [mnemonic : String]
   [ty : AstType]
   [imm : String]
   [dst-reg : String]) : CompilerBackendMaybeAsm
   (let
     [count : i64 (string.>int (substring imm 1 (- (string-length imm) 1)))]
-    (if (compiler-backend-shift-count-valid? count ty)
+    (if (compiler-backend-shift-count-valid? type-segment-bases count ty)
       (CompilerBackendMaybeAsm.Some
         (str_cat.str-cat
           (str-cat
             "    "
             mnemonic
-            (compiler-backend-int-instruction-suffix ty)
+            (compiler-backend-int-instruction-suffix type-segment-bases ty)
             " "
             imm)
-          (str-cat ", " (compiler-backend-sized-reg dst-reg ty) "\n")))
+          (str-cat
+            ", "
+            (compiler-backend-sized-reg type-segment-bases dst-reg ty)
+            "\n")))
       (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-binop-immediate-direct-reg-asm
+  [type-segment-bases : i64]
   [mnem : String]
   [op : CompilerIrBinOp]
   [ty : AstType]
@@ -17236,6 +17886,7 @@
     [(CompilerIrBinOp.Eq)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-reg-asm
+          type-segment-bases
           ty
           imm
           "sete"
@@ -17244,6 +17895,7 @@
     [(CompilerIrBinOp.Ne)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-reg-asm
+          type-segment-bases
           ty
           imm
           "setne"
@@ -17252,6 +17904,7 @@
     [(CompilerIrBinOp.Lt)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-reg-asm
+          type-segment-bases
           ty
           imm
           (compiler-backend-compare-setcc op ty)
@@ -17260,6 +17913,7 @@
     [(CompilerIrBinOp.Le)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-reg-asm
+          type-segment-bases
           ty
           imm
           (compiler-backend-compare-setcc op ty)
@@ -17268,6 +17922,7 @@
     [(CompilerIrBinOp.Gt)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-reg-asm
+          type-segment-bases
           ty
           imm
           (compiler-backend-compare-setcc op ty)
@@ -17276,6 +17931,7 @@
     [(CompilerIrBinOp.Ge)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-reg-asm
+          type-segment-bases
           ty
           imm
           (compiler-backend-compare-setcc op ty)
@@ -17284,23 +17940,31 @@
     [(CompilerIrBinOp.BitTestEq)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-compare-set-reg-asm
+          type-segment-bases
           op
           ty
           imm
-          (compiler-backend-sized-reg dst-reg ty)
+          (compiler-backend-sized-reg type-segment-bases dst-reg ty)
           dst-reg))]
     [(CompilerIrBinOp.BitTestNe)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-compare-set-reg-asm
+          type-segment-bases
           op
           ty
           imm
-          (compiler-backend-sized-reg dst-reg ty)
+          (compiler-backend-sized-reg type-segment-bases dst-reg ty)
           dst-reg))]
     [(CompilerIrBinOp.Shl)
-      (compiler-backend-binop-immediate-shift-reg-asm "shl" ty imm dst-reg)]
+      (compiler-backend-binop-immediate-shift-reg-asm
+        type-segment-bases
+        "shl"
+        ty
+        imm
+        dst-reg)]
     [(CompilerIrBinOp.Shr)
       (compiler-backend-binop-immediate-shift-reg-asm
+        type-segment-bases
         (if (compiler-backend-type-signed? ty)
           "sar"
           "shr")
@@ -17324,19 +17988,22 @@
               dst-reg
               "\n")
             (compiler-backend-binop-reg-asm
+              type-segment-bases
               mnem
               ty
               imm
-              (compiler-backend-sized-reg dst-reg ty)))))]
+              (compiler-backend-sized-reg type-segment-bases dst-reg ty)))))]
     [_
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
+          type-segment-bases
           mnem
           ty
           imm
-          (compiler-backend-sized-reg dst-reg ty)))]))
+          (compiler-backend-sized-reg type-segment-bases dst-reg ty)))]))
 
 (define (compiler-backend-emit-binop-direct-compare
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [dst-home : String]
@@ -17372,10 +18039,10 @@
     [rhs-operand : String
       (if (not (string.eq rhs-reg ""))
         (if (string.eq rhs-reg dst-home)
-          (compiler-backend-sized-reg scav-rhs ty)
-          (compiler-backend-sized-reg rhs-reg ty))
+          (compiler-backend-sized-reg type-segment-bases scav-rhs ty)
+          (compiler-backend-sized-reg type-segment-bases rhs-reg ty))
         (if (string.eq rhs-address "")
-          (compiler-backend-sized-reg scav-rhs ty)
+          (compiler-backend-sized-reg type-segment-bases scav-rhs ty)
           rhs-address))]
     (match (if rhs-load-needed
       (compiler-backend-emit-load-value-with-plan assignments rhs scav-rhs)
@@ -17392,16 +18059,18 @@
                 (str_cat.str-cat
                   lhs-asm
                   (compiler-backend-binop-compare-set-reg-asm
+                    type-segment-bases
                     op
                     ty
                     rhs-operand
-                    (compiler-backend-sized-reg dst-home ty)
+                    (compiler-backend-sized-reg type-segment-bases dst-home ty)
                     dst-home))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-binop-direct-rcx-shift
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst-home : String]
   [op : CompilerIrBinOp]
@@ -17421,12 +18090,12 @@
         (ResultCompilerBackend.Ok
           (str-cat
             lhs-asm
-            (compiler-backend-shift-guard-asm ty "%rcx")
+            (compiler-backend-shift-guard-asm type-segment-bases ty "%rcx")
             "    "
             mnemonic
-            (compiler-backend-int-instruction-suffix ty)
+            (compiler-backend-int-instruction-suffix type-segment-bases ty)
             " %cl, "
-            (compiler-backend-sized-reg dst-home ty)
+            (compiler-backend-sized-reg type-segment-bases dst-home ty)
             "\n"))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
@@ -17442,6 +18111,7 @@
     [_ ""]))
 
 (define (compiler-backend-emit-binop-spill-direct-shift
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -17495,9 +18165,13 @@
                   lhs-asm
                   (str_cat.str-cat
                     (compiler-backend-binop-shift-asm
+                      type-segment-bases
                       (compiler-backend-binop-shift-mnemonic op operand-ty)
                       operand-ty
-                      (compiler-backend-sized-reg result-reg operand-ty)
+                      (compiler-backend-sized-reg
+                        type-segment-bases
+                        result-reg
+                        operand-ty)
                       count-reg)
                     (compiler-backend-emit-store-typed-var-with-plan
                       assignments
@@ -17509,17 +18183,20 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-binop-immediate-reg-asm
+  [type-segment-bases : i64]
   [mnemonic : String]
   [ty : AstType]
   [imm : String]
   [staging-reg : String]) : String
   (compiler-backend-binop-reg-asm
+    type-segment-bases
     mnemonic
     ty
     imm
-    (compiler-backend-sized-reg staging-reg ty)))
+    (compiler-backend-sized-reg type-segment-bases staging-reg ty)))
 
 (define (compiler-backend-binop-immediate-asm
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [imm : String]
   [ty : AstType]
@@ -17529,18 +18206,34 @@
   (match op
     [(CompilerIrBinOp.Add)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-immediate-reg-asm "add" ty imm staging-reg))]
+        (compiler-backend-binop-immediate-reg-asm
+          type-segment-bases
+          "add"
+          ty
+          imm
+          staging-reg))]
     [(CompilerIrBinOp.Sub)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-immediate-reg-asm "sub" ty imm staging-reg))]
+        (compiler-backend-binop-immediate-reg-asm
+          type-segment-bases
+          "sub"
+          ty
+          imm
+          staging-reg))]
     [(CompilerIrBinOp.Mul)
       (CompilerBackendMaybeAsm.Some
-        (if (= (compiler-backend-type-size ty) 1)
+        (if (= (compiler-backend-type-size type-segment-bases ty) 1)
           (str_cat.str-cat "    imulq " imm ", " staging-reg "\n")
-          (compiler-backend-binop-immediate-reg-asm "imul" ty imm staging-reg)))]
+          (compiler-backend-binop-immediate-reg-asm
+            type-segment-bases
+            "imul"
+            ty
+            imm
+            staging-reg)))]
     [(CompilerIrBinOp.Eq)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
+          type-segment-bases
           ty
           imm
           "sete"
@@ -17550,6 +18243,7 @@
     [(CompilerIrBinOp.Ne)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
+          type-segment-bases
           ty
           imm
           "setne"
@@ -17559,6 +18253,7 @@
     [(CompilerIrBinOp.Lt)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
+          type-segment-bases
           ty
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
@@ -17570,6 +18265,7 @@
     [(CompilerIrBinOp.Le)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
+          type-segment-bases
           ty
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
@@ -17581,6 +18277,7 @@
     [(CompilerIrBinOp.Gt)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
+          type-segment-bases
           ty
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
@@ -17592,6 +18289,7 @@
     [(CompilerIrBinOp.Ge)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
+          type-segment-bases
           ty
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
@@ -17602,13 +18300,23 @@
           rhs-zero?))]
     [(CompilerIrBinOp.And)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-immediate-reg-asm "and" ty imm staging-reg))]
+        (compiler-backend-binop-immediate-reg-asm
+          type-segment-bases
+          "and"
+          ty
+          imm
+          staging-reg))]
     [(CompilerIrBinOp.Or)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-immediate-reg-asm "or" ty imm staging-reg))]
+        (compiler-backend-binop-immediate-reg-asm
+          type-segment-bases
+          "or"
+          ty
+          imm
+          staging-reg))]
     [(CompilerIrBinOp.BitAnd)
       (let
-        [size : i64 (compiler-backend-type-size ty)]
+        [size : i64 (compiler-backend-type-size type-segment-bases ty)]
         (CompilerBackendMaybeAsm.Some
           (if (string.eq imm "$255")
             (if (= size 8)
@@ -17639,20 +18347,37 @@
                   (compiler-backend-reg-part result-reg 4)
                   "\n"))
               (compiler-backend-binop-immediate-reg-asm
+                type-segment-bases
                 "and"
                 ty
                 imm
                 staging-reg)))))]
     [(CompilerIrBinOp.BitOr)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-immediate-reg-asm "or" ty imm staging-reg))]
+        (compiler-backend-binop-immediate-reg-asm
+          type-segment-bases
+          "or"
+          ty
+          imm
+          staging-reg))]
     [(CompilerIrBinOp.BitXor)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-immediate-reg-asm "xor" ty imm staging-reg))]
+        (compiler-backend-binop-immediate-reg-asm
+          type-segment-bases
+          "xor"
+          ty
+          imm
+          staging-reg))]
     [(CompilerIrBinOp.Shl)
-      (compiler-backend-binop-immediate-shift-asm "shl" ty imm staging-reg)]
+      (compiler-backend-binop-immediate-shift-asm
+        type-segment-bases
+        "shl"
+        ty
+        imm
+        staging-reg)]
     [(CompilerIrBinOp.Shr)
       (compiler-backend-binop-immediate-shift-asm
+        type-segment-bases
         (if (compiler-backend-type-signed? ty)
           "sar"
           "shr")
@@ -18115,11 +18840,12 @@
     [_ ""]))
 
 (define (compiler-backend-binop-direct-width-ok?
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [ty : AstType]) : bool
   (not
     (and
-      (= (compiler-backend-type-size ty) 1)
+      (= (compiler-backend-type-size type-segment-bases ty) 1)
       (match op
         [(CompilerIrBinOp.Mul) true]
         [_ false]))))
@@ -18131,6 +18857,7 @@
     [_ false]))
 
 (define (compiler-backend-binop-valid-immediate-shift?
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
@@ -18138,6 +18865,7 @@
     (match (compiler-backend-immediate-operand rhs)
       [(CompilerBackendMaybeImmediate.Some imm)
         (compiler-backend-shift-count-valid?
+          type-segment-bases
           (string.>int (substring imm 1 (- (string-length imm) 1)))
           ty)]
       [(CompilerBackendMaybeImmediate.No) false])
@@ -18197,6 +18925,7 @@
   (string.substring imm 1 (- (string.string-length imm) 1)))
 
 (define (compiler-backend-binop-source-asm
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [ty : AstType]
   [rhs : String]
@@ -18205,48 +18934,54 @@
     [(CompilerIrBinOp.Add)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
+          type-segment-bases
           "add"
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)))]
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
     [(CompilerIrBinOp.Sub)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
+          type-segment-bases
           "sub"
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)))]
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
     [(CompilerIrBinOp.Mul)
-      (if (= (compiler-backend-type-size ty) 1)
+      (if (= (compiler-backend-type-size type-segment-bases ty) 1)
         (CompilerBackendMaybeAsm.No)
         (CompilerBackendMaybeAsm.Some
           (compiler-backend-binop-reg-asm
+            type-segment-bases
             "imul"
             ty
             rhs
-            (compiler-backend-sized-reg staging-reg ty))))]
+            (compiler-backend-sized-reg type-segment-bases staging-reg ty))))]
     [(CompilerIrBinOp.Eq)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)
           "sete"
           staging-reg))]
     [(CompilerIrBinOp.Ne)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)
           "setne"
           staging-reg))]
     [(CompilerIrBinOp.Lt)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
             "setl")
@@ -18254,9 +18989,10 @@
     [(CompilerIrBinOp.Le)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
             "setle")
@@ -18264,9 +19000,10 @@
     [(CompilerIrBinOp.Gt)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
             "setg")
@@ -18274,9 +19011,10 @@
     [(CompilerIrBinOp.Ge)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
+          type-segment-bases
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
             "setge")
@@ -18284,54 +19022,61 @@
     [(CompilerIrBinOp.BitTestEq)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-compare-set-reg-asm
+          type-segment-bases
           op
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)
           staging-reg))]
     [(CompilerIrBinOp.BitTestNe)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-compare-set-reg-asm
+          type-segment-bases
           op
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)
           staging-reg))]
     [(CompilerIrBinOp.And)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
+          type-segment-bases
           "and"
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)))]
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
     [(CompilerIrBinOp.Or)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
+          type-segment-bases
           "or"
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)))]
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
     [(CompilerIrBinOp.BitAnd)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
+          type-segment-bases
           "and"
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)))]
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
     [(CompilerIrBinOp.BitOr)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
+          type-segment-bases
           "or"
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)))]
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
     [(CompilerIrBinOp.BitXor)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
+          type-segment-bases
           "xor"
           ty
           rhs
-          (compiler-backend-sized-reg staging-reg ty)))]
+          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
     [_ (CompilerBackendMaybeAsm.No)]))
 
 ;; Strength-reduce a three-operand constant multiply: a SIB-scale power of two
@@ -18413,6 +19158,7 @@
     [_ (CompilerBackendMaybeAsm.No)]))
 
 (define (compiler-backend-emit-binop-direct-immediate
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst-home : String]
   [mnem : String]
@@ -18425,7 +19171,7 @@
     [lhs-reg : String (compiler-backend-value-scalar-register assignments lhs)]
     (if (and
       (not (string.eq lhs-reg ""))
-      (= (compiler-backend-type-size ty) 8)
+      (= (compiler-backend-type-size type-segment-bases ty) 8)
       (match op
         [(CompilerIrBinOp.Mul) true]
         [_ false]))
@@ -18439,7 +19185,7 @@
         (not (string.eq lhs-reg "%rbp"))
         (not (string.eq lhs-reg dst-home))
         (not (string.eq imm "$0"))
-        (= (compiler-backend-type-size ty) 8))
+        (= (compiler-backend-type-size type-segment-bases ty) 8))
         (compiler-backend-binop-immediate-lea-asm op lhs-reg dst-home imm rhs)
         (CompilerBackendMaybeAsm.No))
         [(CompilerBackendMaybeAsm.Some lea-asm)
@@ -18456,6 +19202,7 @@
               (let
                 [op-asm : String
                   (match (compiler-backend-binop-immediate-direct-reg-asm
+                    type-segment-bases
                     mnem
                     op
                     ty
@@ -18469,6 +19216,7 @@
               (ResultCompilerBackend.Err message)])]))))
 
 (define (compiler-backend-binop-direct-immediate-ok?
+  [type-segment-bases : i64]
   [mnem : String]
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
@@ -18476,9 +19224,10 @@
   (or
     (compiler-backend-compare-op? op)
     (not (string.eq mnem ""))
-    (compiler-backend-binop-valid-immediate-shift? op rhs ty)))
+    (compiler-backend-binop-valid-immediate-shift? type-segment-bases op rhs ty)))
 
 (define (compiler-backend-emit-binop-spill-direct-immediate
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [mnem : String]
@@ -18503,6 +19252,7 @@
       result-reg)
       [(ResultCompilerBackend.Ok lhs-asm)
         (match (compiler-backend-binop-immediate-direct-reg-asm
+          type-segment-bases
           mnem
           op
           operand-ty
@@ -18528,16 +19278,18 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-binop-spill-source-operand
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [rhs : CompilerIrValue]
   [ty : AstType]) : String
   (let
     [rhs-reg : String (compiler-backend-value-scalar-register assignments rhs)]
     (if (not (string.eq rhs-reg ""))
-      (compiler-backend-sized-reg rhs-reg ty)
+      (compiler-backend-sized-reg type-segment-bases rhs-reg ty)
       (compiler-backend-value-stack-address assignments rhs))))
 
 (define (compiler-backend-emit-binop-spill-direct-source
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [mnem : String]
@@ -18550,7 +19302,11 @@
   (let
     [rhs-reg : String (compiler-backend-value-scalar-register assignments rhs)]
     [rhs-operand : String
-      (compiler-backend-binop-spill-source-operand assignments rhs operand-ty)]
+      (compiler-backend-binop-spill-source-operand
+        type-segment-bases
+        assignments
+        rhs
+        operand-ty)]
     [exclude : (Array String)
       (if (string.eq rhs-reg "")
         (compiler-backend-binop-scavenge-exclude-for-op op)
@@ -18575,16 +19331,24 @@
           [op-asm : String
             (if (compiler-backend-compare-op? op)
               (compiler-backend-binop-compare-set-reg-asm
+                type-segment-bases
                 op
                 operand-ty
                 rhs-operand
-                (compiler-backend-sized-reg result-reg operand-ty)
+                (compiler-backend-sized-reg
+                  type-segment-bases
+                  result-reg
+                  operand-ty)
                 result-reg)
               (compiler-backend-binop-reg-asm
+                type-segment-bases
                 mnem
                 operand-ty
                 rhs-operand
-                (compiler-backend-sized-reg result-reg operand-ty)))]
+                (compiler-backend-sized-reg
+                  type-segment-bases
+                  result-reg
+                  operand-ty)))]
           (ResultCompilerBackend.Ok
             (str-cat
               lhs-asm
@@ -18782,6 +19546,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-binop-with-plan
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [assignments : CompilerRegAssignmentList]
@@ -18907,6 +19672,7 @@
         (compiler-reg-clobber-binop-shift? op rhs operand-ty)
         (not (compiler-backend-binop-rcx-shift? assignments op rhs dst-home)))
         (compiler-backend-emit-binop-spill-direct-shift
+          type-segment-bases
           assignments
           dst
           op
@@ -18920,15 +19686,22 @@
           (match (compiler-backend-immediate-operand rhs)
             [(CompilerBackendMaybeImmediate.Some _)
               (and
-                (compiler-backend-binop-direct-width-ok? op operand-ty)
+                (compiler-backend-binop-direct-width-ok?
+                  type-segment-bases
+                  op
+                  operand-ty)
                 (compiler-backend-binop-direct-immediate-ok?
+                  type-segment-bases
                   mnem
                   op
                   rhs
                   operand-ty))]
             [(CompilerBackendMaybeImmediate.No)
               (and
-                (compiler-backend-binop-direct-width-ok? op operand-ty)
+                (compiler-backend-binop-direct-width-ok?
+                  type-segment-bases
+                  op
+                  operand-ty)
                 (or
                   (compiler-backend-compare-op? op)
                   (not (string.eq mnem ""))
@@ -18936,6 +19709,7 @@
                 (not
                   (string.eq
                     (compiler-backend-binop-spill-source-operand
+                      type-segment-bases
                       assignments
                       rhs
                       operand-ty)
@@ -18943,10 +19717,14 @@
           (or
             (compiler-backend-compare-op? op)
             (and
-              (compiler-backend-binop-direct-width-ok? op operand-ty)
+              (compiler-backend-binop-direct-width-ok?
+                type-segment-bases
+                op
+                operand-ty)
               (or
                 (not (string.eq mnem ""))
                 (compiler-backend-binop-valid-immediate-shift?
+                  type-segment-bases
                   op
                   rhs
                   operand-ty)
@@ -18963,6 +19741,7 @@
             [(CompilerBackendMaybeImmediate.Some imm)
               (if (string.eq dst-home "")
                 (compiler-backend-emit-binop-spill-direct-immediate
+                  type-segment-bases
                   assignments
                   dst
                   mnem
@@ -18974,6 +19753,7 @@
                   imm
                   planned0)
                 (compiler-backend-emit-binop-direct-immediate
+                  type-segment-bases
                   assignments
                   dst-home
                   mnem
@@ -18988,6 +19768,7 @@
                     (string.eq dst-home "")
                     (compiler-backend-binop-shift-op? op))
                   (compiler-backend-emit-binop-spill-direct-shift
+                    type-segment-bases
                     assignments
                     dst
                     op
@@ -18999,6 +19780,7 @@
                     planned1)]
                 [(string.eq dst-home "")
                   (compiler-backend-emit-binop-spill-direct-source
+                    type-segment-bases
                     assignments
                     dst
                     mnem
@@ -19010,6 +19792,7 @@
                     planned0)]
                 [(compiler-backend-compare-op? op)
                   (compiler-backend-emit-binop-direct-compare
+                    type-segment-bases
                     assignments
                     dst
                     dst-home
@@ -19020,6 +19803,7 @@
                     planned0)]
                 [(compiler-backend-binop-shift-op? op)
                   (compiler-backend-emit-binop-direct-rcx-shift
+                    type-segment-bases
                     assignments
                     dst-home
                     op
@@ -19051,10 +19835,14 @@
                     [rhs-operand : String
                       (if (string.eq rhs-hoist "")
                         (compiler-backend-binop-spill-source-operand
+                          type-segment-bases
                           assignments
                           rhs
                           operand-ty)
-                        (compiler-backend-sized-reg rhs-hoist operand-ty))]
+                        (compiler-backend-sized-reg
+                          type-segment-bases
+                          rhs-hoist
+                          operand-ty))]
                     ;; lint-allow: nested-if-ladder
                     (if (and
                       (or
@@ -19070,10 +19858,17 @@
                       ;; scav path below.
                       (ResultCompilerBackend.Ok
                         (compiler-backend-binop-reg-asm
+                          type-segment-bases
                           mnem
                           operand-ty
-                          (compiler-backend-sized-reg lhs-reg operand-ty)
-                          (compiler-backend-sized-reg dst-home operand-ty)))
+                          (compiler-backend-sized-reg
+                            type-segment-bases
+                            lhs-reg
+                            operand-ty)
+                          (compiler-backend-sized-reg
+                            type-segment-bases
+                            dst-home
+                            operand-ty)))
                       (if (and
                         (string.eq mnem "add")
                         (not (string.eq lhs-reg ""))
@@ -19124,10 +19919,12 @@
                                 (string.append
                                   lhs-asm
                                   (compiler-backend-binop-reg-asm
+                                    type-segment-bases
                                     mnem
                                     operand-ty
                                     rhs-operand
                                     (compiler-backend-sized-reg
+                                      type-segment-bases
                                       dst-home
                                       operand-ty))))]
                             [(ResultCompilerBackend.Err message)
@@ -19148,12 +19945,15 @@
                                       (string.append
                                         lhs-asm
                                         (compiler-backend-binop-reg-asm
+                                          type-segment-bases
                                           mnem
                                           operand-ty
                                           (compiler-backend-sized-reg
+                                            type-segment-bases
                                             scav-rhs
                                             operand-ty)
                                           (compiler-backend-sized-reg
+                                            type-segment-bases
                                             dst-home
                                             operand-ty)))))]
                                 [(ResultCompilerBackend.Err message)
@@ -19161,6 +19961,7 @@
                             [(ResultCompilerBackend.Err message)
                               (ResultCompilerBackend.Err message)])))))])])
           (if (compiler-backend-signed-literal-divmod-src-shape?
+            type-segment-bases
             op
             rhs
             operand-ty)
@@ -19196,6 +19997,7 @@
                 staging)
                 [(ResultCompilerBackend.Ok lhs-asm)
                   (match (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+                    type-segment-bases
                     op
                     rhs
                     operand-ty
@@ -19218,6 +20020,7 @@
                       (match (compiler-backend-immediate-operand rhs)
                         [(CompilerBackendMaybeImmediate.Some imm)
                           (match (compiler-backend-binop-immediate-asm
+                            type-segment-bases
                             op
                             imm
                             operand-ty
@@ -19260,6 +20063,7 @@
                                           rhs-asm
                                           (string.append
                                             (compiler-backend-binop-asm-with-plan
+                                              type-segment-bases
                                               op
                                               operand-ty
                                               scav-rhs
@@ -19281,6 +20085,7 @@
                                 rhs)]
                             (if (not (string.eq rhs-address ""))
                               (match (compiler-backend-binop-source-asm
+                                type-segment-bases
                                 op
                                 operand-ty
                                 rhs-address
@@ -19321,6 +20126,7 @@
                                               rhs-asm
                                               (string.append
                                                 (compiler-backend-binop-asm-with-plan
+                                                  type-segment-bases
                                                   op
                                                   operand-ty
                                                   scav-rhs
@@ -19384,9 +20190,11 @@
                                   false
                                   (not (string.eq rhs-reg staging)))
                                   (compiler-backend-binop-source-asm
+                                    type-segment-bases
                                     op
                                     operand-ty
                                     (compiler-backend-sized-reg
+                                      type-segment-bases
                                       rhs-reg
                                       operand-ty)
                                     staging)
@@ -19416,6 +20224,7 @@
                                                 lhs-asm
                                                 (string.append
                                                   (compiler-backend-binop-asm-with-plan
+                                                    type-segment-bases
                                                     op
                                                     operand-ty
                                                     scav-rhs
@@ -19433,6 +20242,7 @@
                                                 rhs-asm
                                                 (string.append
                                                   (compiler-backend-binop-asm-with-plan
+                                                    type-segment-bases
                                                     op
                                                     operand-ty
                                                     scav-rhs
@@ -19450,6 +20260,7 @@
                   (ResultCompilerBackend.Err message)]))))))))
 
 (define (compiler-backend-emit-binop
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [assignments : CompilerRegAssignmentList]
@@ -19459,6 +20270,7 @@
   [rhs : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop-with-plan
+    type-segment-bases
     types
     global-types
     assignments
@@ -19513,6 +20325,7 @@
     ""))
 
 (define (compiler-backend-emit-binop-rax-rhs
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -19523,7 +20336,11 @@
   [planned-magic : String]
   [planned-dividend : String]
   [planned-mask : String]) : ResultCompilerBackend
-  (if (compiler-backend-signed-literal-divmod-src-shape? op rhs operand-ty)
+  (if (compiler-backend-signed-literal-divmod-src-shape?
+    type-segment-bases
+    op
+    rhs
+    operand-ty)
     (let
       [store : String
         (compiler-backend-binop-result-store
@@ -19532,6 +20349,7 @@
           result-ty
           store-result)]
       (match (compiler-backend-binop-literal-divmod-asm-dst-with-plan
+        type-segment-bases
         op
         rhs
         operand-ty
@@ -19578,6 +20396,7 @@
       ;; Stack-only path (empty-assignments gate) -- const-hoist never plans
       ;; sites here, so no magic home lookup.
       (match (compiler-backend-binop-literal-divmod-asm
+        type-segment-bases
         op
         rhs
         operand-ty
@@ -19591,6 +20410,7 @@
           (match (compiler-backend-immediate-operand rhs)
             [(CompilerBackendMaybeImmediate.Some imm)
               (match (compiler-backend-binop-immediate-asm
+                type-segment-bases
                 op
                 imm
                 operand-ty
@@ -19610,6 +20430,7 @@
                           rhs-asm
                           (string.append
                             (compiler-backend-binop-asm-with-plan
+                              type-segment-bases
                               op
                               operand-ty
                               scav-rhs
@@ -19630,6 +20451,7 @@
                       rhs-asm
                       (string.append
                         (compiler-backend-binop-asm-with-plan
+                          type-segment-bases
                           op
                           operand-ty
                           scav-rhs
@@ -19641,6 +20463,7 @@
                   (ResultCompilerBackend.Err message)])])]))))
 
 (define (compiler-backend-emit-binop-to-rax
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [assignments : CompilerRegAssignmentList]
@@ -19669,6 +20492,7 @@
       (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
         [(ResultCompilerBackend.Ok lhs-asm)
           (match (compiler-backend-emit-binop-rax-rhs
+            type-segment-bases
             assignments
             dst
             op
@@ -19686,6 +20510,7 @@
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackend.Err message)]))
     (compiler-backend-emit-binop-with-plan
+      type-segment-bases
       types
       global-types
       assignments
@@ -19701,6 +20526,7 @@
       planned4)))
 
 (define (compiler-backend-emit-binop-with-rax-value
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [assignments : CompilerRegAssignmentList]
@@ -19729,6 +20555,7 @@
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
       (if (compiler-backend-branch-uses-var? lhs rax-var)
         (compiler-backend-emit-binop-rax-rhs
+          type-segment-bases
           assignments
           dst
           op
@@ -19743,6 +20570,7 @@
           (compiler-backend-branch-uses-var? rhs rax-var)
           (compiler-backend-commutative-binop? op))
           (compiler-backend-emit-binop-rax-rhs
+            type-segment-bases
             assignments
             dst
             op
@@ -19754,6 +20582,7 @@
             planned3
             planned4)
           (compiler-backend-emit-binop-with-plan
+            type-segment-bases
             types
             global-types
             assignments
@@ -19768,6 +20597,7 @@
             planned3
             planned4))))
     (compiler-backend-emit-binop-with-plan
+      type-segment-bases
       types
       global-types
       assignments
@@ -20004,6 +20834,7 @@
       (compiler-backend-planned-or-scavenge-reg-here planned exclude 7 "%r8"))))
 
 (define (compiler-backend-emit-binop-return-with-plan
+  [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
   [types : CompilerRegVarTypeList]
@@ -20050,6 +20881,7 @@
         [operand-ty : AstType
           (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
         (if (compiler-backend-signed-literal-divmod-src-shape?
+          type-segment-bases
           op
           rhs
           operand-ty)
@@ -20071,6 +20903,7 @@
             "%rax")
             [(ResultCompilerBackend.Ok lhs-asm)
               (match (compiler-backend-binop-literal-divmod-asm-here-with-plan
+                type-segment-bases
                 op
                 rhs
                 operand-ty
@@ -20084,6 +20917,7 @@
                   (match (compiler-backend-immediate-operand rhs)
                     [(CompilerBackendMaybeImmediate.Some imm)
                       (match (compiler-backend-binop-immediate-asm
+                        type-segment-bases
                         op
                         imm
                         operand-ty
@@ -20121,6 +20955,7 @@
                                       lhs-asm
                                       (string.append
                                         (compiler-backend-binop-asm-with-plan
+                                          type-segment-bases
                                           op
                                           operand-ty
                                           rhs-reg
@@ -20153,6 +20988,7 @@
                                   lhs-asm
                                   (string.append
                                     (compiler-backend-binop-asm-with-plan
+                                      type-segment-bases
                                       op
                                       operand-ty
                                       rhs-reg
@@ -20504,6 +21340,7 @@
     (not (compiler-backend-bit-test-op? op))))
 
 (define (compiler-backend-emit-compare-operand-flags
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [rhs : String]
   [lhs : String]
@@ -20511,20 +21348,20 @@
   [rhs-zero? : bool]
   [lhs-register? : bool]) : String
   (if (compiler-backend-bit-test-op? op)
-    (compiler-backend-binop-reg-asm "test" ty rhs lhs)
+    (compiler-backend-binop-reg-asm type-segment-bases "test" ty rhs lhs)
     (if (and rhs-zero? (compiler-backend-compare-uses-zero-test? op))
       (if lhs-register?
-        (compiler-backend-binop-reg-asm "test" ty lhs lhs)
+        (compiler-backend-binop-reg-asm type-segment-bases "test" ty lhs lhs)
         (str_cat.str-cat
           "    cmp"
-          (compiler-backend-int-instruction-suffix ty)
+          (compiler-backend-int-instruction-suffix type-segment-bases ty)
           " $0, "
           lhs
           "\n"))
       (string.append
         (str_cat.str-cat
           "    cmp"
-          (compiler-backend-int-instruction-suffix ty)
+          (compiler-backend-int-instruction-suffix type-segment-bases ty)
           " "
           rhs
           ", ")
@@ -20564,6 +21401,7 @@
     6))
 
 (define (compiler-backend-emit-compare-branch-with-lhs-operand
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [op : CompilerIrBinOp]
@@ -20586,6 +21424,7 @@
           lhs-asm
           (string.append
             (compiler-backend-emit-compare-operand-flags
+              type-segment-bases
               op
               imm
               lhs-operand
@@ -20609,8 +21448,9 @@
               lhs-asm
               (string.append
                 (compiler-backend-emit-compare-operand-flags
+                  type-segment-bases
                   op
-                  (compiler-backend-sized-reg rhs-home ty)
+                  (compiler-backend-sized-reg type-segment-bases rhs-home ty)
                   lhs-operand
                   ty
                   false
@@ -20646,8 +21486,12 @@
                       rhs-asm
                       (string.append
                         (compiler-backend-emit-compare-operand-flags
+                          type-segment-bases
                           op
-                          (compiler-backend-sized-reg rhs-reg ty)
+                          (compiler-backend-sized-reg
+                            type-segment-bases
+                            rhs-reg
+                            ty)
                           lhs-operand
                           ty
                           false
@@ -20663,6 +21507,7 @@
                 (ResultCompilerBackend.Err message)]))))]))
 
 (define (compiler-backend-emit-compare-branch-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [op : CompilerIrBinOp]
@@ -20707,6 +21552,7 @@
             ;; scratch entirely. This is both smaller and protects the RHS home
             ;; through the branch compare.
             (compiler-backend-emit-compare-branch-with-lhs-operand
+              type-segment-bases
               assignments
               function
               swapped-op
@@ -20718,12 +21564,13 @@
               swapped-true-jcc
               swapped-false-jcc
               ""
-              (compiler-backend-sized-reg rhs-home ty)
+              (compiler-backend-sized-reg type-segment-bases rhs-home ty)
               true
               rhs-home
               planned-rhs)]
           [(not (string.eq lhs-home ""))
             (compiler-backend-emit-compare-branch-with-lhs-operand
+              type-segment-bases
               assignments
               function
               op
@@ -20735,12 +21582,13 @@
               true-jcc
               false-jcc
               ""
-              (compiler-backend-sized-reg lhs-home ty)
+              (compiler-backend-sized-reg type-segment-bases lhs-home ty)
               true
               lhs-home
               planned-rhs)]
           [(not (string.eq lhs-address ""))
             (compiler-backend-emit-compare-branch-with-lhs-operand
+              type-segment-bases
               assignments
               function
               op
@@ -20770,6 +21618,7 @@
                 lhs-stage)
                 [(ResultCompilerBackend.Ok lhs-asm)
                   (compiler-backend-emit-compare-branch-with-lhs-operand
+                    type-segment-bases
                     assignments
                     function
                     op
@@ -20781,7 +21630,7 @@
                     true-jcc
                     false-jcc
                     lhs-asm
-                    (compiler-backend-sized-reg lhs-stage ty)
+                    (compiler-backend-sized-reg type-segment-bases lhs-stage ty)
                     true
                     lhs-stage
                     planned-rhs)]
@@ -20789,6 +21638,7 @@
                   (ResultCompilerBackend.Err message)]))])))))
 
 (define (compiler-backend-emit-binop-return
+  [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
   [types : CompilerRegVarTypeList]
@@ -20800,6 +21650,7 @@
   [rhs : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop-return-with-plan
+    type-segment-bases
     source-function
     blocks
     types
@@ -20817,6 +21668,7 @@
     ""))
 
 (define (compiler-backend-emit-compare-branch
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [op : CompilerIrBinOp]
@@ -20827,6 +21679,7 @@
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (compiler-backend-emit-compare-branch-with-plan
+    type-segment-bases
     assignments
     function
     op
@@ -20839,10 +21692,12 @@
     ""
     ""))
 
-(define (compiler-backend-load-compare-type? [ty : AstType]) : bool
+(define (compiler-backend-load-compare-type?
+  [type-segment-bases : i64]
+  [ty : AstType]) : bool
   (and
     (not (compiler-backend-float-type? ty))
-    (= (compiler-backend-type-size ty) 8)))
+    (= (compiler-backend-type-size type-segment-bases ty) 8)))
 
 (define (compiler-backend-emit-compare-memory-address-flags
   [rhs : String]
@@ -20989,6 +21844,7 @@
     ""))
 
 (define (compiler-backend-emit-gep-load-compare-branch-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [base : CompilerIrValue]
@@ -21014,7 +21870,8 @@
       (match (compiler-backend-value-as-i64 offset)
         [(option_i64.Some n)
           (let
-            [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+            [disp : i64
+              (* n (compiler-backend-type-size type-segment-bases elem-ty))]
             ;; Address-base scratch: base is loaded here and
             ;; immediately dereferenced by the compare (dead after), so a single
             ;; scavenged base suffices. In the NoImmediate sub-branch scav-rhs must
@@ -21130,6 +21987,7 @@
                 "backend: non-immediate fused gep load compare branch")))]))))
 
 (define (compiler-backend-emit-gep-load-compare-branch
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [base : CompilerIrValue]
@@ -21142,6 +22000,7 @@
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (compiler-backend-emit-gep-load-compare-branch-with-plan
+    type-segment-bases
     assignments
     function
     base
@@ -21703,6 +22562,7 @@
       (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-emit-gep
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -21729,7 +22589,8 @@
       (match (compiler-backend-value-as-i64 offset)
         [(option_i64.Some n)
           (let
-            [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+            [disp : i64
+              (* n (compiler-backend-type-size type-segment-bases elem-ty))]
             (if (if (= disp 0)
               (string.eq base-reg dst-home)
               false)
@@ -21751,7 +22612,8 @@
           (let
             [offset-home : String
               (compiler-backend-value-scalar-register assignments offset)]
-            [scale : i64 (compiler-backend-type-size elem-ty)]
+            [scale : i64
+              (compiler-backend-type-size type-segment-bases elem-ty)]
             (if (and
               (not (string.eq offset-home ""))
               (compiler-backend-gep-sib-scale? scale)
@@ -21771,6 +22633,7 @@
                   dst-home
                   "\n"))
               (compiler-backend-emit-gep-staged
+                type-segment-bases
                 assignments
                 dst
                 base
@@ -21780,6 +22643,7 @@
                 planned-address
                 planned-index)))])
       (compiler-backend-emit-gep-staged
+        type-segment-bases
         assignments
         dst
         base
@@ -21790,6 +22654,7 @@
         planned-index))))
 
 (define (compiler-backend-emit-gep-staged-avoid
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -21801,7 +22666,7 @@
   [planned-address : String]
   [planned-index : String]) : ResultCompilerBackend
   (let
-    [scale : i64 (compiler-backend-type-size elem-ty)]
+    [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     (match (compiler-backend-value-as-i64 offset)
       [(option_i64.Some n)
@@ -21941,6 +22806,7 @@
               (ResultCompilerBackend.Err message)]))])))
 
 (define (compiler-backend-emit-gep-staged
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -21950,6 +22816,7 @@
   [planned-address : String]
   [planned-index : String]) : ResultCompilerBackend
   (compiler-backend-emit-gep-staged-avoid
+    type-segment-bases
     assignments
     dst
     base
@@ -21962,6 +22829,7 @@
     planned-index))
 
 (define (compiler-backend-emit-load-instr
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -22026,6 +22894,7 @@
               (string.append
                 ptr-asm
                 (compiler-backend-emit-load-scalar-address-to-var
+                  type-segment-bases
                   assignments
                   dst
                   base-mem
@@ -22063,6 +22932,7 @@
         ""))))
 
 (define (compiler-backend-emit-load-scalar-address-to-var
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [addr : String]
@@ -22074,15 +22944,23 @@
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     (if (if (string.eq dst-home "")
       false
-      (<= (compiler-backend-type-size ty) 8))
-      (compiler-backend-emit-load-memory-to-reg addr ty dst-home)
+      (<= (compiler-backend-type-size type-segment-bases ty) 8))
+      (compiler-backend-emit-load-memory-to-reg
+        type-segment-bases
+        addr
+        ty
+        dst-home)
       (let
         [load-reg : String
           (if (string.eq planned-value "")
             (compiler-backend-scavenge-reg dst exclude exclude-n "%r8")
             planned-value)]
         (str_cat.str-cat
-          (compiler-backend-emit-load-memory-to-reg addr ty load-reg)
+          (compiler-backend-emit-load-memory-to-reg
+            type-segment-bases
+            addr
+            ty
+            load-reg)
           (compiler-backend-emit-store-var-with-plan assignments dst load-reg))))))
 
 ;; Base-register-parameterized address: scavenged-register-aware address
@@ -22291,6 +23169,7 @@
 ;; register-homed base serves as the store base directly. Callers guarantee
 ;; dst-bias + remaining fits imm32; plain copies pass 0 (byte-identical).
 (define (compiler-backend-emit-copy-bytes-chunks
+  [type-segment-bases : i64]
   [dst-reg : String]
   [src-reg : String]
   [gp-scratch : String]
@@ -22318,6 +23197,7 @@
             "\n"
             "")
           (compiler-backend-emit-copy-bytes-chunks
+            type-segment-bases
             dst-reg
             src-reg
             gp-scratch
@@ -22328,11 +23208,14 @@
       (let
         [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
         [chunk-ty : AstType (compiler-backend-copy-chunk-type chunk)]
-        [reg : String (compiler-backend-sized-reg gp-scratch chunk-ty)]
+        [reg : String
+          (compiler-backend-sized-reg type-segment-bases gp-scratch chunk-ty)]
         (string.append
           (str_cat.str-cat
             "    mov"
-            (compiler-backend-int-instruction-suffix chunk-ty)
+            (compiler-backend-int-instruction-suffix
+              type-segment-bases
+              chunk-ty)
             " "
             (compiler-backend-copy-address offset src-reg)
             ", ")
@@ -22343,7 +23226,9 @@
               (string.append
                 (str_cat.str-cat
                   "    mov"
-                  (compiler-backend-int-instruction-suffix chunk-ty)
+                  (compiler-backend-int-instruction-suffix
+                    type-segment-bases
+                    chunk-ty)
                   " "
                   reg
                   ", ")
@@ -22352,6 +23237,7 @@
                   (string.append
                     "\n"
                     (compiler-backend-emit-copy-bytes-chunks
+                      type-segment-bases
                       dst-reg
                       src-reg
                       gp-scratch
@@ -22430,6 +23316,7 @@
               (- remaining chunk))))))))
 
 (define (compiler-backend-emit-copy-bytes-avoid
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
@@ -22511,6 +23398,7 @@
                     (string.append
                       src-asm
                       (compiler-backend-emit-copy-bytes-chunks
+                        type-segment-bases
                         dst-reg
                         src-reg
                         copy-gp
@@ -22524,6 +23412,7 @@
           (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-emit-copy-bytes
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
@@ -22535,6 +23424,7 @@
   (let
     [no-protect : (Array String) (make-array String 0)]
     (compiler-backend-emit-copy-bytes-avoid
+      type-segment-bases
       assignments
       dst
       src
@@ -22671,6 +23561,7 @@
 ;; filtered to the staged path (frame-spelling invariant, GAP7 later);
 ;; spilled/remat/non-var operands load into scavenged scratches as before.
 (define (compiler-backend-emit-copy-bytes-from-gep-avoid
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
@@ -22690,13 +23581,16 @@
     (match (compiler-backend-value-as-i64 offset)
       [(option_i64.Some n)
         (compiler-backend-emit-copy-bytes-from-gep-const
+          type-segment-bases
           assignments
           base
           src
           size
           ;; gep-disp is 0 here in practice (only Var-index geps carry a
           ;; folded displacement); merged for totality.
-          (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)
+          (+
+            (* n (compiler-backend-type-size type-segment-bases elem-ty))
+            gep-disp)
           protect
           protect-n
           planned-dst
@@ -22705,6 +23599,7 @@
           planned-xmm)]
       [(option_i64.None)
         (compiler-backend-emit-copy-bytes-from-gep-dyn
+          type-segment-bases
           assignments
           base
           offset
@@ -22727,6 +23622,7 @@
 ;; base skips the addq. The source pointer home is likewise the chunk load
 ;; base directly. Out-of-imm32 displacements keep the staged addq fold.
 (define (compiler-backend-emit-copy-bytes-from-gep-const
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [src : CompilerIrValue]
@@ -22824,6 +23720,7 @@
                   (str_cat.str-cat
                     src-asm
                     (compiler-backend-emit-copy-bytes-chunks
+                      type-segment-bases
                       dst-reg
                       src-reg
                       copy-gp
@@ -22845,6 +23742,7 @@
 ;; non-SIB imulq form MUTATES it and keeps the staged index); and the source
 ;; pointer home is the chunk load base directly.
 (define (compiler-backend-emit-copy-bytes-from-gep-dyn
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
@@ -22860,7 +23758,7 @@
   [planned-value : String]
   [planned-xmm : String]) : ResultCompilerBackend
   (let
-    [scale : i64 (compiler-backend-type-size elem-ty)]
+    [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
     [base-home : String
       (compiler-backend-address-base-filter
         (compiler-backend-value-scalar-register assignments base))]
@@ -22933,6 +23831,7 @@
                   (str_cat.str-cat
                     src-asm
                     (compiler-backend-emit-copy-bytes-chunks
+                      type-segment-bases
                       scav-base
                       src-reg
                       copy-gp
@@ -23071,6 +23970,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-from-gep
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -23087,7 +23987,10 @@
       (let
         ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
         ;; displacement); merged for totality.
-        [disp : i64 (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)]
+        [disp : i64
+          (+
+            (* n (compiler-backend-type-size type-segment-bases elem-ty))
+            gep-disp)]
         ;; base-reg-in "" -> scavenge our own base (single-load callers); else use
         ;; the caller-supplied register (the gep-pair shares one base across both
         ;; loads so the 2nd doesn't reload).
@@ -23131,6 +24034,7 @@
                 (string.append
                   base-asm
                   (compiler-backend-emit-load-scalar-address-to-var
+                    type-segment-bases
                     assignments
                     dst
                     addr
@@ -23147,7 +24051,7 @@
       ;; live-through registers and creates redundant moves. Non-SIB scales still
       ;; need scratch copies because the fold mutates the base/index registers.
       (let
-        [scale : i64 (compiler-backend-type-size elem-ty)]
+        [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
         [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
         [base-home : String
           (compiler-backend-address-base-filter
@@ -23240,6 +24144,7 @@
                         (string.append
                           addr-asm
                           (compiler-backend-emit-load-scalar-address-to-var
+                            type-segment-bases
                             assignments
                             dst
                             load-addr
@@ -23253,6 +24158,7 @@
             (ResultCompilerBackend.Err message)]))]))
 
 (define (compiler-backend-emit-load-from-gep-pair-first
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [base : CompilerIrValue]
@@ -23264,7 +24170,8 @@
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some n)
       (let
-        [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        [disp : i64
+          (* n (compiler-backend-type-size type-segment-bases elem-ty))]
         [addr : String (compiler-backend-base-address disp base-reg)]
         (match (compiler-backend-emit-load-value-with-plan
           assignments
@@ -23287,6 +24194,7 @@
                   ;; this spilled first load borrows the sibling result home, the
                   ;; restore clobbers the second load before its consumer.
                   (compiler-backend-emit-load-scalar-address-to-var
+                    type-segment-bases
                     assignments
                     dst
                     addr
@@ -23308,6 +24216,7 @@
             "backend: non-immediate gep pair first load")))]))
 
 (define (compiler-backend-emit-load-from-gep-r10-live
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [offset : CompilerIrValue]
@@ -23318,7 +24227,8 @@
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some n)
       (let
-        [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        [disp : i64
+          (* n (compiler-backend-type-size type-segment-bases elem-ty))]
         ;; The base was loaded into base-reg by the 1st load of the pair; reuse it.
         [addr : String (compiler-backend-base-address disp base-reg)]
         (ResultCompilerBackend.Ok
@@ -23338,6 +24248,7 @@
             ;; 1st word (Win64 next.length -> false OOB abort). Exclude it too; "" (a
             ;; register-homed sibling absent, or itself spilled) keeps the old set.
             (compiler-backend-emit-load-scalar-address-to-var
+              type-segment-bases
               assignments
               dst
               addr
@@ -23357,6 +24268,7 @@
             "backend: non-immediate r10-live gep load")))]))
 
 (define (compiler-backend-emit-load-from-gep-pair
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [offset0 : CompilerIrValue]
@@ -23411,6 +24323,7 @@
             1)
           "%r10"))]
     (match (compiler-backend-emit-load-from-gep-pair-first
+      type-segment-bases
       assignments
       load-dst0
       base
@@ -23421,6 +24334,7 @@
       dst1-home)
       [(ResultCompilerBackend.Ok first-asm)
         (match (compiler-backend-emit-load-from-gep-r10-live
+          type-segment-bases
           assignments
           load-dst1
           offset1
@@ -23435,6 +24349,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-from-gep-pair-planned
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [offset0 : CompilerIrValue]
@@ -23453,6 +24368,7 @@
   [value1 : String]) : ResultCompilerBackend
   (if (and (string.eq address0 "") (string.eq address1 ""))
     (compiler-backend-emit-load-from-gep-pair
+      type-segment-bases
       assignments
       base
       offset0
@@ -23464,6 +24380,7 @@
       load-dst1
       load-ty1)
     (match (compiler-backend-emit-load-from-gep
+      type-segment-bases
       assignments
       load-dst0
       base
@@ -23477,6 +24394,7 @@
       value0)
       [(ResultCompilerBackend.Ok first-asm)
         (match (compiler-backend-emit-load-from-gep
+          type-segment-bases
           assignments
           load-dst1
           base
@@ -23495,6 +24413,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-load
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [first-dst : i64]
   [ptr : CompilerIrValue]
@@ -23507,7 +24426,7 @@
   [second-value : String]) : ResultCompilerBackend
   (let
     [_first-dst : i64 first-dst]
-    (if (= (compiler-backend-type-size first-ty) 8)
+    (if (= (compiler-backend-type-size type-segment-bases first-ty) 8)
       (let
         ;; M-D clobber fix (see emit-load-from-gep-pair): the pointer-chase base
         ;; scratch must not land on second-dst's register home under EMERGENCY
@@ -23540,6 +24459,7 @@
                     second-ty
                     second-value)
                   (compiler-backend-emit-load-scalar-address-to-var
+                    type-segment-bases
                     assignments
                     second-dst
                     base-mem
@@ -23550,6 +24470,7 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))
       (compiler-backend-emit-load-instr
+        type-segment-bases
         assignments
         first-dst
         ptr
@@ -23558,6 +24479,7 @@
         first-value))))
 
 (define (compiler-backend-emit-store-value-to-address
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [src : CompilerIrValue]
   [ty : AstType]
@@ -23566,7 +24488,11 @@
   [exclude : (Array String)]
   [exclude-n : i64]
   [planned-value : String]) : ResultCompilerBackend
-  (match (compiler-backend-emit-store-immediate-to-memory src addr ty)
+  (match (compiler-backend-emit-store-immediate-to-memory
+    type-segment-bases
+    src
+    addr
+    ty)
     [(CompilerBackendMaybeAsm.Some store-asm)
       (ResultCompilerBackend.Ok store-asm)]
     [(CompilerBackendMaybeAsm.No)
@@ -23582,6 +24508,7 @@
               src-home)]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
+              type-segment-bases
               assignments
               src
               ty
@@ -23609,6 +24536,7 @@
               src-home)]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
+              type-segment-bases
               assignments
               src
               ty
@@ -23619,11 +24547,16 @@
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   src-asm
-                  (compiler-backend-emit-store-reg-to-memory addr store-reg ty)))]
+                  (compiler-backend-emit-store-reg-to-memory
+                    type-segment-bases
+                    addr
+                    store-reg
+                    ty)))]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)])))]))
 
 (define (compiler-backend-emit-store-ptr
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
@@ -23648,6 +24581,7 @@
           [addr : String
             (compiler-backend-copy-address 0 (struct-get base reg))]
           (match (compiler-backend-emit-store-value-to-address
+            type-segment-bases
             assignments
             src
             ty
@@ -23664,6 +24598,7 @@
         (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-store-to-gep
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
@@ -23680,7 +24615,10 @@
       (let
         ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
         ;; displacement); merged for totality.
-        [disp : i64 (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)]
+        [disp : i64
+          (+
+            (* n (compiler-backend-type-size type-segment-bases elem-ty))
+            gep-disp)]
         [base-home : String
           (compiler-backend-value-register-home assignments base)]
         [value-home : String
@@ -23699,6 +24637,7 @@
               [addr : String
                 (compiler-backend-copy-address disp (struct-get base-plan reg))]
               (match (compiler-backend-emit-store-value-to-address
+                type-segment-bases
                 assignments
                 value
                 store-ty
@@ -23715,7 +24654,7 @@
             (ResultCompilerBackend.Err message)]))]
     [(option_i64.None)
       (let
-        [scale : i64 (compiler-backend-type-size elem-ty)]
+        [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
         [value-home : String
           (compiler-backend-value-scalar-register assignments value)]
         [base-home : String
@@ -23745,6 +24684,7 @@
             "")]
         (if (not (string.eq direct-addr ""))
           (compiler-backend-emit-store-value-to-address
+            type-segment-bases
             assignments
             value
             store-ty
@@ -23754,6 +24694,7 @@
             2
             planned-value)
           (compiler-backend-emit-store-to-gep-staged
+            type-segment-bases
             assignments
             base
             offset
@@ -23774,6 +24715,7 @@
 ;; through the composed address. Reached when the base or offset is not
 ;; register-homed or the scale is not SIB-encodable.
 (define (compiler-backend-emit-store-to-gep-staged
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
@@ -23865,6 +24807,7 @@
                   (string.append offset-asm base-asm)
                   (string.append base-asm offset-asm))]
               (match (compiler-backend-emit-store-value-to-address
+                type-segment-bases
                 assignments
                 value
                 store-ty
@@ -23886,6 +24829,7 @@
         (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-store-ptr-pair
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [ptr : CompilerIrValue]
   [value0 : CompilerIrValue]
@@ -23918,6 +24862,7 @@
           [addr0 : String (compiler-backend-copy-address 0 base-reg)]
           [addr1 : String (compiler-backend-copy-address disp base-reg)]
           (match (compiler-backend-emit-store-value-to-address
+            type-segment-bases
             assignments
             value0
             ty0
@@ -23928,6 +24873,7 @@
             planned-value0)
             [(ResultCompilerBackend.Ok store0)
               (match (compiler-backend-emit-store-value-to-address
+                type-segment-bases
                 assignments
                 value1
                 ty1
@@ -24120,6 +25066,7 @@
             (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-emit-int-to-float-cast
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -24135,12 +25082,12 @@
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     [src-reg : String (compiler-backend-value-scalar-register assignments src)]
     (if (and
-      (not (opt-type-eq from-ty (AstType.U64)))
+      (not (opt-type-eq type-segment-bases from-ty (AstType.U64)))
       (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
       (not (string.eq src-reg "")))
       (ResultCompilerBackend.Ok
         (compiler-backend-int-to-float-cast-reg-asm src-reg to-ty dst-home))
-      (if (not (opt-type-eq from-ty (AstType.U64)))
+      (if (not (opt-type-eq type-segment-bases from-ty (AstType.U64)))
         (let
           [src-tmp : String
             (if (string.eq src-reg "")
@@ -24166,6 +25113,7 @@
                   "%xmm2")))]
           (match (if (string.eq src-reg "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
+              type-segment-bases
               assignments
               src
               from-ty
@@ -24217,6 +25165,7 @@
                   0
                   "%xmm2")))]
           (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+            type-segment-bases
             assignments
             src
             from-ty
@@ -24307,6 +25256,7 @@
             (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-emit-cast
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [assignments : CompilerRegAssignmentList]
@@ -24319,7 +25269,7 @@
   [planned-scratch1 : String]
   [planned-scratch2 : String]) : ResultCompilerBackend
   (if (and
-    (opt-type-eq from-ty to-ty)
+    (opt-type-eq type-segment-bases from-ty to-ty)
     (compiler-backend-value-same-home? assignments dst src))
     (ResultCompilerBackend.Ok "")
     (let
@@ -24361,6 +25311,7 @@
             planned-xmm)]
         [(and (not from-is-float) to-is-float)
           (compiler-backend-emit-int-to-float-cast
+            type-segment-bases
             function
             current-label
             assignments
@@ -24385,8 +25336,10 @@
           (let
             [dst-home : String
               (compiler-backend-var-register-home assignments dst)]
-            [from-size : i64 (compiler-backend-type-size from-ty)]
-            [to-size : i64 (compiler-backend-type-size to-ty)]
+            [from-size : i64
+              (compiler-backend-type-size type-segment-bases from-ty)]
+            [to-size : i64
+              (compiler-backend-type-size type-segment-bases to-ty)]
             (if (if (string.eq dst-home "")
               false
               (and
@@ -24402,12 +25355,14 @@
                   ;; %rax store round-trip.
                   (ResultCompilerBackend.Ok
                     (compiler-backend-emit-load-typed-var-to-reg-with-plan
+                      type-segment-bases
                       assignments
                       src-id
                       from-ty
                       dst-home))]
                 [_
                   (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                    type-segment-bases
                     assignments
                     src
                     from-ty
@@ -24441,6 +25396,7 @@
                         "%r8")
                       dst-home)]
                   (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                    type-segment-bases
                     assignments
                     src
                     from-ty
@@ -24529,6 +25485,7 @@
     (and from-int to-float (= from-width 8) (= to-width 4))))
 
 (define (compiler-backend-emit-bitcast
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -24709,6 +25666,7 @@
                       "%xmm2")))]
               (match (if (string.eq src-reg "")
                 (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                  type-segment-bases
                   assignments
                   src
                   from-ty
@@ -24748,6 +25706,7 @@
                   0
                   "%r8")))]
           (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+            type-segment-bases
             assignments
             src
             from-ty
@@ -25012,11 +25971,13 @@
   (ast-type-list-len (& types)))
 
 (define (compiler-backend-param-list-from-types
+  [type-segment-bases : i64]
   [types : AstTypeList]
   [idx : i64]) : CompilerIrParamList
-  (compiler-backend-param-list-from-types-at (& types) idx))
+  (compiler-backend-param-list-from-types-at type-segment-bases (& types) idx))
 
 (define (compiler-backend-param-list-from-types-at
+  [type-segment-bases : i64]
   [types : (& types AstTypeList)]
   [idx : i64]) : CompilerIrParamList
   (if (>= idx (ast-type-list-len types))
@@ -25024,10 +25985,14 @@
     (compiler-ir-param-cons
       (CompilerIrParam.Param
         (string.append "arg" (string.int->string idx))
-        (ast-node-pool-reader-type-get
+        (ast-type-segment-bases-get
+          type-segment-bases
           (ast-type-list-get types idx (ast-type-id-fallback)))
         idx)
-      (compiler-backend-param-list-from-types-at types (+ idx 1)))))
+      (compiler-backend-param-list-from-types-at
+        type-segment-bases
+        types
+        (+ idx 1)))))
 
 (define (compiler-backend-var-value-list [count : i64] [idx : i64]) : CompilerIrValueList
   (if (>= idx count)
@@ -25147,15 +26112,18 @@
             (+ out-index 1)
             (+ seq-index 1)))])))
 
-(define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
+(define (compiler-backend-program-index-extern-signature
+  [type-segment-bases : i64]
+  [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
     [(AstType.Func args ret-ty)
       (CompilerBackendMaybeSignature.Some
         (box-get args)
-        (ast-node-pool-reader-type-get ret-ty))]
+        (ast-type-segment-bases-get type-segment-bases ret-ty))]
     [_ (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-program-index-extern-call-info
+  [type-segment-bases : i64]
   [ty : AstType]
   [abi : AstExternAbi]) : i64
   (let
@@ -25164,7 +26132,9 @@
       (if c-abi?
         (match ty
           [(AstType.Func args _)
-            (compiler-backend-type-list-has-aggregate? (box-get args))]
+            (compiler-backend-type-list-has-aggregate?
+              type-segment-bases
+              (box-get args))]
           [_ false])
         false)]
     [fixed-count : i64
@@ -25185,6 +26155,7 @@
       (* (+ fixed-count 1) 4))))
 
 (define (compiler-backend-program-index-extern-signatures-into
+  [type-segment-bases : i64]
   [externs : CompilerIrExternList]
   [signature-ids : backend_i64_i64_map.Map]
   [names : (Array String)]
@@ -25206,13 +26177,18 @@
             _)
           (let
             [call-info : i64
-              (compiler-backend-program-index-extern-call-info ty abi)]
+              (compiler-backend-program-index-extern-call-info
+                type-segment-bases
+                ty
+                abi)]
             (begin
               (array-set! names index extern-name)
               (array-set!
                 signatures
                 index
-                (compiler-backend-program-index-extern-signature ty))
+                (compiler-backend-program-index-extern-signature
+                  type-segment-bases
+                  ty))
               (array-set! call-infos index call-info)
               (if (compiler-backend-extern-call-info-aggregate-params?
                 call-info)
@@ -25221,6 +26197,7 @@
                   (compiler-reg-add-c-memory-call-name! source-name-id))
                 unit)
               (compiler-backend-program-index-extern-signatures-into
+                type-segment-bases
                 (box-get rest)
                 (compiler-backend-program-index-bind-extern-ids
                   signature-ids
@@ -25233,6 +26210,7 @@
                 (+ index 1))))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-program-index-extern-signatures-into
+        type-segment-bases
         (compiler-ir-extern-seq-to-list seq)
         signature-ids
         names
@@ -25299,7 +26277,9 @@
 
 ;; The aggregate type name a register-group value carries (for the
 ;; type-name -> word-count map). Empty for non-aggregate types.
-(define (compiler-backend-aggregate-type-name [ty : AstType]) : String
+(define (compiler-backend-aggregate-type-name
+  [type-segment-bases : i64]
+  [ty : AstType]) : String
   (match ty
     [(AstType.Struct name) (tc-nominal-name-id-display name)]
     [(AstType.StructArgs name _) (tc-nominal-name-id-display name)]
@@ -25307,16 +26287,19 @@
     [(AstType.EnumArgs name _) (tc-nominal-name-id-display name)]
     [(AstType.Region _ inner)
       (compiler-backend-aggregate-type-name
-        (ast-node-pool-reader-type-get inner))]
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [_ ""]))
 
 (define (compiler-backend-collect-group-counts-instr
+  [type-segment-bases : i64]
   [map : backend_string_i64_map.Map]
   [instr : CompilerIrInstr]) : backend_string_i64_map.Map
   (match instr
     [(CompilerIrInstr.Pack _ words ty)
       (let
-        [name : String (compiler-backend-aggregate-type-name ty)]
+        [name : String
+          (compiler-backend-aggregate-type-name type-segment-bases ty)]
         (if (string.eq name "")
           map
           (if (backend_string_i64_map.contains? (& map) name)
@@ -25330,9 +26313,11 @@
     [_ map]))
 
 (define (compiler-backend-collect-group-counts-functions
+  [type-segment-bases : i64]
   [map : backend_string_i64_map.Map]
   [functions : CompilerIrFunctionList]) : backend_string_i64_map.Map
   (match (compiler-backend-collect-functions-shared
+    type-segment-bases
     (CompilerBackendCollectState.GroupCounts map)
     functions)
     [(CompilerBackendCollectState.GroupCounts out) out]
@@ -25380,19 +26365,23 @@
   (CompilerRegVarTypes (array.make-array i64 0) (array.make-array AstType 0)))
 
 (define (compiler-backend-collect-group-counts-instr-seq
+  [type-segment-bases : i64]
   [map : backend_string_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : backend_string_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     map
     (compiler-backend-collect-group-counts-instr-seq
+      type-segment-bases
       (compiler-backend-collect-group-counts-instr
+        type-segment-bases
         map
         (compiler-ir-instr-seq-ref instrs index))
       instrs
       (+ index 1))))
 
 (define (compiler-backend-collect-group-class-masks-instr-seq
+  [type-segment-bases : i64]
   [map : backend_string_i64_map.Map]
   [type-info : CompilerRegVarTypes]
   [instrs : CompilerIrInstrSeq]
@@ -25400,7 +26389,9 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     map
     (compiler-backend-collect-group-class-masks-instr-seq
+      type-segment-bases
       (compiler-backend-collect-group-class-masks-instr
+        type-segment-bases
         map
         type-info
         (compiler-ir-instr-seq-ref instrs index))
@@ -25411,6 +26402,7 @@
 ;; Share the function/block traversal while keeping each instruction
 ;; sequence leaf direct, avoiding a callback or tagged dispatch per instruction.
 (define (compiler-backend-collect-block-shared
+  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [block : CompilerIrBlock]) : CompilerBackendCollectState
   (match block
@@ -25421,10 +26413,15 @@
             (compiler-backend-collect-instr-seq-collections collections instrs))]
         [(CompilerBackendCollectState.GroupCounts map)
           (CompilerBackendCollectState.GroupCounts
-            (compiler-backend-collect-group-counts-instr-seq map instrs 0))]
+            (compiler-backend-collect-group-counts-instr-seq
+              type-segment-bases
+              map
+              instrs
+              0))]
         [(CompilerBackendCollectState.GroupClassMasks map type-info)
           (CompilerBackendCollectState.GroupClassMasks
             (compiler-backend-collect-group-class-masks-instr-seq
+              type-segment-bases
               map
               type-info
               instrs
@@ -25432,29 +26429,34 @@
             type-info)])]))
 
 (define (compiler-backend-collect-block-seq-shared
+  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [seq : CompilerIrBlockSeq]
   [index : i64]) : CompilerBackendCollectState
   (if (>= index (compiler-ir-block-seq-count seq))
     state
     (compiler-backend-collect-block-seq-shared
+      type-segment-bases
       (compiler-backend-collect-block-shared
+        type-segment-bases
         state
         (compiler-ir-block-seq-ref seq index))
       seq
       (+ index 1))))
 
 (define (compiler-backend-collect-blocks-shared
+  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [blocks : CompilerIrBlockList]) : CompilerBackendCollectState
   (match blocks
     [(CompilerIrBlockList.Nil) state]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-backend-collect-blocks-shared
-        (compiler-backend-collect-block-shared state block)
+        type-segment-bases
+        (compiler-backend-collect-block-shared type-segment-bases state block)
         (box-get rest))]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-collect-block-seq-shared state seq 0)]))
+      (compiler-backend-collect-block-seq-shared type-segment-bases state seq 0)]))
 
 (define (compiler-backend-collect-enter-function-shared
   [state : CompilerBackendCollectState]
@@ -25467,38 +26469,49 @@
     [_ state]))
 
 (define (compiler-backend-collect-function-shared
+  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [func : CompilerIrFunction]) : CompilerBackendCollectState
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-backend-collect-blocks-shared
+        type-segment-bases
         (compiler-backend-collect-enter-function-shared state func)
         blocks)]))
 
 (define (compiler-backend-collect-function-seq-shared
+  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [seq : CompilerIrFunctionSeq]
   [index : i64]) : CompilerBackendCollectState
   (if (>= index (compiler-ir-function-seq-count seq))
     state
     (compiler-backend-collect-function-seq-shared
+      type-segment-bases
       (compiler-backend-collect-function-shared
+        type-segment-bases
         state
         (compiler-ir-function-seq-ref seq index))
       seq
       (+ index 1))))
 
 (define (compiler-backend-collect-functions-shared
+  [type-segment-bases : i64]
   [state : CompilerBackendCollectState]
   [functions : CompilerIrFunctionList]) : CompilerBackendCollectState
   (match functions
     [(CompilerIrFunctionList.Nil) state]
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-backend-collect-functions-shared
-        (compiler-backend-collect-function-shared state func)
+        type-segment-bases
+        (compiler-backend-collect-function-shared type-segment-bases state func)
         (box-get rest))]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-collect-function-seq-shared state seq 0)]))
+      (compiler-backend-collect-function-seq-shared
+        type-segment-bases
+        state
+        seq
+        0)]))
 
 (define (compiler-backend-merge-group-class-mask
   [map : backend_string_i64_map.Map]
@@ -25520,6 +26533,7 @@
           map)])))
 
 (define (compiler-backend-collect-group-class-masks-instr
+  [type-segment-bases : i64]
   [map : backend_string_i64_map.Map]
   [type-info : CompilerRegVarTypes]
   [instr : CompilerIrInstr]) : backend_string_i64_map.Map
@@ -25527,14 +26541,16 @@
     [(CompilerIrInstr.Pack _ words ty)
       (compiler-backend-merge-group-class-mask
         map
-        (compiler-backend-aggregate-type-name ty)
+        (compiler-backend-aggregate-type-name type-segment-bases ty)
         (compiler-backend-pack-word-class-mask type-info words 0 0))]
     [_ map]))
 
 (define (compiler-backend-collect-group-class-masks-functions
+  [type-segment-bases : i64]
   [map : backend_string_i64_map.Map]
   [functions : CompilerIrFunctionList]) : backend_string_i64_map.Map
   (match (compiler-backend-collect-functions-shared
+    type-segment-bases
     (CompilerBackendCollectState.GroupClassMasks
       map
       (compiler-backend-empty-reg-var-types))
@@ -25543,6 +26559,7 @@
     [_ map]))
 
 (define (compiler-backend-program-index-build
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : CompilerBackendProgramIndex
   (let
@@ -25567,6 +26584,7 @@
         0)]
     [extern-signature-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-signatures-into
+        type-segment-bases
         externs
         (backend_i64_i64_map.with-capacity (+ (* extern-count 2) 1))
         extern-names
@@ -25587,10 +26605,12 @@
         0)]
     [group-word-counts : backend_string_i64_map.Map
       (compiler-backend-collect-group-counts-functions
+        type-segment-bases
         (backend_string_i64_map.with-capacity (+ (* function-count 2) 1))
         functions)]
     [group-word-class-masks : backend_string_i64_map.Map
       (compiler-backend-collect-group-class-masks-functions
+        type-segment-bases
         (backend_string_i64_map.with-capacity (+ (* function-count 2) 1))
         functions)]
     (CompilerBackendProgramIndex
@@ -25606,15 +26626,17 @@
       extern-link-symbols
       extern-provided
       group-word-counts
-      group-word-class-masks)))
+      group-word-class-masks
+      type-segment-bases)))
 
 ;; Machine-word count for a value's type -- 2 (or more) for a
 ;; register-group aggregate constructed somewhere in the program, else 1.
 (define (compiler-backend-group-word-count
+  [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : AstType]) : i64
   (let
-    [name : String (compiler-backend-aggregate-type-name ty)]
+    [name : String (compiler-backend-aggregate-type-name type-segment-bases ty)]
     (if (string.eq name "")
       1
       (match (backend_string_i64_map.get
@@ -25624,9 +26646,10 @@
         [(backend_string_i64_map.LookupMissing) 1]))))
 
 (define (compiler-backend-group-type?
+  [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : AstType]) : bool
-  (> (compiler-backend-group-word-count index ty) 1))
+  (> (compiler-backend-group-word-count type-segment-bases index ty) 1))
 
 (define (compiler-backend-group-vars-enable!
   [vars : CompilerLiveI64Set]
@@ -25661,12 +26684,13 @@
 ;; the per-function group-var set, while calls, returns, globals, and parameters
 ;; continue to use nominal type classification and preserve the source ABI.
 (define (compiler-backend-copy-group?
+  [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : AstType]
   [dst : i64]
   [src : CompilerIrValue]) : bool
   (or
-    (compiler-backend-group-type? index ty)
+    (compiler-backend-group-type? type-segment-bases index ty)
     (compiler-backend-group-var? dst)
     (compiler-backend-value-group-var? src)))
 
@@ -25758,10 +26782,11 @@
       out)))
 
 (define (compiler-backend-group-word-class-mask
+  [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : AstType]) : i64
   (let
-    [name : String (compiler-backend-aggregate-type-name ty)]
+    [name : String (compiler-backend-aggregate-type-name type-segment-bases ty)]
     (if (string.eq name "")
       0
       (match (backend_string_i64_map.get
@@ -25771,13 +26796,14 @@
         [(backend_string_i64_map.LookupMissing) 0]))))
 
 (define (compiler-backend-group-word-sse?
+  [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : AstType]
   [word-index : i64]) : bool
   (not
     (=
       (bit-and
-        (compiler-backend-group-word-class-mask index ty)
+        (compiler-backend-group-word-class-mask type-segment-bases index ty)
         (compiler-backend-group-word-sse-bit word-index))
       0)))
 
@@ -26223,12 +27249,19 @@
     [else (ast-type-list-new)]))
 
 (define (compiler-backend-varargs-linux-vector-count
+  [type-segment-bases : i64]
   [types : AstTypeList]
   [float-idx : i64]
   [count : i64]) : i64
-  (compiler-backend-varargs-linux-vector-count-at (& types) 0 float-idx count))
+  (compiler-backend-varargs-linux-vector-count-at
+    type-segment-bases
+    (& types)
+    0
+    float-idx
+    count))
 
 (define (compiler-backend-varargs-linux-vector-count-at
+  [type-segment-bases : i64]
   [types : (& types AstTypeList)]
   [index : i64]
   [float-idx : i64]
@@ -26237,7 +27270,8 @@
     count
     (let
       [ty : AstType
-        (ast-node-pool-reader-type-get
+        (ast-type-segment-bases-get
+          type-segment-bases
           (ast-type-list-get types index (ast-type-id-fallback)))]
       [is-float : bool (compiler-backend-float-type? ty)]
       [next-float : i64
@@ -26253,6 +27287,7 @@
           (+ count 1)
           count)]
       (compiler-backend-varargs-linux-vector-count-at
+        type-segment-bases
         types
         (+ index 1)
         next-float
@@ -26262,12 +27297,18 @@
   (compiler-abi-gp-arg-register CompilerRegTargetAbi.Windows position))
 
 (define (compiler-backend-windows-vararg-dup-asm
+  [type-segment-bases : i64]
   [types : AstTypeList]
   [fixed-count : i64]
   [position : i64]) : String
-  (compiler-backend-windows-vararg-dup-asm-at (& types) fixed-count position))
+  (compiler-backend-windows-vararg-dup-asm-at
+    type-segment-bases
+    (& types)
+    fixed-count
+    position))
 
 (define (compiler-backend-windows-vararg-dup-asm-at
+  [type-segment-bases : i64]
   [types : (& types AstTypeList)]
   [fixed-count : i64]
   [position : i64]) : String
@@ -26275,10 +27316,12 @@
     ""
     (let
       [ty : AstType
-        (ast-node-pool-reader-type-get
+        (ast-type-segment-bases-get
+          type-segment-bases
           (ast-type-list-get types position (ast-type-id-fallback)))]
       [tail : String
         (compiler-backend-windows-vararg-dup-asm-at
+          type-segment-bases
           types
           fixed-count
           (+ position 1))]
@@ -26298,6 +27341,7 @@
         tail))))
 
 (define (compiler-backend-varargs-pre-call
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [extern-call-info : i64]
   [param-types : AstTypeList]) : String
@@ -26311,12 +27355,20 @@
           (str_cat.str-cat
             "    movb $"
             (string.int->string
-              (compiler-backend-varargs-linux-vector-count param-types 0 0))
+              (compiler-backend-varargs-linux-vector-count
+                type-segment-bases
+                param-types
+                0
+                0))
             ", %al\n"
             ""
             "")]
         [(CompilerBackendTarget.Windows)
-          (compiler-backend-windows-vararg-dup-asm param-types fixed-count 0)]))))
+          (compiler-backend-windows-vararg-dup-asm
+            type-segment-bases
+            param-types
+            fixed-count
+            0)]))))
 
 (define (compiler-backend-call-param-types-index
   [name : i64]
@@ -26335,6 +27387,7 @@
     [(CompilerRegMaybeType.No) (AstType.I64)]))
 
 (define (compiler-backend-call-actual-param-type-for-index
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [args : CompilerIrCallArgs]
@@ -26343,7 +27396,8 @@
   [index : i64]) : AstType
   (if (< index fixed-count)
     (if (< index (ast-type-list-len (& fixed-types)))
-      (ast-node-pool-reader-type-get
+      (ast-type-segment-bases-get
+        type-segment-bases
         (ast-type-list-get (& fixed-types) index (ast-type-id-fallback)))
       (compiler-backend-call-actual-type
         types
@@ -26355,6 +27409,7 @@
       (compiler-backend-call-arg-at args index))))
 
 (define (compiler-backend-call-actual-param-types-fill
+  [type-segment-bases : i64]
   [out : (&mut out AstTypeList)]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -26369,6 +27424,7 @@
         out
         (ast-node-pool-reader-type-push
           (compiler-backend-call-actual-param-type-for-index
+            type-segment-bases
             types
             global-types
             args
@@ -26376,6 +27432,7 @@
             fixed-count
             index)))
       (compiler-backend-call-actual-param-types-fill
+        type-segment-bases
         out
         types
         global-types
@@ -26385,6 +27442,7 @@
         (+ index 1)))))
 
 (define (compiler-backend-call-actual-param-types-from
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [args : CompilerIrCallArgs]
@@ -26396,6 +27454,7 @@
       (ast-type-list-with-capacity (compiler-backend-call-args-count args))]
     (begin
       (compiler-backend-call-actual-param-types-fill
+        type-segment-bases
         (&mut out)
         types
         global-types
@@ -26406,6 +27465,7 @@
       out)))
 
 (define (compiler-backend-call-c-abi-param-types-fill
+  [type-segment-bases : i64]
   [out : (&mut out AstTypeList)]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -26418,6 +27478,7 @@
     unit
     (if (>= decl-index (ast-type-list-len (& declared-types)))
       (compiler-backend-call-actual-param-types-fill
+        type-segment-bases
         out
         types
         global-types
@@ -26431,12 +27492,17 @@
             (& declared-types)
             decl-index
             (ast-type-id-fallback))]
-        [declared-ty : AstType (ast-node-pool-reader-type-get declared)]
+        [declared-ty : AstType
+          (ast-type-segment-bases-get type-segment-bases declared)]
         [memory-size : i64
           (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))]
         [aggregate? : bool
           (not
-            (string.eq (compiler-backend-aggregate-type-name declared-ty) ""))]
+            (string.eq
+              (compiler-backend-aggregate-type-name
+                type-segment-bases
+                declared-ty)
+              ""))]
         (if (and (> memory-size 0) aggregate?)
           (begin
             (ast-type-list-push
@@ -26449,6 +27515,7 @@
               out
               (ast-node-pool-reader-type-push (AstType.Unit)))
             (compiler-backend-call-c-abi-param-types-fill
+              type-segment-bases
               out
               types
               global-types
@@ -26459,7 +27526,10 @@
               program-index))
           (if (and
             aggregate?
-            (compiler-backend-group-type? program-index declared-ty)
+            (compiler-backend-group-type?
+              type-segment-bases
+              program-index
+              declared-ty)
             (< (+ arg-index 1) (compiler-backend-call-args-count args)))
             (begin
               (ast-type-list-push
@@ -26479,6 +27549,7 @@
                     args
                     (+ arg-index 1))))
               (compiler-backend-call-c-abi-param-types-fill
+                type-segment-bases
                 out
                 types
                 global-types
@@ -26497,6 +27568,7 @@
                     args
                     arg-index)))
               (compiler-backend-call-c-abi-param-types-fill
+                type-segment-bases
                 out
                 types
                 global-types
@@ -26507,6 +27579,7 @@
                 program-index))))))))
 
 (define (compiler-backend-call-c-abi-param-types-from
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [args : CompilerIrCallArgs]
@@ -26518,6 +27591,7 @@
       (ast-type-list-with-capacity (compiler-backend-call-args-count args))]
     (begin
       (compiler-backend-call-c-abi-param-types-fill
+        type-segment-bases
         (&mut out)
         types
         global-types
@@ -26541,10 +27615,12 @@
     (AstType.I64)))
 
 (define (compiler-backend-call-actual-param-types
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [args : CompilerIrCallArgs]) : AstTypeList
   (compiler-backend-call-actual-param-types-from
+    type-segment-bases
     types
     global-types
     args
@@ -26553,12 +27629,14 @@
     0))
 
 (define (compiler-backend-call-c-abi-param-types
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : AstTypeList
   (compiler-backend-call-c-abi-param-types-from
+    type-segment-bases
     types
     global-types
     args
@@ -26566,10 +27644,13 @@
     0
     program-index))
 
-(define (compiler-backend-type-list-has-aggregate? [types : AstTypeList]) : bool
-  (compiler-backend-type-list-has-aggregate-at? (& types) 0))
+(define (compiler-backend-type-list-has-aggregate?
+  [type-segment-bases : i64]
+  [types : AstTypeList]) : bool
+  (compiler-backend-type-list-has-aggregate-at? type-segment-bases (& types) 0))
 
 (define (compiler-backend-type-list-has-aggregate-at?
+  [type-segment-bases : i64]
   [types : (& types AstTypeList)]
   [index : i64]) : bool
   (if (>= index (ast-type-list-len types))
@@ -26578,12 +27659,18 @@
       (not
         (string.eq
           (compiler-backend-aggregate-type-name
-            (ast-node-pool-reader-type-get
+            type-segment-bases
+            (ast-type-segment-bases-get
+              type-segment-bases
               (ast-type-list-get types index (ast-type-id-fallback))))
           ""))
-      (compiler-backend-type-list-has-aggregate-at? types (+ index 1)))))
+      (compiler-backend-type-list-has-aggregate-at?
+        type-segment-bases
+        types
+        (+ index 1)))))
 
 (define (compiler-backend-call-param-types-for-call
+  [type-segment-bases : i64]
   [name : i64]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]
@@ -26597,6 +27684,7 @@
       (compiler-backend-extern-call-info-fixed-count extern-call-info)]
     (if (compiler-backend-extern-call-info-aggregate-params? extern-call-info)
       (compiler-backend-call-c-abi-param-types
+        type-segment-bases
         types
         global-types
         args
@@ -26607,8 +27695,13 @@
           (compiler-backend-call-args-count args)
           (compiler-backend-type-list-count param-types))
           param-types
-          (compiler-backend-call-actual-param-types types global-types args))
+          (compiler-backend-call-actual-param-types
+            type-segment-bases
+            types
+            global-types
+            args))
         (compiler-backend-call-actual-param-types-from
+          type-segment-bases
           types
           global-types
           args
@@ -26639,13 +27732,17 @@
     (/ (+ size 7) 8)))
 
 (define (compiler-backend-c-memory-aggregate-type?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [c-abi? : bool]
   [ty : AstType]) : bool
   (and
     c-abi?
     (compiler-backend-target-linux? target)
-    (not (string.eq (compiler-backend-aggregate-type-name ty) ""))))
+    (not
+      (string.eq
+        (compiler-backend-aggregate-type-name type-segment-bases ty)
+        ""))))
 
 (define (compiler-backend-c-memory-aggregate-marker-size
   [args : CompilerIrCallArgs]
@@ -26664,6 +27761,7 @@
 ;; `compiler-backend-emit-call-args` does, and counts every arg whose bank is
 ;; already full.
 (define (compiler-backend-call-stack-arg-count
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
@@ -26679,12 +27777,17 @@
     (let
       [arg-ty : AstType
         (if (< arg-index (ast-type-list-len (& types)))
-          (ast-node-pool-reader-type-get
+          (ast-type-segment-bases-get
+            type-segment-bases
             (ast-type-list-get (& types) arg-index (ast-type-id-fallback)))
           (AstType.I64))]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [memory-aggregate? : bool
-        (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty)]
+        (compiler-backend-c-memory-aggregate-type?
+          type-segment-bases
+          target
+          c-abi?
+          arg-ty)]
       [memory-size : i64
         (if memory-aggregate?
           (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))
@@ -26697,6 +27800,7 @@
       ;; made tail-call stack accounting diverge from emission.
       (if (> memory-size 0)
         (compiler-backend-call-stack-arg-count
+          type-segment-bases
           target
           args
           types
@@ -26707,10 +27811,17 @@
           (+ position 1)
           (+ stack-count (compiler-backend-stack-slots-for-size memory-size))
           program-index)
-        (if (compiler-backend-group-type? program-index arg-ty)
+        (if (compiler-backend-group-type?
+          type-segment-bases
+          program-index
+          arg-ty)
           (let
             [w0-sse : bool
-              (compiler-backend-group-word-sse? program-index arg-ty 0)]
+              (compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                arg-ty
+                0)]
             [w0-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
@@ -26728,7 +27839,11 @@
                 float-idx)]
             [pos1 : i64 (+ position 1)]
             [w1-sse : bool
-              (compiler-backend-group-word-sse? program-index arg-ty 1)]
+              (compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                arg-ty
+                1)]
             [w1-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
@@ -26737,6 +27852,7 @@
                 float1
                 pos1)]
             (compiler-backend-call-stack-arg-count
+              type-segment-bases
               target
               args
               types
@@ -26760,6 +27876,7 @@
                     0)))
               program-index))
           (compiler-backend-call-stack-arg-count
+            type-segment-bases
             target
             args
             types
@@ -26783,6 +27900,7 @@
             program-index))))))
 
 (define (compiler-backend-type-list-stack-arg-count
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [types : AstTypeList]
   [int-idx : i64]
@@ -26791,6 +27909,7 @@
   [stack-count : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-type-list-stack-arg-count-at
+    type-segment-bases
     target
     (& types)
     0
@@ -26801,6 +27920,7 @@
     program-index))
 
 (define (compiler-backend-type-list-stack-arg-count-at
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [types : (& types AstTypeList)]
   [type-index : i64]
@@ -26813,7 +27933,8 @@
     stack-count
     (let
       [arg-ty : AstType
-        (ast-node-pool-reader-type-get
+        (ast-type-segment-bases-get
+          type-segment-bases
           (ast-type-list-get types type-index (ast-type-id-fallback)))]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [next-int : i64
@@ -26824,10 +27945,14 @@
         (if is-float
           (+ float-idx 1)
           float-idx)]
-      (if (compiler-backend-group-type? program-index arg-ty)
+      (if (compiler-backend-group-type? type-segment-bases program-index arg-ty)
         (let
           [w0-sse : bool
-            (compiler-backend-group-word-sse? program-index arg-ty 0)]
+            (compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              arg-ty
+              0)]
           [w0-stack : bool
             (compiler-backend-stack-call-arg-for-banks?
               target
@@ -26844,7 +27969,11 @@
               (+ float-idx 1)
               float-idx)]
           [w1-sse : bool
-            (compiler-backend-group-word-sse? program-index arg-ty 1)]
+            (compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              arg-ty
+              1)]
           [w1-stack : bool
             (compiler-backend-stack-call-arg-for-banks?
               target
@@ -26853,6 +27982,7 @@
               float1
               (+ position 1))]
           (compiler-backend-type-list-stack-arg-count-at
+            type-segment-bases
             target
             types
             (+ type-index 1)
@@ -26874,6 +28004,7 @@
                   0)))
             program-index))
         (compiler-backend-type-list-stack-arg-count-at
+          type-segment-bases
           target
           types
           (+ type-index 1)
@@ -26891,10 +28022,12 @@
           program-index)))))
 
 (define (compiler-backend-incoming-stack-arg-count
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-type-list-stack-arg-count
+    type-segment-bases
     target
     (compiler-backend-call-param-types-index source-function program-index)
     0
@@ -26905,24 +28038,37 @@
 
 ;; True when any arg type is a 2-word register group.
 (define (compiler-backend-type-list-has-group?
+  [type-segment-bases : i64]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : bool
-  (compiler-backend-type-list-has-group-at? (& types) program-index 0))
+  (compiler-backend-type-list-has-group-at?
+    type-segment-bases
+    (& types)
+    program-index
+    0))
 
 (define (compiler-backend-type-list-has-group-at?
+  [type-segment-bases : i64]
   [types : (& types AstTypeList)]
   [program-index : CompilerBackendProgramIndex]
   [index : i64]) : bool
   (if (>= index (ast-type-list-len types))
     false
     (if (compiler-backend-group-type?
+      type-segment-bases
       program-index
-      (ast-node-pool-reader-type-get
+      (ast-type-segment-bases-get
+        type-segment-bases
         (ast-type-list-get types index (ast-type-id-fallback))))
       true
-      (compiler-backend-type-list-has-group-at? types program-index (+ index 1)))))
+      (compiler-backend-type-list-has-group-at?
+        type-segment-bases
+        types
+        program-index
+        (+ index 1)))))
 
 (define (compiler-backend-direct-tail-call?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
   [name : i64]
@@ -26932,6 +28078,7 @@
   (let
     [tail-stack : i64
       (compiler-backend-call-stack-arg-count
+        type-segment-bases
         target
         args
         types
@@ -26947,6 +28094,7 @@
       (<=
         tail-stack
         (compiler-backend-incoming-stack-arg-count
+          type-segment-bases
           target
           source-function
           program-index))
@@ -26956,17 +28104,23 @@
       ;; direct tail call and fall back to a plain call instead.
       (or
         (= tail-stack 0)
-        (not (compiler-backend-type-list-has-group? types program-index))))))
+        (not
+          (compiler-backend-type-list-has-group?
+            type-segment-bases
+            types
+            program-index))))))
 
 (define (compiler-backend-identity-tail-forwarder-type-ok?
+  [type-segment-bases : i64]
   [program-index : CompilerBackendProgramIndex]
   [ty : AstType]) : bool
   (and
-    (= (compiler-backend-type-size ty) 8)
+    (= (compiler-backend-type-size type-segment-bases ty) 8)
     (not (compiler-backend-float-type? ty))
-    (not (compiler-backend-group-type? program-index ty))))
+    (not (compiler-backend-group-type? type-segment-bases program-index ty))))
 
 (define (compiler-backend-identity-tail-forwarder-args?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
   [args : CompilerIrCallArgs]
@@ -26982,6 +28136,7 @@
         (>= arg-index (ast-type-list-len (& target-types)))]
       [(CompilerIrParamList.Array seq)
         (compiler-backend-identity-tail-forwarder-args?
+          type-segment-bases
           target
           (compiler-ir-param-seq-to-list seq)
           args
@@ -26996,6 +28151,7 @@
       [(CompilerIrParamList.Nil) false]
       [(CompilerIrParamList.Array seq)
         (compiler-backend-identity-tail-forwarder-args?
+          type-segment-bases
           target
           (compiler-ir-param-seq-to-list seq)
           args
@@ -27012,7 +28168,8 @@
             [(CompilerIrParam.Param _ source-ty var-id)
               (let
                 [callee-ty : AstType
-                  (ast-node-pool-reader-type-get
+                  (ast-type-segment-bases-get
+                    type-segment-bases
                     (ast-type-list-get
                       (& target-types)
                       arg-index
@@ -27022,9 +28179,11 @@
                     (and
                       (= arg-var var-id)
                       (compiler-backend-identity-tail-forwarder-type-ok?
+                        type-segment-bases
                         program-index
                         source-ty)
                       (compiler-backend-identity-tail-forwarder-type-ok?
+                        type-segment-bases
                         program-index
                         callee-ty)
                       (not
@@ -27035,6 +28194,7 @@
                           float-idx
                           position))
                       (compiler-backend-identity-tail-forwarder-args?
+                        type-segment-bases
                         target
                         (box-get rest)
                         args
@@ -27047,6 +28207,7 @@
                   [_ false]))]))])))
 
 (define (compiler-backend-identity-tail-forwarder-call?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [_source-function : i64]
   [params : CompilerIrParamList]
@@ -27058,6 +28219,7 @@
       [target-types : AstTypeList
         (compiler-backend-call-param-types-index name program-index)]
       (compiler-backend-identity-tail-forwarder-args?
+        type-segment-bases
         target
         params
         args
@@ -27070,6 +28232,7 @@
     false))
 
 (define (compiler-backend-identity-tail-forwarder-block?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
   [params : CompilerIrParamList]
@@ -27081,6 +28244,7 @@
         (match (compiler-ir-instr-seq-ref instrs 0)
           [(CompilerIrInstr.TailCall name args _)
             (compiler-backend-identity-tail-forwarder-call?
+              type-segment-bases
               target
               source-function
               params
@@ -27091,6 +28255,7 @@
         false)]))
 
 (define (compiler-backend-identity-tail-forwarder?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
   [params : CompilerIrParamList]
@@ -27102,6 +28267,7 @@
       (match (box-get rest)
         [(CompilerIrBlockList.Nil)
           (compiler-backend-identity-tail-forwarder-block?
+            type-segment-bases
             target
             source-function
             params
@@ -27111,6 +28277,7 @@
     [(CompilerIrBlockList.Array seq)
       (if (= (compiler-ir-block-seq-count seq) 1)
         (compiler-backend-identity-tail-forwarder-block?
+          type-segment-bases
           target
           source-function
           params
@@ -27122,6 +28289,7 @@
 ;; not necessarily a per-call %rsp adjustment: Linux/Win64 reserve the maximum
 ;; needed outgoing area in the prologue frame.
 (define (compiler-backend-call-stack-arg-space
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
@@ -27130,6 +28298,7 @@
   (let
     [stack-count : i64
       (compiler-backend-call-stack-arg-count
+        type-segment-bases
         target
         args
         types
@@ -27148,6 +28317,7 @@
 ;; Windows must skip the callee shadow space as well as stack args because the
 ;; callee owns the shadow area during the call.
 (define (compiler-backend-call-stack-arg-layout-space
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
@@ -27156,6 +28326,7 @@
   (+
     (compiler-backend-outgoing-shadow-space target)
     (compiler-backend-call-stack-arg-space
+      type-segment-bases
       target
       args
       types
@@ -27193,6 +28364,7 @@
 ;; four register positions. Sizing the outgoing area by actual stack words (not
 ;; positions-past-4) keeps a boundary group's second word inside the reservation.
 (define (compiler-backend-windows-stack-word-count
+  [type-segment-bases : i64]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [arg-index : i64]
@@ -27204,11 +28376,13 @@
     (let
       [arg-ty : AstType
         (if (< arg-index (ast-type-list-len (& types)))
-          (ast-node-pool-reader-type-get
+          (ast-type-segment-bases-get
+            type-segment-bases
             (ast-type-list-get (& types) arg-index (ast-type-id-fallback)))
           (AstType.I64))]
-      (if (compiler-backend-group-type? program-index arg-ty)
+      (if (compiler-backend-group-type? type-segment-bases program-index arg-ty)
         (compiler-backend-windows-stack-word-count
+          type-segment-bases
           args
           types
           (+ arg-index 1)
@@ -27221,6 +28395,7 @@
             (+ stack-words 2))
           program-index)
         (compiler-backend-windows-stack-word-count
+          type-segment-bases
           args
           types
           (+ arg-index 1)
@@ -27238,11 +28413,19 @@
     0))
 
 (define (compiler-backend-windows-stack-arg-space
+  [type-segment-bases : i64]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-windows-words-stack-space
-    (compiler-backend-windows-stack-word-count args types 0 0 0 program-index)))
+    (compiler-backend-windows-stack-word-count
+      type-segment-bases
+      args
+      types
+      0
+      0
+      0
+      program-index)))
 
 ;; The actual System V outgoing stack-arg space for a named non-C-ABI call.
 ;; Used to size the prologue frame's reserved outgoing region so calls need no
@@ -27250,11 +28433,18 @@
 ;; windows-closure-stack-arg-space, whose `1 + 2*args` word bound is an
 ;; ABI-generic upper bound.
 (define (compiler-backend-linux-stack-arg-space
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (compiler-backend-call-stack-arg-space target args types false program-index))
+  (compiler-backend-call-stack-arg-space
+    type-segment-bases
+    target
+    args
+    types
+    false
+    program-index))
 
 ;; Indirect (closure) calls carry no callee signature here, so size conservatively:
 ;; the leading environment pointer plus two stack words per argument is always an
@@ -27285,6 +28475,7 @@
     [_ false]))
 
 (define (compiler-backend-instr-outgoing-stack-space
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [instr : CompilerIrInstr]
   [program-index : CompilerBackendProgramIndex]) : i64
@@ -27293,6 +28484,7 @@
       (match instr
         [(CompilerIrInstr.Call _ name args _)
           (compiler-backend-windows-stack-arg-space
+            type-segment-bases
             args
             (compiler-backend-call-param-types-index name program-index)
             program-index)]
@@ -27300,6 +28492,7 @@
           (compiler-backend-windows-closure-stack-arg-space args)]
         [(CompilerIrInstr.TailCall name args _)
           (compiler-backend-windows-stack-arg-space
+            type-segment-bases
             args
             (compiler-backend-call-param-types-index name program-index)
             program-index)]
@@ -27310,6 +28503,7 @@
             [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ name args _)
               (+
                 (compiler-backend-windows-stack-arg-space
+                  type-segment-bases
                   args
                   (compiler-backend-call-param-types-index name program-index)
                   program-index)
@@ -27333,6 +28527,7 @@
       (match instr
         [(CompilerIrInstr.Call _ name args _)
           (compiler-backend-linux-stack-arg-space
+            type-segment-bases
             target
             args
             (compiler-backend-call-param-types-index name program-index)
@@ -27341,6 +28536,7 @@
           (compiler-backend-windows-closure-stack-arg-space args)]
         [(CompilerIrInstr.TailCall name args _)
           (compiler-backend-linux-stack-arg-space
+            type-segment-bases
             target
             args
             (compiler-backend-call-param-types-index name program-index)
@@ -27355,6 +28551,7 @@
             [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ name args _)
               (+
                 (compiler-backend-call-stack-arg-space
+                  type-segment-bases
                   target
                   args
                   (compiler-backend-call-param-types-index name program-index)
@@ -27381,6 +28578,7 @@
   (max-space i64))
 
 (define (compiler-backend-outgoing-frame-scan-instrs
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [instrs : CompilerIrInstrSeq]
   [scan : CompilerBackendOutgoingFrameScan]
@@ -27404,6 +28602,7 @@
                   (compiler-reg-max
                     max-space
                     (compiler-backend-instr-outgoing-stack-space
+                      type-segment-bases
                       target
                       instr
                       program-index))))
@@ -27412,6 +28611,7 @@
       (CompilerBackendOutgoingFrameScan needed max-space))))
 
 (define (compiler-backend-outgoing-frame-scan-blocks
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]
   [scan : CompilerBackendOutgoingFrameScan]
@@ -27422,9 +28622,11 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (compiler-backend-outgoing-frame-scan-blocks
+            type-segment-bases
             target
             (box-get rest)
             (compiler-backend-outgoing-frame-scan-instrs
+              type-segment-bases
               target
               instrs
               scan
@@ -27432,6 +28634,7 @@
             program-index)])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-outgoing-frame-scan-block-seq
+        type-segment-bases
         target
         seq
         0
@@ -27439,6 +28642,7 @@
         program-index)]))
 
 (define (compiler-backend-outgoing-frame-scan-block-seq
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
@@ -27449,10 +28653,12 @@
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block _ instrs)
         (compiler-backend-outgoing-frame-scan-block-seq
+          type-segment-bases
           target
           blocks
           (+ index 1)
           (compiler-backend-outgoing-frame-scan-instrs
+            type-segment-bases
             target
             instrs
             scan
@@ -27460,12 +28666,14 @@
           program-index)])))
 
 (define (compiler-backend-outgoing-frame-space
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]) : i64
   (let
     [scan : CompilerBackendOutgoingFrameScan
       (compiler-backend-outgoing-frame-scan-blocks
+        type-segment-bases
         target
         blocks
         (CompilerBackendOutgoingFrameScan false 0)
@@ -27480,6 +28688,7 @@
       0)))
 
 (define (compiler-backend-emit-scalar-stack-call-arg
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
@@ -27503,8 +28712,10 @@
               compiler-backend-c-abi-stage-exclude-count
               "%r10")
             planned-stage)]
-        [gp-part : String (compiler-backend-float-bits-gp-reg scav arg-ty)]
+        [gp-part : String
+          (compiler-backend-float-bits-gp-reg type-segment-bases scav arg-ty)]
         (match (compiler-backend-emit-load-float-bits-to-gp
+          type-segment-bases
           assignments
           value
           arg-ty
@@ -27514,7 +28725,9 @@
               (str_cat.str-cat
                 head
                 "    "
-                (compiler-backend-float-bits-load-mnemonic arg-ty)
+                (compiler-backend-float-bits-load-mnemonic
+                  type-segment-bases
+                  arg-ty)
                 " "
                 gp-part
                 ", "
@@ -28074,6 +29287,7 @@
         (+ position 1)))))
 
 (define (compiler-backend-call-args-gp-parallel-from?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
@@ -28086,9 +29300,15 @@
     (and
       (> count 0)
       (compiler-backend-call-args-gp-fit-from? target 0 count int-idx position)
-      (compiler-backend-types-all-gp-int? target types c-abi? program-index))))
+      (compiler-backend-types-all-gp-int?
+        type-segment-bases
+        target
+        types
+        c-abi?
+        program-index))))
 
 (define (compiler-backend-types-all-gp-int-from?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [types : (& types AstTypeList)]
   [c-abi? : bool]
@@ -28099,14 +29319,20 @@
     true
     (let
       [ty : AstType
-        (ast-node-pool-reader-type-get
+        (ast-type-segment-bases-get
+          type-segment-bases
           (ast-type-list-get types index (ast-type-id-fallback)))]
       (if (or
         (compiler-backend-float-type? ty)
-        (compiler-backend-group-type? program-index ty)
-        (compiler-backend-c-memory-aggregate-type? target c-abi? ty))
+        (compiler-backend-group-type? type-segment-bases program-index ty)
+        (compiler-backend-c-memory-aggregate-type?
+          type-segment-bases
+          target
+          c-abi?
+          ty))
         false
         (compiler-backend-types-all-gp-int-from?
+          type-segment-bases
           target
           types
           c-abi?
@@ -28115,11 +29341,13 @@
           count)))))
 
 (define (compiler-backend-types-all-gp-int?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [types : AstTypeList]
   [c-abi? : bool]
   [program-index : CompilerBackendProgramIndex]) : bool
   (compiler-backend-types-all-gp-int-from?
+    type-segment-bases
     target
     (& types)
     c-abi?
@@ -28130,6 +29358,7 @@
 ;; GP arg-reg threshold SysV 6 / Win64 4 -- mirrors compiler-reg-arg-reg-limit-for-abi
 ;; (regalloc); keep the two in sync (the rev6 integration test guards 6-arg SysV).
 (define (compiler-backend-emit-call-args-with-assignments
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [arg-assignments : CompilerRegAssignmentList]
   [args : CompilerIrCallArgs]
@@ -28150,7 +29379,8 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (if (< arg-index (ast-type-list-len (& types)))
-          (ast-node-pool-reader-type-get
+          (ast-type-segment-bases-get
+            type-segment-bases
             (ast-type-list-get (& types) arg-index (ast-type-id-fallback)))
           (AstType.I64))]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
@@ -28163,7 +29393,11 @@
           (+ float-idx 1)
           float-idx)]
       [memory-aggregate? : bool
-        (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty)]
+        (compiler-backend-c-memory-aggregate-type?
+          type-segment-bases
+          target
+          c-abi?
+          arg-ty)]
       [memory-size : i64
         (if memory-aggregate?
           (compiler-backend-c-memory-aggregate-marker-size args (+ arg-index 1))
@@ -28184,6 +29418,7 @@
             planned-stage)
             [(ResultCompilerBackend.Ok head)
               (match (compiler-backend-emit-call-args-with-assignments
+                type-segment-bases
                 target
                 arg-assignments
                 args
@@ -28206,10 +29441,14 @@
                   (ResultCompilerBackend.Err message)])]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)])]
-        [(compiler-backend-group-type? program-index arg-ty)
+        [(compiler-backend-group-type? type-segment-bases program-index arg-ty)
           (let
             [w0-sse : bool
-              (compiler-backend-group-word-sse? program-index arg-ty 0)]
+              (compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                arg-ty
+                0)]
             [w0-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
@@ -28230,7 +29469,11 @@
                 (+ stack-idx 1)
                 stack-idx)]
             [w1-sse : bool
-              (compiler-backend-group-word-sse? program-index arg-ty 1)]
+              (compiler-backend-group-word-sse?
+                type-segment-bases
+                program-index
+                arg-ty
+                1)]
             [w1-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
@@ -28239,6 +29482,7 @@
                 float1
                 (+ position 1))]
             (match (compiler-backend-emit-group-word-call-arg
+              type-segment-bases
               target
               arg-assignments
               value
@@ -28254,6 +29498,7 @@
               func-diag)
               [(ResultCompilerBackend.Ok head0)
                 (match (compiler-backend-emit-group-word-call-arg
+                  type-segment-bases
                   target
                   arg-assignments
                   value
@@ -28269,6 +29514,7 @@
                   func-diag)
                   [(ResultCompilerBackend.Ok head1)
                     (match (compiler-backend-emit-call-args-with-assignments
+                      type-segment-bases
                       target
                       arg-assignments
                       args
@@ -28305,6 +29551,7 @@
             float-idx
             position)
           (match (compiler-backend-emit-scalar-stack-call-arg
+            type-segment-bases
             target
             arg-assignments
             value
@@ -28314,6 +29561,7 @@
             planned-stage)
             [(ResultCompilerBackend.Ok head)
               (match (compiler-backend-emit-call-args-with-assignments
+                type-segment-bases
                 target
                 arg-assignments
                 args
@@ -28354,6 +29602,7 @@
                   reg))
                 [(ResultCompilerBackend.Ok head)
                   (match (compiler-backend-emit-call-args-with-assignments
+                    type-segment-bases
                     target
                     arg-assignments
                     args
@@ -28379,6 +29628,7 @@
                 (box (compiler-diagnostic-with-message func-diag message)))])]))))
 
 (define (compiler-backend-emit-call-args
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [args : CompilerIrCallArgs]
@@ -28401,6 +29651,7 @@
   (if (and
     (= arg-index 0)
     (compiler-backend-call-args-gp-parallel-from?
+      type-segment-bases
       target
       args
       types
@@ -28416,6 +29667,7 @@
       assignments
       (compiler-backend-arg-moves-build-at target args int-idx position))
     (compiler-backend-emit-call-args-with-assignments
+      type-segment-bases
       target
       assignments
       args
@@ -28439,6 +29691,7 @@
 ;; identically for that one pinned var. Reset on both result paths so the
 ;; main emission spine always observes -1.
 (define (compiler-backend-emit-call-args-with-override
+  [type-segment-bases : i64]
   [override-var : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -28459,6 +29712,7 @@
       (begin
         (set! compiler-backend-rax-override-var override-var)
         (compiler-backend-emit-call-args
+          type-segment-bases
           target
           assignments
           args
@@ -28489,32 +29743,40 @@
     false))
 
 (define (compiler-backend-rax-call-arg-eligible?
+  [type-segment-bases : i64]
   [program-index : CompilerBackendProgramIndex]
   [ty : AstType]) : bool
   (and
-    (= (compiler-backend-type-size ty) 8)
+    (= (compiler-backend-type-size type-segment-bases ty) 8)
     (not (compiler-backend-float-type? ty))
-    (not (compiler-backend-group-type? program-index ty))))
+    (not (compiler-backend-group-type? type-segment-bases program-index ty))))
 
 (define (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+  [type-segment-bases : i64]
   [program-index : CompilerBackendProgramIndex]
   [declared-types : AstTypeList]) : bool
   (if (> (ast-type-list-len (& declared-types)) 0)
     (not
       (compiler-backend-group-type?
+        type-segment-bases
         program-index
-        (ast-node-pool-reader-type-get
+        (ast-type-segment-bases-get
+          type-segment-bases
           (ast-type-list-get (& declared-types) 0 (ast-type-id-fallback)))))
     true))
 
 (define (compiler-backend-rax-call-arg-assignments
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [program-index : CompilerBackendProgramIndex]
   [rax-var : i64]
   [rax-ty : AstType]) : CompilerRegAssignmentList
   (if (and
     (>= rax-var 0)
-    (compiler-backend-rax-call-arg-eligible? program-index rax-ty))
+    (compiler-backend-rax-call-arg-eligible?
+      type-segment-bases
+      program-index
+      rax-ty))
     (compiler-reg-assignment-insert
       assignments
       rax-var
@@ -28528,6 +29790,7 @@
     (compiler-backend-incoming-stack-arg-offset target stack-idx)))
 
 (define (compiler-backend-emit-direct-tail-stack-call-arg
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
@@ -28546,8 +29809,10 @@
               compiler-backend-c-abi-stage-exclude-count
               "%r10")
             planned-stage)]
-        [gp-part : String (compiler-backend-float-bits-gp-reg scav arg-ty)]
+        [gp-part : String
+          (compiler-backend-float-bits-gp-reg type-segment-bases scav arg-ty)]
         (match (compiler-backend-emit-load-float-bits-to-gp
+          type-segment-bases
           assignments
           value
           arg-ty
@@ -28557,7 +29822,9 @@
               (str_cat.str-cat
                 head
                 "    "
-                (compiler-backend-float-bits-load-mnemonic arg-ty)
+                (compiler-backend-float-bits-load-mnemonic
+                  type-segment-bases
+                  arg-ty)
                 " "
                 gp-part
                 ", "
@@ -28588,6 +29855,7 @@
                 (ResultCompilerBackend.Err message)]))]))))
 
 (define (compiler-backend-emit-direct-tail-call-args-from
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [args : CompilerIrCallArgs]
@@ -28605,7 +29873,8 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (if (< arg-index (ast-type-list-len (& types)))
-          (ast-node-pool-reader-type-get
+          (ast-type-segment-bases-get
+            type-segment-bases
             (ast-type-list-get (& types) arg-index (ast-type-id-fallback)))
           (AstType.I64))]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
@@ -28624,6 +29893,7 @@
         float-idx
         position)
         (match (compiler-backend-emit-direct-tail-stack-call-arg
+          type-segment-bases
           target
           assignments
           value
@@ -28633,6 +29903,7 @@
           planned-stage)
           [(ResultCompilerBackend.Ok head)
             (match (compiler-backend-emit-direct-tail-call-args-from
+              type-segment-bases
               target
               assignments
               args
@@ -28666,6 +29937,7 @@
               (compiler-backend-emit-load-value-with-plan assignments value reg))
               [(ResultCompilerBackend.Ok head)
                 (match (compiler-backend-emit-direct-tail-call-args-from
+                  type-segment-bases
                   target
                   assignments
                   args
@@ -28688,6 +29960,7 @@
               (box (compiler-diagnostic-with-message func-diag message)))])))))
 
 (define (compiler-backend-emit-direct-tail-call-args
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [args : CompilerIrCallArgs]
@@ -28695,6 +29968,7 @@
   [planned-stage : String]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (compiler-backend-emit-direct-tail-call-args-from
+    type-segment-bases
     target
     assignments
     args
@@ -29237,6 +30511,7 @@
           "\n")))))
 
 (define (compiler-backend-emit-phi-group-word-save
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [index : i64]
@@ -29246,7 +30521,11 @@
   (match (compiler-backend-group-word-operand assignments var index vars)
     [(ResultCompilerBackend.Ok operand)
       (ResultCompilerBackend.Ok
-        (if (compiler-backend-group-word-sse? program-index ty index)
+        (if (compiler-backend-group-word-sse?
+          type-segment-bases
+          program-index
+          ty
+          index)
           (if (compiler-backend-peephole-register-operand? operand)
             (compiler-backend-emit-phi-temp-slot-save-reg operand "movq" index)
             (compiler-backend-emit-phi-temp-slot-save-gp operand index))
@@ -29254,6 +30533,7 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-phi-group-word-restore
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [index : i64]
@@ -29263,7 +30543,11 @@
   (match (compiler-backend-group-word-operand assignments var index vars)
     [(ResultCompilerBackend.Ok operand)
       (ResultCompilerBackend.Ok
-        (if (compiler-backend-group-word-sse? program-index ty index)
+        (if (compiler-backend-group-word-sse?
+          type-segment-bases
+          program-index
+          ty
+          index)
           (if (compiler-backend-peephole-register-operand? operand)
             (compiler-backend-emit-phi-temp-slot-restore-reg
               operand
@@ -29274,15 +30558,17 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-phi-temp-save
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (if (or
-    (compiler-backend-group-type? program-index ty)
+    (compiler-backend-group-type? type-segment-bases program-index ty)
     (compiler-backend-group-var? dst))
     (match (compiler-backend-emit-phi-group-word-save
+      type-segment-bases
       assignments
       dst
       0
@@ -29291,6 +30577,7 @@
       program-index)
       [(ResultCompilerBackend.Ok w0)
         (match (compiler-backend-emit-phi-group-word-save
+          type-segment-bases
           assignments
           dst
           1
@@ -29313,15 +30600,17 @@
 ;; Restore reverses the word order (word1 then word0), preserving the historical
 ;; group-temp order while using fixed frame slots instead of %rsp pushes.
 (define (compiler-backend-emit-phi-temp-restore
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (if (or
-    (compiler-backend-group-type? program-index ty)
+    (compiler-backend-group-type? type-segment-bases program-index ty)
     (compiler-backend-group-var? dst))
     (match (compiler-backend-emit-phi-group-word-restore
+      type-segment-bases
       assignments
       dst
       1
@@ -29330,6 +30619,7 @@
       program-index)
       [(ResultCompilerBackend.Ok w1)
         (match (compiler-backend-emit-phi-group-word-restore
+          type-segment-bases
           assignments
           dst
           0
@@ -29529,6 +30819,7 @@
 ;; reserved frame temp did. Spilled (mem->mem), float, group, immediate, or remat
 ;; copies can scavenge a bounce register and so keep using the frame temp.
 (define (compiler-backend-phi-copy-reg-swappable?
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [copy : CompilerBackendPhiCopy]
   [program-index : CompilerBackendProgramIndex]) : bool
@@ -29538,7 +30829,7 @@
         (not (compiler-backend-float-type? ty))
         (not
           (or
-            (compiler-backend-group-type? program-index ty)
+            (compiler-backend-group-type? type-segment-bases program-index ty)
             (compiler-backend-group-var? dst)))
         (not
           (string.eq (compiler-backend-var-register-home assignments dst) ""))
@@ -29554,6 +30845,7 @@
           [(CompilerBackendPhiSource.Temp _) true]))]))
 
 (define (compiler-backend-phi-copy-list-reg-swappable?
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]) : bool
@@ -29564,6 +30856,7 @@
         (begin
           (unless
             (compiler-backend-phi-copy-reg-swappable?
+              type-segment-bases
               assignments
               (array-ref (struct-get copies slots) i)
               program-index)
@@ -29577,6 +30870,7 @@
 ;; source home is also a destination home, and the allocator's canonical XMM
 ;; bank makes scalar/vector aliases conflict with the same physical register.
 (define (compiler-backend-phi-copy-xmm-swappable?
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [copy : CompilerBackendPhiCopy]
   [program-index : CompilerBackendProgramIndex]) : bool
@@ -29586,7 +30880,7 @@
         (compiler-backend-float-type? ty)
         (not
           (or
-            (compiler-backend-group-type? program-index ty)
+            (compiler-backend-group-type? type-segment-bases program-index ty)
             (compiler-backend-group-var? dst)))
         (not
           (string.eq (compiler-backend-var-register-home assignments dst) ""))
@@ -29602,6 +30896,7 @@
           [(CompilerBackendPhiSource.Temp _) true]))]))
 
 (define (compiler-backend-phi-copy-list-xmm-swappable?
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]) : bool
@@ -29612,6 +30907,7 @@
         (begin
           (unless
             (compiler-backend-phi-copy-xmm-swappable?
+              type-segment-bases
               assignments
               (array-ref (struct-get copies slots) i)
               program-index)
@@ -29620,6 +30916,7 @@
       true)))
 
 (define (compiler-backend-emit-phi-source-load-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]
@@ -29656,6 +30953,7 @@
     ;; frame-relative at emission, so the transient %rsp shift cannot skew the
     ;; operands, and the FPO audit tracks push/pop deltas.
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+      type-segment-bases
       assignments
       value
       ty
@@ -29809,6 +31107,7 @@
           [(CompilerRegMaybeLocation.No) (CompilerBackendMaybeAsm.No)])])))
 
 (define (compiler-backend-emit-phi-source-immediate-or-load-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]
@@ -29821,6 +31120,7 @@
     [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
     [(CompilerBackendMaybeAsm.No)
       (compiler-backend-emit-phi-source-load-store
+        type-segment-bases
         assignments
         dst
         value
@@ -29828,6 +31128,7 @@
         program-index)]))
 
 (define (compiler-backend-emit-phi-source-scalar-to-var
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]
@@ -29835,6 +31136,7 @@
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-float-type? ty)
     (compiler-backend-emit-phi-source-load-store
+      type-segment-bases
       assignments
       dst
       value
@@ -29849,6 +31151,7 @@
           [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
           [(CompilerBackendMaybeAsm.No)
             (compiler-backend-emit-phi-source-immediate-or-load-store
+              type-segment-bases
               assignments
               dst
               value
@@ -29856,6 +31159,7 @@
               program-index)])]
       [_
         (compiler-backend-emit-phi-source-immediate-or-load-store
+          type-segment-bases
           assignments
           dst
           value
@@ -29863,6 +31167,7 @@
           program-index)])))
 
 (define (compiler-backend-emit-phi-source-to-var
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [source : CompilerBackendPhiSource]
@@ -29873,6 +31178,7 @@
     [(CompilerBackendPhiSource.Temp loc)
       (if (string.eq loc "")
         (compiler-backend-emit-phi-temp-restore
+          type-segment-bases
           assignments
           dst
           ty
@@ -29886,7 +31192,12 @@
         (ResultCompilerBackend.Ok "")
         ;; A register-group phi value carries two words. Keep the direct-home
         ;; fast path, then use the same non-ABI copy path as an ordinary Mov.
-        (if (compiler-backend-copy-group? program-index ty dst value)
+        (if (compiler-backend-copy-group?
+          type-segment-bases
+          program-index
+          ty
+          dst
+          value)
           (match value
             [(CompilerIrValue.Var src-id)
               (match (compiler-backend-emit-phi-var-source-direct
@@ -29897,6 +31208,7 @@
                   (ResultCompilerBackend.Ok asm)]
                 [(CompilerBackendMaybeAsm.No)
                   (compiler-backend-emit-group-copy
+                    type-segment-bases
                     assignments
                     dst
                     value
@@ -29905,6 +31217,7 @@
                     program-index)])]
             [_
               (compiler-backend-emit-group-copy
+                type-segment-bases
                 assignments
                 dst
                 value
@@ -29912,6 +31225,7 @@
                 ty
                 program-index)])
           (compiler-backend-emit-phi-source-scalar-to-var
+            type-segment-bases
             assignments
             dst
             value
@@ -29919,6 +31233,7 @@
             program-index)))]))
 
 (define (compiler-backend-emit-phi-copy-item
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [copy : CompilerBackendPhiCopy]
   [program-index : CompilerBackendProgramIndex]
@@ -29926,6 +31241,7 @@
   (match copy
     [(CompilerBackendPhiCopy.Copy dst source ty)
       (compiler-backend-emit-phi-source-to-var
+        type-segment-bases
         assignments
         dst
         source
@@ -29938,12 +31254,14 @@
 ;; drain threads it through unchanged (a save may still be outstanding); each
 ;; break sets it true for the rest of the edge.
 (define (compiler-backend-emit-phi-copy-list
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [outer-active : bool]) : ResultCompilerBackend
   (compiler-backend-emit-phi-copy-list-with-all
+    type-segment-bases
     assignments
     copies
     copies
@@ -29956,6 +31274,7 @@
 ;; whole marshalling -- including those of already-emitted (drained) copies, which
 ;; still hold placed phi values that must survive to the merge block entry.
 (define (compiler-backend-emit-phi-copy-list-with-all
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopySeq]
   [all : CompilerBackendPhiCopySeq]
@@ -29970,12 +31289,14 @@
           (match copy
             [(CompilerBackendPhiCopy.Copy dst _ _)
               (match (compiler-backend-emit-phi-copy-item
+                type-segment-bases
                 assignments
                 copy
                 program-index
                 vars)
                 [(ResultCompilerBackend.Ok head)
                   (match (compiler-backend-emit-phi-copy-list-with-all
+                    type-segment-bases
                     assignments
                     (compiler-backend-phi-copy-list-remove-dst copies dst)
                     all
@@ -30005,6 +31326,7 @@
                   (if (and
                     (not outer-active)
                     (compiler-backend-phi-copy-list-reg-swappable?
+                      type-segment-bases
                       assignments
                       copies
                       program-index))
@@ -30015,6 +31337,7 @@
                     (string.eq gp-reg "")
                     (not outer-active)
                     (compiler-backend-phi-copy-list-xmm-swappable?
+                      type-segment-bases
                       assignments
                       copies
                       program-index))]
@@ -30046,6 +31369,7 @@
                     unit)]
                 (match (if (string.eq reg "")
                   (compiler-backend-emit-phi-temp-save
+                    type-segment-bases
                     assignments
                     dst
                     ty
@@ -30063,6 +31387,7 @@
                       ty)))
                   [(ResultCompilerBackend.Ok save)
                     (match (compiler-backend-emit-phi-source-to-var
+                      type-segment-bases
                       assignments
                       dst
                       source
@@ -30071,6 +31396,7 @@
                       vars)
                       [(ResultCompilerBackend.Ok head)
                         (match (compiler-backend-emit-phi-copy-list-with-all
+                          type-segment-bases
                           assignments
                           (compiler-backend-phi-copy-list-replace-source-home
                             assignments
@@ -30140,6 +31466,7 @@
   (compiler-backend-leading-phi-copies-seq-from assignments instrs 0 from-label))
 
 (define (compiler-backend-emit-leading-phi-copies
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [instrs : CompilerIrInstrSeq]
   [from-label : i64]
@@ -30148,6 +31475,7 @@
   (match (compiler-backend-leading-phi-copies-seq assignments instrs from-label)
     [(ResultBackendPhiCopies.Ok copies)
       (compiler-backend-emit-phi-copy-list
+        type-segment-bases
         assignments
         copies
         program-index
@@ -30158,6 +31486,7 @@
         (box (compiler-diagnostic-at-start "" message)))]))
 
 (define (compiler-backend-emit-phi-edge-copies
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [target-label : i64]
@@ -30172,6 +31501,7 @@
     (set! compiler-backend-current-phi-planned-stage planned-stage)
     (set! compiler-backend-current-phi-planned-xmm-cycle planned-xmm-cycle)
     (compiler-backend-emit-phi-edge-copies-scan
+      type-segment-bases
       assignments
       blocks
       target-label
@@ -30180,6 +31510,7 @@
       vars)))
 
 (define (compiler-backend-emit-phi-edge-copies-scan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [target-label : i64]
@@ -30200,12 +31531,14 @@
         [(CompilerIrBlock.Block block-label instrs)
           (if (= block-label target-label)
             (compiler-backend-emit-leading-phi-copies
+              type-segment-bases
               assignments
               instrs
               from-label
               program-index
               vars)
             (compiler-backend-emit-phi-edge-copies-scan
+              type-segment-bases
               assignments
               (box-get rest)
               target-label
@@ -30214,6 +31547,7 @@
               vars))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-phi-edge-copies-scan-seq
+        type-segment-bases
         assignments
         seq
         0
@@ -30223,6 +31557,7 @@
         vars)]))
 
 (define (compiler-backend-emit-phi-edge-copies-scan-seq
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
@@ -30242,12 +31577,14 @@
       [(CompilerIrBlock.Block block-label instrs)
         (if (= block-label target-label)
           (compiler-backend-emit-leading-phi-copies
+            type-segment-bases
             assignments
             instrs
             from-label
             program-index
             vars)
           (compiler-backend-emit-phi-edge-copies-scan-seq
+            type-segment-bases
             assignments
             blocks
             (+ index 1)
@@ -30257,6 +31594,7 @@
             vars))])))
 
 (define (compiler-backend-emit-mov-phi-copy-edge
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [target-label : i64]
@@ -30291,6 +31629,7 @@
           planned-stage)
         planned-stage))
     (compiler-backend-emit-mov-phi-copy-edge-scan
+      type-segment-bases
       assignments
       blocks
       target-label
@@ -30301,6 +31640,7 @@
       vars)))
 
 (define (compiler-backend-emit-mov-phi-copy-edge-scan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [target-label : i64]
@@ -30334,6 +31674,7 @@
                   ;; home -- re-apply the build-time same-home filter or the
                   ;; cycle break emits an orphaned push (see drop-same-home).
                   (compiler-backend-emit-phi-copy-list
+                    type-segment-bases
                     assignments
                     (compiler-backend-phi-copy-list-drop-same-home
                       assignments
@@ -30349,6 +31690,7 @@
                 (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-at-start "" message)))])
             (compiler-backend-emit-mov-phi-copy-edge-scan
+              type-segment-bases
               assignments
               (box-get rest)
               target-label
@@ -30359,6 +31701,7 @@
               vars))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-phi-copy-edge-scan-seq
+        type-segment-bases
         assignments
         seq
         0
@@ -30370,6 +31713,7 @@
         vars)]))
 
 (define (compiler-backend-emit-mov-phi-copy-edge-scan-seq
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
@@ -30399,6 +31743,7 @@
                 copies
                 moved-dst)
                 (compiler-backend-emit-phi-copy-list
+                  type-segment-bases
                   assignments
                   (compiler-backend-phi-copy-list-drop-same-home
                     assignments
@@ -30414,6 +31759,7 @@
               (ResultCompilerBackend.Err
                 (box (compiler-diagnostic-at-start "" message)))])
           (compiler-backend-emit-mov-phi-copy-edge-scan-seq
+            type-segment-bases
             assignments
             blocks
             (+ index 1)
@@ -30566,6 +31912,7 @@
           false-copies)))))
 
 (define (compiler-backend-emit-branch-with-phi-copies-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -30589,6 +31936,7 @@
       fallthrough
       planned-test)
     (match (compiler-backend-emit-phi-edge-copies
+      type-segment-bases
       assignments
       blocks
       true-label
@@ -30600,6 +31948,7 @@
       compiler-backend-current-phi-planned-xmm-cycle)
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
+          type-segment-bases
           assignments
           blocks
           false-label
@@ -30656,6 +32005,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-branch-with-phi-copies
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -30669,6 +32019,7 @@
   [planned-cycle : String]
   [planned-stage : String]) : ResultCompilerBackend
   (compiler-backend-emit-branch-with-phi-copies-with-plan
+    type-segment-bases
     assignments
     function
     blocks
@@ -30684,6 +32035,7 @@
     planned-stage))
 
 (define (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -30703,6 +32055,7 @@
   [planned-stage : String]) : ResultCompilerBackend
   (if (not (compiler-backend-branch-needs-phi-copies? true-label false-label))
     (compiler-backend-emit-compare-branch-with-plan
+      type-segment-bases
       assignments
       function
       op
@@ -30715,6 +32068,7 @@
       planned-lhs
       planned-rhs)
     (match (compiler-backend-emit-phi-edge-copies
+      type-segment-bases
       assignments
       blocks
       true-label
@@ -30726,6 +32080,7 @@
       compiler-backend-current-phi-planned-xmm-cycle)
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
+          type-segment-bases
           assignments
           blocks
           false-label
@@ -30758,6 +32113,7 @@
                   false-copies
                   fallthrough)]
               (match (compiler-backend-emit-compare-branch-with-plan
+                type-segment-bases
                 assignments
                 function
                 op
@@ -30786,6 +32142,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-compare-branch-with-phi-copies
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -30802,6 +32159,7 @@
   [planned-cycle : String]
   [planned-stage : String]) : ResultCompilerBackend
   (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
+    type-segment-bases
     assignments
     function
     blocks
@@ -30821,6 +32179,7 @@
     planned-stage))
 
 (define (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -30852,6 +32211,7 @@
       planned-base
       planned-rhs)
     (match (compiler-backend-emit-phi-edge-copies
+      type-segment-bases
       assignments
       blocks
       true-label
@@ -30863,6 +32223,7 @@
       compiler-backend-current-phi-planned-xmm-cycle)
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
+          type-segment-bases
           assignments
           blocks
           false-label
@@ -30923,6 +32284,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-compare-branch-with-phi-copies
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -30939,6 +32301,7 @@
   [planned-cycle : String]
   [planned-stage : String]) : ResultCompilerBackend
   (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
+    type-segment-bases
     assignments
     function
     blocks
@@ -30958,6 +32321,7 @@
     planned-stage))
 
 (define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -30979,6 +32343,7 @@
   [planned-stage : String]) : ResultCompilerBackend
   (if (not (compiler-backend-branch-needs-phi-copies? true-label false-label))
     (compiler-backend-emit-gep-load-compare-branch-with-plan
+      type-segment-bases
       assignments
       function
       base
@@ -30993,6 +32358,7 @@
       planned-base
       planned-rhs)
     (match (compiler-backend-emit-phi-edge-copies
+      type-segment-bases
       assignments
       blocks
       true-label
@@ -31004,6 +32370,7 @@
       compiler-backend-current-phi-planned-xmm-cycle)
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
+          type-segment-bases
           assignments
           blocks
           false-label
@@ -31036,6 +32403,7 @@
                   false-copies
                   fallthrough)]
               (match (compiler-backend-emit-gep-load-compare-branch-with-plan
+                type-segment-bases
                 assignments
                 function
                 base
@@ -31066,6 +32434,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
   [blocks : CompilerIrBlockList]
@@ -31084,6 +32453,7 @@
   [planned-cycle : String]
   [planned-stage : String]) : ResultCompilerBackend
   (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
+    type-segment-bases
     assignments
     function
     blocks
@@ -31104,8 +32474,10 @@
     planned-cycle
     planned-stage))
 
-(define (compiler-backend-tail-call-return-normalize [ty : AstType]) : String
-  (if (= (compiler-backend-type-size ty) 0)
+(define (compiler-backend-tail-call-return-normalize
+  [type-segment-bases : i64]
+  [ty : AstType]) : String
+  (if (= (compiler-backend-type-size type-segment-bases ty) 0)
     "    movq $0, %rax\n"
     ""))
 
@@ -31300,6 +32672,7 @@
           (box (compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-emit-return-with-return-count
+  [type-segment-bases : i64]
   [source-function : i64]
   [return-count : i64]
   [value : CompilerIrMaybeValue]
@@ -31342,12 +32715,24 @@
                   return-count)))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])
-        (if (compiler-backend-group-type? program-index ret-ty)
+        (if (compiler-backend-group-type?
+          type-segment-bases
+          program-index
+          ret-ty)
           (match (compiler-backend-emit-group-load
+            type-segment-bases
             assignments
             v
-            (compiler-backend-group-return-reg program-index ret-ty 0)
-            (compiler-backend-group-return-reg program-index ret-ty 1)
+            (compiler-backend-group-return-reg
+              type-segment-bases
+              program-index
+              ret-ty
+              0)
+            (compiler-backend-group-return-reg
+              type-segment-bases
+              program-index
+              ret-ty
+              1)
             vars
             ret-ty
             program-index)
@@ -31363,6 +32748,7 @@
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)])
           (match (compiler-backend-emit-load-typed-value-with-plan
+            type-segment-bases
             assignments
             v
             ret-ty
@@ -31380,6 +32766,7 @@
               (ResultCompilerBackend.Err message)])))]))
 
 (define (compiler-backend-emit-return
+  [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
   [value : CompilerIrMaybeValue]
@@ -31388,6 +32775,7 @@
   [ret-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (compiler-backend-emit-return-with-return-count
+    type-segment-bases
     source-function
     (compiler-backend-shared-return-count assignments blocks)
     value
@@ -31397,6 +32785,7 @@
     program-index))
 
 (define (compiler-backend-emit-tail-call
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
@@ -31418,6 +32807,7 @@
       (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
+        type-segment-bases
         name
         args
         types
@@ -31435,6 +32825,7 @@
         program-index)]
     [tail-stack-count : i64
       (compiler-backend-call-stack-arg-count
+        type-segment-bases
         target
         args
         param-types
@@ -31447,10 +32838,16 @@
         program-index)]
     [target-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
-    [return-normalize : String (compiler-backend-tail-call-return-normalize ty)]
+    [return-normalize : String
+      (compiler-backend-tail-call-return-normalize type-segment-bases ty)]
     [varargs-pre-call : String
-      (compiler-backend-varargs-pre-call target extern-call-info param-types)]
+      (compiler-backend-varargs-pre-call
+        type-segment-bases
+        target
+        extern-call-info
+        param-types)]
     (if (compiler-backend-direct-tail-call?
+      type-segment-bases
       target
       source-function
       name
@@ -31461,6 +32858,7 @@
         (ResultCompilerBackend.Ok "")
         (if (= tail-stack-count 0)
           (compiler-backend-emit-call-args
+            type-segment-bases
             target
             assignments
             args
@@ -31476,6 +32874,7 @@
             program-index
             vars)
           (compiler-backend-emit-direct-tail-call-args
+            type-segment-bases
             target
             assignments
             args
@@ -31490,6 +32889,7 @@
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackend.Err message)])
       (match (compiler-backend-emit-call-args
+        type-segment-bases
         target
         assignments
         args
@@ -31569,6 +32969,7 @@
       [_ (ResultBackendPhiReturnMatch.Ok (CompilerBackendPhiReturnMatch.No))])))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
+  [type-segment-bases : i64]
   [source-function : i64]
   [return-count : i64]
   [instrs : CompilerIrInstrSeq]
@@ -31603,6 +33004,7 @@
                           ;; always false, so a 16-byte group return would load
                           ;; only word0 (word1-drop miscompile).
                           (compiler-backend-emit-return-with-return-count
+                            type-segment-bases
                             source-function
                             return-count
                             (CompilerIrMaybeValue.Some incoming)
@@ -31620,6 +33022,7 @@
         [_ (ResultCompilerBackend.Ok "")]))))
 
 (define (compiler-backend-emit-trivial-phi-return-edge
+  [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
   [target-label : i64]
@@ -31635,6 +33038,7 @@
         [(CompilerIrBlock.Block block-label instrs)
           (if (= block-label target-label)
             (compiler-backend-emit-trivial-phi-return-edge-instrs
+              type-segment-bases
               source-function
               (compiler-backend-shared-return-count assignments blocks)
               instrs
@@ -31644,6 +33048,7 @@
               ret-ty
               program-index)
             (compiler-backend-emit-trivial-phi-return-edge
+              type-segment-bases
               source-function
               (box-get rest)
               target-label
@@ -31654,6 +33059,7 @@
               program-index))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-trivial-phi-return-edge-seq
+        type-segment-bases
         source-function
         seq
         0
@@ -31665,6 +33071,7 @@
         program-index)]))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-seq
+  [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
@@ -31680,6 +33087,7 @@
       [(CompilerIrBlock.Block block-label instrs)
         (if (= block-label target-label)
           (compiler-backend-emit-trivial-phi-return-edge-instrs
+            type-segment-bases
             source-function
             (compiler-backend-block-seq-return-count blocks index)
             instrs
@@ -31689,6 +33097,7 @@
             ret-ty
             program-index)
           (compiler-backend-emit-trivial-phi-return-edge-seq
+            type-segment-bases
             source-function
             blocks
             (+ index 1)
@@ -31700,6 +33109,7 @@
             program-index))])))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
+  [type-segment-bases : i64]
   [source-function : i64]
   [return-count : i64]
   [instrs : CompilerIrInstrSeq]
@@ -31738,6 +33148,7 @@
                             ;; phi return edge: emit-return needs the real
                             ;; program-index to spot register-group returns.
                             (compiler-backend-emit-return-with-return-count
+                              type-segment-bases
                               source-function
                               return-count
                               (CompilerIrMaybeValue.Some moved-src)
@@ -31756,6 +33167,7 @@
         [_ (ResultCompilerBackend.Ok "")]))))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge
+  [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
   [target-label : i64]
@@ -31773,6 +33185,7 @@
         [(CompilerIrBlock.Block block-label instrs)
           (if (= block-label target-label)
             (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
+              type-segment-bases
               source-function
               (compiler-backend-shared-return-count assignments blocks)
               instrs
@@ -31784,6 +33197,7 @@
               moved-src
               program-index)
             (compiler-backend-emit-mov-trivial-phi-return-edge
+              type-segment-bases
               source-function
               (box-get rest)
               target-label
@@ -31796,6 +33210,7 @@
               program-index))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-trivial-phi-return-edge-seq
+        type-segment-bases
         source-function
         seq
         0
@@ -31809,6 +33224,7 @@
         program-index)]))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-seq
+  [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
@@ -31826,6 +33242,7 @@
       [(CompilerIrBlock.Block block-label instrs)
         (if (= block-label target-label)
           (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
+            type-segment-bases
             source-function
             (compiler-backend-block-seq-return-count blocks index)
             instrs
@@ -31837,6 +33254,7 @@
             moved-src
             program-index)
           (compiler-backend-emit-mov-trivial-phi-return-edge-seq
+            type-segment-bases
             source-function
             blocks
             (+ index 1)
@@ -31877,6 +33295,7 @@
     [_ ""]))
 
 (define (compiler-backend-emit-mov
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -31891,11 +33310,17 @@
     ;; value onto itself -- emit nothing instead of round-tripping both words
     ;; through the group-return register pair.
     [(and
-        (compiler-backend-copy-group? program-index ty dst src)
+        (compiler-backend-copy-group?
+          type-segment-bases
+          program-index
+          ty
+          dst
+          src)
         (compiler-backend-value-same-home? assignments dst src))
       (ResultCompilerBackend.Ok "")]
-    [(compiler-backend-copy-group? program-index ty dst src)
+    [(compiler-backend-copy-group? type-segment-bases program-index ty dst src)
       (compiler-backend-emit-group-copy
+        type-segment-bases
         assignments
         dst
         src
@@ -31924,6 +33349,7 @@
               (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2"))
             dst-home)]
         (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+          type-segment-bases
           assignments
           src
           ty
@@ -31968,7 +33394,7 @@
               false
               (match src
                 [(CompilerIrValue.Var _) true]
-                [_ (= (compiler-backend-type-size ty) 8)]))
+                [_ (= (compiler-backend-type-size type-segment-bases ty) 8)]))
               (compiler-backend-emit-load-value-with-plan
                 assignments
                 src
@@ -31987,6 +33413,7 @@
                 [reg : String
                   (compiler-backend-scavenge-reg dst exclude exclude-n "%r8")]
                 (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                  type-segment-bases
                   assignments
                   src
                   ty
@@ -32073,12 +33500,14 @@
     ""))
 
 (define (compiler-backend-emit-call-result-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [ty : AstType]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (compiler-backend-emit-call-result-store-normalize
+    type-segment-bases
     assignments
     dst
     ty
@@ -32087,12 +33516,14 @@
     false))
 
 (define (compiler-backend-emit-c-abi-call-result-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [ty : AstType]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (compiler-backend-emit-call-result-store-normalize
+    type-segment-bases
     assignments
     dst
     ty
@@ -32101,6 +33532,7 @@
     true))
 
 (define (compiler-backend-emit-call-result-store-normalize
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [ty : AstType]
@@ -32110,6 +33542,7 @@
   (if (compiler-backend-call-result-store-dead? assignments dst)
     (ResultCompilerBackend.Ok "")
     (compiler-backend-emit-call-result-store-live
+      type-segment-bases
       assignments
       dst
       ty
@@ -32118,18 +33551,20 @@
       normalize?)))
 
 (define (compiler-backend-emit-call-result-store-live
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [ty : AstType]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]
   [normalize? : bool]) : ResultCompilerBackend
-  (if (compiler-backend-group-type? program-index ty)
+  (if (compiler-backend-group-type? type-segment-bases program-index ty)
     (compiler-backend-emit-group-store
+      type-segment-bases
       assignments
       dst
-      (compiler-backend-group-return-reg program-index ty 0)
-      (compiler-backend-group-return-reg program-index ty 1)
+      (compiler-backend-group-return-reg type-segment-bases program-index ty 0)
+      (compiler-backend-group-return-reg type-segment-bases program-index ty 1)
       vars
       ty
       program-index)
@@ -32174,6 +33609,7 @@
             "backend: unknown tls current arena helper")))]))
 
 (define (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [arg-assignments : CompilerRegAssignmentList]
@@ -32193,6 +33629,7 @@
       (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
+        type-segment-bases
         name
         args
         types
@@ -32209,6 +33646,7 @@
         c-abi?
         program-index)]
     (match (compiler-backend-emit-call-args-with-override
+      type-segment-bases
       compiler-backend-rax-forward-pending-var
       target
       arg-assignments
@@ -32226,6 +33664,7 @@
       vars)
       [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-call-result-store
+          type-segment-bases
           assignments
           dst
           ty
@@ -32454,6 +33893,7 @@
     "    ret\n"))
 
 (define (compiler-backend-emit-inline-memory-call-with-arg-assignments
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [arg-assignments : CompilerRegAssignmentList]
@@ -32474,6 +33914,7 @@
       (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
+        type-segment-bases
         name
         args
         types
@@ -32490,6 +33931,7 @@
         c-abi?
         program-index)]
     (match (compiler-backend-emit-call-args-with-override
+      type-segment-bases
       compiler-backend-rax-forward-pending-var
       target
       arg-assignments
@@ -32507,6 +33949,7 @@
       vars)
       [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-call-result-store
+          type-segment-bases
           assignments
           dst
           ty
@@ -32537,6 +33980,7 @@
               instr-diag)))])))
 
 (define (compiler-backend-emit-direct-call-with-arg-assignments
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [function : String]
   [current-label : i64]
@@ -32597,6 +34041,7 @@
           (compiler-backend-tls-current-arena-call-id? name)
           (not (compiler-backend-index-function-defines? program-index name)))
         (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
+          type-segment-bases
           target
           assignments
           arg-assignments
@@ -32613,6 +34058,7 @@
           instr-diag)]
       [(compiler-backend-inline-memory-call-name? inline-memory-name)
         (compiler-backend-emit-inline-memory-call-with-arg-assignments
+          type-segment-bases
           target
           assignments
           arg-assignments
@@ -32634,6 +34080,7 @@
             (compiler-backend-index-extern-call-info program-index name)]
           [param-types : AstTypeList
             (compiler-backend-call-param-types-for-call
+              type-segment-bases
               name
               args
               types
@@ -32642,6 +34089,7 @@
               program-index)]
           [effective-arg-assignments : CompilerRegAssignmentList
             (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+              type-segment-bases
               program-index
               param-types)
               arg-assignments
@@ -32651,6 +34099,7 @@
           ;; declared first arg accepts the forward.
           [effective-arg-override : i64
             (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+              type-segment-bases
               program-index
               param-types)
               compiler-backend-rax-forward-pending-var
@@ -32676,6 +34125,7 @@
           ;; delegates to the byte-identical naive path (so conflict-free calls -- the
           ;; overwhelming common case -- are unchanged). Mirrors the tail-call path.
           (match (compiler-backend-emit-call-args-with-override
+            type-segment-bases
             effective-arg-override
             target
             effective-arg-assignments
@@ -32693,6 +34143,7 @@
             vars)
             [(ResultCompilerBackend.Ok args-asm)
               (match (compiler-backend-emit-call-result-store-normalize
+                type-segment-bases
                 assignments
                 dst
                 ty
@@ -32707,6 +34158,7 @@
                         args-asm
                         (string.append
                           (compiler-backend-varargs-pre-call
+                            type-segment-bases
                             target
                             extern-call-info
                             param-types)
@@ -32826,6 +34278,7 @@
           (compiler-backend-spmd-call-class-count args (+ index 1) want-mask))])))
 
 (define (compiler-backend-spmd-private-vector-args-asm
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [args : CompilerIrSpmdCallArgList]
   [index : i64]
@@ -32847,7 +34300,11 @@
                     instr-diag
                     "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")))
               (if (not (compiler-backend-avx512-shape-ok? ty lanes))
-                (compiler-backend-avx512-shape-diagnostic instr-diag ty lanes)
+                (compiler-backend-avx512-shape-diagnostic
+                  type-segment-bases
+                  instr-diag
+                  ty
+                  lanes)
                 (match (compiler-backend-vector-register-use
                   assignments
                   value
@@ -32859,6 +34316,7 @@
                     (match use
                       [(CompilerBackendVectorUse.Use load-asm src)
                         (match (compiler-backend-spmd-private-vector-args-asm
+                          type-segment-bases
                           assignments
                           args
                           (+ index 1)
@@ -32887,6 +34345,7 @@
                       (box
                         (compiler-diagnostic-with-message instr-diag message)))]))))
           (compiler-backend-spmd-private-vector-args-asm
+            type-segment-bases
             assignments
             args
             (+ index 1)
@@ -32987,6 +34446,7 @@
         base-offset))))
 
 (define (compiler-backend-spmd-private-result-store
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [result : CompilerIrSpmdCallResult]
   [vars : i64]
@@ -32998,6 +34458,7 @@
       (match class
         [(CompilerIrSpmdValueClass.Uniform)
           (compiler-backend-emit-call-result-store
+            type-segment-bases
             assignments
             dst
             ty
@@ -33053,6 +34514,7 @@
                 (box (compiler-diagnostic-with-message instr-diag message)))])])]))
 
 (define (compiler-backend-emit-spmd-call-scalar
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [name : i64]
   [active-mask : CompilerIrValue]
@@ -33081,6 +34543,7 @@
         false
         program-index)]
     (match (compiler-backend-emit-call-args
+      type-segment-bases
       target
       assignments
       call-args
@@ -33100,6 +34563,7 @@
           [(CompilerIrSpmdCallResult.Unit) (ResultCompilerBackend.Ok "")]
           [(CompilerIrSpmdCallResult.Value dst _ ty)
             (compiler-backend-emit-call-result-store
+              type-segment-bases
               assignments
               dst
               ty
@@ -33120,6 +34584,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-spmd-call-avx512
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [name : i64]
   [lanes : i64]
@@ -33150,6 +34615,7 @@
     [mask-space : i64 (* 16 (/ (+ mask-bytes 15) 16))]
     [total-space : i64 (+ call-space mask-space)]
     (match (compiler-backend-emit-call-args
+      type-segment-bases
       target
       assignments
       uniform-args
@@ -33166,6 +34632,7 @@
       vars)
       [(ResultCompilerBackend.Ok uniform-asm)
         (match (compiler-backend-spmd-private-vector-args-asm
+          type-segment-bases
           assignments
           args
           0
@@ -33190,6 +34657,7 @@
                   instr-diag)
                   [(ResultCompilerBackend.Ok mask-saves)
                     (match (compiler-backend-spmd-private-result-store
+                      type-segment-bases
                       assignments
                       result
                       vars
@@ -33229,6 +34697,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-spmd-call
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [name : i64]
   [backend : CompilerIrSpmdBackend]
@@ -33244,6 +34713,7 @@
   (match backend
     [(CompilerIrSpmdBackend.Scalar)
       (compiler-backend-emit-spmd-call-scalar
+        type-segment-bases
         target
         name
         active-mask
@@ -33256,6 +34726,7 @@
         instr-diag)]
     [(CompilerIrSpmdBackend.Avx512)
       (compiler-backend-emit-spmd-call-avx512
+        type-segment-bases
         target
         name
         lanes
@@ -33290,6 +34761,7 @@
   (str_cat.str-cat (string.int->string offset) "(" base-reg ")"))
 
 (define (compiler-backend-emit-c-abi-return-slot-store
+  [type-segment-bases : i64]
   [base-reg : String]
   [slot : CompilerIrCAbiReturnSlot]
   [int-idx : i64]
@@ -33306,9 +34778,14 @@
           (compiler-backend-c-abi-return-slot-addr base-reg offset)]
         (if sse?
           (compiler-backend-emit-store-xmm-to-memory addr reg ty)
-          (compiler-backend-emit-store-reg-to-memory addr reg ty)))]))
+          (compiler-backend-emit-store-reg-to-memory
+            type-segment-bases
+            addr
+            reg
+            ty)))]))
 
 (define (compiler-backend-emit-c-abi-return-slot-stores
+  [type-segment-bases : i64]
   [base-reg : String]
   [slots : CompilerIrCAbiReturnSlotList]
   [int-idx : i64]
@@ -33322,11 +34799,13 @@
             [sse? : bool (compiler-backend-float-type? ty)]
             (string.append
               (compiler-backend-emit-c-abi-return-slot-store
+                type-segment-bases
                 base-reg
                 slot
                 int-idx
                 sse-idx)
               (compiler-backend-emit-c-abi-return-slot-stores
+                type-segment-bases
                 base-reg
                 (box-get rest)
                 (if sse?
@@ -33337,6 +34816,7 @@
                   sse-idx))))])]
     [(CompilerIrCAbiReturnSlotList.Array seq)
       (compiler-backend-emit-c-abi-return-slot-stores-array
+        type-segment-bases
         base-reg
         (struct-get seq slots)
         0
@@ -33345,6 +34825,7 @@
         sse-idx)]))
 
 (define (compiler-backend-emit-c-abi-return-slot-stores-array
+  [type-segment-bases : i64]
   [base-reg : String]
   [slots : (Array CompilerIrCAbiReturnSlot)]
   [index : i64]
@@ -33361,11 +34842,13 @@
             [sse? : bool (compiler-backend-float-type? ty)]
             (string.append
               (compiler-backend-emit-c-abi-return-slot-store
+                type-segment-bases
                 base-reg
                 slot
                 int-idx
                 sse-idx)
               (compiler-backend-emit-c-abi-return-slot-stores-array
+                type-segment-bases
                 base-reg
                 slots
                 (+ index 1)
@@ -33423,6 +34906,7 @@
     planned))
 
 (define (compiler-backend-emit-c-abi-return-stores
+  [type-segment-bases : i64]
   [save-offset : i64]
   [slots : CompilerIrCAbiReturnSlotList]
   [planned : String]) : String
@@ -33436,7 +34920,12 @@
         "(%rsp), "
         base-reg
         "\n")
-      (compiler-backend-emit-c-abi-return-slot-stores base-reg slots 0 0))))
+      (compiler-backend-emit-c-abi-return-slot-stores
+        type-segment-bases
+        base-reg
+        slots
+        0
+        0))))
 
 (define (compiler-backend-assignments-use-reg?
   [assignments : CompilerRegAssignmentList]
@@ -33857,6 +35346,7 @@
       "")))
 
 (define (compiler-backend-emit-switch-case-edge-blocks
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [cases : CompilerIrSwitchCaseList]
@@ -33875,6 +35365,7 @@
             compiler-backend-current-phi-targets
             label)
             (match (compiler-backend-emit-phi-edge-copies
+              type-segment-bases
               assignments
               blocks
               label
@@ -33886,6 +35377,7 @@
               "")
               [(ResultCompilerBackend.Ok copies)
                 (match (compiler-backend-emit-switch-case-edge-blocks
+                  type-segment-bases
                   function
                   current-label
                   (box-get rest)
@@ -33911,6 +35403,7 @@
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])
             (compiler-backend-emit-switch-case-edge-blocks
+              type-segment-bases
               function
               current-label
               (box-get rest)
@@ -33922,6 +35415,7 @@
               planned-stage))])]
     [(CompilerIrSwitchCaseList.Array seq)
       (compiler-backend-emit-switch-case-edge-blocks
+        type-segment-bases
         function
         current-label
         (compiler-ir-switch-case-seq-to-list seq)
@@ -34404,6 +35898,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-switch
+  [type-segment-bases : i64]
   [function : String]
   [current-label : i64]
   [index : CompilerIrValue]
@@ -34435,6 +35930,7 @@
               (compiler-backend-switch-shape-message))))]
       [(compiler-backend-switch-target-phi? cases default-label)
         (match (compiler-backend-emit-switch-case-edge-blocks
+          type-segment-bases
           function
           current-label
           cases
@@ -34452,6 +35948,7 @@
                   default-label)]
               (match (if default-needs-edge
                 (match (compiler-backend-emit-phi-edge-copies
+                  type-segment-bases
                   assignments
                   blocks
                   default-label
@@ -34686,6 +36183,7 @@
     (match instr
       [(CompilerIrInstr.Mov dst src ty)
         (match (compiler-backend-emit-mov
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -34716,12 +36214,16 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Gep dst base offset elem-ty)
         (match (compiler-backend-emit-gep
+          ctx.type-segment-bases
           ctx.assignments
           dst
           base
           offset
           elem-ty
-          (compiler-backend-gep-fold-next! offset elem-ty)
+          (compiler-backend-gep-fold-next!
+            ctx.type-segment-bases
+            offset
+            elem-ty)
           planned-scratch0
           planned-scratch1)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
@@ -34733,6 +36235,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Load dst src ty)
         (match (compiler-backend-emit-load-instr
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -34748,6 +36251,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.StorePtr dst src ty)
         (match (compiler-backend-emit-store-ptr
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -34764,6 +36268,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.CopyBytes dst src size)
         (match (compiler-backend-emit-copy-bytes
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -34806,6 +36311,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Cast dst src from-ty to-ty)
         (match (compiler-backend-emit-cast
+          ctx.type-segment-bases
           ctx.function
           ctx.current-label
           ctx.assignments
@@ -34826,6 +36332,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
         (match (compiler-backend-emit-bitcast
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -34843,6 +36350,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.BinOp dst op lhs rhs ty)
         (match (compiler-backend-emit-binop-with-plan
+          ctx.type-segment-bases
           ctx.types
           ctx.global-types
           ctx.assignments
@@ -34880,6 +36388,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.LaneId dst lanes elem-ty)
         (compiler-backend-emit-vector-lane-id
+          ctx.type-segment-bases
           ctx.function
           ctx.current-label
           ctx.assignments
@@ -34889,6 +36398,7 @@
           instr-diag)]
       [(CompilerIrInstr.Splat dst value lanes elem-ty)
         (compiler-backend-emit-vector-splat
+          ctx.type-segment-bases
           ctx.assignments
           dst
           value
@@ -34907,6 +36417,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-binop
+              ctx.type-segment-bases
               ctx.assignments
               dst
               op
@@ -34937,6 +36448,7 @@
               instr-diag)])]
       [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
         (compiler-backend-emit-vector-reduce
+          ctx.type-segment-bases
           ctx.assignments
           dst
           op
@@ -34956,6 +36468,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-compare
+              ctx.type-segment-bases
               ctx.assignments
               dst
               op
@@ -34966,6 +36479,7 @@
               instr-diag)])]
       [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
         (compiler-backend-emit-mask-binop
+          ctx.type-segment-bases
           ctx.assignments
           dst
           op
@@ -34975,6 +36489,7 @@
           instr-diag)]
       [(CompilerIrInstr.MaskNot dst src lanes)
         (compiler-backend-emit-mask-not
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -34982,6 +36497,7 @@
           instr-diag)]
       [(CompilerIrInstr.MaskReduce dst op src lanes)
         (compiler-backend-emit-mask-reduce
+          ctx.type-segment-bases
           ctx.assignments
           dst
           op
@@ -34998,6 +36514,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-select
+              ctx.type-segment-bases
               ctx.assignments
               dst
               mask
@@ -35011,6 +36528,7 @@
               instr-diag)])]
       [(CompilerIrInstr.VectorLoad dst base index lanes elem-ty)
         (compiler-backend-emit-vector-load
+          ctx.type-segment-bases
           ctx.assignments
           dst
           base
@@ -35029,6 +36547,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-store
+              ctx.type-segment-bases
               ctx.assignments
               base
               index
@@ -35048,6 +36567,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-predicated-store
+              ctx.type-segment-bases
               ctx.function
               ctx.current-label
               ctx.assignments
@@ -35070,6 +36590,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-predicated-load
+              ctx.type-segment-bases
               ctx.function
               ctx.current-label
               ctx.assignments
@@ -35093,6 +36614,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-gather-load
+              ctx.type-segment-bases
               ctx.assignments
               dst
               base
@@ -35115,6 +36637,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-shuffle
+              ctx.type-segment-bases
               ctx.target
               ctx.function
               ctx.current-label
@@ -35133,6 +36656,7 @@
               instr-diag)])]
       [(CompilerIrInstr.TailMask dst index len lanes)
         (compiler-backend-emit-tail-mask
+          ctx.type-segment-bases
           ctx.function
           ctx.current-label
           ctx.assignments
@@ -35181,6 +36705,7 @@
               args
               result)
             (compiler-backend-emit-spmd-call
+              ctx.type-segment-bases
               ctx.target
               name
               backend
@@ -35195,6 +36720,7 @@
               instr-diag)])]
       [(CompilerIrInstr.Call dst name args ty)
         (compiler-backend-emit-direct-call-with-arg-assignments
+          ctx.type-segment-bases
           ctx.target
           ctx.function
           ctx.current-label
@@ -35214,6 +36740,7 @@
           instr-diag)]
       [(CompilerIrInstr.CallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
+          ctx.type-segment-bases
           ctx.target
           dst
           func
@@ -35230,6 +36757,7 @@
           instr-diag)]
       [(CompilerIrInstr.CallIndirectC dst func args ty)
         (compiler-backend-emit-indirect-c-call
+          ctx.type-segment-bases
           ctx.target
           dst
           func
@@ -35252,6 +36780,7 @@
               args
               slots)
             (compiler-backend-emit-c-abi-store-result-call
+              ctx.type-segment-bases
               ctx.target
               base
               name
@@ -35275,6 +36804,7 @@
               args
               slots)
             (compiler-backend-emit-indirect-c-abi-store-result-call
+              ctx.type-segment-bases
               ctx.target
               base
               func
@@ -35291,6 +36821,7 @@
               instr-diag)])]
       [(CompilerIrInstr.TailCall name args ty)
         (match (compiler-backend-emit-tail-call
+          ctx.type-segment-bases
           ctx.target
           ctx.source-function
           ctx.blocks
@@ -35318,14 +36849,25 @@
         (let
           [addr : String
             (str_cat.str-cat (compiler-backend-user-symbol-id name) "(%rip)" "")]
-          (if (compiler-backend-group-type? ctx.program-index ty)
+          (if (compiler-backend-group-type?
+            ctx.type-segment-bases
+            ctx.program-index
+            ty)
             ;; Storing a register-group into a global writes both words
             ;; inline (word0 at sym, word1 at sym+8).
             (let
               [reg0 : String
-                (compiler-backend-group-return-reg ctx.program-index ty 0)]
+                (compiler-backend-group-return-reg
+                  ctx.type-segment-bases
+                  ctx.program-index
+                  ty
+                  0)]
               [reg1 : String
-                (compiler-backend-group-return-reg ctx.program-index ty 1)]
+                (compiler-backend-group-return-reg
+                  ctx.type-segment-bases
+                  ctx.program-index
+                  ty
+                  1)]
               [sym0 : String
                 (str_cat.str-cat
                   (compiler-backend-user-symbol-id name)
@@ -35337,6 +36879,7 @@
                   "+8(%rip)"
                   "")]
               (match (compiler-backend-emit-group-load
+                ctx.type-segment-bases
                 ctx.assignments
                 value
                 reg0
@@ -35353,6 +36896,7 @@
                           reg0
                           sym0
                           (compiler-backend-group-word-sse?
+                            ctx.type-segment-bases
                             ctx.program-index
                             ty
                             0))
@@ -35360,6 +36904,7 @@
                           reg1
                           sym1
                           (compiler-backend-group-word-sse?
+                            ctx.type-segment-bases
                             ctx.program-index
                             ty
                             1)))))]
@@ -35372,6 +36917,7 @@
             (let
               [no-exclude : (Array String) (array.make-array String 0)]
               (match (compiler-backend-emit-store-value-to-address
+                ctx.type-segment-bases
                 ctx.assignments
                 value
                 ty
@@ -35390,6 +36936,7 @@
                         instr-diag)))]))))]
       [(CompilerIrInstr.Jump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
+          ctx.type-segment-bases
           ctx.source-function
           ctx.blocks
           target
@@ -35401,6 +36948,7 @@
           [(ResultCompilerBackend.Ok direct-return)
             (if (string.eq direct-return "")
               (match (compiler-backend-emit-phi-edge-copies
+                ctx.type-segment-bases
                 ctx.assignments
                 ctx.blocks
                 target
@@ -35438,6 +36986,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Branch cond true-label false-label)
         (match (compiler-backend-emit-branch-with-phi-copies-with-plan
+          ctx.type-segment-bases
           ctx.assignments
           ctx.function
           ctx.blocks
@@ -35460,6 +37009,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Return value)
         (match (compiler-backend-emit-return
+          ctx.type-segment-bases
           ctx.source-function
           ctx.blocks
           value
@@ -35477,6 +37027,7 @@
       [(CompilerIrInstr.Phi _ _ _) (ResultCompilerBackend.Ok "")]
       [(CompilerIrInstr.Pack dst words ty)
         (compiler-backend-emit-pack
+          ctx.type-segment-bases
           ctx.assignments
           dst
           words
@@ -35488,6 +37039,7 @@
           instr-diag)]
       [(CompilerIrInstr.Word dst src index ty)
         (compiler-backend-emit-word
+          ctx.type-segment-bases
           ctx.assignments
           dst
           src
@@ -35498,6 +37050,7 @@
           instr-diag)]
       [(CompilerIrInstr.TailCallIndirect func args ty)
         (match (compiler-backend-emit-tail-indirect-call
+          ctx.type-segment-bases
           ctx.target
           ctx.source-function
           ctx.blocks
@@ -35522,6 +37075,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Switch index base cases default-label)
         (match (compiler-backend-emit-switch
+          ctx.type-segment-bases
           ctx.function
           ctx.current-label
           index
@@ -36236,6 +37790,7 @@
   (let
     [arg-assignments : CompilerRegAssignmentList
       (compiler-backend-rax-call-arg-assignments
+        ctx.type-segment-bases
         ctx.assignments
         ctx.program-index
         rax-var
@@ -36247,7 +37802,10 @@
     [rax-forward-pending : i64
       (if (and
         (>= rax-var 0)
-        (compiler-backend-rax-call-arg-eligible? ctx.program-index rax-ty))
+        (compiler-backend-rax-call-arg-eligible?
+          ctx.type-segment-bases
+          ctx.program-index
+          rax-ty))
         rax-var
         -1)]
     [instr-diag : CompilerDiagnostic
@@ -36275,6 +37833,7 @@
                   compiler-backend-rax-forward-pending-var
                   rax-forward-pending)
                 (compiler-backend-emit-direct-call-with-arg-assignments
+                  ctx.type-segment-bases
                   ctx.target
                   ctx.function
                   ctx.current-label
@@ -36307,6 +37866,7 @@
                   compiler-backend-rax-forward-pending-var
                   rax-forward-pending)
                 (compiler-backend-emit-indirect-call-with-arg-assignments
+                  ctx.type-segment-bases
                   ctx.target
                   dst
                   func
@@ -36333,12 +37893,16 @@
       [_ (compiler-backend-emit-instr ctx fallthrough instr)])))
 
 (define (compiler-backend-call-rax-forwardable-instr?
+  [type-segment-bases : i64]
   [instr : CompilerIrInstr]
   [program-index : CompilerBackendProgramIndex]
   [rax-var : i64]
   [rax-ty : AstType]) : bool
   (and
-    (compiler-backend-rax-call-arg-eligible? program-index rax-ty)
+    (compiler-backend-rax-call-arg-eligible?
+      type-segment-bases
+      program-index
+      rax-ty)
     (match instr
       [(CompilerIrInstr.Call _ _ args _)
         (compiler-backend-call-leading-arg-uses-var? args rax-var)]
@@ -36516,6 +38080,7 @@
               [keep-live : bool
                 (compiler-backend-var-single-use? ctx.use-counts dst)]
               (match (compiler-backend-emit-binop-with-rax-value
+                ctx.type-segment-bases
                 ctx.types
                 ctx.global-types
                 ctx.assignments
@@ -36653,6 +38218,7 @@
     [(CompilerIrInstrList.Nil) (ResultCompilerBackend.Ok (text_buf.render buf))]
     [(CompilerIrInstrList.Cons instr rest)
       (if (compiler-backend-call-rax-forwardable-instr?
+        ctx.type-segment-bases
         instr
         ctx.program-index
         rax-var
@@ -36690,6 +38256,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
+    ctx.type-segment-bases
     ctx.assignments
     ctx.function
     ctx.blocks
@@ -36752,6 +38319,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
+    ctx.type-segment-bases
     ctx.assignments
     ctx.function
     ctx.blocks
@@ -36813,6 +38381,7 @@
   ;; source branch directly with reversed successors, including the matching
   ;; phi-edge copies, instead of materializing the inverted boolean.
   (match (compiler-backend-emit-branch-with-phi-copies-with-plan
+    ctx.type-segment-bases
     ctx.assignments
     ctx.function
     ctx.blocks
@@ -36874,6 +38443,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
+    ctx.type-segment-bases
     ctx.assignments
     ctx.function
     ctx.blocks
@@ -36955,6 +38525,7 @@
     [_ ""]))
 
 (define (compiler-backend-gep-load-pair-alu-probe
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -36986,8 +38557,10 @@
               (compiler-backend-value-scalar-register assignments offset0)]
             [index1-home : String
               (compiler-backend-value-scalar-register assignments offset1)]
-            [scale0 : i64 (compiler-backend-type-size elem-ty0)]
-            [scale1 : i64 (compiler-backend-type-size elem-ty1)]
+            [scale0 : i64
+              (compiler-backend-type-size type-segment-bases elem-ty0)]
+            [scale1 : i64
+              (compiler-backend-type-size type-segment-bases elem-ty1)]
             [addr0 : String
               (if (and
                 (not (string.eq base-home ""))
@@ -37010,9 +38583,9 @@
                 "")]
             (if (and
               (not (string.eq mnem ""))
-              (= (compiler-backend-type-size load-ty0) 8)
-              (= (compiler-backend-type-size load-ty1) 8)
-              (= (compiler-backend-type-size ty) 8)
+              (= (compiler-backend-type-size type-segment-bases load-ty0) 8)
+              (= (compiler-backend-type-size type-segment-bases load-ty1) 8)
+              (= (compiler-backend-type-size type-segment-bases ty) 8)
               (not (compiler-backend-float-type? load-ty0))
               (not (compiler-backend-float-type? load-ty1))
               (not (compiler-backend-binop-f64? types global-types lhs rhs ty))
@@ -37096,6 +38669,7 @@
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (and
                         (compiler-backend-divmod-direct-gep-store?
+                          ctx.type-segment-bases
                           ctx.assignments
                           div-dst
                           gep-dst
@@ -37198,6 +38772,7 @@
               (compiler-backend-var-single-use? ctx.use-counts alu-dst)
               (compiler-backend-branch-uses-var? div-lhs alu-dst)
               (compiler-backend-signed-literal-divmod-src-shape?
+                ctx.type-segment-bases
                 div-op
                 div-rhs
                 div-ty)
@@ -37376,6 +38951,7 @@
                               ;; A displacement changes only the spelling of an
                               ;; already-valid SIB operand, never admission.
                               (match (compiler-backend-gep-load-pair-alu-probe
+                                ctx.type-segment-bases
                                 ctx.assignments
                                 ctx.types
                                 ctx.global-types
@@ -37401,9 +38977,11 @@
                                   (let
                                     [gep-fold-disp2 : i64
                                       (compiler-backend-gep-fold-next!
+                                        ctx.type-segment-bases
                                         offset2
                                         elem-ty2)]
                                     (match (compiler-backend-gep-load-pair-alu-probe
+                                      ctx.type-segment-bases
                                       ctx.assignments
                                       ctx.types
                                       ctx.global-types
@@ -37480,6 +39058,7 @@
     [_ ""]))
 
 (define (compiler-backend-gep-load-alu-probe
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -37491,7 +39070,7 @@
   [rest : CompilerIrInstrList]) : CompilerBackendGepLoadAluFold
   (if (or
     (compiler-backend-float-type? load-ty)
-    (not (= (compiler-backend-type-size load-ty) 8))
+    (not (= (compiler-backend-type-size type-segment-bases load-ty) 8))
     (not (compiler-backend-var-single-use? use-counts load-dst)))
     (CompilerBackendGepLoadAluFold.No)
     (match rest
@@ -37514,6 +39093,7 @@
                   (compiler-backend-binop-f64? types global-types lhs rhs ty))
                 (=
                   (compiler-backend-type-size
+                    type-segment-bases
                     (compiler-backend-binop-operand-ty
                       types
                       global-types
@@ -37551,6 +39131,7 @@
     dst-home))
 
 (define (compiler-backend-emit-gep-load-alu
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [mnem : String]
   [alu-dst : i64]
@@ -37566,7 +39147,10 @@
         (let
           ;; gep-disp is 0 here in practice (only Var-index geps carry a
           ;; folded displacement); merged for totality.
-          [disp : i64 (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)]
+          [disp : i64
+            (+
+              (* n (compiler-backend-type-size type-segment-bases elem-ty))
+              gep-disp)]
           [base-home : String
             (compiler-backend-address-base-filter-direct
               (compiler-backend-value-scalar-register assignments base))]
@@ -37608,7 +39192,7 @@
               (ResultCompilerBackend.Err message)]))]
       [(option_i64.None)
         (let
-          [scale : i64 (compiler-backend-type-size elem-ty)]
+          [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
           [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
           [base-home : String
             (compiler-backend-address-base-filter
@@ -37717,6 +39301,7 @@
   ;; GAP8 ALU fold first: the probe is side-effect-free, so a rejection costs
   ;; nothing and falls through to the existing single/pair load fusion.
   (match (compiler-backend-gep-load-alu-probe
+    ctx.type-segment-bases
     ctx.assignments
     ctx.types
     ctx.global-types
@@ -37731,6 +39316,7 @@
         ctx
         fallthrough
         (compiler-backend-emit-gep-load-alu
+          ctx.type-segment-bases
           ctx.assignments
           mnem
           alu-dst
@@ -37808,7 +39394,9 @@
                               (compiler-backend-branch-uses-var? src2 gep-dst2)
                               (not
                                 (and
-                                  (compiler-backend-load-compare-type? load-ty2)
+                                  (compiler-backend-load-compare-type?
+                                    ctx.type-segment-bases
+                                    load-ty2)
                                   (compiler-backend-var-single-use?
                                     ctx.use-counts
                                     load-dst2)
@@ -37823,9 +39411,11 @@
                                 ;; advance its ordinal before either pair path.
                                 [gep-fold-disp2 : i64
                                   (compiler-backend-gep-fold-next!
+                                    ctx.type-segment-bases
                                     offset2
                                     elem-ty2)]
                                 (match (compiler-backend-gep-load-pair-alu-probe
+                                  ctx.type-segment-bases
                                   ctx.assignments
                                   ctx.types
                                   ctx.global-types
@@ -37864,6 +39454,7 @@
                                       ctx
                                       fallthrough
                                       (compiler-backend-emit-load-from-gep-pair-planned
+                                        ctx.type-segment-bases
                                         ctx.assignments
                                         base
                                         offset
@@ -37910,6 +39501,7 @@
                                 ctx
                                 fallthrough
                                 (compiler-backend-emit-load-from-gep
+                                  ctx.type-segment-bases
                                   ctx.assignments
                                   load-dst
                                   base
@@ -37940,6 +39532,7 @@
                               ctx
                               fallthrough
                               (compiler-backend-emit-load-from-gep
+                                ctx.type-segment-bases
                                 ctx.assignments
                                 load-dst
                                 base
@@ -37970,6 +39563,7 @@
                           ctx
                           fallthrough
                           (compiler-backend-emit-load-from-gep
+                            ctx.type-segment-bases
                             ctx.assignments
                             load-dst
                             base
@@ -37997,6 +39591,7 @@
                       ctx
                       fallthrough
                       (compiler-backend-emit-load-from-gep
+                        ctx.type-segment-bases
                         ctx.assignments
                         load-dst
                         base
@@ -38023,6 +39618,7 @@
                   ctx
                   fallthrough
                   (compiler-backend-emit-load-from-gep
+                    ctx.type-segment-bases
                     ctx.assignments
                     load-dst
                     base
@@ -38050,6 +39646,7 @@
                 ctx
                 fallthrough
                 (compiler-backend-emit-load-from-gep
+                  ctx.type-segment-bases
                   ctx.assignments
                   load-dst
                   base
@@ -38077,6 +39674,7 @@
             ctx
             fallthrough
             (compiler-backend-emit-load-from-gep
+              ctx.type-segment-bases
               ctx.assignments
               load-dst
               base
@@ -38104,6 +39702,7 @@
         ctx
         fallthrough
         (compiler-backend-emit-load-from-gep
+          ctx.type-segment-bases
           ctx.assignments
           load-dst
           base
@@ -38140,6 +39739,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-to-gep
+    ctx.type-segment-bases
     ctx.assignments
     base
     offset
@@ -38188,6 +39788,7 @@
   [after-jump : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-mov-trivial-phi-return-edge
+    ctx.type-segment-bases
     ctx.source-function
     ctx.blocks
     target-label
@@ -38202,6 +39803,7 @@
       (if (string.eq direct-return "")
         (if (compiler-backend-var-single-use? ctx.use-counts dst)
           (match (compiler-backend-emit-mov-phi-copy-edge
+            ctx.type-segment-bases
             ctx.assignments
             ctx.blocks
             target-label
@@ -38229,6 +39831,7 @@
                     after-jump)
                   buf)
                 (match (compiler-backend-emit-trivial-phi-return-edge
+                  ctx.type-segment-bases
                   ctx.source-function
                   ctx.blocks
                   target-label
@@ -38303,6 +39906,7 @@
               ""))))]))
 
 (define (compiler-backend-emit-call-return
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
@@ -38329,6 +39933,7 @@
       (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
+        type-segment-bases
         name
         args
         types
@@ -38345,6 +39950,7 @@
         c-abi?
         program-index)]
     (match (compiler-backend-emit-call-args
+      type-segment-bases
       target
       assignments
       args
@@ -38412,6 +40018,7 @@
                   args-asm
                   (string.append
                     (compiler-backend-varargs-pre-call
+                      type-segment-bases
                       target
                       extern-call-info
                       param-types)
@@ -38457,12 +40064,14 @@
         [(CompilerRegMaybeType.No) (ast-type-list-new)])]))
 
 (define (compiler-backend-indirect-tail-call-register-only?
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : bool
   (=
     (compiler-backend-call-stack-arg-count
+      type-segment-bases
       target
       args
       types
@@ -38486,6 +40095,7 @@
     planned))
 
 (define (compiler-backend-emit-indirect-call-with-arg-assignments
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [dst : i64]
   [func : CompilerIrValue]
@@ -38511,6 +40121,7 @@
         program-index)]
     [effective-arg-assignments : CompilerRegAssignmentList
       (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+        type-segment-bases
         program-index
         param-types)
         arg-assignments
@@ -38520,6 +40131,7 @@
     ;; first arg accepts the forward.
     [effective-arg-override : i64
       (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+        type-segment-bases
         program-index
         param-types)
         compiler-backend-rax-forward-pending-var
@@ -38531,6 +40143,7 @@
         param-types
         program-index)]
     (match (compiler-backend-emit-call-args-with-override
+      type-segment-bases
       effective-arg-override
       target
       effective-arg-assignments
@@ -38553,6 +40166,7 @@
         (match (compiler-backend-target-arg-reg target 0)
           [(ResultBackendReg.Ok env-reg)
             (match (compiler-backend-emit-call-result-store
+              type-segment-bases
               assignments
               dst
               ty
@@ -38634,6 +40248,7 @@
               instr-diag)))])))
 
 (define (compiler-backend-emit-indirect-call
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [dst : i64]
   [func : CompilerIrValue]
@@ -38649,6 +40264,7 @@
   [vars : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (compiler-backend-emit-indirect-call-with-arg-assignments
+    type-segment-bases
     target
     dst
     func
@@ -38666,6 +40282,7 @@
     instr-diag))
 
 (define (compiler-backend-emit-tail-indirect-call
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
@@ -38697,11 +40314,13 @@
         program-index)]
     [register-only : bool
       (compiler-backend-indirect-tail-call-register-only?
+        type-segment-bases
         target
         args
         param-types
         program-index)]
     (match (compiler-backend-emit-call-args
+      type-segment-bases
       target
       assignments
       args
@@ -38764,6 +40383,7 @@
                                   call-space)
                                 (string.append
                                   (compiler-backend-tail-call-return-normalize
+                                    type-segment-bases
                                     ty)
                                   (compiler-backend-return-tail
                                     source-function
@@ -38822,6 +40442,7 @@
     planned))
 
 (define (compiler-backend-emit-indirect-c-call
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [dst : i64]
   [func : CompilerIrValue]
@@ -38845,8 +40466,11 @@
         externs
         program-index)]
     [param-types : AstTypeList
-      (if (compiler-backend-type-list-has-aggregate? declared-param-types)
+      (if (compiler-backend-type-list-has-aggregate?
+        type-segment-bases
+        declared-param-types)
         (compiler-backend-call-c-abi-param-types
+          type-segment-bases
           types
           (CompilerBackendGlobalTypeList.Nil)
           args
@@ -38857,6 +40481,7 @@
           (compiler-backend-type-list-count declared-param-types))
           declared-param-types
           (compiler-backend-call-actual-param-types
+            type-segment-bases
             types
             (CompilerBackendGlobalTypeList.Nil)
             args)))]
@@ -38870,6 +40495,7 @@
     [direct-home : String
       (compiler-backend-indirect-c-call-direct-home target assignments func)]
     (match (compiler-backend-emit-call-args
+      type-segment-bases
       target
       assignments
       args
@@ -38951,6 +40577,7 @@
               instr-diag)))])))
 
 (define (compiler-backend-emit-c-abi-store-result-call
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [base : CompilerIrValue]
   [name : i64]
@@ -38971,6 +40598,7 @@
       (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
+        type-segment-bases
         name
         args
         types
@@ -38981,6 +40609,7 @@
       (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
       (compiler-backend-call-stack-arg-layout-space
+        type-segment-bases
         target
         args
         param-types
@@ -38992,6 +40621,7 @@
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     (match (compiler-backend-emit-call-args
+      type-segment-bases
       target
       assignments
       args
@@ -39022,6 +40652,7 @@
                     base-save
                     (string.append
                       (compiler-backend-varargs-pre-call
+                        type-segment-bases
                         target
                         extern-call-info
                         param-types)
@@ -39031,6 +40662,7 @@
                         "\n"
                         (string.append
                           (compiler-backend-emit-c-abi-return-stores
+                            type-segment-bases
                             call-space
                             slots
                             planned-target)
@@ -39050,6 +40682,7 @@
               instr-diag)))])))
 
 (define (compiler-backend-emit-indirect-c-abi-store-result-call
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [base : CompilerIrValue]
   [func : CompilerIrValue]
@@ -39073,8 +40706,11 @@
         externs
         program-index)]
     [param-types : AstTypeList
-      (if (compiler-backend-type-list-has-aggregate? declared-param-types)
+      (if (compiler-backend-type-list-has-aggregate?
+        type-segment-bases
+        declared-param-types)
         (compiler-backend-call-c-abi-param-types
+          type-segment-bases
           types
           (CompilerBackendGlobalTypeList.Nil)
           args
@@ -39085,11 +40721,13 @@
           (compiler-backend-type-list-count declared-param-types))
           declared-param-types
           (compiler-backend-call-actual-param-types
+            type-segment-bases
             types
             (CompilerBackendGlobalTypeList.Nil)
             args)))]
     [call-space : i64
       (compiler-backend-call-stack-arg-layout-space
+        type-segment-bases
         target
         args
         param-types
@@ -39099,6 +40737,7 @@
     ;; and the call does not move %rsp.
     [dip : i64 0]
     (match (compiler-backend-emit-call-args
+      type-segment-bases
       target
       assignments
       args
@@ -39143,6 +40782,7 @@
                               "\n"
                               (string.append
                                 (compiler-backend-emit-c-abi-return-stores
+                                  type-segment-bases
                                   call-space
                                   slots
                                   planned-target)
@@ -39198,6 +40838,7 @@
 ;; no-extra-scratch destination-targetable instruction (LEA/two-address
 ;; add/imul/xor).  Wider fallback shapes keep their ordinary home.
 (define (compiler-backend-divmod-producer-retargetable?
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -39216,8 +40857,9 @@
     (match (compiler-backend-immediate-operand rhs)
       [(CompilerBackendMaybeImmediate.Some _)
         (and
-          (compiler-backend-binop-direct-width-ok? op ty)
+          (compiler-backend-binop-direct-width-ok? type-segment-bases op ty)
           (compiler-backend-binop-direct-immediate-ok?
+            type-segment-bases
             (compiler-backend-binop-direct-mnemonic op)
             op
             rhs
@@ -39338,6 +40980,7 @@
   (and
     (compiler-backend-var-single-use? ctx.use-counts producer-dst)
     (compiler-backend-divmod-producer-retargetable?
+      ctx.type-segment-bases
       ctx.assignments
       producer-dst
       producer-op
@@ -39345,12 +40988,17 @@
       producer-rhs
       producer-ty)
     (compiler-backend-branch-uses-var? div-lhs producer-dst)
-    (compiler-backend-signed-literal-divmod-src-shape? div-op div-rhs div-ty)))
+    (compiler-backend-signed-literal-divmod-src-shape?
+      ctx.type-segment-bases
+      div-op
+      div-rhs
+      div-ty)))
 
 ;; The existing Gep+StorePtr fusion accepts the stored scalar in any GP
 ;; register when its address is already directly encodable.  Requiring that
 ;; direct address shape keeps SRC out of all later planned address scratches.
 (define (compiler-backend-divmod-direct-gep-store?
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [result-dst : i64]
   [gep-dst : i64]
@@ -39381,7 +41029,7 @@
                 (compiler-backend-gep-index-address-disp
                   0
                   base-home
-                  (compiler-backend-type-size elem-ty)
+                  (compiler-backend-type-size type-segment-bases elem-ty)
                   offset-home)
                 ""))))])))
 
@@ -39630,8 +41278,10 @@
         compiler-backend-current-instr-reserved-mask
         (compiler-backend-instr-reserved-home-mask
           (CompilerIrInstr.Gep gep-dst base offset elem-ty)))]
-    [gep-disp : i64 (compiler-backend-gep-fold-next! offset elem-ty)]
+    [gep-disp : i64
+      (compiler-backend-gep-fold-next! ctx.type-segment-bases offset elem-ty)]
     (compiler-backend-emit-store-to-gep
+      ctx.type-segment-bases
       ctx.assignments
       base
       offset
@@ -39925,6 +41575,7 @@
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (and
                         (compiler-backend-divmod-direct-gep-store?
+                          ctx.type-segment-bases
                           ctx.assignments
                           div-dst
                           gep-dst
@@ -40036,7 +41687,11 @@
   [buf : text_buf.TextBuf]) : CompilerBackendMaybeDivmodPolish
   (if (and
     (compiler-backend-var-single-use? ctx.use-counts div-dst)
-    (compiler-backend-signed-literal-divmod-src-shape? div-op div-rhs div-ty))
+    (compiler-backend-signed-literal-divmod-src-shape?
+      ctx.type-segment-bases
+      div-op
+      div-rhs
+      div-ty))
     (match after-div
       [(CompilerIrInstrList.Cons maybe-gep after-gep)
         (match maybe-gep
@@ -40047,6 +41702,7 @@
                   (match maybe-store
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (compiler-backend-divmod-direct-gep-store?
+                        ctx.type-segment-bases
                         ctx.assignments
                         div-dst
                         gep-dst
@@ -40245,7 +41901,7 @@
   [rest : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if (and
-    (compiler-backend-load-compare-type? load-ty)
+    (compiler-backend-load-compare-type? ctx.type-segment-bases load-ty)
     (compiler-backend-var-single-use? ctx.use-counts load-dst))
     (match rest
       [(CompilerIrInstrList.Cons next after-cmp)
@@ -40256,6 +41912,7 @@
                 ctx
                 fallthrough
                 (compiler-backend-emit-load-load
+                  ctx.type-segment-bases
                   ctx.assignments
                   load-dst
                   ptr
@@ -40367,7 +42024,12 @@
             (match (compiler-backend-value-as-i64 offset)
               [(option_i64.Some n)
                 (let
-                  [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+                  [disp : i64
+                    (*
+                      n
+                      (compiler-backend-type-size
+                        ctx.type-segment-bases
+                        elem-ty))]
                   (if (compiler-backend-imm32? disp)
                     (match (box-get after-gep)
                       [(CompilerIrInstrList.Cons maybe-store after-store)
@@ -40378,6 +42040,7 @@
                                 ctx
                                 fallthrough
                                 (compiler-backend-emit-store-ptr-pair
+                                  ctx.type-segment-bases
                                   ctx.assignments
                                   ptr
                                   value0
@@ -40464,6 +42127,7 @@
                 bin-lanes
                 bin-elem-ty)
               (if (compiler-backend-vector-load-binop-foldable?
+                ctx.type-segment-bases
                 ctx.use-counts
                 load-dst
                 lanes
@@ -40483,6 +42147,7 @@
                       ctx
                       fallthrough
                       (compiler-backend-emit-vector-binop-memory-source
+                        ctx.type-segment-bases
                         ctx.assignments
                         bin-dst
                         op
@@ -40538,6 +42203,7 @@
       ctx
       fallthrough
       (compiler-backend-emit-copy-bytes-avoid
+        ctx.type-segment-bases
         ctx.assignments
         dst
         src
@@ -40592,6 +42258,7 @@
                     (compiler-backend-var-single-use? ctx.use-counts cast-dst)
                     (compiler-backend-divmod-safe-literal? src bin-ty))
                     (match (compiler-backend-emit-binop
+                      ctx.type-segment-bases
                       ctx.types
                       ctx.global-types
                       ctx.assignments
@@ -40636,6 +42303,7 @@
             (match (if (compiler-backend-var-single-use? ctx.use-counts dst)
               (ResultCompilerBackend.Ok "")
               (compiler-backend-emit-mov
+                ctx.type-segment-bases
                 ctx.assignments
                 dst
                 src
@@ -40645,6 +42313,7 @@
                 ""))
               [(ResultCompilerBackend.Ok prefix)
                 (match (compiler-backend-emit-binop
+                  ctx.type-segment-bases
                   ctx.types
                   ctx.global-types
                   ctx.assignments
@@ -40683,6 +42352,7 @@
                 [(CompilerIrMaybeValue.Some value)
                   (if (compiler-backend-branch-uses-var? value dst)
                     (match (compiler-backend-emit-return
+                      ctx.type-segment-bases
                       ctx.source-function
                       ctx.blocks
                       (CompilerIrMaybeValue.Some src)
@@ -40747,9 +42417,10 @@
                 [(CompilerIrMaybeValue.Some value)
                   (if (and
                     (compiler-backend-branch-uses-var? value dst)
-                    (opt-type-eq ty ctx.ret-ty))
+                    (opt-type-eq ctx.type-segment-bases ty ctx.ret-ty))
                     (compiler-backend-emit-terminator-into
                       (compiler-backend-emit-call-return
+                        ctx.type-segment-bases
                         ctx.target
                         ctx.source-function
                         ctx.blocks
@@ -40820,7 +42491,9 @@
               [(CompilerIrInstr.Load load-dst src load-ty)
                 (if (compiler-backend-branch-uses-var? src gep-dst)
                   (if (and
-                    (compiler-backend-load-compare-type? load-ty)
+                    (compiler-backend-load-compare-type?
+                      ctx.type-segment-bases
+                      load-ty)
                     (compiler-backend-var-single-use? ctx.use-counts load-dst))
                     (match (box-get after-load)
                       [(CompilerIrInstrList.Cons maybe-cmp after-cmp)
@@ -40854,6 +42527,7 @@
                                           fallthrough
                                           gep-dst
                                           (compiler-backend-gep-fold-next!
+                                            ctx.type-segment-bases
                                             offset
                                             elem-ty)
                                           base
@@ -40874,6 +42548,7 @@
                                           fallthrough
                                           gep-dst
                                           (compiler-backend-gep-fold-next!
+                                            ctx.type-segment-bases
                                             offset
                                             elem-ty)
                                           base
@@ -40889,6 +42564,7 @@
                                         fallthrough
                                         gep-dst
                                         (compiler-backend-gep-fold-next!
+                                          ctx.type-segment-bases
                                           offset
                                           elem-ty)
                                         base
@@ -40904,6 +42580,7 @@
                                     fallthrough
                                     gep-dst
                                     (compiler-backend-gep-fold-next!
+                                      ctx.type-segment-bases
                                       offset
                                       elem-ty)
                                     base
@@ -40917,7 +42594,10 @@
                                 ctx
                                 fallthrough
                                 gep-dst
-                                (compiler-backend-gep-fold-next! offset elem-ty)
+                                (compiler-backend-gep-fold-next!
+                                  ctx.type-segment-bases
+                                  offset
+                                  elem-ty)
                                 base
                                 offset
                                 elem-ty
@@ -40930,7 +42610,10 @@
                               ctx
                               fallthrough
                               gep-dst
-                              (compiler-backend-gep-fold-next! offset elem-ty)
+                              (compiler-backend-gep-fold-next!
+                                ctx.type-segment-bases
+                                offset
+                                elem-ty)
                               base
                               offset
                               elem-ty
@@ -40943,7 +42626,10 @@
                           ctx
                           fallthrough
                           gep-dst
-                          (compiler-backend-gep-fold-next! offset elem-ty)
+                          (compiler-backend-gep-fold-next!
+                            ctx.type-segment-bases
+                            offset
+                            elem-ty)
                           base
                           offset
                           elem-ty
@@ -40955,7 +42641,10 @@
                       ctx
                       fallthrough
                       gep-dst
-                      (compiler-backend-gep-fold-next! offset elem-ty)
+                      (compiler-backend-gep-fold-next!
+                        ctx.type-segment-bases
+                        offset
+                        elem-ty)
                       base
                       offset
                       elem-ty
@@ -40975,7 +42664,10 @@
                     ctx
                     fallthrough
                     gep-dst
-                    (compiler-backend-gep-fold-next! offset elem-ty)
+                    (compiler-backend-gep-fold-next!
+                      ctx.type-segment-bases
+                      offset
+                      elem-ty)
                     base
                     offset
                     elem-ty
@@ -40993,7 +42685,11 @@
                 (if (and
                   (compiler-backend-branch-uses-var? copy-dst gep-dst)
                   (compiler-backend-imm32?
-                    (* n (compiler-backend-type-size elem-ty))))
+                    (*
+                      n
+                      (compiler-backend-type-size
+                        ctx.type-segment-bases
+                        elem-ty))))
                   (let
                     [protect-n : i64
                       (compiler-backend-copy-run-protect-count
@@ -41007,6 +42703,7 @@
                       ctx
                       fallthrough
                       (compiler-backend-emit-copy-bytes-from-gep-avoid
+                        ctx.type-segment-bases
                         ctx.assignments
                         base
                         offset
@@ -41015,7 +42712,10 @@
                         copy-size
                         protect
                         protect-n
-                        (compiler-backend-gep-fold-next! offset elem-ty)
+                        (compiler-backend-gep-fold-next!
+                          ctx.type-segment-bases
+                          offset
+                          elem-ty)
                         (compiler-backend-scratch-plan-register-ahead
                           (compiler-backend-runtime-plan-scratch ctx.plan)
                           0
@@ -41067,12 +42767,16 @@
                   fallthrough
                   (if (compiler-backend-branch-uses-var? load-base gep-dst)
                     (compiler-backend-emit-gep
+                      ctx.type-segment-bases
                       ctx.assignments
                       gep-dst
                       base
                       offset
                       elem-ty
-                      (compiler-backend-gep-fold-next! offset elem-ty)
+                      (compiler-backend-gep-fold-next!
+                        ctx.type-segment-bases
+                        offset
+                        elem-ty)
                       (compiler-backend-scratch-plan-register-ahead
                         (compiler-backend-runtime-plan-scratch ctx.plan)
                         0
@@ -41082,12 +42786,16 @@
                         0
                         1))
                     (compiler-backend-emit-gep-staged-avoid
+                      ctx.type-segment-bases
                       ctx.assignments
                       gep-dst
                       base
                       offset
                       elem-ty
-                      (compiler-backend-gep-fold-next! offset elem-ty)
+                      (compiler-backend-gep-fold-next!
+                        ctx.type-segment-bases
+                        offset
+                        elem-ty)
                       (compiler-backend-value-scalar-register
                         ctx.assignments
                         load-base)
@@ -41117,7 +42825,10 @@
                               ctx
                               fallthrough
                               gep-dst
-                              (compiler-backend-gep-fold-next! offset elem-ty)
+                              (compiler-backend-gep-fold-next!
+                                ctx.type-segment-bases
+                                offset
+                                elem-ty)
                               base
                               offset
                               elem-ty
@@ -41157,7 +42868,10 @@
                     ctx
                     fallthrough
                     gep-dst
-                    (compiler-backend-gep-fold-next! offset elem-ty)
+                    (compiler-backend-gep-fold-next!
+                      ctx.type-segment-bases
+                      offset
+                      elem-ty)
                     base
                     offset
                     elem-ty
@@ -41177,7 +42891,10 @@
                     ctx
                     fallthrough
                     gep-dst
-                    (compiler-backend-gep-fold-next! offset elem-ty)
+                    (compiler-backend-gep-fold-next!
+                      ctx.type-segment-bases
+                      offset
+                      elem-ty)
                     base
                     offset
                     elem-ty
@@ -41206,6 +42923,7 @@
                       ctx
                       fallthrough
                       (compiler-backend-emit-copy-bytes-from-gep-avoid
+                        ctx.type-segment-bases
                         ctx.assignments
                         base
                         offset
@@ -41214,7 +42932,10 @@
                         copy-size
                         protect
                         protect-n
-                        (compiler-backend-gep-fold-next! offset elem-ty)
+                        (compiler-backend-gep-fold-next!
+                          ctx.type-segment-bases
+                          offset
+                          elem-ty)
                         (compiler-backend-scratch-plan-register-ahead
                           (compiler-backend-runtime-plan-scratch ctx.plan)
                           0
@@ -41358,6 +43079,7 @@
               dst
               (box-get rest)))
             (match (compiler-backend-emit-binop-to-rax
+              ctx.type-segment-bases
               ctx.types
               ctx.global-types
               ctx.assignments
@@ -41420,6 +43142,7 @@
                               (if (compiler-backend-branch-uses-var? value dst)
                                 (compiler-backend-emit-terminator-into
                                   (compiler-backend-emit-binop-return-with-plan
+                                    ctx.type-segment-bases
                                     ctx.source-function
                                     ctx.blocks
                                     ctx.types
@@ -41840,6 +43563,7 @@
       buf)))
 
 (define (compiler-backend-emit-block
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [function : String]
   [source-function : i64]
@@ -41864,6 +43588,7 @@
         (set! compiler-backend-current-block-label label)
         (match (compiler-backend-emit-instrs
           (CompilerBackendEmissionContext
+            type-segment-bases
             target
             function
             source-function
@@ -41918,6 +43643,7 @@
       [(CompilerIrBlock.Block label _) (CompilerBackendMaybeLabel.Some label)])))
 
 (define (compiler-backend-emit-block-seq-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [function : String]
   [source-function : i64]
@@ -41948,6 +43674,7 @@
               compiler-backend-emit-instr-post-base
               (+ compiler-backend-emit-instr-post-base (struct-get instrs len)))])
         (match (compiler-backend-emit-block
+          type-segment-bases
           target
           function
           source-function
@@ -41968,6 +43695,7 @@
           use-counts)
           [(ResultCompilerBackend.Ok head)
             (compiler-backend-emit-block-seq-into
+              type-segment-bases
               target
               function
               source-function
@@ -41991,6 +43719,7 @@
             (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-emit-blocks-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [function : String]
   [source-function : i64]
@@ -42019,6 +43748,7 @@
               compiler-backend-emit-instr-post-base
               (+ compiler-backend-emit-instr-post-base (struct-get instrs len)))])
         (match (compiler-backend-emit-block
+          type-segment-bases
           target
           function
           source-function
@@ -42039,6 +43769,7 @@
           use-counts)
           [(ResultCompilerBackend.Ok head)
             (compiler-backend-emit-blocks-into
+              type-segment-bases
               target
               function
               source-function
@@ -42061,6 +43792,7 @@
             (ResultCompilerBackend.Err message)]))]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-block-seq-into
+        type-segment-bases
         target
         function
         source-function
@@ -42082,6 +43814,7 @@
         buf)]))
 
 (define (compiler-backend-emit-blocks
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [function : String]
   [source-function : i64]
@@ -42100,6 +43833,7 @@
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
   (compiler-backend-emit-blocks-into
+    type-segment-bases
     target
     function
     source-function
@@ -42221,6 +43955,7 @@
                 (box (compiler-diagnostic-at-start "" message)))]))))))
 
 (define (compiler-backend-emit-spmd-private-param-spills-from
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [params : CompilerIrParamList]
@@ -42235,6 +43970,7 @@
     [(CompilerIrParamList.Nil) (ResultCompilerBackend.Ok "")]
     [(CompilerIrParamList.Array seq)
       (compiler-backend-emit-spmd-private-param-spills-from
+        type-segment-bases
         target
         assignments
         (compiler-ir-param-seq-to-list seq)
@@ -42287,6 +44023,7 @@
                         ty
                         "")
                       (compiler-backend-emit-load-scalar-address-to-var
+                        type-segment-bases
                         assignments
                         var-id
                         addr
@@ -42315,6 +44052,7 @@
                       (box (compiler-diagnostic-at-start "" message)))])))
               [(ResultCompilerBackend.Ok head)
                 (match (compiler-backend-emit-spmd-private-param-spills-from
+                  type-segment-bases
                   target
                   assignments
                   (box-get rest)
@@ -42345,11 +44083,13 @@
                 (ResultCompilerBackend.Err message)]))])]))
 
 (define (compiler-backend-emit-spmd-private-param-spills
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [params : CompilerIrParamList]
   [vars : i64]) : ResultCompilerBackend
   (compiler-backend-emit-spmd-private-param-spills-from
+    type-segment-bases
     target
     assignments
     params
@@ -42362,6 +44102,7 @@
     vars))
 
 (define (compiler-backend-emit-param-spills-from
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [all-params : CompilerIrParamList]
@@ -42376,6 +44117,7 @@
     [(CompilerIrParamList.Nil) (ResultCompilerBackend.Ok "")]
     [(CompilerIrParamList.Array seq)
       (compiler-backend-emit-param-spills-from
+        type-segment-bases
         target
         assignments
         all-params
@@ -42403,10 +44145,17 @@
             ;; INTEGER words advance the integer bank; SSE words advance the float
             ;; bank. This mirrors emit-call-args so self-calls agree on register vs
             ;; stack placement for mixed-bank aggregate words.
-            (if (compiler-backend-group-type? program-index ty)
+            (if (compiler-backend-group-type?
+              type-segment-bases
+              program-index
+              ty)
               (let
                 [w0-sse : bool
-                  (compiler-backend-group-word-sse? program-index ty 0)]
+                  (compiler-backend-group-word-sse?
+                    type-segment-bases
+                    program-index
+                    ty
+                    0)]
                 [w0-stack : bool
                   (compiler-backend-stack-call-arg-for-banks?
                     target
@@ -42427,7 +44176,11 @@
                     (+ stack-idx 1)
                     stack-idx)]
                 [w1-sse : bool
-                  (compiler-backend-group-word-sse? program-index ty 1)]
+                  (compiler-backend-group-word-sse?
+                    type-segment-bases
+                    program-index
+                    ty
+                    1)]
                 [w1-stack : bool
                   (compiler-backend-stack-call-arg-for-banks?
                     target
@@ -42436,6 +44189,7 @@
                     float1
                     (+ position 1))]
                 (match (compiler-backend-emit-group-word-param
+                  type-segment-bases
                   target
                   assignments
                   var-id
@@ -42449,6 +44203,7 @@
                   program-index)
                   [(ResultCompilerBackend.Ok head0)
                     (match (compiler-backend-emit-group-word-param
+                      type-segment-bases
                       target
                       assignments
                       var-id
@@ -42462,6 +44217,7 @@
                       program-index)
                       [(ResultCompilerBackend.Ok head1)
                         (match (compiler-backend-emit-param-spills-from
+                          type-segment-bases
                           target
                           assignments
                           all-params
@@ -42494,6 +44250,7 @@
                 float-idx
                 position)
                 (match (compiler-backend-emit-param-spills-from
+                  type-segment-bases
                   target
                   assignments
                   all-params
@@ -42529,6 +44286,7 @@
                               ty
                               "")
                             (compiler-backend-emit-load-scalar-address-to-var
+                              type-segment-bases
                               assignments
                               var-id
                               addr
@@ -42550,6 +44308,7 @@
                     position))
                   [(ResultBackendReg.Ok reg)
                     (match (compiler-backend-emit-param-spills-from
+                      type-segment-bases
                       target
                       assignments
                       all-params
@@ -42579,6 +44338,7 @@
                           "backend: too many params")))]))))])]))
 
 (define (compiler-backend-emit-param-spills
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [params : CompilerIrParamList]
@@ -42589,6 +44349,7 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (compiler-backend-emit-param-spills-from
+    type-segment-bases
     target
     assignments
     params
@@ -46915,6 +48676,7 @@
 ;; dispatches; kind/scale must match what the pre-pass recorded or the
 ;; function is poisoned (checked after body emission).
 (define (compiler-backend-gep-fold-next!
+  [type-segment-bases : i64]
   [offset : CompilerIrValue]
   [elem-ty : AstType]) : i64
   (if (not compiler-backend-gep-fold-ready)
@@ -46933,7 +48695,7 @@
               (compiler-backend-gep-fold-offset-kind offset))
             (=
               (array-ref compiler-backend-gep-fold-scale-table cursor)
-              (compiler-backend-type-size elem-ty)))
+              (compiler-backend-type-size type-segment-bases elem-ty)))
             (array-ref compiler-backend-gep-fold-disp-table cursor)
             (begin
               (set! compiler-backend-gep-fold-drift true)
@@ -47104,6 +48866,7 @@
 ;; Pass 2: count qualifying gep-index uses per candidate and track the last
 ;; folded gep position; a disqualifying gep-index use kills the candidate.
 (define (compiler-backend-gep-fold-scan-geps
+  [type-segment-bases : i64]
   [barr : (Array CompilerIrBlock)]
   [defs : (Array i64)]
   [cand-base : (Array i64)]
@@ -47133,7 +48896,10 @@
                         (< ov (array-length cand-base))
                         (>= (array-ref cand-base ov) 0))
                         (let
-                          [scale : i64 (compiler-backend-type-size elem-ty)]
+                          [scale : i64
+                            (compiler-backend-type-size
+                              type-segment-bases
+                              elem-ty)]
                           [bdisp : i64 (* (array-ref cand-k ov) scale)]
                           (if (and
                             (= (array-ref cand-block ov) b)
@@ -47265,6 +49031,7 @@
       unit)))
 
 (define (compiler-backend-gep-fold-rewrite-seq
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [block-ord : i64]
   [cand-base : (Array i64)]
@@ -47296,7 +49063,8 @@
                   (set! w (+ w 1))))]
             [(CompilerIrInstr.Gep gdst base offset elem-ty)
               (let
-                [scale : i64 (compiler-backend-type-size elem-ty)]
+                [scale : i64
+                  (compiler-backend-type-size type-segment-bases elem-ty)]
                 (match offset
                   [(CompilerIrValue.Var ov)
                     (if (and
@@ -47355,6 +49123,7 @@
       (CompilerIrInstrSeq out w))))
 
 (define (compiler-backend-gep-fold-rewrite-blocks
+  [type-segment-bases : i64]
   [barr : (Array CompilerIrBlock)]
   [cand-base : (Array i64)]
   [cand-k : (Array i64)]
@@ -47381,6 +49150,7 @@
                 (CompilerIrBlock.Block
                   label
                   (compiler-backend-gep-fold-rewrite-seq
+                    type-segment-bases
                     instrs
                     b
                     cand-base
@@ -47460,6 +49230,7 @@
 ;; per-function displacement table; when nothing folds the input list is
 ;; returned unchanged and the table stays disabled.
 (define (compiler-backend-gep-fold-blocks
+  [type-segment-bases : i64]
   [vars : i64]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (begin
@@ -47495,6 +49266,7 @@
             cand-block
             cand-pos)
           (compiler-backend-gep-fold-scan-geps
+            type-segment-bases
             barr
             defs
             cand-base
@@ -47519,6 +49291,7 @@
               [scale-table : (Array i64) (array.make-array i64 gep-count)]
               [out : CompilerIrBlockList
                 (compiler-backend-gep-fold-rewrite-blocks
+                  type-segment-bases
                   barr
                   cand-base
                   cand-k
@@ -47537,6 +49310,7 @@
             blocks))))))
 
 (define (compiler-backend-emit-function
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [func : CompilerIrFunction]
@@ -47567,7 +49341,7 @@
         ;; BEFORE the register plan, so liveness sees the folded program (the
         ;; shared counter stays live; the offset adds vanish).
         [folded-blocks : CompilerIrBlockList
-          (compiler-backend-gep-fold-blocks vars raw-blocks)]
+          (compiler-backend-gep-fold-blocks type-segment-bases vars raw-blocks)]
         ;; Cycle 26: split a property-proven frame-free entry region before
         ;; regalloc. Incoming parameters stay in ABI locations until the saving
         ;; edge, whose returned labels drive prologue placement and bare returns.
@@ -47599,7 +49373,9 @@
           (if (and
             (compiler-backend-mode-scalar? mode)
             compiler-backend-scalar-registers-enabled)
-            (compiler-reg-cold-call-rewrite-function early-exit-func)
+            (compiler-reg-cold-call-rewrite-function
+              type-segment-bases
+              early-exit-func)
             (CompilerRegColdCallRewrite.Rewrite early-exit-func (- 0 1)))]
         [cold-call-func : CompilerIrFunction
           (compiler-reg-cold-call-rewrite-function-value cold-call-rewrite)]
@@ -47658,15 +49434,22 @@
         [reg-plan : CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if compiler-backend-scalar-registers-enabled
-              (compiler-reg-plan-function-scalar-cold-for-abi-with-types
+              (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types
+                type-segment-bases
                 fn-abi
                 walk-func
                 cold-call-temp-start
                 walk-types)
               (compiler-reg-plan-function-stack-only walk-func))
             (if (compiler-backend-mode-avx2? mode)
-              (compiler-reg-plan-function-avx2-for-abi fn-abi walk-func)
-              (compiler-reg-plan-function-for-abi fn-abi walk-func)))]
+              (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi
+                type-segment-bases
+                fn-abi
+                walk-func)
+              (compiler-reg-plan-function-with-type-segment-bases-for-abi
+                type-segment-bases
+                fn-abi
+                walk-func)))]
         [_cold-call-self-check : unit
           (cfg
             scavenge-self-check
@@ -47719,6 +49502,7 @@
         [loop-split-rewrite : CompilerRegCallSaveRewrite
           (if non-split-passes-enabled
             (compiler-reg-loop-split-rewrite-blocks
+              type-segment-bases
               loop-split-func
               call-save-blocks
               call-save-vars
@@ -47756,6 +49540,7 @@
         [remat0-rewrite : CompilerRegCallSaveRewrite
           (if call-save-enabled
             (compiler-reg-remat-rewrite-blocks
+              type-segment-bases
               remat0-func
               rewritten-blocks
               rewritten-vars
@@ -47813,6 +49598,7 @@
         [scratch-plan-result : CompilerRegScratchPlanResult
           (if call-save-enabled
             (compiler-reg-plan-with-scratch-vreg-result
+              type-segment-bases
               fn-abi
               (CompilerIrFunction.Function
                 name
@@ -47840,6 +49626,7 @@
         ;; costly to repeat).
         [fn-group-vars : CompilerLiveI64Set
           (compiler-reg-function-group-vars
+            type-segment-bases
             (CompilerIrFunction.Function
               name
               params
@@ -47862,6 +49649,7 @@
           ;; That keeps both words inside the `slot-vars`-sized frame instead of
           ;; preserving the old high raw ids that drove frame growth.
           (compiler-reg-color-stack-slots
+            type-segment-bases
             scratch-reg-plan
             fn-group-vars
             params
@@ -47983,6 +49771,7 @@
             emit-blocks-list)]
         [identity-tail-forwarder? : bool
           (compiler-backend-identity-tail-forwarder?
+            type-segment-bases
             target
             name
             params
@@ -47997,6 +49786,7 @@
             (string.eq shrinkwrap-bare-label ""))
             ""
             (compiler-backend-shrinkwrap-prefix-asm
+              type-segment-bases
               target
               params
               scratch-vars
@@ -48015,6 +49805,7 @@
             (string.eq shrinkwrap-bare-label ""))
             ""
             (compiler-backend-shrinkwrap-prefix-asm
+              type-segment-bases
               target
               params
               scratch-vars
@@ -48077,6 +49868,7 @@
             ;; loop-constant optimization as the unwrapped pipeline.
             true)
             (compiler-backend-const-hoist-build!
+              type-segment-bases
               target
               emit-blocks-list
               const-hoist-occupancy-assignments
@@ -48159,11 +49951,13 @@
               (ResultCompilerBackend.Ok "")
               (if (compiler-backend-spmd-private-function? name)
                 (compiler-backend-emit-spmd-private-param-spills
+                  type-segment-bases
                   target
                   assignments
                   params
                   slot-vars)
                 (compiler-backend-emit-param-spills
+                  type-segment-bases
                   target
                   assignments
                   params
@@ -48200,6 +49994,7 @@
                         ""))]
                   [outgoing-frame-space : i64
                     (compiler-backend-outgoing-frame-space
+                      type-segment-bases
                       target
                       emit-blocks-list
                       program-index)]
@@ -48234,6 +50029,7 @@
                                 (compiler-backend-cycle-temp-max-slots))
                               (compiler-backend-emergency-slot-size))))))]
                   (match (compiler-backend-emit-blocks
+                    type-segment-bases
                     target
                     label-scope
                     name
@@ -48350,6 +50146,7 @@
                                     crt-entry
                                     (compiler-backend-target-linux? target))))
                                 (compiler-backend-global-initializers
+                                  type-segment-bases
                                   globals
                                   program-index)
                                 "")
@@ -48468,6 +50265,7 @@
                               ;; pool (allow-rbp=false => no %rbp homes, so it
                               ;; cannot demote again).
                               (compiler-backend-emit-function
+                                type-segment-bases
                                 target
                                 mode
                                 func
@@ -48611,6 +50409,7 @@
                                 ;; register plan, and prologue placement are all
                                 ;; consistently disabled together.
                                 (compiler-backend-emit-function
+                                  type-segment-bases
                                   target
                                   mode
                                   func
@@ -48719,6 +50518,7 @@
         (compiler-backend-direct-emit-instr-limit))]))
 
 (define (compiler-backend-emit-function-scratch
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [func : CompilerIrFunction]
@@ -48741,6 +50541,7 @@
       (with-escape
         (arena.Arena scratch)
         (compiler-backend-emit-function
+          type-segment-bases
           target
           mode
           func
@@ -48765,6 +50566,7 @@
 ;; functions through a scratch arena so transient assembly strings stay within
 ;; the self-build memory budget.
 (define (compiler-backend-emit-function-escaping
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [func : CompilerIrFunction]
@@ -48783,6 +50585,7 @@
     [result : ResultCompilerBackend
       (if (compiler-backend-emit-function-direct? func)
         (compiler-backend-emit-function
+          type-segment-bases
           target
           mode
           func
@@ -48799,6 +50602,7 @@
           true
           true)
         (compiler-backend-emit-function-scratch
+          type-segment-bases
           target
           mode
           func
@@ -48848,6 +50652,7 @@
     functions))
 
 (define (compiler-backend-emit-functions-buffer-raw-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionList]
@@ -48869,6 +50674,7 @@
       (begin
         (cfg compile-profile (compiler-backend-profile-detail-start))
         (match (compiler-backend-emit-function-escaping
+          type-segment-bases
           target
           (compiler-backend-effective-function-mode mode func)
           func
@@ -48891,6 +50697,7 @@
                   "function"
                   (compiler-backend-profile-function-name func)))
               (compiler-backend-emit-functions-buffer-raw-into
+                type-segment-bases
                 target
                 mode
                 (box-get rest)
@@ -48916,6 +50723,7 @@
               (ResultCompilerBackendBuffer.Err message))]))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-backend-emit-function-seq-buffer-into
+        type-segment-bases
         target
         mode
         seq
@@ -48934,6 +50742,7 @@
         buf)]))
 
 (define (compiler-backend-emit-function-seq-buffer-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionSeq]
@@ -48957,6 +50766,7 @@
       (begin
         (cfg compile-profile (compiler-backend-profile-detail-start))
         (match (compiler-backend-emit-function-escaping
+          type-segment-bases
           target
           (compiler-backend-effective-function-mode mode func)
           func
@@ -48979,6 +50789,7 @@
                   "function"
                   (compiler-backend-profile-function-name func)))
               (compiler-backend-emit-function-seq-buffer-into
+                type-segment-bases
                 target
                 mode
                 functions
@@ -49007,6 +50818,7 @@
 ;; Final-buffer streaming emits each function into a rewindable raw arena, then
 ;; immediately moves its optimized bytes into the home-owned output stream.
 (define (compiler-backend-emit-functions-stream-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionList]
@@ -49031,6 +50843,7 @@
           (compiler-backend-assembly-stream-begin-raw!)
           (cfg compile-profile (compiler-backend-profile-detail-start))
           (match (compiler-backend-emit-function-escaping
+            type-segment-bases
             target
             (compiler-backend-effective-function-mode mode func)
             func
@@ -49058,6 +50871,7 @@
                 (unsafe
                   (arena.set! caller-arena))
                 (compiler-backend-emit-functions-stream-into
+                  type-segment-bases
                   target
                   mode
                   (box-get rest)
@@ -49085,6 +50899,7 @@
                 (ResultCompilerBackendBuffer.Err message))])))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-backend-emit-function-seq-stream-into
+        type-segment-bases
         target
         mode
         seq
@@ -49103,6 +50918,7 @@
         buf)]))
 
 (define (compiler-backend-emit-function-seq-stream-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionSeq]
@@ -49128,6 +50944,7 @@
         (compiler-backend-assembly-stream-begin-raw!)
         (cfg compile-profile (compiler-backend-profile-detail-start))
         (match (compiler-backend-emit-function-escaping
+          type-segment-bases
           target
           (compiler-backend-effective-function-mode mode func)
           func
@@ -49155,6 +50972,7 @@
               (unsafe
                 (arena.set! caller-arena))
               (compiler-backend-emit-function-seq-stream-into
+                type-segment-bases
                 target
                 mode
                 functions
@@ -49183,6 +51001,7 @@
               (ResultCompilerBackendBuffer.Err message))])))))
 
 (define (compiler-backend-emit-functions-buffer-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionList]
@@ -49202,6 +51021,7 @@
     [result : ResultCompilerBackendBuffer
       (if (compiler-backend-assembly-stream-active?)
         (compiler-backend-emit-functions-stream-into
+          type-segment-bases
           target
           mode
           functions
@@ -49218,6 +51038,7 @@
           scratch
           buf)
         (compiler-backend-emit-functions-buffer-raw-into
+          type-segment-bases
           target
           mode
           functions
@@ -49299,6 +51120,7 @@
       (text_buf.append buf "    .section .rodata\n    .balign 8\n"))))
 
 (define (compiler-backend-closure-adapter-outgoing-frame-space
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [param-types : AstTypeList]
@@ -49311,6 +51133,7 @@
         (+
           (compiler-backend-outgoing-shadow-space target)
           (compiler-backend-linux-stack-arg-space
+            type-segment-bases
             target
             args
             param-types
@@ -49325,6 +51148,7 @@
             (* 2 (compiler-backend-call-args-count args)))))]))
 
 (define (compiler-backend-emit-closure-entry-adapter
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [name : i64]
   [param-types : AstTypeList]
@@ -49335,7 +51159,7 @@
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [params : CompilerIrParamList
-      (compiler-backend-param-list-from-types param-types 0)]
+      (compiler-backend-param-list-from-types type-segment-bases param-types 0)]
     [vars : i64 (compiler-backend-type-list-count param-types)]
     [args : CompilerIrCallArgs
       (compiler-ir-call-args-from-list
@@ -49353,8 +51177,12 @@
           (compiler-backend-frame-slots-with-groups
             vars
             CompilerRegAssignmentList.Nil
-            (compiler-backend-type-list-has-group? param-types program-index)))
+            (compiler-backend-type-list-has-group?
+              type-segment-bases
+              param-types
+              program-index)))
         (compiler-backend-closure-adapter-outgoing-frame-space
+          type-segment-bases
           target
           args
           param-types
@@ -49368,6 +51196,7 @@
         program-index)]
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
     (match (compiler-backend-emit-param-spills
+      type-segment-bases
       target
       CompilerRegAssignmentList.Nil
       params
@@ -49379,6 +51208,7 @@
       vars)
       [(ResultCompilerBackend.Ok spills)
         (match (compiler-backend-emit-call-args
+          type-segment-bases
           target
           CompilerRegAssignmentList.Nil
           args
@@ -49419,6 +51249,7 @@
                         args-asm
                         (string.append
                           (compiler-backend-varargs-pre-call
+                            type-segment-bases
                             target
                             extern-call-info
                             param-types)
@@ -49446,6 +51277,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [names : BackendSymbolSeq]
   [index : i64]
@@ -49461,6 +51293,7 @@
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (match (compiler-backend-emit-closure-entry-adapter
+            type-segment-bases
             target
             name
             param-types
@@ -49471,6 +51304,7 @@
             program-index)
             [(ResultCompilerBackend.Ok head)
               (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
+                type-segment-bases
                 target
                 names
                 (+ index 1)
@@ -49483,6 +51317,7 @@
               (ResultCompilerBackendBuffer.Err message)])]
         [(CompilerBackendMaybeSignature.No)
           (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
+            type-segment-bases
             target
             names
             (+ index 1)
@@ -49493,6 +51328,7 @@
             buf)]))))
 
 (define (compiler-backend-emit-closure-entry-adapters-stream-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [names : BackendSymbolSeq]
   [index : i64]
@@ -49512,6 +51348,7 @@
             (begin
               (compiler-backend-assembly-stream-begin-raw!)
               (match (compiler-backend-emit-closure-entry-adapter
+                type-segment-bases
                 target
                 name
                 param-types
@@ -49528,6 +51365,7 @@
                     (unsafe
                       (arena.set! caller-arena))
                     (compiler-backend-emit-closure-entry-adapters-stream-into
+                      type-segment-bases
                       target
                       names
                       (+ index 1)
@@ -49543,6 +51381,7 @@
                     (ResultCompilerBackendBuffer.Err message))])))]
         [(CompilerBackendMaybeSignature.No)
           (compiler-backend-emit-closure-entry-adapters-stream-into
+            type-segment-bases
             target
             names
             (+ index 1)
@@ -49553,6 +51392,7 @@
             buf)]))))
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [names : BackendSymbolSeq]
   [functions : CompilerIrFunctionList]
@@ -49562,6 +51402,7 @@
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (if (compiler-backend-assembly-stream-active?)
     (compiler-backend-emit-closure-entry-adapters-stream-into
+      type-segment-bases
       target
       names
       0
@@ -49571,6 +51412,7 @@
       program-index
       buf)
     (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
+      type-segment-bases
       target
       names
       0
@@ -49974,10 +51816,15 @@
                 selector-low)
               selector-high)
             active-lanes)])]
-    [(CompilerIrInstr.TailMask _ index length _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections index)
-        length)]
+    [(CompilerIrInstr.TailMask _ index length lanes)
+      (let
+        [values : CompilerBackendProgramCollections
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections index)
+            length)]
+        (if (= lanes 4)
+          (compiler-backend-program-collections-mark-avx2-i64-lane-id values)
+          values))]
     [(CompilerIrInstr.CpuId _ leaf subleaf _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections leaf)
@@ -50025,9 +51872,11 @@
       out)))
 
 (define (compiler-backend-collect-function-collections
+  [type-segment-bases : i64]
   [collections : CompilerBackendProgramCollections]
   [functions : CompilerIrFunctionList]) : CompilerBackendProgramCollections
   (match (compiler-backend-collect-functions-shared
+    type-segment-bases
     (CompilerBackendCollectState.Collections collections)
     functions)
     [(CompilerBackendCollectState.Collections out) out]
@@ -50050,10 +51899,12 @@
         (compiler-ir-global-seq-to-list seq))]))
 
 (define (compiler-backend-collect-program-collections
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]) : CompilerBackendProgramCollections
   (match program
     [(CompilerIrProgram.Program globals functions _)
       (compiler-backend-collect-function-collections
+        type-segment-bases
         (compiler-backend-collect-global-collections
           (compiler-backend-program-collections-new)
           globals)
@@ -50252,6 +52103,7 @@
     buf))
 
 (define (compiler-backend-global-value-asm
+  [type-segment-bases : i64]
   [ty : AstType]
   [value : CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
@@ -50259,7 +52111,7 @@
     ;; A register-group global stores its value inline (16 bytes), so its
     ;; startup-initialized slot reserves two words rather than one.
     [(CompilerIrValue.Unit)
-      (if (compiler-backend-group-type? program-index ty)
+      (if (compiler-backend-group-type? type-segment-bases program-index ty)
         (ResultCompilerBackend.Ok "    .quad 0\n    .quad 0\n")
         (ResultCompilerBackend.Ok "    .quad 0\n"))]
     [(CompilerIrValue.I64 n)
@@ -50347,6 +52199,7 @@
         ", 3\n")]))
 
 (define (compiler-backend-emit-global
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [global : CompilerIrGlobal]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
@@ -50363,11 +52216,18 @@
               (compiler-backend-emit-runtime-global
                 target
                 symbol
-                (if (compiler-backend-group-type? program-index ty)
+                (if (compiler-backend-group-type?
+                  type-segment-bases
+                  program-index
+                  ty)
                   16
                   8))
               ""))
-          (match (compiler-backend-global-value-asm ty value program-index)
+          (match (compiler-backend-global-value-asm
+            type-segment-bases
+            ty
+            value
+            program-index)
             [(ResultCompilerBackend.Ok value-asm)
               (ResultCompilerBackend.Ok
                 (str_cat.str-cat
@@ -50382,6 +52242,7 @@
               (ResultCompilerBackend.Err message)])))]))
 
 (define (compiler-backend-emit-globals-buffer-into
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [globals : CompilerIrGlobalList]
   [buf : text_buf.TextBuf]
@@ -50389,9 +52250,14 @@
   (match globals
     [(CompilerIrGlobalList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
     [(CompilerIrGlobalList.Cons global rest)
-      (match (compiler-backend-emit-global target global program-index)
+      (match (compiler-backend-emit-global
+        type-segment-bases
+        target
+        global
+        program-index)
         [(ResultCompilerBackend.Ok head)
           (compiler-backend-emit-globals-buffer-into
+            type-segment-bases
             target
             (box-get rest)
             (text_buf.append buf (compiler-backend-emergency-wrap head))
@@ -50400,6 +52266,7 @@
           (ResultCompilerBackendBuffer.Err message)])]
     [(CompilerIrGlobalList.Array seq)
       (compiler-backend-emit-globals-buffer-into
+        type-segment-bases
         target
         (compiler-ir-global-seq-to-list seq)
         buf
@@ -50409,6 +52276,7 @@
   (string.append "__global_init_" global-name))
 
 (define (compiler-backend-global-init-call
+  [type-segment-bases : i64]
   [name : i64]
   [init : i64]
   [ty : AstType]
@@ -50420,7 +52288,7 @@
       "    call "
       init-symbol
       "\n"
-      (if (compiler-backend-group-type? program-index ty)
+      (if (compiler-backend-group-type? type-segment-bases program-index ty)
         ;; A register-group init returns word0:word1 in %rax:%rdx; store
         ;; both into the inline 16-byte global slot.
         (str_cat.str-cat
@@ -50441,6 +52309,7 @@
       "")))
 
 (define (compiler-backend-global-initializers
+  [type-segment-bases : i64]
   [globals : CompilerIrGlobalList]
   [program-index : CompilerBackendProgramIndex]) : String
   (match globals
@@ -50451,11 +52320,20 @@
           (str_cat.str-cat
             (match value
               [(CompilerIrValue.RuntimeGlobal init)
-                (compiler-backend-global-init-call name init ty program-index)]
+                (compiler-backend-global-init-call
+                  type-segment-bases
+                  name
+                  init
+                  ty
+                  program-index)]
               [_ ""])
-            (compiler-backend-global-initializers (box-get rest) program-index))])]
+            (compiler-backend-global-initializers
+              type-segment-bases
+              (box-get rest)
+              program-index))])]
     [(CompilerIrGlobalList.Array seq)
       (compiler-backend-global-initializers
+        type-segment-bases
         (compiler-ir-global-seq-to-list seq)
         program-index)]))
 
@@ -51382,6 +53260,7 @@
       (compiler-backend-entry-call-main))))
 
 (define (compiler-backend-entry-for-target-with-crt
+  [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]
   [globals : CompilerIrGlobalList]
@@ -51396,7 +53275,10 @@
           (compiler-backend-entry
             true
             true
-            (compiler-backend-global-initializers globals program-index))))]
+            (compiler-backend-global-initializers
+              type-segment-bases
+              globals
+              program-index))))]
     [(CompilerBackendTarget.Windows) ""]))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
@@ -51607,6 +53489,7 @@
                                   prefix-buf)))))))))))))))))
 
 (define (compiler-backend-emit-program-buffer-after-index
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -51622,7 +53505,7 @@
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (let
     [collections : CompilerBackendProgramCollections
-      (compiler-backend-collect-program-collections program)]
+      (compiler-backend-collect-program-collections type-segment-bases program)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringSeq
@@ -51680,6 +53563,7 @@
           (cfg compile-profile (compiler-backend-profile-finish "prefix"))
           (cfg compile-profile (compiler-backend-profile-start))
           (match (compiler-backend-emit-functions-buffer-into
+            type-segment-bases
             target
             mode
             entry-functions
@@ -51704,6 +53588,7 @@
                   (compiler-backend-profile-summary-emit))
                 (cfg compile-profile (compiler-backend-profile-start))
                 (match (compiler-backend-emit-closure-entry-adapters-buffer-into
+                  type-segment-bases
                   target
                   closure-names
                   entry-functions
@@ -51729,6 +53614,7 @@
                                 ""))
                             (if emit-entry
                               (compiler-backend-entry-for-target-with-crt
+                                type-segment-bases
                                 target
                                 plan
                                 globals
@@ -51813,7 +53699,8 @@
                   (compiler-backend-profile-summary-emit))
                 (ResultCompilerBackendBuffer.Err message))]))))))
 
-(define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -51874,6 +53761,7 @@
                       emit-entry)]
                   [program-index : CompilerBackendProgramIndex
                     (compiler-backend-program-index-build
+                      type-segment-bases
                       entry-functions
                       externs)]
                   (begin
@@ -51882,6 +53770,7 @@
                       (compiler-backend-profile-finish "index"))
                     (cfg compile-profile (compiler-backend-profile-start))
                     (match (compiler-backend-emit-globals-buffer-into
+                      type-segment-bases
                       target
                       globals
                       (text_buf.append (text_buf.empty) ".data\n")
@@ -51900,6 +53789,7 @@
                             program-index)
                             [(ResultCompilerBackendSymbolValidation.Ok _)
                               (compiler-backend-emit-program-buffer-after-index
+                                type-segment-bases
                                 program
                                 target
                                 mode
@@ -51926,6 +53816,24 @@
           (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
           (ResultCompilerBackendBuffer.Err
             (box (compiler-diagnostic-at-start "" message))))])))
+
+(define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [pic-emit? : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+    (ast-node-pool-reader-type-segment-bases)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    pic-emit?))
 
 (define (compiler-backend-object-value-ref
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -52380,9 +54288,11 @@
           (compiler-backend-object-push-u32! (&mut out) disp)))
       (compiler-backend-object-bytes-finish (& out)))))
 
-(define (compiler-backend-object-load-rax-pointee-bytes [ty : AstType]) : String
+(define (compiler-backend-object-load-rax-pointee-bytes
+  [type-segment-bases : i64]
+  [ty : AstType]) : String
   (let
-    [size : i64 (compiler-backend-type-size ty)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     [signed : bool (compiler-backend-type-signed? ty)]
     (cond
       [(= size 8)
@@ -52603,6 +54513,7 @@
     [_ (compiler-backend-object-value-ref parts site src)]))
 
 (define (compiler-backend-object-load-ptr-to-var
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
@@ -52611,7 +54522,7 @@
   (compiler-backend-object-store-reg-to-var
     (compiler-backend-object-add-nonempty-bytes
       (compiler-backend-object-load-value-to-reg parts site src "%rax")
-      (compiler-backend-object-load-rax-pointee-bytes ty))
+      (compiler-backend-object-load-rax-pointee-bytes type-segment-bases ty))
     dst
     "%rax"))
 
@@ -52647,6 +54558,7 @@
   (object_target.compiler-backend-object-bytes-from-hex "4c01c0"))
 
 (define (compiler-backend-object-gep-to-var
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
   [dst : i64]
@@ -52654,7 +54566,7 @@
   [offset : CompilerIrValue]
   [elem-ty : AstType]) : object_target.CompilerBackendObjectTargetParts
   (let
-    [elem-size : i64 (compiler-backend-type-size elem-ty)]
+    [elem-size : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
     [with-base : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-load-value-to-reg parts site base "%rax")]
     [with-offset : object_target.CompilerBackendObjectTargetParts
@@ -53153,6 +55065,7 @@
 ;; Collected in instruction order; the stage/store walkers read it back to front
 ;; (compiler-backend-phi-copy-seq-rev-ref) to keep the old prepend order.
 (define (compiler-backend-object-edge-phi-copies-scan
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [program-index : CompilerBackendProgramIndex]
   [from-label : i64]
@@ -53169,7 +55082,12 @@
             (begin
               (match (compiler-backend-phi-input-value inputs from-label)
                 [(ResultBackendValue.Ok value)
-                  (if (compiler-backend-copy-group? program-index ty dst value)
+                  (if (compiler-backend-copy-group?
+                    type-segment-bases
+                    program-index
+                    ty
+                    dst
+                    value)
                     unit
                     (compiler-backend-phi-copy-push!
                       (&mut out)
@@ -53183,6 +55101,7 @@
       out)))
 
 (define (compiler-backend-object-edge-phi-copies-seq
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockSeq]
   [program-index : CompilerBackendProgramIndex]
   [target-label : i64]
@@ -53194,11 +55113,13 @@
       [(CompilerIrBlock.Block label instrs)
         (if (= label target-label)
           (compiler-backend-object-edge-phi-copies-scan
+            type-segment-bases
             instrs
             program-index
             from-label
             0)
           (compiler-backend-object-edge-phi-copies-seq
+            type-segment-bases
             blocks
             program-index
             target-label
@@ -53206,6 +55127,7 @@
             (+ index 1)))])))
 
 (define (compiler-backend-object-edge-phi-copies
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
   [target-label : i64]
@@ -53217,17 +55139,20 @@
         [(CompilerIrBlock.Block label instrs)
           (if (= label target-label)
             (compiler-backend-object-edge-phi-copies-scan
+              type-segment-bases
               instrs
               program-index
               from-label
               0)
             (compiler-backend-object-edge-phi-copies
+              type-segment-bases
               (box-get rest)
               program-index
               target-label
               from-label))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-object-edge-phi-copies-seq
+        type-segment-bases
         seq
         program-index
         target-label
@@ -53304,6 +55229,7 @@
         (compiler-backend-object-add-rsp-bytes (* count 8))))))
 
 (define (compiler-backend-object-instr
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [function : String]
@@ -53315,7 +55241,12 @@
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match instr
     [(CompilerIrInstr.Mov dst src ty)
-      (if (compiler-backend-copy-group? program-index ty dst src)
+      (if (compiler-backend-copy-group?
+        type-segment-bases
+        program-index
+        ty
+        dst
+        src)
         (compiler-backend-object-move-group-value-to-var parts function dst src)
         (compiler-backend-object-move-value-to-var parts function dst src ty))]
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
@@ -53459,6 +55390,7 @@
               parts
               function
               (compiler-backend-object-edge-phi-copies
+                type-segment-bases
                 blocks
                 program-index
                 target
@@ -53475,12 +55407,14 @@
           (compiler-backend-asm-label label-scope false-label)]
         [true-copies : CompilerBackendPhiCopySeq
           (compiler-backend-object-edge-phi-copies
+            type-segment-bases
             blocks
             program-index
             true-label
             current-label)]
         [false-copies : CompilerBackendPhiCopySeq
           (compiler-backend-object-edge-phi-copies
+            type-segment-bases
             blocks
             program-index
             false-label
@@ -53581,6 +55515,7 @@
     [(CompilerIrInstr.Phi _ _ _) parts]
     [(CompilerIrInstr.Gep dst base offset elem-ty)
       (compiler-backend-object-gep-to-var
+        type-segment-bases
         parts
         function
         dst
@@ -53588,7 +55523,13 @@
         offset
         elem-ty)]
     [(CompilerIrInstr.Load dst src ty)
-      (compiler-backend-object-load-ptr-to-var parts function dst src ty)]
+      (compiler-backend-object-load-ptr-to-var
+        type-segment-bases
+        parts
+        function
+        dst
+        src
+        ty)]
     [(CompilerIrInstr.StorePtr dst src ty)
       (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref parts function dst)
@@ -53823,6 +55764,7 @@
         default-label)]))
 
 (define (compiler-backend-object-instr-seq
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [function : String]
@@ -53836,7 +55778,9 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     parts
     (compiler-backend-object-instr-seq
+      type-segment-bases
       (compiler-backend-object-instr
+        type-segment-bases
         parts
         target
         function
@@ -53857,6 +55801,7 @@
       (+ index 1))))
 
 (define (compiler-backend-object-blocks
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [function-symbol : String]
@@ -53873,7 +55818,9 @@
             [block-label : String
               (compiler-backend-asm-label label-scope label)]
             (compiler-backend-object-blocks
+              type-segment-bases
               (compiler-backend-object-instr-seq
+                type-segment-bases
                 (object_target.compiler-backend-object-add-text
                   (object_target.compiler-backend-object-symbol-local-section
                     parts
@@ -53898,6 +55845,7 @@
               program-index))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-object-block-seq
+        type-segment-bases
         parts
         target
         function-symbol
@@ -53908,6 +55856,7 @@
         0)]))
 
 (define (compiler-backend-object-block-seq
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [function-symbol : String]
@@ -53923,7 +55872,9 @@
         (let
           [block-label : String (compiler-backend-asm-label label-scope label)]
           (compiler-backend-object-block-seq
+            type-segment-bases
             (compiler-backend-object-instr-seq
+              type-segment-bases
               (object_target.compiler-backend-object-add-text
                 (object_target.compiler-backend-object-symbol-local-section
                   parts
@@ -53949,6 +55900,7 @@
             (+ index 1)))])))
 
 (define (compiler-backend-object-functions
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
@@ -53969,6 +55921,7 @@
                 (CompilerIrFunction.Function name params ret-ty vars blocks))]
             [groups : CompilerLiveI64Set
               (compiler-reg-function-group-vars
+                type-segment-bases
                 (CompilerIrFunction.Function name params ret-ty vars blocks)
                 (compiler-reg-var-types-list types))]
             [_group-enable : unit
@@ -53979,6 +55932,7 @@
                   (compiler-live-set-empty)))]
             [emitted : object_target.CompilerBackendObjectTargetParts
               (compiler-backend-object-blocks
+                type-segment-bases
                 (compiler-backend-object-param-spills
                   (compiler-backend-object-add-nonempty-bytes
                     (object_target.compiler-backend-object-add-text
@@ -54005,6 +55959,7 @@
                 program-index)]
             [_group-disable : unit (compiler-backend-group-vars-disable!)]
             (compiler-backend-object-functions
+              type-segment-bases
               emitted
               target
               (box-get rest)
@@ -54012,6 +55967,7 @@
               program-index))])]
     [(CompilerIrFunctionList.Array seq)
       (compiler-backend-object-function-seq
+        type-segment-bases
         parts
         target
         seq
@@ -54020,6 +55976,7 @@
         0)]))
 
 (define (compiler-backend-object-function-seq
+  [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionSeq]
@@ -54040,6 +55997,7 @@
               (CompilerIrFunction.Function name params ret-ty vars blocks))]
           [groups : CompilerLiveI64Set
             (compiler-reg-function-group-vars
+              type-segment-bases
               (CompilerIrFunction.Function name params ret-ty vars blocks)
               (compiler-reg-var-types-list types))]
           [_group-enable : unit
@@ -54050,6 +56008,7 @@
                 (compiler-live-set-empty)))]
           [emitted : object_target.CompilerBackendObjectTargetParts
             (compiler-backend-object-blocks
+              type-segment-bases
               (compiler-backend-object-param-spills
                 (compiler-backend-object-add-nonempty-bytes
                   (object_target.compiler-backend-object-add-text
@@ -54076,6 +56035,7 @@
               program-index)]
           [_group-disable : unit (compiler-backend-group-vars-disable!)]
           (compiler-backend-object-function-seq
+            type-segment-bases
             emitted
             target
             functions
@@ -54548,6 +56508,7 @@
         crt-entry)]))
 
 (define (compiler-backend-object-image-after-index
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [_mode : CompilerBackendMode]
@@ -54560,7 +56521,7 @@
   [crt-entry : bool]) : cobj.CompilerObjectImage
   (let
     [collections : CompilerBackendProgramCollections
-      (compiler-backend-collect-program-collections program)]
+      (compiler-backend-collect-program-collections type-segment-bases program)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringSeq
@@ -54583,6 +56544,7 @@
                   (compiler-backend-object-closure-descriptors
                     (compiler-backend-object-globals
                       (compiler-backend-object-functions
+                        type-segment-bases
                         (object_target.compiler-backend-object-parts-empty)
                         target
                         entry-functions
@@ -54614,7 +56576,8 @@
       emit-entry
       crt-entry)))
 
-(define (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+(define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -54633,7 +56596,10 @@
                   functions
                   emit-entry)]
               [program-index : CompilerBackendProgramIndex
-                (compiler-backend-program-index-build entry-functions externs)]
+                (compiler-backend-program-index-build
+                  type-segment-bases
+                  entry-functions
+                  externs)]
               ;; Object lowering performs the same aggregate group discovery as
               ;; assembly lowering. Install this image's maps before that walk:
               ;; a prior batch entry may have left arena-owned maps in the
@@ -54657,6 +56623,7 @@
                     [(CompilerBackendSwitchValidation.Ok)
                       (ResultCompilerBackendObject.Ok
                         (compiler-backend-object-image-after-index
+                          type-segment-bases
                           program
                           target
                           mode
@@ -54675,6 +56642,39 @@
       [(ResultBackendRuntimePlan.Err message)
         (ResultCompilerBackendObject.Err
           (box (compiler-diagnostic-at-start "" message)))])))
+
+(define (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendObject
+  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
+    (ast-node-pool-reader-type-segment-bases)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry))
+
+(define (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendObject
+  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode
   [program : CompilerIrProgram]
@@ -58469,7 +60469,8 @@
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (text_buf.render (compiler-backend-peephole-asm-buffer asm)))
 
-(define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -58506,7 +60507,8 @@
               (let
                 [emitted : ResultCompilerBackendBuffer
                   (if crt-entry
-                    (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+                    (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+                      type-segment-bases
                       program
                       target
                       mode
@@ -58514,12 +60516,15 @@
                       emit-entry
                       crt-entry
                       false)
-                    (compiler-backend-emit-program-target-with-mode-buffer
+                    (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+                      type-segment-bases
                       program
                       target
                       mode
                       spans
-                      emit-entry))]
+                      emit-entry
+                      false
+                      false))]
                 (match emitted
                   [(ResultCompilerBackendBuffer.Ok _)
                     (let
@@ -58551,6 +60556,39 @@
                       (compiler-backend-clear-scratch-escaped-emit-state!)
                       (ResultCompilerBackendBuffer.Err message))])))))))))
 
+(define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt
+    (ast-node-pool-reader-type-segment-bases)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry))
+
+(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry))
+
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -58559,6 +60597,27 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
   (match (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry)
+    [(ResultCompilerBackendBuffer.Ok buf)
+      (ResultCompilerBackend.Ok (text_buf.render buf))]
+    [(ResultCompilerBackendBuffer.Err message)
+      (ResultCompilerBackend.Err message)]))
+
+(define (compiler-backend-emit-program-target-with-mode-with-pools-and-crt
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackend
+  (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt
+    pools
     program
     target
     mode
@@ -59096,14 +61155,16 @@
     (str_cat.str-cat ".text\n" compiler-backend-pic-image-base-label ":\n")
     (compiler-backend-pic-rewrite-relocs asm (struct-get image relocations))))
 
-(define (compiler-backend-emit-program-pic-target-with-mode-and-crt
+(define (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendPic
-  (match (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+  (match (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+    type-segment-bases
     program
     target
     mode
@@ -59112,7 +61173,8 @@
     crt-entry
     true)
     [(ResultCompilerBackendBuffer.Ok buf)
-      (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+      (match (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
+        type-segment-bases
         program
         target
         mode
@@ -59144,6 +61206,39 @@
         [(ResultCompilerBackendObject.Err diag)
           (ResultCompilerBackendPic.Err diag)])]
     [(ResultCompilerBackendBuffer.Err diag) (ResultCompilerBackendPic.Err diag)]))
+
+(define (compiler-backend-emit-program-pic-target-with-mode-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendPic
+  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
+    (ast-node-pool-reader-type-segment-bases)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry))
+
+(define (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendPic
+  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry))
 
 (define (compiler-backend-emit-program-pic-target-with-mode
   [program : CompilerIrProgram]

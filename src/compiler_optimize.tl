@@ -86,6 +86,7 @@
     (string.eq compiler-opt-debug-dump-pass pass)))
 
 (define (compiler-opt-debug-observe-function
+  [type-segment-bases : i64]
   [pass : String]
   [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -125,13 +126,14 @@
                     " @"
                     (compiler-ir-symbol-text name)
                     "\n"
-                    (compiler-ir-function-render func)))
+                    (compiler-ir-function-render type-segment-bases func)))
                 (set! compiler-opt-debug-dump-arena (arena.tl_arena_current))
                 (arena.tl_arena_set pass-arena))))
           unit)
         func)]))
 
 (define (compiler-opt-debug-observe-blocks
+  [type-segment-bases : i64]
   [pass : String]
   [name : i64]
   [params : CompilerIrParamList]
@@ -140,6 +142,7 @@
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (begin
     (compiler-opt-debug-observe-function
+      type-segment-bases
       pass
       (CompilerIrFunction.Function name params ret-ty frame blocks))
     blocks))
@@ -781,57 +784,58 @@
     (option_i64.None)))
 
 (define (opt-binop-operand-type
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [lhs-ty : AstType]
   [rhs-ty : AstType]
   [result-ty : AstType]) : AstType
   (match op
     [(CompilerIrBinOp.Eq)
-      (if (opt-type-eq lhs-ty (AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (AstType.I64))
         rhs-ty
         (if (and
-          (opt-type-eq lhs-ty (AstType.F64))
-          (opt-type-eq rhs-ty (AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (AstType.F32)))
           rhs-ty
           lhs-ty))]
     [(CompilerIrBinOp.Ne)
-      (if (opt-type-eq lhs-ty (AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (AstType.I64))
         rhs-ty
         (if (and
-          (opt-type-eq lhs-ty (AstType.F64))
-          (opt-type-eq rhs-ty (AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (AstType.F32)))
           rhs-ty
           lhs-ty))]
     [(CompilerIrBinOp.Lt)
-      (if (opt-type-eq lhs-ty (AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (AstType.I64))
         rhs-ty
         (if (and
-          (opt-type-eq lhs-ty (AstType.F64))
-          (opt-type-eq rhs-ty (AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (AstType.F32)))
           rhs-ty
           lhs-ty))]
     [(CompilerIrBinOp.Le)
-      (if (opt-type-eq lhs-ty (AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (AstType.I64))
         rhs-ty
         (if (and
-          (opt-type-eq lhs-ty (AstType.F64))
-          (opt-type-eq rhs-ty (AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (AstType.F32)))
           rhs-ty
           lhs-ty))]
     [(CompilerIrBinOp.Gt)
-      (if (opt-type-eq lhs-ty (AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (AstType.I64))
         rhs-ty
         (if (and
-          (opt-type-eq lhs-ty (AstType.F64))
-          (opt-type-eq rhs-ty (AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (AstType.F32)))
           rhs-ty
           lhs-ty))]
     [(CompilerIrBinOp.Ge)
-      (if (opt-type-eq lhs-ty (AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (AstType.I64))
         rhs-ty
         (if (and
-          (opt-type-eq lhs-ty (AstType.F64))
-          (opt-type-eq rhs-ty (AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (AstType.F32)))
           rhs-ty
           lhs-ty))]
     [(CompilerIrBinOp.BitAnd) lhs-ty]
@@ -1167,6 +1171,7 @@
           (compiler-finite-cast-fold input from-ty to-ty))])))
 
 (define (opt-fold-binop
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [lhs : OptKnownConst]
   [rhs : OptKnownConst]
@@ -1177,7 +1182,12 @@
         [(OptKnownConst.SomeConst rhs-value rhs-ty)
           (let
             [operand-ty : AstType
-              (opt-binop-operand-type op lhs-ty rhs-ty result-ty)]
+              (opt-binop-operand-type
+                type-segment-bases
+                op
+                lhs-ty
+                rhs-ty
+                result-ty)]
             (cond
               [(opt-bool-type? operand-ty)
                 (opt-fold-bool op lhs-value rhs-value)]
@@ -1371,7 +1381,10 @@
     (CompilerIrMaskBinOp.And)
     op))
 
-(define (opt-fold-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
+(define (opt-fold-instr
+  [type-segment-bases : i64]
+  [env : OptConstEnv]
+  [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
     [(CompilerIrInstr.Mov dst value ty)
       (match (opt-resolve-known env value ty)
@@ -1404,6 +1417,7 @@
       (let
         [result-ty : AstType (compiler-ir-binop-result-type op ty)]
         (match (opt-fold-binop
+          type-segment-bases
           op
           (opt-resolve-known env l ty)
           (opt-resolve-known env r ty)
@@ -1491,15 +1505,18 @@
     [(CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
 
-(define (opt-fold-instrs [env : OptConstEnv] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+(define (opt-fold-instrs
+  [type-segment-bases : i64]
+  [env : OptConstEnv]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
     [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-fold-instr env instr)
+      (match (opt-fold-instr type-segment-bases env instr)
         [(OptInstrResult.Result new-env new-instr)
           (compiler-ir-instr-cons
             new-instr
-            (opt-fold-instrs new-env (box-get rest)))])]))
+            (opt-fold-instrs type-segment-bases new-env (box-get rest)))])]))
 
 (define (opt-strength-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
@@ -2813,6 +2830,7 @@
         blocks)]))
 
 (define (opt-dce-instr-seq-array-escape
+  [pools : AstNodePoolContext]
   [items : (Array i64)]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
@@ -2835,7 +2853,10 @@
               ;; was the last reader of becomes dead for an earlier sweep step.
               (opt-uncount-instr-uses-array items instr)
               (begin
-                (array-set! out-slots write (compiler-ir-clone-instr instr))
+                (array-set!
+                  out-slots
+                  write
+                  (compiler-ir-clone-instr pools instr))
                 (set! write (- write 1)))))
           (set! index (- index 1))))
       (set! live-count (- count (+ write 1)))
@@ -2851,15 +2872,17 @@
       (CompilerIrInstrSeq out-slots live-count))))
 
 (define (opt-dce-block-array-escape
+  [pools : AstNodePoolContext]
   [items : (Array i64)]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       (CompilerIrBlock.Block
         (clone label)
-        (opt-dce-instr-seq-array-escape items instrs))]))
+        (opt-dce-instr-seq-array-escape pools items instrs))]))
 
 (define (opt-dce-block-list-array-escape-fill
+  [pools : AstNodePoolContext]
   [items : (Array i64)]
   [blocks : CompilerIrBlockList]
   [slots : (Array CompilerIrBlock)]
@@ -2868,8 +2891,9 @@
     [(CompilerIrBlockList.Nil) index]
     [(CompilerIrBlockList.Cons block rest)
       (begin
-        (array-set! slots index (opt-dce-block-array-escape items block))
+        (array-set! slots index (opt-dce-block-array-escape pools items block))
         (opt-dce-block-list-array-escape-fill
+          pools
           items
           (box-get rest)
           slots
@@ -2885,17 +2909,22 @@
               (array-set!
                 slots
                 (+ index offset)
-                (opt-dce-block-array-escape items (array-ref src-slots offset)))
+                (opt-dce-block-array-escape
+                  pools
+                  items
+                  (array-ref src-slots offset)))
               (set! offset (+ offset 1))))
           (+ index count)))]))
 
 (define (opt-dce-block-list-array-escape
+  [pools : AstNodePoolContext]
   [items : (Array i64)]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [count : i64 (compiler-ir-block-list-count blocks)]
     [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
-    [written : i64 (opt-dce-block-list-array-escape-fill items blocks slots 0)]
+    [written : i64
+      (opt-dce-block-list-array-escape-fill pools items blocks slots 0)]
     (CompilerIrBlockList.Array (CompilerIrBlockSeq slots written))))
 
 ;; --- aggregate allocation candidate analysis --------------------------------
@@ -3313,6 +3342,7 @@
     (compiler-ir-effect-invalidates-cse? (compiler-ir-instr-effect instr))))
 
 (define (opt-aggregate-scan-instrs
+  [type-segment-bases : i64]
   [base : i64]
   [ty : AstType]
   [size : i64]
@@ -3329,8 +3359,12 @@
       (if (not seen-alloc)
         (match (opt-aggregate-direct-alloc instr)
           [(OptMaybeAggregateAlloc.Some dst alloc-ty alloc-size)
-            (if (and (= dst base) (= alloc-size size) (opt-type-eq alloc-ty ty))
+            (if (and
+              (= dst base)
+              (= alloc-size size)
+              (opt-type-eq type-segment-bases alloc-ty ty))
               (opt-aggregate-scan-instrs
+                type-segment-bases
                 base
                 ty
                 size
@@ -3339,6 +3373,7 @@
                 accesses
                 true)
               (opt-aggregate-scan-instrs
+                type-segment-bases
                 base
                 ty
                 size
@@ -3348,6 +3383,7 @@
                 false))]
           [(OptMaybeAggregateAlloc.No)
             (opt-aggregate-scan-instrs
+              type-segment-bases
               base
               ty
               size
@@ -3368,6 +3404,7 @@
                           dst
                           (+ base-offset field-offset)))
                       (opt-aggregate-scan-instrs
+                        type-segment-bases
                         base
                         ty
                         size
@@ -3380,6 +3417,7 @@
                 (if (opt-aggregate-value-has-pointer? base ptrs offset)
                   (OptAggregateScanResult.Reject)
                   (opt-aggregate-scan-instrs
+                    type-segment-bases
                     base
                     ty
                     size
@@ -3395,6 +3433,7 @@
                     (&mut accesses)
                     (OptAggregateAccess.Load dst offset load-ty))
                   (opt-aggregate-scan-instrs
+                    type-segment-bases
                     base
                     ty
                     size
@@ -3409,6 +3448,7 @@
                   ptrs)
                   (OptAggregateScanResult.Reject)
                   (opt-aggregate-scan-instrs
+                    type-segment-bases
                     base
                     ty
                     size
@@ -3426,6 +3466,7 @@
                       (&mut accesses)
                       (OptAggregateAccess.Store offset store-ty))
                     (opt-aggregate-scan-instrs
+                      type-segment-bases
                       base
                       ty
                       size
@@ -3445,6 +3486,7 @@
                       ptrs)))
                   (OptAggregateScanResult.Reject)
                   (opt-aggregate-scan-instrs
+                    type-segment-bases
                     base
                     ty
                     size
@@ -3460,6 +3502,7 @@
                 (opt-aggregate-instrs-touch-candidate? (box-get rest) base ptrs))
                 (OptAggregateScanResult.Reject)
                 (opt-aggregate-scan-instrs
+                  type-segment-bases
                   base
                   ty
                   size
@@ -3469,11 +3512,13 @@
                   true)))]))]))
 
 (define (opt-aggregate-classify-one
+  [type-segment-bases : i64]
   [base : i64]
   [ty : AstType]
   [size : i64]
   [instrs : CompilerIrInstrList]) : OptAggregateScanResult
   (opt-aggregate-scan-instrs
+    type-segment-bases
     base
     ty
     size
@@ -3484,6 +3529,7 @@
     false))
 
 (define (opt-aggregate-candidates-from-instrs
+  [type-segment-bases : i64]
   [scan : CompilerIrInstrList]
   [candidates : opt_aggregate_candidate_vec.Vec]) : opt_aggregate_candidate_vec.Vec
   (match scan
@@ -3491,7 +3537,12 @@
     [(CompilerIrInstrList.Cons instr rest)
       (match (opt-aggregate-direct-alloc instr)
         [(OptMaybeAggregateAlloc.Some base ty size)
-          (match (opt-aggregate-classify-one base ty size scan)
+          (match (opt-aggregate-classify-one
+            type-segment-bases
+            base
+            ty
+            size
+            scan)
             [(OptAggregateScanResult.Ok ptrs accesses)
               (begin
                 (opt_aggregate_candidate_vec.push
@@ -3502,11 +3553,20 @@
                     size
                     ptrs
                     accesses))
-                (opt-aggregate-candidates-from-instrs (box-get rest) candidates))]
+                (opt-aggregate-candidates-from-instrs
+                  type-segment-bases
+                  (box-get rest)
+                  candidates))]
             [(OptAggregateScanResult.Reject)
-              (opt-aggregate-candidates-from-instrs (box-get rest) candidates)])]
+              (opt-aggregate-candidates-from-instrs
+                type-segment-bases
+                (box-get rest)
+                candidates)])]
         [(OptMaybeAggregateAlloc.No)
-          (opt-aggregate-candidates-from-instrs (box-get rest) candidates)])]))
+          (opt-aggregate-candidates-from-instrs
+            type-segment-bases
+            (box-get rest)
+            candidates)])]))
 
 (define (opt-aggregate-instr-list-append
   [left : CompilerIrInstrList]
@@ -3542,12 +3602,14 @@
       (opt-aggregate-flatten-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-aggregate-allocation-candidates-function
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]) : opt_aggregate_candidate_vec.Vec
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (let
         [instrs : CompilerIrInstrList (opt-aggregate-flatten-blocks blocks)]
         (opt-aggregate-candidates-from-instrs
+          type-segment-bases
           instrs
           (opt_aggregate_candidate_vec.with-capacity
             opt-aggregate-list-initial-capacity)))]))
@@ -3568,21 +3630,29 @@
       left)))
 
 (define (opt-aggregate-allocation-candidates-functions
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]) : opt_aggregate_candidate_vec.Vec
   (match functions
     [(CompilerIrFunctionList.Nil) (opt_aggregate_candidate_vec.with-capacity 0)]
     [(CompilerIrFunctionList.Cons func rest)
       (opt-aggregate-candidate-list-append
-        (opt-aggregate-allocation-candidates-function func)
-        (opt-aggregate-allocation-candidates-functions (box-get rest)))]
+        (opt-aggregate-allocation-candidates-function type-segment-bases func)
+        (opt-aggregate-allocation-candidates-functions
+          type-segment-bases
+          (box-get rest)))]
     [(CompilerIrFunctionList.Array seq)
       (opt-aggregate-allocation-candidates-functions
+        type-segment-bases
         (compiler-ir-function-seq-to-list seq))]))
 
-(define (opt-aggregate-allocation-candidates [program : CompilerIrProgram]) : opt_aggregate_candidate_vec.Vec
+(define (opt-aggregate-allocation-candidates
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]) : opt_aggregate_candidate_vec.Vec
   (match program
     [(CompilerIrProgram.Program _ functions _)
-      (opt-aggregate-allocation-candidates-functions functions)]))
+      (opt-aggregate-allocation-candidates-functions
+        type-segment-bases
+        functions)]))
 
 (define (opt-aggregate-candidate-list-count
   [candidates : opt_aggregate_candidate_vec.Vec]) : i64
@@ -3803,12 +3873,14 @@
     [(CompilerIrBlockList.Array seq)
       (opt-aggregate-promote-blocks slots (compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-aggregate-stack-promote-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-aggregate-stack-promote-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (opt-aggregate-stack-promote-blocks-have-candidate? blocks)
         (match (opt-aggregate-promote-build
-          (opt-aggregate-allocation-candidates-function func)
+          (opt-aggregate-allocation-candidates-function type-segment-bases func)
           frame)
           [(OptAggregatePromoteBuild.Build slots promoted-frame)
             (if (= (opt_aggregate_promote_slot_vec.len (& slots)) 0)
@@ -3919,6 +3991,7 @@
     (box (opt-aggregate-field-facts-unbind facts base offset))))
 
 (define (opt-aggregate-field-facts-lookup
+  [type-segment-bases : i64]
   [facts : OptAggregateFieldFacts]
   [base : i64]
   [offset : i64]
@@ -3929,9 +4002,14 @@
       (if (and
         (= fact-base base)
         (= fact-offset offset)
-        (opt-type-eq fact-ty ty))
+        (opt-type-eq type-segment-bases fact-ty ty))
         (OptAggregateStoredValue.Some value fact-ty)
-        (opt-aggregate-field-facts-lookup (box-get rest) base offset ty))]))
+        (opt-aggregate-field-facts-lookup
+          type-segment-bases
+          (box-get rest)
+          base
+          offset
+          ty))]))
 
 (define (opt-aggregate-field-facts-invalidate-var
   [facts : OptAggregateFieldFacts]
@@ -4057,6 +4135,7 @@
       (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)]))
 
 (define (opt-aggregate-sroa-load
+  [type-segment-bases : i64]
   [candidates : opt_aggregate_candidate_vec.Vec]
   [facts : OptAggregateFieldFacts]
   [dst : i64]
@@ -4068,7 +4147,12 @@
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     (match (opt-aggregate-location-for-value candidates src)
       [(OptAggregateLocation.Some base offset)
-        (match (opt-aggregate-field-facts-lookup facts base offset ty)
+        (match (opt-aggregate-field-facts-lookup
+          type-segment-bases
+          facts
+          base
+          offset
+          ty)
           [(OptAggregateStoredValue.Some value _)
             (OptAggregateSroaResult.Result
               next-facts
@@ -4079,6 +4163,7 @@
         (OptAggregateSroaResult.Result next-facts instr)])))
 
 (define (opt-aggregate-sroa-instr
+  [type-segment-bases : i64]
   [candidates : opt_aggregate_candidate_vec.Vec]
   [facts : OptAggregateFieldFacts]
   [instr : CompilerIrInstr]) : OptAggregateSroaResult
@@ -4086,7 +4171,14 @@
     [(CompilerIrInstr.StorePtr ptr value ty)
       (opt-aggregate-sroa-store candidates facts ptr value ty instr)]
     [(CompilerIrInstr.Load dst src ty)
-      (opt-aggregate-sroa-load candidates facts dst src ty instr)]
+      (opt-aggregate-sroa-load
+        type-segment-bases
+        candidates
+        facts
+        dst
+        src
+        ty
+        instr)]
     [_
       (let
         [def-facts : OptAggregateFieldFacts
@@ -4097,6 +4189,7 @@
           (OptAggregateSroaResult.Result def-facts instr)))]))
 
 (define (opt-aggregate-sroa-instr-seq-from
+  [type-segment-bases : i64]
   [candidates : opt_aggregate_candidate_vec.Vec]
   [facts : OptAggregateFieldFacts]
   [instrs : CompilerIrInstrSeq]
@@ -4104,6 +4197,7 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     CompilerIrInstrList.Nil
     (match (opt-aggregate-sroa-instr
+      type-segment-bases
       candidates
       facts
       (compiler-ir-instr-seq-ref instrs index))
@@ -4111,45 +4205,57 @@
         (compiler-ir-instr-cons
           next-instr
           (opt-aggregate-sroa-instr-seq-from
+            type-segment-bases
             candidates
             next-facts
             instrs
             (+ index 1)))])))
 
 (define (opt-aggregate-sroa-instr-seq
+  [type-segment-bases : i64]
   [candidates : opt_aggregate_candidate_vec.Vec]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-aggregate-sroa-instr-seq-from
+    type-segment-bases
     candidates
     (OptAggregateFieldFacts.Nil)
     instrs
     0))
 
 (define (opt-aggregate-sroa-block
+  [type-segment-bases : i64]
   [candidates : opt_aggregate_candidate_vec.Vec]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-aggregate-sroa-instr-seq candidates instrs))]))
+      (compiler-ir-block
+        label
+        (opt-aggregate-sroa-instr-seq type-segment-bases candidates instrs))]))
 
 (define (opt-aggregate-sroa-blocks
+  [type-segment-bases : i64]
   [candidates : opt_aggregate_candidate_vec.Vec]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-block-cons
-        (opt-aggregate-sroa-block candidates block)
-        (opt-aggregate-sroa-blocks candidates (box-get rest)))]
+        (opt-aggregate-sroa-block type-segment-bases candidates block)
+        (opt-aggregate-sroa-blocks type-segment-bases candidates (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
-      (opt-aggregate-sroa-blocks candidates (compiler-ir-block-seq-to-list seq))]))
+      (opt-aggregate-sroa-blocks
+        type-segment-bases
+        candidates
+        (compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-aggregate-sroa-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
+(define (opt-aggregate-sroa-function-pass
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : OptFunctionPassResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
         [candidates : opt_aggregate_candidate_vec.Vec
-          (opt-aggregate-allocation-candidates-function func)]
+          (opt-aggregate-allocation-candidates-function type-segment-bases func)]
         (if (= (opt_aggregate_candidate_vec.len (& candidates)) 0)
           (OptFunctionPassResult.Result func false)
           (OptFunctionPassResult.Result
@@ -4158,11 +4264,13 @@
               params
               ret-ty
               frame
-              (opt-aggregate-sroa-blocks candidates blocks))
+              (opt-aggregate-sroa-blocks type-segment-bases candidates blocks))
             true)))]))
 
-(define (opt-aggregate-sroa-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-aggregate-sroa-function-pass func)
+(define (opt-aggregate-sroa-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-aggregate-sroa-function-pass type-segment-bases func)
     [(OptFunctionPassResult.Result next _) next]))
 
 ;; --- block-local common subexpression elimination ---------------------------
@@ -4325,6 +4433,7 @@
         [_ false])]))
 
 (define (opt-type-list-eq-at
+  [type-segment-bases : i64]
   [a : (& a AstTypeList)]
   [b : (& b AstTypeList)]
   [index : i64]) : bool
@@ -4332,16 +4441,22 @@
     true
     (and
       (opt-type-eq
-        (ast-node-pool-reader-type-get
+        type-segment-bases
+        (ast-type-segment-bases-get
+          type-segment-bases
           (ast-type-list-get a index (ast-type-id-fallback)))
-        (ast-node-pool-reader-type-get
+        (ast-type-segment-bases-get
+          type-segment-bases
           (ast-type-list-get b index (ast-type-id-fallback))))
-      (opt-type-list-eq-at a b (+ index 1)))))
+      (opt-type-list-eq-at type-segment-bases a b (+ index 1)))))
 
-(define (opt-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
+(define (opt-type-list-eq
+  [type-segment-bases : i64]
+  [a : AstTypeList]
+  [b : AstTypeList]) : bool
   (and
     (= (ast-type-list-len (& a)) (ast-type-list-len (& b)))
-    (opt-type-list-eq-at (& a) (& b) 0)))
+    (opt-type-list-eq-at type-segment-bases (& a) (& b) 0)))
 
 (define (opt-lifetime-list-eq-at
   [a : (& a AstLifetimeList)]
@@ -4360,7 +4475,7 @@
     (= (ast-lifetime-list-len (& a)) (ast-lifetime-list-len (& b)))
     (opt-lifetime-list-eq-at (& a) (& b) 0)))
 
-(define (opt-type-eq [a : AstType] [b : AstType]) : bool
+(define (opt-type-eq [type-segment-bases : i64] [a : AstType] [b : AstType]) : bool
   (match a
     [(AstType.I64)
       (match b
@@ -4442,15 +4557,22 @@
       (match b
         [(AstType.Func b-params b-ret)
           (and
-            (opt-type-list-eq (box-get a-params) (box-get b-params))
+            (opt-type-list-eq
+              type-segment-bases
+              (box-get a-params)
+              (box-get b-params))
             (opt-type-eq
-              (ast-node-pool-reader-type-get a-ret)
-              (ast-node-pool-reader-type-get b-ret)))]
+              type-segment-bases
+              (ast-type-segment-bases-get type-segment-bases a-ret)
+              (ast-type-segment-bases-get type-segment-bases b-ret)))]
         [_ false])]
     [(AstType.Tuple a-items)
       (match b
         [(AstType.Tuple b-items)
-          (opt-type-list-eq (box-get a-items) (box-get b-items))]
+          (opt-type-list-eq
+            type-segment-bases
+            (box-get a-items)
+            (box-get b-items))]
         [_ false])]
     [(AstType.Array a-item a-len)
       (match b
@@ -4458,36 +4580,41 @@
           (and
             (= a-len b-len)
             (opt-type-eq
-              (ast-node-pool-reader-type-get a-item)
-              (ast-node-pool-reader-type-get b-item)))]
+              type-segment-bases
+              (ast-type-segment-bases-get type-segment-bases a-item)
+              (ast-type-segment-bases-get type-segment-bases b-item)))]
         [_ false])]
     [(AstType.DynArray a-item)
       (match b
         [(AstType.DynArray b-item)
           (opt-type-eq
-            (ast-node-pool-reader-type-get a-item)
-            (ast-node-pool-reader-type-get b-item))]
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases a-item)
+            (ast-type-segment-bases-get type-segment-bases b-item))]
         [_ false])]
     [(AstType.Box a-item)
       (match b
         [(AstType.Box b-item)
           (opt-type-eq
-            (ast-node-pool-reader-type-get a-item)
-            (ast-node-pool-reader-type-get b-item))]
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases a-item)
+            (ast-type-segment-bases-get type-segment-bases b-item))]
         [_ false])]
     [(AstType.Ptr a-item)
       (match b
         [(AstType.Ptr b-item)
           (opt-type-eq
-            (ast-node-pool-reader-type-get a-item)
-            (ast-node-pool-reader-type-get b-item))]
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases a-item)
+            (ast-type-segment-bases-get type-segment-bases b-item))]
         [_ false])]
     [(AstType.MutPtr a-item)
       (match b
         [(AstType.MutPtr b-item)
           (opt-type-eq
-            (ast-node-pool-reader-type-get a-item)
-            (ast-node-pool-reader-type-get b-item))]
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases a-item)
+            (ast-type-segment-bases-get type-segment-bases b-item))]
         [_ false])]
     [(AstType.Ref a-region a-inner)
       (match b
@@ -4495,8 +4622,9 @@
           (and
             (= a-region b-region)
             (opt-type-eq
-              (ast-node-pool-reader-type-get a-inner)
-              (ast-node-pool-reader-type-get b-inner)))]
+              type-segment-bases
+              (ast-type-segment-bases-get type-segment-bases a-inner)
+              (ast-type-segment-bases-get type-segment-bases b-inner)))]
         [_ false])]
     [(AstType.MutRef a-region a-inner)
       (match b
@@ -4504,8 +4632,9 @@
           (and
             (= a-region b-region)
             (opt-type-eq
-              (ast-node-pool-reader-type-get a-inner)
-              (ast-node-pool-reader-type-get b-inner)))]
+              type-segment-bases
+              (ast-type-segment-bases-get type-segment-bases a-inner)
+              (ast-type-segment-bases-get type-segment-bases b-inner)))]
         [_ false])]
     [(AstType.Region a-region a-inner)
       (match b
@@ -4513,8 +4642,9 @@
           (and
             (= a-region b-region)
             (opt-type-eq
-              (ast-node-pool-reader-type-get a-inner)
-              (ast-node-pool-reader-type-get b-inner)))]
+              type-segment-bases
+              (ast-type-segment-bases-get type-segment-bases a-inner)
+              (ast-type-segment-bases-get type-segment-bases b-inner)))]
         [_ false])]
     [(AstType.Enum a-name)
       (match b
@@ -4553,8 +4683,9 @@
       (match b
         [(AstType.Consume b-inner)
           (opt-type-eq
-            (ast-node-pool-reader-type-get a-inner)
-            (ast-node-pool-reader-type-get b-inner))]
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases a-inner)
+            (ast-type-segment-bases-get type-segment-bases b-inner))]
         [_ false])]))
 
 (define (opt-symbol-hash [symbol : i64]) : i64
@@ -4584,13 +4715,13 @@
       (hash.combine 12 (opt-symbol-hash init))]
     [(CompilerIrValue.Unit) (hash.i64 10)]))
 
-(define (opt-expr-key-hash [key : OptExprKey]) : i64
+(define (opt-expr-key-hash [type-segment-bases : i64] [key : OptExprKey]) : i64
   (match key
     [(OptExprKey.BinKey op lhs rhs ty)
       (hash.combine
         1
         (hash.combine
-          (opt-type-hash ty)
+          (opt-type-hash type-segment-bases ty)
           (hash.combine
             (hash.i64 (opt-binop-tag op))
             (hash.combine (opt-value-hash lhs) (opt-value-hash rhs)))))]
@@ -4598,7 +4729,7 @@
       (hash.combine
         2
         (hash.combine
-          (opt-type-hash ty)
+          (opt-type-hash type-segment-bases ty)
           (hash.combine (hash.i64 (opt-unop-tag op)) (opt-value-hash value))))]
     [(OptExprKey.CpuIdKey leaf subleaf reg-index)
       (hash.combine
@@ -4608,19 +4739,24 @@
           (hash.combine (opt-value-hash leaf) (opt-value-hash subleaf))))]
     [(OptExprKey.XgetbvKey index) (hash.combine 4 (opt-value-hash index))]))
 
-(define (opt-type-list-hash-at [types : (& types AstTypeList)] [index : i64]) : i64
+(define (opt-type-list-hash-at
+  [type-segment-bases : i64]
+  [types : (& types AstTypeList)]
+  [index : i64]) : i64
   (if (>= index (ast-type-list-len types))
     (hash.i64 0)
     (hash.combine
       1
       (hash.combine
         (opt-type-hash
-          (ast-node-pool-reader-type-get
+          type-segment-bases
+          (ast-type-segment-bases-get
+            type-segment-bases
             (ast-type-list-get types index (ast-type-id-fallback))))
-        (opt-type-list-hash-at types (+ index 1))))))
+        (opt-type-list-hash-at type-segment-bases types (+ index 1))))))
 
-(define (opt-type-list-hash [types : AstTypeList]) : i64
-  (opt-type-list-hash-at (& types) 0))
+(define (opt-type-list-hash [type-segment-bases : i64] [types : AstTypeList]) : i64
+  (opt-type-list-hash-at type-segment-bases (& types) 0))
 
 (define (opt-lifetime-list-hash-at
   [lifetimes : (& lifetimes AstLifetimeList)]
@@ -4639,7 +4775,7 @@
 (define (opt-lifetime-list-hash [lifetimes : AstLifetimeList]) : i64
   (opt-lifetime-list-hash-at (& lifetimes) 0))
 
-(define (opt-type-hash [ty : AstType]) : i64
+(define (opt-type-hash [type-segment-bases : i64] [ty : AstType]) : i64
   (match ty
     [(AstType.I64) (hash.i64 1)]
     [(AstType.I32) (hash.i64 2)]
@@ -4664,42 +4800,68 @@
       (hash.combine
         19
         (hash.combine
-          (opt-type-list-hash (box-get params))
-          (opt-type-hash (ast-node-pool-reader-type-get ret))))]
+          (opt-type-list-hash type-segment-bases (box-get params))
+          (opt-type-hash
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases ret))))]
     [(AstType.Tuple items)
-      (hash.combine 20 (opt-type-list-hash (box-get items)))]
+      (hash.combine 20 (opt-type-list-hash type-segment-bases (box-get items)))]
     [(AstType.Array item len)
       (hash.combine
         21
         (hash.combine
-          (opt-type-hash (ast-node-pool-reader-type-get item))
+          (opt-type-hash
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases item))
           (hash.i64 len)))]
     [(AstType.DynArray item)
-      (hash.combine 22 (opt-type-hash (ast-node-pool-reader-type-get item)))]
+      (hash.combine
+        22
+        (opt-type-hash
+          type-segment-bases
+          (ast-type-segment-bases-get type-segment-bases item)))]
     [(AstType.Box item)
-      (hash.combine 23 (opt-type-hash (ast-node-pool-reader-type-get item)))]
+      (hash.combine
+        23
+        (opt-type-hash
+          type-segment-bases
+          (ast-type-segment-bases-get type-segment-bases item)))]
     [(AstType.Ptr item)
-      (hash.combine 24 (opt-type-hash (ast-node-pool-reader-type-get item)))]
+      (hash.combine
+        24
+        (opt-type-hash
+          type-segment-bases
+          (ast-type-segment-bases-get type-segment-bases item)))]
     [(AstType.MutPtr item)
-      (hash.combine 25 (opt-type-hash (ast-node-pool-reader-type-get item)))]
+      (hash.combine
+        25
+        (opt-type-hash
+          type-segment-bases
+          (ast-type-segment-bases-get type-segment-bases item)))]
     [(AstType.Ref region inner)
       (hash.combine
         26
         (hash.combine
           (hash.i64 region)
-          (opt-type-hash (ast-node-pool-reader-type-get inner))))]
+          (opt-type-hash
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases inner))))]
     [(AstType.MutRef region inner)
       (hash.combine
         27
         (hash.combine
           (hash.i64 region)
-          (opt-type-hash (ast-node-pool-reader-type-get inner))))]
+          (opt-type-hash
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases inner))))]
     [(AstType.Region region inner)
       (hash.combine
         28
         (hash.combine
           (hash.i64 region)
-          (opt-type-hash (ast-node-pool-reader-type-get inner))))]
+          (opt-type-hash
+            type-segment-bases
+            (ast-type-segment-bases-get type-segment-bases inner))))]
     [(AstType.Enum name) (hash.combine 29 (hash.i64 name))]
     [(AstType.EnumArgs name lifetimes)
       (hash.combine
@@ -4722,7 +4884,11 @@
           (hash.i64 name)
           (opt-lifetime-list-hash (box-get lifetimes))))]
     [(AstType.Consume inner)
-      (hash.combine 36 (opt-type-hash (ast-node-pool-reader-type-get inner)))]))
+      (hash.combine
+        36
+        (opt-type-hash
+          type-segment-bases
+          (ast-type-segment-bases-get type-segment-bases inner)))]))
 
 (define (opt-maybe-value-eq
   [a : CompilerIrMaybeValue]
@@ -4858,15 +5024,17 @@
       (opt-switch-case-list-eq (compiler-ir-switch-case-seq-to-list seq) b)]))
 
 (define (opt-c-abi-return-slot-eq
+  [type-segment-bases : i64]
   [a : CompilerIrCAbiReturnSlot]
   [b : CompilerIrCAbiReturnSlot]) : bool
   (match a
     [(CompilerIrCAbiReturnSlot.Slot aty aoffset)
       (match b
         [(CompilerIrCAbiReturnSlot.Slot bty boffset)
-          (and (= aoffset boffset) (opt-type-eq aty bty))])]))
+          (and (= aoffset boffset) (opt-type-eq type-segment-bases aty bty))])]))
 
 (define (opt-c-abi-return-slot-seq-eq-from
+  [type-segment-bases : i64]
   [a : (Array CompilerIrCAbiReturnSlot)]
   [b : (Array CompilerIrCAbiReturnSlot)]
   [index : i64]
@@ -4874,10 +5042,19 @@
   (if (>= index count)
     true
     (and
-      (opt-c-abi-return-slot-eq (array-ref a index) (array-ref b index))
-      (opt-c-abi-return-slot-seq-eq-from a b (+ index 1) count))))
+      (opt-c-abi-return-slot-eq
+        type-segment-bases
+        (array-ref a index)
+        (array-ref b index))
+      (opt-c-abi-return-slot-seq-eq-from
+        type-segment-bases
+        a
+        b
+        (+ index 1)
+        count))))
 
 (define (opt-c-abi-return-slot-seq-eq
+  [type-segment-bases : i64]
   [a : CompilerIrCAbiReturnSlotSeq]
   [b : CompilerIrCAbiReturnSlotSeq]) : bool
   (let
@@ -4885,12 +5062,14 @@
     (and
       (= count (struct-get b len))
       (opt-c-abi-return-slot-seq-eq-from
+        type-segment-bases
         (struct-get a slots)
         (struct-get b slots)
         0
         count))))
 
 (define (opt-c-abi-return-slot-list-eq
+  [type-segment-bases : i64]
   [a : CompilerIrCAbiReturnSlotList]
   [b : CompilerIrCAbiReturnSlotList]) : bool
   (match a
@@ -4903,32 +5082,44 @@
       (match b
         [(CompilerIrCAbiReturnSlotList.Cons bslot brest)
           (and
-            (opt-c-abi-return-slot-eq aslot bslot)
-            (opt-c-abi-return-slot-list-eq (box-get arest) (box-get brest)))]
+            (opt-c-abi-return-slot-eq type-segment-bases aslot bslot)
+            (opt-c-abi-return-slot-list-eq
+              type-segment-bases
+              (box-get arest)
+              (box-get brest)))]
         [(CompilerIrCAbiReturnSlotList.Array seq)
           (opt-c-abi-return-slot-list-eq
+            type-segment-bases
             (compiler-ir-c-abi-return-slot-cons-linked aslot (box-get arest))
             (compiler-ir-c-abi-return-slot-seq-to-list seq))]
         [_ false])]
     [(CompilerIrCAbiReturnSlotList.Array aseq)
       (match b
         [(CompilerIrCAbiReturnSlotList.Array bseq)
-          (opt-c-abi-return-slot-seq-eq aseq bseq)]
+          (opt-c-abi-return-slot-seq-eq type-segment-bases aseq bseq)]
         [_
           (opt-c-abi-return-slot-list-eq
+            type-segment-bases
             (compiler-ir-c-abi-return-slot-seq-to-list aseq)
             b)])]))
 
-(define (opt-instr-eq [a : CompilerIrInstr] [b : CompilerIrInstr]) : bool
+(define (opt-instr-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrInstr]
+  [b : CompilerIrInstr]) : bool
   (match a
     [(CompilerIrInstr.Mov ad av aty)
       (match b
         [(CompilerIrInstr.Mov bd bv bty)
-          (and (= ad bd) (opt-value-eq av bv) (opt-type-eq aty bty))]
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.Alloc ad aty)
       (match b
-        [(CompilerIrInstr.Alloc bd bty) (and (= ad bd) (opt-type-eq aty bty))]
+        [(CompilerIrInstr.Alloc bd bty)
+          (and (= ad bd) (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.AddrOf ad av)
       (match b
@@ -4941,12 +5132,15 @@
             (= ad bd)
             (opt-value-eq abase bbase)
             (opt-value-eq aoffset boffset)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.Load ad av aty)
       (match b
         [(CompilerIrInstr.Load bd bv bty)
-          (and (= ad bd) (opt-value-eq av bv) (opt-type-eq aty bty))]
+          (and
+            (= ad bd)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.StorePtr aptr av aty)
       (match b
@@ -4954,7 +5148,7 @@
           (and
             (opt-value-eq aptr bptr)
             (opt-value-eq av bv)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.CopyBytes adst asrc asize)
       (match b
@@ -4970,8 +5164,8 @@
           (and
             (= ad bd)
             (opt-value-eq av bv)
-            (opt-type-eq afrom bfrom)
-            (opt-type-eq ato bto))]
+            (opt-type-eq type-segment-bases afrom bfrom)
+            (opt-type-eq type-segment-bases ato bto))]
         [_ false])]
     [(CompilerIrInstr.Bitcast ad av afrom ato)
       (match b
@@ -4979,8 +5173,8 @@
           (and
             (= ad bd)
             (opt-value-eq av bv)
-            (opt-type-eq afrom bfrom)
-            (opt-type-eq ato bto))]
+            (opt-type-eq type-segment-bases afrom bfrom)
+            (opt-type-eq type-segment-bases ato bto))]
         [_ false])]
     [(CompilerIrInstr.BinOp ad aop al ar aty)
       (match b
@@ -4990,7 +5184,7 @@
             (opt-binop-eq aop bop)
             (opt-value-eq al bl)
             (opt-value-eq ar br)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.UnOp ad aop av aty)
       (match b
@@ -4999,12 +5193,15 @@
             (= ad bd)
             (opt-unop-eq aop bop)
             (opt-value-eq av bv)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.LaneId ad alanes aty)
       (match b
         [(CompilerIrInstr.LaneId bd blanes bty)
-          (and (= ad bd) (= alanes blanes) (opt-type-eq aty bty))]
+          (and
+            (= ad bd)
+            (= alanes blanes)
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.Splat ad av alanes aty)
       (match b
@@ -5013,7 +5210,7 @@
             (= ad bd)
             (opt-value-eq av bv)
             (= alanes blanes)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
@@ -5034,7 +5231,7 @@
                     (opt-value-eq al bl)
                     (opt-value-eq ar br)
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (match (box-get payload-box)
@@ -5055,7 +5252,7 @@
                     (opt-value-eq as bs)
                     (opt-value-eq ac bc)
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
@@ -5087,7 +5284,7 @@
                       blane-offset
                       (not blane-offset))
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.VectorReduce ad aop av alanes aty)
       (match b
@@ -5097,7 +5294,7 @@
             (opt-vector-reduce-eq aop bop)
             (opt-value-eq av bv)
             (= alanes blanes)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -5118,7 +5315,7 @@
                     (opt-value-eq al bl)
                     (opt-value-eq ar br)
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.MaskBinOp ad aop al ar alanes)
       (match b
@@ -5163,7 +5360,7 @@
                     (opt-value-eq at bt)
                     (opt-value-eq af bf)
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.VectorLoad ad abase aindex alanes aty)
       (match b
@@ -5173,7 +5370,7 @@
             (opt-value-eq abase bbase)
             (opt-value-eq aindex bindex)
             (= alanes blanes)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
@@ -5192,7 +5389,7 @@
                     (opt-value-eq aindex bindex)
                     (opt-value-eq av bv)
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
@@ -5219,7 +5416,7 @@
                     (opt-value-eq av bv)
                     (opt-value-eq amask bmask)
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
@@ -5246,7 +5443,7 @@
                     (opt-value-eq aindex bindex)
                     (opt-value-eq amask bmask)
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (match (box-get payload-box)
@@ -5276,7 +5473,7 @@
                     (opt-maybe-value-eq aselector-high bselector-high)
                     (opt-value-eq aactive-lanes bactive-lanes)
                     (= alanes blanes)
-                    (opt-type-eq aty bty))])]
+                    (opt-type-eq type-segment-bases aty bty))])]
             [_ false])])]
     [(CompilerIrInstr.TailMask ad aindex alength alanes)
       (match b
@@ -5325,7 +5522,7 @@
             (= ad bd)
             (compiler-ir-symbol-eq? aname bname)
             (opt-call-args-eq aargs bargs)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.CallIndirect ad afunc aargs aty)
       (match b
@@ -5334,7 +5531,7 @@
             (= ad bd)
             (opt-value-eq afunc bfunc)
             (opt-call-args-eq aargs bargs)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.CallIndirectC ad afunc aargs aty)
       (match b
@@ -5343,7 +5540,7 @@
             (= ad bd)
             (opt-value-eq afunc bfunc)
             (opt-call-args-eq aargs bargs)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
@@ -5364,7 +5561,10 @@
                     (opt-value-eq abase bbase)
                     (compiler-ir-symbol-eq? aname bname)
                     (opt-call-args-eq aargs bargs)
-                    (opt-c-abi-return-slot-list-eq aslots bslots))])]
+                    (opt-c-abi-return-slot-list-eq
+                      type-segment-bases
+                      aslots
+                      bslots))])]
             [_ false])])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
@@ -5385,7 +5585,10 @@
                     (opt-value-eq abase bbase)
                     (opt-value-eq afunc bfunc)
                     (opt-call-args-eq aargs bargs)
-                    (opt-c-abi-return-slot-list-eq aslots bslots))])]
+                    (opt-c-abi-return-slot-list-eq
+                      type-segment-bases
+                      aslots
+                      bslots))])]
             [_ false])])]
     [(CompilerIrInstr.SpmdCall _) false]
     [(CompilerIrInstr.TailCall aname aargs aty)
@@ -5394,7 +5597,7 @@
           (and
             (compiler-ir-symbol-eq? aname bname)
             (opt-call-args-eq aargs bargs)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.TailCallIndirect afunc aargs aty)
       (match b
@@ -5402,7 +5605,7 @@
           (and
             (opt-value-eq afunc bfunc)
             (opt-call-args-eq aargs bargs)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.Store aname av aty)
       (match b
@@ -5410,7 +5613,7 @@
           (and
             (compiler-ir-symbol-eq? aname bname)
             (opt-value-eq av bv)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.BoundsCheck aindex alength alabel)
       (match b
@@ -5439,7 +5642,7 @@
           (and
             (= ad bd)
             (opt-phi-input-list-eq ainputs binputs)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.Pack ad awords aty)
       (match b
@@ -5447,7 +5650,7 @@
           (and
             (= ad bd)
             (opt-value-list-eq awords bwords)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.Word ad asrc ai aty)
       (match b
@@ -5456,7 +5659,7 @@
             (= ad bd)
             (opt-value-eq asrc bsrc)
             (= ai bi)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(CompilerIrInstr.Switch av abase acases adefault)
       (match b
@@ -5468,7 +5671,10 @@
             (= adefault bdefault))]
         [_ false])]))
 
-(define (opt-instr-list-eq [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : bool
+(define (opt-instr-list-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrInstrList]
+  [b : CompilerIrInstrList]) : bool
   (match a
     [(CompilerIrInstrList.Nil)
       (match b
@@ -5478,37 +5684,55 @@
       (match b
         [(CompilerIrInstrList.Cons bh bt)
           (and
-            (opt-instr-eq ah bh)
-            (opt-instr-list-eq (box-get at) (box-get bt)))]
+            (opt-instr-eq type-segment-bases ah bh)
+            (opt-instr-list-eq type-segment-bases (box-get at) (box-get bt)))]
         [_ false])]))
 
 (define (opt-instr-seq-eq-from
+  [type-segment-bases : i64]
   [a : CompilerIrInstrSeq]
   [b : CompilerIrInstrSeq]
   [index : i64]
   [count : i64]) : bool
-  (if (>= index count)
-    true
-    (and
-      (opt-instr-eq
-        (compiler-ir-instr-seq-ref a index)
-        (compiler-ir-instr-seq-ref b index))
-      (opt-instr-seq-eq-from a b (+ index 1) count))))
+  (let
+    [cursor : i64 index]
+    (begin
+      (while (< cursor count)
+        (if (opt-instr-eq
+          type-segment-bases
+          (compiler-ir-instr-seq-ref a cursor)
+          (compiler-ir-instr-seq-ref b cursor))
+          (set! cursor (+ cursor 1))
+          (return false)))
+      true)))
 
-(define (opt-instr-seq-eq [a : CompilerIrInstrSeq] [b : CompilerIrInstrSeq]) : bool
+(define (opt-instr-seq-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrInstrSeq]
+  [b : CompilerIrInstrSeq]) : bool
   (let
     [acount : i64 (compiler-ir-instr-seq-count a)]
     [bcount : i64 (compiler-ir-instr-seq-count b)]
-    (and (= acount bcount) (opt-instr-seq-eq-from a b 0 acount))))
+    (and
+      (= acount bcount)
+      (opt-instr-seq-eq-from type-segment-bases a b 0 acount))))
 
-(define (opt-block-eq [a : CompilerIrBlock] [b : CompilerIrBlock]) : bool
+(define (opt-block-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrBlock]
+  [b : CompilerIrBlock]) : bool
   (match a
     [(CompilerIrBlock.Block alabel ainstrs)
       (match b
         [(CompilerIrBlock.Block blabel binstrs)
-          (and (= alabel blabel) (opt-instr-seq-eq ainstrs binstrs))])]))
+          (and
+            (= alabel blabel)
+            (opt-instr-seq-eq type-segment-bases ainstrs binstrs))])]))
 
-(define (opt-block-list-eq [a : CompilerIrBlockList] [b : CompilerIrBlockList]) : bool
+(define (opt-block-list-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrBlockList]
+  [b : CompilerIrBlockList]) : bool
   (match a
     [(CompilerIrBlockList.Nil)
       (match b
@@ -5518,42 +5742,69 @@
       (match b
         [(CompilerIrBlockList.Cons bh bt)
           (and
-            (opt-block-eq ah bh)
-            (opt-block-list-eq (box-get at) (box-get bt)))]
+            (opt-block-eq type-segment-bases ah bh)
+            (opt-block-list-eq type-segment-bases (box-get at) (box-get bt)))]
         [(CompilerIrBlockList.Array seq)
-          (opt-block-list-eq a (compiler-ir-block-seq-to-list seq))]
+          (opt-block-list-eq
+            type-segment-bases
+            a
+            (compiler-ir-block-seq-to-list seq))]
         [_ false])]
     [(CompilerIrBlockList.Array seq)
-      (opt-block-list-eq (compiler-ir-block-seq-to-list seq) b)]))
+      (opt-block-list-eq
+        type-segment-bases
+        (compiler-ir-block-seq-to-list seq)
+        b)]))
 
-(define (opt-param-eq [a : CompilerIrParam] [b : CompilerIrParam]) : bool
+(define (opt-param-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrParam]
+  [b : CompilerIrParam]) : bool
   (match a
     [(CompilerIrParam.Param aname aty aid)
       (match b
         [(CompilerIrParam.Param bname bty bid)
-          (and (string.eq aname bname) (= aid bid) (opt-type-eq aty bty))])]))
+          (and
+            (string.eq aname bname)
+            (= aid bid)
+            (opt-type-eq type-segment-bases aty bty))])]))
 
-(define (opt-param-list-eq [a : CompilerIrParamList] [b : CompilerIrParamList]) : bool
+(define (opt-param-list-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrParamList]
+  [b : CompilerIrParamList]) : bool
   (match a
     [(CompilerIrParamList.Nil)
       (match b
         [(CompilerIrParamList.Nil) true]
         [(CompilerIrParamList.Array seq)
-          (opt-param-list-eq a (compiler-ir-param-seq-to-list seq))]
+          (opt-param-list-eq
+            type-segment-bases
+            a
+            (compiler-ir-param-seq-to-list seq))]
         [_ false])]
     [(CompilerIrParamList.Cons ah at)
       (match b
         [(CompilerIrParamList.Cons bh bt)
           (and
-            (opt-param-eq ah bh)
-            (opt-param-list-eq (box-get at) (box-get bt)))]
+            (opt-param-eq type-segment-bases ah bh)
+            (opt-param-list-eq type-segment-bases (box-get at) (box-get bt)))]
         [(CompilerIrParamList.Array seq)
-          (opt-param-list-eq a (compiler-ir-param-seq-to-list seq))]
+          (opt-param-list-eq
+            type-segment-bases
+            a
+            (compiler-ir-param-seq-to-list seq))]
         [_ false])]
     [(CompilerIrParamList.Array seq)
-      (opt-param-list-eq (compiler-ir-param-seq-to-list seq) b)]))
+      (opt-param-list-eq
+        type-segment-bases
+        (compiler-ir-param-seq-to-list seq)
+        b)]))
 
-(define (opt-function-eq [a : CompilerIrFunction] [b : CompilerIrFunction]) : bool
+(define (opt-function-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrFunction]
+  [b : CompilerIrFunction]) : bool
   (match a
     [(CompilerIrFunction.Function aname aparams aret aframe ablocks)
       (match b
@@ -5561,11 +5812,12 @@
           (and
             (compiler-ir-symbol-eq? aname bname)
             (= aframe bframe)
-            (opt-param-list-eq aparams bparams)
-            (opt-type-eq aret bret)
-            (opt-block-list-eq ablocks bblocks))])]))
+            (opt-param-list-eq type-segment-bases aparams bparams)
+            (opt-type-eq type-segment-bases aret bret)
+            (opt-block-list-eq type-segment-bases ablocks bblocks))])]))
 
 (define (opt-function-list-eq
+  [type-segment-bases : i64]
   [a : CompilerIrFunctionList]
   [b : CompilerIrFunctionList]) : bool
   (match a
@@ -5577,25 +5829,35 @@
       (match b
         [(CompilerIrFunctionList.Cons bh bt)
           (and
-            (opt-function-eq ah bh)
-            (opt-function-list-eq (box-get at) (box-get bt)))]
+            (opt-function-eq type-segment-bases ah bh)
+            (opt-function-list-eq type-segment-bases (box-get at) (box-get bt)))]
         [(CompilerIrFunctionList.Array bseq)
-          (opt-function-list-eq a (compiler-ir-function-seq-to-list bseq))]
+          (opt-function-list-eq
+            type-segment-bases
+            a
+            (compiler-ir-function-seq-to-list bseq))]
         [_ false])]
     [(CompilerIrFunctionList.Array aseq)
-      (opt-function-list-eq (compiler-ir-function-seq-to-list aseq) b)]))
+      (opt-function-list-eq
+        type-segment-bases
+        (compiler-ir-function-seq-to-list aseq)
+        b)]))
 
-(define (opt-global-eq [a : CompilerIrGlobal] [b : CompilerIrGlobal]) : bool
+(define (opt-global-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrGlobal]
+  [b : CompilerIrGlobal]) : bool
   (match a
     [(CompilerIrGlobal.Global aname aty avalue)
       (match b
         [(CompilerIrGlobal.Global bname bty bvalue)
           (and
             (compiler-ir-symbol-eq? aname bname)
-            (opt-type-eq aty bty)
+            (opt-type-eq type-segment-bases aty bty)
             (opt-value-eq avalue bvalue))])]))
 
 (define (opt-global-list-eq
+  [type-segment-bases : i64]
   [a : CompilerIrGlobalList]
   [b : CompilerIrGlobalList]) : bool
   (match a
@@ -5604,6 +5866,7 @@
         [(CompilerIrGlobalList.Nil) true]
         [(CompilerIrGlobalList.Array bseq)
           (opt-global-list-eq
+            type-segment-bases
             CompilerIrGlobalList.Nil
             (compiler-ir-global-seq-to-list bseq))]
         [_ false])]
@@ -5611,15 +5874,24 @@
       (match b
         [(CompilerIrGlobalList.Cons bh bt)
           (and
-            (opt-global-eq ah bh)
-            (opt-global-list-eq (box-get at) (box-get bt)))]
+            (opt-global-eq type-segment-bases ah bh)
+            (opt-global-list-eq type-segment-bases (box-get at) (box-get bt)))]
         [(CompilerIrGlobalList.Array bseq)
-          (opt-global-list-eq a (compiler-ir-global-seq-to-list bseq))]
+          (opt-global-list-eq
+            type-segment-bases
+            a
+            (compiler-ir-global-seq-to-list bseq))]
         [_ false])]
     [(CompilerIrGlobalList.Array aseq)
-      (opt-global-list-eq (compiler-ir-global-seq-to-list aseq) b)]))
+      (opt-global-list-eq
+        type-segment-bases
+        (compiler-ir-global-seq-to-list aseq)
+        b)]))
 
-(define (opt-extern-eq [a : CompilerIrExtern] [b : CompilerIrExtern]) : bool
+(define (opt-extern-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrExtern]
+  [b : CompilerIrExtern]) : bool
   (match a
     [(CompilerIrExtern.Extern
         aid
@@ -5644,13 +5916,14 @@
             (= aid bid)
             (= asource bsource)
             (string.eq aname bname)
-            (opt-type-eq aty bty)
+            (opt-type-eq type-segment-bases aty bty)
             (ast-extern-abi-eq? aabi babi)
             (= asymbol bsymbol)
             (ast-extern-link-input-list-eq? alinks blinks)
             (= aprovided bprovided))])]))
 
 (define (opt-extern-list-eq
+  [type-segment-bases : i64]
   [a : CompilerIrExternList]
   [b : CompilerIrExternList]) : bool
   (match a
@@ -5659,6 +5932,7 @@
         [(CompilerIrExternList.Nil) true]
         [(CompilerIrExternList.Array bseq)
           (opt-extern-list-eq
+            type-segment-bases
             CompilerIrExternList.Nil
             (compiler-ir-extern-seq-to-list bseq))]
         [_ false])]
@@ -5666,39 +5940,54 @@
       (match b
         [(CompilerIrExternList.Cons bh bt)
           (and
-            (opt-extern-eq ah bh)
-            (opt-extern-list-eq (box-get at) (box-get bt)))]
+            (opt-extern-eq type-segment-bases ah bh)
+            (opt-extern-list-eq type-segment-bases (box-get at) (box-get bt)))]
         [(CompilerIrExternList.Array bseq)
-          (opt-extern-list-eq a (compiler-ir-extern-seq-to-list bseq))]
+          (opt-extern-list-eq
+            type-segment-bases
+            a
+            (compiler-ir-extern-seq-to-list bseq))]
         [_ false])]
     [(CompilerIrExternList.Array aseq)
-      (opt-extern-list-eq (compiler-ir-extern-seq-to-list aseq) b)]))
+      (opt-extern-list-eq
+        type-segment-bases
+        (compiler-ir-extern-seq-to-list aseq)
+        b)]))
 
-(define (opt-program-eq [a : CompilerIrProgram] [b : CompilerIrProgram]) : bool
+(define (opt-program-eq
+  [type-segment-bases : i64]
+  [a : CompilerIrProgram]
+  [b : CompilerIrProgram]) : bool
   (match a
     [(CompilerIrProgram.Program aglobals afunctions aexterns)
       (match b
         [(CompilerIrProgram.Program bglobals bfunctions bexterns)
           (and
-            (opt-global-list-eq aglobals bglobals)
-            (opt-function-list-eq afunctions bfunctions)
-            (opt-extern-list-eq aexterns bexterns))])]))
+            (opt-global-list-eq type-segment-bases aglobals bglobals)
+            (opt-function-list-eq type-segment-bases afunctions bfunctions)
+            (opt-extern-list-eq type-segment-bases aexterns bexterns))])]))
 
-(define (opt-expr-key-eq [a : OptExprKey] [b : OptExprKey]) : bool
+(define (opt-expr-key-eq
+  [type-segment-bases : i64]
+  [a : OptExprKey]
+  [b : OptExprKey]) : bool
   (match a
     [(OptExprKey.BinKey opa la ra ta)
       (match b
         [(OptExprKey.BinKey opb lb rb tb)
           (and
             (opt-binop-eq opa opb)
-            (opt-type-eq ta tb)
+            (opt-type-eq type-segment-bases ta tb)
             (opt-value-eq la lb)
             (opt-value-eq ra rb))]
         [_ false])]
     [(OptExprKey.UnKey opa va ta)
       (match b
         [(OptExprKey.UnKey opb vb tb)
-          (and (opt-unop-eq opa opb) (opt-type-eq ta tb) (opt-value-eq va vb))]
+          (and
+            (opt-unop-eq opa opb)
+            (opt-type-eq type-segment-bases ta tb)
+            (opt-value-eq va vb))]
         [_ false])]
     [(OptExprKey.CpuIdKey aleaf asubleaf areg)
       (match b
@@ -5713,15 +6002,18 @@
         [(OptExprKey.XgetbvKey bindex) (opt-value-eq aindex bindex)]
         [_ false])]))
 
-(define (opt-expr-lookup [table : OptExprTable] [key : OptExprKey]) : CompilerIrMaybeValue
+(define (opt-expr-lookup
+  [type-segment-bases : i64]
+  [table : OptExprTable]
+  [key : OptExprKey]) : CompilerIrMaybeValue
   (match table
     [(OptExprTable.Nil) (CompilerIrMaybeValue.No)]
     [(OptExprTable.Cons k var rest)
       (let
         [rest : OptExprTable (box-get rest)]
-        (if (opt-expr-key-eq k key)
+        (if (opt-expr-key-eq type-segment-bases k key)
           (CompilerIrMaybeValue.Some (CompilerIrValue.Var var))
-          (opt-expr-lookup rest key)))]))
+          (opt-expr-lookup type-segment-bases rest key)))]))
 
 (define (opt-value-is-var? [value : CompilerIrValue] [var : i64]) : bool
   (match value
@@ -5752,13 +6044,16 @@
 (defenum OptCseResult
   (Result OptExprTable CompilerIrInstr))
 
-(define (opt-cse-instr [table : OptExprTable] [instr : CompilerIrInstr]) : OptCseResult
+(define (opt-cse-instr
+  [type-segment-bases : i64]
+  [table : OptExprTable]
+  [instr : CompilerIrInstr]) : OptCseResult
   (match instr
     [(CompilerIrInstr.BinOp dst op l r ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
         [key : OptExprKey (OptExprKey.BinKey op l r ty)]
-        (match (opt-expr-lookup t1 key)
+        (match (opt-expr-lookup type-segment-bases t1 key)
           [(CompilerIrMaybeValue.Some earlier)
             (OptCseResult.Result
               t1
@@ -5772,7 +6067,7 @@
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
         [key : OptExprKey (OptExprKey.UnKey op v ty)]
-        (match (opt-expr-lookup t1 key)
+        (match (opt-expr-lookup type-segment-bases t1 key)
           [(CompilerIrMaybeValue.Some earlier)
             (OptCseResult.Result t1 (CompilerIrInstr.Mov dst earlier ty))]
           [(CompilerIrMaybeValue.No)
@@ -5781,7 +6076,7 @@
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
         [key : OptExprKey (OptExprKey.CpuIdKey leaf subleaf reg-index)]
-        (match (opt-expr-lookup t1 key)
+        (match (opt-expr-lookup type-segment-bases t1 key)
           [(CompilerIrMaybeValue.Some earlier)
             (OptCseResult.Result
               t1
@@ -5792,7 +6087,7 @@
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
         [key : OptExprKey (OptExprKey.XgetbvKey index)]
-        (match (opt-expr-lookup t1 key)
+        (match (opt-expr-lookup type-segment-bases t1 key)
           [(CompilerIrMaybeValue.Some earlier)
             (OptCseResult.Result
               t1
@@ -5917,15 +6212,18 @@
     [(CompilerIrInstr.Switch _ _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]))
 
-(define (opt-cse-instrs [table : OptExprTable] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+(define (opt-cse-instrs
+  [type-segment-bases : i64]
+  [table : OptExprTable]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
     [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-cse-instr table instr)
+      (match (opt-cse-instr type-segment-bases table instr)
         [(OptCseResult.Result new-table new-instr)
           (compiler-ir-instr-cons
             new-instr
-            (opt-cse-instrs new-table (box-get rest)))])]))
+            (opt-cse-instrs type-segment-bases new-table (box-get rest)))])]))
 
 ;; --- block-local copy propagation -------------------------------------------
 ;;
@@ -6602,14 +6900,15 @@
 ;; Record an `I64->U64` reinterpret cast (the index/length unsigned-compare form)
 ;; so its dst canonicalizes to the source; other casts only invalidate the dst.
 (define (opt-bounds-cast-update
+  [type-segment-bases : i64]
   [env : OptBoundsCastEnv]
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : OptBoundsCastEnv
   (if (and
-    (opt-type-eq from-ty (AstType.I64))
-    (opt-type-eq to-ty (AstType.U64)))
+    (opt-type-eq type-segment-bases from-ty (AstType.I64))
+    (opt-type-eq type-segment-bases to-ty (AstType.U64)))
     (opt-bounds-cast-bind env dst src)
     (opt-bounds-cast-unbind env dst)))
 
@@ -6630,13 +6929,14 @@
   (OptObjectLengthFact.Known length-var object-var))
 
 (define (opt-bounds-object-length-slot?
+  [type-segment-bases : i64]
   [offset : CompilerIrValue]
   [ty : AstType]) : bool
   (match offset
     [(CompilerIrValue.I64 value)
       (or
-        (and (= value 1) (opt-type-eq ty (AstType.I64)))
-        (and (= value 8) (opt-type-eq ty (AstType.U8))))]
+        (and (= value 1) (opt-type-eq type-segment-bases ty (AstType.I64)))
+        (and (= value 8) (opt-type-eq type-segment-bases ty (AstType.U8))))]
     [_ false]))
 
 (define (opt-bounds-update-facts
@@ -6733,6 +7033,7 @@
     [(CompilerIrInstr.Switch _ _ _ _) (OptBoundsFacts.Nil)]))
 
 (define (opt-bounds-instrs-with-object
+  [type-segment-bases : i64]
   [facts : OptBoundsFacts]
   [lengths : OptObjectLengthFact]
   [ptrs : OptObjectLengthFact]
@@ -6749,6 +7050,7 @@
               (opt-bounds-length-value lengths length)]
             (if (opt-bounds-contains facts index-key length-key)
               (opt-bounds-instrs-with-object
+                type-segment-bases
                 facts
                 lengths
                 ptrs
@@ -6757,6 +7059,7 @@
               (compiler-ir-instr-cons
                 instr
                 (opt-bounds-instrs-with-object
+                  type-segment-bases
                   (opt-bounds-add facts index-key length-key)
                   lengths
                   ptrs
@@ -6770,7 +7073,7 @@
             [ptrs2 : OptObjectLengthFact
               (opt-object-length-invalidate-var ptrs dst)]
             [ptrs3 : OptObjectLengthFact
-              (if (opt-bounds-object-length-slot? offset ty)
+              (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
                 (match base
                   [(CompilerIrValue.Var object-var)
                     (opt-object-length-bind ptrs2 dst object-var)]
@@ -6779,6 +7082,7 @@
             (compiler-ir-instr-cons
               instr
               (opt-bounds-instrs-with-object
+                type-segment-bases
                 facts2
                 lengths2
                 ptrs3
@@ -6792,7 +7096,7 @@
             [ptrs2 : OptObjectLengthFact
               (opt-object-length-invalidate-var ptrs dst)]
             [lengths3 : OptObjectLengthFact
-              (if (opt-type-eq ty (AstType.I64))
+              (if (opt-type-eq type-segment-bases ty (AstType.I64))
                 (match src
                   [(CompilerIrValue.Var ptr-var)
                     (match (opt-object-length-lookup ptrs2 ptr-var)
@@ -6804,6 +7108,7 @@
             (compiler-ir-instr-cons
               instr
               (opt-bounds-instrs-with-object
+                type-segment-bases
                 facts2
                 lengths3
                 ptrs2
@@ -6818,8 +7123,8 @@
               (opt-object-length-invalidate-var ptrs dst)]
             [lengths3 : OptObjectLengthFact
               (if (and
-                (opt-type-eq from-ty (AstType.I64))
-                (opt-type-eq to-ty (AstType.U64)))
+                (opt-type-eq type-segment-bases from-ty (AstType.I64))
+                (opt-type-eq type-segment-bases to-ty (AstType.U64)))
                 (match src
                   [(CompilerIrValue.Var length-var)
                     (match (opt-object-length-lookup lengths2 length-var)
@@ -6831,10 +7136,17 @@
             (compiler-ir-instr-cons
               instr
               (opt-bounds-instrs-with-object
+                type-segment-bases
                 facts2
                 lengths3
                 ptrs2
-                (opt-bounds-cast-update casts dst src from-ty to-ty)
+                (opt-bounds-cast-update
+                  type-segment-bases
+                  casts
+                  dst
+                  src
+                  from-ty
+                  to-ty)
                 (box-get rest))))]
         ;; An array element store cannot change any array's LENGTH (in TL a
         ;; length slot is only ever written by make-array, and user code cannot
@@ -6851,6 +7163,7 @@
                   (compiler-ir-instr-cons
                     instr
                     (opt-bounds-instrs
+                      type-segment-bases
                       (OptBoundsFacts.Nil)
                       casts
                       (box-get rest)))]
@@ -6858,6 +7171,7 @@
                   (compiler-ir-instr-cons
                     instr
                     (opt-bounds-instrs-with-object
+                      type-segment-bases
                       facts
                       lengths
                       ptrs
@@ -6866,7 +7180,11 @@
             [_
               (compiler-ir-instr-cons
                 instr
-                (opt-bounds-instrs (OptBoundsFacts.Nil) casts (box-get rest)))])]
+                (opt-bounds-instrs
+                  type-segment-bases
+                  (OptBoundsFacts.Nil)
+                  casts
+                  (box-get rest)))])]
         [_
           (let
             [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
@@ -6878,13 +7196,18 @@
               [(OptBoundsFacts.Nil)
                 (compiler-ir-instr-cons
                   instr
-                  (opt-bounds-instrs next-facts casts2 (box-get rest)))]
+                  (opt-bounds-instrs
+                    type-segment-bases
+                    next-facts
+                    casts2
+                    (box-get rest)))]
               [_
                 (match (opt-instr-def-var instr)
                   [(option_i64.Some dst)
                     (compiler-ir-instr-cons
                       instr
                       (opt-bounds-instrs-with-object
+                        type-segment-bases
                         next-facts
                         (opt-object-length-invalidate-var lengths dst)
                         (opt-object-length-invalidate-var ptrs dst)
@@ -6894,6 +7217,7 @@
                     (compiler-ir-instr-cons
                       instr
                       (opt-bounds-instrs-with-object
+                        type-segment-bases
                         next-facts
                         lengths
                         ptrs
@@ -6901,6 +7225,7 @@
                         (box-get rest)))])]))])]))
 
 (define (opt-bounds-instrs
+  [type-segment-bases : i64]
   [facts : OptBoundsFacts]
   [casts : OptBoundsCastEnv]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -6912,10 +7237,11 @@
           (let
             [index-key : CompilerIrValue (opt-bounds-cast-canon casts index)]
             (if (opt-bounds-contains facts index-key length)
-              (opt-bounds-instrs facts casts (box-get rest))
+              (opt-bounds-instrs type-segment-bases facts casts (box-get rest))
               (compiler-ir-instr-cons
                 instr
                 (opt-bounds-instrs
+                  type-segment-bases
                   (opt-bounds-add facts index-key length)
                   casts
                   (box-get rest)))))]
@@ -6923,10 +7249,11 @@
           (let
             [next-facts : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
             [casts2 : OptBoundsCastEnv (opt-bounds-cast-unbind casts dst)]
-            (if (opt-bounds-object-length-slot? offset ty)
+            (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
               (compiler-ir-instr-cons
                 instr
                 (opt-bounds-instrs-with-object
+                  type-segment-bases
                   next-facts
                   (OptObjectLengthFact.None)
                   (match base
@@ -6940,18 +7267,30 @@
                   (box-get rest)))
               (compiler-ir-instr-cons
                 instr
-                (opt-bounds-instrs next-facts casts2 (box-get rest)))))]
+                (opt-bounds-instrs
+                  type-segment-bases
+                  next-facts
+                  casts2
+                  (box-get rest)))))]
         [(CompilerIrInstr.Cast dst src from-ty to-ty)
           (compiler-ir-instr-cons
             instr
             (opt-bounds-instrs
+              type-segment-bases
               (opt-bounds-update-facts facts instr)
-              (opt-bounds-cast-update casts dst src from-ty to-ty)
+              (opt-bounds-cast-update
+                type-segment-bases
+                casts
+                dst
+                src
+                from-ty
+                to-ty)
               (box-get rest)))]
         [_
           (compiler-ir-instr-cons
             instr
             (opt-bounds-instrs
+              type-segment-bases
               (opt-bounds-update-facts facts instr)
               (match (opt-instr-def-var instr)
                 [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
@@ -6977,6 +7316,7 @@
     [(option_i64.None) casts]))
 
 (define (opt-bounds-seq-step-plain
+  [type-segment-bases : i64]
   [facts : OptBoundsFacts]
   [casts : OptBoundsCastEnv]
   [instr : CompilerIrInstr]) : OptBoundsSeqStep
@@ -6995,7 +7335,7 @@
       (let
         [next-facts : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
         [next-casts : OptBoundsCastEnv (opt-bounds-cast-unbind casts dst)]
-        (if (opt-bounds-object-length-slot? offset ty)
+        (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
           (OptBoundsSeqStep.Step
             (OptBoundsSeqState.Object
               next-facts
@@ -7016,7 +7356,13 @@
       (OptBoundsSeqStep.Step
         (OptBoundsSeqState.Plain
           (opt-bounds-update-facts facts instr)
-          (opt-bounds-cast-update casts dst src from-ty to-ty))
+          (opt-bounds-cast-update
+            type-segment-bases
+            casts
+            dst
+            src
+            from-ty
+            to-ty))
         true)]
     [_
       (OptBoundsSeqStep.Step
@@ -7026,6 +7372,7 @@
         true)]))
 
 (define (opt-bounds-seq-step-object
+  [type-segment-bases : i64]
   [facts : OptBoundsFacts]
   [lengths : OptObjectLengthFact]
   [ptrs : OptObjectLengthFact]
@@ -7055,7 +7402,7 @@
         [ptrs2 : OptObjectLengthFact
           (opt-object-length-invalidate-var ptrs dst)]
         [ptrs3 : OptObjectLengthFact
-          (if (opt-bounds-object-length-slot? offset ty)
+          (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
             (match base
               [(CompilerIrValue.Var object-var)
                 (opt-object-length-bind ptrs2 dst object-var)]
@@ -7076,7 +7423,7 @@
         [ptrs2 : OptObjectLengthFact
           (opt-object-length-invalidate-var ptrs dst)]
         [lengths3 : OptObjectLengthFact
-          (if (opt-type-eq ty (AstType.I64))
+          (if (opt-type-eq type-segment-bases ty (AstType.I64))
             (match src
               [(CompilerIrValue.Var ptr-var)
                 (match (opt-object-length-lookup ptrs2 ptr-var)
@@ -7101,8 +7448,8 @@
           (opt-object-length-invalidate-var ptrs dst)]
         [lengths3 : OptObjectLengthFact
           (if (and
-            (opt-type-eq from-ty (AstType.I64))
-            (opt-type-eq to-ty (AstType.U64)))
+            (opt-type-eq type-segment-bases from-ty (AstType.I64))
+            (opt-type-eq type-segment-bases to-ty (AstType.U64)))
             (match src
               [(CompilerIrValue.Var length-var)
                 (match (opt-object-length-lookup lengths2 length-var)
@@ -7116,7 +7463,13 @@
             facts2
             lengths3
             ptrs2
-            (opt-bounds-cast-update casts dst src from-ty to-ty))
+            (opt-bounds-cast-update
+              type-segment-bases
+              casts
+              dst
+              src
+              from-ty
+              to-ty))
           true))]
     [(CompilerIrInstr.StorePtr ptr _ _)
       (match ptr
@@ -7158,7 +7511,9 @@
                   (OptBoundsSeqState.Object next-facts lengths ptrs next-casts)
                   true)])]))]))
 
-(define (opt-bounds-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : unit
+(define (opt-bounds-instr-seq-rewrite!
+  [type-segment-bases : i64]
+  [instrs : CompilerIrInstrSeq]) : unit
   (let
     [read : i64 0]
     [write : i64 0]
@@ -7172,9 +7527,15 @@
           [step : OptBoundsSeqStep
             (match state
               [(OptBoundsSeqState.Plain facts casts)
-                (opt-bounds-seq-step-plain facts casts instr)]
+                (opt-bounds-seq-step-plain type-segment-bases facts casts instr)]
               [(OptBoundsSeqState.Object facts lengths ptrs casts)
-                (opt-bounds-seq-step-object facts lengths ptrs casts instr)])]
+                (opt-bounds-seq-step-object
+                  type-segment-bases
+                  facts
+                  lengths
+                  ptrs
+                  casts
+                  instr)])]
           (match step
             [(OptBoundsSeqStep.Step next-state keep)
               (begin
@@ -10236,6 +10597,7 @@
         types)]))
 
 (define (opt-ssa-facts-add-def-ty
+  [type-segment-bases : i64]
   [facts : OptSsaFacts]
   [var : i64]
   [ty : AstType]) : OptSsaFacts
@@ -10254,46 +10616,63 @@
             [(OptMaybeAstType.Some old)
               (OptSsaFacts.Facts
                 next-counts
-                (if (opt-type-eq old ty)
+                (if (opt-type-eq type-segment-bases old ty)
                   bad
                   (opt-used-add bad var))
                 types)])))]))
 
 (define (opt-ssa-facts-add-param
+  [type-segment-bases : i64]
   [facts : OptSsaFacts]
   [param : CompilerIrParam]) : OptSsaFacts
   (match param
-    [(CompilerIrParam.Param _ ty var) (opt-ssa-facts-add-def-ty facts var ty)]))
+    [(CompilerIrParam.Param _ ty var)
+      (opt-ssa-facts-add-def-ty type-segment-bases facts var ty)]))
 
 (define (opt-ssa-facts-add-params
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [facts : OptSsaFacts]) : OptSsaFacts
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) facts]
     [(CompilerIrParamList.Array seq)
-      (opt-ssa-facts-add-params (compiler-ir-param-seq-to-list seq) facts)]
+      (opt-ssa-facts-add-params
+        type-segment-bases
+        (compiler-ir-param-seq-to-list seq)
+        facts)]
     [(CompilerIrParamList.Cons param rest)
       (opt-ssa-facts-add-params
+        type-segment-bases
         (box-get rest)
-        (opt-ssa-facts-add-param facts param))]))
+        (opt-ssa-facts-add-param type-segment-bases facts param))]))
 
 (define (opt-ssa-facts-add-instr
+  [type-segment-bases : i64]
   [facts : OptSsaFacts]
   [instr : CompilerIrInstr]) : OptSsaFacts
   (match instr
-    [(CompilerIrInstr.Mov dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
-    [(CompilerIrInstr.Load dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
-    [(CompilerIrInstr.Cast dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(CompilerIrInstr.Mov dst _ ty)
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+    [(CompilerIrInstr.Load dst _ ty)
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+    [(CompilerIrInstr.Cast dst _ _ ty)
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
     [(CompilerIrInstr.Bitcast dst _ _ ty)
-      (opt-ssa-facts-add-def-ty facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
     [(CompilerIrInstr.BinOp dst op _ _ ty)
-      (opt-ssa-facts-add-def-ty facts dst (compiler-ir-binop-result-type op ty))]
-    [(CompilerIrInstr.UnOp dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
-    [(CompilerIrInstr.Call dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+      (opt-ssa-facts-add-def-ty
+        type-segment-bases
+        facts
+        dst
+        (compiler-ir-binop-result-type op ty))]
+    [(CompilerIrInstr.UnOp dst _ _ ty)
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
+    [(CompilerIrInstr.Call dst _ _ ty)
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
     [(CompilerIrInstr.CallIndirect dst _ _ ty)
-      (opt-ssa-facts-add-def-ty facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
     [(CompilerIrInstr.CallIndirectC dst _ _ ty)
-      (opt-ssa-facts-add-def-ty facts dst ty)]
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
@@ -10302,14 +10681,15 @@
             [(CompilerIrSpmdCallResult.Value dst class ty)
               (match class
                 [(CompilerIrSpmdValueClass.Uniform)
-                  (opt-ssa-facts-add-def-ty facts dst ty)]
+                  (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
                 [(CompilerIrSpmdValueClass.Varying)
                   (opt-ssa-facts-add-def-bad facts dst)]
                 [(CompilerIrSpmdValueClass.Mask)
                   (opt-ssa-facts-add-def-bad facts dst)])])])]
-    [(CompilerIrInstr.Phi dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(CompilerIrInstr.Phi dst _ ty)
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst ty)]
     [(CompilerIrInstr.EntryArgc dst)
-      (opt-ssa-facts-add-def-ty facts dst (AstType.I64))]
+      (opt-ssa-facts-add-def-ty type-segment-bases facts dst (AstType.I64))]
     [(CompilerIrInstr.AddrOf dst src)
       (opt-ssa-facts-bad-var (opt-ssa-facts-add-def-bad facts dst) src)]
     [(CompilerIrInstr.Alloc dst _) (opt-ssa-facts-add-def-bad facts dst)]
@@ -10362,17 +10742,23 @@
     [_ facts]))
 
 (define (opt-ssa-facts-add-instr-seq-from
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [facts : OptSsaFacts]) : OptSsaFacts
   (if (>= index (compiler-ir-instr-seq-count instrs))
     facts
     (opt-ssa-facts-add-instr-seq-from
+      type-segment-bases
       instrs
       (+ index 1)
-      (opt-ssa-facts-add-instr facts (compiler-ir-instr-seq-ref instrs index)))))
+      (opt-ssa-facts-add-instr
+        type-segment-bases
+        facts
+        (compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-ssa-facts-add-blocks
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [facts : OptSsaFacts]) : OptSsaFacts
   (match blocks
@@ -10381,17 +10767,24 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (opt-ssa-facts-add-blocks
+            type-segment-bases
             (box-get rest)
-            (opt-ssa-facts-add-instr-seq-from instrs 0 facts))])]
+            (opt-ssa-facts-add-instr-seq-from type-segment-bases instrs 0 facts))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-ssa-facts-add-blocks (compiler-ir-block-seq-to-list seq) facts)]))
+      (opt-ssa-facts-add-blocks
+        type-segment-bases
+        (compiler-ir-block-seq-to-list seq)
+        facts)]))
 
 (define (opt-ssa-facts-from-function
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSsaFacts
   (opt-ssa-facts-add-blocks
+    type-segment-bases
     blocks
     (opt-ssa-facts-add-params
+      type-segment-bases
       params
       (OptSsaFacts.Facts
         (opt_i64_i64_map.with-capacity 64)
@@ -11962,13 +12355,16 @@
             (CompilerIrInstrList.Nil)))
         blocks))))
 
-(define (opt-ssa-construct-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-ssa-construct-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (opt-verify-single-defs? params frame blocks)
         func
         (let
-          [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+          [facts : OptSsaFacts
+            (opt-ssa-facts-from-function type-segment-bases params blocks)]
           ;; Pre-existing lowerer phis are fine (their inputs are rewritten
           ;; per edge during materialization); only a phi DST that is itself
           ;; a rename candidate is out of scope.
@@ -12053,8 +12449,10 @@
             blocks))])))
 
 (define (opt-ssa-construct-function-with-context-result
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   (opt-ssa-construct-function-from-context-result
+    type-segment-bases
     func
     (opt-cfg-context-empty)
     false))
@@ -12063,6 +12461,7 @@
 ;; was built for `func`'s current blocks; otherwise this builds its own, exactly
 ;; as before. The pre-SSA rotation pass hands its context down this way.
 (define (opt-ssa-construct-function-from-context-result
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [entry-context : OptCfgContext]
   [entry-context-valid? : bool]) : OptFunctionCtxResult
@@ -12076,7 +12475,8 @@
         (if (opt-verify-single-defs? params frame blocks)
           (OptFunctionCtxResult.Result func context)
           (let
-            [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+            [facts : OptSsaFacts
+              (opt-ssa-facts-from-function type-segment-bases params blocks)]
             (cond
               ;; Pre-existing lowerer phis are fine (their inputs are rewritten
               ;; per edge during materialization); only a phi DST that is
@@ -12152,12 +12552,15 @@
 (defstruct OptGlobalPackWordFactTable
   (buckets (Array OptGlobalPackWordFacts)))
 
-(define (opt-global-expr-key-eq [a : OptGlobalExprKey] [b : OptGlobalExprKey]) : bool
+(define (opt-global-expr-key-eq
+  [type-segment-bases : i64]
+  [a : OptGlobalExprKey]
+  [b : OptGlobalExprKey]) : bool
   (match a
     [(OptGlobalExprKey.MovKey av aty)
       (match b
         [(OptGlobalExprKey.MovKey bv bty)
-          (and (opt-value-eq av bv) (opt-type-eq aty bty))]
+          (and (opt-value-eq av bv) (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(OptGlobalExprKey.GepKey abase aoff aty)
       (match b
@@ -12165,15 +12568,15 @@
           (and
             (opt-value-eq abase bbase)
             (opt-value-eq aoff boff)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(OptGlobalExprKey.CastKey av afrom ato)
       (match b
         [(OptGlobalExprKey.CastKey bv bfrom bto)
           (and
             (opt-value-eq av bv)
-            (opt-type-eq afrom bfrom)
-            (opt-type-eq ato bto))]
+            (opt-type-eq type-segment-bases afrom bfrom)
+            (opt-type-eq type-segment-bases ato bto))]
         [_ false])]
     [(OptGlobalExprKey.BinKey aop al ar aty)
       (match b
@@ -12182,30 +12585,43 @@
             (opt-binop-eq aop bop)
             (opt-value-eq al bl)
             (opt-value-eq ar br)
-            (opt-type-eq aty bty))]
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(OptGlobalExprKey.UnKey aop av aty)
       (match b
         [(OptGlobalExprKey.UnKey bop bv bty)
-          (and (opt-unop-eq aop bop) (opt-value-eq av bv) (opt-type-eq aty bty))]
+          (and
+            (opt-unop-eq aop bop)
+            (opt-value-eq av bv)
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]))
 
-(define (opt-global-expr-key-hash [key : OptGlobalExprKey]) : i64
+(define (opt-global-expr-key-hash
+  [type-segment-bases : i64]
+  [key : OptGlobalExprKey]) : i64
   (match key
     [(OptGlobalExprKey.MovKey value ty)
-      (hash.combine 1 (hash.combine (opt-value-hash value) (opt-type-hash ty)))]
+      (hash.combine
+        1
+        (hash.combine
+          (opt-value-hash value)
+          (opt-type-hash type-segment-bases ty)))]
     [(OptGlobalExprKey.GepKey base offset ty)
       (hash.combine
         2
         (hash.combine
           (opt-value-hash base)
-          (hash.combine (opt-value-hash offset) (opt-type-hash ty))))]
+          (hash.combine
+            (opt-value-hash offset)
+            (opt-type-hash type-segment-bases ty))))]
     [(OptGlobalExprKey.CastKey value from-ty to-ty)
       (hash.combine
         3
         (hash.combine
           (opt-value-hash value)
-          (hash.combine (opt-type-hash from-ty) (opt-type-hash to-ty))))]
+          (hash.combine
+            (opt-type-hash type-segment-bases from-ty)
+            (opt-type-hash type-segment-bases to-ty))))]
     [(OptGlobalExprKey.BinKey op lhs rhs ty)
       (hash.combine
         4
@@ -12213,13 +12629,17 @@
           (hash.i64 (opt-binop-tag op))
           (hash.combine
             (opt-value-hash lhs)
-            (hash.combine (opt-value-hash rhs) (opt-type-hash ty)))))]
+            (hash.combine
+              (opt-value-hash rhs)
+              (opt-type-hash type-segment-bases ty)))))]
     [(OptGlobalExprKey.UnKey op value ty)
       (hash.combine
         5
         (hash.combine
           (hash.i64 (opt-unop-tag op))
-          (hash.combine (opt-value-hash value) (opt-type-hash ty))))]))
+          (hash.combine
+            (opt-value-hash value)
+            (opt-type-hash type-segment-bases ty))))]))
 
 ;; Key operands must hold a single unchanging value for the fact's lifetime.
 ;; An `CompilerIrValue.Global` operand is a hidden LOAD of a mutable global (the backend
@@ -13283,34 +13703,45 @@
       (opt-global-expr-buckets-fill-empty! buckets (+ index 1)))))
 
 (define (opt-global-expr-bucket-index
+  [type-segment-bases : i64]
   [buckets : (Array OptGlobalExprFacts)]
   [key : OptGlobalExprKey]) : i64
-  (bit-and (opt-global-expr-key-hash key) (- (array-length buckets) 1)))
+  (bit-and
+    (opt-global-expr-key-hash type-segment-bases key)
+    (- (array-length buckets) 1)))
 
 (define (opt-global-expr-table-insert!
+  [type-segment-bases : i64]
   [table : OptGlobalExprFactTable]
   [fact : OptGlobalExprFact]) : unit
   (match fact
     [(OptGlobalExprFact.Fact key _ _ _)
       (let
         [buckets : (Array OptGlobalExprFacts) (struct-get table buckets)]
-        [bucket : i64 (opt-global-expr-bucket-index buckets key)]
+        [bucket : i64
+          (opt-global-expr-bucket-index type-segment-bases buckets key)]
         (array-set!
           buckets
           bucket
           (OptGlobalExprFacts.Cons fact (box (array-ref buckets bucket)))))]))
 
 (define (opt-global-expr-table-insert-reversed!
+  [type-segment-bases : i64]
   [table : OptGlobalExprFactTable]
   [facts : OptGlobalExprFacts]) : unit
   (match facts
     [(OptGlobalExprFacts.Nil) unit]
     [(OptGlobalExprFacts.Cons fact rest)
       (begin
-        (opt-global-expr-table-insert-reversed! table (box-get rest))
-        (opt-global-expr-table-insert! table fact))]))
+        (opt-global-expr-table-insert-reversed!
+          type-segment-bases
+          table
+          (box-get rest))
+        (opt-global-expr-table-insert! type-segment-bases table fact))]))
 
-(define (opt-global-expr-table-from-facts [facts : OptGlobalExprFacts]) : OptGlobalExprFactTable
+(define (opt-global-expr-table-from-facts
+  [type-segment-bases : i64]
+  [facts : OptGlobalExprFacts]) : OptGlobalExprFactTable
   (let
     [capacity : i64
       (opt-global-fact-bucket-capacity (opt-global-expr-facts-count facts))]
@@ -13319,10 +13750,11 @@
     [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
     (begin
       (opt-global-expr-buckets-fill-empty! buckets 0)
-      (opt-global-expr-table-insert-reversed! table facts)
+      (opt-global-expr-table-insert-reversed! type-segment-bases table facts)
       table)))
 
 (define (opt-global-expr-lookup-list
+  [type-segment-bases : i64]
   [facts : OptGlobalExprFacts]
   [key : OptGlobalExprKey]
   [dst : i64]
@@ -13336,7 +13768,7 @@
         [(OptGlobalExprFact.Fact fact-key fact-dst def-block-id def-pos)
           (if (and
             (not (= fact-dst dst))
-            (opt-global-expr-key-eq fact-key key)
+            (opt-global-expr-key-eq type-segment-bases fact-key key)
             (opt-global-fact-available?
               def-block-id
               def-pos
@@ -13345,6 +13777,7 @@
               doms))
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var fact-dst))
             (opt-global-expr-lookup-list
+              type-segment-bases
               (box-get rest)
               key
               dst
@@ -13353,6 +13786,7 @@
               use-pos))])]))
 
 (define (opt-global-expr-lookup
+  [type-segment-bases : i64]
   [table : OptGlobalExprFactTable]
   [key : OptGlobalExprKey]
   [dst : i64]
@@ -13362,7 +13796,10 @@
   (let
     [buckets : (Array OptGlobalExprFacts) (struct-get table buckets)]
     (opt-global-expr-lookup-list
-      (array-ref buckets (opt-global-expr-bucket-index buckets key))
+      type-segment-bases
+      (array-ref
+        buckets
+        (opt-global-expr-bucket-index type-segment-bases buckets key))
       key
       dst
       doms
@@ -13370,6 +13807,7 @@
       use-pos)))
 
 (define (opt-global-cse-instr
+  [type-segment-bases : i64]
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [block-id : i64]
@@ -13379,7 +13817,14 @@
     [(OptMaybeGlobalExprKey.Some key)
       (match (opt-instr-def-var instr)
         [(option_i64.Some dst)
-          (match (opt-global-expr-lookup facts key dst doms block-id pos)
+          (match (opt-global-expr-lookup
+            type-segment-bases
+            facts
+            key
+            dst
+            doms
+            block-id
+            pos)
             [(CompilerIrMaybeValue.Some earlier)
               (match instr
                 [(CompilerIrInstr.Mov _ _ ty)
@@ -13462,6 +13907,7 @@
         [_ false]))))
 
 (define (opt-global-cse-instr-seq
+  [type-segment-bases : i64]
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [block-label : i64]
@@ -13483,12 +13929,19 @@
                   (opt-global-cse-bool-chain-compare? block-label instrs instr)
                   (opt-global-cse-unroll2-address-offset? block-label instr))
                   instr
-                  (opt-global-cse-instr facts doms block-id (+ index 1) instr))
+                  (opt-global-cse-instr
+                    type-segment-bases
+                    facts
+                    doms
+                    block-id
+                    (+ index 1)
+                    instr))
                 out))
             (set! index (- index 1)))))
       out)))
 
 (define (opt-global-cse-blocks
+  [type-segment-bases : i64]
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [all-blocks : CompilerIrBlockList]
@@ -13508,8 +13961,15 @@
               block
               (compiler-ir-block
                 label
-                (opt-global-cse-instr-seq facts doms label block-id instrs)))
+                (opt-global-cse-instr-seq
+                  type-segment-bases
+                  facts
+                  doms
+                  label
+                  block-id
+                  instrs)))
             (opt-global-cse-blocks
+              type-segment-bases
               facts
               doms
               all-blocks
@@ -13517,6 +13977,7 @@
               (+ block-id 1)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-global-cse-blocks
+        type-segment-bases
         facts
         doms
         all-blocks
@@ -13524,6 +13985,7 @@
         block-id)]))
 
 (define (opt-global-value-number-blocks-with-context
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [frame : i64]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -13546,9 +14008,9 @@
     [expr-fact-list : OptGlobalExprFacts
       (opt-global-expr-facts-from-blocks copied 0 (OptGlobalExprFacts.Nil))]
     [expr-facts : OptGlobalExprFactTable
-      (opt-global-expr-table-from-facts expr-fact-list)]
+      (opt-global-expr-table-from-facts type-segment-bases expr-fact-list)]
     [cse : CompilerIrBlockList
-      (opt-global-cse-blocks expr-facts doms copied copied 0)]
+      (opt-global-cse-blocks type-segment-bases expr-facts doms copied copied 0)]
     [cse-copy-fact-list : OptGlobalCopyFacts
       (opt-global-copy-facts-from-blocks cse 0 (OptGlobalCopyFacts.Nil))]
     [cse-copy-facts : OptGlobalCopyFactTable
@@ -13557,6 +14019,7 @@
     (opt-global-copy-blocks cse-copy-facts pack-word-facts doms cse-uses cse 0)))
 
 (define (opt-global-value-number-function-with-context
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : CompilerIrFunction]) : CompilerIrFunction
@@ -13574,13 +14037,20 @@
             params
             ret-ty
             frame
-            (opt-global-value-number-blocks-with-context context frame blocks))])]
+            (opt-global-value-number-blocks-with-context
+              type-segment-bases
+              context
+              frame
+              blocks))])]
     [(ResultCompilerOptimizeVerify.Err _) func]))
 
-(define (opt-global-value-number-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-global-value-number-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (opt-global-value-number-function-with-context
+        type-segment-bases
         (opt-cfg-context-build blocks)
         false
         func)]))
@@ -15147,6 +15617,7 @@
       (opt-loop-rotation-prefix-before-final-from instrs (+ index 1) last))))
 
 (define (opt-loop-rotation-replace-final-jump
+  [pools : AstNodePoolContext]
   [instrs : CompilerIrInstrSeq]
   [guard : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-aggregate-instr-list-append
@@ -15154,9 +15625,10 @@
       instrs
       0
       (- (compiler-ir-instr-seq-count instrs) 1))
-    (compiler-ir-clone-instr-list guard)))
+    (compiler-ir-clone-instr-list pools guard)))
 
 (define (opt-loop-rotation-rewrite-block
+  [pools : AstNodePoolContext]
   [block : CompilerIrBlock]
   [preheader : i64]
   [latch : i64]
@@ -15166,10 +15638,11 @@
       (if (or (= label preheader) (= label latch))
         (compiler-ir-block
           label
-          (opt-loop-rotation-replace-final-jump instrs guard))
+          (opt-loop-rotation-replace-final-jump pools instrs guard))
         block)]))
 
 (define (opt-loop-rotation-rewrite-blocks
+  [pools : AstNodePoolContext]
   [blocks : CompilerIrBlockList]
   [header : i64]
   [preheader : i64]
@@ -15182,14 +15655,21 @@
         [(CompilerIrBlock.Block label _)
           (if (= label header)
             (opt-loop-rotation-rewrite-blocks
+              pools
               (box-get rest)
               header
               preheader
               latch
               guard)
             (compiler-ir-block-cons
-              (opt-loop-rotation-rewrite-block block preheader latch guard)
+              (opt-loop-rotation-rewrite-block
+                pools
+                block
+                preheader
+                latch
+                guard)
               (opt-loop-rotation-rewrite-blocks
+                pools
                 (box-get rest)
                 header
                 preheader
@@ -15197,6 +15677,7 @@
                 guard)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-loop-rotation-rewrite-blocks
+        pools
         (compiler-ir-block-seq-to-list seq)
         header
         preheader
@@ -15204,6 +15685,7 @@
         guard)]))
 
 (define (opt-loop-rotation-apply-guard
+  [pools : AstNodePoolContext]
   [blocks : CompilerIrBlockList]
   [header : i64]
   [preheader : i64]
@@ -15211,7 +15693,13 @@
   [guard : CompilerIrInstrList]) : OptBlockListPassResult
   (let
     [next : CompilerIrBlockList
-      (opt-loop-rotation-rewrite-blocks blocks header preheader latch guard)]
+      (opt-loop-rotation-rewrite-blocks
+        pools
+        blocks
+        header
+        preheader
+        latch
+        guard)]
     (if (and
       (opt-cfg-block-labels-unique? next)
       (opt-cfg-successor-targets-known? next))
@@ -15219,6 +15707,7 @@
       (OptBlockListPassResult.Result blocks false))))
 
 (define (opt-loop-rotation-loop
+  [pools : AstNodePoolContext]
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
   [loops : OptNaturalLoopList]
@@ -15244,6 +15733,7 @@
               (OptBlockListPassResult.Result blocks false)]
             [(OptLoopRotationHeader.Header guard)
               (opt-loop-rotation-apply-guard
+                pools
                 blocks
                 header
                 preheader
@@ -15252,6 +15742,7 @@
           (OptBlockListPassResult.Result blocks false))])))
 
 (define (opt-loop-rotation-loops
+  [pools : AstNodePoolContext]
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
   [loops : OptNaturalLoopList]
@@ -15259,11 +15750,11 @@
   (match remaining
     [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-loop-rotation-loop blocks context loops loop)
+      (match (opt-loop-rotation-loop pools blocks context loops loop)
         [(OptBlockListPassResult.Result next changed)
           (if changed
             (OptBlockListPassResult.Result next true)
-            (opt-loop-rotation-loops blocks context loops (box-get rest)))])]))
+            (opt-loop-rotation-loops pools blocks context loops (box-get rest)))])]))
 
 ;; The step already builds a CFG context for `blocks`. Carry it out so the
 ;; fixpoint below can hand the LAST step's context -- the one built for the
@@ -15272,59 +15763,74 @@
 (defenum OptLoopRotationCtxResult
   (Result CompilerIrBlockList bool OptCfgContext))
 
-(define (opt-loop-rotation-blocks-once-result [blocks : CompilerIrBlockList]) : OptLoopRotationCtxResult
+(define (opt-loop-rotation-blocks-once-result
+  [pools : AstNodePoolContext]
+  [blocks : CompilerIrBlockList]) : OptLoopRotationCtxResult
   (let
     [context : OptCfgContext (opt-cfg-context-build blocks)]
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context blocks context)]
-    (match (opt-loop-rotation-loops blocks context loops loops)
+    (match (opt-loop-rotation-loops pools blocks context loops loops)
       [(OptBlockListPassResult.Result next changed)
         (OptLoopRotationCtxResult.Result next changed context)])))
 
-(define (opt-loop-rotation-blocks-once [blocks : CompilerIrBlockList]) : OptBlockListPassResult
-  (match (opt-loop-rotation-blocks-once-result blocks)
+(define (opt-loop-rotation-blocks-once
+  [pools : AstNodePoolContext]
+  [blocks : CompilerIrBlockList]) : OptBlockListPassResult
+  (match (opt-loop-rotation-blocks-once-result pools blocks)
     [(OptLoopRotationCtxResult.Result next changed _)
       (OptBlockListPassResult.Result next changed)]))
 
 (define (opt-loop-rotation-blocks-fixed-result
+  [pools : AstNodePoolContext]
   [blocks : CompilerIrBlockList]
   [remaining : i64]) : OptBlockCtxResult
   (if (<= remaining 0)
     (OptBlockCtxResult.Result blocks (opt-cfg-context-empty) false)
-    (match (opt-loop-rotation-blocks-once-result blocks)
+    (match (opt-loop-rotation-blocks-once-result pools blocks)
       [(OptLoopRotationCtxResult.Result next changed context)
         (if changed
-          (opt-loop-rotation-blocks-fixed-result next (- remaining 1))
+          (opt-loop-rotation-blocks-fixed-result pools next (- remaining 1))
           ;; Every arm of `opt-loop-rotation-loops` returns its input verbatim
           ;; when it reports no change, so `context` is valid for `next`.
           (OptBlockCtxResult.Result next context true))])))
 
 (define (opt-loop-rotation-blocks-fixed
+  [pools : AstNodePoolContext]
   [blocks : CompilerIrBlockList]
   [remaining : i64]) : CompilerIrBlockList
-  (match (opt-loop-rotation-blocks-fixed-result blocks remaining)
+  (match (opt-loop-rotation-blocks-fixed-result pools blocks remaining)
     [(OptBlockCtxResult.Result out _ _) out]))
 
-(define (opt-loop-rotation-blocks-result [blocks : CompilerIrBlockList]) : OptBlockCtxResult
+(define (opt-loop-rotation-blocks-result
+  [pools : AstNodePoolContext]
+  [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   ;; The natural-loop finder is dominance based, so let it decide whether the
   ;; CFG contains a loop. Textual block order is not a loop property: inlining
   ;; and block layout may put a latch before its header.
   (if (opt-ssa-blocks-have-phi? blocks)
     (OptBlockCtxResult.Result blocks (opt-cfg-context-empty) false)
     (opt-loop-rotation-blocks-fixed-result
+      pools
       blocks
       (+ 1 (compiler-ir-block-list-count blocks)))))
 
-(define (opt-loop-rotation-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match (opt-loop-rotation-blocks-result blocks)
+(define (opt-loop-rotation-blocks
+  [pools : AstNodePoolContext]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match (opt-loop-rotation-blocks-result pools blocks)
     [(OptBlockCtxResult.Result out _ _) out]))
 
-(define (opt-loop-rotation-function-result [func : CompilerIrFunction]) : OptBlockCtxResult
+(define (opt-loop-rotation-function-result
+  [pools : AstNodePoolContext]
+  [func : CompilerIrFunction]) : OptBlockCtxResult
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (opt-loop-rotation-blocks-result blocks)]))
+      (opt-loop-rotation-blocks-result pools blocks)]))
 
-(define (opt-loop-rotation-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-loop-rotation-function
+  [pools : AstNodePoolContext]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (CompilerIrFunction.Function
@@ -15332,7 +15838,7 @@
         params
         ret-ty
         frame
-        (opt-loop-rotation-blocks blocks))]))
+        (opt-loop-rotation-blocks pools blocks))]))
 
 ;; --- post-SSA loop rotation (rotate_ssa) -------------------------------------
 ;;
@@ -16525,32 +17031,46 @@
     blocks
     (opt-licm-type-env-add-params params (OptSsaVarTypes.Nil))))
 
-(define (opt-licm-param-root [ty : AstType] [var : i64]) : OptLicmRoot
+(define (opt-licm-param-root
+  [type-segment-bases : i64]
+  [ty : AstType]
+  [var : i64]) : OptLicmRoot
   (match ty
     [(AstType.Ref _ _) (OptLicmRoot.Shared var)]
     [(AstType.MutRef _ _) (OptLicmRoot.Exclusive var)]
     [(AstType.Region _ inner)
-      (opt-licm-param-root (ast-node-pool-reader-type-get inner) var)]
+      (opt-licm-param-root
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner)
+        var)]
     [_ (OptLicmRoot.NoRoot)]))
 
 (define (opt-licm-root-env-seed-param!
+  [type-segment-bases : i64]
   [env : OptLicmRootEnv]
   [param : CompilerIrParam]) : unit
   (match param
     [(CompilerIrParam.Param _ ty var)
-      (opt-licm-root-env-bind! env var (opt-licm-param-root ty var))]))
+      (opt-licm-root-env-bind!
+        env
+        var
+        (opt-licm-param-root type-segment-bases ty var))]))
 
 (define (opt-licm-root-env-seed-params!
+  [type-segment-bases : i64]
   [env : OptLicmRootEnv]
   [params : CompilerIrParamList]) : unit
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) unit]
     [(CompilerIrParamList.Array seq)
-      (opt-licm-root-env-seed-params! env (compiler-ir-param-seq-to-list seq))]
+      (opt-licm-root-env-seed-params!
+        type-segment-bases
+        env
+        (compiler-ir-param-seq-to-list seq))]
     [(CompilerIrParamList.Cons param rest)
       (begin
-        (opt-licm-root-env-seed-param! env param)
-        (opt-licm-root-env-seed-params! env (box-get rest)))]))
+        (opt-licm-root-env-seed-param! type-segment-bases env param)
+        (opt-licm-root-env-seed-params! type-segment-bases env (box-get rest)))]))
 
 (define (opt-licm-phi-root
   [env : OptLicmRootEnv]
@@ -16601,23 +17121,33 @@
         unit)]
     [_ unit]))
 
-(define (opt-licm-array-header-type? [ty : AstType]) : bool
+(define (opt-licm-array-header-type? [type-segment-bases : i64] [ty : AstType]) : bool
   (match ty
     [(AstType.DynArray _) true]
     [(AstType.String) true]
     [(AstType.Str) true]
     [(AstType.Bytes) true]
     [(AstType.Ref _ inner)
-      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+      (opt-licm-array-header-type?
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [(AstType.MutRef _ inner)
-      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+      (opt-licm-array-header-type?
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [(AstType.Region _ inner)
-      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+      (opt-licm-array-header-type?
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [_ false]))
 
-(define (opt-licm-array-header-var? [types : OptSsaVarTypes] [var : i64]) : bool
+(define (opt-licm-array-header-var?
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [var : i64]) : bool
   (match (opt-ssa-var-type-lookup types var)
-    [(OptMaybeAstType.Some ty) (opt-licm-array-header-type? ty)]
+    [(OptMaybeAstType.Some ty)
+      (opt-licm-array-header-type? type-segment-bases ty)]
     [(OptMaybeAstType.No) false]))
 
 ;; #M-E: the data-pointer slot of an array/string descriptor is fat offset 0.
@@ -16633,6 +17163,7 @@
     [_ false]))
 
 (define (opt-licm-header-slot-gep?
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
@@ -16640,9 +17171,9 @@
   (match base
     [(CompilerIrValue.Var base-var)
       (and
-        (opt-licm-array-header-var? types base-var)
+        (opt-licm-array-header-var? type-segment-bases types base-var)
         (or
-          (opt-bounds-object-length-slot? offset ty)
+          (opt-bounds-object-length-slot? type-segment-bases offset ty)
           (opt-licm-data-slot? offset ty)))]
     [_ false]))
 
@@ -16661,6 +17192,7 @@
     [_ false]))
 
 (define (opt-licm-gep-kind
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [ptrs : OptLicmPtrEnv]
   [base : CompilerIrValue]
@@ -16679,8 +17211,8 @@
             ;; address and another for an inline field within the slot.
             (OptLicmPtrKind.DataElement object)]
           [_
-            (if (opt-licm-array-header-var? types base-var)
-              (if (opt-bounds-object-length-slot? offset ty)
+            (if (opt-licm-array-header-var? type-segment-bases types base-var)
+              (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
                 (OptLicmPtrKind.HeaderSlot base-var)
                 (if (opt-licm-data-slot? offset ty)
                   (OptLicmPtrKind.DataSlot base-var)
@@ -16792,6 +17324,7 @@
     [_ (opt-licm-store-summary-header-or-unknown-store)]))
 
 (define (opt-licm-provenance-state-instr
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [state : OptLicmStoreState]
   [instr : CompilerIrInstr]) : OptLicmStoreState
@@ -16813,7 +17346,13 @@
         (opt-licm-store-state-bind-ptr
           invalid
           dst
-          (opt-licm-gep-kind types (struct-get invalid ptrs) base offset ty))]
+          (opt-licm-gep-kind
+            type-segment-bases
+            types
+            (struct-get invalid ptrs)
+            base
+            offset
+            ty))]
       [(CompilerIrInstr.Load dst src _)
         (match src
           [(CompilerIrValue.Var ptr-var)
@@ -16831,6 +17370,7 @@
       [_ invalid])))
 
 (define (opt-licm-store-state-instr
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [state : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
@@ -16839,7 +17379,7 @@
   (let
     [provenance : OptLicmStoreState
       (if track-provenance?
-        (opt-licm-provenance-state-instr types state instr)
+        (opt-licm-provenance-state-instr type-segment-bases types state instr)
         state)]
     (match instr
       [(CompilerIrInstr.Call _ name _ _)
@@ -16910,6 +17450,7 @@
           (opt-licm-store-summary-from-effect (compiler-ir-instr-effect instr)))])))
 
 (define (opt-licm-store-state-instr-seq-from
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -16919,12 +17460,14 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     state
     (opt-licm-store-state-instr-seq-from
+      type-segment-bases
       types
       instrs
       (+ index 1)
       direct-call-clean
       track-provenance?
       (opt-licm-store-state-instr
+        type-segment-bases
         types
         state
         direct-call-clean
@@ -16932,12 +17475,14 @@
         (compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-licm-store-state-instr-seq
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
   [direct-call-clean : opt_i64_i64_map.Map]
   [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (opt-licm-store-state-instr-seq-from
+    type-segment-bases
     types
     instrs
     0
@@ -16946,6 +17491,7 @@
     state))
 
 (define (opt-licm-store-state-blocks
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [direct-call-clean : opt_i64_i64_map.Map]
@@ -16957,11 +17503,13 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (opt-licm-store-state-blocks
+            type-segment-bases
             types
             (box-get rest)
             direct-call-clean
             track-provenance?
             (opt-licm-store-state-instr-seq
+              type-segment-bases
               types
               instrs
               direct-call-clean
@@ -16969,6 +17517,7 @@
               state))])]
     [(CompilerIrBlockList.Array seq)
       (opt-licm-store-state-blocks
+        type-segment-bases
         types
         (compiler-ir-block-seq-to-list seq)
         direct-call-clean
@@ -16976,6 +17525,7 @@
         state)]))
 
 (define (opt-licm-provenance-state-instr-seq-from
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -16983,15 +17533,18 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     state
     (opt-licm-provenance-state-instr-seq-from
+      type-segment-bases
       types
       instrs
       (+ index 1)
       (opt-licm-provenance-state-instr
+        type-segment-bases
         types
         state
         (compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-licm-provenance-state-blocks
+  [type-segment-bases : i64]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [state : OptLicmStoreState]) : OptLicmStoreState
@@ -17001,11 +17554,18 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (opt-licm-provenance-state-blocks
+            type-segment-bases
             types
             (box-get rest)
-            (opt-licm-provenance-state-instr-seq-from types instrs 0 state))])]
+            (opt-licm-provenance-state-instr-seq-from
+              type-segment-bases
+              types
+              instrs
+              0
+              state))])]
     [(CompilerIrBlockList.Array seq)
       (opt-licm-provenance-state-blocks
+        type-segment-bases
         types
         (compiler-ir-block-seq-to-list seq)
         state)]))
@@ -17015,6 +17575,7 @@
 ;; backedge or later-listed predecessor was not known on the first pass; an
 ;; unresolved/mixed join remains unrooted and therefore conservative.
 (define (opt-licm-provenance-state-from-function
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]) : OptLicmStoreState
@@ -17024,19 +17585,22 @@
     ;; megabytes across compiler optimization; let the generated hashmap grow
     ;; only when a function actually carries many checked/fresh roots.
     [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
-    [_params : unit (opt-licm-root-env-seed-params! roots params)]
+    [_params : unit
+      (opt-licm-root-env-seed-params! type-segment-bases roots params)]
     [initial : OptLicmStoreState
       (opt-licm-store-state-with-provenance (OptLicmPtrEnv.Nil) roots)]
     [first : OptLicmStoreState
-      (opt-licm-provenance-state-blocks types blocks initial)]
-    (opt-licm-provenance-state-blocks types blocks first)))
+      (opt-licm-provenance-state-blocks type-segment-bases types blocks initial)]
+    (opt-licm-provenance-state-blocks type-segment-bases types blocks first)))
 
 (define (opt-licm-store-summary-blocks
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
   (let
     [state : OptLicmStoreState
       (opt-licm-store-state-blocks
+        type-segment-bases
         (OptSsaVarTypes.Nil)
         blocks
         (opt_i64_i64_map.with-capacity 1)
@@ -17075,6 +17639,7 @@
             (opt-licm-store-roots-safe? store-roots load-root))))]))
 
 (define (opt-licm-candidate?
+  [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
   [hoisted : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
@@ -17105,7 +17670,7 @@
           (opt-licm-root-of-value roots base)
           (and
             (opt-licm-store-summary-header-load-safe? legacy-store-summary)
-            (opt-licm-header-slot-gep? types base offset ty))))]
+            (opt-licm-header-slot-gep? type-segment-bases types base offset ty))))]
     [(CompilerIrInstr.Load dst src _)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -17130,6 +17695,7 @@
     [(option_i64.None) hoisted]))
 
 (define (opt-licm-filter-instr-seq-from
+  [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -17151,6 +17717,7 @@
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (if (opt-licm-candidate?
+        type-segment-bases
         loop-defs
         hoisted
         sources
@@ -17163,6 +17730,7 @@
         any-call?
         instr)
         (match (opt-licm-filter-instr-seq-from
+          type-segment-bases
           loop-defs
           instrs
           (+ index 1)
@@ -17182,6 +17750,7 @@
               next-hoisted
               true)])
         (match (opt-licm-filter-instr-seq-from
+          type-segment-bases
           loop-defs
           instrs
           (+ index 1)
@@ -17202,6 +17771,7 @@
               changed)])))))
 
 (define (opt-licm-filter-instr-seq
+  [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [sources : opt_i64_i64_map.Map]
@@ -17214,6 +17784,7 @@
   [any-call? : bool]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
+    type-segment-bases
     loop-defs
     instrs
     0
@@ -17228,6 +17799,7 @@
     hoisted))
 
 (define (opt-licm-filter-body-blocks
+  [type-segment-bases : i64]
   [loop-defs : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [sources : opt_i64_i64_map.Map]
@@ -17250,6 +17822,7 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (match (opt-licm-filter-instr-seq
+            type-segment-bases
             loop-defs
             instrs
             sources
@@ -17263,6 +17836,7 @@
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
+                type-segment-bases
                 loop-defs
                 (box-get rest)
                 sources
@@ -17288,6 +17862,7 @@
                     (or block-changed rest-changed))])])])]
     [(CompilerIrBlockList.Array seq)
       (opt-licm-filter-body-blocks
+        type-segment-bases
         loop-defs
         (compiler-ir-block-seq-to-list seq)
         sources
@@ -17420,6 +17995,7 @@
 ;; operands are already substituted through the env-so-far): loads must match
 ;; on source value + type, geps on base + offset + element type.
 (define (opt-licm-dup-of
+  [type-segment-bases : i64]
   [selected : CompilerIrInstrList]
   [instr : CompilerIrInstr]) : OptLicmDup
   (match selected
@@ -17429,27 +18005,30 @@
         [(CompilerIrInstr.Load pdst psrc pty)
           (match instr
             [(CompilerIrInstr.Load _ src ty)
-              (if (and (opt-value-eq psrc src) (opt-type-eq pty ty))
+              (if (and
+                (opt-value-eq psrc src)
+                (opt-type-eq type-segment-bases pty ty))
                 (OptLicmDupVar pdst)
-                (opt-licm-dup-of (box-get rest) instr))]
-            [_ (opt-licm-dup-of (box-get rest) instr)])]
+                (opt-licm-dup-of type-segment-bases (box-get rest) instr))]
+            [_ (opt-licm-dup-of type-segment-bases (box-get rest) instr)])]
         [(CompilerIrInstr.Gep pdst pbase poffset pty)
           (match instr
             [(CompilerIrInstr.Gep _ base offset ty)
               (if (and
                 (opt-value-eq pbase base)
                 (opt-value-eq poffset offset)
-                (opt-type-eq pty ty))
+                (opt-type-eq type-segment-bases pty ty))
                 (OptLicmDupVar pdst)
-                (opt-licm-dup-of (box-get rest) instr))]
-            [_ (opt-licm-dup-of (box-get rest) instr)])]
-        [_ (opt-licm-dup-of (box-get rest) instr)])]))
+                (opt-licm-dup-of type-segment-bases (box-get rest) instr))]
+            [_ (opt-licm-dup-of type-segment-bases (box-get rest) instr)])]
+        [_ (opt-licm-dup-of type-segment-bases (box-get rest) instr)])]))
 
 ;; Walk the hoisted list in program order, accumulating dup-dst -> canonical
 ;; var bindings. Each instruction is operand-substituted through the env built
 ;; so far BEFORE comparison, so a load through a duplicate gep matches the
 ;; canonical load (its source resolves to the canonical gep dst).
 (define (opt-licm-dedup-env
+  [type-segment-bases : i64]
   [moved : CompilerIrInstrList]
   [selected : CompilerIrInstrList]
   [env : OptCopyEnv]) : OptCopyEnv
@@ -17458,18 +18037,24 @@
     [(CompilerIrInstrList.Cons instr rest)
       (let
         [subst : CompilerIrInstr (opt-copy-subst-instr env instr)]
-        (match (opt-licm-dup-of selected subst)
+        (match (opt-licm-dup-of type-segment-bases selected subst)
           [(OptLicmDupVar canon)
             (match (opt-instr-def-var instr)
               [(option_i64.Some dst)
                 (opt-licm-dedup-env
+                  type-segment-bases
                   (box-get rest)
                   selected
                   (OptCopyEnv.Cons dst (CompilerIrValue.Var canon) (box env)))]
               [(option_i64.None)
-                (opt-licm-dedup-env (box-get rest) selected env)])]
+                (opt-licm-dedup-env
+                  type-segment-bases
+                  (box-get rest)
+                  selected
+                  env)])]
           [(OptLicmDupNone)
             (opt-licm-dedup-env
+              type-segment-bases
               (box-get rest)
               (compiler-ir-instr-cons subst selected)
               env)]))]))
@@ -17735,6 +18320,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-licm-apply-loop
+  [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
@@ -17753,6 +18339,7 @@
             (opt_i64_i64_map.with-capacity map-capacity))]
         [store-state : OptLicmStoreState
           (opt-licm-store-state-blocks
+            type-segment-bases
             types
             body-blocks
             direct-call-clean
@@ -17802,6 +18389,7 @@
           (struct-get store-state store-roots)]
         [any-call? : bool (struct-get store-state any-call?)]
         (match (opt-licm-filter-body-blocks
+          type-segment-bases
           loop-defs
           body-blocks
           sources
@@ -17821,6 +18409,7 @@
               (let
                 [dedup-env : OptCopyEnv
                   (opt-licm-dedup-env
+                    type-segment-bases
                     hoisted
                     (CompilerIrInstrList.Nil)
                     (OptCopyEnv.Nil))]
@@ -17845,6 +18434,7 @@
     [(OptLoopPreheader.No) (OptBlockListPassResult.Result blocks false)]))
 
 (define (opt-licm-apply-loops
+  [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
@@ -17855,6 +18445,7 @@
     [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
       (match (opt-licm-apply-loop
+        type-segment-bases
         sources
         types
         provenance
@@ -17863,6 +18454,7 @@
         loop)
         [(OptBlockListPassResult.Result loop-blocks loop-changed)
           (match (opt-licm-apply-loops
+            type-segment-bases
             sources
             types
             provenance
@@ -17875,15 +18467,24 @@
                 (or loop-changed rest-changed))])])]))
 
 (define (opt-licm-blocks-with-context-and-direct-call-clean
+  [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : OptBlockListPassResult
-  (opt-licm-apply-loops sources types provenance direct-call-clean loops blocks))
+  (opt-licm-apply-loops
+    type-segment-bases
+    sources
+    types
+    provenance
+    direct-call-clean
+    loops
+    blocks))
 
 (define (opt-licm-function-with-context-result-and-direct-call-clean
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [direct-call-clean : opt_i64_i64_map.Map]
@@ -17911,10 +18512,12 @@
                 (let
                   [provenance : OptLicmStoreState
                     (opt-licm-provenance-state-from-function
+                      type-segment-bases
                       params
                       types
                       blocks)]
                   (match (opt-licm-blocks-with-context-and-direct-call-clean
+                    type-segment-bases
                     sources
                     types
                     provenance
@@ -17955,36 +18558,46 @@
       (OptFunctionCtxResult.Result func context)]))
 
 (define (opt-licm-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   (opt-licm-function-with-context-result-and-direct-call-clean
+    type-segment-bases
     context
     false
     (opt_i64_i64_map.with-capacity 1)
     func))
 
 (define (opt-licm-function-with-context
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-licm-function-with-context-result context func)
+  (match (opt-licm-function-with-context-result type-segment-bases context func)
     [(OptFunctionCtxResult.Result next _) next]))
 
 (define (opt-licm-function-with-direct-call-clean
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [direct-call-clean : opt_i64_i64_map.Map]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-licm-function-with-context-result-and-direct-call-clean
+        type-segment-bases
         (opt-cfg-context-build blocks)
         false
         direct-call-clean
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
-(define (opt-licm-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-licm-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (opt-licm-function-with-context (opt-cfg-context-build blocks) func)]))
+      (opt-licm-function-with-context
+        type-segment-bases
+        (opt-cfg-context-build blocks)
+        func)]))
 
 ;; --- simple induction-derived cleanup --------------------------------------
 ;;
@@ -18132,6 +18745,7 @@
     [_ (option_i64.None)]))
 
 (define (opt-induction-update-step-instr
+  [type-segment-bases : i64]
   [instr : CompilerIrInstr]
   [phi-var : i64]
   [next-var : i64]
@@ -18140,13 +18754,14 @@
     [(CompilerIrInstr.BinOp dst op lhs rhs instr-ty)
       (if (and
         (= dst next-var)
-        (opt-type-eq instr-ty ty)
+        (opt-type-eq type-segment-bases instr-ty ty)
         (opt-induction-i64-type? ty))
         (opt-induction-step-from-binop op lhs rhs phi-var)
         (option_i64.None))]
     [_ (option_i64.None)]))
 
 (define (opt-induction-find-update-instr-seq-from
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [phi-var : i64]
@@ -18159,8 +18774,14 @@
       (match (opt-instr-def-var instr)
         [(option_i64.Some dst)
           (if (= dst next-var)
-            (opt-induction-update-step-instr instr phi-var next-var ty)
+            (opt-induction-update-step-instr
+              type-segment-bases
+              instr
+              phi-var
+              next-var
+              ty)
             (opt-induction-find-update-instr-seq-from
+              type-segment-bases
               instrs
               (+ index 1)
               phi-var
@@ -18168,6 +18789,7 @@
               ty))]
         [(option_i64.None)
           (opt-induction-find-update-instr-seq-from
+            type-segment-bases
             instrs
             (+ index 1)
             phi-var
@@ -18175,13 +18797,21 @@
             ty)]))))
 
 (define (opt-induction-find-update-instr-seq
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [phi-var : i64]
   [next-var : i64]
   [ty : AstType]) : option_i64.Option
-  (opt-induction-find-update-instr-seq-from instrs 0 phi-var next-var ty))
+  (opt-induction-find-update-instr-seq-from
+    type-segment-bases
+    instrs
+    0
+    phi-var
+    next-var
+    ty))
 
 (define (opt-induction-find-update-blocks
+  [type-segment-bases : i64]
   [body-blocks : CompilerIrBlockList]
   [phi-var : i64]
   [next-var : i64]
@@ -18192,6 +18822,7 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (match (opt-induction-find-update-instr-seq
+            type-segment-bases
             instrs
             phi-var
             next-var
@@ -18199,12 +18830,14 @@
             [(option_i64.Some step) (option_i64.Some step)]
             [(option_i64.None)
               (opt-induction-find-update-blocks
+                type-segment-bases
                 (box-get rest)
                 phi-var
                 next-var
                 ty)])])]
     [(CompilerIrBlockList.Array seq)
       (opt-induction-find-update-blocks
+        type-segment-bases
         (compiler-ir-block-seq-to-list seq)
         phi-var
         next-var
@@ -18263,6 +18896,7 @@
       [(option_i64.None) (option_i64.None)])))
 
 (define (opt-induction-fact-from-phi
+  [type-segment-bases : i64]
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : i64]
@@ -18276,6 +18910,7 @@
           (opt-natural-loop-latch loop))
           [(OptInductionPhiInputs.Some start next-var)
             (match (opt-induction-find-update-blocks
+              type-segment-bases
               body-blocks
               phi-var
               next-var
@@ -18289,6 +18924,7 @@
                 (match (opt-induction-mov-chain-var body-blocks next-var 0)
                   [(option_i64.Some resolved)
                     (match (opt-induction-find-update-blocks
+                      type-segment-bases
                       body-blocks
                       phi-var
                       resolved
@@ -18303,6 +18939,7 @@
     [_ (OptMaybeInductionFact.No)]))
 
 (define (opt-induction-find-fact-instr-seq-from
+  [type-segment-bases : i64]
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : i64]
@@ -18311,6 +18948,7 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptMaybeInductionFact.No)
     (match (opt-induction-fact-from-phi
+      type-segment-bases
       body-blocks
       loop
       preheader
@@ -18318,6 +18956,7 @@
       [(OptMaybeInductionFact.Some fact) (OptMaybeInductionFact.Some fact)]
       [(OptMaybeInductionFact.No)
         (opt-induction-find-fact-instr-seq-from
+          type-segment-bases
           body-blocks
           loop
           preheader
@@ -18325,13 +18964,21 @@
           (+ index 1))])))
 
 (define (opt-induction-find-fact-instr-seq
+  [type-segment-bases : i64]
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : i64]
   [instrs : CompilerIrInstrSeq]) : OptMaybeInductionFact
-  (opt-induction-find-fact-instr-seq-from body-blocks loop preheader instrs 0))
+  (opt-induction-find-fact-instr-seq-from
+    type-segment-bases
+    body-blocks
+    loop
+    preheader
+    instrs
+    0))
 
 (define (opt-induction-find-fact
+  [type-segment-bases : i64]
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : i64]) : OptMaybeInductionFact
@@ -18339,7 +18986,12 @@
     [(OptMaybeBlock.Some block)
       (match block
         [(CompilerIrBlock.Block _ instrs)
-          (opt-induction-find-fact-instr-seq body-blocks loop preheader instrs)])]
+          (opt-induction-find-fact-instr-seq
+            type-segment-bases
+            body-blocks
+            loop
+            preheader
+            instrs)])]
     [(OptMaybeBlock.No) (OptMaybeInductionFact.No)]))
 
 (define (opt-induction-blocker-instr-seq-at?
@@ -18799,12 +19451,16 @@
 ;; each use; a pointer IV there only adds a latch add and a loop-live range.
 ;; Fire the address deriveds only when the per-iteration byte stride does not
 ;; fold (16-byte enum elements, 24-byte entries, ...).
-(define (opt-induction-gep-stride-pays? [scale : i64] [ty : AstType]) : bool
+(define (opt-induction-gep-stride-pays?
+  [type-segment-bases : i64]
+  [scale : i64]
+  [ty : AstType]) : bool
   (let
-    [stride : i64 (* scale (opt-load-loc-type-size ty))]
+    [stride : i64 (* scale (opt-load-loc-type-size type-segment-bases ty))]
     (and (> stride 2) (not (= stride 4)) (not (= stride 8)))))
 
 (define (opt-induction-find-derived-instr
+  [type-segment-bases : i64]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
@@ -18826,7 +19482,7 @@
           (match (opt-induction-value-offset offsets offset phi-var)
             [(option_i64.Some derived-offset)
               (if (and
-                (opt-induction-gep-stride-pays? 1 ty)
+                (opt-induction-gep-stride-pays? type-segment-bases 1 ty)
                 (opt-induction-value-base-invariant? loop-defs base))
                 (OptMaybeInductionDerived.Some
                   (OptInductionDerived.Gep base derived-offset ty))
@@ -18837,7 +19493,10 @@
                   (match (opt_i64_i64_map.get (& scaled) offset-var)
                     [(opt_i64_i64_map.LookupFound scale)
                       (if (and
-                        (opt-induction-gep-stride-pays? scale ty)
+                        (opt-induction-gep-stride-pays?
+                          type-segment-bases
+                          scale
+                          ty)
                         (opt-induction-value-base-invariant? loop-defs base))
                         (OptMaybeInductionDerived.Some
                           (OptInductionDerived.GepScaled base scale ty))
@@ -18848,6 +19507,7 @@
         [_ (OptMaybeInductionDerived.No)])]))
 
 (define (opt-induction-derived-eq?
+  [type-segment-bases : i64]
   [left : OptInductionDerived]
   [right : OptInductionDerived]) : bool
   (match left
@@ -18857,7 +19517,7 @@
           (and
             (= left-scale right-scale)
             (= left-offset right-offset)
-            (opt-type-eq left-ty right-ty))]
+            (opt-type-eq type-segment-bases left-ty right-ty))]
         [_ false])]
     [(OptInductionDerived.Gep left-base left-offset left-ty)
       (match right
@@ -18865,7 +19525,7 @@
           (and
             (opt-value-eq left-base right-base)
             (= left-offset right-offset)
-            (opt-type-eq left-ty right-ty))]
+            (opt-type-eq type-segment-bases left-ty right-ty))]
         [_ false])]
     [(OptInductionDerived.GepScaled left-base left-scale left-ty)
       (match right
@@ -18873,18 +19533,22 @@
           (and
             (opt-value-eq left-base right-base)
             (= left-scale right-scale)
-            (opt-type-eq left-ty right-ty))]
+            (opt-type-eq type-segment-bases left-ty right-ty))]
         [_ false])]))
 
 (define (opt-induction-derived-list-contains?
+  [type-segment-bases : i64]
   [deriveds : OptInductionDerivedList]
   [derived : OptInductionDerived]) : bool
   (match deriveds
     [(OptInductionDerivedList.Nil) false]
     [(OptInductionDerivedList.Cons head rest)
-      (if (opt-induction-derived-eq? head derived)
+      (if (opt-induction-derived-eq? type-segment-bases head derived)
         true
-        (opt-induction-derived-list-contains? (box-get rest) derived))]))
+        (opt-induction-derived-list-contains?
+          type-segment-bases
+          (box-get rest)
+          derived))]))
 
 (define (opt-induction-derived-list-append
   [deriveds : OptInductionDerivedList]
@@ -18898,9 +19562,10 @@
         (box (opt-induction-derived-list-append (box-get rest) derived)))]))
 
 (define (opt-induction-derived-list-append-unique
+  [type-segment-bases : i64]
   [deriveds : OptInductionDerivedList]
   [derived : OptInductionDerived]) : OptInductionDerivedList
-  (if (opt-induction-derived-list-contains? deriveds derived)
+  (if (opt-induction-derived-list-contains? type-segment-bases deriveds derived)
     deriveds
     (opt-induction-derived-list-append deriveds derived)))
 
@@ -18920,6 +19585,7 @@
         (opt-induction-derived-list-slot-count (box-get rest)))]))
 
 (define (opt-induction-collect-derived-instr-seq-from
+  [type-segment-bases : i64]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
@@ -18930,6 +19596,7 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     deriveds
     (match (opt-induction-find-derived-instr
+      type-segment-bases
       fact
       offsets
       scaled
@@ -18937,15 +19604,20 @@
       (compiler-ir-instr-seq-ref instrs index))
       [(OptMaybeInductionDerived.Some derived)
         (opt-induction-collect-derived-instr-seq-from
+          type-segment-bases
           fact
           offsets
           scaled
           loop-defs
           instrs
           (+ index 1)
-          (opt-induction-derived-list-append-unique deriveds derived))]
+          (opt-induction-derived-list-append-unique
+            type-segment-bases
+            deriveds
+            derived))]
       [(OptMaybeInductionDerived.No)
         (opt-induction-collect-derived-instr-seq-from
+          type-segment-bases
           fact
           offsets
           scaled
@@ -18955,6 +19627,7 @@
           deriveds)])))
 
 (define (opt-induction-collect-derived-instr-seq
+  [type-segment-bases : i64]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
@@ -18962,6 +19635,7 @@
   [instrs : CompilerIrInstrSeq]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
   (opt-induction-collect-derived-instr-seq-from
+    type-segment-bases
     fact
     offsets
     scaled
@@ -19044,6 +19718,7 @@
     (opt-induction-switch-predecessor? blocks label)))
 
 (define (opt-induction-collect-derived-blocks
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
@@ -19058,6 +19733,7 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (opt-induction-collect-derived-blocks
+            type-segment-bases
             index
             fact
             offsets
@@ -19068,6 +19744,7 @@
             (if (opt-induction-switch-arm? index all-body-blocks label instrs)
               deriveds
               (opt-induction-collect-derived-instr-seq
+                type-segment-bases
                 fact
                 offsets
                 scaled
@@ -19076,6 +19753,7 @@
                 deriveds)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-induction-collect-derived-blocks
+        type-segment-bases
         index
         fact
         offsets
@@ -19086,6 +19764,7 @@
         deriveds)]))
 
 (define (opt-induction-derived-matches?
+  [type-segment-bases : i64]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
@@ -19100,7 +19779,7 @@
               (match op
                 [(CompilerIrBinOp.Mul)
                   (and
-                    (opt-type-eq instr-ty ty)
+                    (opt-type-eq type-segment-bases instr-ty ty)
                     (match (opt-induction-mul-derived
                       offsets
                       lhs
@@ -19109,7 +19788,10 @@
                       step
                       ty)
                       [(OptMaybeInductionDerived.Some found)
-                        (opt-induction-derived-eq? found derived)]
+                        (opt-induction-derived-eq?
+                          type-segment-bases
+                          found
+                          derived)]
                       [(OptMaybeInductionDerived.No) false]))]
                 [_ false])]
             [_ false])]
@@ -19117,7 +19799,7 @@
           (match instr
             [(CompilerIrInstr.Gep _ instr-base instr-offset instr-ty)
               (and
-                (opt-type-eq instr-ty ty)
+                (opt-type-eq type-segment-bases instr-ty ty)
                 (opt-value-eq instr-base base)
                 (match (opt-induction-value-offset offsets instr-offset phi-var)
                   [(option_i64.Some found-offset)
@@ -19128,7 +19810,7 @@
           (match instr
             [(CompilerIrInstr.Gep _ instr-base instr-offset instr-ty)
               (and
-                (opt-type-eq instr-ty ty)
+                (opt-type-eq type-segment-bases instr-ty ty)
                 (opt-value-eq instr-base base)
                 (match instr-offset
                   [(CompilerIrValue.Var offset-var)
@@ -19144,13 +19826,20 @@
 ;; backend truncate the 64-bit pointer (spill/reload sizing), which used to
 ;; crash byte-buffer loops as soon as the mov-chase let the pass fire there.
 (define (opt-induction-rewrite-instr
+  [type-segment-bases : i64]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
-  (if (opt-induction-derived-matches? fact offsets scaled derived instr)
+  (if (opt-induction-derived-matches?
+    type-segment-bases
+    fact
+    offsets
+    scaled
+    derived
+    instr)
     (match (opt-instr-def-var instr)
       [(option_i64.Some dst)
         (CompilerIrInstr.Mov
@@ -19161,6 +19850,7 @@
     instr))
 
 (define (opt-induction-rewrite-instr-seq-from
+  [type-segment-bases : i64]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
@@ -19172,6 +19862,7 @@
     CompilerIrInstrList.Nil
     (compiler-ir-instr-cons
       (opt-induction-rewrite-instr
+        type-segment-bases
         fact
         offsets
         scaled
@@ -19179,6 +19870,7 @@
         derived-phi
         (compiler-ir-instr-seq-ref instrs index))
       (opt-induction-rewrite-instr-seq-from
+        type-segment-bases
         fact
         offsets
         scaled
@@ -19188,6 +19880,7 @@
         (+ index 1)))))
 
 (define (opt-induction-rewrite-instr-seq
+  [type-segment-bases : i64]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
@@ -19195,6 +19888,7 @@
   [derived-phi : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-induction-rewrite-instr-seq-from
+    type-segment-bases
     fact
     offsets
     scaled
@@ -19204,6 +19898,7 @@
     0))
 
 (define (opt-induction-rewrite-blocks
+  [type-segment-bases : i64]
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [fact : OptInductionFact]
@@ -19225,6 +19920,7 @@
               (compiler-ir-block
                 label
                 (opt-induction-rewrite-instr-seq
+                  type-segment-bases
                   fact
                   offsets
                   scaled
@@ -19233,6 +19929,7 @@
                   instrs))
               block)
             (opt-induction-rewrite-blocks
+              type-segment-bases
               body
               index
               fact
@@ -19244,6 +19941,7 @@
               (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-induction-rewrite-blocks
+        type-segment-bases
         body
         index
         fact
@@ -19255,6 +19953,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-induction-rewrite-derived-list-blocks
+  [type-segment-bases : i64]
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [fact : OptInductionFact]
@@ -19267,6 +19966,7 @@
     [(OptInductionDerivedList.Nil) blocks]
     [(OptInductionDerivedList.Cons derived rest)
       (opt-induction-rewrite-derived-list-blocks
+        type-segment-bases
         body
         index
         fact
@@ -19275,6 +19975,7 @@
         (box-get rest)
         (+ frame (opt-induction-derived-slot-count derived))
         (opt-induction-rewrite-blocks
+          type-segment-bases
           body
           index
           fact
@@ -19548,6 +20249,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-induction-apply-loop
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [blocks : CompilerIrBlockList]
   [frame : i64]
@@ -19560,7 +20262,11 @@
           (opt-natural-loop-current-body-blocks loop blocks)]
         (if (opt-induction-loop-blocked? body-blocks)
           (OptInductionApplyResult.Result blocks frame false)
-          (match (opt-induction-find-fact body-blocks loop preheader)
+          (match (opt-induction-find-fact
+            type-segment-bases
+            body-blocks
+            loop
+            preheader)
             [(OptMaybeInductionFact.Some fact)
               (let
                 [loop-defs : opt_i64_i64_map.Map
@@ -19574,6 +20280,7 @@
                   (opt-induction-scaled-env-blocks fact loop-defs body-blocks)]
                 [deriveds : OptInductionDerivedList
                   (opt-induction-collect-derived-blocks
+                    type-segment-bases
                     index
                     fact
                     offsets
@@ -19589,6 +20296,7 @@
                   (let
                     [rewritten : CompilerIrBlockList
                       (opt-induction-rewrite-derived-list-blocks
+                        type-segment-bases
                         body
                         index
                         fact
@@ -19623,6 +20331,7 @@
     [(OptLoopPreheader.No) (OptInductionApplyResult.Result blocks frame false)]))
 
 (define (opt-induction-apply-loops
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]
@@ -19632,9 +20341,15 @@
     [(OptNaturalLoopList.Nil)
       (OptInductionApplyResult.Result blocks frame changed)]
     [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-induction-apply-loop index blocks frame loop)
+      (match (opt-induction-apply-loop
+        type-segment-bases
+        index
+        blocks
+        frame
+        loop)
         [(OptInductionApplyResult.Result next-blocks next-frame loop-changed)
           (opt-induction-apply-loops
+            type-segment-bases
             index
             (box-get rest)
             next-blocks
@@ -19642,6 +20357,7 @@
             (or changed loop-changed))])]))
 
 (define (opt-induction-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
@@ -19651,6 +20367,7 @@
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
           (match (opt-induction-apply-loops
+            type-segment-bases
             (struct-get context index)
             (opt-cfg-natural-loops-with-context blocks context)
             blocks
@@ -19681,15 +20398,25 @@
       (OptFunctionCtxResult.Result func context)]))
 
 (define (opt-induction-function-with-context
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-induction-function-with-context-result context false func)
+  (match (opt-induction-function-with-context-result
+    type-segment-bases
+    context
+    false
+    func)
     [(OptFunctionCtxResult.Result next _) next]))
 
-(define (opt-induction-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-induction-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (opt-induction-function-with-context (opt-cfg-context-build blocks) func)]))
+      (opt-induction-function-with-context
+        type-segment-bases
+        (opt-cfg-context-build blocks)
+        func)]))
 
 ;; Branch folding can leave both source blocks reachable while removing only
 ;; one source-to-phi edge. Filter against the destination's actual reachable
@@ -20029,6 +20756,7 @@
       true)))
 
 (define (opt-bool-branch-chain-collect-value!
+  [type-segment-bases : i64]
   [defs : (Array OptBoolBranchDef)]
   [refs : (Array i64)]
   [visited : (Array bool)]
@@ -20051,13 +20779,15 @@
                       (match op
                         [(CompilerIrBinOp.And)
                           (and
-                            (opt-type-eq ty (AstType.Bool))
+                            (opt-type-eq type-segment-bases ty (AstType.Bool))
                             (opt-bool-branch-chain-collect-value!
+                              type-segment-bases
                               defs
                               refs
                               visited
                               lhs)
                             (opt-bool-branch-chain-collect-value!
+                              type-segment-bases
                               defs
                               refs
                               visited
@@ -20415,6 +21145,7 @@
             new-preds)])]))
 
 (define (opt-bool-branch-chain-try-block
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [defs : (Array OptBoolBranchDef)]
@@ -20453,6 +21184,7 @@
                                 (opt-cfg-fill-bool! visited frame false)]
                               [collected? : bool
                                 (opt-bool-branch-chain-collect-value!
+                                  type-segment-bases
                                   defs
                                   refs
                                   visited
@@ -20610,6 +21342,7 @@
             [_ (OptBoolBranchChainRewrite.No)])))]))
 
 (define (opt-bool-branch-chain-first-list
+  [type-segment-bases : i64]
   [all-blocks : CompilerIrBlockList]
   [frame : i64]
   [defs : (Array OptBoolBranchDef)]
@@ -20618,11 +21351,18 @@
   (match blocks
     [(CompilerIrBlockList.Nil) (OptBoolBranchChainRewrite.No)]
     [(CompilerIrBlockList.Cons block rest)
-      (match (opt-bool-branch-chain-try-block all-blocks frame defs uses block)
+      (match (opt-bool-branch-chain-try-block
+        type-segment-bases
+        all-blocks
+        frame
+        defs
+        uses
+        block)
         [(OptBoolBranchChainRewrite.Some next next-frame)
           (OptBoolBranchChainRewrite.Some next next-frame)]
         [(OptBoolBranchChainRewrite.No)
           (opt-bool-branch-chain-first-list
+            type-segment-bases
             all-blocks
             frame
             defs
@@ -20630,6 +21370,7 @@
             (box-get rest))])]
     [(CompilerIrBlockList.Array seq)
       (opt-bool-branch-chain-first-list
+        type-segment-bases
         all-blocks
         frame
         defs
@@ -20637,6 +21378,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-bool-branch-chain-blocks-raw
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [remaining : i64]) : OptBoolBranchChainResult
@@ -20645,11 +21387,18 @@
     (let
       [defs : (Array OptBoolBranchDef) (opt-bool-branch-defs frame blocks)]
       [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
-      (match (opt-bool-branch-chain-first-list blocks frame defs uses blocks)
+      (match (opt-bool-branch-chain-first-list
+        type-segment-bases
+        blocks
+        frame
+        defs
+        uses
+        blocks)
         [(OptBoolBranchChainRewrite.No)
           (OptBoolBranchChainResult.Result blocks frame false)]
         [(OptBoolBranchChainRewrite.Some next next-frame)
           (match (opt-bool-branch-chain-blocks-raw
+            type-segment-bases
             next
             next-frame
             (- remaining 1))
@@ -20905,6 +21654,7 @@
           target-label))]))
 
 (define (opt-bool-branch-fuse-constant-phi!
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
@@ -20918,7 +21668,7 @@
   (if (or
     (not (= dst cond-var))
     (not (= (opt-bool-branch-use-count uses dst) 1))
-    (not (opt-type-eq ty (AstType.Bool)))
+    (not (opt-type-eq type-segment-bases ty (AstType.Bool)))
     (= merge-label true-label)
     (= merge-label false-label))
     false
@@ -21083,6 +21833,7 @@
               true))])]))
 
 (define (opt-bool-branch-fuse-compare-phi!
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
@@ -21096,7 +21847,7 @@
   (if (or
     (not (= dst cond-var))
     (not (= (opt-bool-branch-use-count uses dst) 1))
-    (not (opt-type-eq ty (AstType.Bool)))
+    (not (opt-type-eq type-segment-bases ty (AstType.Bool)))
     (= merge-label true-label)
     (= merge-label false-label)
     (opt-bool-branch-target-has-phi? blocks true-label)
@@ -21130,6 +21881,7 @@
                 false-label))))])))
 
 (define (opt-bool-branch-fuse-phi!
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
@@ -21141,6 +21893,7 @@
   [true-label : i64]
   [false-label : i64]) : bool
   (if (opt-bool-branch-fuse-constant-phi!
+    type-segment-bases
     blocks
     index
     uses
@@ -21153,6 +21906,7 @@
     false-label)
     true
     (opt-bool-branch-fuse-compare-phi!
+      type-segment-bases
       blocks
       index
       uses
@@ -21165,6 +21919,7 @@
       false-label)))
 
 (define (opt-bool-branch-fuse-block!
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
@@ -21181,6 +21936,7 @@
                   true-label
                   false-label)
                 (opt-bool-branch-fuse-phi!
+                  type-segment-bases
                   blocks
                   index
                   uses
@@ -21195,6 +21951,7 @@
           [_ false]))]))
 
 (define (opt-bool-branch-fuse-first-list!
+  [type-segment-bases : i64]
   [all-blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
@@ -21202,9 +21959,19 @@
   (match blocks
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Cons block rest)
-      (if (opt-bool-branch-fuse-block! all-blocks index uses block)
+      (if (opt-bool-branch-fuse-block!
+        type-segment-bases
+        all-blocks
+        index
+        uses
+        block)
         true
-        (opt-bool-branch-fuse-first-list! all-blocks index uses (box-get rest)))]
+        (opt-bool-branch-fuse-first-list!
+          type-segment-bases
+          all-blocks
+          index
+          uses
+          (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
       (let
         [pos : i64 0]
@@ -21212,6 +21979,7 @@
         (begin
           (while (< pos count)
             (if (opt-bool-branch-fuse-block!
+              type-segment-bases
               all-blocks
               index
               uses
@@ -21233,6 +22001,7 @@
       (opt-bool-branch-clone-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-bool-branch-fuse-blocks-raw
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [remaining : i64]) : OptBlockListPassResult
@@ -21241,8 +22010,14 @@
     (let
       [index : OptCfgIndex (opt-cfg-index-build blocks)]
       [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
-      (if (opt-bool-branch-fuse-first-list! blocks index uses blocks)
+      (if (opt-bool-branch-fuse-first-list!
+        type-segment-bases
+        blocks
+        index
+        uses
+        blocks)
         (match (opt-bool-branch-fuse-blocks-raw
+          type-segment-bases
           (opt-cfg-simplify-blocks blocks)
           frame
           (- remaining 1))
@@ -21251,15 +22026,19 @@
         (OptBlockListPassResult.Result blocks false)))))
 
 (define (opt-bool-branch-fuse-blocks
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [remaining : i64]) : OptBlockListPassResult
   (opt-bool-branch-fuse-blocks-raw
+    type-segment-bases
     (opt-bool-branch-clone-blocks blocks)
     frame
     remaining))
 
-(define (opt-bool-branch-block-candidate? [block : CompilerIrBlock]) : bool
+(define (opt-bool-branch-block-candidate?
+  [type-segment-bases : i64]
+  [block : CompilerIrBlock]) : bool
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (and
@@ -21267,25 +22046,31 @@
         (match (compiler-ir-instr-seq-ref instrs 0)
           [(CompilerIrInstr.Phi dst _ ty)
             (and
-              (opt-type-eq ty (AstType.Bool))
+              (opt-type-eq type-segment-bases ty (AstType.Bool))
               (match (compiler-ir-instr-seq-ref instrs 1)
                 [(CompilerIrInstr.Branch (CompilerIrValue.Var cond-var) _ _)
                   (= dst cond-var)]
                 [_ false]))]
           [_ false]))]))
 
-(define (opt-bool-branch-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+(define (opt-bool-branch-blocks-have-candidate?
+  [type-segment-bases : i64]
+  [blocks : CompilerIrBlockList]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Cons block rest)
-      (if (opt-bool-branch-block-candidate? block)
+      (if (opt-bool-branch-block-candidate? type-segment-bases block)
         true
-        (opt-bool-branch-blocks-have-candidate? (box-get rest)))]
+        (opt-bool-branch-blocks-have-candidate?
+          type-segment-bases
+          (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
       (opt-bool-branch-blocks-have-candidate?
+        type-segment-bases
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-bool-branch-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionPassResult
@@ -21294,13 +22079,18 @@
   ;; byte-for-byte input function instead of retaining a partial edge rewrite.
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (not (opt-bool-branch-blocks-have-candidate? blocks))
+      (if (not
+        (opt-bool-branch-blocks-have-candidate? type-segment-bases blocks))
         (OptFunctionPassResult.Result func false)
         (match (opt-verify-gate verified? func context)
           [(ResultCompilerOptimizeVerify.Err _)
             (OptFunctionPassResult.Result func false)]
           [(ResultCompilerOptimizeVerify.Ok)
-            (match (opt-bool-branch-fuse-blocks blocks frame 16)
+            (match (opt-bool-branch-fuse-blocks
+              type-segment-bases
+              blocks
+              frame
+              16)
               [(OptBlockListPassResult.Result next-blocks changed)
                 (if changed
                   (let
@@ -21394,6 +22184,7 @@
   (opt-bool-branch-chain-blocks-have-candidate-from? blocks blocks))
 
 (define (opt-bool-branch-chain-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionPassResult
@@ -21406,6 +22197,7 @@
             (OptFunctionPassResult.Result func false)]
           [(ResultCompilerOptimizeVerify.Ok)
             (match (opt-bool-branch-chain-blocks-raw
+              type-segment-bases
               (opt-bool-branch-clone-blocks blocks)
               frame
               64)
@@ -21584,9 +22376,15 @@
               acc))])]))
 
 (defenum OptSccpState
-  (State OptCfgIndex (Array bool) OptSccpEnv bool))
+  ;; The type segment-bases scalar belongs to this analysis instance. Carrying
+  ;; it in the already-threaded state keeps SCCP isolated without adding a
+  ;; redundant argument to every per-instruction lattice bind.
+  (State OptCfgIndex (Array bool) OptSccpEnv bool i64))
 
-(define (opt-sccp-value-eq [a : OptSccpValue] [b : OptSccpValue]) : bool
+(define (opt-sccp-value-eq
+  [type-segment-bases : i64]
+  [a : OptSccpValue]
+  [b : OptSccpValue]) : bool
   (match a
     [(OptSccpValue.Unknown)
       (match b
@@ -21599,10 +22397,13 @@
     [(OptSccpValue.Const av aty)
       (match b
         [(OptSccpValue.Const bv bty)
-          (and (opt-value-eq av bv) (opt-type-eq aty bty))]
+          (and (opt-value-eq av bv) (opt-type-eq type-segment-bases aty bty))]
         [_ false])]))
 
-(define (opt-sccp-join [old : OptSccpValue] [new : OptSccpValue]) : OptSccpValue
+(define (opt-sccp-join
+  [type-segment-bases : i64]
+  [old : OptSccpValue]
+  [new : OptSccpValue]) : OptSccpValue
   (match old
     [(OptSccpValue.Unknown) new]
     [(OptSccpValue.Overdefined) (OptSccpValue.Overdefined)]
@@ -21613,7 +22414,7 @@
         [(OptSccpValue.Const new-value new-ty)
           (if (and
             (opt-value-eq old-value new-value)
-            (opt-type-eq old-ty new-ty))
+            (opt-type-eq type-segment-bases old-ty new-ty))
             old
             (OptSccpValue.Overdefined))])]))
 
@@ -21661,21 +22462,22 @@
   [var : i64]
   [value : OptSccpValue]) : OptSccpState
   (match state
-    [(OptSccpState.State cfg-index executable env changed)
+    [(OptSccpState.State cfg-index executable env changed type-segment-bases)
       (let
         [old : OptSccpValue (opt-sccp-env-lookup env var)]
-        [merged : OptSccpValue (opt-sccp-join old value)]
-        (if (opt-sccp-value-eq old merged)
+        [merged : OptSccpValue (opt-sccp-join type-segment-bases old value)]
+        (if (opt-sccp-value-eq type-segment-bases old merged)
           state
           (OptSccpState.State
             cfg-index
             executable
             (opt-sccp-env-set env var merged)
-            true)))]))
+            true
+            type-segment-bases)))]))
 
 (define (opt-sccp-state-mark-executable [state : OptSccpState] [label : i64]) : OptSccpState
   (match state
-    [(OptSccpState.State cfg-index executable env changed)
+    [(OptSccpState.State cfg-index executable env changed type-segment-bases)
       (match (opt-cfg-index-id cfg-index label)
         [(option_i64.Some id)
           (if (and (>= id 0) (< id (array-length executable)))
@@ -21683,14 +22485,19 @@
               state
               (begin
                 (array-set! executable id true)
-                (OptSccpState.State cfg-index executable env true)))
+                (OptSccpState.State
+                  cfg-index
+                  executable
+                  env
+                  true
+                  type-segment-bases)))
             state)]
         [(option_i64.None) state])]))
 
 (define (opt-sccp-state-reset-changed [state : OptSccpState]) : OptSccpState
   (match state
-    [(OptSccpState.State cfg-index executable env _)
-      (OptSccpState.State cfg-index executable env false)]))
+    [(OptSccpState.State cfg-index executable env _ type-segment-bases)
+      (OptSccpState.State cfg-index executable env false type-segment-bases)]))
 
 (define (opt-sccp-immediate [value : CompilerIrValue] [ty : AstType]) : OptSccpValue
   (match (opt-normalize-const value (opt-default-immediate-type value ty))
@@ -21703,7 +22510,7 @@
   [value : CompilerIrValue]
   [ty : AstType]) : OptSccpValue
   (match state
-    [(OptSccpState.State _ _ env _)
+    [(OptSccpState.State _ _ env _ _)
       (match value
         [(CompilerIrValue.Var id) (opt-sccp-env-lookup env id)]
         [_ (opt-sccp-immediate value ty)])]))
@@ -21721,6 +22528,7 @@
         [(CompilerIrMaybeValue.No) (OptSccpValue.Overdefined)])]))
 
 (define (opt-sccp-fold-binop-value
+  [type-segment-bases : i64]
   [op : CompilerIrBinOp]
   [lhs : OptSccpValue]
   [rhs : OptSccpValue]
@@ -21730,6 +22538,7 @@
       (match rhs
         [(OptSccpValue.Const rhs-value rhs-ty)
           (match (opt-fold-binop
+            type-segment-bases
             op
             (OptKnownConst.SomeConst lhs-value lhs-ty)
             (OptKnownConst.SomeConst rhs-value rhs-ty)
@@ -21759,7 +22568,7 @@
   [pred : i64]
   [ty : AstType]) : OptSccpValue
   (match state
-    [(OptSccpState.State cfg-index executable _ _)
+    [(OptSccpState.State cfg-index executable _ _ _)
       (match (opt-cfg-index-id cfg-index pred)
         [(option_i64.Some pred-id)
           (if (and
@@ -21771,17 +22580,23 @@
         [(option_i64.None) (OptSccpValue.Unknown)])]))
 
 (define (opt-sccp-phi-value
+  [type-segment-bases : i64]
   [state : OptSccpState]
   [inputs : CompilerIrPhiInputList]
   [ty : AstType]) : OptSccpValue
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (OptSccpValue.Unknown)]
     [(CompilerIrPhiInputList.Array seq)
-      (opt-sccp-phi-value state (compiler-ir-phi-input-seq-to-list seq) ty)]
+      (opt-sccp-phi-value
+        type-segment-bases
+        state
+        (compiler-ir-phi-input-seq-to-list seq)
+        ty)]
     [(CompilerIrPhiInputList.Cons value pred rest)
       (opt-sccp-join
+        type-segment-bases
         (opt-sccp-phi-input-value state value pred ty)
-        (opt-sccp-phi-value state (box-get rest) ty))]))
+        (opt-sccp-phi-value type-segment-bases state (box-get rest) ty))]))
 
 (define (opt-sccp-mark-branch-targets
   [state : OptSccpState]
@@ -21822,6 +22637,7 @@
         (compiler-ir-switch-case-seq-to-list seq))]))
 
 (define (opt-sccp-process-instr
+  [type-segment-bases : i64]
   [state : OptSccpState]
   [instr : CompilerIrInstr]) : OptSccpState
   (match instr
@@ -21842,6 +22658,7 @@
         state
         dst
         (opt-sccp-fold-binop-value
+          type-segment-bases
           op
           (opt-sccp-value state lhs ty)
           (opt-sccp-value state rhs ty)
@@ -21852,7 +22669,10 @@
         dst
         (opt-sccp-fold-unop-value op (opt-sccp-value state value ty) ty))]
     [(CompilerIrInstr.Phi dst inputs ty)
-      (opt-sccp-state-bind state dst (opt-sccp-phi-value state inputs ty))]
+      (opt-sccp-state-bind
+        state
+        dst
+        (opt-sccp-phi-value type-segment-bases state inputs ty))]
     [(CompilerIrInstr.Jump label) (opt-sccp-state-mark-executable state label)]
     [(CompilerIrInstr.Branch cond true-label false-label)
       (opt-sccp-mark-branch-targets state cond true-label false-label)]
@@ -21948,37 +22768,45 @@
     [_ state]))
 
 (define (opt-sccp-process-instr-seq-from
+  [type-segment-bases : i64]
   [state : OptSccpState]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : OptSccpState
   (if (>= index (compiler-ir-instr-seq-count instrs))
     state
     (opt-sccp-process-instr-seq-from
-      (opt-sccp-process-instr state (compiler-ir-instr-seq-ref instrs index))
+      type-segment-bases
+      (opt-sccp-process-instr
+        type-segment-bases
+        state
+        (compiler-ir-instr-seq-ref instrs index))
       instrs
       (+ index 1))))
 
 (define (opt-sccp-process-instr-seq
+  [type-segment-bases : i64]
   [state : OptSccpState]
   [instrs : CompilerIrInstrSeq]) : OptSccpState
-  (opt-sccp-process-instr-seq-from state instrs 0))
+  (opt-sccp-process-instr-seq-from type-segment-bases state instrs 0))
 
 (define (opt-sccp-process-block
+  [type-segment-bases : i64]
   [state : OptSccpState]
   [block : CompilerIrBlock]
   [block-id : i64]) : OptSccpState
   (match state
-    [(OptSccpState.State _ executable _ _)
+    [(OptSccpState.State _ executable _ _ _)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (if (and
             (>= block-id 0)
             (< block-id (array-length executable))
             (array-ref executable block-id))
-            (opt-sccp-process-instr-seq state instrs)
+            (opt-sccp-process-instr-seq type-segment-bases state instrs)
             state)])]))
 
 (define (opt-sccp-process-blocks-from
+  [type-segment-bases : i64]
   [state : OptSccpState]
   [blocks : CompilerIrBlockList]
   [block-id : i64]) : OptSccpState
@@ -21986,11 +22814,13 @@
     [(CompilerIrBlockList.Nil) state]
     [(CompilerIrBlockList.Cons block rest)
       (opt-sccp-process-blocks-from
-        (opt-sccp-process-block state block block-id)
+        type-segment-bases
+        (opt-sccp-process-block type-segment-bases state block block-id)
         (box-get rest)
         (+ block-id 1))]
     [(CompilerIrBlockList.Array seq)
       (opt-sccp-process-blocks-from
+        type-segment-bases
         state
         (compiler-ir-block-seq-to-list seq)
         block-id)]))
@@ -22010,6 +22840,7 @@
             (opt-sccp-env-set env id (OptSccpValue.Overdefined)))])]))
 
 (define (opt-sccp-initial-state
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSccpState
@@ -22032,7 +22863,8 @@
       (struct-get context index)
       executable-flags
       (opt-sccp-env-from-params params (opt-sccp-env-make (+ max-var 1)))
-      true)))
+      true
+      type-segment-bases)))
 
 ;; Frame-sized variant: var ids are dense below the function's frame field
 ;; (the lowerer's next-var counter, the same invariant regalloc relies on),
@@ -22041,6 +22873,7 @@
 ;; lookups return Unknown either way, so sizing by frame is
 ;; behavior-identical to sizing by the whole-function max-var walks.
 (define (opt-sccp-initial-state-with-frame
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [frame : i64]) : OptSccpState
@@ -22061,9 +22894,11 @@
       (struct-get context index)
       executable-flags
       (opt-sccp-env-from-params params (opt-sccp-env-make frame))
-      true)))
+      true
+      type-segment-bases)))
 
 (define (opt-sccp-analyze-fixed
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [state : OptSccpState]
   [remaining : i64]) : OptSccpState
@@ -22072,34 +22907,43 @@
     (let
       [next : OptSccpState
         (opt-sccp-process-blocks-from
+          type-segment-bases
           (opt-sccp-state-reset-changed state)
           blocks
           0)]
       (match next
-        [(OptSccpState.State _ _ _ changed)
+        [(OptSccpState.State _ _ _ changed _)
           (if changed
-            (opt-sccp-analyze-fixed blocks next (- remaining 1))
+            (opt-sccp-analyze-fixed
+              type-segment-bases
+              blocks
+              next
+              (- remaining 1))
             next)]))))
 
 (define (opt-sccp-analyze
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptSccpState
   (opt-sccp-analyze-fixed
+    type-segment-bases
     blocks
-    (opt-sccp-initial-state context params blocks)
+    (opt-sccp-initial-state type-segment-bases context params blocks)
     (+
       (+ (compiler-ir-block-list-count blocks) 8)
       (* 2 (compiler-ir-block-list-instruction-count blocks)))))
 
 (define (opt-sccp-analyze-with-frame
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]
   [frame : i64]) : OptSccpState
   (opt-sccp-analyze-fixed
+    type-segment-bases
     blocks
-    (opt-sccp-initial-state-with-frame context params frame)
+    (opt-sccp-initial-state-with-frame type-segment-bases context params frame)
     (+
       (+ (compiler-ir-block-list-count blocks) 8)
       (* 2 (compiler-ir-block-list-instruction-count blocks)))))
@@ -22641,12 +23485,13 @@
       (opt-sccp-rewrite-blocks env (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-sccp-blocks
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [context : OptCfgContext (opt-cfg-context-build blocks)]
-    (match (opt-sccp-analyze context params blocks)
-      [(OptSccpState.State _ _ env _)
+    (match (opt-sccp-analyze type-segment-bases context params blocks)
+      [(OptSccpState.State _ _ env _ _)
         (if (opt-sccp-env-any-const? env 0)
           (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
           ;; No constants bound anywhere: the rewrite is the identity, so
@@ -22654,11 +23499,12 @@
           (opt-cfg-simplify-blocks blocks))])))
 
 (define (opt-sccp-blocks-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptBlockCtxResult
-  (match (opt-sccp-analyze context params blocks)
-    [(OptSccpState.State _ _ env _)
+  (match (opt-sccp-analyze type-segment-bases context params blocks)
+    [(OptSccpState.State _ _ env _ _)
       (if (opt-sccp-env-any-const? env 0)
         (opt-cfg-simplify-blocks-with-context-result
           (OptBlockCtxResult.Result
@@ -22688,12 +23534,18 @@
 ;; literal (opt-sccp-blocks-change-successors?). The lattice env is sized by
 ;; the function frame (dense var ids), skipping the max-var walks.
 (define (opt-sccp-blocks-with-context-result-raw
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]
   [frame : i64]) : OptBlockCtxResult
-  (match (opt-sccp-analyze-with-frame context params blocks frame)
-    [(OptSccpState.State _ _ env _)
+  (match (opt-sccp-analyze-with-frame
+    type-segment-bases
+    context
+    params
+    blocks
+    frame)
+    [(OptSccpState.State _ _ env _ _)
       (if (opt-sccp-env-any-const? env 0)
         (OptBlockCtxResult.Result
           (opt-sccp-rewrite-blocks env blocks)
@@ -22707,13 +23559,19 @@
 ;; cfg-simplify included) but sizes the lattice env by the function frame
 ;; instead of walking the whole function for max-var.
 (define (opt-sccp-blocks-with-frame
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]
   [frame : i64]) : CompilerIrBlockList
   (let
     [context : OptCfgContext (opt-cfg-context-build blocks)]
-    (match (opt-sccp-analyze-with-frame context params blocks frame)
-      [(OptSccpState.State _ _ env _)
+    (match (opt-sccp-analyze-with-frame
+      type-segment-bases
+      context
+      params
+      blocks
+      frame)
+      [(OptSccpState.State _ _ env _ _)
         (if (opt-sccp-env-any-const? env 0)
           (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
           (opt-cfg-simplify-blocks blocks))])))
@@ -23228,7 +24086,9 @@
         (compiler-ir-block-seq-to-list seq)
         tail)]))
 
-(define (opt-late-total-switch-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-late-total-switch-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
@@ -23255,18 +24115,23 @@
             ret-ty
             (array-ref frame-cell 0)
             next-blocks)]
-        (compiler-opt-debug-observe-function "total_switch" rewritten))]))
+        (compiler-opt-debug-observe-function
+          type-segment-bases
+          "total_switch"
+          rewritten))]))
 
 (define (opt-late-total-switch-function-list
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (match functions
     [(CompilerIrFunctionList.Nil) CompilerIrFunctionList.Nil]
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-function-cons
-        (opt-late-total-switch-function func)
-        (opt-late-total-switch-function-list (box-get rest)))]
+        (opt-late-total-switch-function type-segment-bases func)
+        (opt-late-total-switch-function-list type-segment-bases (box-get rest)))]
     [(CompilerIrFunctionList.Array seq)
       (opt-late-total-switch-function-list
+        type-segment-bases
         (compiler-ir-function-seq-to-list seq))]))
 
 (define (opt-switch-block-starts-with-phi?
@@ -23989,11 +24854,15 @@
       (OptGvnMap buckets))))
 
 (define (opt-gvn-bucket-index
+  [type-segment-bases : i64]
   [buckets : (Array OptGvnBucket)]
   [key : OptExprKey]) : i64
-  (bit-and (opt-expr-key-hash key) (- (array-length buckets) 1)))
+  (bit-and
+    (opt-expr-key-hash type-segment-bases key)
+    (- (array-length buckets) 1)))
 
 (define (opt-gvn-table-push!
+  [type-segment-bases : i64]
   [table : OptGvnMap]
   [entry : OptGvnEntry]
   [changes : OptGvnScopeChanges]) : OptGvnScopeChanges
@@ -24001,7 +24870,7 @@
     [(OptGvnEntry.Entry key _ _)
       (let
         [buckets : (Array OptGvnBucket) (struct-get table buckets)]
-        [bucket : i64 (opt-gvn-bucket-index buckets key)]
+        [bucket : i64 (opt-gvn-bucket-index type-segment-bases buckets key)]
         [old-head : OptGvnBucket (array-ref buckets bucket)]
         ;; Under inline-by-value aggregates, `array-ref` of a
         ;; memory-backed aggregate returns the element ADDRESS (in-place), not a
@@ -24018,9 +24887,16 @@
           (array-set! buckets bucket (OptGvnBucket.Cons entry (box old-head)))
           result))]))
 
-(define (opt-gvn-table-insert! [table : OptGvnMap] [entry : OptGvnEntry]) : unit
+(define (opt-gvn-table-insert!
+  [type-segment-bases : i64]
+  [table : OptGvnMap]
+  [entry : OptGvnEntry]) : unit
   (begin
-    (opt-gvn-table-push! table entry (OptGvnScopeChanges.Nil))
+    (opt-gvn-table-push!
+      type-segment-bases
+      table
+      entry
+      (OptGvnScopeChanges.Nil))
     unit))
 
 (define (opt-gvn-table-restore!
@@ -24041,6 +24917,7 @@
 ;; single-source as an available value keyed by its expression and tagged with
 ;; its defining block.
 (define (opt-gvn-record
+  [type-segment-bases : i64]
   [instr : CompilerIrInstr]
   [def-block-id : i64]
   [sources : opt_i64_i64_map.Map]
@@ -24050,6 +24927,7 @@
     [(CompilerIrInstr.BinOp dst op l r ty)
       (if (opt-gvn-recordable-instr? instr sources)
         (opt-gvn-table-push!
+          type-segment-bases
           table
           (OptGvnEntry.Entry (OptExprKey.BinKey op l r ty) dst def-block-id)
           changes)
@@ -24057,6 +24935,7 @@
     [(CompilerIrInstr.UnOp dst op v ty)
       (if (opt-gvn-recordable-instr? instr sources)
         (opt-gvn-table-push!
+          type-segment-bases
           table
           (OptGvnEntry.Entry (OptExprKey.UnKey op v ty) dst def-block-id)
           changes)
@@ -24064,6 +24943,7 @@
     [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
       (if (opt-gvn-recordable-instr? instr sources)
         (opt-gvn-table-push!
+          type-segment-bases
           table
           (OptGvnEntry.Entry
             (OptExprKey.CpuIdKey leaf subleaf reg-index)
@@ -24074,6 +24954,7 @@
     [(CompilerIrInstr.Xgetbv dst index)
       (if (opt-gvn-recordable-instr? instr sources)
         (opt-gvn-table-push!
+          type-segment-bases
           table
           (OptGvnEntry.Entry (OptExprKey.XgetbvKey index) dst def-block-id)
           changes)
@@ -24081,6 +24962,7 @@
     [_ changes]))
 
 (define (opt-gvn-record-scope-instr-seq-from
+  [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
   [def-block-id : i64]
   [instrs : CompilerIrInstrSeq]
@@ -24090,12 +24972,14 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     changes
     (opt-gvn-record-scope-instr-seq-from
+      type-segment-bases
       sources
       def-block-id
       instrs
       (+ index 1)
       table
       (opt-gvn-record
+        type-segment-bases
         (compiler-ir-instr-seq-ref instrs index)
         def-block-id
         sources
@@ -24105,21 +24989,30 @@
 ;; Find the nearest scoped result var for `key`, or -1 if none qualifies.
 ;; Dominance is represented by the current table scope; the bucket walk only
 ;; handles hash collisions and older same-key ancestors.
-(define (opt-gvn-lookup-bucket [bucket : OptGvnBucket] [key : OptExprKey]) : i64
+(define (opt-gvn-lookup-bucket
+  [type-segment-bases : i64]
+  [bucket : OptGvnBucket]
+  [key : OptExprKey]) : i64
   (match bucket
     [(OptGvnBucket.Nil) (- 0 1)]
     [(OptGvnBucket.Cons entry rest)
       (match entry
         [(OptGvnEntry.Entry ekey evar def-block-id)
-          (if (and (>= def-block-id 0) (opt-expr-key-eq ekey key))
+          (if (and
+            (>= def-block-id 0)
+            (opt-expr-key-eq type-segment-bases ekey key))
             evar
-            (opt-gvn-lookup-bucket (box-get rest) key))])]))
+            (opt-gvn-lookup-bucket type-segment-bases (box-get rest) key))])]))
 
-(define (opt-gvn-lookup [table : OptGvnMap] [key : OptExprKey]) : i64
+(define (opt-gvn-lookup
+  [type-segment-bases : i64]
+  [table : OptGvnMap]
+  [key : OptExprKey]) : i64
   (let
     [buckets : (Array OptGvnBucket) (struct-get table buckets)]
     (opt-gvn-lookup-bucket
-      (array-ref buckets (opt-gvn-bucket-index buckets key))
+      type-segment-bases
+      (array-ref buckets (opt-gvn-bucket-index type-segment-bases buckets key))
       key)))
 
 ;; Rewriting an instruction allocates only when the rewrite fires: scanning a
@@ -24131,6 +25024,7 @@
   (Some CompilerIrInstr))
 
 (define (opt-gvn-rewrite-instr-maybe
+  [type-segment-bases : i64]
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
   [instr : CompilerIrInstr]) : OptMaybeInstr
@@ -24140,7 +25034,11 @@
         (opt-gvn-value-stable? sources l)
         (opt-gvn-value-stable? sources r))
         (let
-          [earlier : i64 (opt-gvn-lookup table (OptExprKey.BinKey op l r ty))]
+          [earlier : i64
+            (opt-gvn-lookup
+              type-segment-bases
+              table
+              (OptExprKey.BinKey op l r ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (OptMaybeInstr.Some
               (CompilerIrInstr.Mov
@@ -24152,7 +25050,8 @@
     [(CompilerIrInstr.UnOp dst op v ty)
       (if (opt-gvn-value-stable? sources v)
         (let
-          [earlier : i64 (opt-gvn-lookup table (OptExprKey.UnKey op v ty))]
+          [earlier : i64
+            (opt-gvn-lookup type-segment-bases table (OptExprKey.UnKey op v ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (OptMaybeInstr.Some
               (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty))
@@ -24164,7 +25063,10 @@
         (opt-gvn-value-stable? sources subleaf))
         (let
           [earlier : i64
-            (opt-gvn-lookup table (OptExprKey.CpuIdKey leaf subleaf reg-index))]
+            (opt-gvn-lookup
+              type-segment-bases
+              table
+              (OptExprKey.CpuIdKey leaf subleaf reg-index))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (OptMaybeInstr.Some
               (CompilerIrInstr.Mov
@@ -24176,7 +25078,11 @@
     [(CompilerIrInstr.Xgetbv dst index)
       (if (opt-gvn-value-stable? sources index)
         (let
-          [earlier : i64 (opt-gvn-lookup table (OptExprKey.XgetbvKey index))]
+          [earlier : i64
+            (opt-gvn-lookup
+              type-segment-bases
+              table
+              (OptExprKey.XgetbvKey index))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (OptMaybeInstr.Some
               (CompilerIrInstr.Mov
@@ -24188,6 +25094,7 @@
     [_ (OptMaybeInstr.No)]))
 
 (define (opt-gvn-seq-rewrite-changed?
+  [type-segment-bases : i64]
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
@@ -24195,14 +25102,21 @@
   (if (< index 0)
     false
     (match (opt-gvn-rewrite-instr-maybe
+      type-segment-bases
       table
       sources
       (compiler-ir-instr-seq-ref instrs index))
       [(OptMaybeInstr.Some _) true]
       [(OptMaybeInstr.No)
-        (opt-gvn-seq-rewrite-changed? table sources instrs (- index 1))])))
+        (opt-gvn-seq-rewrite-changed?
+          type-segment-bases
+          table
+          sources
+          instrs
+          (- index 1))])))
 
 (define (opt-gvn-rewrite-instr-seq-from
+  [type-segment-bases : i64]
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
@@ -24211,12 +25125,14 @@
   (if (< index 0)
     out
     (opt-gvn-rewrite-instr-seq-from
+      type-segment-bases
       table
       sources
       instrs
       (- index 1)
       (compiler-ir-instr-cons
         (match (opt-gvn-rewrite-instr-maybe
+          type-segment-bases
           table
           sources
           (compiler-ir-instr-seq-ref instrs index))
@@ -24225,10 +25141,12 @@
         out))))
 
 (define (opt-gvn-rewrite-instr-seq
+  [type-segment-bases : i64]
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-gvn-rewrite-instr-seq-from
+    type-segment-bases
     table
     sources
     instrs
@@ -24236,12 +25154,14 @@
     CompilerIrInstrList.Nil))
 
 (define (opt-gvn-rewrite-block
+  [type-segment-bases : i64]
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
   [block : CompilerIrBlock]) : OptBlockPassResult
   (match block
     [(CompilerIrBlock.Block label instrs)
       (if (opt-gvn-seq-rewrite-changed?
+        type-segment-bases
         table
         sources
         instrs
@@ -24249,7 +25169,7 @@
         (OptBlockPassResult.Result
           (compiler-ir-block
             label
-            (opt-gvn-rewrite-instr-seq table sources instrs))
+            (opt-gvn-rewrite-instr-seq type-segment-bases table sources instrs))
           true)
         (OptBlockPassResult.Result block false))]))
 
@@ -24296,6 +25216,7 @@
       (opt-gvn-materialize-blocks doms out (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-gvn-rewrite-id
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [table : OptGvnMap]
@@ -24318,7 +25239,7 @@
                   (opt-induction-switch-arm? index blocks label instrs)
                   (opt-bool-branch-chain-check-block? label instrs))
                   (OptBlockPassResult.Result block false)
-                  (opt-gvn-rewrite-block table sources block))
+                  (opt-gvn-rewrite-block type-segment-bases table sources block))
                   [(OptBlockPassResult.Result rewritten block-changed)
                     (begin
                       (if block-changed
@@ -24330,6 +25251,7 @@
                       (let
                         [changes : OptGvnScopeChanges
                           (opt-gvn-record-scope-instr-seq-from
+                            type-segment-bases
                             sources
                             id
                             instrs
@@ -24338,6 +25260,7 @@
                             (OptGvnScopeChanges.Nil))]
                         [children-changed : i64
                           (opt-gvn-rewrite-children
+                            type-segment-bases
                             context
                             children
                             table
@@ -24353,6 +25276,7 @@
       0)))
 
 (define (opt-gvn-rewrite-children
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [table : OptGvnMap]
@@ -24371,6 +25295,7 @@
         (begin
           (if (=
             (opt-gvn-rewrite-id
+              type-segment-bases
               context
               children
               table
@@ -24385,6 +25310,7 @@
       changed)))
 
 (define (opt-gvn-rewrite-dom
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
@@ -24405,6 +25331,7 @@
                 (>= entry-id 0)
                 (array-ref (struct-get index reachable) entry-id))
                 (opt-gvn-rewrite-id
+                  type-segment-bases
                   context
                   children
                   table
@@ -24421,6 +25348,7 @@
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.
 (define (opt-gvn-blocks-with-context-and-call-memory
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [call-memory : opt_i64_i64_map.Map]
@@ -24432,24 +25360,39 @@
         (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 64)))]
     [table : OptGvnMap (opt-gvn-map-empty (opt-gvn-count sources (- 0 1)))]
     [gvn : CompilerIrBlockList
-      (opt-gvn-rewrite-dom context table sources blocks)]
-    [hs : OptLoadHeaderSet (opt-load-header-set-from-function params gvn)]
-    (opt-load-gvn-blocks-with-context context sources hs params call-memory gvn)))
+      (opt-gvn-rewrite-dom type-segment-bases context table sources blocks)]
+    [hs : OptLoadHeaderSet
+      (opt-load-header-set-from-function type-segment-bases params gvn)]
+    (opt-load-gvn-blocks-with-context
+      type-segment-bases
+      context
+      sources
+      hs
+      params
+      call-memory
+      gvn)))
 
 (define (opt-gvn-blocks-with-context
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-gvn-blocks-with-context-and-call-memory
+    type-segment-bases
     context
     params
     (opt_i64_i64_map.with-capacity 1)
     blocks))
 
 (define (opt-gvn-blocks
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-gvn-blocks-with-context (opt-cfg-context-build blocks) params blocks))
+  (opt-gvn-blocks-with-context
+    type-segment-bases
+    (opt-cfg-context-build blocks)
+    params
+    blocks))
 
 ;; --- dominated redundant bounds-check elimination ----------------------------
 ;;
@@ -24655,6 +25598,7 @@
     [_ false]))
 
 (define (opt-dom-cmp-lookup
+  [type-segment-bases : i64]
   [facts : OptDomCmpFacts]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
@@ -24666,19 +25610,25 @@
       (match fact
         [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value)
           (if (and
-            (opt-type-eq ty fact-ty)
+            (opt-type-eq type-segment-bases ty fact-ty)
             (opt-binop-eq op fact-op)
             (opt-value-eq lhs fact-lhs)
             (opt-value-eq rhs fact-rhs))
             (OptDomCmpLookup.Some fact-value)
             (if (and
-              (opt-type-eq ty fact-ty)
+              (opt-type-eq type-segment-bases ty fact-ty)
               (opt-binop-eq op (opt-dom-cmp-negated-op fact-op))
               (if (opt-dom-cmp-negation-swaps? fact-op)
                 (and (opt-value-eq lhs fact-rhs) (opt-value-eq rhs fact-lhs))
                 (and (opt-value-eq lhs fact-lhs) (opt-value-eq rhs fact-rhs))))
               (OptDomCmpLookup.Some (not fact-value))
-              (opt-dom-cmp-lookup (box-get rest) op lhs rhs ty)))])]))
+              (opt-dom-cmp-lookup
+                type-segment-bases
+                (box-get rest)
+                op
+                lhs
+                rhs
+                ty)))])]))
 
 ;; The fact an edge into `taken?` establishes, given the branch condition's
 ;; defining comparison. Operands are resolved through the same copy map the
@@ -24781,12 +25731,20 @@
 ;; so without this the mask shape is hidden behind a cast on both sides. Only the
 ;; 64-bit pair is unwrapped: the bit pattern is identical, so nothing about the
 ;; value's range changes. A widening or narrowing cast is left alone.
-(define (opt-bounds-dom-int-cast-transparent? [from : AstType] [to : AstType]) : bool
+(define (opt-bounds-dom-int-cast-transparent?
+  [type-segment-bases : i64]
+  [from : AstType]
+  [to : AstType]) : bool
   (or
-    (and (opt-type-eq from (AstType.I64)) (opt-type-eq to (AstType.U64)))
-    (and (opt-type-eq from (AstType.U64)) (opt-type-eq to (AstType.I64)))))
+    (and
+      (opt-type-eq type-segment-bases from (AstType.I64))
+      (opt-type-eq type-segment-bases to (AstType.U64)))
+    (and
+      (opt-type-eq type-segment-bases from (AstType.U64))
+      (opt-type-eq type-segment-bases to (AstType.I64)))))
 
 (define (opt-bounds-dom-strip-int-cast
+  [type-segment-bases : i64]
   [extra-defs : (Array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [value : CompilerIrValue]) : CompilerIrValue
@@ -24797,7 +25755,10 @@
         [(OptBoolBranchDef.Some instr _)
           (match instr
             [(CompilerIrInstr.Cast _ source from to)
-              (if (opt-bounds-dom-int-cast-transparent? from to)
+              (if (opt-bounds-dom-int-cast-transparent?
+                type-segment-bases
+                from
+                to)
                 (opt-bounds-dom-resolve copies source)
                 value)]
             [_ value])])]
@@ -24836,6 +25797,7 @@
 ;; Do the facts in scope prove `len >= 1`? A dominating `len >= 1` or `len < 1`
 ;; edge answers it, and so does a length that is already a positive literal.
 (define (opt-bounds-dom-len-positive?
+  [type-segment-bases : i64]
   [cmp-facts : OptDomCmpFacts]
   [len : CompilerIrValue]) : bool
   (or
@@ -24843,6 +25805,7 @@
       [(CompilerIrValue.I64 count) (>= count 1)]
       [_ false])
     (match (opt-dom-cmp-lookup
+      type-segment-bases
       cmp-facts
       (CompilerIrBinOp.Lt)
       len
@@ -24851,6 +25814,7 @@
       [(OptDomCmpLookup.Some value) (not value)]
       [(OptDomCmpLookup.No) false])
     (match (opt-dom-cmp-lookup
+      type-segment-bases
       cmp-facts
       (CompilerIrBinOp.Le)
       (CompilerIrValue.I64 1)
@@ -24861,6 +25825,7 @@
     ;; `(<= len 0)` guarding an empty-table early return is the other common way
     ;; this gets written, and it decides positivity on its false edge.
     (match (opt-dom-cmp-lookup
+      type-segment-bases
       cmp-facts
       (CompilerIrBinOp.Le)
       len
@@ -24869,6 +25834,7 @@
       [(OptDomCmpLookup.Some value) (not value)]
       [(OptDomCmpLookup.No) false])
     (match (opt-dom-cmp-lookup
+      type-segment-bases
       cmp-facts
       (CompilerIrBinOp.Lt)
       (CompilerIrValue.I64 0)
@@ -24996,6 +25962,7 @@
 ;; `seed < len`; anything else must be `self + k` for a positive literal k whose
 ;; edge was guarded by `self + k < len`.
 (define (opt-bounds-dom-counter-input-ok?
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [terms : (Array OptBoolBranchDef)]
   [defs : (Array OptBoolBranchDef)]
@@ -25011,6 +25978,7 @@
       (and
         (>= seed 0)
         (match (opt-dom-cmp-lookup
+          type-segment-bases
           cmp-facts
           (CompilerIrBinOp.Lt)
           (CompilerIrValue.I64 seed)
@@ -25047,6 +26015,7 @@
     [_ false]))
 
 (define (opt-bounds-dom-counter-inputs-ok?
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [terms : (Array OptBoolBranchDef)]
   [defs : (Array OptBoolBranchDef)]
@@ -25061,6 +26030,7 @@
     [(CompilerIrPhiInputList.Cons value from-label rest)
       (and
         (opt-bounds-dom-counter-input-ok?
+          type-segment-bases
           index
           terms
           defs
@@ -25075,6 +26045,7 @@
           [(CompilerIrPhiInputList.Nil) true]
           [_
             (opt-bounds-dom-counter-inputs-ok?
+              type-segment-bases
               index
               terms
               defs
@@ -25086,6 +26057,7 @@
               (box-get rest))]))]
     [(CompilerIrPhiInputList.Array seq)
       (opt-bounds-dom-counter-inputs-ok?
+        type-segment-bases
         index
         terms
         defs
@@ -25097,6 +26069,7 @@
         (compiler-ir-phi-input-seq-to-list seq))]))
 
 (define (opt-bounds-dom-counter-in-range?
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [terms : (Array OptBoolBranchDef)]
   [defs : (Array OptBoolBranchDef)]
@@ -25116,6 +26089,7 @@
               (and
                 (opt-integer-type? ty)
                 (opt-bounds-dom-counter-inputs-ok?
+                  type-segment-bases
                   index
                   terms
                   defs
@@ -25243,6 +26217,7 @@
         depth)]))
 
 (define (opt-bounds-dom-mask-in-range?
+  [type-segment-bases : i64]
   [defs : (Array OptBoolBranchDef)]
   [phi-defs : (Array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
@@ -25251,14 +26226,15 @@
   [raw-len : CompilerIrValue]) : bool
   (let
     [idx : CompilerIrValue
-      (opt-bounds-dom-strip-int-cast phi-defs copies raw-idx)]
+      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies raw-idx)]
     [len : CompilerIrValue
-      (opt-bounds-dom-strip-int-cast phi-defs copies raw-len)]
+      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies raw-len)]
     (and
-      (opt-bounds-dom-len-positive? cmp-facts len)
+      (opt-bounds-dom-len-positive? type-segment-bases cmp-facts len)
       (opt-bounds-dom-masked-or-phi? defs phi-defs copies len idx 4))))
 
 (define (opt-bounds-dom-instrs-from
+  [type-segment-bases : i64]
   [defs : (Array OptBoolBranchDef)]
   [phi-defs : (Array OptBoolBranchDef)]
   [terms : (Array OptBoolBranchDef)]
@@ -25282,6 +26258,7 @@
             (if (or
               (opt-bounds-contains facts cidx clen)
               (opt-bounds-dom-mask-in-range?
+                type-segment-bases
                 defs
                 phi-defs
                 copies
@@ -25289,6 +26266,7 @@
                 cidx
                 clen)
               (opt-bounds-dom-counter-in-range?
+                type-segment-bases
                 cfg-index
                 terms
                 defs
@@ -25296,9 +26274,18 @@
                 copies
                 cmp-facts
                 block-label
-                (opt-bounds-dom-strip-int-cast phi-defs copies cidx)
-                (opt-bounds-dom-strip-int-cast phi-defs copies clen)))
+                (opt-bounds-dom-strip-int-cast
+                  type-segment-bases
+                  phi-defs
+                  copies
+                  cidx)
+                (opt-bounds-dom-strip-int-cast
+                  type-segment-bases
+                  phi-defs
+                  copies
+                  clen)))
               (opt-bounds-dom-instrs-from
+                type-segment-bases
                 defs
                 phi-defs
                 terms
@@ -25347,6 +26334,7 @@
                           (box cmp-facts))))
                     cmp-facts)]
                 (match (opt-bounds-dom-instrs-from
+                  type-segment-bases
                   defs
                   phi-defs
                   terms
@@ -25365,6 +26353,7 @@
                       out-cmp-facts)]))))]
         [_
           (match (opt-bounds-dom-instrs-from
+            type-segment-bases
             defs
             phi-defs
             terms
@@ -25379,7 +26368,11 @@
             [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
               (OptBoundsDomWalk.Walk
                 (compiler-ir-instr-cons
-                  (opt-bounds-dom-fold-compare cmp-facts copies instr)
+                  (opt-bounds-dom-fold-compare
+                    type-segment-bases
+                    cmp-facts
+                    copies
+                    instr)
                   tail)
                 out-facts
                 out-cmp-facts)])]))))
@@ -25389,6 +26382,7 @@
 ;; select, phi input -- sees an ordinary constant and the later fold/cfg passes
 ;; collapse the control flow.
 (define (opt-bounds-dom-fold-compare
+  [type-segment-bases : i64]
   [cmp-facts : OptDomCmpFacts]
   [copies : opt_i64_i64_map.Map]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -25396,6 +26390,7 @@
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
       (if (and (opt-dom-cmp-foldable-op? op) (opt-integer-type? ty))
         (match (opt-dom-cmp-lookup
+          type-segment-bases
           cmp-facts
           (opt-dom-cmp-canon-op op)
           (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))
@@ -25411,6 +26406,7 @@
     [_ instr]))
 
 (define (opt-bounds-dom-rewrite-id
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [defs : (Array OptBoolBranchDef)]
@@ -25435,6 +26431,7 @@
             (match block
               [(CompilerIrBlock.Block _ instrs)
                 (match (opt-bounds-dom-instrs-from
+                  type-segment-bases
                   defs
                   phi-defs
                   terms
@@ -25454,6 +26451,7 @@
                         (OptGvnBlockResult.SomeBlock
                           (compiler-ir-block label rewritten)))
                       (opt-bounds-dom-rewrite-children
+                        type-segment-bases
                         context
                         children
                         defs
@@ -25548,6 +26546,7 @@
         [_ cmp-facts]))))
 
 (define (opt-bounds-dom-rewrite-children
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [defs : (Array OptBoolBranchDef)]
@@ -25573,6 +26572,7 @@
           (let
             [child-id : i64 (array-ref edges edge)]
             (opt-bounds-dom-rewrite-id
+              type-segment-bases
               context
               children
               defs
@@ -25598,6 +26598,7 @@
       unit)))
 
 (define (opt-bounds-dom-blocks-with-context
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [frame : i64]
@@ -25628,6 +26629,7 @@
             (>= entry-id 0)
             (array-ref (struct-get index reachable) entry-id))
             (opt-bounds-dom-rewrite-id
+              type-segment-bases
               context
               children
               defs
@@ -25694,6 +26696,7 @@
         [_ false])]))
 
 (define (opt-divrem-facts-contains-kind?
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
@@ -25705,17 +26708,23 @@
         [(OptDivRemFact.Fact fact-var fact-ty fact-kind)
           (if (and
             (= fact-var var)
-            (opt-type-eq fact-ty ty)
+            (opt-type-eq type-segment-bases fact-ty ty)
             (opt-divrem-fact-kind-eq? fact-kind kind))
             true
-            (opt-divrem-facts-contains-kind? (box-get rest) var ty kind))])]))
+            (opt-divrem-facts-contains-kind?
+              type-segment-bases
+              (box-get rest)
+              var
+              ty
+              kind))])]))
 
 (define (opt-divrem-facts-add-kind
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
   [kind : OptDivRemFactKind]) : OptDivRemFacts
-  (if (opt-divrem-facts-contains-kind? facts var ty kind)
+  (if (opt-divrem-facts-contains-kind? type-segment-bases facts var ty kind)
     facts
     (OptDivRemFacts.Cons (OptDivRemFact.Fact var ty kind) (box facts))))
 
@@ -25733,24 +26742,43 @@
               (OptDivRemFacts.Cons fact (box rest2))))])]))
 
 (define (opt-divrem-add-nonzero
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]) : OptDivRemFacts
-  (opt-divrem-facts-add-kind facts var ty (OptDivRemFactKind.NonZero)))
+  (opt-divrem-facts-add-kind
+    type-segment-bases
+    facts
+    var
+    ty
+    (OptDivRemFactKind.NonZero)))
 
 (define (opt-divrem-add-not-neg-one
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]) : OptDivRemFacts
-  (opt-divrem-facts-add-kind facts var ty (OptDivRemFactKind.NotNegOne)))
+  (opt-divrem-facts-add-kind
+    type-segment-bases
+    facts
+    var
+    ty
+    (OptDivRemFactKind.NotNegOne)))
 
 (define (opt-divrem-add-not-signed-min
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]) : OptDivRemFacts
-  (opt-divrem-facts-add-kind facts var ty (OptDivRemFactKind.NotSignedMin)))
+  (opt-divrem-facts-add-kind
+    type-segment-bases
+    facts
+    var
+    ty
+    (OptDivRemFactKind.NotSignedMin)))
 
 (define (opt-divrem-add-exact-facts
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
@@ -25758,17 +26786,18 @@
   (let
     [nonzero : OptDivRemFacts
       (if (!= value 0)
-        (opt-divrem-add-nonzero facts var ty)
+        (opt-divrem-add-nonzero type-segment-bases facts var ty)
         facts)]
     [not-neg-one : OptDivRemFacts
       (if (and (opt-signed-integer-type? ty) (!= value (- 0 1)))
-        (opt-divrem-add-not-neg-one nonzero var ty)
+        (opt-divrem-add-not-neg-one type-segment-bases nonzero var ty)
         nonzero)]
     (if (and (opt-signed-integer-type? ty) (!= value (opt-signed-min ty)))
-      (opt-divrem-add-not-signed-min not-neg-one var ty)
+      (opt-divrem-add-not-signed-min type-segment-bases not-neg-one var ty)
       not-neg-one)))
 
 (define (opt-divrem-add-not-eq-facts
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
@@ -25776,17 +26805,18 @@
   (let
     [nonzero : OptDivRemFacts
       (if (= value 0)
-        (opt-divrem-add-nonzero facts var ty)
+        (opt-divrem-add-nonzero type-segment-bases facts var ty)
         facts)]
     [not-neg-one : OptDivRemFacts
       (if (and (opt-signed-integer-type? ty) (= value (- 0 1)))
-        (opt-divrem-add-not-neg-one nonzero var ty)
+        (opt-divrem-add-not-neg-one type-segment-bases nonzero var ty)
         nonzero)]
     (if (and (opt-signed-integer-type? ty) (= value (opt-signed-min ty)))
-      (opt-divrem-add-not-signed-min not-neg-one var ty)
+      (opt-divrem-add-not-signed-min type-segment-bases not-neg-one var ty)
       not-neg-one)))
 
 (define (opt-divrem-add-gt-facts
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
@@ -25794,17 +26824,18 @@
   (let
     [nonzero : OptDivRemFacts
       (if (opt-typed-ge? value 0 ty)
-        (opt-divrem-add-nonzero facts var ty)
+        (opt-divrem-add-nonzero type-segment-bases facts var ty)
         facts)]
     [not-neg-one : OptDivRemFacts
       (if (and (opt-signed-integer-type? ty) (>= value (- 0 1)))
-        (opt-divrem-add-not-neg-one nonzero var ty)
+        (opt-divrem-add-not-neg-one type-segment-bases nonzero var ty)
         nonzero)]
     (if (and (opt-signed-integer-type? ty) (>= value (opt-signed-min ty)))
-      (opt-divrem-add-not-signed-min not-neg-one var ty)
+      (opt-divrem-add-not-signed-min type-segment-bases not-neg-one var ty)
       not-neg-one)))
 
 (define (opt-divrem-add-ge-facts
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
@@ -25812,17 +26843,18 @@
   (let
     [nonzero : OptDivRemFacts
       (if (opt-typed-gt? value 0 ty)
-        (opt-divrem-add-nonzero facts var ty)
+        (opt-divrem-add-nonzero type-segment-bases facts var ty)
         facts)]
     [not-neg-one : OptDivRemFacts
       (if (and (opt-signed-integer-type? ty) (>= value 0))
-        (opt-divrem-add-not-neg-one nonzero var ty)
+        (opt-divrem-add-not-neg-one type-segment-bases nonzero var ty)
         nonzero)]
     (if (and (opt-signed-integer-type? ty) (> value (opt-signed-min ty)))
-      (opt-divrem-add-not-signed-min not-neg-one var ty)
+      (opt-divrem-add-not-signed-min type-segment-bases not-neg-one var ty)
       not-neg-one)))
 
 (define (opt-divrem-add-lt-facts
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
@@ -25830,13 +26862,14 @@
   (let
     [nonzero : OptDivRemFacts
       (if (and (opt-signed-integer-type? ty) (<= value 0))
-        (opt-divrem-add-nonzero facts var ty)
+        (opt-divrem-add-nonzero type-segment-bases facts var ty)
         facts)]
     (if (and (opt-signed-integer-type? ty) (<= value (- 0 1)))
-      (opt-divrem-add-not-neg-one nonzero var ty)
+      (opt-divrem-add-not-neg-one type-segment-bases nonzero var ty)
       nonzero)))
 
 (define (opt-divrem-add-le-facts
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
@@ -25844,13 +26877,14 @@
   (let
     [nonzero : OptDivRemFacts
       (if (and (opt-signed-integer-type? ty) (< value 0))
-        (opt-divrem-add-nonzero facts var ty)
+        (opt-divrem-add-nonzero type-segment-bases facts var ty)
         facts)]
     (if (and (opt-signed-integer-type? ty) (<= value (- 0 2)))
-      (opt-divrem-add-not-neg-one nonzero var ty)
+      (opt-divrem-add-not-neg-one type-segment-bases nonzero var ty)
       nonzero)))
 
 (define (opt-divrem-add-compare-facts
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
@@ -25859,12 +26893,18 @@
   (if (not (opt-integer-type? ty))
     facts
     (match op
-      [(CompilerIrBinOp.Eq) (opt-divrem-add-exact-facts facts var ty value)]
-      [(CompilerIrBinOp.Ne) (opt-divrem-add-not-eq-facts facts var ty value)]
-      [(CompilerIrBinOp.Gt) (opt-divrem-add-gt-facts facts var ty value)]
-      [(CompilerIrBinOp.Ge) (opt-divrem-add-ge-facts facts var ty value)]
-      [(CompilerIrBinOp.Lt) (opt-divrem-add-lt-facts facts var ty value)]
-      [(CompilerIrBinOp.Le) (opt-divrem-add-le-facts facts var ty value)]
+      [(CompilerIrBinOp.Eq)
+        (opt-divrem-add-exact-facts type-segment-bases facts var ty value)]
+      [(CompilerIrBinOp.Ne)
+        (opt-divrem-add-not-eq-facts type-segment-bases facts var ty value)]
+      [(CompilerIrBinOp.Gt)
+        (opt-divrem-add-gt-facts type-segment-bases facts var ty value)]
+      [(CompilerIrBinOp.Ge)
+        (opt-divrem-add-ge-facts type-segment-bases facts var ty value)]
+      [(CompilerIrBinOp.Lt)
+        (opt-divrem-add-lt-facts type-segment-bases facts var ty value)]
+      [(CompilerIrBinOp.Le)
+        (opt-divrem-add-le-facts type-segment-bases facts var ty value)]
       [_ facts])))
 
 (define (opt-divrem-invert-compare [op : CompilerIrBinOp]) : CompilerIrBinOp
@@ -25914,6 +26954,7 @@
     [_ fallback]))
 
 (define (opt-divrem-add-edge-facts-from-cmp
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
@@ -25933,7 +26974,13 @@
           facts
           (match (opt-normalize-scalar-to-i64 rhs operand-ty)
             [(option_i64.Some value)
-              (opt-divrem-add-compare-facts facts var operand-ty op value)]
+              (opt-divrem-add-compare-facts
+                type-segment-bases
+                facts
+                var
+                operand-ty
+                op
+                value)]
             [(option_i64.None) facts]))]
       [_
         (match rhs
@@ -25943,6 +26990,7 @@
               (match (opt-normalize-scalar-to-i64 lhs operand-ty)
                 [(option_i64.Some value)
                   (opt-divrem-add-compare-facts
+                    type-segment-bases
                     facts
                     var
                     operand-ty
@@ -25952,6 +27000,7 @@
           [_ facts])])))
 
 (define (opt-divrem-edge-facts
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
@@ -25962,6 +27011,7 @@
       (match (opt-divrem-find-cmp-def instrs cond-var)
         [(OptDivRemCmp.Cmp op lhs rhs ty cmp-index)
           (opt-divrem-add-edge-facts-from-cmp
+            type-segment-bases
             facts
             types
             instrs
@@ -26045,6 +27095,7 @@
     [(option_i64.None) false]))
 
 (define (opt-divrem-value-proves-kind?
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [value : CompilerIrValue]
   [ty : AstType]
@@ -26053,10 +27104,11 @@
     true
     (match value
       [(CompilerIrValue.Var var)
-        (opt-divrem-facts-contains-kind? facts var ty kind)]
+        (opt-divrem-facts-contains-kind? type-segment-bases facts var ty kind)]
       [_ false])))
 
 (define (opt-divrem-proven-safe?
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
@@ -26064,22 +27116,35 @@
   (if (not (opt-integer-type? ty))
     false
     (if (opt-unsigned-integer-type? ty)
-      (opt-divrem-value-proves-kind? facts rhs ty (OptDivRemFactKind.NonZero))
+      (opt-divrem-value-proves-kind?
+        type-segment-bases
+        facts
+        rhs
+        ty
+        (OptDivRemFactKind.NonZero))
       (and
-        (opt-divrem-value-proves-kind? facts rhs ty (OptDivRemFactKind.NonZero))
+        (opt-divrem-value-proves-kind?
+          type-segment-bases
+          facts
+          rhs
+          ty
+          (OptDivRemFactKind.NonZero))
         (or
           (opt-divrem-value-proves-kind?
+            type-segment-bases
             facts
             rhs
             ty
             (OptDivRemFactKind.NotNegOne))
           (opt-divrem-value-proves-kind?
+            type-segment-bases
             facts
             lhs
             ty
             (OptDivRemFactKind.NotSignedMin)))))))
 
 (define (opt-divrem-rewrite-op
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
@@ -26087,23 +27152,24 @@
   [ty : AstType]) : CompilerIrBinOp
   (match op
     [(CompilerIrBinOp.Div)
-      (if (opt-divrem-proven-safe? facts lhs rhs ty)
+      (if (opt-divrem-proven-safe? type-segment-bases facts lhs rhs ty)
         (CompilerIrBinOp.SafeDiv)
         op)]
     [(CompilerIrBinOp.Mod)
-      (if (opt-divrem-proven-safe? facts lhs rhs ty)
+      (if (opt-divrem-proven-safe? type-segment-bases facts lhs rhs ty)
         (CompilerIrBinOp.SafeMod)
         op)]
     [_ op]))
 
 (define (opt-divrem-rewrite-instr
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
       (CompilerIrInstr.BinOp
         dst
-        (opt-divrem-rewrite-op facts op lhs rhs ty)
+        (opt-divrem-rewrite-op type-segment-bases facts op lhs rhs ty)
         lhs
         rhs
         ty)]
@@ -26117,6 +27183,7 @@
     [(option_i64.None) facts]))
 
 (define (opt-divrem-rewrite-instr-seq-from
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -26128,8 +27195,10 @@
       (compiler-ir-instr-list-reverse-onto out-rev CompilerIrInstrList.Nil))
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      [rewritten : CompilerIrInstr (opt-divrem-rewrite-instr facts instr)]
+      [rewritten : CompilerIrInstr
+        (opt-divrem-rewrite-instr type-segment-bases facts instr)]
       (opt-divrem-rewrite-instr-seq-from
+        type-segment-bases
         (opt-divrem-facts-after-instr facts rewritten)
         instrs
         (+ index 1)
@@ -26137,11 +27206,13 @@
         (compiler-ir-instr-cons rewritten out-rev)))))
 
 (define (opt-divrem-rewrite-block
+  [type-segment-bases : i64]
   [facts : OptDivRemFacts]
   [block : CompilerIrBlock]) : OptDivRemBlockRewrite
   (match block
     [(CompilerIrBlock.Block label instrs)
       (match (opt-divrem-rewrite-instr-seq-from
+        type-segment-bases
         facts
         instrs
         0
@@ -26186,6 +27257,7 @@
     [(option_i64.None) unit]))
 
 (define (opt-divrem-propagate-terminator!
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [facts-by-id : (Array OptDivRemFacts)]
   [facts : OptDivRemFacts]
@@ -26201,15 +27273,28 @@
           index
           facts-by-id
           true-label
-          (opt-divrem-edge-facts facts types instrs cond true))
+          (opt-divrem-edge-facts
+            type-segment-bases
+            facts
+            types
+            instrs
+            cond
+            true))
         (opt-divrem-set-successor-facts!
           index
           facts-by-id
           false-label
-          (opt-divrem-edge-facts facts types instrs cond false)))]
+          (opt-divrem-edge-facts
+            type-segment-bases
+            facts
+            types
+            instrs
+            cond
+            false)))]
     [_ unit]))
 
 (define (opt-divrem-propagate-block!
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [facts-by-id : (Array OptDivRemFacts)]
   [facts : OptDivRemFacts]
@@ -26221,6 +27306,7 @@
         [count : i64 (compiler-ir-instr-seq-count instrs)]
         (if (> count 0)
           (opt-divrem-propagate-terminator!
+            type-segment-bases
             index
             facts-by-id
             facts
@@ -26248,6 +27334,7 @@
       (opt-divrem-facts-fill-empty! facts (+ index 1)))))
 
 (define (opt-divrem-process-rpo!
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [blocks : CompilerIrBlockList]
   [types : OptSsaVarTypes]
@@ -26267,7 +27354,7 @@
             [(OptMaybeBlock.Some block)
               (let
                 [rewrite : OptDivRemBlockRewrite
-                  (opt-divrem-rewrite-block facts block)]
+                  (opt-divrem-rewrite-block type-segment-bases facts block)]
                 (match rewrite
                   [(OptDivRemBlockRewrite.Rewrite rewritten final-facts)
                     (begin
@@ -26276,6 +27363,7 @@
                         id
                         (OptDivRemBlockResult.SomeBlock rewritten))
                       (opt-divrem-propagate-block!
+                        type-segment-bases
                         index
                         facts-by-id
                         final-facts
@@ -26283,6 +27371,7 @@
                         rewritten))]))]
             [(OptMaybeBlock.No) unit])
           (opt-divrem-process-rpo!
+            type-segment-bases
             context
             blocks
             types
@@ -26366,6 +27455,7 @@
     [(CompilerIrBlockList.Array seq) (opt-divrem-block-seq-has-divmod? seq 0)]))
 
 (define (opt-divrem-safety-blocks-with-context
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -26376,7 +27466,8 @@
     (let
       [index : OptCfgIndex (struct-get context index)]
       [count : i64 (opt-cfg-index-block-count index)]
-      [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+      [ssa-facts : OptSsaFacts
+        (opt-ssa-facts-from-function type-segment-bases params blocks)]
       [types : OptSsaVarTypes
         (match ssa-facts
           [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
@@ -26386,13 +27477,22 @@
       (begin
         (opt-divrem-facts-fill-empty! facts 0)
         (opt-divrem-results-fill-empty! out 0)
-        (opt-divrem-process-rpo! context blocks types facts out 0)
+        (opt-divrem-process-rpo!
+          type-segment-bases
+          context
+          blocks
+          types
+          facts
+          out
+          0)
         (opt-divrem-materialize-blocks context out blocks)))))
 
 (define (opt-divrem-safety-blocks
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-divrem-safety-blocks-with-context
+    type-segment-bases
     (opt-cfg-context-build blocks)
     params
     blocks))
@@ -26549,7 +27649,10 @@
     [(CompilerIrBinOp.BitXor) true]
     [_ false]))
 
-(define (opt-loop-bce-expr-eq [a : OptLoopBceExpr] [b : OptLoopBceExpr]) : bool
+(define (opt-loop-bce-expr-eq
+  [type-segment-bases : i64]
+  [a : OptLoopBceExpr]
+  [b : OptLoopBceExpr]) : bool
   (match a
     [(OptLoopBceExpr.Unknown) false]
     [(OptLoopBceExpr.Value av)
@@ -26565,18 +27668,31 @@
         [(OptLoopBceExpr.Bin bop bl br bty)
           (and
             (opt-binop-eq aop bop)
-            (opt-type-eq aty bty)
+            (opt-type-eq type-segment-bases aty bty)
             (or
               (and
-                (opt-loop-bce-expr-eq (box-get al) (box-get bl))
-                (opt-loop-bce-expr-eq (box-get ar) (box-get br)))
+                (opt-loop-bce-expr-eq
+                  type-segment-bases
+                  (box-get al)
+                  (box-get bl))
+                (opt-loop-bce-expr-eq
+                  type-segment-bases
+                  (box-get ar)
+                  (box-get br)))
               (and
                 (opt-loop-bce-commutative-op? aop)
-                (opt-loop-bce-expr-eq (box-get al) (box-get br))
-                (opt-loop-bce-expr-eq (box-get ar) (box-get bl)))))]
+                (opt-loop-bce-expr-eq
+                  type-segment-bases
+                  (box-get al)
+                  (box-get br))
+                (opt-loop-bce-expr-eq
+                  type-segment-bases
+                  (box-get ar)
+                  (box-get bl)))))]
         [_ false])]))
 
 (define (opt-range-nonnegative-contains?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [expr : OptLoopBceExpr]) : bool
@@ -26585,12 +27701,24 @@
     [(OptRangeFacts.Cons fact rest)
       (match fact
         [(OptRangeFact.Nonnegative fact-label fact-expr)
-          (if (and (= fact-label label) (opt-loop-bce-expr-eq fact-expr expr))
+          (if (and
+            (= fact-label label)
+            (opt-loop-bce-expr-eq type-segment-bases fact-expr expr))
             true
-            (opt-range-nonnegative-contains? (box-get rest) label expr))]
-        [_ (opt-range-nonnegative-contains? (box-get rest) label expr)])]))
+            (opt-range-nonnegative-contains?
+              type-segment-bases
+              (box-get rest)
+              label
+              expr))]
+        [_
+          (opt-range-nonnegative-contains?
+            type-segment-bases
+            (box-get rest)
+            label
+            expr)])]))
 
 (define (opt-range-less-than-contains?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [lhs : OptLoopBceExpr]
@@ -26602,13 +27730,25 @@
         [(OptRangeFact.LessThan fact-label fact-lhs fact-rhs)
           (if (and
             (= fact-label label)
-            (opt-loop-bce-expr-eq fact-lhs lhs)
-            (opt-loop-bce-expr-eq fact-rhs rhs))
+            (opt-loop-bce-expr-eq type-segment-bases fact-lhs lhs)
+            (opt-loop-bce-expr-eq type-segment-bases fact-rhs rhs))
             true
-            (opt-range-less-than-contains? (box-get rest) label lhs rhs))]
-        [_ (opt-range-less-than-contains? (box-get rest) label lhs rhs)])]))
+            (opt-range-less-than-contains?
+              type-segment-bases
+              (box-get rest)
+              label
+              lhs
+              rhs))]
+        [_
+          (opt-range-less-than-contains?
+            type-segment-bases
+            (box-get rest)
+            label
+            lhs
+            rhs)])]))
 
 (define (opt-range-less-than-or-eq-contains?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [lhs : OptLoopBceExpr]
@@ -26620,23 +27760,36 @@
         [(OptRangeFact.LessThanOrEq fact-label fact-lhs fact-rhs)
           (if (and
             (= fact-label label)
-            (opt-loop-bce-expr-eq fact-lhs lhs)
-            (opt-loop-bce-expr-eq fact-rhs rhs))
+            (opt-loop-bce-expr-eq type-segment-bases fact-lhs lhs)
+            (opt-loop-bce-expr-eq type-segment-bases fact-rhs rhs))
             true
-            (opt-range-less-than-or-eq-contains? (box-get rest) label lhs rhs))]
-        [_ (opt-range-less-than-or-eq-contains? (box-get rest) label lhs rhs)])]))
+            (opt-range-less-than-or-eq-contains?
+              type-segment-bases
+              (box-get rest)
+              label
+              lhs
+              rhs))]
+        [_
+          (opt-range-less-than-or-eq-contains?
+            type-segment-bases
+            (box-get rest)
+            label
+            lhs
+            rhs)])]))
 
 (define (opt-range-proves-less-than-or-eq?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
   (or
-    (opt-loop-bce-expr-eq lhs rhs)
-    (opt-range-less-than-contains? facts label lhs rhs)
-    (opt-range-less-than-or-eq-contains? facts label lhs rhs)))
+    (opt-loop-bce-expr-eq type-segment-bases lhs rhs)
+    (opt-range-less-than-contains? type-segment-bases facts label lhs rhs)
+    (opt-range-less-than-or-eq-contains? type-segment-bases facts label lhs rhs)))
 
 (define (opt-range-proves-less-than-through-one-bound-from?
+  [type-segment-bases : i64]
   [all-facts : OptRangeFacts]
   [scan : OptRangeFacts]
   [label : i64]
@@ -26649,10 +27802,16 @@
         [(OptRangeFact.LessThan fact-label fact-lhs fact-mid)
           (if (and
             (= fact-label label)
-            (opt-loop-bce-expr-eq fact-lhs lhs)
-            (opt-range-proves-less-than-or-eq? all-facts label fact-mid rhs))
+            (opt-loop-bce-expr-eq type-segment-bases fact-lhs lhs)
+            (opt-range-proves-less-than-or-eq?
+              type-segment-bases
+              all-facts
+              label
+              fact-mid
+              rhs))
             true
             (opt-range-proves-less-than-through-one-bound-from?
+              type-segment-bases
               all-facts
               (box-get rest)
               label
@@ -26660,6 +27819,7 @@
               rhs))]
         [_
           (opt-range-proves-less-than-through-one-bound-from?
+            type-segment-bases
             all-facts
             (box-get rest)
             label
@@ -26667,54 +27827,77 @@
             rhs)])]))
 
 (define (opt-range-proves-less-than-through-one-bound?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
-  (opt-range-proves-less-than-through-one-bound-from? facts facts label lhs rhs))
+  (opt-range-proves-less-than-through-one-bound-from?
+    type-segment-bases
+    facts
+    facts
+    label
+    lhs
+    rhs))
 
 (define (opt-range-proves-less-than?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
   (or
-    (opt-range-less-than-contains? facts label lhs rhs)
-    (opt-range-proves-less-than-through-one-bound? facts label lhs rhs)))
+    (opt-range-less-than-contains? type-segment-bases facts label lhs rhs)
+    (opt-range-proves-less-than-through-one-bound?
+      type-segment-bases
+      facts
+      label
+      lhs
+      rhs)))
 
 (define (opt-range-proves-nonnegative?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [expr : OptLoopBceExpr]) : bool
-  (opt-range-nonnegative-contains? facts label expr))
+  (opt-range-nonnegative-contains? type-segment-bases facts label expr))
 
 (define (opt-range-facts-add-nonnegative
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [expr : OptLoopBceExpr]) : OptRangeFacts
-  (if (opt-range-nonnegative-contains? facts label expr)
+  (if (opt-range-nonnegative-contains? type-segment-bases facts label expr)
     facts
     (OptRangeFacts.Cons (OptRangeFact.Nonnegative label expr) (box facts))))
 
 (define (opt-range-facts-add-less-than
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : OptRangeFacts
-  (if (opt-range-less-than-contains? facts label lhs rhs)
+  (if (opt-range-less-than-contains? type-segment-bases facts label lhs rhs)
     facts
     (OptRangeFacts.Cons (OptRangeFact.LessThan label lhs rhs) (box facts))))
 
 (define (opt-range-facts-add-less-than-or-eq
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : OptRangeFacts
-  (if (opt-range-less-than-or-eq-contains? facts label lhs rhs)
+  (if (opt-range-less-than-or-eq-contains?
+    type-segment-bases
+    facts
+    label
+    lhs
+    rhs)
     facts
     (OptRangeFacts.Cons (OptRangeFact.LessThanOrEq label lhs rhs) (box facts))))
 
 (define (opt-range-facts-propagate-label-from
+  [type-segment-bases : i64]
   [source : OptRangeFacts]
   [out : OptRangeFacts]
   [parent-label : i64]
@@ -26729,27 +27912,48 @@
             (match fact
               [(OptRangeFact.Nonnegative label expr)
                 (if (= label parent-label)
-                  (opt-range-facts-add-nonnegative out child-label expr)
+                  (opt-range-facts-add-nonnegative
+                    type-segment-bases
+                    out
+                    child-label
+                    expr)
                   out)]
               [(OptRangeFact.LessThan label lhs rhs)
                 (if (= label parent-label)
-                  (opt-range-facts-add-less-than out child-label lhs rhs)
+                  (opt-range-facts-add-less-than
+                    type-segment-bases
+                    out
+                    child-label
+                    lhs
+                    rhs)
                   out)]
               [(OptRangeFact.LessThanOrEq label lhs rhs)
                 (if (= label parent-label)
-                  (opt-range-facts-add-less-than-or-eq out child-label lhs rhs)
+                  (opt-range-facts-add-less-than-or-eq
+                    type-segment-bases
+                    out
+                    child-label
+                    lhs
+                    rhs)
                   out)])]
           (opt-range-facts-propagate-label-from
+            type-segment-bases
             (box-get rest)
             next
             parent-label
             child-label))])))
 
 (define (opt-range-facts-propagate-label
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [parent-label : i64]
   [child-label : i64]) : OptRangeFacts
-  (opt-range-facts-propagate-label-from facts facts parent-label child-label))
+  (opt-range-facts-propagate-label-from
+    type-segment-bases
+    facts
+    facts
+    parent-label
+    child-label))
 
 (define (opt-range-expr-stable?
   [sources : opt_i64_i64_map.Map]
@@ -26820,6 +28024,7 @@
         ty)]))
 
 (define (opt-range-proves-additive-index-parts-in-range?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [base : OptLoopBceExpr]
@@ -26834,8 +28039,9 @@
       (and
         (> offset 0)
         upper-known-nonnegative
-        (opt-range-proves-nonnegative? facts label base)
+        (opt-range-proves-nonnegative? type-segment-bases facts label base)
         (opt-range-proves-less-than?
+          type-segment-bases
           facts
           label
           base
@@ -26843,6 +28049,7 @@
     [(option_i64.None) false]))
 
 (define (opt-range-proves-additive-index-in-range?
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [label : i64]
   [index : OptLoopBceExpr]
@@ -26855,6 +28062,7 @@
         (opt-signed-integer-type? ty))
         (or
           (opt-range-proves-additive-index-parts-in-range?
+            type-segment-bases
             facts
             label
             (box-get lhs)
@@ -26863,6 +28071,7 @@
             ty
             upper-known-nonnegative)
           (opt-range-proves-additive-index-parts-in-range?
+            type-segment-bases
             facts
             label
             (box-get rhs)
@@ -26874,6 +28083,7 @@
     [_ false]))
 
 (define (opt-range-add-nonnegative-from-compare
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [sources : opt_i64_i64_map.Map]
   [label : i64]
@@ -26891,11 +28101,19 @@
               (match op
                 [(CompilerIrBinOp.Ge)
                   (if (= value 0)
-                    (opt-range-facts-add-nonnegative facts label lhs)
+                    (opt-range-facts-add-nonnegative
+                      type-segment-bases
+                      facts
+                      label
+                      lhs)
                     facts)]
                 [(CompilerIrBinOp.Gt)
                   (if (and (opt-signed-integer-type? ty) (= value (- 0 1)))
-                    (opt-range-facts-add-nonnegative facts label lhs)
+                    (opt-range-facts-add-nonnegative
+                      type-segment-bases
+                      facts
+                      label
+                      lhs)
                     facts)]
                 [_ facts])]
             [(option_i64.None) facts])
@@ -26906,17 +28124,26 @@
             (match op
               [(CompilerIrBinOp.Le)
                 (if (= value 0)
-                  (opt-range-facts-add-nonnegative from-lhs label rhs)
+                  (opt-range-facts-add-nonnegative
+                    type-segment-bases
+                    from-lhs
+                    label
+                    rhs)
                   from-lhs)]
               [(CompilerIrBinOp.Lt)
                 (if (and (opt-signed-integer-type? ty) (= value (- 0 1)))
-                  (opt-range-facts-add-nonnegative from-lhs label rhs)
+                  (opt-range-facts-add-nonnegative
+                    type-segment-bases
+                    from-lhs
+                    label
+                    rhs)
                   from-lhs)]
               [_ from-lhs])]
           [(option_i64.None) from-lhs])
         from-lhs))))
 
 (define (opt-range-add-less-than-from-compare
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [sources : opt_i64_i64_map.Map]
   [label : i64]
@@ -26928,17 +28155,18 @@
       (if (and
         (opt-range-expr-stable? sources lhs)
         (opt-range-expr-stable? sources rhs))
-        (opt-range-facts-add-less-than facts label lhs rhs)
+        (opt-range-facts-add-less-than type-segment-bases facts label lhs rhs)
         facts)]
     [(CompilerIrBinOp.Gt)
       (if (and
         (opt-range-expr-stable? sources lhs)
         (opt-range-expr-stable? sources rhs))
-        (opt-range-facts-add-less-than facts label rhs lhs)
+        (opt-range-facts-add-less-than type-segment-bases facts label rhs lhs)
         facts)]
     [_ facts]))
 
 (define (opt-range-add-less-than-or-eq-from-compare
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [sources : opt_i64_i64_map.Map]
   [label : i64]
@@ -26950,17 +28178,28 @@
       (if (and
         (opt-range-expr-stable? sources lhs)
         (opt-range-expr-stable? sources rhs))
-        (opt-range-facts-add-less-than-or-eq facts label lhs rhs)
+        (opt-range-facts-add-less-than-or-eq
+          type-segment-bases
+          facts
+          label
+          lhs
+          rhs)
         facts)]
     [(CompilerIrBinOp.Ge)
       (if (and
         (opt-range-expr-stable? sources lhs)
         (opt-range-expr-stable? sources rhs))
-        (opt-range-facts-add-less-than-or-eq facts label rhs lhs)
+        (opt-range-facts-add-less-than-or-eq
+          type-segment-bases
+          facts
+          label
+          rhs
+          lhs)
         facts)]
     [_ facts]))
 
 (define (opt-range-add-edge-facts
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
@@ -26973,11 +28212,26 @@
     [operand-ty : AstType
       (opt-range-compare-operand-type types lhs rhs fallback-ty)]
     [less : OptRangeFacts
-      (opt-range-add-less-than-from-compare facts sources label op lhs rhs)]
+      (opt-range-add-less-than-from-compare
+        type-segment-bases
+        facts
+        sources
+        label
+        op
+        lhs
+        rhs)]
     [less-or-eq : OptRangeFacts
-      (opt-range-add-less-than-or-eq-from-compare less sources label op lhs rhs)]
+      (opt-range-add-less-than-or-eq-from-compare
+        type-segment-bases
+        less
+        sources
+        label
+        op
+        lhs
+        rhs)]
     [nonnegative : OptRangeFacts
       (opt-range-add-nonnegative-from-compare
+        type-segment-bases
         less-or-eq
         sources
         label
@@ -26994,11 +28248,19 @@
       (match op
         [(CompilerIrBinOp.Lt)
           (if (opt-range-expr-stable? sources lhs)
-            (opt-range-facts-add-nonnegative nonnegative label lhs)
+            (opt-range-facts-add-nonnegative
+              type-segment-bases
+              nonnegative
+              label
+              lhs)
             nonnegative)]
         [(CompilerIrBinOp.Gt)
           (if (opt-range-expr-stable? sources rhs)
-            (opt-range-facts-add-nonnegative nonnegative label rhs)
+            (opt-range-facts-add-nonnegative
+              type-segment-bases
+              nonnegative
+              label
+              rhs)
             nonnegative)]
         [_ nonnegative])
       nonnegative)))
@@ -27201,12 +28463,17 @@
     [_ (OptLoopBceExpr.Value value)]))
 
 (define (opt-loop-bce-same-width-int-cast?
+  [type-segment-bases : i64]
   [from-ty : AstType]
   [to-ty : AstType]) : bool
   (or
-    (and (opt-type-eq from-ty (AstType.I64)) (opt-type-eq to-ty (AstType.U64)))
-    (and (opt-type-eq from-ty (AstType.U64)) (opt-type-eq to-ty (AstType.I64)))
-    (opt-type-eq from-ty to-ty)))
+    (and
+      (opt-type-eq type-segment-bases from-ty (AstType.I64))
+      (opt-type-eq type-segment-bases to-ty (AstType.U64)))
+    (and
+      (opt-type-eq type-segment-bases from-ty (AstType.U64))
+      (opt-type-eq type-segment-bases to-ty (AstType.I64)))
+    (opt-type-eq type-segment-bases from-ty to-ty)))
 
 (define (opt-loop-bce-data-slot? [offset : CompilerIrValue]) : bool
   (match offset
@@ -27457,6 +28724,7 @@
         [_ false])]))
 
 (define (opt-loop-bce-plus-one-add?
+  [type-segment-bases : i64]
   [instr : CompilerIrInstr]
   [dst : i64]
   [index-var : i64]) : bool
@@ -27465,7 +28733,7 @@
       (and
         (= out dst)
         (opt-binop-eq op (CompilerIrBinOp.Add))
-        (opt-type-eq ty (AstType.I64))
+        (opt-type-eq type-segment-bases ty (AstType.I64))
         (or
           (and
             (opt-value-eq lhs (CompilerIrValue.Var index-var))
@@ -27486,6 +28754,7 @@
           (OptI64List.Cons head (box tail))))]))
 
 (define (opt-loop-bce-index-increment-step
+  [type-segment-bases : i64]
   [current : OptLoopBceIndexDef]
   [plus-one : OptI64List]
   [instr : CompilerIrInstr]
@@ -27504,13 +28773,14 @@
       [(CompilerIrInstr.BinOp dst _ _ _ _)
         (if (and
           (= dst index-var)
-          (opt-loop-bce-plus-one-add? instr dst index-var))
+          (opt-loop-bce-plus-one-add? type-segment-bases instr dst index-var))
           (OptLoopBceIndexDef.Increment)
           (OptLoopBceIndexDef.Other))]
       [_ (OptLoopBceIndexDef.Other)])
     current))
 
 (define (opt-loop-bce-plus-one-update
+  [type-segment-bases : i64]
   [plus-one : OptI64List]
   [instr : CompilerIrInstr]
   [index-var : i64]) : OptI64List
@@ -27522,11 +28792,12 @@
         (opt-loop-bce-i64-list-remove plus-one dst))]
     (if (and
       (not (= dst (- 0 1)))
-      (opt-loop-bce-plus-one-add? instr dst index-var))
+      (opt-loop-bce-plus-one-add? type-segment-bases instr dst index-var))
       (opt-i64-list-add removed dst)
       removed)))
 
 (define (opt-loop-bce-index-increment-instrs
+  [type-segment-bases : i64]
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [count : i64]
@@ -27538,10 +28809,20 @@
     (let
       [instr : CompilerIrInstr (array-ref slots index)]
       [next : OptLoopBceIndexDef
-        (opt-loop-bce-index-increment-step current plus-one instr index-var)]
+        (opt-loop-bce-index-increment-step
+          type-segment-bases
+          current
+          plus-one
+          instr
+          index-var)]
       [next-plus : OptI64List
-        (opt-loop-bce-plus-one-update plus-one instr index-var)]
+        (opt-loop-bce-plus-one-update
+          type-segment-bases
+          plus-one
+          instr
+          index-var)]
       (opt-loop-bce-index-increment-instrs
+        type-segment-bases
         slots
         (+ index 1)
         count
@@ -27550,11 +28831,13 @@
         next-plus))))
 
 (define (opt-loop-bce-block-last-def-increment?
+  [type-segment-bases : i64]
   [block : CompilerIrBlock]
   [index-var : i64]) : bool
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (match (opt-loop-bce-index-increment-instrs
+        type-segment-bases
         (struct-get instrs slots)
         0
         (struct-get instrs len)
@@ -27576,6 +28859,7 @@
             [_ false])))]))
 
 (define (opt-loop-bce-header-edge-shape
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [preds : OptLabelSet]
   [header-label : i64]
@@ -27591,10 +28875,14 @@
             [init? : bool (opt-loop-bce-block-last-def-zero? block index-var)]
             [latch? : bool
               (and
-                (opt-loop-bce-block-last-def-increment? block index-var)
+                (opt-loop-bce-block-last-def-increment?
+                  type-segment-bases
+                  block
+                  index-var)
                 (opt-loop-bce-block-jumps-to? block header-label))]
             (if (or init? latch?)
               (opt-loop-bce-header-edge-shape
+                type-segment-bases
                 blocks
                 (box-get rest)
                 header-label
@@ -27606,6 +28894,7 @@
           (OptLoopBceHeaderEdges.Edges false seen-init seen-latch)])]))
 
 (define (opt-loop-bce-guard-nonnegative?
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [header-label : i64]
@@ -27634,6 +28923,7 @@
                             preheader
                             index-var)
                           (opt-loop-bce-block-last-def-increment?
+                            type-segment-bases
                             body
                             index-var)
                           (opt-loop-bce-block-jumps-to? body header-label))]
@@ -27641,6 +28931,7 @@
                   [(OptMaybeBlock.No) false])]
               [(OptLoopBceMaybeLabel.NoLabel) false])
             (match (opt-loop-bce-header-edge-shape
+              type-segment-bases
               blocks
               header-preds
               header-label
@@ -27686,6 +28977,7 @@
         (opt-loop-bce-induction-step-safe? step upper upper-inclusive ty))]))
 
 (define (opt-loop-bce-induction-fact-for-var-instr-seq-from
+  [type-segment-bases : i64]
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : i64]
@@ -27695,6 +28987,7 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptMaybeInductionFact.No)
     (match (opt-induction-fact-from-phi
+      type-segment-bases
       body-blocks
       loop
       preheader
@@ -27705,6 +28998,7 @@
             (if (= phi-var var)
               (OptMaybeInductionFact.Some fact)
               (opt-loop-bce-induction-fact-for-var-instr-seq-from
+                type-segment-bases
                 body-blocks
                 loop
                 preheader
@@ -27713,6 +29007,7 @@
                 var))])]
       [(OptMaybeInductionFact.No)
         (opt-loop-bce-induction-fact-for-var-instr-seq-from
+          type-segment-bases
           body-blocks
           loop
           preheader
@@ -27721,6 +29016,7 @@
           var)])))
 
 (define (opt-loop-bce-induction-fact-for-var
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
   [preheader : i64]
@@ -27733,6 +29029,7 @@
         (match block
           [(CompilerIrBlock.Block _ instrs)
             (opt-loop-bce-induction-fact-for-var-instr-seq-from
+              type-segment-bases
               body-blocks
               loop
               preheader
@@ -27761,6 +29058,7 @@
           body-label))]))
 
 (define (opt-loop-bce-canonical-iv-proof?
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
@@ -27785,6 +29083,7 @@
             (match (opt-natural-loop-preheader loop)
               [(OptLoopPreheader.Some preheader)
                 (match (opt-loop-bce-induction-fact-for-var
+                  type-segment-bases
                   blocks
                   loop
                   preheader
@@ -27799,6 +29098,7 @@
           [(OptMaybeNaturalLoop.No) false])])))
 
 (define (opt-loop-bce-add-canonical-iv-facts-for-bound
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -27810,6 +29110,7 @@
   [upper : OptLoopBceExpr]
   [upper-inclusive : bool]) : OptRangeFacts
   (if (opt-loop-bce-canonical-iv-proof?
+    type-segment-bases
     blocks
     doms
     loops
@@ -27820,14 +29121,26 @@
     upper
     upper-inclusive)
     (opt-range-facts-add-nonnegative
+      type-segment-bases
       (if upper-inclusive
-        (opt-range-facts-add-less-than-or-eq facts body-label iv upper)
-        (opt-range-facts-add-less-than facts body-label iv upper))
+        (opt-range-facts-add-less-than-or-eq
+          type-segment-bases
+          facts
+          body-label
+          iv
+          upper)
+        (opt-range-facts-add-less-than
+          type-segment-bases
+          facts
+          body-label
+          iv
+          upper))
       body-label
       iv)
     facts))
 
 (define (opt-loop-bce-add-canonical-iv-facts
+  [type-segment-bases : i64]
   [facts : OptRangeFacts]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -27841,6 +29154,7 @@
   (match op
     [(CompilerIrBinOp.Lt)
       (opt-loop-bce-add-canonical-iv-facts-for-bound
+        type-segment-bases
         facts
         blocks
         doms
@@ -27853,6 +29167,7 @@
         false)]
     [(CompilerIrBinOp.Gt)
       (opt-loop-bce-add-canonical-iv-facts-for-bound
+        type-segment-bases
         facts
         blocks
         doms
@@ -27865,6 +29180,7 @@
         false)]
     [(CompilerIrBinOp.Le)
       (opt-loop-bce-add-canonical-iv-facts-for-bound
+        type-segment-bases
         facts
         blocks
         doms
@@ -27877,6 +29193,7 @@
         true)]
     [(CompilerIrBinOp.Ge)
       (opt-loop-bce-add-canonical-iv-facts-for-bound
+        type-segment-bases
         facts
         blocks
         doms
@@ -27890,6 +29207,7 @@
     [_ facts]))
 
 (define (opt-loop-bce-branch-state
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
@@ -27912,6 +29230,7 @@
               (opt-range-compare-operand-type types lhs rhs ty)]
             [true-ranges : OptRangeFacts
               (opt-range-add-edge-facts
+                type-segment-bases
                 (struct-get state ranges)
                 sources
                 types
@@ -27922,6 +29241,7 @@
                 ty)]
             [false-ranges : OptRangeFacts
               (opt-range-add-edge-facts
+                type-segment-bases
                 true-ranges
                 sources
                 types
@@ -27932,6 +29252,7 @@
                 ty)]
             [canonical-ranges : OptRangeFacts
               (opt-loop-bce-add-canonical-iv-facts
+                type-segment-bases
                 false-ranges
                 blocks
                 doms
@@ -27947,6 +29268,7 @@
             [range-nonnegative : bool
               (or
                 (opt-range-nonnegative-contains?
+                  type-segment-bases
                   (struct-get range-state ranges)
                   block-label
                   lhs)
@@ -27955,11 +29277,15 @@
                   block-label)
                   [(OptLoopBceGuardEnv.Cons _ found found-marker _)
                     (and
-                      (opt-loop-bce-expr-eq found lhs)
-                      (opt-loop-bce-expr-eq found-marker marker))]
+                      (opt-loop-bce-expr-eq type-segment-bases found lhs)
+                      (opt-loop-bce-expr-eq
+                        type-segment-bases
+                        found-marker
+                        marker))]
                   [(OptLoopBceGuardEnv.Nil) false]))]
             [loop-nonnegative : bool
               (opt-loop-bce-guard-nonnegative?
+                type-segment-bases
                 blocks
                 index
                 block-label
@@ -27997,7 +29323,9 @@
                       (opt-loop-bce-state-bind-ranges
                         range-state
                         (opt-range-facts-add-less-than
+                          type-segment-bases
                           (opt-range-facts-add-nonnegative
+                            type-segment-bases
                             (struct-get range-state ranges)
                             true-label
                             lhs)
@@ -28017,6 +29345,7 @@
     [_ state]))
 
 (define (opt-loop-bce-update-gep
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [sources : opt_i64_i64_map.Map]
   [dst : i64]
@@ -28036,7 +29365,7 @@
         (let
           [object : i64 (opt-loop-bce-alias-resolve aliases base-var)]
           [kind : OptLoopBcePtrKind
-            (if (opt-bounds-object-length-slot? offset ty)
+            (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
               (OptLoopBcePtrKind.LengthSlot object)
               (if (opt-loop-bce-data-slot? offset)
                 (OptLoopBcePtrKind.DataSlot object)
@@ -28055,6 +29384,7 @@
       [_ invalid])))
 
 (define (opt-loop-bce-update-load
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [sources : opt_i64_i64_map.Map]
   [dst : i64]
@@ -28096,7 +29426,7 @@
       [_
         (match src
           [(CompilerIrValue.Global _)
-            (if (opt-type-eq ty (AstType.I64))
+            (if (opt-type-eq type-segment-bases ty (AstType.I64))
               (opt-loop-bce-state-bind-expr
                 invalid
                 sources
@@ -28147,6 +29477,7 @@
       memory)))
 
 (define (opt-loop-bce-update-instr
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
   [sources : opt_i64_i64_map.Map]
@@ -28181,15 +29512,22 @@
     [(CompilerIrInstr.AddrOf dst _)
       (opt-loop-bce-state-invalidate-def state dst)]
     [(CompilerIrInstr.Gep dst base offset ty)
-      (opt-loop-bce-update-gep state sources dst base offset ty)]
+      (opt-loop-bce-update-gep
+        type-segment-bases
+        state
+        sources
+        dst
+        base
+        offset
+        ty)]
     [(CompilerIrInstr.Load dst src ty)
-      (opt-loop-bce-update-load state sources dst src ty)]
+      (opt-loop-bce-update-load type-segment-bases state sources dst src ty)]
     [(CompilerIrInstr.Cast dst src from-ty to-ty)
       (opt-loop-bce-state-bind-expr
         state
         sources
         dst
-        (if (opt-loop-bce-same-width-int-cast? from-ty to-ty)
+        (if (opt-loop-bce-same-width-int-cast? type-segment-bases from-ty to-ty)
           (opt-loop-bce-value-expr sources (struct-get state exprs) src)
           (OptLoopBceExpr.Unknown)))]
     [(CompilerIrInstr.Bitcast dst _ _ _)
@@ -28315,6 +29653,7 @@
     [(CompilerIrInstr.Store _ _ _) state]
     [(CompilerIrInstr.Branch cond true-label false-label)
       (opt-loop-bce-branch-state
+        type-segment-bases
         state
         sources
         types
@@ -28340,16 +29679,18 @@
     [(CompilerIrInstr.Switch _ _ _ _) state]))
 
 (define (opt-loop-bce-length-expr-known?
+  [type-segment-bases : i64]
   [lengths : OptLoopBceLengthEnv]
   [expr : OptLoopBceExpr]) : bool
   (match lengths
     [(OptLoopBceLengthEnv.Nil) false]
     [(OptLoopBceLengthEnv.Cons _ found rest)
-      (if (opt-loop-bce-expr-eq found expr)
+      (if (opt-loop-bce-expr-eq type-segment-bases found expr)
         true
-        (opt-loop-bce-length-expr-known? (box-get rest) expr))]))
+        (opt-loop-bce-length-expr-known? type-segment-bases (box-get rest) expr))]))
 
 (define (opt-loop-bce-range-can-remove?
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [sources : opt_i64_i64_map.Map]
   [block-label : i64]
@@ -28362,12 +29703,25 @@
       (opt-loop-bce-value-expr sources (struct-get state exprs) length)]
     [ranges : OptRangeFacts (struct-get state ranges)]
     [length-known-nonnegative : bool
-      (opt-loop-bce-length-expr-known? (struct-get state lengths) length-expr)]
+      (opt-loop-bce-length-expr-known?
+        type-segment-bases
+        (struct-get state lengths)
+        length-expr)]
     (or
       (and
-        (opt-range-proves-nonnegative? ranges block-label index-expr)
-        (opt-range-proves-less-than? ranges block-label index-expr length-expr))
+        (opt-range-proves-nonnegative?
+          type-segment-bases
+          ranges
+          block-label
+          index-expr)
+        (opt-range-proves-less-than?
+          type-segment-bases
+          ranges
+          block-label
+          index-expr
+          length-expr))
       (opt-range-proves-additive-index-in-range?
+        type-segment-bases
         ranges
         block-label
         index-expr
@@ -28375,6 +29729,7 @@
         length-known-nonnegative))))
 
 (define (opt-loop-bce-can-remove?
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [sources : opt_i64_i64_map.Map]
   [block-label : i64]
@@ -28384,19 +29739,30 @@
     [length-expr : OptLoopBceExpr
       (opt-loop-bce-value-expr sources (struct-get state exprs) length)]
     (or
-      (opt-loop-bce-range-can-remove? state sources block-label index length)
+      (opt-loop-bce-range-can-remove?
+        type-segment-bases
+        state
+        sources
+        block-label
+        index
+        length)
       (and
-        (opt-loop-bce-length-expr-known? (struct-get state lengths) length-expr)
+        (opt-loop-bce-length-expr-known?
+          type-segment-bases
+          (struct-get state lengths)
+          length-expr)
         (match (opt-loop-bce-guard-lookup (struct-get state guards) block-label)
           [(OptLoopBceGuardEnv.Cons _ guard-index guard-length _)
             (and
               (opt-loop-bce-expr-eq
+                type-segment-bases
                 guard-index
                 (opt-loop-bce-value-expr sources (struct-get state exprs) index))
-              (opt-loop-bce-expr-eq guard-length length-expr))]
+              (opt-loop-bce-expr-eq type-segment-bases guard-length length-expr))]
           [(OptLoopBceGuardEnv.Nil) false])))))
 
 (define (opt-loop-bce-rewrite-instr-seq-from
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
   [sources : opt_i64_i64_map.Map]
@@ -28416,10 +29782,17 @@
       [drop? : bool
         (match instr
           [(CompilerIrInstr.BoundsCheck idx len _)
-            (opt-loop-bce-can-remove? state sources block-label idx len)]
+            (opt-loop-bce-can-remove?
+              type-segment-bases
+              state
+              sources
+              block-label
+              idx
+              len)]
           [_ false])]
       (if drop?
         (opt-loop-bce-rewrite-instr-seq-from
+          type-segment-bases
           state
           summaries
           sources
@@ -28435,6 +29808,7 @@
         (let
           [next-state : OptLoopBceState
             (opt-loop-bce-update-instr
+              type-segment-bases
               state
               summaries
               sources
@@ -28446,6 +29820,7 @@
               block-label
               instr)]
           (match (opt-loop-bce-rewrite-instr-seq-from
+            type-segment-bases
             next-state
             summaries
             sources
@@ -28464,6 +29839,7 @@
                 (compiler-ir-instr-cons instr out-rest))]))))))
 
 (define (opt-loop-bce-rewrite-instr-seq
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
   [sources : opt_i64_i64_map.Map]
@@ -28475,6 +29851,7 @@
   [block-label : i64]
   [instrs : CompilerIrInstrSeq]) : OptLoopBceRewrite
   (opt-loop-bce-rewrite-instr-seq-from
+    type-segment-bases
     state
     summaries
     sources
@@ -28489,6 +29866,7 @@
     (compiler-ir-instr-seq-count instrs)))
 
 (define (opt-loop-bce-rewrite-block
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
   [sources : opt_i64_i64_map.Map]
@@ -28501,6 +29879,7 @@
   (match block
     [(CompilerIrBlock.Block label instrs)
       (match (opt-loop-bce-rewrite-instr-seq
+        type-segment-bases
         state
         summaries
         sources
@@ -28517,6 +29896,7 @@
             (compiler-ir-block label out-instrs))])]))
 
 (define (opt-loop-bce-length-store-shape-instrs
+  [type-segment-bases : i64]
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [count : i64]
@@ -28533,7 +29913,7 @@
       [next-ptrs : OptI64List
         (match instr
           [(CompilerIrInstr.Gep gep-dst _ offset ty)
-            (if (opt-bounds-object-length-slot? offset ty)
+            (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
               (opt-i64-list-add removed gep-dst)
               removed)]
           [_ removed])]
@@ -28544,24 +29924,28 @@
               (if (opt-i64-list-contains? ptrs ptr-var)
                 true
                 (opt-loop-bce-length-store-shape-instrs
+                  type-segment-bases
                   slots
                   (+ index 1)
                   count
                   next-ptrs))]
             [_
               (opt-loop-bce-length-store-shape-instrs
+                type-segment-bases
                 slots
                 (+ index 1)
                 count
                 next-ptrs)])]
         [_
           (opt-loop-bce-length-store-shape-instrs
+            type-segment-bases
             slots
             (+ index 1)
             count
             next-ptrs)]))))
 
 (define (opt-loop-bce-length-store-shape-blocks
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [ptrs : OptI64List]) : bool
   (match blocks
@@ -28570,18 +29954,24 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (if (opt-loop-bce-length-store-shape-instrs
+            type-segment-bases
             (struct-get instrs slots)
             0
             (struct-get instrs len)
             ptrs)
             true
-            (opt-loop-bce-length-store-shape-blocks (box-get rest) ptrs))])]
+            (opt-loop-bce-length-store-shape-blocks
+              type-segment-bases
+              (box-get rest)
+              ptrs))])]
     [(CompilerIrBlockList.Array seq)
       (opt-loop-bce-length-store-shape-blocks
+        type-segment-bases
         (compiler-ir-block-seq-to-list seq)
         ptrs)]))
 
 (define (opt-loop-bce-length-load-shape-instrs
+  [type-segment-bases : i64]
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [count : i64]
@@ -28598,7 +29988,7 @@
       [next-ptrs : OptI64List
         (match instr
           [(CompilerIrInstr.Gep gep-dst _ offset ty)
-            (if (opt-bounds-object-length-slot? offset ty)
+            (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
               (opt-i64-list-add removed gep-dst)
               removed)]
           [_ removed])]
@@ -28609,24 +29999,28 @@
               (if (opt-i64-list-contains? ptrs ptr-var)
                 true
                 (opt-loop-bce-length-load-shape-instrs
+                  type-segment-bases
                   slots
                   (+ index 1)
                   count
                   next-ptrs))]
             [_
               (opt-loop-bce-length-load-shape-instrs
+                type-segment-bases
                 slots
                 (+ index 1)
                 count
                 next-ptrs)])]
         [_
           (opt-loop-bce-length-load-shape-instrs
+            type-segment-bases
             slots
             (+ index 1)
             count
             next-ptrs)]))))
 
 (define (opt-loop-bce-length-load-shape-blocks
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [ptrs : OptI64List]) : bool
   (match blocks
@@ -28635,18 +30029,24 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (if (opt-loop-bce-length-load-shape-instrs
+            type-segment-bases
             (struct-get instrs slots)
             0
             (struct-get instrs len)
             ptrs)
             true
-            (opt-loop-bce-length-load-shape-blocks (box-get rest) ptrs))])]
+            (opt-loop-bce-length-load-shape-blocks
+              type-segment-bases
+              (box-get rest)
+              ptrs))])]
     [(CompilerIrBlockList.Array seq)
       (opt-loop-bce-length-load-shape-blocks
+        type-segment-bases
         (compiler-ir-block-seq-to-list seq)
         ptrs)]))
 
 (define (opt-loop-bce-string-byte-shape-instrs
+  [type-segment-bases : i64]
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [count : i64]) : bool
@@ -28654,25 +30054,40 @@
     false
     (match (array-ref slots index)
       [(CompilerIrInstr.Gep _ _ _ ty)
-        (if (opt-type-eq ty (AstType.Char))
+        (if (opt-type-eq type-segment-bases ty (AstType.Char))
           true
-          (opt-loop-bce-string-byte-shape-instrs slots (+ index 1) count))]
-      [_ (opt-loop-bce-string-byte-shape-instrs slots (+ index 1) count)])))
+          (opt-loop-bce-string-byte-shape-instrs
+            type-segment-bases
+            slots
+            (+ index 1)
+            count))]
+      [_
+        (opt-loop-bce-string-byte-shape-instrs
+          type-segment-bases
+          slots
+          (+ index 1)
+          count)])))
 
-(define (opt-loop-bce-string-byte-shape-blocks [blocks : CompilerIrBlockList]) : bool
+(define (opt-loop-bce-string-byte-shape-blocks
+  [type-segment-bases : i64]
+  [blocks : CompilerIrBlockList]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (if (opt-loop-bce-string-byte-shape-instrs
+            type-segment-bases
             (struct-get instrs slots)
             0
             (struct-get instrs len))
             true
-            (opt-loop-bce-string-byte-shape-blocks (box-get rest)))])]
+            (opt-loop-bce-string-byte-shape-blocks
+              type-segment-bases
+              (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-loop-bce-string-byte-shape-blocks
+        type-segment-bases
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-loop-bce-argc-call-shape-instrs
@@ -28784,6 +30199,7 @@
       (opt-count-bounds-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-loop-bce-eligible-blocks?
+  [type-segment-bases : i64]
   [summaries : OptLoopBceSummaries]
   [blocks : CompilerIrBlockList]) : bool
   (and
@@ -28792,10 +30208,16 @@
     (or
       (and
         (opt-loop-bce-argc-call-shape-blocks summaries blocks)
-        (opt-loop-bce-length-store-shape-blocks blocks (OptI64List.Nil)))
+        (opt-loop-bce-length-store-shape-blocks
+          type-segment-bases
+          blocks
+          (OptI64List.Nil)))
       (and
-        (opt-loop-bce-length-load-shape-blocks blocks (OptI64List.Nil))
-        (opt-loop-bce-string-byte-shape-blocks blocks))
+        (opt-loop-bce-length-load-shape-blocks
+          type-segment-bases
+          blocks
+          (OptI64List.Nil))
+        (opt-loop-bce-string-byte-shape-blocks type-segment-bases blocks))
       (and
         (<= (compiler-ir-block-list-count blocks) 8)
         (opt-loop-bce-compare-shape-blocks blocks)))))
@@ -28843,6 +30265,7 @@
         block-id)]))
 
 (define (opt-loop-bce-rewrite-id
+  [type-segment-bases : i64]
   [summaries : OptLoopBceSummaries]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
@@ -28863,6 +30286,7 @@
           [(OptMaybeBlock.No) unit]
           [(OptMaybeBlock.Some block)
             (match (opt-loop-bce-rewrite-block
+              type-segment-bases
               state
               summaries
               sources
@@ -28879,6 +30303,7 @@
                     id
                     (OptLoopBceBlockResult.SomeBlock rewritten))
                   (opt-loop-bce-rewrite-children
+                    type-segment-bases
                     summaries
                     sources
                     types
@@ -28893,6 +30318,7 @@
       unit)))
 
 (define (opt-loop-bce-rewrite-children
+  [type-segment-bases : i64]
   [summaries : OptLoopBceSummaries]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
@@ -28917,9 +30343,14 @@
           [child-id : i64 (array-ref edges edge)]
           [child-label : i64 (array-ref labels child-id)]
           [child-state : OptLoopBceState
-            (opt-loop-bce-state-propagate-guard state parent-label child-label)]
+            (opt-loop-bce-state-propagate-guard
+              type-segment-bases
+              state
+              parent-label
+              child-label)]
           (begin
             (opt-loop-bce-rewrite-id
+              type-segment-bases
               summaries
               sources
               types
@@ -28935,12 +30366,13 @@
       unit)))
 
 (define (opt-loop-bce-blocks
+  [type-segment-bases : i64]
   [summaries : OptLoopBceSummaries]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (if (or
     (not (struct-get summaries enabled))
-    (not (opt-loop-bce-eligible-blocks? summaries blocks)))
+    (not (opt-loop-bce-eligible-blocks? type-segment-bases summaries blocks)))
     blocks
     (let
       [context : OptCfgContext (opt-cfg-context-build blocks)]
@@ -28956,7 +30388,8 @@
         (opt-gvn-sources-blocks
           blocks
           (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 64)))]
-      [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+      [ssa-facts : OptSsaFacts
+        (opt-ssa-facts-from-function type-segment-bases params blocks)]
       [types : OptSsaVarTypes
         (match ssa-facts
           [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
@@ -28968,6 +30401,7 @@
               (>= entry-id 0)
               (array-ref (struct-get cfg-index reachable) entry-id))
               (opt-loop-bce-rewrite-id
+                type-segment-bases
                 summaries
                 sources
                 types
@@ -28984,6 +30418,7 @@
         (opt-loop-bce-materialize-blocks out blocks 0)))))
 
 (define (opt-loop-bce-state-propagate-guard
+  [type-segment-bases : i64]
   [state : OptLoopBceState]
   [parent-label : i64]
   [child-label : i64]) : OptLoopBceState
@@ -28992,6 +30427,7 @@
       (opt-loop-bce-state-bind-ranges
         state
         (opt-range-facts-propagate-label
+          type-segment-bases
           (struct-get state ranges)
           parent-label
           child-label))]
@@ -29446,7 +30882,9 @@
       blocks)
     blocks))
 
-(define (opt-fold-strength-cse-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : i64
+(define (opt-fold-strength-cse-instr-seq-rewrite!
+  [type-segment-bases : i64]
+  [instrs : CompilerIrInstrSeq]) : i64
   (let
     [index : i64 0]
     [store-count : i64 0]
@@ -29457,12 +30895,13 @@
     (begin
       (while (< index count)
         (match (opt-fold-instr
+          type-segment-bases
           fold-state
           (compiler-ir-instr-seq-ref instrs index))
           [(OptInstrResult.Result next-fold folded)
             (match (opt-strength-instr strength-state folded)
               [(OptInstrResult.Result next-strength strengthened)
-                (match (opt-cse-instr cse-state strengthened)
+                (match (opt-cse-instr type-segment-bases cse-state strengthened)
                   [(OptCseResult.Result next-cse rewritten)
                     (begin
                       (match rewritten
@@ -29479,6 +30918,7 @@
       store-count)))
 
 (define (opt-load-copy-instr-seq-rewrite!
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instrs : CompilerIrInstrSeq]) : unit
@@ -29491,6 +30931,7 @@
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     (while (< index count)
       (match (opt-load-cse-dispatch
+        type-segment-bases
         hs
         false
         sources
@@ -30109,6 +31550,8 @@
           (= (opt-block-fold-scan scan-work opt-fold-scan-tag instrs) 0))])))
 
 (define (optimize-block-hs-full
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [dead-kinds : OptLoadPtrKinds]
   [load-kinds : OptLoadPtrKinds]
@@ -30117,7 +31560,7 @@
   (match block
     [(CompilerIrBlock.Block label instrs)
       (let
-        [work : CompilerIrInstrSeq (compiler-ir-clone-instr-seq instrs)]
+        [work : CompilerIrInstrSeq (compiler-ir-clone-instr-seq pools instrs)]
         [store-capacity : i64 0]
         ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
         ;; pure expressions, propagate the resulting copies, then remove duplicate
@@ -30131,25 +31574,31 @@
         ;; the list without changing it (byte-identical output, ~0.9% of
         ;; self-compile).
         (begin
-          (set! store-capacity (opt-fold-strength-cse-instr-seq-rewrite! work))
+          (set!
+            store-capacity
+            (opt-fold-strength-cse-instr-seq-rewrite! type-segment-bases work))
           (set!
             work
             (opt-dead-store-instr-seq-known-with-kinds
+              type-segment-bases
               hs
               store-capacity
               dead-kinds
               work))
           (opt-load-copy-instr-seq-rewrite!
+            type-segment-bases
             hs
             (opt-load-cse-empty-state-for-size-with-kinds
               (compiler-ir-instr-seq-count work)
               load-kinds
               load-facts)
             work)
-          (opt-bounds-instr-seq-rewrite! work)
+          (opt-bounds-instr-seq-rewrite! type-segment-bases work)
           (CompilerIrBlock.Block label work)))]))
 
 (define (optimize-block-hs-with-kinds
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [dead-kinds : OptLoadPtrKinds]
   [load-kinds : OptLoadPtrKinds]
@@ -30160,6 +31609,8 @@
   (if (opt-block-scan-skippable? scan-work block)
     block
     (optimize-block-hs-full
+      pools
+      type-segment-bases
       hs
       dead-kinds
       load-kinds
@@ -30167,20 +31618,32 @@
       block)))
 
 (define (optimize-block-hs
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [scan-work : (Array i64)]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (if (opt-block-scan-skippable? scan-work block)
     block
     (optimize-block-hs-full
+      pools
+      type-segment-bases
       hs
       (opt-load-kinds-empty)
       (opt-load-kinds-empty)
       (opt-alias-empty)
       block)))
 
-(define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
-  (optimize-block-hs (opt-load-header-set-empty) (array.make-array i64 0) block))
+(define (optimize-block
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (optimize-block-hs
+    pools
+    type-segment-bases
+    (opt-load-header-set-empty)
+    (array.make-array i64 0)
+    block))
 
 (define (optimize-block-entry-facts
   [block : CompilerIrBlock]
@@ -30193,6 +31656,8 @@
         (opt-alias-empty))]))
 
 (define (optimize-block-seq-hs
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [entry-label : i64]
   [seed-facts : OptAliasFacts]
@@ -30211,6 +31676,8 @@
               slots
               index
               (optimize-block-hs-with-kinds
+                pools
+                type-segment-bases
                 hs
                 (opt-load-kinds-empty)
                 (opt-load-kinds-empty)
@@ -30222,6 +31689,8 @@
       (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
 
 (define (optimize-block-seq-hs-dense
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [entry-label : i64]
   [seed-facts : OptAliasFacts]
@@ -30243,6 +31712,8 @@
               slots
               index
               (optimize-block-hs-with-kinds
+                pools
+                type-segment-bases
                 hs
                 (opt-load-kinds-dense-state
                   work
@@ -30260,6 +31731,8 @@
       (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
 
 (define (optimize-block-list-hs
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [entry-label : i64]
   [seed-facts : OptAliasFacts]
@@ -30270,6 +31743,8 @@
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-block-cons
         (optimize-block-hs-with-kinds
+          pools
+          type-segment-bases
           hs
           (opt-load-kinds-empty)
           (opt-load-kinds-empty)
@@ -30278,13 +31753,22 @@
           scan-work
           block)
         (optimize-block-list-hs
+          pools
+          type-segment-bases
           hs
           entry-label
           seed-facts
           scan-work
           (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
-      (optimize-block-seq-hs hs entry-label seed-facts scan-work seq)]))
+      (optimize-block-seq-hs
+        pools
+        type-segment-bases
+        hs
+        entry-label
+        seed-facts
+        scan-work
+        seq)]))
 
 (define (optimize-block-list-has-work?
   [scan-work : (Array i64)]
@@ -30306,6 +31790,8 @@
 ;; generation stamps reset it per block in O(1), and stale bytes can only ever
 ;; over-report "maybe" (safe), never skip a firing block.
 (define (optimize-block-list-for-function-pass
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [frame : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptBlockListPassResult
@@ -30315,13 +31801,20 @@
       (OptBlockListPassResult.Result blocks false)
       (let
         [hs : OptLoadHeaderSet
-          (opt-load-header-set-from-function-with-size params blocks frame)]
+          (opt-load-header-set-from-function-with-size
+            type-segment-bases
+            params
+            blocks
+            frame)]
         [entry-label : i64 (opt-cfg-entry-label blocks)]
-        [seed-facts : OptAliasFacts (opt-alias-seed-params params)]
+        [seed-facts : OptAliasFacts
+          (opt-alias-seed-params type-segment-bases params)]
         [next : CompilerIrBlockList
           (match blocks
             [(CompilerIrBlockList.Array seq)
               (optimize-block-seq-hs-dense
+                pools
+                type-segment-bases
                 hs
                 entry-label
                 seed-facts
@@ -30330,12 +31823,15 @@
                 seq)]
             [_
               (optimize-block-list-hs
+                pools
+                type-segment-bases
                 hs
                 entry-label
                 seed-facts
                 scan-work
                 blocks)])]
-        [changed : bool (not (opt-block-list-eq blocks next))]
+        [changed : bool
+          (not (opt-block-list-eq type-segment-bases blocks next))]
         (OptBlockListPassResult.Result
           (if changed
             next
@@ -30343,14 +31839,26 @@
           changed)))))
 
 (define (optimize-block-list-for-function
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [frame : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match (optimize-block-list-for-function-pass frame params blocks)
+  (match (optimize-block-list-for-function-pass
+    pools
+    type-segment-bases
+    frame
+    params
+    blocks)
     [(OptBlockListPassResult.Result next _) next]))
 
-(define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define (optimize-block-list
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (optimize-block-list-hs
+    pools
+    type-segment-bases
     (opt-load-header-set-empty)
     (compiler-ir-label "entry")
     (opt-alias-empty)
@@ -32226,6 +33734,7 @@
 ;; counter. The unrolled group computes one Gep(base, group-index), then uses
 ;; literal lane-group offsets from it.
 (define (opt-unroll-simd-load-shape
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
@@ -32244,6 +33753,7 @@
                 (match state
                   [(OptUnrollSimdLoadShape.Empty)
                     (opt-unroll-simd-load-shape
+                      type-segment-bases
                       instrs
                       (+ index 1)
                       last
@@ -32253,8 +33763,9 @@
                   [(OptUnrollSimdLoadShape.Some first-base first-ty)
                     (if (and
                       (opt-value-eq first-base base)
-                      (opt-type-eq first-ty ty))
+                      (opt-type-eq type-segment-bases first-ty ty))
                       (opt-unroll-simd-load-shape
+                        type-segment-bases
                         instrs
                         (+ index 1)
                         last
@@ -32271,6 +33782,7 @@
             index-var)
             (OptUnrollSimdLoadShape.Fail)
             (opt-unroll-simd-load-shape
+              type-segment-bases
               instrs
               (+ index 1)
               last
@@ -32279,6 +33791,7 @@
               state))]))))
 
 (define (opt-unroll-simd-shape-finish
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [entry-label : i64]
   [label : i64]
@@ -32364,6 +33877,7 @@
                                           blocks
                                           pred-label)
                                           (match (opt-unroll-simd-load-shape
+                                            type-segment-bases
                                             instrs
                                             0
                                             (- cond-index 2)
@@ -32408,6 +33922,7 @@
     [_ (OptUnrollSimdMaybeShape.No)]))
 
 (define (opt-unroll-simd-block-shape
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [entry-label : i64]
   [block : CompilerIrBlock]) : OptUnrollSimdMaybeShape
@@ -32433,6 +33948,7 @@
                               [(CompilerIrBinOp.Le) true]
                               [_ false]))
                             (opt-unroll-simd-shape-finish
+                              type-segment-bases
                               blocks
                               entry-label
                               label
@@ -32859,6 +34375,7 @@
         frame)]))
 
 (define (opt-unroll-simd-blocks-scan
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [remaining : CompilerIrBlockList]
   [entry-label : i64]
@@ -32866,13 +34383,23 @@
   (match remaining
     [(CompilerIrBlockList.Nil) (OptUnrollResult.Result blocks frame false)]
     [(CompilerIrBlockList.Cons block rest)
-      (match (opt-unroll-simd-block-shape blocks entry-label block)
+      (match (opt-unroll-simd-block-shape
+        type-segment-bases
+        blocks
+        entry-label
+        block)
         [(OptUnrollSimdMaybeShape.Some shape)
           (opt-unroll-simd-apply blocks block shape frame)]
         [(OptUnrollSimdMaybeShape.No)
-          (opt-unroll-simd-blocks-scan blocks (box-get rest) entry-label frame)])]
+          (opt-unroll-simd-blocks-scan
+            type-segment-bases
+            blocks
+            (box-get rest)
+            entry-label
+            frame)])]
     [(CompilerIrBlockList.Array seq)
       (opt-unroll-simd-blocks-scan
+        type-segment-bases
         blocks
         (compiler-ir-block-seq-to-list seq)
         entry-label
@@ -32910,11 +34437,13 @@
       (opt-unroll-blocks-have-candidate? (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-unroll-simd-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (match (opt-unroll-simd-blocks-scan
+        type-segment-bases
         blocks
         blocks
         (opt-cfg-entry-label blocks)
@@ -32942,6 +34471,7 @@
             (OptFunctionCtxResult.Result func context))])]))
 
 (define (opt-unroll-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
@@ -32966,7 +34496,10 @@
               (if (and
                 (not (opt-verify-single-defs? params frame prescan-blocks))
                 (opt-verify-ok? (opt-verify-final-function func)))
-                (opt-unroll-simd-function-with-context-result context func)
+                (opt-unroll-simd-function-with-context-result
+                  type-segment-bases
+                  context
+                  func)
                 (OptFunctionCtxResult.Result func context))]))
         (OptFunctionCtxResult.Result func context))]))
 
@@ -33040,10 +34573,13 @@
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
-(define (opt-unroll-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-unroll-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-unroll-function-with-context-result
+        type-segment-bases
         (opt-cfg-context-build blocks)
         false
         func)
@@ -35645,7 +37181,9 @@
         [(OptLateBoundsPairResult.No)
           (opt-late-bounds-pair-scan-loops blocks frame (box-get rest))])]))
 
-(define (opt-late-bounds-pair-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-late-bounds-pair-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   ;; Late pass outside the verified fixpoint: scan first, and only when a
   ;; rewrite candidate exists pay for verification. Rejection keeps the input.
   (match func
@@ -35669,19 +37207,24 @@
             ;; verify against a fresh view and keep the input on rejection.
             (match (opt-verify-function candidate)
               [(ResultCompilerOptimizeVerify.Ok)
-                (compiler-opt-debug-observe-function "paired_bounds" candidate)]
+                (compiler-opt-debug-observe-function
+                  type-segment-bases
+                  "paired_bounds"
+                  candidate)]
               [(ResultCompilerOptimizeVerify.Err _) func]))])]))
 
 (define (opt-late-bounds-pair-function-list
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (match functions
     [(CompilerIrFunctionList.Nil) CompilerIrFunctionList.Nil]
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-function-cons
-        (opt-late-bounds-pair-function func)
-        (opt-late-bounds-pair-function-list (box-get rest)))]
+        (opt-late-bounds-pair-function type-segment-bases func)
+        (opt-late-bounds-pair-function-list type-segment-bases (box-get rest)))]
     [(CompilerIrFunctionList.Array seq)
       (opt-late-bounds-pair-function-list
+        type-segment-bases
         (compiler-ir-function-seq-to-list seq))]))
 
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
@@ -38726,6 +40269,7 @@
 ;; Record each SIB-scale Gep def's operands for cloning. marks[dst] = 1 means
 ;; the parallel arrays hold a splittable Gep for dst.
 (define (opt-gep-split-geps-instrs!
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [bases : (Array CompilerIrValue)]
@@ -38738,7 +40282,8 @@
       (match (compiler-ir-instr-seq-ref instrs index)
         [(CompilerIrInstr.Gep dst base offset elem-ty)
           (let
-            [scale : i64 (opt-scratch-alloc-type-size elem-ty)]
+            [scale : i64
+              (opt-scratch-alloc-type-size type-segment-bases elem-ty)]
             (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
               (begin
                 (array-set! bases dst base)
@@ -38747,9 +40292,17 @@
                 (array-set! marks dst 1))
               unit))]
         [_ unit])
-      (opt-gep-split-geps-instrs! instrs (+ index 1) bases offsets tys marks))))
+      (opt-gep-split-geps-instrs!
+        type-segment-bases
+        instrs
+        (+ index 1)
+        bases
+        offsets
+        tys
+        marks))))
 
 (define (opt-gep-split-geps-blocks!
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [bases : (Array CompilerIrValue)]
   [offsets : (Array CompilerIrValue)]
@@ -38761,10 +40314,24 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (begin
-            (opt-gep-split-geps-instrs! instrs 0 bases offsets tys marks)
-            (opt-gep-split-geps-blocks! (box-get rest) bases offsets tys marks))])]
+            (opt-gep-split-geps-instrs!
+              type-segment-bases
+              instrs
+              0
+              bases
+              offsets
+              tys
+              marks)
+            (opt-gep-split-geps-blocks!
+              type-segment-bases
+              (box-get rest)
+              bases
+              offsets
+              tys
+              marks))])]
     [(CompilerIrBlockList.Array seq)
       (opt-gep-split-geps-blocks!
+        type-segment-bases
         (compiler-ir-block-seq-to-list seq)
         bases
         offsets
@@ -39088,10 +40655,14 @@
         tys
         cell)]))
 
-(define (opt-gep-split-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (opt-gep-split-function-inner func))
+(define (opt-gep-split-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (opt-gep-split-function-inner type-segment-bases func))
 
-(define (opt-gep-split-function-inner [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-gep-split-function-inner
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
@@ -39112,7 +40683,13 @@
             (opt-gep-split-seed-params! params defs)
             (opt-gep-split-defs-blocks! blocks defs))]
         [_geps : unit
-          (opt-gep-split-geps-blocks! blocks bases offsets tys marks)]
+          (opt-gep-split-geps-blocks!
+            type-segment-bases
+            blocks
+            bases
+            offsets
+            tys
+            marks)]
         [any? : bool
           (opt-gep-split-candidates!
             cands
@@ -40330,6 +41907,7 @@
         (array-ref pending-uses var)))))
 
 (define (opt-successor-sink-prepare-operands-from!
+  [type-segment-bases : i64]
   [context : OptSuccessorSinkPrepareContext]
   [instr : CompilerIrInstr]
   [uses : (Array i64)]
@@ -40341,6 +41919,7 @@
     true
     (if (<= (array-ref uses var) 0)
       (opt-successor-sink-prepare-operands-from!
+        type-segment-bases
         context
         instr
         uses
@@ -40350,12 +41929,14 @@
         origins)
       (and
         (opt-successor-sink-ensure-operand!
+          type-segment-bases
           context
           var
           pending-moves
           (&mut builder)
           origins)
         (opt-successor-sink-prepare-operands-from!
+          type-segment-bases
           context
           instr
           uses
@@ -40365,6 +41946,7 @@
           origins)))))
 
 (define (opt-successor-sink-prepare-operands!
+  [type-segment-bases : i64]
   [context : OptSuccessorSinkPrepareContext]
   [instr : CompilerIrInstr]
   [pending-moves : CompilerIrInstrList]
@@ -40375,6 +41957,7 @@
     (begin
       (opt-collect-instr-uses-array uses instr)
       (opt-successor-sink-prepare-operands-from!
+        type-segment-bases
         context
         instr
         uses
@@ -40397,6 +41980,7 @@
     [_ (opt-successor-sink-stable-value? base)]))
 
 (define (opt-successor-sink-try-induction-remat!
+  [type-segment-bases : i64]
   [context : OptSuccessorSinkPrepareContext]
   [var : i64]
   [producer : CompilerIrInstr]
@@ -40411,7 +41995,7 @@
         ;; Integer Add is byte-identical to Gep only for byte elements. This
         ;; form lets the backend select one LEA for base+scaled-index while the
         ;; following constant Gep remains a load displacement.
-        (= (opt-load-loc-type-size ptr-ty) 1))
+        (= (opt-load-loc-type-size type-segment-bases ptr-ty) 1))
         (let
           [fresh-mul : i64
             (opt-bce-version-alloc-var (struct-get context frame-cell))]
@@ -40456,6 +42040,7 @@
 ;; its live range. A producer whose original uses all move may move as usual.
 ;; Otherwise only Gep/BinOp can be cloned, recursively, with a four-clone cap.
 (define (opt-successor-sink-ensure-operand!
+  [type-segment-bases : i64]
   [context : OptSuccessorSinkPrepareContext]
   [var : i64]
   [pending-moves : CompilerIrInstrList]
@@ -40482,6 +42067,7 @@
             [_rematerialized : bool
               (if (> def-tag 0)
                 (opt-successor-sink-try-induction-remat!
+                  type-segment-bases
                   context
                   var
                   (compiler-ir-instr-seq-ref
@@ -40530,6 +42116,7 @@
                       (compiler-ir-instr-cons producer pending-moves)]
                     [ok : bool
                       (opt-successor-sink-prepare-operands!
+                        type-segment-bases
                         context
                         producer
                         next-pending
@@ -40569,6 +42156,7 @@
                       ;; there and force transitive rematerialization as needed.
                       [ok : bool
                         (opt-successor-sink-prepare-operands!
+                          type-segment-bases
                           context
                           producer
                           pending-moves
@@ -40611,6 +42199,7 @@
                     false)])))]))))
 
 (define (opt-successor-sink-prepare-root
+  [type-segment-bases : i64]
   [frame : i64]
   [blocks : CompilerIrBlockList]
   [all-defs : (Array i64)]
@@ -40679,6 +42268,7 @@
           (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)]
         [ok : bool
           (opt-successor-sink-prepare-operands!
+            type-segment-bases
             context
             instr
             pending
@@ -40702,6 +42292,7 @@
             (OptSuccessorSinkPrepared.No)))))))
 
 (define (opt-successor-sink-plan-block
+  [type-segment-bases : i64]
   [frame : i64]
   [frame-cell : (Array i64)]
   [blocks : CompilerIrBlockList]
@@ -40759,6 +42350,7 @@
                             dst)
                             [(OptSuccessorSinkMaybeLabel.Some target)
                               (match (opt-successor-sink-prepare-root
+                                type-segment-bases
                                 frame
                                 blocks
                                 all-defs
@@ -40798,6 +42390,7 @@
               moves))))]))
 
 (define (opt-successor-sink-plan-blocks
+  [type-segment-bases : i64]
   [frame : i64]
   [frame-cell : (Array i64)]
   [blocks : CompilerIrBlockList]
@@ -40813,6 +42406,7 @@
     [(CompilerIrBlockList.Nil) tail]
     [(CompilerIrBlockList.Cons block rest)
       (opt-successor-sink-plan-blocks
+        type-segment-bases
         frame
         frame-cell
         blocks
@@ -40824,6 +42418,7 @@
         allowed-uses
         (box-get rest)
         (opt-successor-sink-plan-block
+          type-segment-bases
           frame
           frame-cell
           blocks
@@ -40837,6 +42432,7 @@
           tail))]
     [(CompilerIrBlockList.Array seq)
       (opt-successor-sink-plan-blocks
+        type-segment-bases
         frame
         frame-cell
         blocks
@@ -41045,6 +42641,7 @@
         leaves)]))
 
 (define (opt-successor-sink-blocks-result
+  [type-segment-bases : i64]
   [frame : i64]
   [frame-cell : (Array i64)]
   [blocks : CompilerIrBlockList]) : OptBlockCtxResult
@@ -41069,6 +42666,7 @@
     [allowed-uses : (Array i64) (opt-used-array-new frame)]
     [moves : OptSuccessorSinkMoves
       (opt-successor-sink-plan-blocks
+        type-segment-bases
         frame
         frame-cell
         ready
@@ -41095,10 +42693,15 @@
           false)])))
 
 (define (opt-successor-sink-blocks
+  [type-segment-bases : i64]
   [frame : i64]
   [frame-cell : (Array i64)]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match (opt-successor-sink-blocks-result frame frame-cell blocks)
+  (match (opt-successor-sink-blocks-result
+    type-segment-bases
+    frame
+    frame-cell
+    blocks)
     [(OptBlockCtxResult.Result out _ _) out]))
 
 ;; Public pass boundary used by self-tests and by the opt2 pipeline. Both the
@@ -41110,6 +42713,7 @@
 ;; unchanged. The returned context is valid for the returned function's blocks,
 ;; which spares the caller the rebuild it used to do right after this returned.
 (define (opt-successor-sink-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; The check itself is still a full verify: this pass is NOT covered by the
@@ -41124,7 +42728,11 @@
             [frame-cell : (Array i64) (opt-used-array-new 1)]
             [_frame-init : unit (array-set! frame-cell 0 frame)]
             [sink-result : OptBlockCtxResult
-              (opt-successor-sink-blocks-result frame frame-cell blocks)]
+              (opt-successor-sink-blocks-result
+                type-segment-bases
+                frame
+                frame-cell
+                blocks)]
             [next-blocks : CompilerIrBlockList
               (match sink-result
                 [(OptBlockCtxResult.Result b _ _) b])]
@@ -41147,8 +42755,11 @@
               [(ResultCompilerOptimizeVerify.Err _)
                 (OptFunctionCtxResult.Result func context)]))])]))
 
-(define (opt-successor-sink-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-successor-sink-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match (opt-successor-sink-function-with-context-result
+    type-segment-bases
     (opt-cfg-context-build (opt-function-blocks func))
     func)
     [(OptFunctionCtxResult.Result f _) f]))
@@ -41218,6 +42829,7 @@
     [_ false]))
 
 (define (opt-if-convert-try!
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockSeq]
   [facts : (Array OptIfConvertBlockFact)]
   [id : i64]) : bool
@@ -41267,7 +42879,10 @@
                               (not
                                 (or
                                   (opt-integer-type? ty)
-                                  (opt-type-eq ty (AstType.Bool))))
+                                  (opt-type-eq
+                                    type-segment-bases
+                                    ty
+                                    (AstType.Bool))))
                               (match (struct-get merge last)
                                 [(CompilerIrInstrScalarFact.Branch next _ _)
                                   (opt-value-eq (clone condition) next)]
@@ -41341,7 +42956,9 @@
                 [_ false]))]
           [_ false])))))
 
-(define (opt-if-convert-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
+(define (opt-if-convert-function-pass
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : OptFunctionPassResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame original)
       (let
@@ -41357,7 +42974,7 @@
               (begin
                 (while (< read (array-length facts))
                   (begin
-                    (if (opt-if-convert-try! seq facts read)
+                    (if (opt-if-convert-try! type-segment-bases seq facts read)
                       (set! changed true)
                       unit)
                     (set! read (+ read 1))))
@@ -41378,17 +42995,22 @@
                         (OptFunctionPassResult.Result func false)])))))]
           [_ (OptFunctionPassResult.Result func false)]))]))
 
-(define (opt-if-convert-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-if-convert-function-pass func)
+(define (opt-if-convert-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-if-convert-function-pass type-segment-bases func)
     [(OptFunctionPassResult.Result next _) next]))
 
 (define (optimize-function-once-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
   (let
     [_t-tailrec : i64 (cfg compile-profile (profile.now-ms) 0)]
     [tailrec : CompilerIrFunction
       (compiler-opt-debug-observe-function
+        type-segment-bases
         "tailrec"
         (opt-tailrec-function func))]
     (match tailrec
@@ -41412,11 +43034,14 @@
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [fold-result : OptBlockListPassResult
             (optimize-block-list-for-function-pass
+              pools
+              type-segment-bases
               frame
               params
               const-global-blocks)]
           [folded : CompilerIrBlockList
             (compiler-opt-debug-observe-blocks
+              type-segment-bases
               "fold"
               name
               params
@@ -41436,10 +43061,11 @@
           [affine-candidate? : bool (opt-affine-blocks-have-candidate? folded)]
           [affine-input : CompilerIrBlockList
             (if (and affine-candidate? (not fold-changed))
-              (compiler-ir-clone-block-list folded)
+              (compiler-ir-clone-block-list pools folded)
               folded)]
           [affine : CompilerIrBlockList
             (compiler-opt-debug-observe-blocks
+              type-segment-bases
               "affine"
               name
               params
@@ -41455,13 +43081,15 @@
               unit)]
           [loop-bce : CompilerIrBlockList
             (if (struct-get summaries enabled)
-              (opt-loop-bce-blocks summaries params affine)
+              (opt-loop-bce-blocks type-segment-bases summaries params affine)
               affine)]
           [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
           [promoted : CompilerIrFunction
             (compiler-opt-debug-observe-function
+              type-segment-bases
               "stack_promote"
               (opt-aggregate-stack-promote-function
+                type-segment-bases
                 (CompilerIrFunction.Function name params ret-ty frame loop-bce)))]
           [_p-promote : unit
             (cfg
@@ -41477,8 +43105,10 @@
                 [_t-sroa : i64 (cfg compile-profile (profile.now-ms) 0)]
                 [sroa : CompilerIrFunction
                   (compiler-opt-debug-observe-function
+                    type-segment-bases
                     "sroa"
                     (opt-aggregate-sroa-function
+                      type-segment-bases
                       (CompilerIrFunction.Function
                         name
                         params
@@ -41507,6 +43137,7 @@
                       [rotation-result : OptBlockCtxResult
                         (if run-loop?
                           (opt-loop-rotation-function-result
+                            pools
                             (CompilerIrFunction.Function
                               name
                               params
@@ -41519,6 +43150,7 @@
                             false))]
                       [rotated : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "rotation"
                           (CompilerIrFunction.Function
                             name
@@ -41548,6 +43180,7 @@
                       [ssa-result : OptFunctionCtxResult
                         (if run-loop?
                           (opt-ssa-construct-function-from-context-result
+                            type-segment-bases
                             rotated
                             rotation-context
                             rotation-context-valid?)
@@ -41556,6 +43189,7 @@
                             (opt-cfg-context-empty)))]
                       [ssa : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "ssa"
                           (match ssa-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -41573,6 +43207,7 @@
                       [_t-gvn : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [gvn : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "gvn"
                           name
                           params
@@ -41580,6 +43215,7 @@
                           ssa-frame
                           (if run-heavy?
                             (opt-gvn-blocks-with-context-and-call-memory
+                              type-segment-bases
                               ssa-context
                               params
                               (struct-get summaries call-memory)
@@ -41605,6 +43241,7 @@
                         (cfg compile-profile (profile.now-ms) 0)]
                       [bounds-dom : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "bounds_dom"
                           name
                           params
@@ -41615,6 +43252,7 @@
                             (opt-verify-ok?
                               (opt-verify-function-with-context ssa ssa-context)))
                             (opt-bounds-dom-blocks-with-context
+                              type-segment-bases
                               ssa-context
                               params
                               ssa-frame
@@ -41632,12 +43270,14 @@
                       [sccp-result : OptBlockCtxResult
                         (if run-loop?
                           (opt-sccp-blocks-with-context-result-raw
+                            type-segment-bases
                             ssa-context
                             params
                             bounds-dom
                             ssa-frame)
                           (OptBlockCtxResult.Result
                             (opt-sccp-blocks-with-frame
+                              type-segment-bases
                               params
                               bounds-dom
                               ssa-frame)
@@ -41645,6 +43285,7 @@
                             false))]
                       [sccp : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "sccp"
                           name
                           params
@@ -41675,16 +43316,20 @@
                       [bool-branch-context : OptCfgContext
                         (if sccp-context-valid
                           sccp-context
-                          (if (opt-bool-branch-blocks-have-candidate? sccp)
+                          (if (opt-bool-branch-blocks-have-candidate?
+                            type-segment-bases
+                            sccp)
                             (opt-cfg-context-build sccp)
                             (opt-cfg-context-empty)))]
                       [bool-branch-result : OptFunctionPassResult
                         (opt-bool-branch-function-with-context-result
+                          type-segment-bases
                           bool-branch-context
                           false
                           bool-branch-input)]
                       [bool-branch : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "bool_branch"
                           name
                           params
@@ -41718,6 +43363,7 @@
                             false))]
                       [cfg : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "cfg"
                           name
                           params
@@ -41747,6 +43393,7 @@
                           (OptFunctionPassResult.Result switch-input false))]
                       [switched : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "switch"
                           (match switch-result
                             [(OptFunctionPassResult.Result f _) f]))]
@@ -41823,6 +43470,7 @@
                             (opt-cfg-context-empty)))]
                       [preheaders : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "preheaders"
                           (match preheaders-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -41848,6 +43496,7 @@
                           preheaders-result)]
                       [rotate-ssa : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "rotate_ssa"
                           (match rotate-ssa-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -41867,12 +43516,14 @@
                       [scratch-reset-result : OptFunctionCtxResult
                         (if run-loop?
                           (opt-scratch-reset-function-with-context-result
+                            type-segment-bases
                             rotate-ssa-context
                             loop-cluster-verified?
                             rotate-ssa)
                           rotate-ssa-result)]
                       [scratch-reset : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "scratch_reset"
                           (match scratch-reset-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -41891,6 +43542,7 @@
                       [licm-result : OptFunctionCtxResult
                         (if run-loop?
                           (opt-licm-function-with-context-result-and-direct-call-clean
+                            type-segment-bases
                             scratch-reset-context
                             loop-cluster-verified?
                             (struct-get summaries direct-call-clean)
@@ -41898,6 +43550,7 @@
                           scratch-reset-result)]
                       [licm : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "licm"
                           (match licm-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -41917,11 +43570,13 @@
                       [pre-induction-sink-result : OptFunctionCtxResult
                         (if run-loop?
                           (opt-successor-sink-function-with-context-result
+                            type-segment-bases
                             licm-context
                             licm)
                           licm-result)]
                       [pre-induction-sink : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "pre_induction_sink"
                           (match pre-induction-sink-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -41933,12 +43588,14 @@
                       [induction-result : OptFunctionCtxResult
                         (if run-loop?
                           (opt-induction-function-with-context-result
+                            type-segment-bases
                             pre-induction-sink-context
                             loop-cluster-verified?
                             pre-induction-sink)
                           licm-result)]
                       [induction : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "induction"
                           (match induction-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -41969,6 +43626,7 @@
                           induction-result)]
                       [bce-version : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "bce_version"
                           (match bce-version-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -41992,12 +43650,14 @@
                       [unroll-result : OptFunctionCtxResult
                         (if run-loop?
                           (opt-unroll-function-with-context-result
+                            type-segment-bases
                             bce-version-context
                             loop-cluster-verified?
                             bce-version)
                           bce-version-result)]
                       [unrolled : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "unroll"
                           (match unroll-result
                             [(OptFunctionCtxResult.Result f _) f]))]
@@ -42037,9 +43697,11 @@
                       [_t-global : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [global : CompilerIrFunction
                         (compiler-opt-debug-observe-function
+                          type-segment-bases
                           "global_gvn"
                           (if run-heavy?
                             (opt-global-value-number-function-with-context
+                              type-segment-bases
                               unroll-context
                               loop-cluster-verified?
                               (CompilerIrFunction.Function
@@ -42079,6 +43741,7 @@
                         (cfg compile-profile (profile.now-ms) 0)]
                       [divrem-safe : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "divrem_safety"
                           name
                           params
@@ -42086,6 +43749,7 @@
                           unroll-frame
                           (if run-heavy?
                             (opt-divrem-safety-blocks-with-context
+                              type-segment-bases
                               unroll-context
                               params
                               const-div-blocks)
@@ -42107,6 +43771,7 @@
                       [gep-split : CompilerIrFunction
                         (if run-heavy?
                           (opt-gep-split-function
+                            type-segment-bases
                             (CompilerIrFunction.Function
                               name
                               params
@@ -42151,6 +43816,7 @@
                       [successor-sink-function : CompilerIrFunction
                         (if run-heavy?
                           (opt-successor-sink-function
+                            type-segment-bases
                             (CompilerIrFunction.Function
                               name
                               params
@@ -42165,6 +43831,7 @@
                             cmp-sink))]
                       [successor-sink : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "successor_sink"
                           name
                           params
@@ -42199,6 +43866,7 @@
                       [bool-branch-late-result : OptFunctionPassResult
                         (if run-heavy?
                           (opt-bool-branch-chain-function-with-context-result
+                            type-segment-bases
                             (if (opt-bool-branch-chain-blocks-have-candidate?
                               successor-sink)
                               (opt-cfg-context-build successor-sink)
@@ -42213,6 +43881,7 @@
                           [(OptFunctionPassResult.Result f _) f])]
                       [bool-branch-late : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "bool_branch_late"
                           name
                           params
@@ -42238,6 +43907,7 @@
                         (opt-dce-block-list-array-pass used bool-branch-late)]
                       [dced : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
+                          type-segment-bases
                           "dce"
                           name
                           params
@@ -42257,8 +43927,15 @@
                         bool-branch-late-frame
                         dced))]))]))])))
 
-(define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
-  (optimize-function-once-with-summaries func (opt-loop-bce-empty-summaries)))
+(define (optimize-function-once
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (optimize-function-once-with-summaries
+    pools
+    type-segment-bases
+    func
+    (opt-loop-bce-empty-summaries)))
 
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
@@ -42267,6 +43944,8 @@
   (Result CompilerIrFunction (Array i64)))
 
 (define (optimize-function-once-level2-pre-dce-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : OptLevel1PreDceResult
   (match func
@@ -42275,12 +43954,18 @@
         [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
         [folded : CompilerIrBlockList
           (compiler-opt-debug-observe-blocks
+            type-segment-bases
             "fold"
             name
             params
             ret-ty
             frame
-            (optimize-block-list-for-function frame params blocks))]
+            (optimize-block-list-for-function
+              pools
+              type-segment-bases
+              frame
+              params
+              blocks))]
         [_p-fold : unit
           (cfg
             compile-profile
@@ -42288,13 +43973,15 @@
             unit)]
         [loop-bce : CompilerIrBlockList
           (if (struct-get summaries enabled)
-            (opt-loop-bce-blocks summaries params folded)
+            (opt-loop-bce-blocks type-segment-bases summaries params folded)
             folded)]
         [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
         [promoted : CompilerIrFunction
           (compiler-opt-debug-observe-function
+            type-segment-bases
             "stack_promote"
             (opt-aggregate-stack-promote-function
+              type-segment-bases
               (CompilerIrFunction.Function name params ret-ty frame loop-bce)))]
         [_p-promote : unit
           (cfg
@@ -42308,6 +43995,7 @@
               [used : (Array i64) (opt-used-array-new promoted-frame)]
               [cfg : CompilerIrBlockList
                 (compiler-opt-debug-observe-blocks
+                  type-segment-bases
                   "cfg"
                   name
                   params
@@ -42329,9 +44017,15 @@
                 used))]))]))
 
 (define (optimize-function-once-level2-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
-  (match (optimize-function-once-level2-pre-dce-with-summaries func summaries)
+  (match (optimize-function-once-level2-pre-dce-with-summaries
+    pools
+    type-segment-bases
+    func
+    summaries)
     [(OptLevel1PreDceResult.Result pre-dce used)
       (match pre-dce
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -42339,6 +44033,7 @@
             [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
             [dced : CompilerIrBlockList
               (compiler-opt-debug-observe-blocks
+                type-segment-bases
                 "dce"
                 name
                 params
@@ -42353,12 +44048,18 @@
             (CompilerIrFunction.Function name params ret-ty frame dced))])]))
 
 (define (optimize-function-pass-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
   (let
     [next : CompilerIrFunction
-      (optimize-function-once-with-summaries func summaries)]
-    [changed : bool (not (opt-function-eq func next))]
+      (optimize-function-once-with-summaries
+        pools
+        type-segment-bases
+        func
+        summaries)]
+    [changed : bool (not (opt-function-eq type-segment-bases func next))]
     (OptFunctionPassResult.Result
       (if changed
         next
@@ -42366,15 +44067,23 @@
       changed)))
 
 (define (optimize-function-fixed-pass-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [remaining : i64]
   [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
   (if (<= remaining 0)
     (OptFunctionPassResult.Result func false)
-    (match (optimize-function-pass-with-summaries func summaries)
+    (match (optimize-function-pass-with-summaries
+      pools
+      type-segment-bases
+      func
+      summaries)
       [(OptFunctionPassResult.Result next changed)
         (if changed
           (match (optimize-function-fixed-pass-with-summaries
+            pools
+            type-segment-bases
             next
             (- remaining 1)
             summaries)
@@ -42383,32 +44092,60 @@
           (OptFunctionPassResult.Result func false))])))
 
 (define (optimize-function-fixed-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [remaining : i64]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
-  (match (optimize-function-fixed-pass-with-summaries func remaining summaries)
+  (match (optimize-function-fixed-pass-with-summaries
+    pools
+    type-segment-bases
+    func
+    remaining
+    summaries)
     [(OptFunctionPassResult.Result next _) next]))
 
-(define (optimize-function-fixed [func : CompilerIrFunction] [remaining : i64]) : CompilerIrFunction
+(define (optimize-function-fixed
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]
+  [remaining : i64]) : CompilerIrFunction
   (optimize-function-fixed-with-summaries
+    pools
+    type-segment-bases
     func
     remaining
     (opt-loop-bce-empty-summaries)))
 
-(define (opt-if-convert-final-pass [func : CompilerIrFunction]) : OptFunctionPassResult
-  (match (opt-if-convert-function-pass func)
+(define (opt-if-convert-final-pass
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : OptFunctionPassResult
+  (match (opt-if-convert-function-pass type-segment-bases func)
     [(OptFunctionPassResult.Result next changed)
       (OptFunctionPassResult.Result
-        (compiler-opt-debug-observe-function "if_convert" next)
+        (compiler-opt-debug-observe-function
+          type-segment-bases
+          "if_convert"
+          next)
         changed)]))
 
-(define (opt-if-convert-final [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-if-convert-final-pass func)
+(define (opt-if-convert-final
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-if-convert-final-pass type-segment-bases func)
     [(OptFunctionPassResult.Result next _) next]))
 
-(define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (optimize-function
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (opt-if-convert-final
-    (optimize-function-fixed func (optimize-function-max-iterations))))
+    type-segment-bases
+    (optimize-function-fixed
+      pools
+      type-segment-bases
+      func
+      (optimize-function-max-iterations))))
 
 ;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
 ;; path), 2 = the full optimizer + scalar register allocation + inlining (the
@@ -42416,6 +44153,8 @@
 ;; between 0 and the cheap level) was collapsed: old level 2 became level 1 and
 ;; old level 3 became level 2.
 (define (optimize-function-with-level-and-summaries-pass
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [level : i64]
   [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
@@ -42428,33 +44167,52 @@
       ;; remains part of this single optimizer pass.
       (let
         [next : CompilerIrFunction
-          (optimize-function-once-level2-with-summaries func summaries)]
-        [changed : bool (not (opt-function-eq func next))]
+          (optimize-function-once-level2-with-summaries
+            pools
+            type-segment-bases
+            func
+            summaries)]
+        [changed : bool (not (opt-function-eq type-segment-bases func next))]
         (OptFunctionPassResult.Result
           (if changed
             next
             func)
           changed))
       (match (optimize-function-fixed-pass-with-summaries
+        pools
+        type-segment-bases
         func
         (optimize-function-max-iterations)
         summaries)
         [(OptFunctionPassResult.Result fixed fixed-changed)
-          (match (opt-if-convert-final-pass fixed)
+          (match (opt-if-convert-final-pass type-segment-bases fixed)
             [(OptFunctionPassResult.Result final if-convert-changed)
               (OptFunctionPassResult.Result
                 final
                 (or fixed-changed if-convert-changed))])]))))
 
 (define (optimize-function-with-level-and-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [level : i64]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
-  (match (optimize-function-with-level-and-summaries-pass func level summaries)
+  (match (optimize-function-with-level-and-summaries-pass
+    pools
+    type-segment-bases
+    func
+    level
+    summaries)
     [(OptFunctionPassResult.Result next _) next]))
 
-(define (optimize-function-with-level [func : CompilerIrFunction] [level : i64]) : CompilerIrFunction
+(define (optimize-function-with-level
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]
+  [level : i64]) : CompilerIrFunction
   (optimize-function-with-level-and-summaries
+    pools
+    type-segment-bases
     func
     level
     (opt-loop-bce-empty-summaries)))
@@ -42470,6 +44228,8 @@
 ;; in scratch and then cloning the whole function. The scratch path remains for
 ;; opt2/fixpoint.
 (define (optimize-function-list-with-level-and-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [funcs : CompilerIrFunctionList]
   [level : i64]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunctionList
@@ -42480,6 +44240,8 @@
         [scratch : i64 (arena.tl_arena_make)]
         [result : CompilerIrFunctionList
           (optimize-function-list-level1-escaping-with-summaries
+            pools
+            type-segment-bases
             funcs
             scratch
             summaries)]
@@ -42496,6 +44258,8 @@
         [scratch : i64 (arena.tl_arena_make)]
         [result : CompilerIrFunctionList
           (optimize-function-list-escaping-with-summaries
+            pools
+            type-segment-bases
             funcs
             level
             scratch
@@ -42511,6 +44275,8 @@
           result)))))
 
 (define (optimize-function-level1-escaping-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [scratch : i64]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
@@ -42525,7 +44291,11 @@
         [mark : i64 (arena.tl_region_mark)]
         [_t-body : i64 (cfg compile-profile (profile.now-ms) 0)]
         [pre-dce-result : OptLevel1PreDceResult
-          (optimize-function-once-level2-pre-dce-with-summaries func summaries)]
+          (optimize-function-once-level2-pre-dce-with-summaries
+            pools
+            type-segment-bases
+            func
+            summaries)]
         [_profile-body : unit
           (cfg
             compile-profile
@@ -42542,12 +44312,12 @@
                       (arena.tl_arena_set enclosing))
                     (let
                       [escaped-blocks : CompilerIrBlockList
-                        (opt-dce-block-list-array-escape used blocks)]
+                        (opt-dce-block-list-array-escape pools used blocks)]
                       [escaped : CompilerIrFunction
                         (CompilerIrFunction.Function
                           (compiler-ir-symbol-clone name)
-                          (compiler-ir-clone-param-list params)
-                          (compiler-ir-clone-type ret-ty)
+                          (compiler-ir-clone-param-list pools params)
+                          (compiler-ir-clone-type pools ret-ty)
                           frame
                           escaped-blocks)]
                       [_profile-dce : unit
@@ -42577,6 +44347,8 @@
                       escaped)))])])))))
 
 (define (optimize-function-list-level1-escaping-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [funcs : CompilerIrFunctionList]
   [scratch : i64]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunctionList
@@ -42588,6 +44360,8 @@
           (cfg compile-profile (compiler-opt-profile-detail-start))]
         [optimized : CompilerIrFunction
           (optimize-function-level1-escaping-with-summaries
+            pools
+            type-segment-bases
             func
             scratch
             summaries)]
@@ -42595,6 +44369,7 @@
           (cfg
             compile-profile
             (compiler-opt-scratch-region-report-function-escaping
+              type-segment-bases
               optimized
               scratch))]
         [_finish : unit
@@ -42606,17 +44381,23 @@
         (compiler-ir-function-cons
           optimized
           (optimize-function-list-level1-escaping-with-summaries
+            pools
+            type-segment-bases
             (box-get rest)
             scratch
             summaries)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-list-compact
         (optimize-function-list-level1-escaping-with-summaries
+          pools
+          type-segment-bases
           (compiler-ir-function-seq-to-list seq)
           scratch
           summaries))]))
 
 (define (optimize-function-list-escaping-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [funcs : CompilerIrFunctionList]
   [level : i64]
   [scratch : i64]
@@ -42629,6 +44410,8 @@
           (cfg compile-profile (compiler-opt-profile-detail-start))]
         [optimized : CompilerIrFunction
           (optimize-function-escaping-with-summaries
+            pools
+            type-segment-bases
             func
             level
             scratch
@@ -42637,6 +44420,7 @@
           (cfg
             compile-profile
             (compiler-opt-scratch-region-report-function-escaping
+              type-segment-bases
               optimized
               scratch))]
         [_finish : unit
@@ -42648,6 +44432,8 @@
         (compiler-ir-function-cons
           optimized
           (optimize-function-list-escaping-with-summaries
+            pools
+            type-segment-bases
             (box-get rest)
             level
             scratch
@@ -42655,6 +44441,8 @@
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-list-compact
         (optimize-function-list-escaping-with-summaries
+          pools
+          type-segment-bases
           (compiler-ir-function-seq-to-list seq)
           level
           scratch
@@ -42666,6 +44454,8 @@
 ;; optimizer input belongs to the lower-IR arena, which is released before the
 ;; backend consumes the optimized program.
 (define (optimize-function-escaping-with-summaries
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [level : i64]
   [scratch : i64]
@@ -42681,7 +44471,12 @@
         [mark : i64 (arena.tl_region_mark)]
         [_t-body : i64 (cfg compile-profile (profile.now-ms) 0)]
         [body-result : OptFunctionPassResult
-          (optimize-function-with-level-and-summaries-pass func level summaries)]
+          (optimize-function-with-level-and-summaries-pass
+            pools
+            type-segment-bases
+            func
+            level
+            summaries)]
         [_profile-body : unit
           (cfg
             compile-profile
@@ -42711,7 +44506,7 @@
                 (let
                   [_t-clone : i64 (cfg compile-profile (profile.now-ms) 0)]
                   [escaped : CompilerIrFunction
-                    (compiler-ir-clone-function optimized)]
+                    (compiler-ir-clone-function pools optimized)]
                   [_profile-clone : unit
                     (cfg
                       compile-profile
@@ -47264,6 +49059,7 @@
         fallback)]))
 
 (define (opt-inline-repair-or-keep
+  [type-segment-bases : i64]
   [fallback : CompilerIrFunction]
   [next : CompilerIrFunction]
   [repair? : bool]) : CompilerIrFunction
@@ -47271,11 +49067,12 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (if (opt-inline-structure-ok-reclaiming? blocks)
         (if repair?
-          (opt-ssa-construct-function next)
+          (opt-ssa-construct-function type-segment-bases next)
           next)
         fallback)]))
 
 (define (opt-inline-function
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -47311,6 +49108,7 @@
                     new-blocks
                     opt-inline-pred-renames)]
                 (opt-inline-repair-or-keep
+                  type-segment-bases
                   func
                   (CompilerIrFunction.Function
                     name
@@ -47321,6 +49119,7 @@
                   (> added 0))))]))]))
 
 (define (opt-inline-function-with-spans
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -47372,7 +49171,7 @@
                   (OptInlineSpanProgram.Program
                     (compiler-ir-function-cons
                       (if (> added 0)
-                        (opt-ssa-construct-function next)
+                        (opt-ssa-construct-function type-segment-bases next)
                         next)
                       CompilerIrFunctionList.Nil)
                     next-spans)
@@ -47754,6 +49553,7 @@
         vars)]))
 
 (define (opt-inline-tiny-leaf-function
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [index : OptFunctionIndex]
   [flags : (Array bool)]) : CompilerIrFunction
@@ -47768,6 +49568,7 @@
               (if (= opt-inline-caller-site-count 0)
                 func
                 (opt-inline-repair-or-keep
+                  type-segment-bases
                   func
                   (CompilerIrFunction.Function
                     name
@@ -47778,6 +49579,7 @@
                   false))])))]))
 
 (define (opt-inline-tiny-leaf-program-functions
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (let
     [index : OptFunctionIndex (opt-function-index-build functions)]
@@ -47791,7 +49593,11 @@
           (array-set!
             values
             i
-            (opt-inline-tiny-leaf-function (array-ref values i) index flags))
+            (opt-inline-tiny-leaf-function
+              type-segment-bases
+              (array-ref values i)
+              index
+              flags))
           (set! i (+ i 1))))
       (opt-function-index-to-list index))))
 
@@ -48063,6 +49869,7 @@
         current-spans))))
 
 (define (opt-inline-process-scc-order!
+  [type-segment-bases : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [scc-result : OptSccResult]) : unit
@@ -48081,6 +49888,7 @@
             values
             slot
             (opt-inline-function
+              type-segment-bases
               (array-ref values slot)
               index
               census
@@ -48089,6 +49897,7 @@
         (set! index-pos (+ index-pos 1))))))
 
 (define (opt-inline-process-scc-order-with-spans
+  [type-segment-bases : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [scc-result : OptSccResult]
@@ -48107,6 +49916,7 @@
             [slot : i64 (array-ref slot-order index-pos)]
             [caller-scc : i64 (array-ref scc-of slot)]
             (match (opt-inline-function-with-spans
+              type-segment-bases
               (array-ref values slot)
               index
               census
@@ -48135,11 +49945,12 @@
 ;; (the register-allocated quality build) runs the full census/SCC pipeline;
 ;; level 1 runs only the call-free tiny-leaf pass above.
 (define (opt-inline-program-functions
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [level : i64]) : CompilerIrFunctionList
   (if (< level 2)
     (if (= level 1)
-      (opt-inline-tiny-leaf-program-functions functions)
+      (opt-inline-tiny-leaf-program-functions type-segment-bases functions)
       functions)
     (let
       [devirt : CompilerIrFunctionList
@@ -48152,7 +49963,11 @@
       (begin
         (set! opt-inline-verify-scratch-arena verify-scratch)
         (opt-inline-multiblock-ok-memo-install! index)
-        (opt-inline-process-scc-order! index census scc-result)
+        (opt-inline-process-scc-order!
+          type-segment-bases
+          index
+          census
+          scc-result)
         (let
           [out : CompilerIrFunctionList (opt-function-index-to-list index)]
           [scratch-head : i64 opt-inline-verify-scratch-arena]
@@ -48164,6 +49979,7 @@
             out))))))
 
 (define (opt-inline-program-functions-with-spans
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [level : i64]
   [spans : CompilerSourceSpans]) : OptInlineSpanProgram
@@ -48184,7 +50000,12 @@
       [_install-multiblock-memo : unit
         (opt-inline-multiblock-ok-memo-install! index)]
       [next-spans : CompilerSourceSpans
-        (opt-inline-process-scc-order-with-spans index census scc-result spans)]
+        (opt-inline-process-scc-order-with-spans
+          type-segment-bases
+          index
+          census
+          scc-result
+          spans)]
       [out : OptInlineSpanProgram
         (OptInlineSpanProgram.Program
           (opt-function-index-to-list index)
@@ -48969,6 +50790,7 @@
     [_ (OptLoopBceExpr.Value value)]))
 
 (define (opt-loop-bce-argc-scan-instr
+  [type-segment-bases : i64]
   [scan : OptLoopBceArgcScan]
   [instr : CompilerIrInstr]) : OptLoopBceArgcScan
   (match scan
@@ -48994,7 +50816,10 @@
               (opt-loop-bce-expr-bind
                 env
                 dst
-                (if (opt-loop-bce-same-width-int-cast? from-ty to-ty)
+                (if (opt-loop-bce-same-width-int-cast?
+                  type-segment-bases
+                  from-ty
+                  to-ty)
                   (opt-loop-bce-argc-value-expr env src)
                   (OptLoopBceExpr.Unknown)))
               seen
@@ -49011,6 +50836,7 @@
                   env
                   true
                   (opt-loop-bce-expr-eq
+                    type-segment-bases
                     (opt-loop-bce-argc-value-expr env value)
                     (OptLoopBceExpr.Argc)))]
               [(CompilerIrMaybeValue.No)
@@ -49029,15 +50855,18 @@
                   ok)))]))]))
 
 (define (opt-loop-bce-argc-scan-seq-from
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [scan : OptLoopBceArgcScan]) : OptLoopBceArgcScan
   (if (>= index (compiler-ir-instr-seq-count instrs))
     scan
     (opt-loop-bce-argc-scan-seq-from
+      type-segment-bases
       instrs
       (+ index 1)
       (opt-loop-bce-argc-scan-instr
+        type-segment-bases
         scan
         (compiler-ir-instr-seq-ref instrs index)))))
 
@@ -49058,16 +50887,21 @@
           [_ (set! index (+ index 1))]))
       found)))
 
-(define (opt-loop-bce-argc-single-block-returns? [instrs : CompilerIrInstrSeq]) : bool
+(define (opt-loop-bce-argc-single-block-returns?
+  [type-segment-bases : i64]
+  [instrs : CompilerIrInstrSeq]) : bool
   (if (not (opt-loop-bce-argc-seq-has-entry? instrs))
     false
     (match (opt-loop-bce-argc-scan-seq-from
+      type-segment-bases
       instrs
       0
       (OptLoopBceArgcScan.Scan (OptLoopBceExprEnv.Nil) false true))
       [(OptLoopBceArgcScan.Scan _ seen ok) (and seen ok)])))
 
-(define (opt-loop-bce-function-returns-argc? [func : CompilerIrFunction]) : bool
+(define (opt-loop-bce-function-returns-argc?
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : bool
   (match func
     [(CompilerIrFunction.Function _ params _ _ blocks)
       (if (not (= (opt-tailrec-param-count params) 0))
@@ -49078,13 +50912,17 @@
               [(CompilerIrBlockList.Nil)
                 (match block
                   [(CompilerIrBlock.Block _ instrs)
-                    (opt-loop-bce-argc-single-block-returns? instrs)])]
+                    (opt-loop-bce-argc-single-block-returns?
+                      type-segment-bases
+                      instrs)])]
               [_ false])]
           [(CompilerIrBlockList.Array seq)
             (if (= (compiler-ir-block-seq-count seq) 1)
               (match (compiler-ir-block-seq-ref seq 0)
                 [(CompilerIrBlock.Block _ instrs)
-                  (opt-loop-bce-argc-single-block-returns? instrs)])
+                  (opt-loop-bce-argc-single-block-returns?
+                    type-segment-bases
+                    instrs)])
               false)]
           [(CompilerIrBlockList.Nil) false]))]))
 
@@ -49120,11 +50958,14 @@
   (and
     (not
       (opt-loop-bce-function-returns-argc?
+        (ast-node-pool-reader-type-segment-bases)
         (opt-loop-bce-argc-summary-test-function false)))
     (opt-loop-bce-function-returns-argc?
+      (ast-node-pool-reader-type-segment-bases)
       (opt-loop-bce-argc-summary-test-function true))))
 
 (define (opt-loop-bce-argc-return-map
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match functions
@@ -49133,15 +50974,18 @@
       (match func
         [(CompilerIrFunction.Function name _ _ _ _)
           (begin
-            (if (opt-loop-bce-function-returns-argc? func)
+            (if (opt-loop-bce-function-returns-argc? type-segment-bases func)
               (opt_i64_i64_map.insert-ref!
                 (&mut map)
                 (compiler-ir-symbol-id name)
                 1)
               unit)
-            (opt-loop-bce-argc-return-map (box-get rest) map))])]
+            (opt-loop-bce-argc-return-map type-segment-bases (box-get rest) map))])]
     [(CompilerIrFunctionList.Array seq)
-      (opt-loop-bce-argc-return-map (compiler-ir-function-seq-to-list seq) map)]))
+      (opt-loop-bce-argc-return-map
+        type-segment-bases
+        (compiler-ir-function-seq-to-list seq)
+        map)]))
 
 (define (opt-loop-bce-clean-storeptr-safe?
   [state : OptLoopBceState]
@@ -49156,6 +51000,7 @@
     [_ false]))
 
 (define (opt-loop-bce-clean-update-instr
+  [type-segment-bases : i64]
   [scan : OptLoopBceCleanScan]
   [clean : opt_i64_i64_map.Map]
   [instr : CompilerIrInstr]) : OptLoopBceCleanScan
@@ -49189,6 +51034,7 @@
           [(CompilerIrInstr.Gep dst base offset ty)
             (OptLoopBceCleanScan.Scan
               (opt-loop-bce-update-gep
+                type-segment-bases
                 state
                 (opt_i64_i64_map.with-capacity 1)
                 dst
@@ -49199,6 +51045,7 @@
           [(CompilerIrInstr.Load dst src ty)
             (OptLoopBceCleanScan.Scan
               (opt-loop-bce-update-load
+                type-segment-bases
                 state
                 (opt_i64_i64_map.with-capacity 1)
                 dst
@@ -49273,6 +51120,7 @@
                 ok))]))]))
 
 (define (opt-loop-bce-clean-scan-seq-from
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [clean : opt_i64_i64_map.Map]
@@ -49280,15 +51128,18 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     scan
     (opt-loop-bce-clean-scan-seq-from
+      type-segment-bases
       instrs
       (+ index 1)
       clean
       (opt-loop-bce-clean-update-instr
+        type-segment-bases
         scan
         clean
         (compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-loop-bce-clean-scan-blocks
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [clean : opt_i64_i64_map.Map]
   [scan : OptLoopBceCleanScan]) : OptLoopBceCleanScan
@@ -49302,33 +51153,46 @@
             (match block
               [(CompilerIrBlock.Block _ instrs)
                 (opt-loop-bce-clean-scan-blocks
+                  type-segment-bases
                   (box-get rest)
                   clean
-                  (opt-loop-bce-clean-scan-seq-from instrs 0 clean scan))])]
+                  (opt-loop-bce-clean-scan-seq-from
+                    type-segment-bases
+                    instrs
+                    0
+                    clean
+                    scan))])]
           [(CompilerIrBlockList.Array seq)
             (opt-loop-bce-clean-scan-blocks
+              type-segment-bases
               (compiler-ir-block-seq-to-list seq)
               clean
               scan)]))]))
 
 (define (opt-loop-bce-function-length-clean?
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [clean : opt_i64_i64_map.Map]) : bool
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-loop-bce-clean-scan-blocks
+        type-segment-bases
         blocks
         clean
         (OptLoopBceCleanScan.Scan (opt-loop-bce-initial-state) true))
         [(OptLoopBceCleanScan.Scan _ ok) ok])]))
 
 (define (opt-loop-bce-length-clean-pass
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [clean : opt_i64_i64_map.Map]) : OptLoopBceCleanPass
   (match functions
     [(CompilerIrFunctionList.Nil) (OptLoopBceCleanPass.Pass clean false)]
     [(CompilerIrFunctionList.Cons func rest)
-      (match (opt-loop-bce-length-clean-pass (box-get rest) clean)
+      (match (opt-loop-bce-length-clean-pass
+        type-segment-bases
+        (box-get rest)
+        clean)
         [(OptLoopBceCleanPass.Pass tail-clean tail-added)
           (match func
             [(CompilerIrFunction.Function name _ _ _ _)
@@ -49336,7 +51200,10 @@
                 (& tail-clean)
                 (compiler-ir-symbol-id name))
                 (OptLoopBceCleanPass.Pass tail-clean tail-added)
-                (if (opt-loop-bce-function-length-clean? func tail-clean)
+                (if (opt-loop-bce-function-length-clean?
+                  type-segment-bases
+                  func
+                  tail-clean)
                   (begin
                     (opt_i64_i64_map.insert-ref!
                       (&mut tail-clean)
@@ -49346,6 +51213,7 @@
                   (OptLoopBceCleanPass.Pass tail-clean tail-added)))])])]
     [(CompilerIrFunctionList.Array seq)
       (opt-loop-bce-length-clean-pass
+        type-segment-bases
         (compiler-ir-function-seq-to-list seq)
         clean)]))
 
@@ -49716,6 +51584,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-call-memory-roots
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptLicmRootEnv
   (let
@@ -49725,7 +51594,7 @@
         (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 32)))]
     [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
     (begin
-      (opt-licm-root-env-seed-params! roots params)
+      (opt-licm-root-env-seed-params! type-segment-bases roots params)
       (opt-call-memory-root-scan-blocks! sources roots blocks)
       (opt-call-memory-root-scan-blocks! sources roots blocks)
       roots)))
@@ -49992,6 +51861,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-call-memory-function-candidate
+  [type-segment-bases : i64]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [func : CompilerIrFunction]) : OptCallMemoryCandidate
@@ -50003,7 +51873,7 @@
         function-set
         params
         (if (opt-call-memory-blocks-need-roots? summaries blocks)
-          (opt-call-memory-roots params blocks)
+          (opt-call-memory-roots type-segment-bases params blocks)
           (opt-licm-root-env-with-capacity 1))
         blocks)]))
 
@@ -50011,6 +51881,7 @@
   (Pass opt_i64_i64_map.Map bool))
 
 (define (opt-call-memory-build-pass
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
@@ -50028,6 +51899,7 @@
                 (begin
                   (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
                   (opt-call-memory-build-pass
+                    type-segment-bases
                     (box-get rest)
                     current
                     function-set
@@ -50035,11 +51907,13 @@
                     changed))]
               [(opt_i64_i64_map.LookupMissing)
                 (match (opt-call-memory-function-candidate
+                  type-segment-bases
                   current
                   function-set
                   func)
                   [(OptCallMemoryCandidate.Unresolved)
                     (opt-call-memory-build-pass
+                      type-segment-bases
                       (box-get rest)
                       current
                       function-set
@@ -50049,6 +51923,7 @@
                     (begin
                       (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
                       (opt-call-memory-build-pass
+                        type-segment-bases
                         (box-get rest)
                         current
                         function-set
@@ -50056,6 +51931,7 @@
                         true))])]))])]
     [(CompilerIrFunctionList.Array seq)
       (opt-call-memory-build-pass
+        type-segment-bases
         (compiler-ir-function-seq-to-list seq)
         current
         function-set
@@ -50106,6 +51982,7 @@
       (shl 1 0))))
 
 (define (opt-call-memory-build-fixed
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [function-set : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
@@ -50117,6 +51994,7 @@
     ;; the builtin seeds are re-applied here as well as to the initial map --
     ;; otherwise they would vanish after round one.
     (match (opt-call-memory-build-pass
+      type-segment-bases
       functions
       current
       function-set
@@ -50125,6 +52003,7 @@
       [(OptCallMemoryBuildPass.Pass next changed)
         (if changed
           (opt-call-memory-build-fixed
+            type-segment-bases
             functions
             function-set
             next
@@ -50133,9 +52012,11 @@
           next)])))
 
 (define (opt-call-memory-build
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [capacity : i64]) : opt_i64_i64_map.Map
   (opt-call-memory-build-fixed
+    type-segment-bases
     functions
     (opt-call-memory-function-set
       functions
@@ -50580,6 +52461,7 @@
   1024)
 
 (define (opt-loop-bce-build-summaries-with-direct-call-clean
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [build-direct-call-clean : bool]
   [build-call-memory : bool]) : OptLoopBceSummaries
@@ -50588,10 +52470,12 @@
       (opt-function-index-capacity (opt-function-list-count functions))]
     [argc-return : opt_i64_i64_map.Map
       (opt-loop-bce-argc-return-map
+        type-segment-bases
         functions
         (opt_i64_i64_map.with-capacity capacity))]
     [length-clean : opt_i64_i64_map.Map
       (match (opt-loop-bce-length-clean-pass
+        type-segment-bases
         functions
         (opt_i64_i64_map.with-capacity capacity))
         [(OptLoopBceCleanPass.Pass clean _) clean])]
@@ -50601,7 +52485,7 @@
         (opt_i64_i64_map.with-capacity 1))]
     [call-memory : opt_i64_i64_map.Map
       (if build-call-memory
-        (opt-call-memory-build functions capacity)
+        (opt-call-memory-build type-segment-bases functions capacity)
         (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true
@@ -50628,6 +52512,7 @@
 ;; -- and in particular the opt1 self-compile throughput metric -- pay nothing
 ;; for it and stay byte-identical.
 (define (opt-build-program-summaries
+  [type-segment-bases : i64]
   [globals : CompilerIrGlobalList]
   [reachable-functions : CompilerIrFunctionList]
   [level : i64]) : OptLoopBceSummaries
@@ -50636,6 +52521,7 @@
       (opt-function-list-count reachable-functions)
       (opt-loop-bce-summary-function-limit))
       (opt-loop-bce-build-summaries-with-direct-call-clean
+        type-segment-bases
         reachable-functions
         (>= level 2)
         (>= level 1))
@@ -50739,7 +52625,9 @@
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))
 
-(define (optimize-program-with-level
+(define (optimize-program-with-reader-context-and-level
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [level : i64]) : CompilerIrProgram
   (match program
@@ -50753,7 +52641,7 @@
           (cfg compile-profile (compiler-opt-profile-start))
           (let
             [reachable-functions : CompilerIrFunctionList
-              (opt-inline-program-functions functions level)]
+              (opt-inline-program-functions type-segment-bases functions level)]
             (begin
               (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
               (cfg compile-profile (compiler-opt-profile-start))
@@ -50769,6 +52657,7 @@
                   (opt-pruned-program-functions pruned)]
                 [summaries : OptLoopBceSummaries
                   (opt-build-program-summaries
+                    type-segment-bases
                     pruned-globals
                     pruned-functions
                     level)]
@@ -50779,6 +52668,8 @@
                     unit)]
                 [optimized-functions : CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
+                    pools
+                    type-segment-bases
                     pruned-functions
                     level
                     summaries)]
@@ -50808,17 +52699,20 @@
                       (opt-pruned-program-functions final-pruned)]
                     [scratch-reset-functions : CompilerIrFunctionList
                       (opt-scratch-reset-function-list-with-level
+                        type-segment-bases
                         final-functions
                         level)]
                     [paired-bounds-functions : CompilerIrFunctionList
                       (if (< level 2)
                         scratch-reset-functions
                         (opt-late-bounds-pair-function-list
+                          type-segment-bases
                           scratch-reset-functions))]
                     [total-switch-functions : CompilerIrFunctionList
                       (if (< level 2)
                         paired-bounds-functions
                         (opt-late-total-switch-function-list
+                          type-segment-bases
                           paired-bounds-functions))]
                     (begin
                       (cfg
@@ -50829,6 +52723,27 @@
                         (compiler-ir-function-list-compact
                           total-switch-functions)
                         externs)))))))))]))
+
+(define (optimize-program-with-level
+  [program : CompilerIrProgram]
+  [level : i64]) : CompilerIrProgram
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-reader-context-current)]
+    (optimize-program-with-reader-context-and-level
+      pools
+      (ast-node-pool-context-type-segment-bases pools)
+      program
+      level)))
+
+(define (optimize-program-with-pools-and-level
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [level : i64]) : CompilerIrProgram
+  (optimize-program-with-reader-context-and-level
+    pools
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    level))
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
@@ -51057,7 +52972,9 @@
               (compiler-source-spans-clear-instrs source-spans)
               functions)])])))
 
-(define (optimize-program-with-spans-and-level
+(define (optimize-program-with-spans-and-reader-context-and-level
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [level : i64]) : CompilerOptimizedProgram
@@ -51069,7 +52986,11 @@
           (opt-remap-spans-program spans program))
         (begin
           (cfg compile-profile (compiler-opt-profile-start))
-          (match (opt-inline-program-functions-with-spans functions level spans)
+          (match (opt-inline-program-functions-with-spans
+            type-segment-bases
+            functions
+            level
+            spans)
             [(OptInlineSpanProgram.Program reachable-functions inline-spans)
               (begin
                 (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
@@ -51086,6 +53007,7 @@
                     (opt-pruned-program-functions pruned)]
                   [summaries : OptLoopBceSummaries
                     (opt-build-program-summaries
+                      type-segment-bases
                       pruned-globals
                       pruned-functions
                       level)]
@@ -51096,6 +53018,8 @@
                       unit)]
                   [optimized-functions : CompilerIrFunctionList
                     (optimize-function-list-with-level-and-summaries
+                      pools
+                      type-segment-bases
                       pruned-functions
                       level
                       summaries)]
@@ -51125,17 +53049,20 @@
                         (opt-pruned-program-functions final-pruned)]
                       [scratch-reset-functions : CompilerIrFunctionList
                         (opt-scratch-reset-function-list-with-level
+                          type-segment-bases
                           final-functions
                           level)]
                       [paired-bounds-functions : CompilerIrFunctionList
                         (if (< level 2)
                           scratch-reset-functions
                           (opt-late-bounds-pair-function-list
+                            type-segment-bases
                             scratch-reset-functions))]
                       [total-switch-functions : CompilerIrFunctionList
                         (if (< level 2)
                           paired-bounds-functions
                           (opt-late-total-switch-function-list
+                            type-segment-bases
                             paired-bounds-functions))]
                       [optimized : CompilerIrProgram
                         (CompilerIrProgram.Program
@@ -51150,6 +53077,31 @@
                         (CompilerOptimizedProgram.Program
                           (compiler-opt-debug-finish-program optimized)
                           (opt-remap-spans-program inline-spans optimized)))))))])))]))
+
+(define (optimize-program-with-spans-and-level
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [level : i64]) : CompilerOptimizedProgram
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-reader-context-current)]
+    (optimize-program-with-spans-and-reader-context-and-level
+      pools
+      (ast-node-pool-context-type-segment-bases pools)
+      program
+      spans
+      level)))
+
+(define (optimize-program-with-spans-and-pools-and-level
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [level : i64]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-reader-context-and-level
+    pools
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    spans
+    level))
 
 (define (optimize-program-with-spans
   [program : CompilerIrProgram]
@@ -51440,18 +53392,23 @@
   (SharedCheckedRef)
   (ExclusiveCheckedRef))
 
-(define (opt-alias-param-root-kind [ty : AstType]) : OptAliasParamRootKind
+(define (opt-alias-param-root-kind [type-segment-bases : i64] [ty : AstType]) : OptAliasParamRootKind
   (match ty
     [(AstType.Ref _ _) (OptAliasParamRootKind.SharedCheckedRef)]
     [(AstType.MutRef _ _) (OptAliasParamRootKind.ExclusiveCheckedRef)]
     [(AstType.Region _ inner)
-      (opt-alias-param-root-kind (ast-node-pool-reader-type-get inner))]
+      (opt-alias-param-root-kind
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [_ (OptAliasParamRootKind.NotCheckedRef)]))
 
-(define (opt-alias-seed-param [facts : OptAliasFacts] [param : CompilerIrParam]) : OptAliasFacts
+(define (opt-alias-seed-param
+  [type-segment-bases : i64]
+  [facts : OptAliasFacts]
+  [param : CompilerIrParam]) : OptAliasFacts
   (match param
     [(CompilerIrParam.Param _ ty var)
-      (match (opt-alias-param-root-kind ty)
+      (match (opt-alias-param-root-kind type-segment-bases ty)
         [(OptAliasParamRootKind.SharedCheckedRef)
           (opt-alias-mark-shared-ref facts var)]
         [(OptAliasParamRootKind.ExclusiveCheckedRef)
@@ -51459,29 +53416,39 @@
         [(OptAliasParamRootKind.NotCheckedRef) facts])]))
 
 (define (opt-alias-seed-param-seq
+  [type-segment-bases : i64]
   [params : CompilerIrParamSeq]
   [index : i64]
   [facts : OptAliasFacts]) : OptAliasFacts
   (if (>= index (compiler-ir-param-seq-count params))
     facts
     (opt-alias-seed-param-seq
+      type-segment-bases
       params
       (+ index 1)
-      (opt-alias-seed-param facts (compiler-ir-param-seq-ref params index)))))
+      (opt-alias-seed-param
+        type-segment-bases
+        facts
+        (compiler-ir-param-seq-ref params index)))))
 
 (define (opt-alias-seed-params-from
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [facts : OptAliasFacts]) : OptAliasFacts
   (match params
     [(CompilerIrParamList.Nil) facts]
-    [(CompilerIrParamList.Array seq) (opt-alias-seed-param-seq seq 0 facts)]
+    [(CompilerIrParamList.Array seq)
+      (opt-alias-seed-param-seq type-segment-bases seq 0 facts)]
     [(CompilerIrParamList.Cons param rest)
       (opt-alias-seed-params-from
+        type-segment-bases
         (box-get rest)
-        (opt-alias-seed-param facts param))]))
+        (opt-alias-seed-param type-segment-bases facts param))]))
 
-(define (opt-alias-seed-params [params : CompilerIrParamList]) : OptAliasFacts
-  (opt-alias-seed-params-from params (opt-alias-empty)))
+(define (opt-alias-seed-params
+  [type-segment-bases : i64]
+  [params : CompilerIrParamList]) : OptAliasFacts
+  (opt-alias-seed-params-from type-segment-bases params (opt-alias-empty)))
 
 ;; Conservative control-flow join: keep only facts that appear with an
 ;; identical kind on both incoming edges.
@@ -51697,7 +53664,7 @@
 (defenum OptScratchScopeReport
   (Report i64 i64 OptScratchBlockerReason))
 
-(define (opt-scratch-alloc-type-size [ty : AstType]) : i64
+(define (opt-scratch-alloc-type-size [type-segment-bases : i64] [ty : AstType]) : i64
   (match ty
     [(AstType.I64) 8]
     [(AstType.U64) 8]
@@ -51725,7 +53692,9 @@
     [(AstType.Ref _ _) 8]
     [(AstType.MutRef _ _) 8]
     [(AstType.Region _ inner)
-      (opt-scratch-alloc-type-size (ast-node-pool-reader-type-get inner))]
+      (opt-scratch-alloc-type-size
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [(AstType.Enum _) 8]
     [(AstType.EnumArgs _ _) 8]
     [(AstType.Struct _) 8]
@@ -51736,7 +53705,9 @@
     [(AstType.Var _) 0]
     [(AstType.VarArgs _ _) 0]
     [(AstType.Consume inner)
-      (opt-scratch-alloc-type-size (ast-node-pool-reader-type-get inner))]))
+      (opt-scratch-alloc-type-size
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]))
 
 (define (opt-scratch-root-list-contains?
   [roots : OptScratchRootList]
@@ -51751,10 +53722,14 @@
     roots
     (OptScratchRootList.Cons root (box roots))))
 
-(define (opt-scratch-direct-alloc [instr : CompilerIrInstr]) : OptScratchAlloc
+(define (opt-scratch-direct-alloc
+  [type-segment-bases : i64]
+  [instr : CompilerIrInstr]) : OptScratchAlloc
   (match instr
     [(CompilerIrInstr.Alloc dst ty)
-      (OptScratchAlloc.Alloc dst (opt-scratch-alloc-type-size ty))]
+      (OptScratchAlloc.Alloc
+        dst
+        (opt-scratch-alloc-type-size type-segment-bases ty))]
     [(CompilerIrInstr.Call dst name args _)
       (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (match (opt-aggregate-tl-alloc-size args)
@@ -51838,10 +53813,11 @@
     [(OptScratchBlockerReason.Blocked _) false]))
 
 (define (opt-scratch-blocker-reason
+  [type-segment-bases : i64]
   [roots : OptScratchRootList]
   [facts : OptAliasFacts]
   [instr : CompilerIrInstr]) : OptScratchBlockerReason
-  (match (opt-scratch-direct-alloc instr)
+  (match (opt-scratch-direct-alloc type-segment-bases instr)
     [(OptScratchAlloc.Alloc _ _) (OptScratchBlockerReason.NoBlocker)]
     [(OptScratchAlloc.NoAlloc)
       (match instr
@@ -52078,6 +54054,7 @@
           [_ (opt-alias-update-facts facts instr)]))]))
 
 (define (opt-scratch-state-step
+  [type-segment-bases : i64]
   [state : OptScratchScopeState]
   [instr : CompilerIrInstr]) : OptScratchScopeState
   (match state
@@ -52086,8 +54063,8 @@
         [blocked : OptScratchScopeState
           (opt-scratch-state-with-blocker
             state
-            (opt-scratch-blocker-reason roots facts instr))]
-        (match (opt-scratch-direct-alloc instr)
+            (opt-scratch-blocker-reason type-segment-bases roots facts instr))]
+        (match (opt-scratch-direct-alloc type-segment-bases instr)
           [(OptScratchAlloc.Alloc dst bytes)
             (opt-scratch-state-record-alloc blocked dst bytes)]
           [(OptScratchAlloc.NoAlloc)
@@ -52107,27 +54084,35 @@
       (OptScratchScopeReport.Report allocs bytes blocker)]))
 
 (define (opt-scratch-scope-scan-instrs
+  [type-segment-bases : i64]
   [state : OptScratchScopeState]
   [instrs : CompilerIrInstrList]) : OptScratchScopeState
   (match instrs
     [(CompilerIrInstrList.Nil) state]
     [(CompilerIrInstrList.Cons instr rest)
       (opt-scratch-scope-scan-instrs
-        (opt-scratch-state-step state instr)
+        type-segment-bases
+        (opt-scratch-state-step type-segment-bases state instr)
         (box-get rest))]))
 
 (define (opt-scratch-scope-scan-instr-seq-from
+  [type-segment-bases : i64]
   [state : OptScratchScopeState]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : OptScratchScopeState
   (if (>= index (compiler-ir-instr-seq-count instrs))
     state
     (opt-scratch-scope-scan-instr-seq-from
-      (opt-scratch-state-step state (compiler-ir-instr-seq-ref instrs index))
+      type-segment-bases
+      (opt-scratch-state-step
+        type-segment-bases
+        state
+        (compiler-ir-instr-seq-ref instrs index))
       instrs
       (+ index 1))))
 
 (define (opt-scratch-scope-scan-blocks
+  [type-segment-bases : i64]
   [state : OptScratchScopeState]
   [blocks : CompilerIrBlockList]) : OptScratchScopeState
   (match blocks
@@ -52136,27 +54121,48 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (opt-scratch-scope-scan-blocks
-            (opt-scratch-scope-scan-instr-seq-from state instrs 0)
+            type-segment-bases
+            (opt-scratch-scope-scan-instr-seq-from
+              type-segment-bases
+              state
+              instrs
+              0)
             (box-get rest))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-scratch-scope-scan-blocks state (compiler-ir-block-seq-to-list seq))]))
+      (opt-scratch-scope-scan-blocks
+        type-segment-bases
+        state
+        (compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-scratch-scope-report-instrs [instrs : CompilerIrInstrList]) : OptScratchScopeReport
+(define (opt-scratch-scope-report-instrs
+  [type-segment-bases : i64]
+  [instrs : CompilerIrInstrList]) : OptScratchScopeReport
   (opt-scratch-scope-report-from-state
-    (opt-scratch-scope-scan-instrs (opt-scratch-state-initial) instrs)))
+    (opt-scratch-scope-scan-instrs
+      type-segment-bases
+      (opt-scratch-state-initial)
+      instrs)))
 
-(define (opt-scratch-scope-report-block [block : CompilerIrBlock]) : OptScratchScopeReport
+(define (opt-scratch-scope-report-block
+  [type-segment-bases : i64]
+  [block : CompilerIrBlock]) : OptScratchScopeReport
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (opt-scratch-scope-report-from-state
         (opt-scratch-scope-scan-instr-seq-from
+          type-segment-bases
           (opt-scratch-state-initial)
           instrs
           0))]))
 
-(define (opt-scratch-scope-report-blocks [blocks : CompilerIrBlockList]) : OptScratchScopeReport
+(define (opt-scratch-scope-report-blocks
+  [type-segment-bases : i64]
+  [blocks : CompilerIrBlockList]) : OptScratchScopeReport
   (opt-scratch-scope-report-from-state
-    (opt-scratch-scope-scan-blocks (opt-scratch-state-initial) blocks)))
+    (opt-scratch-scope-scan-blocks
+      type-segment-bases
+      (opt-scratch-state-initial)
+      blocks)))
 
 (define (opt-scratch-report-candidate?
   [report : OptScratchScopeReport]
@@ -52170,6 +54176,7 @@
         (opt-scratch-blocker-none? blocker))]))
 
 (define (opt-scratch-report-blocked?
+  [_type-segment-bases : i64]
   [report : OptScratchScopeReport]
   [expected-allocs : i64]
   [expected-bytes : i64]
@@ -52261,6 +54268,7 @@
 (cfg
   compile-profile
   (define (compiler-opt-scratch-region-report-blocks
+    [type-segment-bases : i64]
     [function : String]
     [blocks : CompilerIrBlockList]) : unit
     (match blocks
@@ -52274,16 +54282,21 @@
                 function
                 label
                 (compiler-ir-label "-")
-                (opt-scratch-scope-report-block block))])
-          (compiler-opt-scratch-region-report-blocks function (box-get rest)))]
+                (opt-scratch-scope-report-block type-segment-bases block))])
+          (compiler-opt-scratch-region-report-blocks
+            type-segment-bases
+            function
+            (box-get rest)))]
       [(CompilerIrBlockList.Array seq)
         (compiler-opt-scratch-region-report-blocks
+          type-segment-bases
           function
           (compiler-ir-block-seq-to-list seq))])))
 
 (cfg
   compile-profile
   (define (compiler-opt-scratch-region-report-loops
+    [type-segment-bases : i64]
     [function : String]
     [loops : OptNaturalLoopList]) : unit
     (match loops
@@ -52296,12 +54309,17 @@
             (opt-natural-loop-header loop)
             (opt-natural-loop-latch loop)
             (opt-scratch-scope-report-blocks
+              type-segment-bases
               (opt-natural-loop-body-blocks loop)))
-          (compiler-opt-scratch-region-report-loops function (box-get rest)))])))
+          (compiler-opt-scratch-region-report-loops
+            type-segment-bases
+            function
+            (box-get rest)))])))
 
 (cfg
   compile-profile
   (define (compiler-opt-scratch-region-report-function
+    [type-segment-bases : i64]
     [func : CompilerIrFunction]) : unit
     (match func
       [(CompilerIrFunction.Function name _ _ _ blocks)
@@ -52313,15 +54331,20 @@
               name-text
               (compiler-ir-label "-")
               (compiler-ir-label "-")
-              (opt-scratch-scope-report-blocks blocks))
-            (compiler-opt-scratch-region-report-blocks name-text blocks)
+              (opt-scratch-scope-report-blocks type-segment-bases blocks))
+            (compiler-opt-scratch-region-report-blocks
+              type-segment-bases
+              name-text
+              blocks)
             (compiler-opt-scratch-region-report-loops
+              type-segment-bases
               name-text
               (opt-cfg-natural-loops blocks))))])))
 
 (cfg
   compile-profile
   (define (compiler-opt-scratch-region-report-function-escaping
+    [type-segment-bases : i64]
     [func : CompilerIrFunction]
     [scratch : i64]) : unit
     (let
@@ -52331,7 +54354,10 @@
           (arena.tl_arena_set scratch))
         (let
           [mark : i64 (arena.tl_region_mark)]
-          [_report : unit (compiler-opt-scratch-region-report-function func)]
+          [_report : unit
+            (compiler-opt-scratch-region-report-function
+              type-segment-bases
+              func)]
           [scratch-head : i64 (arena.tl_arena_current)]
           (unsafe
             (arena.tl_arena_set scratch-head)
@@ -52357,8 +54383,13 @@
   (One i64)
   (Many))
 
-(define (opt-scratch-scope-state-blocks [blocks : CompilerIrBlockList]) : OptScratchScopeState
-  (opt-scratch-scope-scan-blocks (opt-scratch-state-initial) blocks))
+(define (opt-scratch-scope-state-blocks
+  [type-segment-bases : i64]
+  [blocks : CompilerIrBlockList]) : OptScratchScopeState
+  (opt-scratch-scope-scan-blocks
+    type-segment-bases
+    (opt-scratch-state-initial)
+    blocks))
 
 (define (opt-scratch-state-candidate? [state : OptScratchScopeState]) : bool
   (match state
@@ -52370,12 +54401,14 @@
     [(OptScratchScopeReport.Report allocs _ _) allocs]))
 
 (define (opt-scratch-block-alloc-count
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [label : i64]) : i64
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) 0]
     [(OptMaybeBlock.Some block)
-      (opt-scratch-report-alloc-count (opt-scratch-scope-report-block block))]))
+      (opt-scratch-report-alloc-count
+        (opt-scratch-scope-report-block type-segment-bases block))]))
 
 (define (opt-scratch-reset-mark-candidate-add
   [candidate : OptScratchResetMarkCandidate]
@@ -52620,6 +54653,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-scratch-loop-eligible?
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]) : bool
@@ -52634,12 +54668,14 @@
         [body-blocks : CompilerIrBlockList
           (opt-natural-loop-current-body-blocks loop blocks)]
         [state : OptScratchScopeState
-          (opt-scratch-scope-state-blocks body-blocks)]
+          (opt-scratch-scope-state-blocks type-segment-bases body-blocks)]
         (and
           (opt-scratch-state-candidate? state)
           (or
             (= header latch)
-            (= (opt-scratch-block-alloc-count blocks header) 0))
+            (=
+              (opt-scratch-block-alloc-count type-segment-bases blocks header)
+              0))
           (not (opt-scratch-state-loop-carried-candidate? state body-blocks))
           (opt-scratch-loop-blocks-exits-safe?
             index
@@ -52749,6 +54785,7 @@
         true)]))
 
 (define (opt-scratch-reset-apply-loops
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [blocks : CompilerIrBlockList]
   [frame : i64]
@@ -52757,16 +54794,23 @@
     [(OptNaturalLoopList.Nil)
       (OptScratchResetApplyResult.Result blocks frame false)]
     [(OptNaturalLoopList.Cons loop rest)
-      (if (opt-scratch-loop-eligible? context blocks loop)
+      (if (opt-scratch-loop-eligible? type-segment-bases context blocks loop)
         (opt-scratch-reset-apply-loop context blocks frame loop)
-        (opt-scratch-reset-apply-loops context blocks frame (box-get rest)))]))
+        (opt-scratch-reset-apply-loops
+          type-segment-bases
+          context
+          blocks
+          frame
+          (box-get rest)))]))
 
 (define (opt-scratch-reset-function-unchecked-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (match (opt-scratch-reset-apply-loops
+        type-segment-bases
         context
         blocks
         frame
@@ -52786,6 +54830,7 @@
             (OptFunctionCtxResult.Result func context))])]))
 
 (define (opt-scratch-reset-function-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
@@ -52794,6 +54839,7 @@
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
           (match (opt-scratch-reset-apply-loops
+            type-segment-bases
             context
             blocks
             frame
@@ -52819,54 +54865,67 @@
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
-(define (opt-scratch-reset-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-scratch-reset-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-scratch-reset-function-with-context-result
+        type-segment-bases
         (opt-cfg-context-build blocks)
         false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
-(define (opt-scratch-reset-function-unchecked [func : CompilerIrFunction]) : CompilerIrFunction
+(define (opt-scratch-reset-function-unchecked
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (if (<=
         (compiler-ir-block-list-count blocks)
         (opt-heavy-pass-block-limit))
         (match (opt-scratch-reset-function-unchecked-with-context-result
+          type-segment-bases
           (opt-cfg-context-build blocks)
           func)
           [(OptFunctionCtxResult.Result next _) next])
         func)]))
 
 (define (opt-scratch-reset-function-list-unchecked
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (match functions
     [(CompilerIrFunctionList.Nil) (CompilerIrFunctionList.Nil)]
     [(CompilerIrFunctionList.Cons func rest)
       (compiler-ir-function-cons
-        (opt-scratch-reset-function-unchecked func)
-        (opt-scratch-reset-function-list-unchecked (box-get rest)))]
+        (opt-scratch-reset-function-unchecked type-segment-bases func)
+        (opt-scratch-reset-function-list-unchecked
+          type-segment-bases
+          (box-get rest)))]
     [(CompilerIrFunctionList.Array seq)
       (compiler-ir-function-list-compact
         (opt-scratch-reset-function-list-unchecked
+          type-segment-bases
           (compiler-ir-function-seq-to-list seq)))]))
 
 (define (opt-scratch-reset-function-list-with-level
+  [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
   [level : i64]) : CompilerIrFunctionList
   (if (< level 2)
     functions
-    (opt-scratch-reset-function-list-unchecked functions)))
+    (opt-scratch-reset-function-list-unchecked type-segment-bases functions)))
 
 (define (opt-scratch-reset-pre-ssa-function-with-context-result
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
         [context : OptCfgContext
-          (opt-cfg-context-build (compiler-ir-clone-block-list blocks))]
+          (opt-cfg-context-build (compiler-ir-clone-block-list pools blocks))]
         [input : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty frame blocks)]
         [preheaders-result : OptFunctionCtxResult
@@ -52878,6 +54937,7 @@
           (match preheaders-result
             [(OptFunctionCtxResult.Result _ ctx) ctx])]
         (opt-scratch-reset-function-with-context-result
+          type-segment-bases
           preheaders-context
           false
           preheaders))]))
@@ -52998,24 +55058,35 @@
 ;; A checked reference to an array/string descriptor addresses that descriptor
 ;; directly, so its parameter var is a header base for GEP/load classification
 ;; just like a by-value descriptor var.
-(define (opt-load-header-param-type? [ty : AstType]) : bool
+(define (opt-load-header-param-type? [type-segment-bases : i64] [ty : AstType]) : bool
   (match ty
     [(AstType.Ref _ inner)
-      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+      (opt-licm-array-header-type?
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [(AstType.MutRef _ inner)
-      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+      (opt-licm-array-header-type?
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [(AstType.Region _ inner)
-      (opt-load-header-param-type? (ast-node-pool-reader-type-get inner))]
-    [_ (opt-licm-array-header-type? ty)]))
+      (opt-load-header-param-type?
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
+    [_ (opt-licm-array-header-type? type-segment-bases ty)]))
 
 (define (opt-load-header-set-add-param
+  [type-segment-bases : i64]
   [param : CompilerIrParam]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (match param
     [(CompilerIrParam.Param _ ty var)
-      (opt-load-header-set-mark set var (opt-load-header-param-type? ty))]))
+      (opt-load-header-set-mark
+        set
+        var
+        (opt-load-header-param-type? type-segment-bases ty))]))
 
 (define (opt-load-header-set-add-param-seq
+  [type-segment-bases : i64]
   [params : CompilerIrParamSeq]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (let
@@ -53028,64 +55099,101 @@
           (set!
             work
             (opt-load-header-set-add-param
+              type-segment-bases
               (compiler-ir-param-seq-ref params index)
               work))
           (set! index (+ index 1))))
       work)))
 
 (define (opt-load-header-set-add-params
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (match params
     [(CompilerIrParamList.Nil) set]
     [(CompilerIrParamList.Array seq)
-      (opt-load-header-set-add-param-seq seq set)]
+      (opt-load-header-set-add-param-seq type-segment-bases seq set)]
     [(CompilerIrParamList.Cons param rest)
       (opt-load-header-set-add-params
+        type-segment-bases
         (box-get rest)
-        (opt-load-header-set-add-param param set))]))
+        (opt-load-header-set-add-param type-segment-bases param set))]))
 
 ;; Defs with a declared result type mark it; every OTHER defining instruction
 ;; poisons its dst (its handle-ness is unknown).
 (define (opt-load-header-set-add-instr
+  [type-segment-bases : i64]
   [set : OptLoadHeaderSet]
   [instr : CompilerIrInstr]) : OptLoadHeaderSet
   (match instr
     [(CompilerIrInstr.Mov dst _ ty)
-      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+      (opt-load-header-set-mark
+        set
+        dst
+        (opt-licm-array-header-type? type-segment-bases ty))]
     [(CompilerIrInstr.Load dst _ ty)
-      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+      (opt-load-header-set-mark
+        set
+        dst
+        (opt-licm-array-header-type? type-segment-bases ty))]
     [(CompilerIrInstr.Call dst _ _ ty)
-      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+      (opt-load-header-set-mark
+        set
+        dst
+        (opt-licm-array-header-type? type-segment-bases ty))]
     [(CompilerIrInstr.CallIndirect dst _ _ ty)
-      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+      (opt-load-header-set-mark
+        set
+        dst
+        (opt-licm-array-header-type? type-segment-bases ty))]
     [(CompilerIrInstr.CallIndirectC dst _ _ ty)
-      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+      (opt-load-header-set-mark
+        set
+        dst
+        (opt-licm-array-header-type? type-segment-bases ty))]
     [(CompilerIrInstr.Phi dst _ ty)
-      (opt-load-header-set-mark set dst (opt-licm-array-header-type? ty))]
+      (opt-load-header-set-mark
+        set
+        dst
+        (opt-licm-array-header-type? type-segment-bases ty))]
     [(CompilerIrInstr.Cast dst _ _ to-ty)
-      (opt-load-header-set-mark set dst (opt-licm-array-header-type? to-ty))]
+      (opt-load-header-set-mark
+        set
+        dst
+        (opt-licm-array-header-type? type-segment-bases to-ty))]
     [(CompilerIrInstr.Bitcast dst _ _ to-ty)
-      (opt-load-header-set-mark set dst (opt-licm-array-header-type? to-ty))]
+      (opt-load-header-set-mark
+        set
+        dst
+        (opt-licm-array-header-type? type-segment-bases to-ty))]
     [_
       (match (opt-instr-def-var instr)
         [(option_i64.Some dst) (opt-load-header-set-mark set dst false)]
         [(option_i64.None) set])]))
 
 (define (opt-load-header-set-add-instr-seq-from
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    set
-    (opt-load-header-set-add-instr-seq-from
-      instrs
-      (+ index 1)
-      (opt-load-header-set-add-instr
-        set
-        (compiler-ir-instr-seq-ref instrs index)))))
+  (let
+    [cursor : i64 index]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [work : OptLoadHeaderSet set]
+    (begin
+      (while (< cursor count)
+        (begin
+          (set!
+            work
+            (opt-load-header-set-add-instr
+              type-segment-bases
+              work
+              (compiler-ir-instr-seq-ref instrs cursor)))
+          (set! cursor (+ cursor 1))))
+      work)))
 
 (define (opt-load-header-set-add-block-seq
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockSeq]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (let
@@ -53097,11 +55205,18 @@
         (begin
           (match (compiler-ir-block-seq-ref blocks index)
             [(CompilerIrBlock.Block _ instrs)
-              (set! work (opt-load-header-set-add-instr-seq-from instrs 0 work))])
+              (set!
+                work
+                (opt-load-header-set-add-instr-seq-from
+                  type-segment-bases
+                  instrs
+                  0
+                  work))])
           (set! index (+ index 1))))
       work)))
 
 (define (opt-load-header-set-add-blocks
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (match blocks
@@ -53110,25 +55225,38 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (opt-load-header-set-add-blocks
+            type-segment-bases
             (box-get rest)
-            (opt-load-header-set-add-instr-seq-from instrs 0 set))])]
+            (opt-load-header-set-add-instr-seq-from
+              type-segment-bases
+              instrs
+              0
+              set))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-load-header-set-add-block-seq seq set)]))
+      (opt-load-header-set-add-block-seq type-segment-bases seq set)]))
 
 (define (opt-load-header-set-from-function
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : OptLoadHeaderSet
   (opt-load-header-set-add-blocks
+    type-segment-bases
     blocks
-    (opt-load-header-set-add-params params (opt-load-header-set-empty))))
+    (opt-load-header-set-add-params
+      type-segment-bases
+      params
+      (opt-load-header-set-empty))))
 
 (define (opt-load-header-set-from-function-with-size
+  [type-segment-bases : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]
   [frame : i64]) : OptLoadHeaderSet
   (opt-load-header-set-add-blocks
+    type-segment-bases
     blocks
     (opt-load-header-set-add-params
+      type-segment-bases
       params
       (opt-load-header-set-with-size frame))))
 
@@ -53161,7 +55289,7 @@
 ;; Byte width of a scalar Load/StorePtr and the gep displacement scale. MUST
 ;; mirror compiler-backend-type-size (gep disp = offset * this); 0 means
 ;; zero-sized/unclassifiable and callers must treat the location as unknown.
-(define (opt-load-loc-type-size [ty : AstType]) : i64
+(define (opt-load-loc-type-size [type-segment-bases : i64] [ty : AstType]) : i64
   (match ty
     [(AstType.I64) 8]
     [(AstType.U64) 8]
@@ -53189,7 +55317,9 @@
     [(AstType.Ref _ _) 8]
     [(AstType.MutRef _ _) 8]
     [(AstType.Region _ inner)
-      (opt-load-loc-type-size (ast-node-pool-reader-type-get inner))]
+      (opt-load-loc-type-size
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [(AstType.Enum _) 8]
     [(AstType.EnumArgs _ _) 8]
     [(AstType.Struct _) 8]
@@ -53200,7 +55330,9 @@
     [(AstType.Var _) 8]
     [(AstType.VarArgs _ _) 8]
     [(AstType.Consume inner)
-      (opt-load-loc-type-size (ast-node-pool-reader-type-get inner))]))
+      (opt-load-loc-type-size
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]))
 
 ;; What memory a pointer-valued var addresses:
 ;;   Element          -- points at/into some array/string DATA BUFFER (the
@@ -53813,6 +55945,7 @@
 ;; Kind transfer for one instruction: redefinitions first (own binding + the
 ;; base-reference sweep), then the deriving arms.
 (define (opt-load-kinds-step
+  [type-segment-bases : i64]
   [kinds : OptLoadPtrKinds]
   [hs : OptLoadHeaderSet]
   [instr : CompilerIrInstr]) : OptLoadPtrKinds
@@ -53838,14 +55971,14 @@
                       (opt-load-loc-scaled-field-checked
                         bvar
                         index-var
-                        (opt-load-loc-type-size ty)
+                        (opt-load-loc-type-size type-segment-bases ty)
                         false))]
                   [_ (opt-load-kinds-bind invalidated dst (OptLoadLocElement))])]
               [(OptLoadLocField b0 o0 _ h0)
                 (match offset
                   [(CompilerIrValue.I64 k)
                     (let
-                      [sz : i64 (opt-load-loc-type-size ty)]
+                      [sz : i64 (opt-load-loc-type-size type-segment-bases ty)]
                       (if (> sz 0)
                         (opt-load-kinds-bind
                           invalidated
@@ -53862,7 +55995,7 @@
                         (opt-load-loc-scaled-field-checked
                           b0
                           index-var
-                          (opt-load-loc-type-size ty)
+                          (opt-load-loc-type-size type-segment-bases ty)
                           h0))
                       invalidated)]
                   [_ invalidated])]
@@ -53872,7 +56005,7 @@
                 (match offset
                   [(CompilerIrValue.I64 k)
                     (let
-                      [sz : i64 (opt-load-loc-type-size ty)]
+                      [sz : i64 (opt-load-loc-type-size type-segment-bases ty)]
                       (if (and (> sz 0) (not (= bvar dst)))
                         (opt-load-kinds-bind
                           invalidated
@@ -53896,13 +56029,16 @@
           [(CompilerIrValue.Var p)
             (match (opt-load-kinds-lookup invalidated p)
               [(OptLoadLocField _ off _ header?)
-                (if (and header? (= off 0) (= (opt-load-loc-type-size ty) 8))
+                (if (and
+                  header?
+                  (= off 0)
+                  (= (opt-load-loc-type-size type-segment-bases ty) 8))
                   (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
                   invalidated)]
               [_
                 (if (and
                   (opt-load-header-var? hs p)
-                  (= (opt-load-loc-type-size ty) 8))
+                  (= (opt-load-loc-type-size type-segment-bases ty) 8))
                   ;; A header var's first word is the data pointer (the element
                   ;; base), whether or not the var already has a Field kind.
                   (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
@@ -53937,6 +56073,7 @@
 ;; `epoch` is the state's allocation counter AFTER `opt-load-cse-epoch-step`,
 ;; i.e. the epoch a fresh allocation in `instr` must be tagged with.
 (define (opt-load-alias-update-facts
+  [type-segment-bases : i64]
   [facts : OptAliasFacts]
   [kinds : OptLoadPtrKinds]
   [instr : CompilerIrInstr]
@@ -53949,7 +56086,10 @@
           [(CompilerIrValue.Var ptr)
             (match (opt-load-kinds-lookup kinds ptr)
               [(OptLoadLocField _ off _ header?)
-                (if (and header? (= off 0) (= (opt-load-loc-type-size ty) 8))
+                (if (and
+                  header?
+                  (= off 0)
+                  (= (opt-load-loc-type-size type-segment-bases ty) 8))
                   (opt-alias-derive-var base dst ptr)
                   (opt-alias-mark-may-alias base dst))]
               [_ (opt-alias-mark-may-alias base dst)])]
@@ -54001,14 +56141,17 @@
   (OptLoadStoreElement)
   (OptLoadStoreField i64 i64 i64 bool))
 
-(define (opt-load-key-eq [a : OptLoadKey] [b : OptLoadKey]) : bool
+(define (opt-load-key-eq
+  [type-segment-bases : i64]
+  [a : OptLoadKey]
+  [b : OptLoadKey]) : bool
   (match a
     [(OptLoadKey.Raw av aty aelem)
       (match b
         [(OptLoadKey.Raw bv bty belem)
           (and
             (opt-value-eq av bv)
-            (opt-type-eq aty bty)
+            (opt-type-eq type-segment-bases aty bty)
             (=
               (if aelem
                 1
@@ -54023,7 +56166,7 @@
           (and
             (= abase bbase)
             (= aoff boff)
-            (opt-type-eq aty bty)
+            (opt-type-eq type-segment-bases aty bty)
             (=
               (if ah
                 1
@@ -54038,7 +56181,7 @@
           (and
             (= abase bbase)
             (= aindex bindex)
-            (opt-type-eq aty bty)
+            (opt-type-eq type-segment-bases aty bty)
             (=
               (if ah
                 1
@@ -54088,15 +56231,19 @@
   (match entry
     [(OptLoadEntry.Entry _ _ epoch) epoch]))
 
-(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : CompilerIrMaybeValue
+(define (opt-load-table-lookup
+  [type-segment-bases : i64]
+  [table : OptLoadTable]
+  [key : OptLoadKey]) : CompilerIrMaybeValue
   (match table
     [(OptLoadTable.Nil) (CompilerIrMaybeValue.No)]
     [(OptLoadTable.Cons entry rest)
-      (if (opt-load-key-eq (opt-load-entry-key entry) key)
+      (if (opt-load-key-eq type-segment-bases (opt-load-entry-key entry) key)
         (CompilerIrMaybeValue.Some (opt-load-entry-value entry))
-        (opt-load-table-lookup (box-get rest) key))]))
+        (opt-load-table-lookup type-segment-bases (box-get rest) key))]))
 
 (define (opt-load-table-has-value-with-type?
+  [type-segment-bases : i64]
   [table : OptLoadTable]
   [value : CompilerIrValue]
   [ty : AstType]) : bool
@@ -54105,11 +56252,19 @@
     [(OptLoadTable.Cons entry rest)
       (if (and
         (opt-value-eq (opt-load-entry-value entry) value)
-        (opt-type-eq (opt-load-key-type (opt-load-entry-key entry)) ty))
+        (opt-type-eq
+          type-segment-bases
+          (opt-load-key-type (opt-load-entry-key entry))
+          ty))
         true
-        (opt-load-table-has-value-with-type? (box-get rest) value ty))]))
+        (opt-load-table-has-value-with-type?
+          type-segment-bases
+          (box-get rest)
+          value
+          ty))]))
 
 (define (opt-load-table-remove-key-scan
+  [type-segment-bases : i64]
   [table : OptLoadTable]
   [key : OptLoadKey]) : OptLoadTable
   (match table
@@ -54117,8 +56272,8 @@
     [(OptLoadTable.Cons entry rest)
       (let
         [tail : OptLoadTable
-          (opt-load-table-remove-key-scan (box-get rest) key)]
-        (if (opt-load-key-eq (opt-load-entry-key entry) key)
+          (opt-load-table-remove-key-scan type-segment-bases (box-get rest) key)]
+        (if (opt-load-key-eq type-segment-bases (opt-load-entry-key entry) key)
           tail
           (OptLoadTable.Cons entry (box tail))))]))
 
@@ -54132,16 +56287,17 @@
 ;; Bind key -> value. Since granular invalidation lets tables survive stores,
 ;; cap growth: a fresh key is skipped once the table reaches the state cap.
 (define (opt-load-table-bind
+  [type-segment-bases : i64]
   [table : OptLoadTable]
   [cap : i64]
   [key : OptLoadKey]
   [value : CompilerIrValue]
   [epoch : i64]) : OptLoadTable
-  (match (opt-load-table-lookup table key)
+  (match (opt-load-table-lookup type-segment-bases table key)
     [(CompilerIrMaybeValue.Some _)
       (OptLoadTable.Cons
         (OptLoadEntry.Entry key value epoch)
-        (box (opt-load-table-remove-key-scan table key)))]
+        (box (opt-load-table-remove-key-scan type-segment-bases table key)))]
     [(CompilerIrMaybeValue.No)
       (let
         [current-len : i64 (opt-load-table-len table)]
@@ -54168,6 +56324,7 @@
                 (box table))))))]))
 
 (define (opt-load-copy-entry-within?
+  [type-segment-bases : i64]
   [entry : OptLoadEntry]
   [src-base : i64]
   [src-off : i64]
@@ -54175,7 +56332,7 @@
   (match (opt-load-entry-key entry)
     [(OptLoadKey.Field base off ty _)
       (let
-        [width : i64 (opt-load-loc-type-size ty)]
+        [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
         (and
           (= base src-base)
           (> width 0)
@@ -54186,6 +56343,7 @@
 ;; The synthesized destination entry is created by THIS CopyBytes, so it takes
 ;; the state's current allocation epoch, not the source entry's older one.
 (define (opt-load-copy-transfer-entry
+  [type-segment-bases : i64]
   [table : OptLoadTable]
   [cap : i64]
   [entry : OptLoadEntry]
@@ -54198,7 +56356,12 @@
   [size : i64]
   [dst-header? : bool]
   [epoch : i64]) : OptLoadTable
-  (if (opt-load-copy-entry-within? entry src-base src-off size)
+  (if (opt-load-copy-entry-within?
+    type-segment-bases
+    entry
+    src-base
+    src-off
+    size)
     (match (opt-load-entry-key entry)
       [(OptLoadKey.Field _ off ty _)
         (let
@@ -54216,12 +56379,13 @@
                 (opt-load-value-gvn-stable? sources value))
               true)]
           (if eligible?
-            (opt-load-table-bind table cap key value epoch)
+            (opt-load-table-bind type-segment-bases table cap key value epoch)
             table))]
       [_ table])
     table))
 
 (define (opt-load-table-transfer-copy-fields
+  [type-segment-bases : i64]
   [source : OptLoadTable]
   [out : OptLoadTable]
   [cap : i64]
@@ -54238,8 +56402,10 @@
     [(OptLoadTable.Nil) out]
     [(OptLoadTable.Cons entry rest)
       (opt-load-table-transfer-copy-fields
+        type-segment-bases
         (box-get rest)
         (opt-load-copy-transfer-entry
+          type-segment-bases
           out
           cap
           entry
@@ -54318,6 +56484,7 @@
     [(OptLoadKey.ScaledField base _ _ _) (opt-alias-root-of-var facts base)]))
 
 (define (opt-load-entry-survives-store-location?
+  [type-segment-bases : i64]
   [class : OptLoadStoreClass]
   [entry : OptLoadEntry]) : bool
   (match class
@@ -54342,7 +56509,7 @@
               slo
               swidth
               eoff
-              (opt-load-loc-type-size ety)))]
+              (opt-load-loc-type-size type-segment-bases ety)))]
         ;; A var-offset key cannot prove disjointness from any store: drop
         ;; (conservative, matching a generic Raw).
         [(OptLoadKey.ScaledField _ _ _ _) false])]
@@ -54366,6 +56533,7 @@
     [(OptAliasRoot.NoRoot) false]))
 
 (define (opt-load-entry-survives-store?
+  [type-segment-bases : i64]
   [facts : OptAliasFacts]
   [store-root : OptAliasRoot]
   [class : OptLoadStoreClass]
@@ -54375,9 +56543,10 @@
       store-root
       (opt-load-key-alias-root facts (opt-load-entry-key entry)))
     (opt-load-entry-precedes-fresh-alloc? store-root entry)
-    (opt-load-entry-survives-store-location? class entry)))
+    (opt-load-entry-survives-store-location? type-segment-bases class entry)))
 
 (define (opt-load-table-filter-store
+  [type-segment-bases : i64]
   [table : OptLoadTable]
   [facts : OptAliasFacts]
   [store-root : OptAliasRoot]
@@ -54387,8 +56556,18 @@
     [(OptLoadTable.Cons entry rest)
       (let
         [tail : OptLoadTable
-          (opt-load-table-filter-store (box-get rest) facts store-root class)]
-        (if (opt-load-entry-survives-store? facts store-root class entry)
+          (opt-load-table-filter-store
+            type-segment-bases
+            (box-get rest)
+            facts
+            store-root
+            class)]
+        (if (opt-load-entry-survives-store?
+          type-segment-bases
+          facts
+          store-root
+          class
+          entry)
           (OptLoadTable.Cons entry (box tail))
           tail))]))
 
@@ -54579,6 +56758,7 @@
           [_ false]))]))
 
 (define (opt-dead-store-step
+  [type-segment-bases : i64]
   [pending : OptDeadStoreSet]
   [kinds : OptLoadPtrKinds]
   [dead : (Array i64)]
@@ -54590,7 +56770,10 @@
         [(CompilerIrInstr.StorePtr ptr _ ty)
           (let
             [class : OptLoadStoreClass
-              (opt-load-classify-store kinds ptr (opt-load-loc-type-size ty))]
+              (opt-load-classify-store
+                kinds
+                ptr
+                (opt-load-loc-type-size type-segment-bases ty))]
             (opt-dead-store-add-current
               (opt-dead-store-filter-store pending dead class)
               index
@@ -54598,7 +56781,10 @@
         [(CompilerIrInstr.Load _ src ty)
           (opt-dead-store-filter-access
             pending
-            (opt-load-classify-store kinds src (opt-load-loc-type-size ty)))]
+            (opt-load-classify-store
+              kinds
+              src
+              (opt-load-loc-type-size type-segment-bases ty)))]
         [(CompilerIrInstr.CopyBytes _ _ _) (opt-dead-store-set-clear pending)]
         [_
           (if (opt-dead-store-other-keeps-pending? instr)
@@ -54646,6 +56832,7 @@
       stores)))
 
 (define (opt-dead-store-instr-seq-known-with-kinds
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [store-capacity : i64]
   [initial-kinds : OptLoadPtrKinds]
@@ -54665,27 +56852,39 @@
             (begin
               (set!
                 pending
-                (opt-dead-store-step pending kinds dead index instr))
-              (set! kinds (opt-load-kinds-step kinds hs instr))
+                (opt-dead-store-step
+                  type-segment-bases
+                  pending
+                  kinds
+                  dead
+                  index
+                  instr))
+              (set!
+                kinds
+                (opt-load-kinds-step type-segment-bases kinds hs instr))
               (set! index (+ index 1)))))
         (opt-dead-store-compact! instrs dead count)
         instrs))
     instrs))
 
 (define (opt-dead-store-instr-seq-known
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [store-capacity : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (opt-dead-store-instr-seq-known-with-kinds
+    type-segment-bases
     hs
     store-capacity
     (opt-load-kinds-empty)
     instrs))
 
 (define (opt-dead-store-instr-seq
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (opt-dead-store-instr-seq-known
+    type-segment-bases
     hs
     (opt-dead-store-storeptr-capacity instrs)
     instrs))
@@ -54712,6 +56911,7 @@
     [_ true]))
 
 (define (opt-load-subword-forward-const
+  [type-segment-bases : i64]
   [value : CompilerIrValue]
   [ty : AstType]) : CompilerIrMaybeValue
   (match ty
@@ -54719,25 +56919,30 @@
     [_
       (match (opt-normalize-const value ty)
         [(OptKnownConst.SomeConst normalized normalized-ty)
-          (if (opt-type-eq normalized-ty ty)
+          (if (opt-type-eq type-segment-bases normalized-ty ty)
             (CompilerIrMaybeValue.Some normalized)
             (CompilerIrMaybeValue.No))]
         [(OptKnownConst.NoConst) (CompilerIrMaybeValue.No)])]))
 
 (define (opt-load-subword-store-forward-value
+  [type-segment-bases : i64]
   [table : OptLoadTable]
   [value : CompilerIrValue]
   [ty : AstType]
   [width : i64]) : CompilerIrMaybeValue
   (if (opt-copy-safe-source? value)
     (if (> width 0)
-      (match (opt-load-subword-forward-const value ty)
+      (match (opt-load-subword-forward-const type-segment-bases value ty)
         [(CompilerIrMaybeValue.Some normalized)
           (CompilerIrMaybeValue.Some normalized)]
         [(CompilerIrMaybeValue.No)
           (match value
             [(CompilerIrValue.Var _)
-              (if (opt-load-table-has-value-with-type? table value ty)
+              (if (opt-load-table-has-value-with-type?
+                type-segment-bases
+                table
+                value
+                ty)
                 (CompilerIrMaybeValue.Some value)
                 (CompilerIrMaybeValue.No))]
             [_ (CompilerIrMaybeValue.No)])])
@@ -54747,6 +56952,7 @@
 ;; Any instruction that is neither Load/StorePtr/CopyBytes nor a clear-all:
 ;; drop def-invalidated entries, update alias facts and pointer kinds.
 (define (opt-load-cse-state-step-other
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
@@ -54755,11 +56961,16 @@
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
-          (opt-load-alias-update-facts facts kinds instr next-epoch)
+          (opt-load-alias-update-facts
+            type-segment-bases
+            facts
+            kinds
+            instr
+            next-epoch)
           (match (opt-instr-def-var instr)
             [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
             [(option_i64.None) table])
-          (opt-load-kinds-step kinds hs instr)
+          (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
           next-epoch))]))
 
@@ -54769,6 +56980,7 @@
 ;; Unique(epoch) roots across the clear, so a lower counter afterwards would
 ;; make a later entry look older than an earlier allocation.
 (define (opt-load-cse-state-clear-for-memory
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
@@ -54777,9 +56989,14 @@
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
-          (opt-load-alias-update-facts facts kinds instr next-epoch)
+          (opt-load-alias-update-facts
+            type-segment-bases
+            facts
+            kinds
+            instr
+            next-epoch)
           (OptLoadTable.Nil)
-          (opt-load-kinds-step kinds hs instr)
+          (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
           next-epoch))]))
 
@@ -54788,6 +57005,7 @@
 ;; through a fresh/exclusive argument preserves entries on different proven
 ;; roots; missing/unrooted/shared arguments conservatively empty the table.
 (define (opt-load-table-filter-call-writes
+  [type-segment-bases : i64]
   [table : OptLoadTable]
   [facts : OptAliasFacts]
   [args : CompilerIrCallArgs]
@@ -54796,12 +57014,20 @@
   (if (>= index (opt-call-memory-param-limit))
     table
     (if (not (opt-call-memory-summary-param-write? summary index))
-      (opt-load-table-filter-call-writes table facts args summary (+ index 1))
+      (opt-load-table-filter-call-writes
+        type-segment-bases
+        table
+        facts
+        args
+        summary
+        (+ index 1))
       (match (opt-call-memory-arg-at args index)
         [(CompilerIrMaybeValue.No) (OptLoadTable.Nil)]
         [(CompilerIrMaybeValue.Some value)
           (opt-load-table-filter-call-writes
+            type-segment-bases
             (opt-load-table-filter-store
+              type-segment-bases
               table
               facts
               (opt-alias-root-of-value facts value)
@@ -54812,6 +57038,7 @@
             (+ index 1))]))))
 
 (define (opt-load-cse-state-direct-call
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [call-memory : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
@@ -54833,16 +57060,27 @@
                 (opt-call-memory-summary-global? summary)
                 (opt-call-memory-summary-unknown? summary))
                 (OptLoadTable.Nil)
-                (opt-load-table-filter-call-writes table facts args summary 0))]
+                (opt-load-table-filter-call-writes
+                  type-segment-bases
+                  table
+                  facts
+                  args
+                  summary
+                  0))]
             [(opt_i64_i64_map.LookupMissing)
               (match (compiler-ir-direct-call-effect-id name)
                 [(CompilerIrEffect.MemoryRead) table]
                 [_ (OptLoadTable.Nil)])])]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
-          (opt-load-alias-update-facts facts kinds instr next-epoch)
+          (opt-load-alias-update-facts
+            type-segment-bases
+            facts
+            kinds
+            instr
+            next-epoch)
           (opt-load-table-invalidate-var filtered dst)
-          (opt-load-kinds-step kinds hs instr)
+          (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
           next-epoch))]))
 
@@ -54851,6 +57089,7 @@
 ;; forwarding additionally requires a normalized constant or a same-type load
 ;; origin, so arbitrary non-canonical sub-word vars still reload from memory.
 (define (opt-load-cse-state-store
+  [type-segment-bases : i64]
   ;; lint-allow: unused-variable
   [hs : OptLoadHeaderSet]
   [gated? : bool]
@@ -54863,14 +57102,24 @@
   (match state
     [(OptLoadCseState.State facts table kinds table-cap epoch)
       (let
-        [width : i64 (opt-load-loc-type-size ty)]
+        [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
         [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
         [store-root : OptAliasRoot (opt-alias-root-of-value facts ptr)]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         [facts2 : OptAliasFacts
-          (opt-load-alias-update-facts facts kinds instr next-epoch)]
+          (opt-load-alias-update-facts
+            type-segment-bases
+            facts
+            kinds
+            instr
+            next-epoch)]
         [filtered : OptLoadTable
-          (opt-load-table-filter-store table facts store-root class)]
+          (opt-load-table-filter-store
+            type-segment-bases
+            table
+            facts
+            store-root
+            class)]
         (match class
           [(OptLoadStoreUnknown)
             ;; Unknown offset/location still preserves entries rooted at a
@@ -54892,13 +57141,19 @@
                     (if (opt-copy-safe-source? value)
                       (CompilerIrMaybeValue.Some value)
                       (CompilerIrMaybeValue.No))
-                    (opt-load-subword-store-forward-value table value ty width))
+                    (opt-load-subword-store-forward-value
+                      type-segment-bases
+                      table
+                      value
+                      ty
+                      width))
                   (CompilerIrMaybeValue.No))]
               (OptLoadCseState.State
                 facts2
                 (match forwarded
                   [(CompilerIrMaybeValue.Some forwarded-value)
                     (opt-load-table-bind
+                      type-segment-bases
                       filtered
                       table-cap
                       key
@@ -54913,6 +57168,7 @@
 ;; invalidation, plus conservative field-to-field forwarding when source and
 ;; destination are disjoint ranges of the same tracked base.
 (define (opt-load-cse-state-copy-bytes
+  [type-segment-bases : i64]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
@@ -54928,9 +57184,19 @@
         [store-root : OptAliasRoot (opt-alias-root-of-value facts dst)]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         [facts2 : OptAliasFacts
-          (opt-load-alias-update-facts facts kinds instr next-epoch)]
+          (opt-load-alias-update-facts
+            type-segment-bases
+            facts
+            kinds
+            instr
+            next-epoch)]
         [filtered : OptLoadTable
-          (opt-load-table-filter-store table facts store-root class)]
+          (opt-load-table-filter-store
+            type-segment-bases
+            table
+            facts
+            store-root
+            class)]
         (match class
           [(OptLoadStoreUnknown)
             (OptLoadCseState.State facts2 filtered kinds table-cap next-epoch)]
@@ -54952,6 +57218,7 @@
                           0))
                       (opt-load-ranges-disjoint? src-off size dst-off size))
                       (opt-load-table-transfer-copy-fields
+                        type-segment-bases
                         filtered
                         filtered
                         table-cap
@@ -54969,6 +57236,7 @@
               (OptLoadCseState.State facts2 copied kinds table-cap next-epoch))]))]))
 
 (define (opt-load-cse-core-load
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
@@ -54991,7 +57259,7 @@
               (opt-load-key-gvn-stable? sources key))
             true)]
         (match (if eligible?
-          (opt-load-table-lookup table2 key)
+          (opt-load-table-lookup type-segment-bases table2 key)
           (CompilerIrMaybeValue.No))
           [(CompilerIrMaybeValue.Some earlier)
             ;; Entries whose cached value is dst were dropped above, so the
@@ -55001,9 +57269,14 @@
               [next-epoch : i64 (opt-load-cse-epoch-step epoch new-instr)]
               (OptLoadCseResult.Result
                 (OptLoadCseState.State
-                  (opt-load-alias-update-facts facts kinds new-instr next-epoch)
+                  (opt-load-alias-update-facts
+                    type-segment-bases
+                    facts
+                    kinds
+                    new-instr
+                    next-epoch)
                   table2
-                  (opt-load-kinds-step kinds hs new-instr)
+                  (opt-load-kinds-step type-segment-bases kinds hs new-instr)
                   table-cap
                   next-epoch)
                 new-instr))]
@@ -55014,16 +57287,22 @@
               [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
               (OptLoadCseResult.Result
                 (OptLoadCseState.State
-                  (opt-load-alias-update-facts facts kinds instr next-epoch)
+                  (opt-load-alias-update-facts
+                    type-segment-bases
+                    facts
+                    kinds
+                    instr
+                    next-epoch)
                   (if record?
                     (opt-load-table-bind
+                      type-segment-bases
                       table2
                       table-cap
                       key
                       (CompilerIrValue.Var dst)
                       next-epoch)
                     table2)
-                  (opt-load-kinds-step kinds hs instr)
+                  (opt-load-kinds-step type-segment-bases kinds hs instr)
                   table-cap
                   next-epoch)
                 instr))]))]))
@@ -55032,6 +57311,7 @@
 ;; cross-block (gated? true) passes. StorePtr/CopyBytes are matched before the
 ;; clear-all check: they ARE memory writes, handled granularly.
 (define (opt-load-cse-dispatch
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
@@ -55041,17 +57321,44 @@
   (match instr
     [(CompilerIrInstr.StorePtr ptr value ty)
       (OptLoadCseResult.Result
-        (opt-load-cse-state-store hs gated? sources state ptr value ty instr)
+        (opt-load-cse-state-store
+          type-segment-bases
+          hs
+          gated?
+          sources
+          state
+          ptr
+          value
+          ty
+          instr)
         instr)]
     [(CompilerIrInstr.CopyBytes dst src size)
       (OptLoadCseResult.Result
-        (opt-load-cse-state-copy-bytes gated? sources state dst src size instr)
+        (opt-load-cse-state-copy-bytes
+          type-segment-bases
+          gated?
+          sources
+          state
+          dst
+          src
+          size
+          instr)
         instr)]
     [(CompilerIrInstr.Load dst src ty)
-      (opt-load-cse-core-load hs gated? sources state dst src ty instr)]
+      (opt-load-cse-core-load
+        type-segment-bases
+        hs
+        gated?
+        sources
+        state
+        dst
+        src
+        ty
+        instr)]
     [(CompilerIrInstr.Call dst name args _)
       (OptLoadCseResult.Result
         (opt-load-cse-state-direct-call
+          type-segment-bases
           hs
           call-memory
           state
@@ -55063,13 +57370,18 @@
     [_
       (if (opt-alias-instr-clears-all? instr)
         (OptLoadCseResult.Result
-          (opt-load-cse-state-clear-for-memory hs state instr)
+          (opt-load-cse-state-clear-for-memory
+            type-segment-bases
+            hs
+            state
+            instr)
           instr)
         (OptLoadCseResult.Result
-          (opt-load-cse-state-step-other hs state instr)
+          (opt-load-cse-state-step-other type-segment-bases hs state instr)
           instr))]))
 
 (define (opt-load-cse-instrs-from
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
@@ -55078,11 +57390,19 @@
   (match instrs
     [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
     [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-load-cse-dispatch hs false sources call-memory state instr)
+      (match (opt-load-cse-dispatch
+        type-segment-bases
+        hs
+        false
+        sources
+        call-memory
+        state
+        instr)
         [(OptLoadCseResult.Result next-state new-instr)
           (compiler-ir-instr-cons
             new-instr
             (opt-load-cse-instrs-from
+              type-segment-bases
               hs
               sources
               call-memory
@@ -55090,10 +57410,12 @@
               (box-get rest)))])]))
 
 (define (opt-load-cse-instrs
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs-from
+    type-segment-bases
     hs
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
@@ -55167,23 +57489,27 @@
   (No)
   (Some OptLoadEntry))
 
-(define (opt-load-table-find-entry [table : OptLoadTable] [key : OptLoadKey]) : OptMaybeLoadEntry
+(define (opt-load-table-find-entry
+  [type-segment-bases : i64]
+  [table : OptLoadTable]
+  [key : OptLoadKey]) : OptMaybeLoadEntry
   (match table
     [(OptLoadTable.Nil) (OptMaybeLoadEntry.No)]
     [(OptLoadTable.Cons entry rest)
-      (if (opt-load-key-eq (opt-load-entry-key entry) key)
+      (if (opt-load-key-eq type-segment-bases (opt-load-entry-key entry) key)
         (OptMaybeLoadEntry.Some entry)
-        (opt-load-table-find-entry (box-get rest) key))]))
+        (opt-load-table-find-entry type-segment-bases (box-get rest) key))]))
 
 ;; A joined entry must be older than every allocation both edges agree on, so it
 ;; keeps the LATER (larger) of the two creation epochs -- the conservative side
 ;; of the strict `entry-epoch < alloc-epoch` keep test.
 (define (opt-load-table-intersect-entry
+  [type-segment-bases : i64]
   [entry : OptLoadEntry]
   [other : OptLoadTable]) : OptMaybeLoadEntry
   (match entry
     [(OptLoadEntry.Entry key value epoch)
-      (match (opt-load-table-find-entry other key)
+      (match (opt-load-table-find-entry type-segment-bases other key)
         [(OptMaybeLoadEntry.No) (OptMaybeLoadEntry.No)]
         [(OptMaybeLoadEntry.Some found)
           (if (opt-value-eq (opt-load-entry-value found) value)
@@ -55198,18 +57524,23 @@
                     epoch))))
             (OptMaybeLoadEntry.No))])]))
 
-(define (opt-load-table-intersect [a : OptLoadTable] [b : OptLoadTable]) : OptLoadTable
+(define (opt-load-table-intersect
+  [type-segment-bases : i64]
+  [a : OptLoadTable]
+  [b : OptLoadTable]) : OptLoadTable
   (match a
     [(OptLoadTable.Nil) (OptLoadTable.Nil)]
     [(OptLoadTable.Cons entry rest)
       (let
-        [tail : OptLoadTable (opt-load-table-intersect (box-get rest) b)]
-        (match (opt-load-table-intersect-entry entry b)
+        [tail : OptLoadTable
+          (opt-load-table-intersect type-segment-bases (box-get rest) b)]
+        (match (opt-load-table-intersect-entry type-segment-bases entry b)
           [(OptMaybeLoadEntry.Some merged)
             (OptLoadTable.Cons merged (box tail))]
           [(OptMaybeLoadEntry.No) tail]))]))
 
 (define (opt-load-cse-state-intersect
+  [type-segment-bases : i64]
   [a : OptLoadCseState]
   [b : OptLoadCseState]) : OptLoadCseState
   (match a
@@ -55218,7 +57549,7 @@
         [(OptLoadCseState.State bfacts btable bkinds btable-cap bepoch)
           (OptLoadCseState.State
             (opt-alias-intersect afacts bfacts)
-            (opt-load-table-intersect atable btable)
+            (opt-load-table-intersect type-segment-bases atable btable)
             (opt-load-kinds-intersect akinds bkinds)
             (if (< atable-cap btable-cap)
               atable-cap
@@ -55444,6 +57775,7 @@
           tail))]))
 
 (define (opt-load-gvn-entry-from-preds
+  [type-segment-bases : i64]
   [index : OptCfgIndex]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
@@ -55485,6 +57817,7 @@
       [pred : i64 (array-ref (struct-get (struct-get index preds) edges) edge)]
       (if (not (array-ref (struct-get index reachable) pred))
         (opt-load-gvn-entry-from-preds
+          type-segment-bases
           index
           exit-states
           processed
@@ -55499,6 +57832,7 @@
           acc)
         (if (not (array-ref processed pred))
           (opt-load-gvn-entry-from-preds
+            type-segment-bases
             index
             exit-states
             processed
@@ -55514,6 +57848,7 @@
           (match (array-ref exit-states pred)
             [(OptMaybeLoadCseState.Some pred-state)
               (opt-load-gvn-entry-from-preds
+                type-segment-bases
                 index
                 exit-states
                 processed
@@ -55526,10 +57861,14 @@
                 true
                 saw-unprocessed
                 (if has-state
-                  (opt-load-cse-state-intersect acc pred-state)
+                  (opt-load-cse-state-intersect
+                    type-segment-bases
+                    acc
+                    pred-state)
                   (opt-load-cse-state-clone-facts pred-state)))]
             [(OptMaybeLoadCseState.No)
               (opt-load-gvn-entry-from-preds
+                type-segment-bases
                 index
                 exit-states
                 processed
@@ -55544,6 +57883,7 @@
                 acc)]))))))
 
 (define (opt-load-gvn-entry-state
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
@@ -55560,6 +57900,7 @@
         (if (= id entry-id)
           empty-state
           (opt-load-gvn-entry-from-preds
+            type-segment-bases
             index
             exit-states
             processed
@@ -55578,6 +57919,7 @@
 ;; in, so the CSE state threads through an indexed walk that fills a sized target
 ;; sequence instead of consing a reversed list and reversing it back.
 (define (opt-load-gvn-instr-seq
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
@@ -55594,6 +57936,7 @@
           (set!
             current
             (match (opt-load-cse-dispatch
+              type-segment-bases
               hs
               true
               sources
@@ -55608,6 +57951,7 @@
       (OptLoadGvnBlockRewrite.Rewrite current (CompilerIrInstrSeq slots count)))))
 
 (define (opt-load-gvn-rewrite-block
+  [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [entry-state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
@@ -55615,9 +57959,16 @@
   [block : CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(CompilerIrBlock.Block _ instrs)
-      (opt-load-gvn-instr-seq hs entry-state sources call-memory instrs)]))
+      (opt-load-gvn-instr-seq
+        type-segment-bases
+        hs
+        entry-state
+        sources
+        call-memory
+        instrs)]))
 
 (define (opt-load-gvn-process-id
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
@@ -55634,6 +57985,7 @@
     [label : i64 (opt-cfg-index-label index id)]
     [entry-state : OptLoadCseState
       (opt-load-gvn-entry-state
+        type-segment-bases
         context
         exit-states
         processed
@@ -55647,6 +57999,7 @@
         (match block
           [(CompilerIrBlock.Block block-label _)
             (match (opt-load-gvn-rewrite-block
+              type-segment-bases
               hs
               entry-state
               sources
@@ -55666,6 +58019,7 @@
                   (array-set! processed id true))])])])))
 
 (define (opt-load-gvn-process-rpo
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
@@ -55686,6 +58040,7 @@
         [id : i64 (opt-cfg-index-rpo-id index slot)]
         (begin
           (opt-load-gvn-process-id
+            type-segment-bases
             context
             hs
             sources
@@ -55698,6 +58053,7 @@
             empty-state
             id)
           (opt-load-gvn-process-rpo
+            type-segment-bases
             context
             hs
             sources
@@ -55753,6 +58109,7 @@
     [(CompilerIrBlockList.Array seq) (opt-load-gvn-block-seq-has-load? seq 0)]))
 
 (define (opt-load-gvn-blocks-with-context
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
@@ -55782,12 +58139,13 @@
             (compiler-ir-block-list-instruction-count blocks))
           (opt-load-cse-kinds-cap-for-size
             (compiler-ir-block-list-instruction-count blocks))
-          (opt-alias-seed-params params))]
+          (opt-alias-seed-params type-segment-bases params))]
       (begin
         (opt-load-state-array-fill-empty! exit-states count)
         (opt-cfg-fill-bool! processed count false)
         (opt-gvn-block-results-fill-empty! out 0)
         (opt-load-gvn-process-rpo
+          type-segment-bases
           context
           hs
           sources

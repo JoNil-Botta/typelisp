@@ -532,6 +532,7 @@
     (let
       [rewrite : CompilerRegColdCallRewrite
         (compiler-reg-cold-call-rewrite-function
+          (ast-node-pool-reader-type-segment-bases)
           (compiler-reg-cold-call-test-function))]
       [rewritten : CompilerIrFunction
         (compiler-reg-cold-call-rewrite-function-value rewrite)]
@@ -2920,6 +2921,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -2993,6 +2995,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -3023,6 +3026,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -3053,6 +3057,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -3084,6 +3089,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -3119,6 +3125,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -3154,6 +3161,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -3191,6 +3199,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-remat-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -4015,6 +4024,7 @@
           (let
             [rewrite : CompilerRegCallSaveRewrite
               (compiler-reg-loop-split-rewrite-blocks
+                (ast-node-pool-reader-type-segment-bases)
                 func
                 blocks
                 vars
@@ -4066,6 +4076,7 @@
           (let
             [rewrite : CompilerRegCallSaveRewrite
               (compiler-reg-loop-split-rewrite-blocks
+                (ast-node-pool-reader-type-segment-bases)
                 func
                 blocks
                 vars
@@ -4120,6 +4131,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-loop-split-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -4156,6 +4168,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ vars blocks)
           (match (compiler-reg-loop-split-rewrite-blocks
+            (ast-node-pool-reader-type-segment-bases)
             func
             blocks
             vars
@@ -4248,16 +4261,45 @@
       [full-window : CompilerRegStringList
         (compiler-reg-loop-split-candidate-regs
           true
-          (compiler-reg-loop-split-region-rcx-safe? func 0 12)
-          (compiler-reg-loop-split-region-rdx-safe? func 0 12))]
+          (compiler-reg-loop-split-region-rcx-safe?
+            (ast-node-pool-reader-type-segment-bases)
+            func
+            0
+            12)
+          (compiler-reg-loop-split-region-rdx-safe?
+            (ast-node-pool-reader-type-segment-bases)
+            func
+            0
+            12))]
       (and
         ;; Point 4 is the variable shift; inclusive-start makes [4,6) unsafe.
-        (compiler-reg-loop-split-region-crosses-kind? func 2 4 6)
+        (compiler-reg-loop-split-region-crosses-kind?
+          (ast-node-pool-reader-type-segment-bases)
+          func
+          2
+          4
+          6)
         ;; Points 6 and 8 are the div and mul %rdx fixed-use sites.
-        (compiler-reg-loop-split-region-crosses-kind? func 4 6 8)
-        (compiler-reg-loop-split-region-crosses-kind? func 4 8 10)
+        (compiler-reg-loop-split-region-crosses-kind?
+          (ast-node-pool-reader-type-segment-bases)
+          func
+          4
+          6
+          8)
+        (compiler-reg-loop-split-region-crosses-kind?
+          (ast-node-pool-reader-type-segment-bases)
+          func
+          4
+          8
+          10)
         ;; The half-open end still excludes a clobber exactly at end.
-        (not (compiler-reg-loop-split-region-crosses-kind? func 2 0 4))
+        (not
+          (compiler-reg-loop-split-region-crosses-kind?
+            (ast-node-pool-reader-type-segment-bases)
+            func
+            2
+            0
+            4))
         (not (compiler-reg-string-list-contains? full-window "%rcx"))
         (not (compiler-reg-string-list-contains? full-window "%rdx"))
         (compiler-reg-string-list-contains? full-window "%r8")
@@ -4849,6 +4891,7 @@
           (let
             [_caller-placed : unit
               (compiler-reg-assign-group-pair-component
+                (ast-node-pool-reader-type-segment-bases)
                 0
                 vars
                 (compiler-reg-coalesce-test-i64-types vars)
@@ -4867,6 +4910,7 @@
                 empty-split)]
             [_csr-placed : unit
               (compiler-reg-assign-group-pair-component
+                (ast-node-pool-reader-type-segment-bases)
                 0
                 vars
                 (compiler-reg-coalesce-test-i64-types vars)
@@ -4885,6 +4929,7 @@
                 empty-split)]
             [_placed : unit
               (compiler-reg-assign-group-pair-component
+                (ast-node-pool-reader-type-segment-bases)
                 0
                 vars
                 (compiler-reg-coalesce-test-i64-types vars)

@@ -109,6 +109,7 @@ tests/spmd/masked_if_shift_value_types.tl
 tests/spmd/masked_if_shift_inactive.tl
 tests/spmd/masked_if_shift_i16_reject.tl
 tests/spmd/masked_if_value_types.tl
+tests/spmd/masked_move_fault_suppression.tl
 tests/spmd/masked_if_nested_i64.tl
 tests/spmd/masked_if_i16_u16.tl
 tests/spmd/inline_helper_masked_if_i64.tl
@@ -457,7 +458,7 @@ verify_avx2_varying_while_shape() {
         echo "tests/spmd/varying_while_i64.tl avx2 (shape compile)" >> "$FAILURES"
         return
     fi
-    for shape in spmd_vwhile_header vpand vpmovmskb avx2_mask_spmd_vwhile_header avx2_mask_spmd_vwhile_body; do
+    for shape in spmd_vwhile_header spmd_vwhile_body vpand vpmovmskb vpmaskmovq; do
         if ! grep -F -- "$shape" "$_asm" > /dev/null; then
             echo "[spmd-simd] varying-while AVX2 assembly missing $shape" >&2
             echo "tests/spmd/varying_while_i64.tl avx2 (missing $shape)" >> "$FAILURES"
@@ -638,6 +639,70 @@ verify_masked_shift_shape() {
     done
 }
 
+verify_avx2_native_mask_shapes() {
+    compile_spmd_mode tests/spmd/masked_if_value_types.tl avx2
+    _tag=tests_spmd_masked_if_value_types_tl
+    _asm="$WORKDIR/$_tag.avx2.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] native AVX2 mask shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/masked_if_value_types.tl avx2 (native mask compile)" >> "$FAILURES"
+        return
+    fi
+    for pair in \
+        "u32 vpmaskmovd" \
+        "u64 vpmaskmovq" \
+        "f32 vmaskmovps" \
+        "f64 vmaskmovpd"
+    do
+        _lane=${pair%% *}
+        _opcode=${pair##* }
+        _func="$WORKDIR/$_tag.avx2.$_lane.native-mask.s"
+        sed -n \
+            "/^_tl_masked_if_value_types_fill_${_lane}_foreach:/,/^$/p" \
+            "$_asm" > "$_func"
+        for shape in "$_opcode" vpblendvb; do
+            if ! grep -F -- "$shape" "$_func" > /dev/null; then
+                echo "[spmd-simd] AVX2 $_lane masked body missing $shape" >&2
+                echo "tests/spmd/masked_if_value_types.tl avx2 $_lane (missing $shape)" >> "$FAILURES"
+            fi
+        done
+        if grep -E -- '_load_skip_|_store_skip_' "$_func" > /dev/null; then
+            echo "[spmd-simd] AVX2 $_lane masked body still stages individual lanes" >&2
+            echo "tests/spmd/masked_if_value_types.tl avx2 $_lane (per-lane staging)" >> "$FAILURES"
+        fi
+    done
+
+    _bool_func="$WORKDIR/$_tag.avx2.bool.native-mask.s"
+    sed -n \
+        '/^_tl_masked_if_value_types_fill_bool_foreach:/,/^$/p' \
+        "$_asm" > "$_bool_func"
+    if grep -E -- 'vpmaskmov|vmaskmov' "$_bool_func" > /dev/null; then
+        echo "[spmd-simd] AVX2 bool memory operation used a dword/qword masked move" >&2
+        echo "tests/spmd/masked_if_value_types.tl avx2 bool (invalid masked move)" >> "$FAILURES"
+    fi
+
+    compile_spmd_mode tests/spmd/masked_if_i16_u16.tl avx2
+    _narrow_tag=tests_spmd_masked_if_i16_u16_tl
+    _narrow_asm="$WORKDIR/$_narrow_tag.avx2.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] narrow AVX2 mask fallback compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/masked_if_i16_u16.tl avx2 (fallback compile)" >> "$FAILURES"
+        return
+    fi
+    for shape in _load_skip_ _store_skip_; do
+        if ! grep -F -- "$shape" "$_narrow_asm" > /dev/null; then
+            echo "[spmd-simd] narrow AVX2 mask fallback missing $shape" >&2
+            echo "tests/spmd/masked_if_i16_u16.tl avx2 (missing $shape)" >> "$FAILURES"
+        fi
+    done
+    if grep -E -- 'vpmaskmov|vmaskmov' "$_narrow_asm" > /dev/null; then
+        echo "[spmd-simd] narrow AVX2 mask fallback used a dword/qword masked move" >&2
+        echo "tests/spmd/masked_if_i16_u16.tl avx2 (invalid masked move)" >> "$FAILURES"
+    fi
+}
+
 while IFS= read -r prog; do
     [ -n "$prog" ] || continue
     if [ ! -f "$prog" ]; then
@@ -710,6 +775,7 @@ verify_masked_bitwise_shape avx2
 verify_masked_bitwise_shape avx512
 verify_masked_shift_shape avx2
 verify_masked_shift_shape avx512
+verify_avx2_native_mask_shapes
 verify_avx2_scan_prefix_shape
 verify_avx512_scan_prefix_shape
 

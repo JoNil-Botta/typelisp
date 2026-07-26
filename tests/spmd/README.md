@@ -103,6 +103,10 @@ compile and run in `avx2` and `avx512`.
 - `masked_if_value_types.tl` - AVX2/AVX-512 value-producing masked `if` over
   u32, u64, f32, f64, and bool lane results, each with a non-full tail. Exit
   42.
+- `masked_move_fault_suppression.tl` - Linux scalar/AVX2/AVX-512 masked i64
+  copy whose inactive lanes address an explicitly unmapped guard page, proving
+  inactive masked loads and stores do not fault. Other hosts use a no-op parity
+  case. Exit 42.
 - `masked_if_nested_i64.tl` - AVX2/AVX-512 nested masked varying `if` over
   `n = 13` i64 lanes, covering parent/child branch-mask composition and a
   masked tail. Exit 42.

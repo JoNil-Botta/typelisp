@@ -2,7 +2,7 @@
 (import "../compiler_liveness.tl")
 (import "../compiler_regalloc.tl")
 (import "../compiler_regalloc_tests.tl")
-(import compiler_intern as ci)
+(import "../compiler_intern.tl" as ci)
 (import stdlib.string)
 
 (define (compiler-reg-smoke-spmd-call-function) : CompilerIrFunction
@@ -141,13 +141,20 @@
     [types : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [groups : CompilerLiveI64Set
       (compiler-reg-function-group-vars
+        (ast-node-pool-reader-type-segment-bases)
         func
         (compiler-reg-var-types-list types))]
     (and
       ;; Source handles remain scalar even though structurally-created pair
       ;; vars with the same provenance type occupy two homes.
-      (not (compiler-reg-type-register-group? (AstType.String)))
-      (not (compiler-reg-type-register-group? (AstType.DynArray 1)))
+      (not
+        (compiler-reg-type-register-group?
+          (ast-node-pool-reader-type-segment-bases)
+          (AstType.String)))
+      (not
+        (compiler-reg-type-register-group?
+          (ast-node-pool-reader-type-segment-bases)
+          (AstType.DynArray 1)))
       (= (compiler-live-set-count groups) 2)
       (not (compiler-live-set-contains? groups 0))
       (compiler-live-set-contains? groups 4)

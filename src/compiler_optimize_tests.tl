@@ -460,9 +460,9 @@
         (CompilerIrCallArgs.Nil)
         (AstType.Unit))]
     [runtime-facts : OptAliasFacts
-      (opt-alias-update-value-facts (opt-alias-empty) runtime-alloc)]
+      (opt-alias-update-value-facts (opt-alias-empty) runtime-alloc 0)]
     [hygienic-facts : OptAliasFacts
-      (opt-alias-update-value-facts (opt-alias-empty) hygienic-alloc)]
+      (opt-alias-update-value-facts (opt-alias-empty) hygienic-alloc 0)]
     (cond
       [(= generated-alloc cbi.compiler-builtin-id-tl-alloc) 1]
       [(not
@@ -505,7 +505,7 @@
         8]
       [(match (opt-alias-lookup runtime-facts 91)
           [(OptMaybeAliasKind.Some kind)
-            (not (opt-alias-kind-eq kind (OptAliasKind.Unique)))]
+            (not (opt-alias-kind-eq kind (OptAliasKind.Unique 0)))]
           [(OptMaybeAliasKind.No) true])
         9]
       [(match (opt-alias-lookup hygienic-facts 92)
@@ -21957,23 +21957,22 @@
       [raw-blocked : OptScratchScopeReport
         (opt-scratch-scope-report-instrs
           (opt-scratch-test-one-block (CompilerIrInstr.AddrOf 2 1)))]
+      ;; The scratch analysis records its roots with `opt-alias-mark-unique`, so
+      ;; the fixture builds the fact the same way instead of hand-encoding it.
       [store-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
             (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
-          [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
-          (begin
-            (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
-            (OptScratchScopeReport.Report
-              1
-              32
-              (opt-scratch-blocker-reason
-                roots
-                (OptAliasFacts.Facts facts-map)
-                (CompilerIrInstr.StorePtr
-                  (CompilerIrValue.Var 99)
-                  (CompilerIrValue.Var 1)
-                  (AstType.U64))))))]
+          (OptScratchScopeReport.Report
+            1
+            32
+            (opt-scratch-blocker-reason
+              roots
+              (opt-alias-mark-unique (opt-alias-empty) 1 0)
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 99)
+                (CompilerIrValue.Var 1)
+                (AstType.U64)))))]
       [arena-blocked : OptScratchScopeReport
         (opt-scratch-scope-report-instrs
           (opt-scratch-test-one-block
@@ -21986,17 +21985,14 @@
         (let
           [roots : OptScratchRootList
             (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
-          [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
-          (begin
-            (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
-            (OptScratchScopeReport.Report
-              1
-              32
-              (opt-scratch-blocker-reason
-                roots
-                (OptAliasFacts.Facts facts-map)
-                (CompilerIrInstr.Return
-                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))))))]
+          (OptScratchScopeReport.Report
+            1
+            32
+            (opt-scratch-blocker-reason
+              roots
+              (opt-alias-mark-unique (opt-alias-empty) 1 0)
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1))))))]
       [reset-positive : CompilerIrFunction
         (opt-scratch-reset-rewrite (opt-scratch-reset-positive-blocks))]
       [reset-call-blocked : CompilerIrFunction
@@ -22124,7 +22120,7 @@
 (define (opt-alias-join-facts-a) : OptAliasFacts
   (opt-alias-bind
     (opt-alias-bind
-      (opt-alias-bind (opt-alias-empty) 0 (OptAliasKind.Unique))
+      (opt-alias-bind (opt-alias-empty) 0 (OptAliasKind.Unique 0))
       1
       (OptAliasKind.Derived 0))
     2
@@ -22133,11 +22129,11 @@
 (define (opt-alias-join-facts-b) : OptAliasFacts
   (opt-alias-bind
     (opt-alias-bind
-      (opt-alias-bind (opt-alias-empty) 0 (OptAliasKind.Unique))
+      (opt-alias-bind (opt-alias-empty) 0 (OptAliasKind.Unique 0))
       1
       (OptAliasKind.MayAlias))
     3
-    (OptAliasKind.Unique)))
+    (OptAliasKind.Unique 0)))
 
 (define (opt-alias-sample-store) : CompilerIrInstr
   (CompilerIrInstr.StorePtr
@@ -22176,16 +22172,18 @@
     [joined : OptAliasFacts
       (opt-alias-intersect (opt-alias-join-facts-a) (opt-alias-join-facts-b))]
     [invalidated : OptAliasFacts
-      (opt-alias-mark-invalidated (opt-alias-mark-unique (opt-alias-empty) 0) 0)]
+      (opt-alias-mark-invalidated
+        (opt-alias-mark-unique (opt-alias-empty) 0 0)
+        0)]
     [seeded : OptAliasFacts
       (opt-alias-seed-params (opt-load-cse-mixed-ref-params))]
     (cond
-      [(not (opt-alias-contains? unique 0 (OptAliasKind.Unique))) 1]
+      [(not (opt-alias-contains? unique 0 (OptAliasKind.Unique 0))) 1]
       [(not (opt-alias-contains? unique 1 (OptAliasKind.Derived 0))) 2]
       [(not (opt-alias-absent? unique 2)) 3]
       [(not (= (opt-alias-facts-len unique) 2)) 4]
       [(not (opt-alias-contains? transitive 2 (OptAliasKind.Derived 0))) 5]
-      [(not (opt-alias-contains? loaded 0 (OptAliasKind.Unique))) 6]
+      [(not (opt-alias-contains? loaded 0 (OptAliasKind.Unique 0))) 6]
       [(not (opt-alias-contains? loaded 1 (OptAliasKind.MayAlias))) 7]
       [(not (= (opt-alias-facts-len stored) 0)) 8]
       [(not (opt-alias-instr-clears-all? (opt-alias-sample-store))) 9]
@@ -22194,12 +22192,26 @@
       [(not (opt-alias-contains? copied 1 (OptAliasKind.Derived 0))) 12]
       [(not (opt-alias-contains? copied 2 (OptAliasKind.MayAlias))) 13]
       [(not (= (opt-alias-facts-len joined) 1)) 14]
-      [(not (opt-alias-contains? joined 0 (OptAliasKind.Unique))) 15]
+      [(not (opt-alias-contains? joined 0 (OptAliasKind.Unique 0))) 15]
       [(opt-alias-contains? joined 1 (OptAliasKind.Derived 0)) 16]
       [(opt-alias-instr-clears-all? (opt-alias-sample-binop)) 17]
       [(not (opt-alias-contains? invalidated 0 (OptAliasKind.Invalidated))) 18]
       [(not (opt-alias-contains? seeded 0 (OptAliasKind.SharedRef))) 19]
       [(not (opt-alias-contains? seeded 1 (OptAliasKind.ExclusiveRef))) 20]
+      ;; Allocation epochs survive the packed encoding, distinguish otherwise
+      ;; identical Unique roots, and the retired -1 code stays conservative.
+      [(not
+          (opt-alias-kind-eq
+            (opt-alias-kind-decode
+              (opt-alias-kind-encode (OptAliasKind.Unique 7)))
+            (OptAliasKind.Unique 7)))
+        21]
+      [(opt-alias-kind-eq (OptAliasKind.Unique 0) (OptAliasKind.Unique 1)) 22]
+      [(not
+          (opt-alias-kind-eq
+            (opt-alias-kind-decode -1)
+            (OptAliasKind.Invalidated)))
+        23]
       [else 42])))
 
 (define (opt-load-cse-run [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -23048,6 +23060,65 @@
               (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
               (CompilerIrInstrList.Nil))))))))
 
+;; Fresh-allocation epoch rule: var 0 carries no alias fact, so the cached load
+;; of var 2 has a NoRoot key that root-identity disjointness cannot save. It was
+;; still cached BEFORE var 4 was allocated, so the store through var 4's storage
+;; provably misses it and the re-load forwards.
+(define (opt-load-cse-fresh-alloc-epoch-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Alloc 4 (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            5
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 0)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.I64 9)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
+              (CompilerIrInstrList.Nil))))))))
+
+;; Same shape with the allocation moved FIRST: the cached load now happens in
+;; var 4's epoch, so it may address that very allocation and the store must
+;; still drop it. Guards the strict `<` in the epoch comparison.
+(define (opt-load-cse-fresh-alloc-epoch-tie-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Alloc 4 (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        2
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            5
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 0)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.I64 9)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
+              (CompilerIrInstrList.Nil))))))))
+
 (define (opt-load-cse-disjoint-copybytes-root-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.Gep
@@ -23195,11 +23266,11 @@
     [key1 : OptLoadKey
       (OptLoadKey.Raw (CompilerIrValue.Var 1) (AstType.I64) false)]
     [table1 : OptLoadTable
-      (opt-load-table-bind (OptLoadTable.Nil) 1 key0 (CompilerIrValue.Var 10))]
+      (opt-load-table-bind (OptLoadTable.Nil) 1 key0 (CompilerIrValue.Var 10) 0)]
     [table2 : OptLoadTable
-      (opt-load-table-bind table1 1 key1 (CompilerIrValue.Var 11))]
+      (opt-load-table-bind table1 1 key1 (CompilerIrValue.Var 11) 0)]
     [table-updated : OptLoadTable
-      (opt-load-table-bind table2 1 key0 (CompilerIrValue.Var 12))]
+      (opt-load-table-bind table2 1 key0 (CompilerIrValue.Var 12) 0)]
     [kinds1 : OptLoadPtrKinds
       (opt-load-kinds-bind
         (opt-load-kinds-empty-with-cap 1)
@@ -23476,6 +23547,10 @@
       (opt-load-cse-run-with-params
         (opt-load-cse-mixed-ref-params)
         (opt-load-cse-fresh-tl-alloc-root-instrs))]
+    [fresh-alloc-epoch : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-fresh-alloc-epoch-instrs))]
+    [fresh-alloc-epoch-tie : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-fresh-alloc-epoch-tie-instrs))]
     [checked-copybytes : CompilerIrInstrList
       (opt-load-cse-run-with-params
         (opt-load-cse-mixed-ref-params)
@@ -23703,4 +23778,12 @@
               (AstType.I64))
             1))
         77]
+      ;; Fresh-allocation epoch ordering: an entry cached before the allocation
+      ;; survives a store through it; one cached in the same epoch does not.
+      [(not (= (opt-count-load-instrs fresh-alloc-epoch) 1)) 78]
+      [(not
+          (= (opt-count-mov-dst-var-src fresh-alloc-epoch 6 3 (AstType.I64)) 1))
+        79]
+      [(not (= (opt-count-load-instrs fresh-alloc-epoch-tie) 2)) 80]
+      [(not (= (opt-count-mov-dst-instrs fresh-alloc-epoch-tie 6) 0)) 81]
       [else 44])))

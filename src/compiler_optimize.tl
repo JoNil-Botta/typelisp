@@ -50062,6 +50062,49 @@
         out
         changed)]))
 
+;; Three runtime builtins have a memory footprint precise enough to summarize,
+;; which lets a caller's cached load table survive them instead of being wiped:
+;;
+;;   - tl_alloc      : writes nothing IR-visible. Allocator bookkeeping lives in
+;;                     thread-local runtime state no IR address value can name,
+;;                     and the storage it returns did not exist before the call,
+;;                     so no cached entry can describe it. (A recycling
+;;                     tl_region_reset / tl_arena_set is deliberately NOT
+;;                     summarized, so any reuse of freed storage still wipes.)
+;;   - tl_array_zero : writes only through its first parameter.
+;;   - tl_array_fill8: writes only through its first parameter.
+;;
+;; Symbols are raw interned ids (`compiler-ir-symbol-id` is the identity and
+;; `compiler-ir-symbol-eq?` is `=`), so the seed key is the builtin id itself --
+;; exactly what `opt-load-cse-state-direct-call` looks up for a call-site name.
+;; An uninitialized builtin id is -1 and is never a call-site name, so it is
+;; skipped rather than seeded (mirroring `compiler-ir-runtime-memory-write-id?`).
+(define (opt-call-memory-seed-builtin
+  [out : opt_i64_i64_map.Map]
+  [name-id : i64]
+  [summary : i64]) : opt_i64_i64_map.Map
+  (if (< name-id 0)
+    out
+    (let
+      [next : opt_i64_i64_map.Map out]
+      (begin
+        (opt_i64_i64_map.insert-ref!
+          (&mut next)
+          (compiler-ir-symbol-id name-id)
+          summary)
+        next))))
+
+(define (opt-call-memory-seed-builtins [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (opt-call-memory-seed-builtin
+      (opt-call-memory-seed-builtin
+        (opt-call-memory-seed-builtin out cbi.compiler-builtin-id-tl-alloc 0)
+        cbi.compiler-builtin-id-tl-array-zero
+        (shl 1 0))
+      cbi.compiler-builtin-id-tl-array-fill8
+      (shl 1 0))))
+
 (define (opt-call-memory-build-fixed
   [functions : CompilerIrFunctionList]
   [function-set : opt_i64_i64_map.Map]
@@ -50070,11 +50113,14 @@
   [remaining : i64]) : opt_i64_i64_map.Map
   (if (<= remaining 0)
     current
+    ;; Each round builds a fresh `out` and copies rows in per function name, so
+    ;; the builtin seeds are re-applied here as well as to the initial map --
+    ;; otherwise they would vanish after round one.
     (match (opt-call-memory-build-pass
       functions
       current
       function-set
-      (opt_i64_i64_map.with-capacity capacity)
+      (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
       false)
       [(OptCallMemoryBuildPass.Pass next changed)
         (if changed
@@ -50094,7 +50140,7 @@
     (opt-call-memory-function-set
       functions
       (opt_i64_i64_map.with-capacity capacity))
-    (opt_i64_i64_map.with-capacity capacity)
+    (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
     capacity
     (+ (opt-function-list-count functions) 1)))
 
@@ -51129,7 +51175,10 @@
 ;;
 ;; A fact binds an IR temporary (var id) to one of six deliberately
 ;; conservative kinds:
-;;   - Unique       : a freshly allocated root no other tracked pointer aliases
+;;   - Unique epoch : a freshly allocated root no other tracked pointer aliases,
+;;                    tagged with the allocation epoch (the load-GVN state's
+;;                    allocation counter at the moment the allocation ran; the
+;;                    scratch/report consumer has no counter and passes 0)
 ;;   - ExclusiveRef : a checked mutable-reference parameter root; no other
 ;;                    checked root in the function may alias it
 ;;   - SharedRef    : a checked immutable-reference parameter root; another
@@ -51147,7 +51196,7 @@
 ;; and indirect calls, tail calls) conservatively clears ALL facts rather than
 ;; assuming C-style noalias. Control-flow joins intersect the per-edge sets.
 (defenum OptAliasKind
-  (Unique)
+  (Unique i64)
   (ExclusiveRef)
   (SharedRef)
   (Derived i64)
@@ -51156,7 +51205,8 @@
 
 ;; Alias facts live in a mutable i64->i64 hashmap keyed by var id.
 ;; Kinds pack into the value: a Derived root is its non-negative root var id,
-;; the kind-only variants take negative codes. State is threaded linearly
+;; the kind-only variants take negative codes, and Unique(epoch) takes the
+;; open-ended range at or below -6 (epoch >= 0). State is threaded linearly
 ;; through a block (helpers mutate and return the same table); control-flow
 ;; joins and clears build a fresh table, so retained per-block exit states
 ;; are never aliased by a successor's mutations.
@@ -51166,9 +51216,11 @@
 (define (opt-alias-empty) : OptAliasFacts
   (OptAliasFacts.Facts (opt_i64_i64_map.with-capacity 17)))
 
+;; Unique(epoch) encodes as -(6 + epoch), so -1 is no longer produced by any
+;; kind; a stale -1 (or the unused -5) decodes to the conservative Invalidated.
 (define (opt-alias-kind-encode [kind : OptAliasKind]) : i64
   (match kind
-    [(OptAliasKind.Unique) -1]
+    [(OptAliasKind.Unique epoch) (- 0 (+ 6 epoch))]
     [(OptAliasKind.ExclusiveRef) -2]
     [(OptAliasKind.SharedRef) -3]
     [(OptAliasKind.MayAlias) -4]
@@ -51178,10 +51230,10 @@
 (define (opt-alias-kind-decode [value : i64]) : OptAliasKind
   (cond
     [(>= value 0) (OptAliasKind.Derived value)]
-    [(= value -1) (OptAliasKind.Unique)]
     [(= value -2) (OptAliasKind.ExclusiveRef)]
     [(= value -3) (OptAliasKind.SharedRef)]
     [(= value -4) (OptAliasKind.MayAlias)]
+    [(<= value -6) (OptAliasKind.Unique (- (- 0 value) 6))]
     [else (OptAliasKind.Invalidated)]))
 
 (defenum OptMaybeAliasKind
@@ -51190,9 +51242,9 @@
 
 (define (opt-alias-kind-eq [a : OptAliasKind] [b : OptAliasKind]) : bool
   (match a
-    [(OptAliasKind.Unique)
+    [(OptAliasKind.Unique ea)
       (match b
-        [(OptAliasKind.Unique) true]
+        [(OptAliasKind.Unique eb) (= ea eb)]
         [_ false])]
     [(OptAliasKind.ExclusiveRef)
       (match b
@@ -51247,8 +51299,11 @@
             (opt-alias-kind-encode kind))
           (OptAliasFacts.Facts out)))]))
 
-(define (opt-alias-mark-unique [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
-  (opt-alias-bind facts var (OptAliasKind.Unique)))
+(define (opt-alias-mark-unique
+  [facts : OptAliasFacts]
+  [var : i64]
+  [epoch : i64]) : OptAliasFacts
+  (opt-alias-bind facts var (OptAliasKind.Unique epoch)))
 
 (define (opt-alias-mark-exclusive-ref [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.ExclusiveRef)))
@@ -51272,7 +51327,7 @@
       (if (= dst src)
         facts
         (match kind
-          [(OptAliasKind.Unique)
+          [(OptAliasKind.Unique _)
             (opt-alias-bind facts dst (OptAliasKind.Derived src))]
           [(OptAliasKind.ExclusiveRef)
             (opt-alias-bind facts dst (OptAliasKind.Derived src))]
@@ -51291,7 +51346,7 @@
   (match (opt-alias-lookup facts base)
     [(OptMaybeAliasKind.Some kind)
       (match kind
-        [(OptAliasKind.Unique)
+        [(OptAliasKind.Unique _)
           (opt-alias-bind facts dst (OptAliasKind.Derived base))]
         [(OptAliasKind.ExclusiveRef)
           (opt-alias-bind facts dst (OptAliasKind.Derived base))]
@@ -51316,9 +51371,11 @@
     [(OptMaybeAliasKind.No) true]
     [(OptMaybeAliasKind.Some _) false]))
 
+;; A Fresh root carries (canonical root var, allocation epoch); the other roots
+;; are parameter storage that predates every allocation and carry no epoch.
 (defenum OptAliasRoot
   (NoRoot)
-  (Fresh i64)
+  (Fresh i64 i64)
   (Exclusive i64)
   (Shared i64))
 
@@ -51327,14 +51384,14 @@
   [var : i64]
   [kind : OptAliasKind]) : OptAliasRoot
   (match kind
-    [(OptAliasKind.Unique) (OptAliasRoot.Fresh var)]
+    [(OptAliasKind.Unique epoch) (OptAliasRoot.Fresh var epoch)]
     [(OptAliasKind.ExclusiveRef) (OptAliasRoot.Exclusive var)]
     [(OptAliasKind.SharedRef) (OptAliasRoot.Shared var)]
     [(OptAliasKind.Derived root)
       (match (opt-alias-lookup facts root)
         [(OptMaybeAliasKind.Some root-kind)
           (match root-kind
-            [(OptAliasKind.Unique) (OptAliasRoot.Fresh root)]
+            [(OptAliasKind.Unique epoch) (OptAliasRoot.Fresh root epoch)]
             [(OptAliasKind.ExclusiveRef) (OptAliasRoot.Exclusive root)]
             [(OptAliasKind.SharedRef) (OptAliasRoot.Shared root)]
             [_ (OptAliasRoot.NoRoot)])]
@@ -51357,19 +51414,21 @@
 ;; Only fresh allocations and checked mutable-reference roots prove a write
 ;; target disjoint from a DIFFERENT tracked root. SharedRef roots deliberately
 ;; do not: separate immutable-reference parameters may alias each other.
+;; Allocation epochs play no part here -- root identity alone decides. The
+;; epoch-ordering rule is a separate disjunct in the load-table keep test.
 (define (opt-alias-store-root-disjoint?
   [store-root : OptAliasRoot]
   [entry-root : OptAliasRoot]) : bool
   (match store-root
-    [(OptAliasRoot.Fresh store-id)
+    [(OptAliasRoot.Fresh store-id _)
       (match entry-root
-        [(OptAliasRoot.Fresh entry-id) (not (= store-id entry-id))]
+        [(OptAliasRoot.Fresh entry-id _) (not (= store-id entry-id))]
         [(OptAliasRoot.Exclusive entry-id) (not (= store-id entry-id))]
         [(OptAliasRoot.Shared entry-id) (not (= store-id entry-id))]
         [(OptAliasRoot.NoRoot) false])]
     [(OptAliasRoot.Exclusive store-id)
       (match entry-root
-        [(OptAliasRoot.Fresh entry-id) (not (= store-id entry-id))]
+        [(OptAliasRoot.Fresh entry-id _) (not (= store-id entry-id))]
         [(OptAliasRoot.Exclusive entry-id) (not (= store-id entry-id))]
         [(OptAliasRoot.Shared entry-id) (not (= store-id entry-id))]
         [(OptAliasRoot.NoRoot) false])]
@@ -51533,20 +51592,36 @@
     [(CompilerIrValue.Var src) (opt-alias-copy-var facts dst src)]
     [_ (opt-alias-mark-may-alias facts dst)]))
 
+;; True for the two instruction shapes that create storage that did not exist
+;; before them: a frame `Alloc` and a direct `tl_alloc` runtime call. The
+;; load-GVN state opens a new allocation epoch for exactly these.
+(define (opt-alias-instr-fresh-alloc? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Alloc _ _) true]
+    [(CompilerIrInstr.Call _ name _ _)
+      (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)]
+    [_ false]))
+
 ;; Value/provenance transfer independent of memory invalidation. Every
 ;; definition first removes an older binding for the reused var id; recognized
 ;; pointer producers then bind the new value. This matters in the pre-SSA local
 ;; pipeline, where a scalar BinOp may reuse a former pointer var id.
+;;
+;; `epoch` is the allocation epoch to tag a fresh allocation with. Callers that
+;; run an allocation counter (load GVN) pass the ALREADY-BUMPED value, so the
+;; allocation's epoch is strictly greater than every load-table entry created
+;; before it; the counter-free scratch/report consumer passes 0.
 (define (opt-alias-update-value-facts
   [facts : OptAliasFacts]
-  [instr : CompilerIrInstr]) : OptAliasFacts
+  [instr : CompilerIrInstr]
+  [epoch : i64]) : OptAliasFacts
   (let
     [base : OptAliasFacts
       (match (opt-instr-def-var instr)
         [(option_i64.Some dst) (opt-alias-remove-var facts dst)]
         [(option_i64.None) facts])]
     (match instr
-      [(CompilerIrInstr.Alloc dst _) (opt-alias-mark-unique base dst)]
+      [(CompilerIrInstr.Alloc dst _) (opt-alias-mark-unique base dst epoch)]
       [(CompilerIrInstr.Gep dst source _ _)
         (opt-alias-update-gep base dst source)]
       [(CompilerIrInstr.Mov dst value _) (opt-alias-update-copy base dst value)]
@@ -51554,12 +51629,12 @@
         (opt-alias-update-copy base dst value)]
       [(CompilerIrInstr.Bitcast dst value _ _)
         (opt-alias-update-copy base dst value)]
-      ;; A direct runtime allocation call is a barrier for all cached loads, but
-      ;; its returned pointer is nevertheless a fresh root for subsequent
-      ;; scalar-store filtering.
+      ;; A direct runtime allocation call returns a fresh root for subsequent
+      ;; scalar-store filtering, and opens a new allocation epoch: storage that
+      ;; did not exist before the call cannot alias anything cached before it.
       [(CompilerIrInstr.Call dst name _ _)
         (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
-          (opt-alias-mark-unique base dst)
+          (opt-alias-mark-unique base dst epoch)
           base)]
       [(CompilerIrInstr.Load dst _ _) (opt-alias-mark-may-alias base dst)]
       [(CompilerIrInstr.EntryArgv dst) (opt-alias-mark-may-alias base dst)]
@@ -51589,7 +51664,7 @@
   [instr : CompilerIrInstr]) : OptAliasFacts
   (if (opt-alias-instr-clears-all? instr)
     (opt-alias-empty)
-    (opt-alias-update-value-facts facts instr)))
+    (opt-alias-update-value-facts facts instr 0)))
 
 (define (opt-alias-run [facts : OptAliasFacts] [instrs : CompilerIrInstrList]) : OptAliasFacts
   (match instrs
@@ -51715,7 +51790,7 @@
   (match (opt-alias-lookup facts var)
     [(OptMaybeAliasKind.Some kind)
       (match kind
-        [(OptAliasKind.Unique) (opt-scratch-root-list-contains? roots var)]
+        [(OptAliasKind.Unique _) (opt-scratch-root-list-contains? roots var)]
         [(OptAliasKind.ExclusiveRef) false]
         [(OptAliasKind.SharedRef) false]
         [(OptAliasKind.Derived root)
@@ -51963,7 +52038,9 @@
         (+ alloc-count 1)
         (+ known-bytes bytes)
         (opt-scratch-root-list-add roots dst)
-        (opt-alias-mark-unique facts dst)
+        ;; The report-only scratch analysis runs no allocation counter and
+        ;; never consults epochs, so every root it records is epoch 0.
+        (opt-alias-mark-unique facts dst 0)
         blocker)]))
 
 (define (opt-scratch-state-facts
@@ -53857,10 +53934,13 @@
 ;; from byte offset 0 of a recognized descriptor header is the descriptor's
 ;; data pointer and inherits the descriptor's canonical checked/allocation
 ;; root; ordinary loads remain MayAlias.
+;; `epoch` is the state's allocation counter AFTER `opt-load-cse-epoch-step`,
+;; i.e. the epoch a fresh allocation in `instr` must be tagged with.
 (define (opt-load-alias-update-facts
   [facts : OptAliasFacts]
   [kinds : OptLoadPtrKinds]
-  [instr : CompilerIrInstr]) : OptAliasFacts
+  [instr : CompilerIrInstr]
+  [epoch : i64]) : OptAliasFacts
   (match instr
     [(CompilerIrInstr.Load dst src ty)
       (let
@@ -53874,7 +53954,18 @@
                   (opt-alias-mark-may-alias base dst))]
               [_ (opt-alias-mark-may-alias base dst)])]
           [_ (opt-alias-mark-may-alias base dst)]))]
-    [_ (opt-alias-update-value-facts facts instr)]))
+    [_ (opt-alias-update-value-facts facts instr epoch)]))
+
+;; Allocation-epoch counter discipline: a fresh allocation increments the
+;; counter, everything else leaves it alone. The counter never decreases along
+;; any path (block joins take the max, a single-predecessor entry carries it,
+;; and the back-edge reset keeps the accumulated predecessors' value), so an
+;; allocation's epoch is strictly greater than the creation epoch of every
+;; load-table entry that already exists when it runs.
+(define (opt-load-cse-epoch-step [epoch : i64] [instr : CompilerIrInstr]) : i64
+  (if (opt-alias-instr-fresh-alloc? instr)
+    (+ epoch 1)
+    epoch))
 
 ;; Load-table keys. Raw keys are address-value identity (with an element flag
 ;; for the keep rules); Field keys are canonical (base var, byte offset,
@@ -53888,15 +53979,18 @@
   ;; each is a distinct temp var (the Raw key would not CSE them).
   (ScaledField i64 i64 AstType bool))
 
+;; key, cached value, and the allocation epoch the entry was created at (the
+;; state's allocation counter at bind time).
 (defenum OptLoadEntry
-  (Entry OptLoadKey CompilerIrValue))
+  (Entry OptLoadKey CompilerIrValue i64))
 
 (defenum OptLoadTable
   (Nil)
   (Cons OptLoadEntry (Box OptLoadTable)))
 
+;; facts, table, pointer kinds, table cap, allocation-epoch counter.
 (defenum OptLoadCseState
-  (State OptAliasFacts OptLoadTable OptLoadPtrKinds i64))
+  (State OptAliasFacts OptLoadTable OptLoadPtrKinds i64 i64))
 
 (defenum OptLoadCseResult
   (Result OptLoadCseState CompilerIrInstr))
@@ -53984,11 +54078,15 @@
 
 (define (opt-load-entry-key [entry : OptLoadEntry]) : OptLoadKey
   (match entry
-    [(OptLoadEntry.Entry key _) key]))
+    [(OptLoadEntry.Entry key _ _) key]))
 
 (define (opt-load-entry-value [entry : OptLoadEntry]) : CompilerIrValue
   (match entry
-    [(OptLoadEntry.Entry _ value) value]))
+    [(OptLoadEntry.Entry _ value _) value]))
+
+(define (opt-load-entry-epoch [entry : OptLoadEntry]) : i64
+  (match entry
+    [(OptLoadEntry.Entry _ _ epoch) epoch]))
 
 (define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : CompilerIrMaybeValue
   (match table
@@ -54037,11 +54135,12 @@
   [table : OptLoadTable]
   [cap : i64]
   [key : OptLoadKey]
-  [value : CompilerIrValue]) : OptLoadTable
+  [value : CompilerIrValue]
+  [epoch : i64]) : OptLoadTable
   (match (opt-load-table-lookup table key)
     [(CompilerIrMaybeValue.Some _)
       (OptLoadTable.Cons
-        (OptLoadEntry.Entry key value)
+        (OptLoadEntry.Entry key value epoch)
         (box (opt-load-table-remove-key-scan table key)))]
     [(CompilerIrMaybeValue.No)
       (let
@@ -54064,7 +54163,9 @@
                 compile-profile
                 (compiler-opt-load-cse-profile-note-table-size
                   (+ current-len 1)))
-              (OptLoadTable.Cons (OptLoadEntry.Entry key value) (box table))))))]))
+              (OptLoadTable.Cons
+                (OptLoadEntry.Entry key value epoch)
+                (box table))))))]))
 
 (define (opt-load-copy-entry-within?
   [entry : OptLoadEntry]
@@ -54082,6 +54183,8 @@
           (<= (+ off width) (+ src-off size))))]
     [_ false]))
 
+;; The synthesized destination entry is created by THIS CopyBytes, so it takes
+;; the state's current allocation epoch, not the source entry's older one.
 (define (opt-load-copy-transfer-entry
   [table : OptLoadTable]
   [cap : i64]
@@ -54093,7 +54196,8 @@
   [dst-base : i64]
   [dst-off : i64]
   [size : i64]
-  [dst-header? : bool]) : OptLoadTable
+  [dst-header? : bool]
+  [epoch : i64]) : OptLoadTable
   (if (opt-load-copy-entry-within? entry src-base src-off size)
     (match (opt-load-entry-key entry)
       [(OptLoadKey.Field _ off ty _)
@@ -54112,7 +54216,7 @@
                 (opt-load-value-gvn-stable? sources value))
               true)]
           (if eligible?
-            (opt-load-table-bind table cap key value)
+            (opt-load-table-bind table cap key value epoch)
             table))]
       [_ table])
     table))
@@ -54128,7 +54232,8 @@
   [dst-base : i64]
   [dst-off : i64]
   [size : i64]
-  [dst-header? : bool]) : OptLoadTable
+  [dst-header? : bool]
+  [epoch : i64]) : OptLoadTable
   (match source
     [(OptLoadTable.Nil) out]
     [(OptLoadTable.Cons entry rest)
@@ -54145,7 +54250,8 @@
           dst-base
           dst-off
           size
-          dst-header?)
+          dst-header?
+          epoch)
         cap
         gated?
         sources
@@ -54154,7 +54260,8 @@
         dst-base
         dst-off
         size
-        dst-header?)]))
+        dst-header?
+        epoch)]))
 
 (define (opt-load-entry-mentions-var? [entry : OptLoadEntry] [var : i64]) : bool
   (or
@@ -54241,6 +54348,23 @@
         [(OptLoadKey.ScaledField _ _ _ _) false])]
     [(OptLoadStoreUnknown) false]))
 
+;; Epoch-ordering rule: freshly allocated storage is disjoint from every address
+;; value that already existed when the allocation ran. So a store rooted at an
+;; allocation of epoch E cannot alias an entry whose creation epoch is strictly
+;; below E -- whatever that entry's own root class is (including NoRoot, an
+;; untracked pointer), and whether or not the allocation escapes afterwards. The
+;; inequality must be strict: an entry bound at exactly E may address the
+;; allocation itself. Entries created at or after E are dropped as before.
+(define (opt-load-entry-precedes-fresh-alloc?
+  [store-root : OptAliasRoot]
+  [entry : OptLoadEntry]) : bool
+  (match store-root
+    [(OptAliasRoot.Fresh _ alloc-epoch)
+      (< (opt-load-entry-epoch entry) alloc-epoch)]
+    [(OptAliasRoot.Exclusive _) false]
+    [(OptAliasRoot.Shared _) false]
+    [(OptAliasRoot.NoRoot) false]))
+
 (define (opt-load-entry-survives-store?
   [facts : OptAliasFacts]
   [store-root : OptAliasRoot]
@@ -54250,6 +54374,7 @@
     (opt-alias-store-root-disjoint?
       store-root
       (opt-load-key-alias-root facts (opt-load-entry-key entry)))
+    (opt-load-entry-precedes-fresh-alloc? store-root entry)
     (opt-load-entry-survives-store-location? class entry)))
 
 (define (opt-load-table-filter-store
@@ -54626,28 +54751,37 @@
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap)
-      (OptLoadCseState.State
-        (opt-load-alias-update-facts facts kinds instr)
-        (match (opt-instr-def-var instr)
-          [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
-          [(option_i64.None) table])
-        (opt-load-kinds-step kinds hs instr)
-        table-cap)]))
+    [(OptLoadCseState.State facts table kinds table-cap epoch)
+      (let
+        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        (OptLoadCseState.State
+          (opt-load-alias-update-facts facts kinds instr next-epoch)
+          (match (opt-instr-def-var instr)
+            [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
+            [(option_i64.None) table])
+          (opt-load-kinds-step kinds hs instr)
+          table-cap
+          next-epoch))]))
 
 ;; Calls/unknown effects: the table clears entirely; pointer kinds are value
-;; properties and survive (only the instr's own def is invalidated).
+;; properties and survive (only the instr's own def is invalidated). The
+;; allocation counter is carried, never reset: alias facts keep their
+;; Unique(epoch) roots across the clear, so a lower counter afterwards would
+;; make a later entry look older than an earlier allocation.
 (define (opt-load-cse-state-clear-for-memory
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts _ kinds table-cap)
-      (OptLoadCseState.State
-        (opt-load-alias-update-facts facts kinds instr)
-        (OptLoadTable.Nil)
-        (opt-load-kinds-step kinds hs instr)
-        table-cap)]))
+    [(OptLoadCseState.State facts _ kinds table-cap epoch)
+      (let
+        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        (OptLoadCseState.State
+          (opt-load-alias-update-facts facts kinds instr next-epoch)
+          (OptLoadTable.Nil)
+          (opt-load-kinds-step kinds hs instr)
+          table-cap
+          next-epoch))]))
 
 ;; Apply one callee parameter-write bit to the cached load table. The callee
 ;; summary carries no byte-range fact, so filtering is root-only: a write
@@ -54686,8 +54820,10 @@
   [args : CompilerIrCallArgs]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap)
+    [(OptLoadCseState.State facts table kinds table-cap epoch)
       (let
+        ;; Filtering reads the PRE-call facts and table, so a tl_alloc call
+        ;; cannot use its own (not yet bound) fresh root to keep entries.
         [filtered : OptLoadTable
           (match (opt_i64_i64_map.get
             (& call-memory)
@@ -54702,11 +54838,13 @@
               (match (compiler-ir-direct-call-effect-id name)
                 [(CompilerIrEffect.MemoryRead) table]
                 [_ (OptLoadTable.Nil)])])]
+        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
-          (opt-load-alias-update-facts facts kinds instr)
+          (opt-load-alias-update-facts facts kinds instr next-epoch)
           (opt-load-table-invalidate-var filtered dst)
           (opt-load-kinds-step kinds hs instr)
-          table-cap))]))
+          table-cap
+          next-epoch))]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
 ;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
@@ -54723,19 +54861,22 @@
   [ty : AstType]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap)
+    [(OptLoadCseState.State facts table kinds table-cap epoch)
       (let
         [width : i64 (opt-load-loc-type-size ty)]
         [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
         [store-root : OptAliasRoot (opt-alias-root-of-value facts ptr)]
-        [facts2 : OptAliasFacts (opt-load-alias-update-facts facts kinds instr)]
+        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        [facts2 : OptAliasFacts
+          (opt-load-alias-update-facts facts kinds instr next-epoch)]
         [filtered : OptLoadTable
           (opt-load-table-filter-store table facts store-root class)]
         (match class
           [(OptLoadStoreUnknown)
             ;; Unknown offset/location still preserves entries rooted at a
-            ;; different exclusive checked or fresh allocation root.
-            (OptLoadCseState.State facts2 filtered kinds table-cap)]
+            ;; different exclusive checked or fresh allocation root, and entries
+            ;; created before a fresh store root's allocation epoch.
+            (OptLoadCseState.State facts2 filtered kinds table-cap next-epoch)]
           [_
             (let
               [key : OptLoadKey (opt-load-key-for-address kinds ptr ty)]
@@ -54757,10 +54898,16 @@
                 facts2
                 (match forwarded
                   [(CompilerIrMaybeValue.Some forwarded-value)
-                    (opt-load-table-bind filtered table-cap key forwarded-value)]
+                    (opt-load-table-bind
+                      filtered
+                      table-cap
+                      key
+                      forwarded-value
+                      next-epoch)]
                   [(CompilerIrMaybeValue.No) filtered])
                 kinds
-                table-cap))]))]))
+                table-cap
+                next-epoch))]))]))
 
 ;; CopyBytes writes `size` bytes through its dst pointer: same granular
 ;; invalidation, plus conservative field-to-field forwarding when source and
@@ -54774,19 +54921,21 @@
   [size : i64]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap)
+    [(OptLoadCseState.State facts table kinds table-cap epoch)
       (let
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
         [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
         [store-root : OptAliasRoot (opt-alias-root-of-value facts dst)]
-        [facts2 : OptAliasFacts (opt-load-alias-update-facts facts kinds instr)]
+        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        [facts2 : OptAliasFacts
+          (opt-load-alias-update-facts facts kinds instr next-epoch)]
         [filtered : OptLoadTable
           (opt-load-table-filter-store table facts store-root class)]
         (match class
           [(OptLoadStoreUnknown)
-            (OptLoadCseState.State facts2 filtered kinds table-cap)]
+            (OptLoadCseState.State facts2 filtered kinds table-cap next-epoch)]
           [(OptLoadStoreElement)
-            (OptLoadCseState.State facts2 filtered kinds table-cap)]
+            (OptLoadCseState.State facts2 filtered kinds table-cap next-epoch)]
           [(OptLoadStoreField dst-base dst-off _ dst-header?)
             (let
               [copied : OptLoadTable
@@ -54813,10 +54962,11 @@
                         dst-base
                         dst-off
                         size
-                        dst-header?)
+                        dst-header?
+                        next-epoch)
                       filtered)]
                   [_ filtered])]
-              (OptLoadCseState.State facts2 copied kinds table-cap))]))]))
+              (OptLoadCseState.State facts2 copied kinds table-cap next-epoch))]))]))
 
 (define (opt-load-cse-core-load
   [hs : OptLoadHeaderSet]
@@ -54828,7 +54978,7 @@
   [ty : AstType]
   [instr : CompilerIrInstr]) : OptLoadCseResult
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap)
+    [(OptLoadCseState.State facts table kinds table-cap epoch)
       (let
         ;; The dst redefinition drops stale entries first; the key is computed
         ;; from the PRE-def kinds (a `Load dst <- dst` reads the old address).
@@ -54848,29 +54998,34 @@
             ;; rewrite never copies a var this instruction overwrites.
             (let
               [new-instr : CompilerIrInstr (CompilerIrInstr.Mov dst earlier ty)]
+              [next-epoch : i64 (opt-load-cse-epoch-step epoch new-instr)]
               (OptLoadCseResult.Result
                 (OptLoadCseState.State
-                  (opt-load-alias-update-facts facts kinds new-instr)
+                  (opt-load-alias-update-facts facts kinds new-instr next-epoch)
                   table2
                   (opt-load-kinds-step kinds hs new-instr)
-                  table-cap)
+                  table-cap
+                  next-epoch)
                 new-instr))]
           [(CompilerIrMaybeValue.No)
             (let
               [record? : bool
                 (and eligible? (not (opt-load-key-uses-var? key dst)))]
+              [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
               (OptLoadCseResult.Result
                 (OptLoadCseState.State
-                  (opt-load-alias-update-facts facts kinds instr)
+                  (opt-load-alias-update-facts facts kinds instr next-epoch)
                   (if record?
                     (opt-load-table-bind
                       table2
                       table-cap
                       key
-                      (CompilerIrValue.Var dst))
+                      (CompilerIrValue.Var dst)
+                      next-epoch)
                     table2)
                   (opt-load-kinds-step kinds hs instr)
-                  table-cap)
+                  table-cap
+                  next-epoch)
                 instr))]))]))
 
 ;; Shared per-instruction dispatcher for the block-local (gated? false) and
@@ -54965,7 +55120,8 @@
       facts
       (OptLoadTable.Nil)
       (opt-load-kinds-empty-with-cap kinds-cap)
-      table-cap)))
+      table-cap
+      0)))
 
 (define (opt-load-cse-empty-state-with-caps [table-cap : i64] [kinds-cap : i64]) : OptLoadCseState
   (opt-load-cse-state-with-caps-and-facts table-cap kinds-cap (opt-alias-empty)))
@@ -54991,28 +55147,56 @@
         (opt-load-kinds-set-cap
           kinds
           (opt-load-cse-kinds-cap-for-size instr-count))
-        table-cap))))
+        table-cap
+        0))))
 
 ;; The load table is a persistent list, but the alias facts and pointer kinds
 ;; are mutable tables; entering a block through a single predecessor must
 ;; process a copy.
 (define (opt-load-cse-state-clone-facts [state : OptLoadCseState]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap)
+    [(OptLoadCseState.State facts table kinds table-cap epoch)
       (OptLoadCseState.State
         (opt-alias-clone facts)
         table
         (opt-load-kinds-clone kinds)
-        table-cap)]))
+        table-cap
+        epoch)]))
 
-(define (opt-load-table-contains-entry?
-  [table : OptLoadTable]
-  [entry : OptLoadEntry]) : bool
+(defenum OptMaybeLoadEntry
+  (No)
+  (Some OptLoadEntry))
+
+(define (opt-load-table-find-entry [table : OptLoadTable] [key : OptLoadKey]) : OptMaybeLoadEntry
+  (match table
+    [(OptLoadTable.Nil) (OptMaybeLoadEntry.No)]
+    [(OptLoadTable.Cons entry rest)
+      (if (opt-load-key-eq (opt-load-entry-key entry) key)
+        (OptMaybeLoadEntry.Some entry)
+        (opt-load-table-find-entry (box-get rest) key))]))
+
+;; A joined entry must be older than every allocation both edges agree on, so it
+;; keeps the LATER (larger) of the two creation epochs -- the conservative side
+;; of the strict `entry-epoch < alloc-epoch` keep test.
+(define (opt-load-table-intersect-entry
+  [entry : OptLoadEntry]
+  [other : OptLoadTable]) : OptMaybeLoadEntry
   (match entry
-    [(OptLoadEntry.Entry key value)
-      (match (opt-load-table-lookup table key)
-        [(CompilerIrMaybeValue.Some found) (opt-value-eq found value)]
-        [(CompilerIrMaybeValue.No) false])]))
+    [(OptLoadEntry.Entry key value epoch)
+      (match (opt-load-table-find-entry other key)
+        [(OptMaybeLoadEntry.No) (OptMaybeLoadEntry.No)]
+        [(OptMaybeLoadEntry.Some found)
+          (if (opt-value-eq (opt-load-entry-value found) value)
+            (OptMaybeLoadEntry.Some
+              (OptLoadEntry.Entry
+                key
+                value
+                (let
+                  [found-epoch : i64 (opt-load-entry-epoch found)]
+                  (if (< epoch found-epoch)
+                    found-epoch
+                    epoch))))
+            (OptMaybeLoadEntry.No))])]))
 
 (define (opt-load-table-intersect [a : OptLoadTable] [b : OptLoadTable]) : OptLoadTable
   (match a
@@ -55020,24 +55204,30 @@
     [(OptLoadTable.Cons entry rest)
       (let
         [tail : OptLoadTable (opt-load-table-intersect (box-get rest) b)]
-        (if (opt-load-table-contains-entry? b entry)
-          (OptLoadTable.Cons entry (box tail))
-          tail))]))
+        (match (opt-load-table-intersect-entry entry b)
+          [(OptMaybeLoadEntry.Some merged)
+            (OptLoadTable.Cons merged (box tail))]
+          [(OptMaybeLoadEntry.No) tail]))]))
 
 (define (opt-load-cse-state-intersect
   [a : OptLoadCseState]
   [b : OptLoadCseState]) : OptLoadCseState
   (match a
-    [(OptLoadCseState.State afacts atable akinds atable-cap)
+    [(OptLoadCseState.State afacts atable akinds atable-cap aepoch)
       (match b
-        [(OptLoadCseState.State bfacts btable bkinds btable-cap)
+        [(OptLoadCseState.State bfacts btable bkinds btable-cap bepoch)
           (OptLoadCseState.State
             (opt-alias-intersect afacts bfacts)
             (opt-load-table-intersect atable btable)
             (opt-load-kinds-intersect akinds bkinds)
             (if (< atable-cap btable-cap)
               atable-cap
-              btable-cap))])]))
+              btable-cap)
+            ;; The counter takes the MAX so the next allocation's epoch still
+            ;; exceeds every entry epoch arriving on either edge.
+            (if (< aepoch bepoch)
+              bepoch
+              aepoch))])]))
 
 (define (opt-load-state-array-fill-empty!
   [states : (Array OptMaybeLoadCseState)]
@@ -55275,16 +55465,21 @@
       ;; entries (header-typed, stable base): those loads live outside every
       ;; data buffer, so the loop's stores cannot reach them.
       (match acc
-        [(OptLoadCseState.State _ acc-table acc-kinds _)
+        [(OptLoadCseState.State _ acc-table acc-kinds _ acc-epoch)
           (match empty-state
-            [(OptLoadCseState.State empty-facts empty-table _ empty-cap)
+            [(OptLoadCseState.State empty-facts empty-table _ empty-cap _)
               (OptLoadCseState.State
                 empty-facts
                 (if (opt-load-gvn-loop-safe-contains? loop-safe label)
                   (opt-load-table-filter-descriptor-stable acc-table sources)
                   empty-table)
                 (opt-load-kinds-filter-stable acc-kinds sources)
-                empty-cap)])])
+                empty-cap
+                ;; Carried entries keep their creation epochs, so the counter
+                ;; must be the accumulated predecessors' value: resetting it to
+                ;; zero would let a loop-body allocation claim an epoch that a
+                ;; surviving entry already used.
+                acc-epoch)])])
       acc)
     (let
       [pred : i64 (array-ref (struct-get (struct-get index preds) edges) edge)]

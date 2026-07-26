@@ -113,6 +113,21 @@
       (compiler-symbols-decl-maybe-span (box-get inner-box))]
     [_ CompilerSymbolsMaybeSpan.No]))
 
+(define (compiler-symbols-note-last-error-fallback!
+  [decl : AstDecl]
+  [path : (& path str)]) : unit
+  (begin
+    (set! compiler-symbols-last-error-path (string.copy path))
+    (match (compiler-symbols-decl-maybe-span decl)
+      [(CompilerSymbolsMaybeSpan.Some span)
+        (begin
+          (set! compiler-symbols-last-error-span span)
+          (set! compiler-symbols-last-error-has-span true))]
+      [(CompilerSymbolsMaybeSpan.No)
+        (begin
+          (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
+          (set! compiler-symbols-last-error-has-span false))])))
+
 (define (compiler-symbols-note-last-error!
   [origin-key : i64]
   [origin-slot : i64]
@@ -2793,11 +2808,12 @@
                         (set! done true))]
                     [CompilerNoString
                       (begin
-                        (compiler-symbols-note-last-error!
-                          decl-origin-key
-                          (+ decl-origin-offset cur-position)
+                        ;; Keep the cheap expression/member fallback current for
+                        ;; later registry diagnostics. Cold declaration-origin
+                        ;; lookup is deferred until this add actually fails.
+                        (compiler-symbols-note-last-error-fallback!
                           decl
-                          decl-path)
+                          (& decl-path))
                         (compiler-symbols-index-decl!
                           cur-symbols
                           decl
@@ -2842,6 +2858,13 @@
                               (set! cur-index (+ cur-index 1)))]
                           [(ResultCompilerSymbols.Err message)
                             (begin
+                              (if compiler-symbols-last-error-has-span
+                                unit
+                                (compiler-symbols-note-last-error!
+                                  decl-origin-key
+                                  (+ decl-origin-offset cur-position)
+                                  decl
+                                  decl-path))
                               (set! result (ResultCompilerSymbols.Err message))
                               (set! done true))]))])]))]))
       result)))

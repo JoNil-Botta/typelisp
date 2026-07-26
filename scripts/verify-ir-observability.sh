@@ -46,6 +46,32 @@ if ! cmp -s "$EXPECTED_NORMALIZED" "$ACTUAL_NORMALIZED"; then
     exit 1
 fi
 
+# Cross-block load GVN across a fresh allocation: the parameter's length field
+# is loaded once and the second read is forwarded over tl_alloc, tl_array_zero,
+# and the new descriptor's header stores.
+GVN_SOURCE="$ROOT/tests/golden/optimizer_load_fresh_alloc.tl"
+GVN_EXPECTED="$ROOT/tests/golden/optimizer_load_fresh_alloc.after-gvn.ir"
+GVN_ACTUAL="$WORKDIR/optimizer_load_fresh_alloc.after-gvn.ir"
+GVN_EXPECTED_NORMALIZED="$WORKDIR/optimizer_load_fresh_alloc.expected.normalized.ir"
+GVN_ACTUAL_NORMALIZED="$WORKDIR/optimizer_load_fresh_alloc.actual.normalized.ir"
+
+"$COMPILER" compile "$GVN_SOURCE" \
+    --dump-ir after-gvn \
+    --verify-ir \
+    --opt-level 2 \
+    -o "$GVN_ACTUAL" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/gvn.stdout" 2>"$WORKDIR/gvn.stderr"
+
+tr -d '\r' <"$GVN_EXPECTED" >"$GVN_EXPECTED_NORMALIZED"
+tr -d '\r' <"$GVN_ACTUAL" >"$GVN_ACTUAL_NORMALIZED"
+if ! cmp -s "$GVN_EXPECTED_NORMALIZED" "$GVN_ACTUAL_NORMALIZED"; then
+    echo "optimizer load-GVN fresh-allocation IR golden mismatch" >&2
+    diff -u "$GVN_EXPECTED_NORMALIZED" "$GVN_ACTUAL_NORMALIZED" >&2 || true
+    exit 1
+fi
+
 "$COMPILER" compile "$SOURCE" \
     --dump-ir \
     --verify-ir \

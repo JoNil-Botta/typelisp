@@ -44490,6 +44490,7 @@
           (cfg
             compile-profile
             (compiler-opt-scratch-region-report-function-escaping
+              type-segment-bases
               optimized
               scratch))]
         [_finish : unit
@@ -44540,6 +44541,7 @@
           (cfg
             compile-profile
             (compiler-opt-scratch-region-report-function-escaping
+              type-segment-bases
               optimized
               scratch))]
         [_finish : unit
@@ -54310,6 +54312,7 @@
 (cfg
   compile-profile
   (define (compiler-opt-scratch-region-report-blocks
+    [type-segment-bases : i64]
     [function : String]
     [blocks : CompilerIrBlockList]) : unit
     (match blocks
@@ -54324,15 +54327,20 @@
                 label
                 (compiler-ir-label "-")
                 (opt-scratch-scope-report-block type-segment-bases block))])
-          (compiler-opt-scratch-region-report-blocks function (box-get rest)))]
+          (compiler-opt-scratch-region-report-blocks
+            type-segment-bases
+            function
+            (box-get rest)))]
       [(CompilerIrBlockList.Array seq)
         (compiler-opt-scratch-region-report-blocks
+          type-segment-bases
           function
           (compiler-ir-block-seq-to-list seq))])))
 
 (cfg
   compile-profile
   (define (compiler-opt-scratch-region-report-loops
+    [type-segment-bases : i64]
     [function : String]
     [loops : OptNaturalLoopList]) : unit
     (match loops
@@ -54347,11 +54355,15 @@
             (opt-scratch-scope-report-blocks
               type-segment-bases
               (opt-natural-loop-body-blocks loop)))
-          (compiler-opt-scratch-region-report-loops function (box-get rest)))])))
+          (compiler-opt-scratch-region-report-loops
+            type-segment-bases
+            function
+            (box-get rest)))])))
 
 (cfg
   compile-profile
   (define (compiler-opt-scratch-region-report-function
+    [type-segment-bases : i64]
     [func : CompilerIrFunction]) : unit
     (match func
       [(CompilerIrFunction.Function name _ _ _ blocks)
@@ -54364,14 +54376,19 @@
               (compiler-ir-label "-")
               (compiler-ir-label "-")
               (opt-scratch-scope-report-blocks type-segment-bases blocks))
-            (compiler-opt-scratch-region-report-blocks name-text blocks)
+            (compiler-opt-scratch-region-report-blocks
+              type-segment-bases
+              name-text
+              blocks)
             (compiler-opt-scratch-region-report-loops
+              type-segment-bases
               name-text
               (opt-cfg-natural-loops blocks))))])))
 
 (cfg
   compile-profile
   (define (compiler-opt-scratch-region-report-function-escaping
+    [type-segment-bases : i64]
     [func : CompilerIrFunction]
     [scratch : i64]) : unit
     (let
@@ -54381,7 +54398,10 @@
           (arena.tl_arena_set scratch))
         (let
           [mark : i64 (arena.tl_region_mark)]
-          [_report : unit (compiler-opt-scratch-region-report-function func)]
+          [_report : unit
+            (compiler-opt-scratch-region-report-function
+              type-segment-bases
+              func)]
           [scratch-head : i64 (arena.tl_arena_current)]
           (unsafe
             (arena.tl_arena_set scratch-head)

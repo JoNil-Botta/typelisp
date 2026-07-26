@@ -10,10 +10,12 @@
 (import stdlib.vector)
 (import (vector.vector String) as lint_svec)
 (import "compiler_check_core.tl")
+(import compiler_target_cfg_core as target_cfg)
 (import "compiler_load.tl")
 (import "lint_core.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
+(import sym_i64_env)
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
@@ -25,6 +27,26 @@
 (defenum ResultSelfhostLintConfig
   (Ok SelfhostLintConfig)
   (Err String))
+
+(define selfhost-lint-language-target : target_cfg.CompilerTargetCfg
+  (target_cfg.compiler-target-cfg-default))
+(define selfhost-lint-language-cfg-names : lint_svec.Vec
+  (lint_svec.new))
+(define selfhost-lint-cli-has-target : bool
+  false)
+
+(define (selfhost-lint-language-config-reset!) : unit
+  (begin
+    (set!
+      selfhost-lint-language-target
+      (target_cfg.compiler-target-cfg-default))
+    (set! selfhost-lint-language-cfg-names (lint_svec.new))
+    (set! selfhost-lint-cli-has-target false)))
+
+(define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
+  (target_cfg.compiler-target-cfgs-with-names
+    selfhost-lint-language-target
+    selfhost-lint-language-cfg-names))
 
 (define (selfhost-lint-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -154,6 +176,53 @@
             redundant-function-name
             prefer-dotted-field
             true)]
+        [(string.eq current "--cfg")
+          (if (>= (+ idx 1) count)
+            (ResultSelfhostLintConfig.Err
+              "selfhost-lint: --cfg requires a value")
+            (begin
+              (lint_svec.push
+                (&mut selfhost-lint-language-cfg-names)
+                (io.arg (+ idx 1)))
+              (selfhost-lint-parse-options
+                (+ idx 2)
+                count
+                input-paths
+                manifest-path
+                has-manifest
+                stdlib-roots
+                enforcing
+                deprecated-string-concat
+                redundant-function-name
+                prefer-dotted-field
+                name-case)))]
+        [(string.eq current "--target")
+          (if (>= (+ idx 1) count)
+            (ResultSelfhostLintConfig.Err
+              "selfhost-lint: --target requires a value")
+            (if selfhost-lint-cli-has-target
+              (ResultSelfhostLintConfig.Err
+                "selfhost-lint: --target was provided more than once")
+              (match (target_cfg.compiler-target-cfg-parse (io.arg (+ idx 1)))
+                [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
+                  (begin
+                    (set! selfhost-lint-language-target parsed-target)
+                    (set! selfhost-lint-cli-has-target true)
+                    (selfhost-lint-parse-options
+                      (+ idx 2)
+                      count
+                      input-paths
+                      manifest-path
+                      has-manifest
+                      stdlib-roots
+                      enforcing
+                      deprecated-string-concat
+                      redundant-function-name
+                      prefer-dotted-field
+                      name-case))]
+                [(target_cfg.ResultCompilerTargetCfg.Err message)
+                  (ResultSelfhostLintConfig.Err
+                    (string.append "selfhost-lint: " message))])))]
         [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
@@ -216,18 +285,20 @@
 
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
-  (selfhost-lint-parse-options
-    start
-    count
-    (lint_svec.new)
-    ""
-    false
-    (lint_svec.new)
-    false
-    false
-    false
-    false
-    false))
+  (begin
+    (selfhost-lint-language-config-reset!)
+    (selfhost-lint-parse-options
+      start
+      count
+      (lint_svec.new)
+      ""
+      false
+      (lint_svec.new)
+      false
+      false
+      false
+      false
+      false)))
 
 ;; Render one finding as `path:line:col: message` (line/col from the flagged
 ;; node's source span; 0:0 only for synthesized nodes that carry no location).
@@ -906,7 +977,9 @@
       (unsafe
         (arena.tl_arena_set home)))))
 
-(define (selfhost-lint-unsafe-surface-cache-load! [path : String]) : SelfhostLintUnsafeSurfaceLookup
+(define (selfhost-lint-unsafe-surface-cache-load!
+  [path : String]
+  [cfgs : sym_i64_env.SymI64Env]) : SelfhostLintUnsafeSurfaceLookup
   (let
     [normalized : String (compiler-load-normalize-path path)]
     (match (selfhost-lint-unsafe-surface-cache-lookup normalized)
@@ -930,7 +1003,7 @@
             (match (parse-ast-source-diagnostic-with-cfg-and-pools
               normalized
               (io.read-file normalized)
-              (compiler-cfg-empty)
+              cfgs
               (ast-node-pool-compat-context-current))
               [(ResultAstProgramDiagnostic.Ok program)
                 (match (compiler-load-surface-summary-build
@@ -1027,6 +1100,7 @@
 (define (selfhost-lint-unsafe-surface-prepare-imports!
   [path : String]
   [stdlib-roots : lint_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [imports : CompilerLoadSurfaceImportList]) : unit
   (match imports
     [(CompilerLoadSurfaceImportNil) unit]
@@ -1042,7 +1116,7 @@
               import-edge)
               [(ResultPkgResolve.Err _) unit]
               [(ResultPkgResolve.Ok resolved)
-                (match (selfhost-lint-unsafe-surface-cache-load! resolved)
+                (match (selfhost-lint-unsafe-surface-cache-load! resolved cfgs)
                   [(SelfhostLintUnsafeSurfaceLookup.Miss) unit]
                   [(SelfhostLintUnsafeSurfaceLookup.Hit valid names)
                     (if valid
@@ -1051,12 +1125,14 @@
           (selfhost-lint-unsafe-surface-prepare-imports!
             path
             stdlib-roots
+            cfgs
             (box-get rest))))]))
 
 (define (selfhost-lint-unsafe-surface-prepare!
   [path : String]
   [program : AstProgram]
-  [stdlib-roots : lint_svec.Vec]) : unit
+  [stdlib-roots : lint_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : unit
   (begin
     (selfhost-lint-unsafe-surface-cache-ensure!)
     (lint-unused-unsafe-classifier-reset!)
@@ -1070,6 +1146,7 @@
           (selfhost-lint-unsafe-surface-prepare-imports!
             path
             stdlib-roots
+            cfgs
             (struct-get summary imports)))])
     (lint-unused-unsafe-classifier-enable!)))
 
@@ -1093,7 +1170,8 @@
 (define (selfhost-lint-typed-unused-unsafe-findings
   [path : String]
   [source : String]
-  [stdlib-roots : lint_svec.Vec]) : LintFindings
+  [stdlib-roots : lint_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : LintFindings
   (begin
     (set! selfhost-lint-typed-unused-unsafe-error "")
     (tc-unused-unsafe-tracking-reset! path)
@@ -1107,11 +1185,15 @@
           (ast-node-pool-compat-context-clear!)
           (let
             [checked : ResultCompilerCheck
-              (compiler-check-source-with-roots path source stdlib-roots)]
+              (compiler-check-source-with-roots-and-cfg
+                path
+                source
+                stdlib-roots
+                cfgs)]
             (begin
               (ast-node-pool-compat-context-use! lint-pools)
               checked))))
-      (compiler-check-source-with-roots path source stdlib-roots))
+      (compiler-check-source-with-roots-and-cfg path source stdlib-roots cfgs))
       [(ResultCompilerCheck.Ok _)
         (let
           [findings : LintFindings
@@ -1136,13 +1218,14 @@
   [path : String]
   [source : String]
   [program : AstProgram]
-  [stdlib-roots : lint_svec.Vec]) : LintFindings
+  [stdlib-roots : lint_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : LintFindings
   (if (lint-program-has-unused-unsafe-candidate? program)
     (begin
       (set!
         selfhost-lint-unused-unsafe-fallback-file-count
         (+ selfhost-lint-unused-unsafe-fallback-file-count 1))
-      (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots))
+      (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots cfgs))
     (lint-findings-empty)))
 
 (define (selfhost-lint-findings-without-unused-unsafe-from
@@ -1172,13 +1255,14 @@
   [source : String]
   [program : AstProgram]
   [stdlib-roots : lint_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : LintFindings
   (begin
     (set! selfhost-lint-typed-unused-unsafe-error "")
-    (selfhost-lint-unsafe-surface-prepare! path program stdlib-roots)
+    (selfhost-lint-unsafe-surface-prepare! path program stdlib-roots cfgs)
     (let
       [ordinary : LintFindings
         (selfhost-lint-program-findings-with-all-options
@@ -1193,7 +1277,11 @@
       [unused-count : i64 (lint-unused-unsafe-classifier-unused-count)]
       [typed : LintFindings
         (if (> unknown-count 0)
-          (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots)
+          (selfhost-lint-typed-unused-unsafe-findings
+            path
+            source
+            stdlib-roots
+            cfgs)
           (lint-findings-empty))]
       [base : LintFindings
         (if (> unknown-count 0)
@@ -1217,10 +1305,11 @@
         (lint-unused-unsafe-classifier-disable!)
         (selfhost-lint-findings-append base typed)))))
 
-(define (selfhost-lint-source-with-roots-and-all-options
+(define (selfhost-lint-source-with-roots-and-all-options-with-cfg
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
@@ -1234,7 +1323,7 @@
     (lint-unused-unsafe-classifier-reset!)
     (let
       [findings : LintFindings
-        (match (parse-ast-source-diagnostic path source)
+        (match (parse-ast-source-diagnostic-with-cfg path source cfgs)
           [(ResultAstProgramDiagnostic.Ok program)
             (let
               [ordinary : LintFindings
@@ -1251,13 +1340,32 @@
                   path
                   source
                   program
-                  stdlib-roots)))]
+                  stdlib-roots
+                  cfgs)))]
           [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)])]
       (begin
         ;; Preserve diagnostic counters, but leave no cache pointer into the
         ;; caller's request arena after returning its findings.
         (selfhost-lint-unsafe-surface-cache-release!)
         findings))))
+
+(define (selfhost-lint-source-with-roots-and-all-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : LintFindings
+  (selfhost-lint-source-with-roots-and-all-options-with-cfg
+    path
+    source
+    stdlib-roots
+    (selfhost-lint-language-cfgs)
+    deprecated-string-concat
+    redundant-function-name
+    prefer-dotted-field
+    name-case))
 
 (define (selfhost-lint-source-with-roots-and-staged-options
   [path : String]
@@ -1296,6 +1404,21 @@
   [source : String]
   [stdlib-roots : lint_svec.Vec]) : LintFindings
   (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
+
+(define (selfhost-lint-source-with-roots-and-cfg
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : LintFindings
+  (selfhost-lint-source-with-roots-and-all-options-with-cfg
+    path
+    source
+    stdlib-roots
+    cfgs
+    false
+    false
+    false
+    false))
 
 ;; Package-level dead-code linting records top-level declarations as graph nodes.
 ;; Library packages expose every top-level declaration as API roots. Binary
@@ -1340,7 +1463,7 @@
   ;; configurations. Keep this list explicit: arbitrary caller cfgs must stay
   ;; inactive rather than turning conditional implementation details into API.
   (compiler-cfg-enable
-    (compiler-cfg-enable (compiler-check-language-cfgs) "test")
+    (compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
     "scratch-vreg"))
 
 (define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (Array
@@ -3892,7 +4015,7 @@
     (match (parse-ast-source-diagnostic-with-cfg-and-pools
       input-path
       source
-      (compiler-cfg-empty)
+      (selfhost-lint-language-cfgs)
       (ast-node-pool-compat-context-current))
       [(ResultAstProgramDiagnostic.Ok program)
         (let
@@ -3902,6 +4025,7 @@
               source
               program
               stdlib-roots
+              (selfhost-lint-language-cfgs)
               deprecated-string-concat
               redundant-function-name
               prefer-dotted-field
@@ -3949,7 +4073,7 @@
     (match (parse-ast-source-diagnostic-with-cfg-and-pools
       input-path
       source
-      (compiler-cfg-empty)
+      (selfhost-lint-language-cfgs)
       (ast-node-pool-compat-context-current))
       [(ResultAstProgramDiagnostic.Ok program)
         (let
@@ -3959,6 +4083,7 @@
               source
               program
               stdlib-roots
+              (selfhost-lint-language-cfgs)
               deprecated-string-concat
               redundant-function-name
               prefer-dotted-field

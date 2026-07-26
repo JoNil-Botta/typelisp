@@ -1,0 +1,8 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{},"initializationOptions":{"target":"windows-x86_64","cfg":["editor-feature"]}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/cfg-target.tl","languageId":"typelisp","version":1,"text":"(cfg windows (define platform-value : i64 40))\n(cfg editor-feature (define cfg-value : i64 2))\n(define (main) : i64\n  (let [value (+ platform-value cfg-value)]\n    value))\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"tl/getType","params":{"textDocument":{"uri":"${{TMP_URI}}/cfg-target.tl"},"position":{"line":3,"character":20}}},
+  {"jsonrpc":"2.0","id":3,"method":"textDocument/definition","params":{"textDocument":{"uri":"${{TMP_URI}}/cfg-target.tl"},"position":{"line":3,"character":20}}},
+  {"jsonrpc":"2.0","id":4,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

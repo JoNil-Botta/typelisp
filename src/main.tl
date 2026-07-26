@@ -176,19 +176,21 @@ Options:
 
 (define (cli-check-help-text) : String
   "Usage:
-    typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Type check a source file or package.
 
 Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --target <target>              linux-x86_64 or windows-x86_64
+    --cfg <name>                   Enable a compile-time cfg predicate name
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
 (define (cli-fmt-help-text) : String
   "Usage:
-    typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp fmt [<file.tl>...] [--check] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Format source files or every source in a package.
@@ -196,12 +198,14 @@ Summary:
 Options:
     --check                        Report files that would change without writing them
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --target <target>              linux-x86_64 or windows-x86_64
+    --cfg <name>                   Accept cfg selection; every CST branch remains formatted
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
 (define (cli-lint-help-text) : String
   "Usage:
-    typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Lint source files or every source in a package.
@@ -213,6 +217,8 @@ Options:
     --prefer-dotted-field          Enable staged simple struct-get dotted field lint
     --name-case                    Enable staged declaration/binder casing lints
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --target <target>              linux-x86_64 or windows-x86_64
+    --cfg <name>                   Enable a compile-time cfg predicate name
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
@@ -312,6 +318,11 @@ Options:
     --stdlib-root <dir>            Search root for stdlib/... imports
     --prefix-cache-stats           Print typecheck prefix-cache stats on stderr when the server exits
     --transcript-batch <file>      Run file-bounded transcript sessions serially (test tooling)
+
+Initialization options:
+    target                         linux-x86_64 or windows-x86_64 (default: server host)
+    cfg                            Array of compile-time cfg predicate names
+    Fields may be direct or nested under initializationOptions.typelisp.
 ")
 
 (define (cli-new-help-text) : String

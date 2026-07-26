@@ -7,6 +7,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
+(import compiler_target_cfg_core as target_cfg)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
@@ -15,10 +16,11 @@
 (import "test_cli_core.tl")
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
+(import sym_i64_env)
 
 (defenum SelfhostCheckConfig
-  (File String cli_svec.Vec)
-  (Package String bool cli_svec.Vec))
+  (File String cli_svec.Vec target_cfg.CompilerTargetCfg cli_svec.Vec)
+  (Package String bool cli_svec.Vec target_cfg.CompilerTargetCfg cli_svec.Vec))
 
 (defenum ResultSelfhostCheckConfig
   (Ok SelfhostCheckConfig)
@@ -32,15 +34,22 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : cli_svec.Vec]) : ResultSelfhostCheckConfig
+  [stdlib-roots : cli_svec.Vec]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfg-names : cli_svec.Vec]) : ResultSelfhostCheckConfig
   (if has-input
     (if has-manifest
       (ResultSelfhostCheckConfig.Err
         "selfhost-check: cannot combine input path with --manifest-path")
       (ResultSelfhostCheckConfig.Ok
-        (SelfhostCheckConfig.File input-path stdlib-roots)))
+        (SelfhostCheckConfig.File input-path stdlib-roots target cfg-names)))
     (ResultSelfhostCheckConfig.Ok
-      (SelfhostCheckConfig.Package manifest-path has-manifest stdlib-roots))))
+      (SelfhostCheckConfig.Package
+        manifest-path
+        has-manifest
+        stdlib-roots
+        target
+        cfg-names))))
 
 (define (selfhost-check-parse-args
   [idx : i64]
@@ -49,37 +58,90 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : cli_svec.Vec]) : ResultSelfhostCheckConfig
+  [stdlib-roots : cli_svec.Vec]
+  [target : target_cfg.CompilerTargetCfg]
+  [has-target : bool]
+  [cfg-names : cli_svec.Vec]) : ResultSelfhostCheckConfig
   (if (>= idx count)
     (selfhost-check-config-finish
       input-path
       has-input
       manifest-path
       has-manifest
-      stdlib-roots)
+      stdlib-roots
+      target
+      cfg-names)
     (let
       [current : String (io.arg idx)]
       (match (cli_option.cli-common-option-parse
         current
         idx
         count
-        cli_option.cli-common-option-stdlib-root)
+        (bit-or
+          cli_option.cli-common-option-stdlib-root
+          (bit-or
+            cli_option.cli-common-option-cfg
+            cli_option.cli-common-option-target)))
         [(cli_option.CliCommonOption.Missing kind)
           (ResultSelfhostCheckConfig.Err
             (cli_option.cli-common-option-missing-message "selfhost-check" kind))]
-        [(cli_option.CliCommonOption.Value _ value next-idx)
-          (selfhost-check-parse-args
-            next-idx
-            count
-            input-path
-            has-input
-            manifest-path
-            has-manifest
-            (let
-              [next-roots : cli_svec.Vec stdlib-roots]
-              (begin
-                (cli_svec.push (&mut next-roots) value)
-                next-roots)))]
+        [(cli_option.CliCommonOption.Value kind value next-idx)
+          (match kind
+            [(cli_option.CliCommonOptionKind.StdlibRoot)
+              (selfhost-check-parse-args
+                next-idx
+                count
+                input-path
+                has-input
+                manifest-path
+                has-manifest
+                (let
+                  [next-roots : cli_svec.Vec stdlib-roots]
+                  (begin
+                    (cli_svec.push (&mut next-roots) value)
+                    next-roots))
+                target
+                has-target
+                cfg-names)]
+            [(cli_option.CliCommonOptionKind.Cfg)
+              (selfhost-check-parse-args
+                next-idx
+                count
+                input-path
+                has-input
+                manifest-path
+                has-manifest
+                stdlib-roots
+                target
+                has-target
+                (let
+                  [next-cfg-names : cli_svec.Vec cfg-names]
+                  (begin
+                    (cli_svec.push (&mut next-cfg-names) value)
+                    next-cfg-names)))]
+            [(cli_option.CliCommonOptionKind.Target)
+              (if has-target
+                (ResultSelfhostCheckConfig.Err
+                  "selfhost-check: --target was provided more than once")
+                (match (target_cfg.compiler-target-cfg-parse value)
+                  [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
+                    (selfhost-check-parse-args
+                      next-idx
+                      count
+                      input-path
+                      has-input
+                      manifest-path
+                      has-manifest
+                      stdlib-roots
+                      parsed-target
+                      true
+                      cfg-names)]
+                  [(target_cfg.ResultCompilerTargetCfg.Err message)
+                    (ResultSelfhostCheckConfig.Err
+                      (string.append "selfhost-check: " message))]))]
+            [(cli_option.CliCommonOptionKind.OptLevel)
+              (ResultSelfhostCheckConfig.Err
+                "selfhost-check: internal unsupported common option")])]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
             [(string.eq current "--manifest-path")
@@ -96,7 +158,10 @@
                     has-input
                     (io.arg (+ idx 1))
                     true
-                    stdlib-roots)))]
+                    stdlib-roots
+                    target
+                    has-target
+                    cfg-names)))]
             [(selfhost-check-flag? current)
               (ResultSelfhostCheckConfig.Err
                 (string.append "selfhost-check: unknown flag " current))]
@@ -111,12 +176,25 @@
                 true
                 manifest-path
                 has-manifest
-                stdlib-roots)])]))))
+                stdlib-roots
+                target
+                has-target
+                cfg-names)])]))))
 
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
 (define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
-  (selfhost-check-parse-args start count "" false "" false (cli_svec.new)))
+  (selfhost-check-parse-args
+    start
+    count
+    ""
+    false
+    ""
+    false
+    (cli_svec.new)
+    (target_cfg.compiler-target-cfg-default)
+    false
+    (cli_svec.new)))
 
 (define (selfhost-check-doctest-report [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)
@@ -132,38 +210,49 @@
 
 (define (selfhost-check-file-doctests
   [input-path : String]
-  [stdlib-roots : cli_svec.Vec]) : i64
+  [stdlib-roots : cli_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (selfhost-check-doctest-report
-    (doc-test-typecheck-file-with-roots input-path stdlib-roots)))
+    (doc-test-typecheck-file-with-roots-and-cfg input-path stdlib-roots cfgs)))
 
 (define (selfhost-check-package-doctests
   [paths : AstDeclPathList]
   [stdlib-roots : cli_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : i64
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (selfhost-check-doctest-report
-    (doc-test-typecheck-package-paths-with-roots
+    (doc-test-typecheck-package-paths-with-roots-and-cfg
       paths
       stdlib-roots
       manifest-dir
-      deps)))
+      deps
+      cfgs)))
 
 (define (selfhost-check-file
   [input-path : String]
-  [stdlib-roots : cli_svec.Vec]) : i64
-  (match (compiler-check-file-with-roots input-path stdlib-roots)
+  [stdlib-roots : cli_svec.Vec]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfg-names : cli_svec.Vec]) : i64
+  (match (compiler-check-file-with-roots-and-cfg
+    input-path
+    stdlib-roots
+    (target_cfg.compiler-target-cfgs-with-names target cfg-names))
     [(ResultCompilerCheck.Ok _)
       (let
         [inline-test-status : i64
           (tltest-inline-typecheck-file-with-cfg
             input-path
             stdlib-roots
-            (compiler-check-language-cfgs)
+            (target_cfg.compiler-target-cfgs-with-names target cfg-names)
             "typecheck-prefix-inline-check")]
         (if (= inline-test-status 0)
           (let
             [doctest-status : i64
-              (selfhost-check-file-doctests input-path stdlib-roots)]
+              (selfhost-check-file-doctests
+                input-path
+                stdlib-roots
+                (target_cfg.compiler-target-cfgs-with-names target cfg-names))]
             (if (= doctest-status 0)
               (selfhost-check-print-passed)
               doctest-status))
@@ -208,7 +297,9 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : cli_svec.Vec]) : i64
+  [stdlib-roots : cli_svec.Vec]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfg-names : cli_svec.Vec]) : i64
   (match (package-source-discover-for "check" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
@@ -224,12 +315,13 @@
         [emit-entry : bool
           (selfhost-check-package-kind-entry? (struct-get manifest kind))]
         [_reset-file-state : unit (compiler-driver-reset-file-state!)]
-        (match (compiler-check-package-entry-file-with-roots
+        (match (compiler-check-package-entry-file-with-roots-and-cfg
           entry-path
           stdlib-roots
           manifest-dir
           (struct-get manifest deps)
-          emit-entry)
+          emit-entry
+          (target_cfg.compiler-target-cfgs-with-names target cfg-names))
           [(ResultCompilerCheckWithPaths.Ok _ paths)
             (let
               ;; Doctests run after the compiler and intern arenas are reset.
@@ -250,7 +342,7 @@
                   manifest-dir
                   name
                   (struct-get manifest deps)
-                  (compiler-check-language-cfgs)
+                  (target_cfg.compiler-target-cfgs-with-names target cfg-names)
                   "typecheck-prefix-inline-check-package")]
               (if (= inline-test-status 0)
                 (let
@@ -259,7 +351,10 @@
                       doctest-paths
                       stdlib-roots
                       manifest-dir
-                      (struct-get manifest deps))]
+                      (struct-get manifest deps)
+                      (target_cfg.compiler-target-cfgs-with-names
+                        target
+                        cfg-names))]
                   (if (= doctest-status 0)
                     (selfhost-check-print-passed)
                     doctest-status))
@@ -275,10 +370,20 @@
   (match (selfhost-check-config-from start count)
     [(ResultSelfhostCheckConfig.Ok config)
       (match config
-        [(SelfhostCheckConfig.File input-path stdlib-roots)
-          (selfhost-check-file input-path stdlib-roots)]
-        [(SelfhostCheckConfig.Package manifest-path has-manifest stdlib-roots)
-          (selfhost-check-package manifest-path has-manifest stdlib-roots)])]
+        [(SelfhostCheckConfig.File input-path stdlib-roots target cfg-names)
+          (selfhost-check-file input-path stdlib-roots target cfg-names)]
+        [(SelfhostCheckConfig.Package
+            manifest-path
+            has-manifest
+            stdlib-roots
+            target
+            cfg-names)
+          (selfhost-check-package
+            manifest-path
+            has-manifest
+            stdlib-roots
+            target
+            cfg-names)])]
     [(ResultSelfhostCheckConfig.Err message)
       (begin
         (io.print-error message)

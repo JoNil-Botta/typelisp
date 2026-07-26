@@ -7,6 +7,7 @@
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")
 (import compiler_builtin_ids as cbi)
+(import compiler_target_cfg_core as target_cfg)
 (import sym_i64_env)
 
 (defenum ResultCompilerCheck
@@ -43,8 +44,8 @@
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
+  (target_cfg.compiler-target-cfgs
+    target_cfg.CompilerTargetCfg.Linux
     (compiler-cfg-empty)))
 
 (define (compiler-check-diagnostic-with-fallback-path
@@ -167,7 +168,8 @@
 (define (compiler-check-file-loaded-with-prelude
   [path : String]
   [stdlib-roots : svec.Vec]
-  [prelude : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
+  [prelude : ResultCompilerLoadWithPaths]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (match prelude
     [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
@@ -182,12 +184,12 @@
           path
           prelude-seen
           stdlib-roots
-          (compiler-check-language-cfgs))
+          cfgs)
         stdlib-roots
         (compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-check"
           stdlib-roots
-          (compiler-check-language-cfgs)))]
+          cfgs))]
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -203,11 +205,21 @@
       (compiler-load-core-macro-prelude-with-roots-cfg
         (sym_i64_env.sym-i64-empty)
         (svec.new)
-        (compiler-check-language-cfgs)))))
+        (compiler-check-language-cfgs))
+      (compiler-check-language-cfgs))))
 
 (define (compiler-check-file-with-roots
   [path : String]
   [stdlib-roots : svec.Vec]) : ResultCompilerCheck
+  (compiler-check-file-with-roots-and-cfg
+    path
+    stdlib-roots
+    (compiler-check-language-cfgs)))
+
+(define (compiler-check-file-with-roots-and-cfg
+  [path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -217,13 +229,27 @@
       (compiler-load-core-macro-prelude-with-roots-cfg
         (sym_i64_env.sym-i64-empty)
         stdlib-roots
-        (compiler-check-language-cfgs)))))
+        cfgs)
+      cfgs)))
 
 (define (compiler-check-package-file-with-roots
   [path : String]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
+  (compiler-check-package-file-with-roots-and-cfg
+    path
+    stdlib-roots
+    manifest-dir
+    deps
+    (compiler-check-language-cfgs)))
+
+(define (compiler-check-package-file-with-roots-and-cfg
+  [path : String]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -232,7 +258,7 @@
       stdlib-roots
       manifest-dir
       deps
-      (compiler-check-language-cfgs))
+      cfgs)
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -248,12 +274,12 @@
             stdlib-roots
             manifest-dir
             deps
-            (compiler-check-language-cfgs))
+            cfgs)
           stdlib-roots
           (compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
             stdlib-roots
-            (compiler-check-language-cfgs)))]
+            cfgs))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -265,6 +291,21 @@
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
+  (compiler-check-package-source-with-roots-and-cfg
+    path
+    source
+    stdlib-roots
+    manifest-dir
+    deps
+    (compiler-check-language-cfgs)))
+
+(define (compiler-check-package-source-with-roots-and-cfg
+  [path : String]
+  [source : String]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -273,7 +314,7 @@
       stdlib-roots
       manifest-dir
       deps
-      (compiler-check-language-cfgs))
+      cfgs)
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -288,7 +329,7 @@
           (match (compiler-load-parse-source-diagnostic-escaping
             path
             source
-            (compiler-check-language-cfgs))
+            cfgs)
             [(ResultAstProgramDiagnostic.Ok program)
               (compiler-check-loaded-with-prelude-cache
                 path
@@ -302,13 +343,13 @@
                   AstMaybeModuleName.No
                   manifest-dir
                   deps
-                  (compiler-check-language-cfgs)
+                  cfgs
                   parse-identity)
                 stdlib-roots
                 (compiler-typecheck-prefix-cache-scope
                   "typecheck-prefix-check"
                   stdlib-roots
-                  (compiler-check-language-cfgs)))]
+                  cfgs))]
             [(ResultAstProgramDiagnostic.Err diag)
               (begin
                 (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -324,6 +365,21 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]) : ResultCompilerCheckWithPaths
+  (compiler-check-package-entry-file-with-roots-and-cfg
+    path
+    stdlib-roots
+    manifest-dir
+    deps
+    emit-entry
+    (compiler-check-language-cfgs)))
+
+(define (compiler-check-package-entry-file-with-roots-and-cfg
+  [path : String]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [emit-entry : bool]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheckWithPaths
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -335,21 +391,32 @@
         manifest-dir
         deps
         emit-entry
-        (compiler-check-language-cfgs))
+        cfgs)
       stdlib-roots
       (compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-check"
         stdlib-roots
-        (compiler-check-language-cfgs)))))
+        cfgs))))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
+  (compiler-check-source-with-roots-and-cfg
+    path
+    source
+    (svec.new)
+    (compiler-check-language-cfgs)))
+
+(define (compiler-check-source-with-roots-and-cfg
+  [path : String]
+  [source : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (svec.new)
-      (compiler-check-language-cfgs))
+      stdlib-roots
+      cfgs)
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
@@ -363,13 +430,13 @@
             path
             source
             prelude-seen
-            (svec.new)
-            (compiler-check-language-cfgs))
-          (svec.new)
+            stdlib-roots
+            cfgs)
+          stdlib-roots
           (compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
-            (svec.new)
-            (compiler-check-language-cfgs)))]
+            stdlib-roots
+            cfgs))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -379,37 +446,11 @@
   [path : String]
   [source : String]
   [stdlib-roots : svec.Vec]) : ResultCompilerCheck
-  (begin
-    (compiler-check-reset-pools!)
-    (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-core-macro-prelude-with-roots-cfg
-      (sym_i64_env.sym-i64-empty)
-      stdlib-roots
-      (compiler-check-language-cfgs))
-      [(ResultCompilerLoadWithPaths.Ok
-          prelude-decls
-          prelude-paths
-          prelude-modules
-          prelude-seen)
-        (compiler-check-loaded-with-prelude-cache
-          path
-          prelude-decls
-          (ast-decl-path-list-with-modules prelude-paths prelude-modules)
-          (compiler-load-source-with-paths-and-roots-cfg
-            path
-            source
-            prelude-seen
-            stdlib-roots
-            (compiler-check-language-cfgs))
-          stdlib-roots
-          (compiler-typecheck-prefix-cache-scope
-            "typecheck-prefix-check"
-            stdlib-roots
-            (compiler-check-language-cfgs)))]
-      [(ResultCompilerLoadWithPaths.Err diag)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err diag))])))
+  (compiler-check-source-with-roots-and-cfg
+    path
+    source
+    stdlib-roots
+    (compiler-check-language-cfgs)))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-source path source)
@@ -788,6 +829,36 @@
               [(ResultCompilerCheck.Err _) false]))]
         [(ResultCompilerCheck.Err _) false]))))
 
+(define (compiler-check-target-cfg-ok?) : bool
+  (let
+    [source : String
+      "(cfg linux (define platform-value : i64 40))
+(cfg windows (define platform-value : i64 40))
+(cfg tooling-feature (define cfg-value : i64 2))
+(define (main) : i64 (+ platform-value cfg-value))"]
+    [names : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut names) "tooling-feature")
+      (and
+        (match (compiler-check-source-with-roots-and-cfg
+          "tests/check_cfg_linux.tl"
+          source
+          (svec.new)
+          (target_cfg.compiler-target-cfgs-with-names
+            target_cfg.CompilerTargetCfg.Linux
+            names))
+          [(ResultCompilerCheck.Ok _) true]
+          [(ResultCompilerCheck.Err _) false])
+        (match (compiler-check-source-with-roots-and-cfg
+          "tests/check_cfg_windows.tl"
+          source
+          (svec.new)
+          (target_cfg.compiler-target-cfgs-with-names
+            target_cfg.CompilerTargetCfg.Windows
+            names))
+          [(ResultCompilerCheck.Ok _) true]
+          [(ResultCompilerCheck.Err _) false])))))
+
 (define (compiler-check-self-test) : i64
   (begin
     (unless
@@ -833,4 +904,7 @@
     (unless
       (compiler-check-pool-reset-ok?)
       (return (io.panic "compiler-check: pool reset smoke mismatch")))
+    (unless
+      (compiler-check-target-cfg-ok?)
+      (return (io.panic "compiler-check: target/cfg smoke mismatch")))
     42))

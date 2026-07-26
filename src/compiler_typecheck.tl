@@ -10715,6 +10715,34 @@
         [(ResultCompilerTypecheck.Ok _) false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-typecheck-dup-type-path-ok? [source : String] [name : String]) : bool
+  (match (parse-ast-source source)
+    [(ResultAstProgram.Ok program)
+      (match (typecheck-compiler-program-with-paths
+        program
+        (compiler-typecheck-dup-extern-paths))
+        [(ResultCompilerTypecheck.Err diag)
+          (let
+            [value : CompilerDiagnostic (box-get diag)]
+            (and
+              (string.contains
+                (compiler-diagnostic-message value)
+                (string.append "symbols: duplicate type declaration " name))
+              (string.eq (compiler-diagnostic-path value) "src/assets.tl")
+              (= (compiler-diagnostic-line value) 2)
+              (= (compiler-diagnostic-col value) 1)))]
+        [(ResultCompilerTypecheck.Ok _) false])]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-typecheck-dup-type-paths-ok?) : bool
+  (and
+    (compiler-typecheck-dup-type-path-ok?
+      (compiler-typecheck-dup-struct-type-source)
+      "Point")
+    (compiler-typecheck-dup-type-path-ok?
+      (compiler-typecheck-dup-enum-type-source)
+      "E")))
+
 (define (compiler-typecheck-unsafe-decl-origin-source) : String
   "(module main)
 (unsafe (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c)))")
@@ -10862,6 +10890,7 @@
       "symbols: duplicate value declaration f")
     (compiler-typecheck-dup-extern-paths-ok?)
     (compiler-typecheck-dup-function-paths-ok?)
+    (compiler-typecheck-dup-type-paths-ok?)
     (compiler-typecheck-semantic-diagnostic-spans-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-variant-function-collision-source)

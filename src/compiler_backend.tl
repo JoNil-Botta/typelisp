@@ -2207,14 +2207,20 @@
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
-  [elem-ty : AstType]) : ResultCompilerBackendSimdIndexedAddress
+  [elem-ty : AstType]
+  [planned-base : String]
+  [planned-index : String]) : ResultCompilerBackendSimdIndexedAddress
   (let
     [base-home : String (compiler-backend-simd-base-home assignments base)]
     [addr-exclude : (Array String)
       (compiler-backend-scavenge-exclude-ops2 assignments base index)]
     [base-reg : String
       (if (string.eq base-home "")
-        (compiler-backend-scavenge-reg-here addr-exclude 7 "%r8")
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-base
+          addr-exclude
+          7
+          "%r8")
         base-home)]
     (match (compiler-backend-value-as-i64 index)
       [(option_i64.Some n)
@@ -2239,7 +2245,11 @@
             (compiler-backend-scavenge-exclude-append addr-exclude 7 base-reg)]
           [index-reg : String
             (if (string.eq index-home "")
-              (compiler-backend-scavenge-reg-here index-exclude 8 "%r9")
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-index
+                index-exclude
+                8
+                "%r9")
               index-home)]
           (match (compiler-backend-emit-simd-base-data-pointer
             assignments
@@ -2278,6 +2288,8 @@
   [index : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-dst-reg
@@ -2291,7 +2303,9 @@
           assignments
           base
           index
-          elem-ty)
+          elem-ty
+          planned-address-base
+          planned-address-index)
           [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
               [addr-asm : String (struct-get addr-plan asm)]
@@ -2842,6 +2856,8 @@
   [index : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (let
@@ -2874,7 +2890,9 @@
                       assignments
                       base
                       index
-                      elem-ty)
+                      elem-ty
+                      planned-address-base
+                      planned-address-index)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
                           [addr-asm : String (struct-get addr-plan asm)]
@@ -2922,6 +2940,8 @@
   [value : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-register-use
@@ -2938,7 +2958,9 @@
               assignments
               base
               index
-              elem-ty)
+              elem-ty
+              planned-address-base
+              planned-address-index)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
@@ -3658,6 +3680,8 @@
   [index : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-dst-reg
@@ -3671,7 +3695,9 @@
           assignments
           base
           index
-          elem-ty)
+          elem-ty
+          planned-address-base
+          planned-address-index)
           [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
               [addr-asm : String (struct-get addr-plan asm)]
@@ -3870,6 +3896,8 @@
   [index : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (let
@@ -3902,7 +3930,9 @@
                       assignments
                       base
                       index
-                      elem-ty)
+                      elem-ty
+                      planned-address-base
+                      planned-address-index)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
                           [addr-asm : String (struct-get addr-plan asm)]
@@ -4400,6 +4430,8 @@
   [value : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-register-use
@@ -4416,7 +4448,9 @@
               assignments
               base
               index
-              elem-ty)
+              elem-ty
+              planned-address-base
+              planned-address-index)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
@@ -4452,6 +4486,8 @@
   [index : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-load
@@ -4461,6 +4497,8 @@
       index
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)
     (compiler-backend-emit-avx2-vector-load
       assignments
@@ -4469,6 +4507,8 @@
       index
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)))
 
 (define (compiler-backend-avx2-gather-mnemonic [elem-ty : AstType]) : String
@@ -4594,6 +4634,8 @@
   [lane-offset : bool]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [mnemonic : String (compiler-backend-avx2-gather-mnemonic elem-ty)]
@@ -4615,7 +4657,9 @@
             assignments
             index-base
             (compiler-backend-gather-address-index index lane-offset)
-            (AstType.I64))
+            (AstType.I64)
+            planned-address-base
+            planned-address-index)
             [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
               (let
                 [index-asm : String (struct-get index-plan asm)]
@@ -4776,6 +4820,8 @@
   [lane-offset : bool]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [mnemonic : String (compiler-backend-avx512-gather-mnemonic elem-ty)]
@@ -4797,7 +4843,9 @@
             assignments
             index-base
             (compiler-backend-gather-address-index index lane-offset)
-            (AstType.I64))
+            (AstType.I64)
+            planned-address-base
+            planned-address-index)
             [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
               (let
                 [index-asm : String (struct-get index-plan asm)]
@@ -4924,6 +4972,8 @@
   [lane-offset : bool]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-gather-load
@@ -4935,6 +4985,8 @@
       lane-offset
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)
     (compiler-backend-emit-avx512-gather-load
       assignments
@@ -4945,6 +4997,8 @@
       lane-offset
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)))
 
 (define (compiler-backend-shuffle-label
@@ -5442,6 +5496,8 @@
   [index : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-binop-memory-source
@@ -5453,6 +5509,8 @@
       index
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)
     (compiler-backend-emit-avx2-vector-binop-memory-source
       assignments
@@ -5463,6 +5521,8 @@
       index
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)))
 
 (define (compiler-backend-vector-load-binop-fold-value
@@ -6495,6 +6555,8 @@
   [value : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-store
@@ -6504,6 +6566,8 @@
       value
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)
     (compiler-backend-emit-avx2-vector-store
       assignments
@@ -6512,6 +6576,8 @@
       value
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)))
 
 (define (compiler-backend-emit-avx512-tail-mask-dynamic
@@ -6762,6 +6828,8 @@
   [mask : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (match elem-ty
     [(AstType.Bool) true]
@@ -6773,6 +6841,8 @@
       index
       mask
       lanes
+      planned-address-base
+      planned-address-index
       instr-diag)
     (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
       (match (compiler-backend-avx512-mask-register-use
@@ -6795,7 +6865,9 @@
                     assignments
                     base
                     index
-                    elem-ty)
+                    elem-ty
+                    planned-address-base
+                    planned-address-index)
                     [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                       (let
                         [addr-asm : String (struct-get addr-plan asm)]
@@ -6841,6 +6913,8 @@
   [mask : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (match elem-ty
     [(AstType.Bool) true]
@@ -6852,6 +6926,8 @@
       value
       mask
       lanes
+      planned-address-base
+      planned-address-index
       instr-diag)
     (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
       (match (compiler-backend-vector-register-use
@@ -6877,7 +6953,9 @@
                         assignments
                         base
                         index
-                        elem-ty)
+                        elem-ty
+                        planned-address-base
+                        planned-address-index)
                         [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                           (let
                             [addr-asm : String (struct-get addr-plan asm)]
@@ -6917,6 +6995,8 @@
   [index : CompilerIrValue]
   [mask : CompilerIrValue]
   [lanes : i64]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
     (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.Bool) lanes)
@@ -6939,7 +7019,9 @@
                   assignments
                   base
                   index
-                  (AstType.Bool))
+                  (AstType.Bool)
+                  planned-address-base
+                  planned-address-index)
                   [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
                       [addr-asm : String (struct-get addr-plan asm)]
@@ -7021,6 +7103,8 @@
   [value : CompilerIrValue]
   [mask : CompilerIrValue]
   [lanes : i64]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
     (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.Bool) lanes)
@@ -7046,7 +7130,9 @@
                       assignments
                       base
                       index
-                      (AstType.Bool))
+                      (AstType.Bool)
+                      planned-address-base
+                      planned-address-index)
                       [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                         (let
                           [addr-asm : String (struct-get addr-plan asm)]
@@ -8405,6 +8491,8 @@
   [mask : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (if (match elem-ty
     [(AstType.Bool) true]
@@ -8432,7 +8520,9 @@
                   assignments
                   base
                   index
-                  elem-ty)
+                  elem-ty
+                  planned-address-base
+                  planned-address-index)
                   [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
                       [addr-asm : String (struct-get addr-plan asm)]
@@ -8488,6 +8578,8 @@
   [mask : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (if (match elem-ty
     [(AstType.Bool) true]
@@ -8508,7 +8600,9 @@
               assignments
               base
               index
-              elem-ty)
+              elem-ty
+              planned-address-base
+              planned-address-index)
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
@@ -8613,6 +8707,8 @@
   [mask : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-predicated-load
@@ -8625,6 +8721,8 @@
       mask
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)
     (compiler-backend-emit-avx512-predicated-load
       assignments
@@ -8634,6 +8732,8 @@
       mask
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)))
 
 (define (compiler-backend-emit-predicated-store
@@ -8646,6 +8746,8 @@
   [mask : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-address-base : String]
+  [planned-address-index : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-current-mode-avx2?)
     (compiler-backend-emit-avx2-predicated-store
@@ -8658,6 +8760,8 @@
       mask
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)
     (compiler-backend-emit-avx512-predicated-store
       assignments
@@ -8667,6 +8771,8 @@
       mask
       lanes
       elem-ty
+      planned-address-base
+      planned-address-index
       instr-diag)))
 
 (define (compiler-backend-avx2-tail-mask-fill-lanes
@@ -34857,6 +34963,8 @@
           index
           lanes
           elem-ty
+          planned-scratch0
+          planned-scratch1
           instr-diag)]
       [(CompilerIrInstr.VectorStore payload-box)
         (match (box-get payload-box)
@@ -34873,6 +34981,8 @@
               value
               lanes
               elem-ty
+              planned-scratch0
+              planned-scratch1
               instr-diag)])]
       [(CompilerIrInstr.PredicatedStore payload-box)
         (match (box-get payload-box)
@@ -34893,6 +35003,8 @@
               mask
               lanes
               elem-ty
+              planned-scratch0
+              planned-scratch1
               instr-diag)])]
       [(CompilerIrInstr.PredicatedLoad payload-box)
         (match (box-get payload-box)
@@ -34913,6 +35025,8 @@
               mask
               lanes
               elem-ty
+              planned-scratch0
+              planned-scratch1
               instr-diag)])]
       [(CompilerIrInstr.GatherLoad payload-box)
         (match (box-get payload-box)
@@ -34933,6 +35047,8 @@
               lane-offset
               lanes
               elem-ty
+              planned-scratch0
+              planned-scratch1
               instr-diag)])]
       [(CompilerIrInstr.VectorShuffle payload-box)
         (match (box-get payload-box)
@@ -40321,6 +40437,12 @@
                         index
                         bin-lanes
                         bin-elem-ty
+                        (compiler-backend-scratch-plan-register-here
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          0)
+                        (compiler-backend-scratch-plan-register-here
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          1)
                         (compiler-backend-instr-diagnostic
                           ctx.spans
                           ctx.source-function

@@ -230,6 +230,10 @@
       compiler-driver-active-state-pool-arena
       0
       (compiler-driver-state-owned-pool-arena state))
+    (array-set!
+      compiler-driver-active-state-surface-arena
+      0
+      (compiler-driver-state-surface-arena state))
     (ast-node-pool-context-install! (compiler-driver-state-pool-context state))))
 
 ;; The most recently installed driver state's own pool arena, or 0 when no
@@ -238,6 +242,8 @@
 ;; detached compat pools (entry arena) once the source arena is detached, so
 ;; `compiler-driver-node-pool-base-arena` cannot name the checked-program arena.
 (define compiler-driver-active-state-pool-arena : (Array i64)
+  (array.make-array i64 1))
+(define compiler-driver-active-state-surface-arena : (Array i64)
   (array.make-array i64 1))
 
 ;; Legacy/test adapter for the remaining load/typecheck/lower call graph.
@@ -280,6 +286,11 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "state-surface-arena"
+        (array-ref compiler-driver-active-state-surface-arena 0))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "expr-pool-storage"
         (ast-node-pool-expr-storage-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
@@ -292,6 +303,31 @@
         phase
         "intern-persistent"
         (ci.intern-persistent-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "ir-labels"
+        (compiler-ir-label-arena-handle-value))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "load-provenance"
+        (compiler-load-provenance-arena-handle-value))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "lexer-token-buffer"
+        (compiler-load-lex-token-buffer-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "reader-node-pool"
+        (compiler-load-reader-node-pool-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "typecheck-aggregate-layout-cache"
+        (tc-agg-layout-cache-storage-arena-handle-value))
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
@@ -334,6 +370,17 @@
         "typecheck-prefix-cache"
         (tc-prefix-snapshot-cache-arena-value-for-state
           (compiler-driver-state-typecheck-prefix-cache state)))
+      unit)))
+
+(define (compiler-driver-allocation-profile-backend-output-snapshot!) : unit
+  (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
+    unit
+    (begin
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "backend"
+        "backend-output-home"
+        (compiler-backend-assembly-stream-home-arena-handle-value))
       unit)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
@@ -1599,6 +1646,7 @@
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
                       (compiler-driver-allocation-profile-snapshot! "backend")
+                      (compiler-driver-allocation-profile-backend-output-snapshot!)
                       (ResultCompilerDriverBuffer.Ok asm))]
                   [(ResultCompilerBackendBuffer.Err diag)
                     (begin
@@ -1606,6 +1654,7 @@
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
                       (compiler-driver-allocation-profile-snapshot! "backend")
+                      (compiler-driver-allocation-profile-backend-output-snapshot!)
                       (ResultCompilerDriverBuffer.Err
                         (box
                           (compiler-diagnostic-with-path
@@ -1738,6 +1787,47 @@
                             (box-get diag)
                             input-path))))]))))]))))
 
+(define (compiler-driver-arena-owner-root [handle : i64]) : i64
+  (if (= handle 0)
+    0
+    (let
+      [root : i64
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+      (if (= root 0)
+        handle
+        root))))
+
+(define (compiler-driver-arena-owner-current-head [handle : i64]) : i64
+  (let
+    [root : i64 (compiler-driver-arena-owner-root handle)]
+    (if (= root 0)
+      0
+      (let
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (if (= head 0)
+          root
+          head)))))
+
+(define (compiler-driver-restore-arena-owner-current! [return-arena : i64]) : unit
+  (let
+    [active : i64 (arena.tl_arena_current)]
+    [active-root : i64 (compiler-driver-arena-owner-root active)]
+    [return-root : i64 (compiler-driver-arena-owner-root return-arena)]
+    ;; The frontend return handle can name the caller arena's old root while
+    ;; optimizer/backend output has advanced that same owner by several
+    ;; segments. Preserve an already-active head, or resume the owner's
+    ;; root-tracked current head when another arena is active. Re-entering the
+    ;; stale root would create a sibling chain that batch destruction cannot
+    ;; reach.
+    (if (and (not (= active-root 0)) (= active-root return-root))
+      unit
+      (unsafe
+        (arena.tl_arena_set
+          (compiler-driver-arena-owner-current-head return-arena))))))
+
 (define (compiler-driver-restore-frontend-return-arena!) : unit
   (if (= compiler-driver-pending-frontend-return-arena 0)
     unit
@@ -1745,8 +1835,7 @@
       [return-arena : i64 compiler-driver-pending-frontend-return-arena]
       (begin
         (set! compiler-driver-pending-frontend-return-arena 0)
-        (unsafe
-          (arena.tl_arena_set return-arena))))))
+        (compiler-driver-restore-arena-owner-current! return-arena)))))
 
 (define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
   (and

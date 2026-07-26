@@ -450,6 +450,9 @@
 (define compiler-backend-assembly-stream-batch-function-limit : i64
   64)
 
+(define (compiler-backend-assembly-stream-home-arena-handle-value) : i64
+  (arena.raw-handle compiler-backend-assembly-stream-home-arena))
+
 (defenum CompilerBackendUnsignedDivMagic
   (No)
   (RoundUp u64 i64)
@@ -57359,6 +57362,36 @@
 ;; and every synthesized line live there, and only the single rendered group
 ;; string escapes into `home`. One render per group -- the post-peephole render,
 ;; the sweep's buffer render and the substring copy are all gone.
+(define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
+  (let
+    [handle : i64 (arena.raw-handle owner)]
+    (if (= handle 0)
+      owner
+      (let
+        [root-candidate : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+        [root : i64
+          (if (= root-candidate 0)
+            handle
+            root-candidate)]
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (arena.Arena
+          (if (= head 0)
+            root
+            head))))))
+
+(define (compiler-backend-assembly-stream-carry-home-current!
+  [home-arena : arena.Arena]) : unit
+  ;; Rendering/appending the retained group can grow `home-arena`. Carry its
+  ;; root-tracked current head into the next flush instead of re-entering the
+  ;; old segment and creating a detached sibling overflow chain.
+  (set!
+    compiler-backend-assembly-stream-home-arena
+    (compiler-backend-arena-owner-current-head home-arena)))
+
 (define (compiler-backend-peephole-sweep-chunk-state-flush
   [state : CompilerBackendPeepholeSweepChunkState]
   [scratch-mark : arena.ArenaMark]
@@ -57387,6 +57420,8 @@
               (text_buf.append (struct-get state out) kept)
               (text_buf.empty)
               cursor)))]
+      [_carry-home : unit
+        (compiler-backend-assembly-stream-carry-home-current! home-arena)]
       (begin
         (unsafe
           (arena.rewind scratch-mark))
@@ -57775,13 +57810,15 @@
                     (let
                       [final : text_buf.TextBuf
                         (compiler-backend-assembly-stream-finish!)]
+                      [final-home-arena : arena.Arena
+                        compiler-backend-assembly-stream-home-arena]
                       (begin
                         (unsafe
                           (arena.destroy emit-arena))
                         (unsafe
                           (arena.destroy raw-arena))
                         (unsafe
-                          (arena.set! home-arena))
+                          (arena.set! final-home-arena))
                         (compiler-backend-deadstore-sweep-report-and-reset!)
                         (unsafe
                           (arena.destroy peephole-arena))
@@ -57793,7 +57830,7 @@
                       ;; the legacy error lifetime contract.
                       (compiler-backend-assembly-stream-abort!)
                       (unsafe
-                        (arena.set! home-arena))
+                        (arena.set! compiler-backend-assembly-stream-home-arena))
                       (unsafe
                         (arena.destroy peephole-arena))
                       (compiler-backend-clear-scratch-escaped-emit-state!)

@@ -97,6 +97,12 @@ validate_profile() {
         required["start/compiler-entry"] = 0
         required["load/active"] = 0
         required["load/source-pools"] = 0
+        required["load/state-surface-arena"] = 0
+        required["load/ir-labels"] = 0
+        required["load/load-provenance"] = 0
+        required["load/lexer-token-buffer"] = 0
+        required["load/reader-node-pool"] = 0
+        required["load/typecheck-aggregate-layout-cache"] = 0
         required["typecheck.macro.peak/macro-enclosing"] = 0
         required["typecheck.macro.peak/macro-scratch"] = 0
         required["typecheck.macro.peak/macro-symbols-reclaiming"] = 0
@@ -106,6 +112,7 @@ validate_profile() {
         required["lower/lower-scratch"] = 0
         required["optimize/optimizer-scratch"] = 0
         required["backend/active"] = 0
+        required["backend/backend-output-home"] = 0
         required["write/active"] = 0
         required["complete/active"] = 0
     }
@@ -137,6 +144,26 @@ validate_profile() {
         }
         key = $2 "/" $3
         if (key in required) required[key]++
+        if (key == "batch-pre-release/entry-scratch-saved") {
+            pre_release_rows++
+            pre_release_root[pre_release_rows] = $4
+            pre_release_bump[pre_release_rows] = $5
+            pre_release_committed[pre_release_rows] = $6
+            pre_release_reserved[pre_release_rows] = $7
+            pre_release_segments[pre_release_rows] = $8
+        }
+        if (key == "batch-post-release/entry-scratch-saved") {
+            post_release_rows++
+            if ($4 != pre_release_root[post_release_rows] ||
+                $5 != pre_release_bump[post_release_rows] ||
+                $6 != pre_release_committed[post_release_rows] ||
+                $7 != pre_release_reserved[post_release_rows] ||
+                $8 != pre_release_segments[post_release_rows]) {
+                print "batch cleanup changed the saved entry scratch owner" > "/dev/stderr"
+                exit 1
+            }
+        }
+        if (key == "batch-steady/active") batch_steady_rows++
         rows++
     }
     END {
@@ -153,6 +180,17 @@ validate_profile() {
             required["complete/active"] != 1) {
             print "unexpected allocation-profile entry phase counts" > "/dev/stderr"
             exit 1
+        }
+        if (expected_entries > 1) {
+            if (pre_release_rows != expected_entries ||
+                post_release_rows != expected_entries) {
+                print "unexpected allocation-profile entry scratch count" > "/dev/stderr"
+                exit 1
+            }
+            if (batch_steady_rows != expected_entries) {
+                print "unexpected allocation-profile batch steady count" > "/dev/stderr"
+                exit 1
+            }
         }
     }
 ' "$profile_file"

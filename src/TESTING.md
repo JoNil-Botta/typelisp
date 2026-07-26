@@ -517,6 +517,14 @@ the independently owned arenas that are simultaneously live. Repeated
 snapshots capture transient symbol-generation overlap without treating retired
 roots as concurrent indefinitely.
 
+The ordinary phase snapshots also name the state surface, IR-label,
+load-provenance, lexer-token-buffer, reader-node-pool, and aggregate-layout
+owners. The backend snapshot adds `backend-output-home`, the retained streaming
+assembly owner. Batch mode names the exact saved entry scratch head at
+`batch-pre-release` and `batch-post-release`, then emits `batch-steady` only
+after that owner is destroyed. Together these rows distinguish intended session
+roots from lower-phase storage that accidentally survives an entry.
+
 On Windows, correlate those rows with the compiler process's working set and
 private bytes using:
 

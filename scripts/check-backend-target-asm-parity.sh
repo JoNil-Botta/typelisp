@@ -200,20 +200,6 @@ normalize_asm() {
             gsub(/%e(di|si|cx)/, "%Gd", s)
             return s
         }
-        function normalize_loop_divmod_parity_stack(s, at, token, offset) {
-            if (!loop_divmod_parity_normalize_enabled() ||
-                    target != "windows-x86_64") return s
-            # Win64 reserves one additional emergency GP-save slot now that
-            # %rbp can be the eighth nonvolatile value home. This fixture fires
-            # the emergency layout, shifting every canonical body slot by
-            # exactly eight bytes without changing the dataflow being compared.
-            if (!match(s, /[0-9]+\(%rsp\)/)) return s
-            at = RSTART
-            token = substr(s, at, RLENGTH)
-            sub(/\(%rsp\)$/, "", token)
-            offset = (token + 0) - 8
-            return substr(s, 1, at - 1) offset "(%rsp)" substr(s, at + RLENGTH)
-        }
         function skip_loop_divmod_parity_epilogue(s) {
             if (!loop_divmod_parity_normalize_enabled()) return 0
             if (s ~ /^leaq [0-9]+\(%rsp\), %rsp$/) return 1
@@ -336,7 +322,6 @@ normalize_asm() {
             line = normalize_arg_regs(line)
             line = consume_pending_stack_arg(line)
             line = normalize_loop_divmod_parity_regs(line)
-            line = normalize_loop_divmod_parity_stack(line)
             if (skip_loop_divmod_parity_epilogue(line)) {
                 next
             }
@@ -465,19 +450,10 @@ expected_target_asm_mismatch() {
     # (opt2 cross-fixpoint + 26/26
     # TL-vs-C parity green). The gate flags a stale entry if the output matches
     # again, so remove an entry once a future change re-converges the two targets.
-    #
-    # Cycle 28 const-hoist widening (#5490): the loop-hoisted divmod magic plan
-    # is a Linux-only backend path (compiler-backend-target-linux? guard at the
-    # const-hoist-build! call site), so once the widened admission fires on
-    # unroll-guarded loops the Linux opt2 body reads magic from hoisted frame
-    # homes while the Windows body re-materializes per iteration. Both are
-    # correct; the divergence is the intended Linux optimization.
-    #
     case "${_etm_opt}:${_etm_name}" in
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;
-        2:target_asm_loop_divmod_parity) return 0 ;;
     esac
     return 1
 }

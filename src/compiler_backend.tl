@@ -14506,7 +14506,7 @@
 ;;   * sites: constant divmods in the region whose expansion takes the signed or
 ;;     unsigned MAGIC path, plus supported size-8 BinOps with an I64 RHS outside
 ;;     signed imm32; deduplicated by site kind + VALUE;
-;;   * register: first of {r8, r9, rsi, rdi} (the M-G2b shadow set: rax/rdx/rcx
+;;   * register: first target-safe member of the M-G2b shadow set (rax/rdx/rcx
 ;;     are div/shift-fixed, r10/r11 stay the scavenger's) whose segment-precise
 ;;     occupancy is FREE over the whole hull [P-start .. region-end] -- checked
 ;;     against the same fresh final-IR intervals the scavenge occupancy is built
@@ -14521,7 +14521,9 @@
 ;;     the region avoids R; the site's own dividend/mask/magic scratch picks
 ;;     additionally exclude R so even an emergency pick cannot alias it.
 ;;
-;; Linux scalar-opt2 text path only (rsi/rdi are CSRs on Win64).
+;; Scalar-opt2 text path. Win64 excludes rsi/rdi because they are callee-saved;
+;; r8/r9 remain caller-saved, and rbx is callee-saved under both ABIs (with a
+;; frame home for divmod).
 ;; ===========================================================================
 (defenum CompilerBackendConstHoistHome
   (CompilerBackendNoConstHoistHome)
@@ -14605,21 +14607,29 @@
     (compiler-backend-shrinkwrap-admission-state-clean?)))
 
 ;; Registers eligible to carry a hoisted magic across a leaf loop region.
+;; Win64 excludes %rsi/%rdi because they are callee-saved there. %r8/%r9 are
+;; volatile under both ABIs, while %rbx is callee-saved under both and uses the
+;; frame-home path for divmod.
 ;;
 ;; %rbx is the revertible M-F extension for register-saturated leaf loops. The
 ;; ordinary caller-saved candidates are all loop-carried in vm-run, while %rbx
 ;; is free. For divmod magic, selecting %rbx becomes a frame-home hoist initialized
 ;; through %rbx; the register is then free for the one dividend copy at each site.
-(define (compiler-backend-const-hoist-candidate-regs) : CompilerRegStringList
+(define (compiler-backend-const-hoist-candidate-regs
+  [target : CompilerBackendTarget]) : CompilerRegStringList
   (compiler-reg-string-cons
     "%r8"
     (compiler-reg-string-cons
       "%r9"
-      (compiler-reg-string-cons
-        "%rsi"
-        (compiler-reg-string-cons
-          "%rdi"
-          (compiler-reg-string-cons "%rbx" CompilerRegStringList.Nil))))))
+      (match target
+        [(CompilerBackendTarget.Windows)
+          (compiler-reg-string-cons "%rbx" CompilerRegStringList.Nil)]
+        [(CompilerBackendTarget.Linux)
+          (compiler-reg-string-cons
+            "%rsi"
+            (compiler-reg-string-cons
+              "%rdi"
+              (compiler-reg-string-cons "%rbx" CompilerRegStringList.Nil)))]))))
 
 (define (compiler-backend-const-hoist-uses-reg-from? [reg : String] [i : i64]) : bool
   (if (>= i compiler-backend-const-hoist-site-count)
@@ -15151,6 +15161,7 @@
 ;; Installs the site/injection globals and returns the synthetic occupancy
 ;; entries for the scavenge context.
 (define (compiler-backend-const-hoist-build!
+  [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
   [intervals : CompilerRegIntervalList]
@@ -15375,7 +15386,8 @@
                                           (< inject-count synth-cap))
                                           (match (compiler-reg-loop-split-first-register
                                             (compiler-backend-const-hoist-free-candidates
-                                              (compiler-backend-const-hoist-candidate-regs)
+                                              (compiler-backend-const-hoist-candidate-regs
+                                                target)
                                               synth-regs
                                               synth-lo
                                               synth-hi
@@ -47819,15 +47831,34 @@
             (not (string.eq shrinkwrap-planned-guard ""))
             (not (string.eq shrinkwrap-incoming-guard ""))
             (not (string.eq (compiler-ir-symbol-text name) "main")))]
+        ;; Const-hoist register admission must see every cfg-gated scratch-vreg
+        ;; home over its exact point range. The published scratch reg-plan keeps
+        ;; only unique callee-saved homes for prologue accounting, so append the
+        ;; complete scratch plan as fresh synthetic vars for this occupancy
+        ;; query. Otherwise a caller-saved scratch such as %r9 can be selected
+        ;; for a loop magic and then overwrite that magic at a divmod site.
+        [const-hoist-occupancy-vars : i64
+          (compiler-backend-scratch-plan-extend-vars scratch-plan scratch-vars)]
+        [const-hoist-occupancy-assignments : CompilerRegAssignmentList
+          (compiler-backend-scratch-plan-extend-assignments
+            scratch-plan
+            scratch-vars
+            assignments)]
+        [const-hoist-occupancy-intervals : CompilerRegIntervalList
+          (compiler-backend-scratch-plan-extend-intervals
+            scratch-plan
+            scratch-vars
+            scavenge-intervals)]
         ;; M-F: loop-hoisted divmod magic constants. Built over the FINAL
         ;; emitted IR + the same fresh intervals the scavenge occupancy uses,
         ;; so a hoist register is provably free over its whole loop region and
         ;; the synthetic entries below keep every scavenge away from it.
-        ;; Linux scalar-opt2 text path only; empty plan = byte-identical.
+        ;; Scalar-opt2 text path. The candidate list filters Win64 callee-saved
+        ;; %rsi/%rdi while retaining ABI-safe %r8/%r9 and %rbx (frame-homed for
+        ;; divmod). Empty plan = byte-identical.
         [const-hoist-synth : CompilerBackendConstHoistSynth
           (if (and
             call-save-enabled
-            (compiler-backend-target-linux? target)
             (not identity-tail-forwarder?)
             ;; Guard blocks contain comparisons only. Divmod hoists are placed
             ;; at their loop/body region, which is necessarily beyond the
@@ -47835,10 +47866,11 @@
             ;; loop-constant optimization as the unwrapped pipeline.
             true)
             (compiler-backend-const-hoist-build!
+              target
               emit-blocks-list
-              assignments
-              scavenge-intervals
-              scratch-vars
+              const-hoist-occupancy-assignments
+              const-hoist-occupancy-intervals
+              const-hoist-occupancy-vars
               (compiler-backend-frame-slots-emergency-max
                 slot-vars
                 has-group-vars))

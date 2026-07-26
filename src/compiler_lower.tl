@@ -18726,6 +18726,14 @@
     (not (sym_i64_env.sym-i64-contains-id env name-id))
     (not (lower-top-level-value-defined-id? ctx name-id))))
 
+(define (lower-top-level-builtin-available-id?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (if (cbi.compiler-builtin-private-intrinsic-id? name-id)
+    (tc-private-intrinsic-unshadowed-id? ctx type-env name-id)
+    (not (lower-top-level-value-defined-id? ctx name-id))))
+
 (define (lower-string-runtime-builtin? [name : String]) : bool
   (let
     [_ : String name]
@@ -27547,9 +27555,9 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (lower-private-string-eq-helper-call-id? type-env source-id)
+  (if (lower-private-string-eq-helper-call-id? ctx type-env source-id)
     (lower-string-eq-call ctx state env type-env args result-ty origin)
-    (if (tc-string-to-int-helper-call-id? type-env source-id)
+    (if (lower-private-string-to-int-helper-call-id? ctx type-env source-id)
       (lower-string-to-int-call ctx state env type-env args result-ty origin)
       (lower-direct-call-id
         ctx
@@ -27563,11 +27571,20 @@
         origin))))
 
 (define (lower-private-string-eq-helper-call-id?
+  [ctx : TcContext]
   [type-env : TcTypeEnv]
   [name-id : i64]) : bool
   (and
     (cbi.compiler-builtin-typecheck-string-eq-id? name-id)
-    (tc-default-builtin-unshadowed-id? type-env name-id)))
+    (lower-top-level-builtin-available-id? ctx type-env name-id)))
+
+(define (lower-private-string-to-int-helper-call-id?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (and
+    (cbi.compiler-builtin-typecheck-string-to-int-id? name-id)
+    (lower-top-level-builtin-available-id? ctx type-env name-id)))
 
 ;; Lower an unshadowed `(__tl_string_ref s i)` intrinsic call to the
 ;; bounds-checked String byte index, like the parser-owned `AstExpr.StringRef`
@@ -28683,7 +28700,10 @@
                           name)]
                       [name-id : i64 source-key-id]
                       [builtin-available : bool
-                        (not (lower-top-level-value-defined-id? ctx name-id))]
+                        (lower-top-level-builtin-available-id?
+                          ctx
+                          type-env
+                          name-id)]
                       [atomic-symbol : String
                         (lower-atomic-extern-symbol-for-name-id
                           ctx
@@ -28753,6 +28773,7 @@
                             result-ty
                             origin)]
                         [(lower-private-string-eq-helper-call-id?
+                            ctx
                             type-env
                             name-id)
                           (lower-string-eq-call
@@ -28763,7 +28784,10 @@
                             args
                             result-ty
                             origin)]
-                        [(tc-string-to-int-helper-call-id? type-env name-id)
+                        [(lower-private-string-to-int-helper-call-id?
+                            ctx
+                            type-env
+                            name-id)
                           (lower-string-to-int-call
                             ctx
                             state
@@ -52848,6 +52872,14 @@
           [(and
               unshadowed
               (lower-string-concat-call-source? ctx env type-env name))
+            (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
+          [(and
+              unshadowed
+              (cbi.compiler-builtin-private-intrinsic-id? name)
+              (lower-top-level-builtin-available-id? ctx type-env name))
+            ;; Private intrinsic calls in imported bodies must pass through the
+            ;; ordinary expression lowerer before direct-tail-call selection.
+            ;; Otherwise a compatible caller-owned shadow can capture the call.
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
           [(and
               unshadowed

@@ -341,8 +341,10 @@ verify_map_fused_reduce_shape() {
     sed -n '/^_tl_map_fused_reduce_i64_reduce_map_fused:/,/^$/p' "$_asm" > "$_func"
     sed -n '/spmd_reduce_value_body/,/spmd_reduce_value_tail_init/p' "$_func" > "$_gang"
     _gang_adds=$(grep -c -F -- "vpaddq" "$_gang" || true)
-    if [ "$_gang_adds" != 2 ]; then
-        echo "[spmd-simd] map-fused reduce $_mode gang has $_gang_adds vpaddq instructions; wanted map + accumulator" >&2
+    # The counted-loop unroller emits sixteen map+accumulator pairs and keeps
+    # one original pair as the remainder loop.
+    if [ "$_gang_adds" != 34 ]; then
+        echo "[spmd-simd] map-fused reduce $_mode gang has $_gang_adds vpaddq instructions; wanted 16 unrolled map+accumulator pairs plus the remainder pair" >&2
         echo "tests/spmd/map_fused_reduce_i64.tl $_mode (gang vpaddq count)" >> "$FAILURES"
     fi
     if grep -E -- 'vextract|vpsrldq' "$_gang" > /dev/null; then

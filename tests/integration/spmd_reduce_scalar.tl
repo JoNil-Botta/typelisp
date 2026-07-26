@@ -160,6 +160,9 @@
     [n32 : i64 11]
     [gs : (Array i32) (array.make-array i32 11)]
     [hs : (Array i32) (array.make-array i32 11)]
+    ;; Long enough to enter the x16 vector-gang unroller in both AVX2 and
+    ;; AVX-512 modes, with a non-divisible scalar tail.
+    [long-xs : (Array i64) (array.make-array i64 143)]
     [f32-values : (Array f32) (array.make-array f32 19)]
     [f32-zeros : (Array f32) (array.make-array f32 16)]
     [f32-overflow : (Array f32) (array.make-array f32 16)]
@@ -170,6 +173,7 @@
       (fill-f64 fs)
       (fill-i32 gs n32)
       (fill-signed-i32 hs)
+      (fill-i64 long-xs 143)
       (fill-f32 f32-values 19)
       (fill-f32-negative-zero f32-zeros 16)
       (fill-f32-overflow f32-overflow 16)
@@ -230,4 +234,6 @@
             (f32-bits (reduce-sum-f32 f32-overflow 16 f32-pos-zero))
             (f32-bits (manual-sum-f32 f32-overflow 16 f32-pos-zero)))
           37]
+        [(!= (reduce-sum long-xs 143) 10296) 38]
+        [(!= (reduce-sum long-xs 143) (manual-sum long-xs 143)) 39]
         [else 42]))))

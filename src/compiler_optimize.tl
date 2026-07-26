@@ -30780,6 +30780,38 @@
   (No)
   (Some OptUnrollShape))
 
+;; SIMD values deliberately stay in mutable (non-SSA) form, so the SPMD
+;; lowerer's rotated gang loop has no Phi prefix:
+;;
+;;   B: vector body...; i = inext; inext = i + lanes;
+;;      c = inext <= bound; Branch c B EXIT
+;;
+;; The dedicated shape below versions that exact store-free form. Transient
+;; results are freshened while a destination that reads itself remains mutable,
+;; so each copy consumes the preceding copy's recurrence state. The original B
+;; remains the remainder loop.
+(defstruct OptUnrollSimdShape
+  (pred-label i64)
+  (tail-label i64)
+  (cond-index i64)
+  (index-var i64)
+  (next-var i64)
+  (step i64)
+  (ity AstType)
+  (bound CompilerIrValue)
+  (cmp-op CompilerIrBinOp)
+  (vector-base CompilerIrValue)
+  (vector-ty AstType))
+
+(defenum OptUnrollSimdMaybeShape
+  (No)
+  (Some OptUnrollSimdShape))
+
+(defenum OptUnrollSimdLoadShape
+  (Fail)
+  (Empty)
+  (Some CompilerIrValue AstType))
+
 (defenum OptUnrollResult
   (Result CompilerIrBlockList i64 bool))
 
@@ -30800,7 +30832,7 @@
       (opt-unroll-no-phi-from? instrs (+ index 1)))))
 
 ;; Clonable straight-line body instruction kinds. Anything else (calls, allocs,
-;; vector ops, name stores, nested terminators) rejects the loop.
+;; vector stores, name stores, nested terminators) rejects the loop.
 (define (opt-unroll-body-instr-ok? [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.Mov _ _ _) true]
@@ -30810,6 +30842,17 @@
     [(CompilerIrInstr.UnOp _ _ _ _) true]
     [(CompilerIrInstr.Gep _ _ _ _) true]
     [(CompilerIrInstr.Load _ _ _) true]
+    ;; Store-free SIMD gang bodies have the same long-trip compute/load shape
+    ;; as scalar reductions and scans. Keep vector stores and predicated memory
+    ;; operations excluded alongside scalar StorePtr.
+    [(CompilerIrInstr.LaneId _ _ _) true]
+    [(CompilerIrInstr.Splat _ _ _ _) true]
+    [(CompilerIrInstr.VectorBinOp _) true]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorCompare _) true]
+    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.Select _) true]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) true]
     ;; StorePtr deliberately EXCLUDED: store-bearing counted loops are
     ;; dominated by fills and short-trip container writes (hashmap grow/insert
     ;; regressed 1-2%, self-compile +1.4% when they unrolled -- the entry
@@ -31372,6 +31415,71 @@
       (let
         [new-src : CompilerIrValue (opt-unroll-subst-value remap src)]
         (CompilerIrInstr.Load (opt-unroll-clone-dst remap cell dst) new-src ty))]
+    [(CompilerIrInstr.LaneId dst lanes ty)
+      (CompilerIrInstr.LaneId (opt-unroll-clone-dst remap cell dst) lanes ty)]
+    [(CompilerIrInstr.Splat dst value lanes ty)
+      (CompilerIrInstr.Splat
+        (opt-unroll-clone-dst remap cell dst)
+        (opt-unroll-subst-value remap value)
+        lanes
+        ty)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload.Payload dst op lhs rhs lanes ty)
+          (ir-instr-vector-bin-op
+            (opt-unroll-clone-dst remap cell dst)
+            op
+            (opt-unroll-subst-value remap lhs)
+            (opt-unroll-subst-value remap rhs)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (CompilerIrInstr.VectorReduce
+        (opt-unroll-clone-dst remap cell dst)
+        op
+        (opt-unroll-subst-value remap src)
+        lanes
+        ty)]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload.Payload dst op lhs rhs lanes ty)
+          (ir-instr-vector-compare
+            (opt-unroll-clone-dst remap cell dst)
+            op
+            (opt-unroll-subst-value remap lhs)
+            (opt-unroll-subst-value remap rhs)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
+      (CompilerIrInstr.MaskBinOp
+        (opt-unroll-clone-dst remap cell dst)
+        op
+        (opt-unroll-subst-value remap lhs)
+        (opt-unroll-subst-value remap rhs)
+        lanes)]
+    [(CompilerIrInstr.Select payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload.Payload
+            dst
+            mask
+            on-true
+            on-false
+            lanes
+            ty)
+          (ir-instr-select
+            (opt-unroll-clone-dst remap cell dst)
+            (opt-unroll-subst-value remap mask)
+            (opt-unroll-subst-value remap on-true)
+            (opt-unroll-subst-value remap on-false)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.VectorLoad dst base index lanes ty)
+      (CompilerIrInstr.VectorLoad
+        (opt-unroll-clone-dst remap cell dst)
+        (opt-unroll-subst-value remap base)
+        (opt-unroll-subst-value remap index)
+        lanes
+        ty)]
     [(CompilerIrInstr.StorePtr ptr value ty)
       (CompilerIrInstr.StorePtr
         (opt-unroll-subst-value remap ptr)
@@ -31950,6 +32058,681 @@
           (array-ref cell 0)
           true))]))
 
+;; The mutable SIMD path admits the same pure/load vector forms as the SSA
+;; cloner, but not BoundsCheck: repeating one would duplicate its function-
+;; unique continuation label. Stores and predicated memory are already absent
+;; from `opt-unroll-body-instr-ok?`.
+(define (opt-unroll-simd-body-instr-ok? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BoundsCheck _ _ _) false]
+    [_ (opt-unroll-body-instr-ok? instr)]))
+
+(define (opt-unroll-simd-vector-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.LaneId _ _ _) true]
+    [(CompilerIrInstr.Splat _ _ _ _) true]
+    [(CompilerIrInstr.VectorBinOp _) true]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ _) true]
+    [(CompilerIrInstr.VectorCompare _) true]
+    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.Select _) true]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) true]
+    [_ false]))
+
+(define (opt-unroll-simd-body-ok?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    true
+    (and
+      (opt-unroll-simd-body-instr-ok? (compiler-ir-instr-seq-ref instrs index))
+      (opt-unroll-simd-body-ok? instrs (+ index 1) last))))
+
+(define (opt-unroll-simd-body-has-vector?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    false
+    (or
+      (opt-unroll-simd-vector-instr? (compiler-ir-instr-seq-ref instrs index))
+      (opt-unroll-simd-body-has-vector? instrs (+ index 1) last))))
+
+;; A self-loop candidate must have exactly one predecessor besides itself.
+(define (opt-unroll-simd-outside-pred [preds : OptLabelSet] [loop-label : i64]) : OptLoopPreheader
+  (match preds
+    [(OptLabelSet.Cons first first-rest)
+      (match (box-get first-rest)
+        [(OptLabelSet.Cons second second-rest)
+          (match (box-get second-rest)
+            [(OptLabelSet.Nil)
+              (cond
+                [(and (= first loop-label) (!= second loop-label))
+                  (OptLoopPreheader.Some second)]
+                [(and (= second loop-label) (!= first loop-label))
+                  (OptLoopPreheader.Some first)]
+                [else (OptLoopPreheader.No)])]
+            [_ (OptLoopPreheader.No)])]
+        [_ (OptLoopPreheader.No)])]
+    [_ (OptLoopPreheader.No)]))
+
+;; Direct gang unrolling advances the scalar index once per group. Every
+;; VectorLoad must therefore read the canonical counter from the same base and
+;; use one vector-width step; no other body instruction may consume that
+;; counter. The unrolled group computes one Gep(base, group-index), then uses
+;; literal lane-group offsets from it.
+(define (opt-unroll-simd-load-shape
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [index-var : i64]
+  [step : i64]
+  [state : OptUnrollSimdLoadShape]) : OptUnrollSimdLoadShape
+  (if (>= index last)
+    state
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.VectorLoad _ base load-index lanes ty)
+          (match load-index
+            [(CompilerIrValue.Var load-index-var)
+              (if (and (= load-index-var index-var) (= lanes step))
+                (match state
+                  [(OptUnrollSimdLoadShape.Empty)
+                    (opt-unroll-simd-load-shape
+                      instrs
+                      (+ index 1)
+                      last
+                      index-var
+                      step
+                      (OptUnrollSimdLoadShape.Some base ty))]
+                  [(OptUnrollSimdLoadShape.Some first-base first-ty)
+                    (if (and
+                      (opt-value-eq first-base base)
+                      (opt-type-eq first-ty ty))
+                      (opt-unroll-simd-load-shape
+                        instrs
+                        (+ index 1)
+                        last
+                        index-var
+                        step
+                        state)
+                      (OptUnrollSimdLoadShape.Fail))]
+                  [(OptUnrollSimdLoadShape.Fail) (OptUnrollSimdLoadShape.Fail)])
+                (OptUnrollSimdLoadShape.Fail))]
+            [_ (OptUnrollSimdLoadShape.Fail)])]
+        [_
+          (if (opt-used-contains
+            (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 8) instr)
+            index-var)
+            (OptUnrollSimdLoadShape.Fail)
+            (opt-unroll-simd-load-shape
+              instrs
+              (+ index 1)
+              last
+              index-var
+              step
+              state))]))))
+
+(define (opt-unroll-simd-shape-finish
+  [blocks : CompilerIrBlockList]
+  [entry-label : i64]
+  [label : i64]
+  [instrs : CompilerIrInstrSeq]
+  [cond-index : i64]
+  [tail-label : i64]
+  [cmp-op : CompilerIrBinOp]
+  [cmp-lhs : CompilerIrValue]
+  [bound : CompilerIrValue]) : OptUnrollSimdMaybeShape
+  (match cmp-lhs
+    [(CompilerIrValue.Var next-var)
+      (if (< cond-index 2)
+        (OptUnrollSimdMaybeShape.No)
+        (match (compiler-ir-instr-seq-ref instrs (- cond-index 1))
+          [(CompilerIrInstr.BinOp inc-dst inc-op inc-lhs inc-rhs ity)
+            (match inc-op
+              [(CompilerIrBinOp.Add)
+                (match inc-lhs
+                  [(CompilerIrValue.Var index-var)
+                    (match inc-rhs
+                      [(CompilerIrValue.I64 step)
+                        (match (compiler-ir-instr-seq-ref
+                          instrs
+                          (- cond-index 2))
+                          [(CompilerIrInstr.Mov move-dst move-src move-ty)
+                            (match move-src
+                              [(CompilerIrValue.Var move-next)
+                                (let
+                                  [defs : opt_i64_i64_map.Map
+                                    (opt-unroll-block-defs
+                                      (struct-get instrs slots)
+                                      0
+                                      (compiler-ir-instr-seq-count instrs)
+                                      (opt_i64_i64_map.with-capacity 32))]
+                                  (if (and
+                                    (= inc-dst next-var)
+                                    (= move-dst index-var)
+                                    (= move-next next-var)
+                                    (> step 0)
+                                    (<= step 1024)
+                                    (match ity
+                                      [(AstType.I64) true]
+                                      [_ false])
+                                    (match move-ty
+                                      [(AstType.I64) true]
+                                      [_ false])
+                                    (!= label entry-label)
+                                    (opt-unroll-invariant-bound? defs bound)
+                                    (opt-unroll-simd-body-ok?
+                                      instrs
+                                      0
+                                      cond-index)
+                                    (opt-unroll-simd-body-has-vector?
+                                      instrs
+                                      0
+                                      cond-index)
+                                    (not
+                                      (opt-cfg-block-exists?
+                                        blocks
+                                        (compiler-ir-label
+                                          (string.append
+                                            (compiler-ir-label-text label)
+                                            "__unroll_guard"))))
+                                    (not
+                                      (opt-cfg-block-exists?
+                                        blocks
+                                        (compiler-ir-label
+                                          (string.append
+                                            (compiler-ir-label-text label)
+                                            "__unroll_body"))))
+                                    (not
+                                      (opt-cfg-block-exists?
+                                        blocks
+                                        (compiler-ir-label
+                                          (string.append
+                                            (compiler-ir-label-text label)
+                                            "__unroll_exit")))))
+                                    (match (opt-unroll-simd-outside-pred
+                                      (opt-cfg-predecessors blocks label)
+                                      label)
+                                      [(OptLoopPreheader.Some pred-label)
+                                        (if (opt-unroll-pred-retargetable?
+                                          blocks
+                                          pred-label)
+                                          (match (opt-unroll-simd-load-shape
+                                            instrs
+                                            0
+                                            (- cond-index 2)
+                                            index-var
+                                            step
+                                            (OptUnrollSimdLoadShape.Empty))
+                                            [(OptUnrollSimdLoadShape.Some
+                                                vector-base
+                                                vector-ty)
+                                              ;; The shared Gep is emitted
+                                              ;; before the cloned body, so its
+                                              ;; source base must be available
+                                              ;; outside the loop.
+                                              (if (opt-unroll-invariant-bound?
+                                                defs
+                                                vector-base)
+                                                (OptUnrollSimdMaybeShape.Some
+                                                  (OptUnrollSimdShape
+                                                    pred-label
+                                                    tail-label
+                                                    cond-index
+                                                    index-var
+                                                    next-var
+                                                    step
+                                                    ity
+                                                    bound
+                                                    cmp-op
+                                                    vector-base
+                                                    vector-ty))
+                                                (OptUnrollSimdMaybeShape.No))]
+                                            [_ (OptUnrollSimdMaybeShape.No)])
+                                          (OptUnrollSimdMaybeShape.No))]
+                                      [(OptLoopPreheader.No)
+                                        (OptUnrollSimdMaybeShape.No)])
+                                    (OptUnrollSimdMaybeShape.No)))]
+                              [_ (OptUnrollSimdMaybeShape.No)])]
+                          [_ (OptUnrollSimdMaybeShape.No)])]
+                      [_ (OptUnrollSimdMaybeShape.No)])]
+                  [_ (OptUnrollSimdMaybeShape.No)])]
+              [_ (OptUnrollSimdMaybeShape.No)])]
+          [_ (OptUnrollSimdMaybeShape.No)]))]
+    [_ (OptUnrollSimdMaybeShape.No)]))
+
+(define (opt-unroll-simd-block-shape
+  [blocks : CompilerIrBlockList]
+  [entry-label : i64]
+  [block : CompilerIrBlock]) : OptUnrollSimdMaybeShape
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 7)
+          (OptUnrollSimdMaybeShape.No)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch cond true-label false-label)
+              (match cond
+                [(CompilerIrValue.Var cond-var)
+                  (if (and (= true-label label) (!= false-label label))
+                    (let
+                      [cond-index : i64 (- count 2)]
+                      (match (compiler-ir-instr-seq-ref instrs cond-index)
+                        [(CompilerIrInstr.BinOp cond-dst cmp-op cmp-lhs bound _)
+                          (if (and
+                            (= cond-dst cond-var)
+                            (match cmp-op
+                              [(CompilerIrBinOp.Lt) true]
+                              [(CompilerIrBinOp.Le) true]
+                              [_ false]))
+                            (opt-unroll-simd-shape-finish
+                              blocks
+                              entry-label
+                              label
+                              instrs
+                              cond-index
+                              false-label
+                              cmp-op
+                              cmp-lhs
+                              bound)
+                            (OptUnrollSimdMaybeShape.No))]
+                        [_ (OptUnrollSimdMaybeShape.No)]))
+                    (OptUnrollSimdMaybeShape.No))]
+                [_ (OptUnrollSimdMaybeShape.No)])]
+            [_ (OptUnrollSimdMaybeShape.No)])))]))
+
+;; A loop-carried vector recurrence cannot become an ordinary scalar Phi (the
+;; Phi IR has no lane count), so keep only a vector destination that reads
+;; itself mutable. Every transient vector/scalar destination is freshened: this
+;; restores single-use VectorLoad facts for backend memory-operand folding and
+;; gives register allocation non-overlapping scalar counter intervals.
+(define (opt-unroll-simd-recurrent-vector-dst [instr : CompilerIrInstr]) : option_i64.Option
+  (if (opt-unroll-simd-vector-instr? instr)
+    (match (opt-instr-def-var instr)
+      [(option_i64.Some dst)
+        (if (opt-used-contains
+          (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 8) instr)
+          dst)
+          (option_i64.Some dst)
+          (option_i64.None))]
+      [(option_i64.None) (option_i64.None)])
+    (option_i64.None)))
+
+(define (opt-unroll-simd-clone-recurrence
+  [remap : (Array CompilerIrValue)]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.LaneId dst lanes ty)
+      (CompilerIrInstr.LaneId dst lanes ty)]
+    [(CompilerIrInstr.Splat dst value lanes ty)
+      (CompilerIrInstr.Splat dst (opt-unroll-subst-value remap value) lanes ty)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload.Payload dst op lhs rhs lanes ty)
+          (ir-instr-vector-bin-op
+            dst
+            op
+            (opt-unroll-subst-value remap lhs)
+            (opt-unroll-subst-value remap rhs)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (CompilerIrInstr.VectorReduce
+        dst
+        op
+        (opt-unroll-subst-value remap src)
+        lanes
+        ty)]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload.Payload dst op lhs rhs lanes ty)
+          (ir-instr-vector-compare
+            dst
+            op
+            (opt-unroll-subst-value remap lhs)
+            (opt-unroll-subst-value remap rhs)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
+      (CompilerIrInstr.MaskBinOp
+        dst
+        op
+        (opt-unroll-subst-value remap lhs)
+        (opt-unroll-subst-value remap rhs)
+        lanes)]
+    [(CompilerIrInstr.Select payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload.Payload
+            dst
+            mask
+            on-true
+            on-false
+            lanes
+            ty)
+          (ir-instr-select
+            dst
+            (opt-unroll-subst-value remap mask)
+            (opt-unroll-subst-value remap on-true)
+            (opt-unroll-subst-value remap on-false)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.VectorLoad dst base index lanes ty)
+      (CompilerIrInstr.VectorLoad
+        dst
+        (opt-unroll-subst-value remap base)
+        (opt-unroll-subst-value remap index)
+        lanes
+        ty)]
+    [_ instr]))
+
+(define (opt-unroll-simd-clone-instr
+  [remap : (Array CompilerIrValue)]
+  [cell : (Array i64)]
+  [group-base : i64]
+  [step : i64]
+  [copy : i64]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match (opt-unroll-simd-recurrent-vector-dst instr)
+    [(option_i64.Some dst)
+      (begin
+        ;; The source occurrence denotes the mutable value written by the
+        ;; preceding gang, not a transient clone from an earlier instruction.
+        (opt-unroll-remap-set remap dst (CompilerIrValue.Var dst))
+        (opt-unroll-simd-clone-recurrence remap instr))]
+    [(option_i64.None)
+      (match instr
+        [(CompilerIrInstr.VectorLoad dst _ _ lanes ty)
+          (CompilerIrInstr.VectorLoad
+            (opt-unroll-clone-dst remap cell dst)
+            (CompilerIrValue.Var group-base)
+            (CompilerIrValue.I64 (* copy step))
+            lanes
+            ty)]
+        [_ (opt-unroll-clone-instr remap cell copy instr)])]))
+
+;; Emit sixteen sequential remapped copies.
+(define (opt-unroll-simd-copies
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [remap : (Array CompilerIrValue)]
+  [cell : (Array i64)]
+  [group-base : i64]
+  [step : i64]
+  [copy : i64]) : CompilerIrInstrList
+  (if (>= copy 16)
+    (CompilerIrInstrList.Nil)
+    (if (>= index last)
+      (opt-unroll-simd-copies
+        instrs
+        0
+        last
+        remap
+        cell
+        group-base
+        step
+        (+ copy 1))
+      (let
+        [cloned : CompilerIrInstr
+          (opt-unroll-simd-clone-instr
+            remap
+            cell
+            group-base
+            step
+            copy
+            (compiler-ir-instr-seq-ref instrs index))]
+        (compiler-ir-instr-cons
+          cloned
+          (opt-unroll-simd-copies
+            instrs
+            (+ index 1)
+            last
+            remap
+            cell
+            group-base
+            step
+            copy))))))
+
+(define (opt-unroll-simd-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [pred-label : i64]
+  [loop-label : i64]
+  [guard-block : CompilerIrBlock]
+  [unrolled-block : CompilerIrBlock]
+  [exit-block : CompilerIrBlock]
+  [original-block : CompilerIrBlock]
+  [guard-label : i64]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (if (= label loop-label)
+            (compiler-ir-block-cons
+              guard-block
+              (compiler-ir-block-cons
+                unrolled-block
+                (compiler-ir-block-cons
+                  exit-block
+                  (compiler-ir-block-cons
+                    original-block
+                    (opt-unroll-simd-rewrite-blocks
+                      (box-get rest)
+                      pred-label
+                      loop-label
+                      guard-block
+                      unrolled-block
+                      exit-block
+                      original-block
+                      guard-label)))))
+            (compiler-ir-block-cons
+              (if (= label pred-label)
+                (compiler-ir-block
+                  label
+                  (opt-unroll-retarget-instrs instrs 0 loop-label guard-label))
+                block)
+              (opt-unroll-simd-rewrite-blocks
+                (box-get rest)
+                pred-label
+                loop-label
+                guard-block
+                unrolled-block
+                exit-block
+                original-block
+                guard-label)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-simd-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        pred-label
+        loop-label
+        guard-block
+        unrolled-block
+        exit-block
+        original-block
+        guard-label)]))
+
+(define (opt-unroll-simd-apply
+  [blocks : CompilerIrBlockList]
+  [block : CompilerIrBlock]
+  [shape : OptUnrollSimdShape]
+  [frame : i64]) : OptUnrollResult
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [cond-index : i64 (struct-get shape cond-index)]
+        [index-var : i64 (struct-get shape index-var)]
+        [step : i64 (struct-get shape step)]
+        [ity : AstType (struct-get shape ity)]
+        [bound : CompilerIrValue (struct-get shape bound)]
+        [cmp-op : CompilerIrBinOp (struct-get shape cmp-op)]
+        [pred-label : i64 (struct-get shape pred-label)]
+        [tail-label : i64 (struct-get shape tail-label)]
+        [guard-label : i64
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__unroll_guard"))]
+        [unrolled-label : i64
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__unroll_body"))]
+        [exit-label : i64
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__unroll_exit"))]
+        [vector-base : CompilerIrValue (struct-get shape vector-base)]
+        [vector-ty : AstType (struct-get shape vector-ty)]
+        [remap : (Array CompilerIrValue)
+          (array.make-array CompilerIrValue frame)]
+        [_fill : unit (opt-unroll-remap-fill remap 0)]
+        [cell : (Array i64) (array.make-array i64 1)]
+        [_cell : unit (array-set! cell 0 frame)]
+        [iu : i64 (opt-unroll-alloc-var cell)]
+        [group-base : i64 (opt-unroll-alloc-var cell)]
+        [copies : CompilerIrInstrList
+          (opt-unroll-simd-copies
+            instrs
+            0
+            (- cond-index 2)
+            remap
+            cell
+            group-base
+            step
+            0)]
+        [end-index : i64 (opt-unroll-alloc-var cell)]
+        [end-next : i64 (opt-unroll-alloc-var cell)]
+        [remainder-ok : i64 (opt-unroll-alloc-var cell)]
+        [ngroup : i64 (opt-unroll-alloc-var cell)]
+        [gwrap : i64 (opt-unroll-alloc-var cell)]
+        [gfirst : i64 (opt-unroll-alloc-var cell)]
+        [gok : i64 (opt-unroll-alloc-var cell)]
+        [gu : i64 (opt-unroll-alloc-var cell)]
+        [guard-block : CompilerIrBlock
+          (compiler-ir-block
+            guard-label
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                ngroup
+                (CompilerIrBinOp.Sub)
+                bound
+                (CompilerIrValue.I64 (* step 16))
+                ity)
+              (compiler-ir-instr-cons
+                ;; Reject a wrapped bound - 16*step.
+                (CompilerIrInstr.BinOp
+                  gwrap
+                  (CompilerIrBinOp.Le)
+                  (CompilerIrValue.Var ngroup)
+                  bound
+                  ity)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    gfirst
+                    cmp-op
+                    (CompilerIrValue.Var index-var)
+                    (CompilerIrValue.Var ngroup)
+                    ity)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      gok
+                      (CompilerIrBinOp.And)
+                      (CompilerIrValue.Var gwrap)
+                      (CompilerIrValue.Var gfirst)
+                      (AstType.Bool))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Branch
+                        (CompilerIrValue.Var gok)
+                        unrolled-label
+                        label)
+                      (CompilerIrInstrList.Nil)))))))]
+        [unrolled-block : CompilerIrBlock
+          (compiler-ir-block
+            unrolled-label
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                iu
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var index-var)
+                  guard-label
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Var end-index)
+                    unrolled-label
+                    (CompilerIrPhiInputList.Nil)))
+                ity)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Gep
+                  group-base
+                  vector-base
+                  (CompilerIrValue.Var iu)
+                  vector-ty)
+                (opt-aggregate-instr-list-append
+                  copies
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      end-index
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var iu)
+                      (CompilerIrValue.I64 (* step 16))
+                      ity)
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        end-next
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var end-index)
+                        (CompilerIrValue.I64 step)
+                        ity)
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.BinOp
+                          gu
+                          cmp-op
+                          (CompilerIrValue.Var end-index)
+                          (CompilerIrValue.Var ngroup)
+                          ity)
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Branch
+                            (CompilerIrValue.Var gu)
+                            unrolled-label
+                            exit-label)
+                          (CompilerIrInstrList.Nil)))))))))]
+        [exit-block : CompilerIrBlock
+          (compiler-ir-block
+            exit-label
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov
+                index-var
+                (CompilerIrValue.Var end-index)
+                ity)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Mov
+                  (struct-get shape next-var)
+                  (CompilerIrValue.Var end-next)
+                  ity)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    remainder-ok
+                    cmp-op
+                    (CompilerIrValue.Var end-next)
+                    bound
+                    ity)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Branch
+                      (CompilerIrValue.Var remainder-ok)
+                      label
+                      tail-label)
+                    (CompilerIrInstrList.Nil))))))]
+        (OptUnrollResult.Result
+          (opt-unroll-simd-rewrite-blocks
+            blocks
+            pred-label
+            label
+            guard-block
+            unrolled-block
+            exit-block
+            block
+            guard-label)
+          (array-ref cell 0)
+          true))]))
+
 ;; Apply at most one unroll per invocation (the pipeline fixpoint picks up
 ;; further loops on later iterations), bounding growth.
 (define (opt-unroll-blocks-scan
@@ -31972,11 +32755,31 @@
         entry-label
         frame)]))
 
-;; Cheap shape prescan: a candidate self-loop is a block that starts with a
-;; Phi and ends with a conditional Branch whose true arm targets the block
-;; itself. Most functions have none, and the full entry verify below is the
-;; expensive part of this stage on the self-compile budget -- skip it (and
-;; everything else) when no block can possibly match.
+(define (opt-unroll-simd-blocks-scan
+  [blocks : CompilerIrBlockList]
+  [remaining : CompilerIrBlockList]
+  [entry-label : i64]
+  [frame : i64]) : OptUnrollResult
+  (match remaining
+    [(CompilerIrBlockList.Nil) (OptUnrollResult.Result blocks frame false)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match (opt-unroll-simd-block-shape blocks entry-label block)
+        [(OptUnrollSimdMaybeShape.Some shape)
+          (opt-unroll-simd-apply blocks block shape frame)]
+        [(OptUnrollSimdMaybeShape.No)
+          (opt-unroll-simd-blocks-scan blocks (box-get rest) entry-label frame)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-simd-blocks-scan
+        blocks
+        (compiler-ir-block-seq-to-list seq)
+        entry-label
+        frame)]))
+
+;; Cheap shape prescan: a candidate self-loop either starts with a Phi (the
+;; canonical SSA form) or contains a mutable SIMD instruction (the SPMD gang
+;; form), and ends with a conditional Branch whose true arm targets the block
+;; itself. Most functions have neither, so skip the entry verify when no block
+;; can possibly match.
 (define (opt-unroll-block-candidate? [block : CompilerIrBlock]) : bool
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -31984,11 +32787,13 @@
         [count : i64 (compiler-ir-instr-seq-count instrs)]
         (if (< count 4)
           false
-          (match (compiler-ir-instr-seq-ref instrs 0)
-            [(CompilerIrInstr.Phi _ _ _)
-              (match (compiler-ir-instr-seq-ref instrs (- count 1))
-                [(CompilerIrInstr.Branch _ true-label _) (= true-label label)]
-                [_ false])]
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch _ true-label _)
+              (and
+                (= true-label label)
+                (or
+                  (compiler-ir-instr-seq-phi? instrs 0)
+                  (opt-unroll-simd-body-has-vector? instrs 0 (- count 1))))]
             [_ false])))]))
 
 (define (opt-unroll-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
@@ -32001,20 +32806,65 @@
     [(CompilerIrBlockList.Array seq)
       (opt-unroll-blocks-have-candidate? (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-unroll-simd-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (match (opt-unroll-simd-blocks-scan
+        blocks
+        blocks
+        (opt-cfg-entry-label blocks)
+        frame)
+        [(OptUnrollResult.Result next-blocks next-frame changed)
+          (if changed
+            (let
+              [next : CompilerIrFunction
+                (CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  next-frame
+                  next-blocks)]
+              [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+              ;; Mutable SIMD IR is intentionally outside scalar SSA. Its
+              ;; verifier contract is therefore the final/backend structural
+              ;; contract; the exact local shape checks above establish the
+              ;; dataflow used by the rewrite.
+              (match (opt-verify-final-function next)
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (OptFunctionCtxResult.Result next next-context)]
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (OptFunctionCtxResult.Result func context)]))
+            (OptFunctionCtxResult.Result func context))])]))
+
 (define (opt-unroll-function-with-context-result
   [context : OptCfgContext]
   [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ prescan-blocks)
+    [(CompilerIrFunction.Function _ params _ frame prescan-blocks)
       (if (or
         (opt-unroll-blocks-have-candidate? prescan-blocks)
         (opt-unroll-mb-blocks-have-candidate? prescan-blocks))
-        (opt-unroll-function-verified-with-context-result
-          context
-          verified?
-          func)
+        (if verified?
+          (opt-unroll-function-verified-with-context-result context true func)
+          (match (opt-verify-function-with-context func context)
+            [(ResultCompilerOptimizeVerify.Ok)
+              (opt-unroll-function-verified-with-context-result
+                context
+                true
+                func)]
+            [(ResultCompilerOptimizeVerify.Err _)
+              ;; SPMD vector state is deliberately mutable, so these functions
+              ;; fail only the scalar single-definition contract. Admit just
+              ;; the exact SIMD shape through the backend IR contract.
+              (if (and
+                (not (opt-verify-single-defs? params frame prescan-blocks))
+                (opt-verify-ok? (opt-verify-final-function func)))
+                (opt-unroll-simd-function-with-context-result context func)
+                (OptFunctionCtxResult.Result func context))]))
         (OptFunctionCtxResult.Result func context))]))
 
 (define (opt-unroll-function-verified-with-context-result

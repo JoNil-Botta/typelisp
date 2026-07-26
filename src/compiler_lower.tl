@@ -45468,7 +45468,7 @@
         (if (and
           (or
             (lower-mode-avx2? (lower-state-mode state))
-            (lower-mode-avx512? (lower-state-mode state)))
+            (and (lower-mode-avx512? (lower-state-mode state)) (< divisor 0)))
           (> positive-divisor 0)
           (>= index-offset 0)
           (=

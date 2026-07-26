@@ -410,6 +410,9 @@
 (define compiler-backend-assembly-stream-batch-function-limit : i64
   64)
 
+(define (compiler-backend-assembly-stream-home-arena-handle-value) : i64
+  (arena.raw-handle compiler-backend-assembly-stream-home-arena))
+
 (defenum CompilerBackendUnsignedDivMagic
   (No)
   (RoundUp u64 i64)
@@ -56938,6 +56941,33 @@
 ;; on entry and rewound before return; only the final copied group string
 ;; escapes into `home`. This keeps neither a whole raw assembly String nor a
 ;; whole peepholed String alive beside the retained output.
+(define (compiler-backend-peephole-sweep-chunk-state-copy-home
+  [state : CompilerBackendPeepholeSweepChunkState]
+  [swept-asm : String]
+  [sweep-cursor : i64]
+  [scratch-arena : arena.Arena]
+  [home-arena : arena.Arena]) : CompilerBackendPeepholeSweepChunkState
+  (let
+    [_set-home : unit
+      (unsafe
+        (arena.set! home-arena))]
+    [kept : String
+      (string.substring swept-asm 0 (string.string-length swept-asm))]
+    [finished : CompilerBackendPeepholeSweepChunkState
+      (CompilerBackendPeepholeSweepChunkState
+        (text_buf.append (struct-get state out) kept)
+        (text_buf.empty)
+        sweep-cursor)]
+    [new-home-arena : arena.Arena (arena.current)]
+    (begin
+      ;; `home-arena` can grow while the retained output is appended. Carry
+      ;; the new head into the next flush instead of re-entering the old
+      ;; segment and creating detached sibling overflow chains.
+      (set! compiler-backend-assembly-stream-home-arena new-home-arena)
+      (unsafe
+        (arena.set! scratch-arena))
+      finished)))
+
 (define (compiler-backend-peephole-sweep-chunk-state-flush
   [state : CompilerBackendPeepholeSweepChunkState]
   [scratch-mark : arena.ArenaMark]
@@ -56952,16 +56982,14 @@
           peepholed-asm
           (struct-get state sweep-cursor))]
       [swept-asm : String (text_buf.render (struct-get swept buf))]
+      [scratch-arena : arena.Arena (arena.current)]
       [finished : CompilerBackendPeepholeSweepChunkState
-        (in-arena
-          home-arena
-          (let
-            [kept : String
-              (string.substring swept-asm 0 (string.string-length swept-asm))]
-            (CompilerBackendPeepholeSweepChunkState
-              (text_buf.append (struct-get state out) kept)
-              (text_buf.empty)
-              (struct-get swept cursor))))]
+        (compiler-backend-peephole-sweep-chunk-state-copy-home
+          state
+          swept-asm
+          (struct-get swept cursor)
+          scratch-arena
+          home-arena)]
       (begin
         (unsafe
           (arena.rewind scratch-mark))
@@ -57291,13 +57319,15 @@
                     (let
                       [final : text_buf.TextBuf
                         (compiler-backend-assembly-stream-finish!)]
+                      [final-home-arena : arena.Arena
+                        compiler-backend-assembly-stream-home-arena]
                       (begin
                         (unsafe
                           (arena.destroy emit-arena))
                         (unsafe
                           (arena.destroy raw-arena))
                         (unsafe
-                          (arena.set! home-arena))
+                          (arena.set! final-home-arena))
                         (compiler-backend-deadstore-sweep-report-and-reset!)
                         (unsafe
                           (arena.destroy peephole-arena))
@@ -57309,7 +57339,7 @@
                       ;; the legacy error lifetime contract.
                       (compiler-backend-assembly-stream-abort!)
                       (unsafe
-                        (arena.set! home-arena))
+                        (arena.set! compiler-backend-assembly-stream-home-arena))
                       (unsafe
                         (arena.destroy peephole-arena))
                       (compiler-backend-clear-scratch-escaped-emit-state!)

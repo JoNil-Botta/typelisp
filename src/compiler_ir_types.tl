@@ -149,6 +149,9 @@
 (define compiler-ir-label-arena-handle : i64
   0)
 
+(define (compiler-ir-label-arena-handle-value) : i64
+  compiler-ir-label-arena-handle)
+
 (define (compiler-ir-label-arena) : i64
   (begin
     (if (= compiler-ir-label-arena-handle 0)

@@ -186,6 +186,8 @@ WINDOWS_QUEUE=
 WINDOWS_QUEUE_WIN=
 WINDOWS_RESULTS=
 WINDOWS_RESULTS_WIN=
+WINDOWS_ASSERTIONS=
+WINDOWS_ASSERTIONS_WIN=
 WINDOWS_SUMMARY=
 WINDOWS_SUMMARY_WIN=
 WINDOWS_RUNNER_STDOUT=
@@ -196,8 +198,11 @@ WINDOWS_QUEUE_REQUESTS=0
 WINDOWS_MANIFEST_COMPILE_MS=0
 WINDOWS_MANIFEST_ASSEMBLE_MS=0
 WINDOWS_MANIFEST_LINK_MS=0
+WINDOWS_MANIFEST_QUEUE_PREP_MS=0
 WINDOWS_MANIFEST_RUN_MS=0
+WINDOWS_MANIFEST_RESULT_PROCESS_MS=0
 WINDOWS_MANIFEST_ASSERT_MS=0
+WINDOWS_MANIFEST_ASSERT_REPORT_MS=0
 WINDOWS_MANIFEST_COMPILES=0
 WINDOWS_MANIFEST_ASSEMBLES=0
 WINDOWS_MANIFEST_LINKS=0
@@ -217,12 +222,14 @@ if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     WINDOWS_QUEUE_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration.requests"
     WINDOWS_RESULTS="$WORKDIR/windows-integration.results"
     WINDOWS_RESULTS_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration.results"
+    WINDOWS_ASSERTIONS="$WORKDIR/windows-integration.assertions"
+    WINDOWS_ASSERTIONS_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration.assertions"
     WINDOWS_SUMMARY="$WORKDIR/windows-integration.summary"
     WINDOWS_SUMMARY_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration.summary"
     WINDOWS_RUNNER_STDOUT="$WORKDIR/windows-integration-runner.stdout"
     WINDOWS_RUNNER_STDERR="$WORKDIR/windows-integration-runner.stderr"
     WINDOWS_QUEUED_CASES="$WORKDIR/windows-integration.queued"
-    : > "$WINDOWS_QUEUE"
+    printf 'tlwinq2\000' > "$WINDOWS_QUEUE"
     : > "$WINDOWS_QUEUED_CASES"
     # The queue runner and its work root are the only manifest-run path
     # conversions. Linked inputs/outputs are constructed from validated case
@@ -537,10 +544,6 @@ normalized_stream() {
     fi
 }
 
-windows_queue_encode() {
-    printf '%s' "$1" | base64 | tr -d '\r\n'
-}
-
 windows_queue_decode() {
     case "$1" in
         "~") printf '%s' "" ;;
@@ -548,29 +551,9 @@ windows_queue_decode() {
     esac
 }
 
-windows_queue_encoded_arguments() {
-    _encoded_args=
-    for _argument in "$@"; do
-        _encoded=$(windows_queue_encode "$_argument")
-        if [ -z "$_encoded" ]; then
-            _encoded='~'
-        fi
-        if [ -n "$_encoded_args" ]; then
-            _encoded_args="$_encoded_args,$_encoded"
-        else
-            _encoded_args=$_encoded
-        fi
-    done
-    if [ -n "$_encoded_args" ]; then
-        printf '%s\n' "$_encoded_args"
-    else
-        printf '%s\n' -
-    fi
-}
-
-# Append one native-path request to a UTF-8 queue. The caller supplies a
-# validated label and an already split argument vector; base64 keeps the queue
-# independent of shell quoting, whitespace, and path separators.
+# Append one native-path request to the NUL-delimited UTF-8 queue. NUL cannot
+# occur in a Windows path or process argument, so this preserves the already
+# split argument vector without launching per-field base64/tr helpers.
 windows_queue_append_request() {
     _queue=$1
     _label=$2
@@ -578,19 +561,24 @@ windows_queue_append_request() {
     _stdout=$4
     _stderr=$5
     _code=$6
-    shift 6
-    _arguments=$(windows_queue_encoded_arguments "$@")
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    _expected_exit=$7
+    _expected_stdout=$8
+    _expected_stderr=$9
+    shift 9
+    if [ ! -s "$_queue" ]; then
+        printf 'tlwinq2\000' > "$_queue"
+    fi
+    printf '%s\000' \
         "$_label" \
-        "$(windows_queue_encode "$_exe")" \
-        "$(windows_queue_encode "$_stdout")" \
-        "$(windows_queue_encode "$_stderr")" \
-        "$(windows_queue_encode "$_code")" \
-        "$_arguments" >> "$_queue"
-}
-
-windows_case_native_path() {
-    printf '%s\\%s\\%s\n' "$WINDOWS_WORKDIR_WIN" "$1" "$2"
+        "$_exe" \
+        "$_stdout" \
+        "$_stderr" \
+        "$_code" \
+        "$_expected_exit" \
+        "$_expected_stdout" \
+        "$_expected_stderr" \
+        "$#" \
+        "$@" >> "$_queue"
 }
 
 windows_result_for_label() {
@@ -614,15 +602,17 @@ EOF
 windows_run_request_file() {
     _request_win=$1
     _result_win=$2
-    _summary_win=$3
-    _runner_stdout=$4
-    _runner_stderr=$5
+    _assertion_win=$3
+    _summary_win=$4
+    _runner_stdout=$5
+    _runner_stderr=$6
     ci_timing_set_now_ms
     _started=$CI_TIMING_NOW_MS
     set +e
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_RUNNER_WIN" \
         -RequestPath "$_request_win" \
         -ResultPath "$_result_win" \
+        -AssertionPath "$_assertion_win" \
         -SummaryPath "$_summary_win" \
         > "$_runner_stdout" 2> "$_runner_stderr"
     WINDOWS_RUNNER_STATUS=$?
@@ -635,15 +625,43 @@ windows_run_request_file() {
 
 windows_queue_manifest_case() {
     _name=$1
-    _runtime_args=$2
-    _exe_win=$(windows_case_native_path "$_name" "$_name.exe")
-    _stdout_win=$(windows_case_native_path "$_name" "$_name.stdout")
-    _stderr_win=$(windows_case_native_path "$_name" "$_name.stderr")
-    _code_win=$(windows_case_native_path "$_name" "$_name.exit")
-    # shellcheck disable=SC2086
-    windows_queue_append_request "$WINDOWS_QUEUE" "$_name" \
-        "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" \
-        $(deps_or_empty "$_runtime_args")
+    _want=$2
+    _stdout_spec=$3
+    _stderr_spec=$4
+    _runtime_args=$5
+    ci_timing_set_now_ms
+    _queue_started=$CI_TIMING_NOW_MS
+    _case_dir="$WORKDIR/$_name"
+    _expected_stdout="$_case_dir/$_name.expected.stdout"
+    _expected_stderr="$_case_dir/$_name.expected.stderr"
+    write_expected_stream "$_stdout_spec" "$_expected_stdout"
+    write_expected_stream "$_stderr_spec" "$_expected_stderr"
+    _exe_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.exe"
+    _stdout_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.stdout"
+    _stderr_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.stderr"
+    _code_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.exit"
+    _expected_stdout_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.expected.stdout"
+    _expected_stderr_win="$WINDOWS_WORKDIR_WIN\\$_name\\$_name.expected.stderr"
+    case "$_runtime_args" in
+        "" | -)
+            windows_queue_append_request "$WINDOWS_QUEUE" "$_name" \
+                "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" \
+                "$_want" "$_expected_stdout_win" "$_expected_stderr_win"
+            ;;
+        *)
+            # The manifest argument field is an already whitespace-separated
+            # vector; preserve the same splitting contract as the old
+            # `deps_or_empty` command substitution without its subshell.
+            # shellcheck disable=SC2086
+            windows_queue_append_request "$WINDOWS_QUEUE" "$_name" \
+                "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" \
+                "$_want" "$_expected_stdout_win" "$_expected_stderr_win" \
+                $_runtime_args
+            ;;
+    esac
+    ci_timing_set_now_ms
+    _queue_finished=$CI_TIMING_NOW_MS
+    WINDOWS_MANIFEST_QUEUE_PREP_MS=$((WINDOWS_MANIFEST_QUEUE_PREP_MS + _queue_finished - _queue_started))
     printf '%s\n' "$_name" >> "$WINDOWS_QUEUED_CASES"
     WINDOWS_MANIFEST_QUEUED=$((WINDOWS_MANIFEST_QUEUED + 1))
     WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 1))
@@ -708,23 +726,26 @@ run_windows_program() {
     _direct_id=$WINDOWS_DIRECT_POWERSHELL_STARTS
     _direct_queue="$WORKDIR/windows-direct-$_direct_id.requests"
     _direct_results="$WORKDIR/windows-direct-$_direct_id.results"
+    _direct_assertions="$WORKDIR/windows-direct-$_direct_id.assertions"
     _direct_summary="$WORKDIR/windows-direct-$_direct_id.summary"
     _direct_stdout="$WORKDIR/windows-direct-$_direct_id.runner.stdout"
     _direct_stderr="$WORKDIR/windows-direct-$_direct_id.runner.stderr"
     _direct_queue_win=$(cygpath -aw "$_direct_queue")
     _direct_results_win=$(cygpath -aw "$_direct_results")
+    _direct_assertions_win=$(cygpath -aw "$_direct_assertions")
     _direct_summary_win=$(cygpath -aw "$_direct_summary")
     _exe_win=$(cygpath -aw "$_exe_posix")
     _stdout_win=$(cygpath -aw "$_stdout_posix")
     _stderr_win=$(cygpath -aw "$_stderr_posix")
     _code_win=$(cygpath -aw "$_code_posix")
-    WINDOWS_DIRECT_CYGPATH_CONVERSIONS=$((WINDOWS_DIRECT_CYGPATH_CONVERSIONS + 7))
+    WINDOWS_DIRECT_CYGPATH_CONVERSIONS=$((WINDOWS_DIRECT_CYGPATH_CONVERSIONS + 8))
     windows_queue_append_request "$_direct_queue" "windows_direct_$_direct_id" \
-        "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" "$@"
+        "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" - - - "$@"
     WINDOWS_RESULTS=$_direct_results
     if ! windows_run_request_file \
         "$_direct_queue_win" \
         "$_direct_results_win" \
+        "$_direct_assertions_win" \
         "$_direct_summary_win" \
         "$_direct_stdout" \
         "$_direct_stderr"; then
@@ -1772,7 +1793,8 @@ windows_enqueue_missing_launch_self_test() {
         "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.exe" \
         "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.stdout" \
         "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.stderr" \
-        "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.exit"
+        "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.exit" \
+        - - -
     WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 1))
 }
 
@@ -1782,6 +1804,7 @@ windows_run_manifest_queue() {
     if ! windows_run_request_file \
         "$WINDOWS_QUEUE_WIN" \
         "$WINDOWS_RESULTS_WIN" \
+        "$WINDOWS_ASSERTIONS_WIN" \
         "$WINDOWS_SUMMARY_WIN" \
         "$WINDOWS_RUNNER_STDOUT" \
         "$WINDOWS_RUNNER_STDERR"; then
@@ -1791,11 +1814,36 @@ windows_run_manifest_queue() {
         return 1
     fi
     WINDOWS_MANIFEST_RUN_MS=$WINDOWS_LAST_RUN_MS
-    _result_rows=$(wc -l < "$WINDOWS_RESULTS" | tr -d '[:space:]')
-    if [ "$_result_rows" -ne "$WINDOWS_QUEUE_REQUESTS" ]; then
-        echo "FAIL: Windows integration queue returned $_result_rows results for $WINDOWS_QUEUE_REQUESTS requests" >&2
+    WINDOWS_SUMMARY_REQUESTS=
+    WINDOWS_SUMMARY_CHILD_STARTS=
+    WINDOWS_SUMMARY_LAUNCH_FAILURES=
+    WINDOWS_SUMMARY_ASSERTIONS=
+    WINDOWS_SUMMARY_RESULT_PROCESS_MS=
+    WINDOWS_SUMMARY_ASSERT_MS=
+    WINDOWS_SUMMARY_ELAPSED_MS=
+    while IFS='=' read -r _summary_key _summary_value || [ -n "$_summary_key" ]; do
+        case "$_summary_key" in
+            requests) WINDOWS_SUMMARY_REQUESTS=$_summary_value ;;
+            child_starts) WINDOWS_SUMMARY_CHILD_STARTS=$_summary_value ;;
+            launch_failures) WINDOWS_SUMMARY_LAUNCH_FAILURES=$_summary_value ;;
+            assertions) WINDOWS_SUMMARY_ASSERTIONS=$_summary_value ;;
+            result_process_ms) WINDOWS_SUMMARY_RESULT_PROCESS_MS=$_summary_value ;;
+            assert_ms) WINDOWS_SUMMARY_ASSERT_MS=$_summary_value ;;
+            elapsed_ms) WINDOWS_SUMMARY_ELAPSED_MS=$_summary_value ;;
+        esac
+    done < "$WINDOWS_SUMMARY"
+    if [ "$WINDOWS_SUMMARY_REQUESTS" -ne "$WINDOWS_QUEUE_REQUESTS" ]; then
+        echo "FAIL: Windows integration queue returned $WINDOWS_SUMMARY_REQUESTS results for $WINDOWS_QUEUE_REQUESTS requests" >&2
         return 1
     fi
+    if [ "$WINDOWS_SUMMARY_ASSERTIONS" -ne "$WINDOWS_MANIFEST_QUEUED" ]; then
+        echo "FAIL: Windows integration runner asserted $WINDOWS_SUMMARY_ASSERTIONS cases for $WINDOWS_MANIFEST_QUEUED queued manifest cases" >&2
+        return 1
+    fi
+    WINDOWS_MANIFEST_RESULT_PROCESS_MS=$WINDOWS_SUMMARY_RESULT_PROCESS_MS
+    ci_timing_record_elapsed windows-manifest queue-prepare "$WINDOWS_MANIFEST_QUEUE_PREP_MS" 0
+    ci_timing_record_elapsed windows-manifest runner "$WINDOWS_MANIFEST_RUN_MS" 0
+    ci_timing_record_elapsed windows-manifest result-process "$WINDOWS_MANIFEST_RESULT_PROCESS_MS" 0
     if ! windows_result_for_label "$WINDOWS_RUNNER_MISSING_LABEL"; then
         echo "FAIL: Windows integration queue omitted launch-failure self-test" >&2
         return 1
@@ -1811,45 +1859,92 @@ windows_run_manifest_queue() {
 }
 
 windows_assert_queued_cases() {
-    while IFS='|' read -r _name _source _want _stdout_spec _runtime_args _deps _extra _suite_members || [ -n "$_name" ]; do
-        case "$_name" in
-            "" | \#*) continue ;;
-        esac
-        if ! grep -F -x "$_name" "$WINDOWS_QUEUED_CASES" >/dev/null 2>&1; then
-            continue
-        fi
-        _expected_stderr_spec=-
-        case "${_extra:-}" in
-            "") ;;
-            stage-stdlib) ;;
-            expected-stderr:*) _expected_stderr_spec=${_extra#expected-stderr:} ;;
-        esac
+    ci_timing_set_now_ms
+    _assert_report_started=$CI_TIMING_NOW_MS
+    _assertion_rows=0
+    while IFS="$(printf '\t')" read -r \
+        _name \
+        _status \
+        _exit \
+        _want \
+        _error \
+        _run_ms \
+        _assert_ms \
+        _exit_matches \
+        _stdout_matches \
+        _stderr_matches || [ -n "$_name" ]; do
+        [ -n "$_name" ] || continue
+        _assertion_rows=$((_assertion_rows + 1))
         _case_dir="$WORKDIR/$_name"
-        if ! windows_result_for_label "$_name"; then
-            echo "FAIL: $_name missing queued Windows result" >&2
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
+        _asm="$_case_dir/$_name.s"
+        _run_shell_stderr="$_case_dir/$_name.run-shell.stderr"
+
+        if [ "$_name" = u64_float_casts ]; then
+            check_u64_float_cast_asm "$_asm"
         fi
-        if [ "$WINDOWS_RESULT_STATUS" != ok ]; then
-            echo "FAIL: $_name Windows launch failed: $WINDOWS_RESULT_ERROR" >&2
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
+        case "$_name" in
+            stdlib_string | string_eq) check_stdlib_string_helpers_asm "$_asm" "$_name" ;;
+        esac
+
+        _case_failed=0
+        if [ "$_status" != ok ]; then
+            _decoded_error=$(windows_queue_decode "$_error")
+            echo "FAIL: $_name Windows launch failed: $_decoded_error" >&2
+            _case_failed=1
+        else
+            ci_timing_record_elapsed "$_name" run "$_run_ms" "$_exit"
+            if [ "$_exit_matches" -ne 1 ]; then
+                echo "FAIL: $_name expected exit $_want, got $_exit" >&2
+                _case_failed=1
+            fi
+            if [ "$_stdout_matches" -ne 1 ]; then
+                echo "FAIL: $_name stdout mismatch" >&2
+                if command -v diff >/dev/null 2>&1; then
+                    diff -u \
+                        "$_case_dir/$_name.expected.stdout.cmp" \
+                        "$_case_dir/$_name.stdout.cmp" >&2 || true
+                fi
+                _case_failed=1
+            fi
+            if [ "$_stderr_matches" -ne 1 ]; then
+                echo "FAIL: $_name stderr mismatch" >&2
+                if command -v diff >/dev/null 2>&1; then
+                    diff -u \
+                        "$_case_dir/$_name.expected.stderr.cmp" \
+                        "$_case_dir/$_name.stderr.cmp" >&2 || true
+                fi
+                _case_failed=1
+            fi
         fi
-        got=$WINDOWS_RESULT_EXIT
-        ci_timing_record_elapsed "$_name" run "$WINDOWS_RESULT_MS" "$got"
-        assert_manifest_case \
-            "$_name" \
-            "$_want" \
-            "$_stdout_spec" \
-            "$_expected_stderr_spec" \
-            "$_case_dir/$_name.s" \
-            "$_case_dir/$_name.stdout" \
-            "$_case_dir/$_name.stderr" \
-            "$_case_dir" \
-            "$_case_dir/$_name.run-shell.stderr"
-    done < "$NORMALIZED_MANIFEST"
+        if [ "$_case_failed" -ne 0 ] && [ -s "$_run_shell_stderr" ]; then
+            echo "NOTE: $_name shell run diagnostics:" >&2
+            sed 's/^/  /' "$_run_shell_stderr" >&2
+        fi
+
+        if [ "$_case_failed" -eq 0 ]; then
+            echo "PASS: $_name"
+            _assert_status=0
+        else
+            failed=$((failed + 1))
+            _assert_status=1
+        fi
+        ran=$((ran + 1))
+        WINDOWS_MANIFEST_ASSERT_MS=$((WINDOWS_MANIFEST_ASSERT_MS + _assert_ms))
+        WINDOWS_MANIFEST_ASSERTS=$((WINDOWS_MANIFEST_ASSERTS + 1))
+        ci_timing_record_elapsed "$_name" assert "$_assert_ms" "$_assert_status"
+    done < "$WINDOWS_ASSERTIONS"
+    if [ "$_assertion_rows" -ne "$WINDOWS_MANIFEST_QUEUED" ]; then
+        echo "FAIL: Windows integration assertion stream contained $_assertion_rows cases for $WINDOWS_MANIFEST_QUEUED queued manifest cases" >&2
+        return 1
+    fi
+    ci_timing_set_now_ms
+    _assert_report_finished=$CI_TIMING_NOW_MS
+    WINDOWS_MANIFEST_ASSERT_REPORT_MS=$((_assert_report_finished - _assert_report_started))
+    ci_timing_record_elapsed \
+        windows-manifest \
+        assert-report \
+        "$WINDOWS_MANIFEST_ASSERT_REPORT_MS" \
+        0
 }
 
 windows_legacy_exit_to_unsigned() {
@@ -1957,17 +2052,14 @@ windows_runner_differential_self_test() {
 }
 
 windows_print_manifest_summary() {
-    _runner_requests=$(awk -F= '$1 == "requests" { print $2 }' "$WINDOWS_SUMMARY")
-    _runner_children=$(awk -F= '$1 == "child_starts" { print $2 }' "$WINDOWS_SUMMARY")
-    _runner_failures=$(awk -F= '$1 == "launch_failures" { print $2 }' "$WINDOWS_SUMMARY")
-    _runner_elapsed=$(awk -F= '$1 == "elapsed_ms" { print $2 }' "$WINDOWS_SUMMARY")
     _legacy_launch_cygpath=$((WINDOWS_MANIFEST_QUEUED * 4))
     echo "Windows integration process/timing summary:"
     echo "  manifest cases queued: $WINDOWS_MANIFEST_QUEUED"
-    echo "  process starts: legacy powershell=$WINDOWS_MANIFEST_QUEUED, queued powershell=$WINDOWS_MANIFEST_POWERSHELL_STARTS, child executables=$_runner_children"
+    echo "  process starts: legacy powershell=$WINDOWS_MANIFEST_QUEUED, queued powershell=$WINDOWS_MANIFEST_POWERSHELL_STARTS, child executables=$WINDOWS_SUMMARY_CHILD_STARTS"
+    echo "  queue encoding helper processes: 0"
     echo "  cygpath conversions: legacy launch-path lower bound=$_legacy_launch_cygpath, queued manifest=$WINDOWS_MANIFEST_CYGPATH_CONVERSIONS"
-    echo "  queue: requests=$_runner_requests launch_failures=$_runner_failures elapsed_ms=$_runner_elapsed"
-    echo "  phase_ms: compile=$WINDOWS_MANIFEST_COMPILE_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS link=$WINDOWS_MANIFEST_LINK_MS run=$WINDOWS_MANIFEST_RUN_MS assert=$WINDOWS_MANIFEST_ASSERT_MS"
+    echo "  queue: requests=$WINDOWS_SUMMARY_REQUESTS launch_failures=$WINDOWS_SUMMARY_LAUNCH_FAILURES elapsed_ms=$WINDOWS_SUMMARY_ELAPSED_MS"
+    echo "  phase_ms: compile=$WINDOWS_MANIFEST_COMPILE_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS link=$WINDOWS_MANIFEST_LINK_MS queue_prepare=$WINDOWS_MANIFEST_QUEUE_PREP_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
     echo "  phase_counts: compile=$WINDOWS_MANIFEST_COMPILES assemble=$WINDOWS_MANIFEST_ASSEMBLES link=$WINDOWS_MANIFEST_LINKS assert=$WINDOWS_MANIFEST_ASSERTS"
     echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
 }
@@ -2261,7 +2353,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             continue
         fi
         # shellcheck disable=SC2086
-        windows_queue_manifest_case "$name" "$runtime_args"
+        windows_queue_manifest_case \
+            "$name" \
+            "$want" \
+            "$stdout_spec" \
+            "$expected_stderr_spec" \
+            "$runtime_args"
         continue
     else
         set +e

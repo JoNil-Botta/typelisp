@@ -1529,6 +1529,10 @@
   (match ctx
     [(TcContext _ _ _ _ module-id _ _ _) module-id]))
 
+(define (tc-context-type-module-id [ctx : TcContext]) : i64
+  (match ctx
+    [(TcContext _ _ _ _ _ type-module-id _ _) type-module-id]))
+
 (define (tc-context-for-type-resolution [ctx : TcContext]) : TcContext
   (match ctx
     [(TcContext
@@ -3938,6 +3942,18 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-stdlib-tlci-native-expr-results : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-tlci-native-module-results : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-tlci-native-decls-results : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-stdlib-source-interpreted : i64
     0))
 (cfg
@@ -4116,6 +4132,9 @@
       (set! compiler-tc-macro-stdlib-tlci-load-failures 0)
       (set! compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 0)
       (set! compiler-tc-macro-stdlib-tlci-native-dispatches 0)
+      (set! compiler-tc-macro-stdlib-tlci-native-expr-results 0)
+      (set! compiler-tc-macro-stdlib-tlci-native-module-results 0)
+      (set! compiler-tc-macro-stdlib-tlci-native-decls-results 0)
       (set! compiler-tc-macro-stdlib-source-interpreted 0)
       (set! compiler-tc-macro-walk-decls-shared 0)
       (set! compiler-tc-macro-walk-decls-expanded 0)
@@ -4818,6 +4837,15 @@
       (compiler-tc-macro-counter-profile-line
         "stdlib_tlci_native_dispatches"
         compiler-tc-macro-stdlib-tlci-native-dispatches)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_native_expr_results"
+        compiler-tc-macro-stdlib-tlci-native-expr-results)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_native_module_results"
+        compiler-tc-macro-stdlib-tlci-native-module-results)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_native_decls_results"
+        compiler-tc-macro-stdlib-tlci-native-decls-results)
       (compiler-tc-macro-counter-profile-line
         "stdlib_source_interpreted"
         compiler-tc-macro-stdlib-source-interpreted)
@@ -25167,6 +25195,58 @@
         true
         (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id))]))
 
+(define (tc-top-level-value-owned-by-module-id?
+  [ctx : TcContext]
+  [module-id : i64]
+  [name-id : i64]) : bool
+  (let
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    [handle : i64
+      (compiler-symbols-lookup-value-in-module-id-or
+        symbols
+        module-id
+        name-id
+        (compiler-symbols-missing-handle))]
+    (and
+      (compiler-symbols-handle-found? handle)
+      ;; Module-qualified alias entries can point at declarations owned by a
+      ;; different module.  Those aliases must not count as a definition-site
+      ;; shadow of a compiler-private intrinsic.
+      (=
+        (compiler-symbols-owner-module-id-at-index-or
+          symbols
+          (compiler-symbol-handle-index handle)
+          -2)
+        module-id))))
+
+(define (tc-private-intrinsic-unshadowed-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (and
+    (cbi.compiler-builtin-private-intrinsic-id? name-id)
+    ;; Function parameters and lexical bindings always shadow, including in an
+    ;; imported body.  The scoped runtime holds the hot local stack separately;
+    ;; the persistent scan covers callers that materialized that stack.
+    (not
+      (or
+        (and
+          tc-type-env-scoped-runtime-active
+          (>= (tc-type-env-scoped-runtime-lookup-index name-id) 0))
+        (tc-name-local-bound-before-module-scan-id? env name-id)))
+    ;; A top-level definition shadows only in the module that owns this body.
+    ;; In an imported aggregate, the ordinary value env belongs to the caller,
+    ;; while type-module-id retains the declaration's defining module.
+    (not
+      (let
+        [module-id : i64 (tc-context-type-module-id ctx)]
+        (if (compiler-symbol-root-module-id? module-id)
+          ;; Root-module probes used by the compiler's in-process source tests
+          ;; rebuild the type env repeatedly while sharing symbol storage.  The
+          ;; env is authoritative for an unqualified root definition.
+          (tc-name-bound-id? env name-id)
+          (tc-top-level-value-owned-by-module-id? ctx module-id name-id))))))
+
 (define (tc-default-builtin-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (if (cbi.compiler-builtin-typecheck-region-arg-id? name-id)
     (if tc-type-env-scoped-runtime-active
@@ -29221,7 +29301,7 @@
                     func
                     cbi.compiler-builtin-id-tl-private-string-eq
                     args)]
-                [(tc-string-to-int-helper-call-id? env lookup-id)
+                [(tc-string-to-int-helper-call-id? ctx env lookup-id)
                   (tc-borrowed-string-builtin-call
                     ctx
                     env
@@ -29238,11 +29318,11 @@
                   (tc-reflection-query-runtime-call name)]
                 [(and
                     (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
-                    (not (tc-name-bound-id? env name-id)))
+                    (tc-private-intrinsic-unshadowed-id? ctx env name-id))
                   (tc-float-sqrt-call ctx env args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-float-bitcast-id? name-id)
-                    (not (tc-name-bound-id? env name-id)))
+                    (tc-private-intrinsic-unshadowed-id? ctx env name-id))
                   (tc-float-bitcast-call ctx env name-id args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-clone-id? name-id)
@@ -29467,7 +29547,10 @@
   (or
     (and
       (cbi.compiler-builtin-typecheck-string-length-id? lookup-id)
-      (not (tc-name-bound-id? env (tc-env-name-key-id lookup-id))))
+      (tc-private-intrinsic-unshadowed-id?
+        ctx
+        env
+        (tc-env-name-key-id lookup-id)))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
@@ -29484,7 +29567,10 @@
   (or
     (and
       (cbi.compiler-builtin-typecheck-string-ref-call-id? lookup-id)
-      (not (tc-name-bound-id? env (tc-env-name-key-id lookup-id))))
+      (tc-private-intrinsic-unshadowed-id?
+        ctx
+        env
+        (tc-env-name-key-id lookup-id)))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
@@ -29510,7 +29596,7 @@
   (or
     (and
       (cbi.compiler-builtin-typecheck-string-eq-id? lookup-id)
-      (tc-default-builtin-unshadowed-id? env lookup-id))
+      (tc-private-intrinsic-unshadowed-id? ctx env lookup-id))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
@@ -29558,10 +29644,13 @@
       cbi.compiler-builtin-id-string-concat
       "string-concat")))
 
-(define (tc-string-to-int-helper-call-id? [env : TcTypeEnv] [lookup-id : i64]) : bool
+(define (tc-string-to-int-helper-call-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lookup-id : i64]) : bool
   (and
     (cbi.compiler-builtin-typecheck-string-to-int-id? lookup-id)
-    (tc-default-builtin-unshadowed-id? env lookup-id)))
+    (tc-private-intrinsic-unshadowed-id? ctx env lookup-id)))
 
 (define (tc-borrowed-string-builtin-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-typecheck-borrowed-string-id? name-id))
@@ -30256,7 +30345,7 @@
                   func
                   args
                   (AstType.String))]
-              [(tc-string-to-int-helper-call-id? env lookup-id)
+              [(tc-string-to-int-helper-call-id? ctx env lookup-id)
                 (tc-borrowed-string-builtin-call
                   ctx
                   env
@@ -30273,11 +30362,11 @@
                 (tc-reflection-query-runtime-call name)]
               [(and
                   (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
-                  (not (tc-name-bound-id? env name-id)))
+                  (tc-private-intrinsic-unshadowed-id? ctx env name-id))
                 (tc-float-sqrt-call ctx env args)]
               [(and
                   (cbi.compiler-builtin-typecheck-float-bitcast-id? name-id)
-                  (not (tc-name-bound-id? env name-id)))
+                  (tc-private-intrinsic-unshadowed-id? ctx env name-id))
                 (tc-float-bitcast-call ctx env name-id args)]
               [(and
                   (cbi.compiler-builtin-typecheck-clone-id? name-id)
@@ -30367,7 +30456,7 @@
                     func
                     args
                     (AstType.String))]
-                [(tc-string-to-int-helper-call-id? env lookup-id)
+                [(tc-string-to-int-helper-call-id? ctx env lookup-id)
                   (tc-borrowed-string-builtin-call
                     ctx
                     env
@@ -30384,11 +30473,11 @@
                   (tc-reflection-query-runtime-call name)]
                 [(and
                     (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
-                    (not (tc-name-bound-id? env name-id)))
+                    (tc-private-intrinsic-unshadowed-id? ctx env name-id))
                   (tc-float-sqrt-call ctx env args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-float-bitcast-id? name-id)
-                    (not (tc-name-bound-id? env name-id)))
+                    (tc-private-intrinsic-unshadowed-id? ctx env name-id))
                   (tc-float-bitcast-call ctx env name-id args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-clone-id? name-id)
@@ -68985,6 +69074,7 @@
     [definition-module : String]
     [macro-name : String]
     [params : AstMacroParamList]
+    [ret : AstType]
     [env : CtfeEnv]
     [call-expr : AstExpr]) : MacroNativeStdlibTlciResult
     (let
@@ -69060,7 +69150,24 @@
                                       compiler-tc-macro-stdlib-tlci-native-dispatches
                                       (+
                                         compiler-tc-macro-stdlib-tlci-native-dispatches
-                                        1))))
+                                        1))
+                                    (if (tc-macro-result-module? ret)
+                                      (set!
+                                        compiler-tc-macro-stdlib-tlci-native-module-results
+                                        (+
+                                          compiler-tc-macro-stdlib-tlci-native-module-results
+                                          1))
+                                      (if (tc-macro-result-decls? ret)
+                                        (set!
+                                          compiler-tc-macro-stdlib-tlci-native-decls-results
+                                          (+
+                                            compiler-tc-macro-stdlib-tlci-native-decls-results
+                                            1))
+                                        (set!
+                                          compiler-tc-macro-stdlib-tlci-native-expr-results
+                                          (+
+                                            compiler-tc-macro-stdlib-tlci-native-expr-results
+                                            1))))))
                                 (MacroNativeStdlibTlciResult.Value value)))]
                           ;; status 0 with no committed result: a registration
                           ;; shell -- keep the counted interpreted fallback.
@@ -69101,6 +69208,7 @@
     [_definition-module : String]
     [_macro-name : String]
     [_params : AstMacroParamList]
+    [_ret : AstType]
     [_env : CtfeEnv]
     [_call-expr : AstExpr]) : MacroNativeStdlibTlciResult
     MacroNativeStdlibTlciResult.No))
@@ -69116,6 +69224,7 @@
   [macro-name-id : i64]
   [macro-name : String]
   [params : AstMacroParamList]
+  [ret : AstType]
   [body : AstExpr]
   [expanded-args : AstExprList]
   [call-expr : AstExpr]) : ResultMacroValueEnv
@@ -69173,6 +69282,7 @@
                 fallback-module
                 macro-name
                 params
+                ret
                 env
                 call-expr)]
             (begin
@@ -69234,6 +69344,7 @@
   [macro-name-id : i64]
   [macro-name : String]
   [params : AstMacroParamList]
+  [ret : AstType]
   [body : AstExpr]
   [expanded-args : AstExprList]
   [call-expr : AstExpr]) : ResultMacroValue
@@ -69246,6 +69357,7 @@
     macro-name-id
     macro-name
     params
+    ret
     body
     expanded-args
     call-expr)
@@ -69261,6 +69373,7 @@
   [macro-name-id : i64]
   [macro-name : String]
   [params : AstMacroParamList]
+  [ret : AstType]
   [body : AstExpr]
   [args : AstExprList]
   [depth : i64]
@@ -69280,6 +69393,7 @@
         macro-name-id
         macro-name
         params
+        ret
         body
         expanded-args
         call-expr)]
@@ -69778,6 +69892,7 @@
         macro-name-id
         macro-name
         params
+        ret
         body
         args
         depth
@@ -71656,6 +71771,7 @@
                                   macro-name
                                   definition-module)
                                 params
+                                ret
                                 body
                                 expanded-args
                                 call-expr)
@@ -71879,6 +71995,7 @@
                                         macro-name
                                         definition-module)
                                       params
+                                      ret
                                       body
                                       expanded-args
                                       call-expr)

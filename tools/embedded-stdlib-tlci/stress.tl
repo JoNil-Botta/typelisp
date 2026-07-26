@@ -287,10 +287,10 @@
 ;: Tier 2: the callback layer, between tier 1's bare crossing and tier 3's pool
 ;: cycling. It dispatches the same native entry tier 3 uses, so the two tiers
 ;: differ in exactly one variable -- tier 3 captures pools and pushes a fresh
-;: operand every iteration, tier 2 does both once and then holds one session for
-;: the whole run. A tier 2 failure with tier 1 clean therefore isolates callback
-;: marshalling; a tier 3 failure with tier 2 clean isolates the per-iteration
-;: session/pool cycling.
+;: operand every iteration, while tier 2 holds both for the whole run. Both
+;: open the fresh per-invocation host session required by SPEC 5.17.1.1. A tier
+;: 2 failure with tier 1 clean therefore isolates callback marshalling; a tier
+;: 3 failure with tier 2 clean isolates per-iteration pool/operand cycling.
 ;;
 ;; Note on "does not allocate AST nodes" in #5528's tier list: no stdlib entry
 ;; drives host callbacks without allocating its own expansion, so what tier 2
@@ -323,16 +323,6 @@
         operands
         0
         (CompilerCtfeValue.Expr operand-node (AstType.Expr)))
-      ;; One session for the whole run, which is the lifetime shape #5460 failed
-      ;; in. Fuel is sized for the run rather than per dispatch so the session
-      ;; never needs reopening.
-      (compiler-comptime-host-session-open!
-        pools
-        operands
-        1
-        0x7FFFFFFF
-        stress-cookie
-        (ctfe-reflect-info-list-empty))
       (while (and (= outcome stress-status-ok) (< i iterations))
         (begin
           (when
@@ -344,6 +334,15 @@
               0
               (array-ref canaries 0)
               (array-ref canaries 1)))
+          ;; Keep the mapped image, pools, and operand storage alive across the
+          ;; run, but give each entry invocation its transactional result slot.
+          (compiler-comptime-host-session-open!
+            pools
+            operands
+            1
+            64
+            stress-cookie
+            (ctfe-reflect-info-list-empty))
           (match (tlci-loader-dispatch-macro
             loaded
             stress-native-identity
@@ -376,9 +375,9 @@
                 [(not (stress-canaries-ok? canaries))
                   (set! outcome stress-status-canary-clobbered)]
                 [else unit])])
+          (compiler-comptime-host-session-close!)
           (when (not (= outcome stress-status-ok)) (array-set! failed-at 0 i))
           (set! i (+ i 1))))
-      (compiler-comptime-host-session-close!)
       (stress-progress-write!
         progress-path
         2

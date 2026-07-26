@@ -9306,6 +9306,40 @@
 (define (compiler-backend-test-span [line : i64] [col : i64]) : AstSourceSpan
   (ast-source-span line col line col))
 
+(define (compiler-backend-source-span-symbol-provenance-ok?) : bool
+  (let
+    [source-name : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id (ci.intern "same-span-name"))]
+    [generated-name : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id (ci.intern-generated-name "same-span-name"))]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert
+        (compiler-source-spans-insert
+          (compiler-source-spans-empty)
+          source-name
+          (compiler-backend-test-span 12 3))
+        generated-name
+        (compiler-backend-test-span 34 5))]
+    [index : CompilerBackendSourceSpanIndex
+      (compiler-backend-source-span-index-build spans)]
+    (and
+      (not (compiler-ir-symbol-id-eq? source-name generated-name))
+      (string.eq
+        (compiler-ir-symbol-id-text source-name)
+        (compiler-ir-symbol-id-text generated-name))
+      (match (compiler-backend-source-span-index-lookup index source-name)
+        [(CompilerMaybeSourceSpan.Some span)
+          (and
+            (= (ast-source-span-start-line span) 12)
+            (= (ast-source-span-start-col span) 3))]
+        [(CompilerMaybeSourceSpan.No) false])
+      (match (compiler-backend-source-span-index-lookup index generated-name)
+        [(CompilerMaybeSourceSpan.Some span)
+          (and
+            (= (ast-source-span-start-line span) 34)
+            (= (ast-source-span-start-col span) 5))]
+        [(CompilerMaybeSourceSpan.No) false]))))
+
 (define (compiler-backend-instr-diagnostic-case-ok?
   [instr : CompilerIrInstr]
   [want-message : String]
@@ -9316,7 +9350,7 @@
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert
           (compiler-source-spans-empty)
-          "main"
+          (compiler-ir-symbol-typed-id (ci.intern "main"))
           (compiler-backend-test-span 10 2))
         (ci.intern "main")
         instr
@@ -13137,7 +13171,7 @@
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert
           (compiler-source-spans-empty)
-          "main"
+          (compiler-ir-symbol-typed-id (ci.intern "main"))
           (compiler-backend-test-span 10 2))
         (ci.intern "main")
         phi
@@ -28494,6 +28528,7 @@
     (backend-and8
       (and
         (compiler-backend-instr-diagnostics-ok?)
+        (compiler-backend-source-span-symbol-provenance-ok?)
         (compiler-backend-register-group-fail-closed-ok?)
         (compiler-backend-reg-part-pools-ok?)
         (compiler-backend-scavenge-emergency-reg-support-ok?)

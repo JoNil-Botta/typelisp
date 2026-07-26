@@ -90,8 +90,27 @@
   (Any))
 
 ;; Parsed symbols use their parser ID directly; synthesized/structural symbols
-;; receive one generated ID whose pool entry owns the display spelling. IR
-;; stores that raw i64, avoiding a heap object for every name occurrence.
+;; receive one generated ID whose pool entry owns the display spelling. Most IR
+;; still stores that raw i64, avoiding a heap object for every name occurrence.
+;; Typed boundaries use this one-word handle so packed structural keys and
+;; missing-value sentinels cannot be rendered accidentally.
+(defstruct CompilerIrSymbolId
+  (value i64))
+
+(define (compiler-ir-symbol-typed-id [symbol : i64]) : CompilerIrSymbolId
+  (CompilerIrSymbolId symbol))
+
+(define (compiler-ir-symbol-id-value [symbol : CompilerIrSymbolId]) : i64
+  (struct-get symbol value))
+
+(define (compiler-ir-symbol-id-eq?
+  [left : CompilerIrSymbolId]
+  [right : CompilerIrSymbolId]) : bool
+  (= (compiler-ir-symbol-id-value left) (compiler-ir-symbol-id-value right)))
+
+(define (compiler-ir-symbol-id-text [symbol : CompilerIrSymbolId]) : String
+  (compiler-ir-symbol-text (compiler-ir-symbol-id-value symbol)))
+
 (define (compiler-ir-symbol-id [symbol : i64]) : i64
   symbol)
 
@@ -4636,13 +4655,14 @@
 ;;
 ;; line/column instead of falling back to `path:1:1`.
 ;;
-;; The table is a deterministic association list keyed by function name; the
+;; The table is a deterministic association list keyed by function symbol ID;
+;; rendering is reserved for diagnostics. The
 ;;
 ;; first binding for a name wins on lookup (entries are appended in lowering
 ;;
 ;; order).
 (defenum CompilerSourceSpansEntry
-  (Entry String AstSourceSpan))
+  (Entry CompilerIrSymbolId AstSourceSpan))
 
 (defstruct CompilerSourceSpansEntrySeq
   (slots (Array CompilerSourceSpansEntry))
@@ -4956,7 +4976,7 @@
 ;; preserve the old cons-list first-binding behavior without O(n^2) appends.
 (define (compiler-source-spans-insert
   [spans : CompilerSourceSpans]
-  [name : String]
+  [name : CompilerIrSymbolId]
   [span : AstSourceSpan]) : CompilerSourceSpans
   (match spans
     [(CompilerSourceSpans.Spans entries instr-entries instr-count)
@@ -4970,18 +4990,18 @@
 (define (compiler-source-spans-entry-array-lookup
   [slots : (Array CompilerSourceSpansEntry)]
   [index : i64]
-  [name : String]) : CompilerMaybeSourceSpan
+  [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
   (if (< index 0)
     (CompilerMaybeSourceSpan.No)
     (match (array-ref slots index)
       [(CompilerSourceSpansEntry.Entry entry-name span)
-        (if (string.eq entry-name name)
+        (if (compiler-ir-symbol-id-eq? entry-name name)
           (CompilerMaybeSourceSpan.Some span)
           (compiler-source-spans-entry-array-lookup slots (- index 1) name))])))
 
 (define (compiler-source-spans-entry-list-lookup
   [entries : CompilerSourceSpansEntryList]
-  [name : String]) : CompilerMaybeSourceSpan
+  [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
   (match entries
     [(CompilerSourceSpansEntryList.Nil) (CompilerMaybeSourceSpan.No)]
     [(CompilerSourceSpansEntryList.Cons entry rest)
@@ -4989,7 +5009,7 @@
         [rest : CompilerSourceSpansEntryList (box-get rest)]
         (match entry
           [(CompilerSourceSpansEntry.Entry entry-name span)
-            (if (string.eq entry-name name)
+            (if (compiler-ir-symbol-id-eq? entry-name name)
               (CompilerMaybeSourceSpan.Some span)
               (compiler-source-spans-entry-list-lookup rest name))]))]
     [(CompilerSourceSpansEntryList.Array seq)
@@ -5000,7 +5020,7 @@
 
 (define (compiler-source-spans-lookup
   [spans : CompilerSourceSpans]
-  [name : String]) : CompilerMaybeSourceSpan
+  [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
   (match spans
     [(CompilerSourceSpans.Spans entries _ _)
       (compiler-source-spans-entry-list-lookup entries name)]))
@@ -7179,25 +7199,47 @@
     [span1 : AstSourceSpan (ast-source-span 1 2 1 3)]
     [span2 : AstSourceSpan (ast-source-span 4 5 4 8)]
     [span3 : AstSourceSpan (ast-source-span 7 8 7 12)]
+    [first : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id (ci.intern-generated-canonical-name "first"))]
+    [second : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id
+        (ci.intern-generated-canonical-name "second"))]
+    [one : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id (ci.intern-generated-canonical-name "one"))]
+    [two : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id (ci.intern-generated-canonical-name "two"))]
+    [same : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id (ci.intern-generated-canonical-name "same"))]
+    [source-provenance : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id
+        (ci.intern-source-slice "span-same-provenance" 0 20))]
+    [generated-provenance : CompilerIrSymbolId
+      (compiler-ir-symbol-typed-id
+        (ci.intern-generated-name "span-same-provenance"))]
     [entries : CompilerSourceSpansEntryList
       (compiler-source-spans-entry-list-append
         (compiler-source-spans-entry-list-append
           (CompilerSourceSpansEntryList.Nil)
-          (CompilerSourceSpansEntry.Entry "first" span1))
-        (CompilerSourceSpansEntry.Entry "second" span2))]
+          (CompilerSourceSpansEntry.Entry first span1))
+        (CompilerSourceSpansEntry.Entry second span2))]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert
-        (compiler-source-spans-insert (compiler-source-spans-empty) "one" span1)
-        "two"
+        (compiler-source-spans-insert (compiler-source-spans-empty) one span1)
+        two
         span2)]
     [shadowed : CompilerSourceSpans
       (compiler-source-spans-insert
+        (compiler-source-spans-insert (compiler-source-spans-empty) same span1)
+        same
+        span3)]
+    [same-spelling : CompilerSourceSpans
+      (compiler-source-spans-insert
         (compiler-source-spans-insert
           (compiler-source-spans-empty)
-          "same"
+          source-provenance
           span1)
-        "same"
-        span3)]
+        generated-provenance
+        span2)]
     [instr : CompilerIrInstr
       (CompilerIrInstr.Mov 9 (CompilerIrValue.I64 1) (AstType.I64))]
     [instr-spans : CompilerSourceSpans
@@ -7211,19 +7253,32 @@
         instr
         span3)]
     (and
+      (= (comptime (size-of (type CompilerIrSymbolId))) 8)
       (= (compiler-source-spans-entry-list-count entries) 2)
       (= (compiler-source-spans-count spans) 2)
-      (match (compiler-source-spans-entry-list-lookup entries "second")
+      (match (compiler-source-spans-entry-list-lookup entries second)
         [(CompilerMaybeSourceSpan.Some found)
           (and
             (= (ast-source-span-start-line found) 4)
             (= (ast-source-span-end-col found) 8))]
         [(CompilerMaybeSourceSpan.No) false])
-      (match (compiler-source-spans-lookup shadowed "same")
+      (match (compiler-source-spans-lookup shadowed same)
         [(CompilerMaybeSourceSpan.Some found)
           (and
             (= (ast-source-span-start-line found) 7)
             (= (ast-source-span-end-col found) 12))]
+        [(CompilerMaybeSourceSpan.No) false])
+      (not (compiler-ir-symbol-id-eq? source-provenance generated-provenance))
+      (string.eq
+        (compiler-ir-symbol-id-text source-provenance)
+        (compiler-ir-symbol-id-text generated-provenance))
+      (match (compiler-source-spans-lookup same-spelling source-provenance)
+        [(CompilerMaybeSourceSpan.Some found)
+          (= (ast-source-span-start-line found) 1)]
+        [(CompilerMaybeSourceSpan.No) false])
+      (match (compiler-source-spans-lookup same-spelling generated-provenance)
+        [(CompilerMaybeSourceSpan.Some found)
+          (= (ast-source-span-start-line found) 4)]
         [(CompilerMaybeSourceSpan.No) false])
       (match (compiler-source-spans-lookup-instr instr-spans 7 instr)
         [(CompilerMaybeSourceSpan.Some found)

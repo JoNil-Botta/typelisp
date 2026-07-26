@@ -575,7 +575,7 @@
   (type-segment-bases i64))
 
 (defstruct CompilerBackendSourceSpanIndex
-  (entries backend_string_i64_map.Map)
+  (entries backend_i64_i64_map.Map)
   (values (Array CompilerMaybeSourceSpan)))
 
 (define (compiler-backend-runtime-tail-profile?
@@ -1373,22 +1373,27 @@
 
 (define (compiler-backend-source-span-index-add
   [entries : CompilerSourceSpansEntryList]
-  [map : backend_string_i64_map.Map]
+  [map : backend_i64_i64_map.Map]
   [values : (Array CompilerMaybeSourceSpan)]
-  [index : i64]) : backend_string_i64_map.Map
+  [index : i64]) : backend_i64_i64_map.Map
   (match entries
     [(CompilerSourceSpansEntryList.Nil) map]
     [(CompilerSourceSpansEntryList.Cons entry rest)
       (match entry
         [(CompilerSourceSpansEntry.Entry name span)
-          (if (backend_string_i64_map.contains? (& map) name)
+          (if (backend_i64_i64_map.contains?
+            (& map)
+            (compiler-ir-symbol-id-value name))
             (compiler-backend-source-span-index-add
               (box-get rest)
               map
               values
               index)
             (begin
-              (backend_string_i64_map.insert-ref! (&mut map) name index)
+              (backend_i64_i64_map.insert-ref!
+                (&mut map)
+                (compiler-ir-symbol-id-value name)
+                index)
               (array-set! values index (CompilerMaybeSourceSpan.Some span))
               (compiler-backend-source-span-index-add
                 (box-get rest)
@@ -1405,20 +1410,25 @@
 (define (compiler-backend-source-span-index-add-array
   [slots : (Array CompilerSourceSpansEntry)]
   [index : i64]
-  [map : backend_string_i64_map.Map]
-  [values : (Array CompilerMaybeSourceSpan)]) : backend_string_i64_map.Map
+  [map : backend_i64_i64_map.Map]
+  [values : (Array CompilerMaybeSourceSpan)]) : backend_i64_i64_map.Map
   (if (< index 0)
     map
     (match (array-ref slots index)
       [(CompilerSourceSpansEntry.Entry name span)
-        (if (backend_string_i64_map.contains? (& map) name)
+        (if (backend_i64_i64_map.contains?
+          (& map)
+          (compiler-ir-symbol-id-value name))
           (compiler-backend-source-span-index-add-array
             slots
             (- index 1)
             map
             values)
           (begin
-            (backend_string_i64_map.insert-ref! (&mut map) name index)
+            (backend_i64_i64_map.insert-ref!
+              (&mut map)
+              (compiler-ir-symbol-id-value name)
+              index)
             (array-set! values index (CompilerMaybeSourceSpan.Some span))
             (compiler-backend-source-span-index-add-array
               slots
@@ -1438,24 +1448,26 @@
           (CompilerBackendSourceSpanIndex
             (compiler-backend-source-span-index-add
               entries
-              (backend_string_i64_map.with-capacity (+ (* count 2) 16))
+              (backend_i64_i64_map.with-capacity (+ (* count 2) 16))
               values
               0)
             values)))]))
 
 (define (compiler-backend-source-span-index-lookup
   [index : CompilerBackendSourceSpanIndex]
-  [name : String]) : CompilerMaybeSourceSpan
-  (match (backend_string_i64_map.get (& (struct-get index entries)) name)
-    [(backend_string_i64_map.LookupFound slot)
+  [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
+  (match (backend_i64_i64_map.get
+    (& (struct-get index entries))
+    (compiler-ir-symbol-id-value name))
+    [(backend_i64_i64_map.LookupFound slot)
       (if (and (>= slot 0) (< slot (array-length (struct-get index values))))
         (array-ref (struct-get index values) slot)
         (CompilerMaybeSourceSpan.No))]
-    [(backend_string_i64_map.LookupMissing) (CompilerMaybeSourceSpan.No)]))
+    [(backend_i64_i64_map.LookupMissing) (CompilerMaybeSourceSpan.No)]))
 
 (define (compiler-backend-function-diagnostic-index
   [index : CompilerBackendSourceSpanIndex]
-  [function : String]
+  [function : CompilerIrSymbolId]
   [message : String]) : CompilerDiagnostic
   (match (compiler-backend-source-span-index-lookup index function)
     [(CompilerMaybeSourceSpan.Some span)
@@ -49336,7 +49348,7 @@
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic-index
             span-index
-            (compiler-ir-symbol-text name)
+            (compiler-ir-symbol-typed-id name)
             "")]
         [_current-mode : unit (compiler-backend-set-current-mode! mode)]
         ;; Ensure the register allocator can see the program-wide group

@@ -2120,7 +2120,9 @@
   [spans : CompilerSourceSpans]
   [name : String]
   [want-line : i64]) : bool
-  (match (compiler-source-spans-lookup spans name)
+  (match (compiler-source-spans-lookup
+    spans
+    (compiler-ir-symbol-typed-id (ci.intern name)))
     [(CompilerMaybeSourceSpan.Some span)
       (= (ast-source-span-start-line span) want-line)]
     [(CompilerMaybeSourceSpan.No) false]))

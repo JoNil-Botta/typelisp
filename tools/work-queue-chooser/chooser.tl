@@ -1,11 +1,12 @@
 ;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser.
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
-;# each entry, skips draft PRs and PRs whose checks are still pending/running,
-;# issues labeled `blocked`, and issues an open PR already claims (the issue
-;# number appears as a 4+ digit run in a PR branch name or title -- an issue
-;# someone is already working is not work to hand to a second agent), weights
-;# the rest (PR review = 45,
+;# each entry, skips draft PRs, PRs whose checks are still pending/running, PRs
+;# whose newest review/comment is later than their newest commit, issues labeled
+;# `blocked`, and issues an open PR already claims (the issue number appears as a
+;# 4+ digit run in a PR branch name or title -- an issue someone is already
+;# working is not work to hand to a second agent), weights the rest (PR review =
+;# 45,
 ;# ready-for-implementation = 10, research/triage = 1, +50 for a p0 label,
 ;# +3 for a p1 label), uses system entropy to make a weighted pick, and prints
 ;# one action line:
@@ -218,6 +219,17 @@
           [_ false])]
       [(json.JsonMissing) false])))
 
+;: Look up the JSON array stored at `field`, or an empty sequence when absent.
+(define (json-field-array [value : json.Json] [field : String]) : json.JsonSeq
+  (let
+    [key : String field]
+    (match (json.object-get value (& key))
+      [(json.JsonFound found)
+        (match found
+          [(json.JsonArray entries) (box-get entries)]
+          [_ (json.list-empty)])]
+      [(json.JsonMissing) (json.list-empty)])))
+
 ;: True when any object in `labels` has a `name` equal to `needle`.
 (define (label-list-has? [labels : json.JsonSeq] [needle : String]) : bool
   (let
@@ -266,6 +278,81 @@
 ;: Return true when a PR is a draft. Draft PRs are never offered for review.
 (define (pr-draft? [item : json.Json]) : bool
   (json-field-bool item "isDraft"))
+
+;: Compare normalized GitHub RFC 3339 timestamps lexicographically. GitHub emits
+;: these values in fixed-width UTC form, so byte order is chronological order.
+(define (pr-timestamp-after? [left : String] [right : String]) : bool
+  (let
+    [left-len : i64 (string.string-length left)]
+    [right-len : i64 (string.string-length right)]
+    [common-len : i64
+      (if (< left-len right-len)
+        left-len
+        right-len)]
+    [index : i64 0]
+    [after : bool false]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index common-len))
+        (let
+          [left-code : i64 (chooser-char-code-at left index)]
+          [right-code : i64 (chooser-char-code-at right index)]
+          (if (> left-code right-code)
+            (begin
+              (set! after true)
+              (set! done true))
+            (if (< left-code right-code)
+              (set! done true)
+              (set! index (+ index 1))))))
+      (if done
+        after
+        (> left-len right-len)))))
+
+;: Return the latest non-empty timestamp at `field` in an object sequence.
+(define (pr-latest-seq-timestamp [entries : json.JsonSeq] [field : String]) : String
+  (let
+    [n : i64 (json.list-count entries)]
+    [index : i64 0]
+    [latest : String ""]
+    (begin
+      (while (< index n)
+        (begin
+          (match (json.list-get-index entries index)
+            [(json.JsonFound entry)
+              (let
+                [candidate : String (json-field-string entry field)]
+                (if (pr-timestamp-after? candidate latest)
+                  (set! latest candidate)
+                  unit))]
+            [(json.JsonMissing) unit])
+          (set! index (+ index 1))))
+      latest)))
+
+;: Return the latest review or issue-comment timestamp supplied for a PR.
+(define (pr-latest-review-activity [item : json.Json]) : String
+  (let
+    [latest-review : String
+      (pr-latest-seq-timestamp (json-field-array item "reviews") "submittedAt")]
+    [latest-comment : String
+      (pr-latest-seq-timestamp (json-field-array item "comments") "createdAt")]
+    (if (pr-timestamp-after? latest-comment latest-review)
+      latest-comment
+      latest-review)))
+
+;: Return true when a review or issue comment settled the current PR head.
+;: Missing/wrong-shaped activity or commit fields fail open so legacy producers
+;: keep every otherwise eligible PR in the queue during contract rollout.
+(define (pr-reviewed-after-latest-commit? [item : json.Json]) : bool
+  (let
+    [latest-commit : String
+      (pr-latest-seq-timestamp
+        (json-field-array item "commits")
+        "committedDate")]
+    [latest-activity : String (pr-latest-review-activity item)]
+    (and
+      (> (string.string-length latest-commit) 0)
+      (> (string.string-length latest-activity) 0)
+      (pr-timestamp-after? latest-activity latest-commit))))
 
 ;: Return true when a check run status is terminal; conclusions may pass/fail.
 (define (pr-check-status-complete? [status : String]) : bool
@@ -350,8 +437,8 @@
   (label-list-has? (issue-label-list item) "ready-for-implementation"))
 
 ;: Append a JSON array of PR objects as candidates, preserving source order.
-;: Draft PRs are never eligible, and non-draft PRs whose checks are still
-;: pending or running are skipped until their checks reach a terminal state.
+;: Draft PRs are never eligible. Non-draft PRs are skipped while checks are
+;: pending/running and after review activity settles their current commit.
 (define (pr-candidates-into
   [items : json.JsonSeq]
   [out : (&mut out CandBuilder)]) : unit
@@ -362,7 +449,10 @@
       (begin
         (match (json.list-get-index items i)
           [(json.JsonFound head)
-            (if (and (not (pr-draft? head)) (pr-checks-complete? head))
+            (if (and
+              (not (pr-draft? head))
+              (pr-checks-complete? head)
+              (not (pr-reviewed-after-latest-commit? head)))
               (cand-builder-push! out (pr-candidate head))
               unit)]
           [(json.JsonMissing) unit])
@@ -495,17 +585,6 @@
           [(json.JsonMissing) unit])
         (set! i (+ i 1))))))
 
-;: Look up the JSON array stored at `field`, or an empty sequence when absent.
-(define (json-field-array [value : json.Json] [field : String]) : json.JsonSeq
-  (let
-    [key : String field]
-    (match (json.object-get value (& key))
-      [(json.JsonFound found)
-        (match found
-          [(json.JsonArray entries) (box-get entries)]
-          [_ (json.list-empty)])]
-      [(json.JsonMissing) (json.list-empty)])))
-
 ;: Count open non-draft PRs in the raw `prs` array. Draft PRs and a missing
 ;: `isDraft` field are handled by `json-field-bool` (missing => non-draft).
 (define (count-open-nondraft-prs [items : json.JsonSeq]) : i64
@@ -607,6 +686,31 @@
             (if (= (struct-get (cand-nth cands 4) number) 7)
               unit
               (io.panic "issue should remain after skipped PRs"))))]
+      [(json.ErrJson _) (io.panic "test JSON should parse")])))
+
+(test
+  chooser-skips-reviewed-pr-until-a-new-push
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":100,\"title\":\"Comment settled\",\"isDraft\":false,\"statusCheckRollup\":[],\"commits\":[{\"committedDate\":\"2026-07-26T10:00:00Z\"}],\"reviews\":[],\"comments\":[{\"createdAt\":\"2026-07-26T10:01:00Z\"}]},{\"number\":101,\"title\":\"Pushed again\",\"isDraft\":false,\"statusCheckRollup\":[],\"commits\":[{\"committedDate\":\"2026-07-26T10:00:00Z\"},{\"committedDate\":\"2026-07-26T10:02:00Z\"}],\"reviews\":[{\"submittedAt\":\"2026-07-26T10:00:30Z\"}],\"comments\":[{\"createdAt\":\"2026-07-26T10:01:00Z\"}]},{\"number\":102,\"title\":\"Never reviewed\",\"isDraft\":false,\"statusCheckRollup\":[],\"commits\":[{\"committedDate\":\"2026-07-26T10:00:00Z\"}],\"reviews\":[],\"comments\":[]},{\"number\":103,\"title\":\"Legacy payload\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":104,\"title\":\"Review settled\",\"isDraft\":false,\"statusCheckRollup\":[],\"commits\":[{\"committedDate\":\"2026-07-26T10:00:00Z\"}],\"reviews\":[{\"submittedAt\":\"2026-07-26T10:03:00Z\"}],\"comments\":[{\"createdAt\":\"2026-07-26T09:59:00Z\"}]}],\"issues\":[]}"]
+    (match (json.parse (& text))
+      [(json.OkJson root)
+        (let
+          [cands : CandSeq (build-candidates root)]
+          (begin
+            (if (= (cand-count cands) 3)
+              unit
+              (io.panic
+                "expected pushed, never-reviewed, and legacy PR candidates"))
+            (if (= (struct-get (cand-nth cands 0) number) 101)
+              unit
+              (io.panic "a push after review must make the PR eligible again"))
+            (if (= (struct-get (cand-nth cands 1) number) 102)
+              unit
+              (io.panic "a PR with no review activity must remain eligible"))
+            (if (= (struct-get (cand-nth cands 2) number) 103)
+              unit
+              (io.panic "missing activity data must fail open"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test

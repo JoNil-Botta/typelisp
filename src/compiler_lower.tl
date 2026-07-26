@@ -17406,7 +17406,10 @@
           (- 0 1))]
       [logical-name-text : String (compiler-ir-symbol-text logical-name)]
       [function-spans : CompilerSourceSpans
-        (lower-record-function-span spans logical-name-text body)]
+        (lower-record-function-span
+          spans
+          (compiler-ir-symbol-typed-id logical-name)
+          body)]
       [state : LowerState
         (LowerState.State
           (if sret-needed
@@ -48025,7 +48028,10 @@
     [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
     [hidden-name-text : String (compiler-ir-symbol-text hidden-name)]
     [function-spans : CompilerSourceSpans
-      (lower-record-function-span spans hidden-name-text body)]
+      (lower-record-function-span
+        spans
+        (compiler-ir-symbol-typed-id hidden-name)
+        body)]
     [state : LowerState
       (LowerState.State
         param-count
@@ -48144,7 +48150,10 @@
     [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
     [hidden-name-text : String (compiler-ir-symbol-text hidden-name)]
     [function-spans : CompilerSourceSpans
-      (lower-record-function-span spans hidden-name-text body)]
+      (lower-record-function-span
+        spans
+        (compiler-ir-symbol-typed-id hidden-name)
+        body)]
     [state : LowerState
       (LowerState.State
         param-count
@@ -54295,7 +54304,10 @@
           (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
           ret-ty)]
       [function-spans : CompilerSourceSpans
-        (lower-record-function-span spans logical-name-text body)]
+        (lower-record-function-span
+          spans
+          (compiler-ir-symbol-typed-id logical-name)
+          body)]
       [state : LowerState
         (LowerState.State
           (if sret-needed
@@ -54400,7 +54412,7 @@
 ;; falls back to its default location for that function.
 (define (lower-record-function-span
   [spans : CompilerSourceSpans]
-  [name : String]
+  [name : CompilerIrSymbolId]
   [body : AstExpr]) : CompilerSourceSpans
   (match (lower-ast-expr-direct-span body)
     [(CompilerMaybeSourceSpan.Some span)
@@ -54616,7 +54628,7 @@
                   [escaped-spans : CompilerSourceSpans
                     (lower-record-function-span
                       spans
-                      (compiler-ir-symbol-text logical-name)
+                      (compiler-ir-symbol-typed-id logical-name)
                       body)]
                   [new-enclosing : i64 (arena.tl_arena_current)]
                   (begin

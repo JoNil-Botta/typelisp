@@ -7,6 +7,8 @@ cd "$ROOT"
 RECENT=${CI_TIMING_TREND_RECENT:-3}
 BASELINE=${CI_TIMING_TREND_BASELINE:-20}
 FACTOR=${CI_TIMING_TREND_FACTOR:-1.5}
+MIN_MS=${CI_TIMING_TREND_MIN_MS:-250}
+BASELINE_PERCENTILE=${CI_TIMING_TREND_BASELINE_PERCENTILE:-95}
 RUN_LIMIT=${CI_TIMING_TREND_RUN_LIMIT:-100}
 # Gates whose cost is already governed by an explicit cap in
 # scripts/check-ci-timing-budgets.sh. This analyzer has no notion of an accepted
@@ -32,8 +34,10 @@ History schema:
   head_sha run_id run_url created_at gate case_or_chunk phase elapsed_ms exit host
 
 Configuration: CI_TIMING_TREND_RECENT (3), CI_TIMING_TREND_BASELINE (20),
-CI_TIMING_TREND_FACTOR (1.5), CI_TIMING_TREND_RUN_LIMIT (100), and
-CI_TIMING_TREND_DENYLIST (newline-separated gate names).
+CI_TIMING_TREND_FACTOR (1.5), CI_TIMING_TREND_MIN_MS (250),
+CI_TIMING_TREND_BASELINE_PERCENTILE (95, nearest-rank),
+CI_TIMING_TREND_RUN_LIMIT (100),
+and CI_TIMING_TREND_DENYLIST (newline-separated gate names).
 EOF
 }
 
@@ -50,6 +54,22 @@ validate_config() {
         echo "[ci-timing-trend] factor must be numeric and greater than 1" >&2
         return 2
     }
+    case "$MIN_MS" in
+        *[!0-9]* | '')
+            echo "[ci-timing-trend] minimum duration must be a non-negative integer" >&2
+            return 2
+            ;;
+    esac
+    case "$BASELINE_PERCENTILE" in
+        *[!0-9]* | '')
+            echo "[ci-timing-trend] baseline percentile must be an integer from 50 to 100" >&2
+            return 2
+            ;;
+    esac
+    if [ "$BASELINE_PERCENTILE" -lt 50 ] || [ "$BASELINE_PERCENTILE" -gt 100 ]; then
+        echo "[ci-timing-trend] baseline percentile must be an integer from 50 to 100" >&2
+        return 2
+    fi
     required=$((RECENT + BASELINE))
     if [ "$RUN_LIMIT" -lt "$required" ]; then
         echo "[ci-timing-trend] run limit $RUN_LIMIT is smaller than required history $required" >&2
@@ -92,7 +112,9 @@ analyze() {
         sort -t "$tab" -k4,4r -k2,2nr -k10,10 -k5,5 > "$sorted"
 
     awk -F '\t' -v recent="$RECENT" -v baseline="$BASELINE" \
-        -v factor="$FACTOR" -v denylist="$DENYLIST" -v marker="$MARKER" '
+        -v factor="$FACTOR" -v min_ms="$MIN_MS" \
+        -v baseline_percentile="$BASELINE_PERCENTILE" \
+        -v denylist="$DENYLIST" -v marker="$MARKER" '
         function denied(gate, n, i, rows) {
             n = split(denylist, rows, "\n")
             for (i = 1; i <= n; i++) if (gate == rows[i]) return 1
@@ -120,6 +142,19 @@ analyze() {
             if (count % 2) return work[int(count / 2) + 1]
             return (work[count / 2] + work[count / 2 + 1]) / 2
         }
+        function percentile(key, start, count, percent, i, j, rank, tmp) {
+            delete work
+            for (i = 1; i <= count; i++) work[i] = value[key, start + i - 1]
+            for (i = 2; i <= count; i++) {
+                tmp = work[i]; j = i - 1
+                while (j > 0 && work[j] > tmp) {
+                    work[j + 1] = work[j]; j--
+                }
+                work[j + 1] = tmp
+            }
+            rank = int((percent * count + 99) / 100)
+            return work[rank]
+        }
         {
             if (!seen_head[$1]++) {
                 heads++
@@ -143,7 +178,9 @@ analyze() {
             print "# CI timing trend report"
             print ""
             print "Recent window: **" recent "**; preceding baseline: **" baseline \
-                "**; alert factor: **" factor "x**."
+                "**; alert factor: **" factor "x**; minimum duration: **" \
+                min_ms " ms**; baseline dispersion guard: **nearest-rank P" \
+                baseline_percentile "**."
             print ""
             for (i = 1; i <= key_count; i++) {
                 key = keys[i]
@@ -153,26 +190,42 @@ analyze() {
                 }
                 base = median(key, recent + 1, baseline)
                 now = median(key, 1, recent)
-                ratio = (base == 0 ? 999999 : now / base)
+                guard = percentile(key, recent + 1, baseline, baseline_percentile)
                 base_median[key] = base
                 recent_median[key] = now
+                baseline_guard[key] = guard
+                if (base == 0) {
+                    if (now > 0) zero_filtered[++zero_filtered_count] = key
+                    continue
+                }
+                ratio = now / base
                 ratios[key] = ratio
-                if (ratio > factor) alerts[++alert_count] = key
+                if (ratio <= factor) continue
+                if (base < min_ms || now < min_ms) {
+                    duration_filtered[++duration_filtered_count] = key
+                    continue
+                }
+                if (now <= guard) {
+                    dispersion_filtered[++dispersion_filtered_count] = key
+                    continue
+                }
+                alerts[++alert_count] = key
             }
             if (alert_count == 0) {
                 print "## Status: no sustained regressions"
                 print ""
-                print "No complete host/gate series exceeds the configured factor."
+                print "No complete host/gate series exceeds the factor, duration floor, and baseline dispersion guard."
             } else {
                 print "## Sustained regressions"
                 print ""
-                print "| Host | Gate | Baseline median | Recent median | Ratio |"
-                print "| --- | --- | ---: | ---: | ---: |"
+                print "| Host | Gate | Baseline median | Baseline P" \
+                    baseline_percentile " | Recent median | Ratio |"
+                print "| --- | --- | ---: | ---: | ---: | ---: |"
                 for (i = 1; i <= alert_count; i++) {
                     key = alerts[i]; split(key, parts, SUBSEP)
-                    printf "| %s | %s | %.0f ms | %.0f ms | %.3fx |\n", \
+                    printf "| %s | %s | %.0f ms | %.0f ms | %.0f ms | %.3fx |\n", \
                         parts[1], parts[2], base_median[key], \
-                        recent_median[key], ratios[key]
+                        baseline_guard[key], recent_median[key], ratios[key]
                 }
                 print ""
                 print "### Newest-first series used"
@@ -183,6 +236,53 @@ analyze() {
                     for (j = 1; j <= recent + baseline; j++)
                         print "  - [" run[key, j] "](" url[key, j] "): " \
                             value[key, j] " ms"
+                }
+            }
+            if (zero_filtered_count) {
+                print ""
+                print "## Zero-baseline changes"
+                print ""
+                print "These changes are informational only. A zero baseline never forms a ratio or alert."
+                print ""
+                print "| Host | Gate | Baseline median | Recent median |"
+                print "| --- | --- | ---: | ---: |"
+                for (i = 1; i <= zero_filtered_count; i++) {
+                    key = zero_filtered[i]; split(key, parts, SUBSEP)
+                    printf "| %s | %s | %.0f ms | %.0f ms |\n", \
+                        parts[1], parts[2], base_median[key], recent_median[key]
+                }
+            }
+            if (duration_filtered_count) {
+                print ""
+                print "## Signals below the duration floor"
+                print ""
+                print "These ratio-shaped changes are informational only because a median is below " \
+                    min_ms " ms."
+                print ""
+                print "| Host | Gate | Baseline median | Recent median | Ratio |"
+                print "| --- | --- | ---: | ---: | ---: |"
+                for (i = 1; i <= duration_filtered_count; i++) {
+                    key = duration_filtered[i]; split(key, parts, SUBSEP)
+                    printf "| %s | %s | %.0f ms | %.0f ms | %.3fx |\n", \
+                        parts[1], parts[2], base_median[key], \
+                        recent_median[key], ratios[key]
+                }
+            }
+            if (dispersion_filtered_count) {
+                print ""
+                print "## Signals within baseline dispersion"
+                print ""
+                print "These ratio-shaped changes do not exceed the nearest-rank baseline P" \
+                    baseline_percentile " observation."
+                print ""
+                print "| Host | Gate | Baseline median | Baseline P" \
+                    baseline_percentile " | Recent median | Ratio |"
+                print "| --- | --- | ---: | ---: | ---: | ---: |"
+                for (i = 1; i <= dispersion_filtered_count; i++) {
+                    key = dispersion_filtered[i]; split(key, parts, SUBSEP)
+                    printf "| %s | %s | %.0f ms | %.0f ms | %.0f ms | %.3fx |\n", \
+                        parts[1], parts[2], base_median[key], \
+                        baseline_guard[key], recent_median[key], ratios[key]
                 }
             }
             if (insufficient_count) {
@@ -199,7 +299,7 @@ analyze() {
             }
             print ""
             print "_Generated from successful pull-request CI artifacts; alerts are report-only._"
-            print alert_count > (report ".alert-count")
+            print alert_count + 0 > (report ".alert-count")
         }
     ' report="$report" "$sorted" > "$report"
     rm -f "$sorted"
@@ -304,19 +404,67 @@ self_test() {
     i=1
     while [ "$i" -le 23 ]; do
         # Newest three Linux gate-a values breach 1.5x; exact-threshold gate-b does not.
-        if [ "$i" -le 3 ]; then a=160; b=150; else a=100; b=100; fi
+        if [ "$i" -le 3 ]; then
+            a=1600
+            b=1500
+            clean=12500
+            sub_floor=400
+            zero_baseline=5000
+        else
+            a=1000
+            b=1000
+            clean=4100
+            sub_floor=200
+            zero_baseline=0
+        fi
+        # Exact noisy series from #5661: baseline median 1065 ms, P95 6280 ms,
+        # recent median 1600 ms. The ratio breaches by only 0.002x while the
+        # recent observation remains well inside the baseline dispersion.
+        case "$i" in
+            1) noisy=6530 ;;
+            2) noisy=1600 ;;
+            3) noisy=1390 ;;
+            4) noisy=740 ;;
+            5) noisy=8570 ;;
+            6) noisy=990 ;;
+            7) noisy=1450 ;;
+            8) noisy=580 ;;
+            9) noisy=1160 ;;
+            10) noisy=1070 ;;
+            11) noisy=2500 ;;
+            12) noisy=800 ;;
+            13) noisy=760 ;;
+            14) noisy=810 ;;
+            15) noisy=6280 ;;
+            16) noisy=800 ;;
+            17) noisy=780 ;;
+            18) noisy=4500 ;;
+            19) noisy=4190 ;;
+            20) noisy=720 ;;
+            21) noisy=2150 ;;
+            22) noisy=1180 ;;
+            23) noisy=1060 ;;
+        esac
         created=$(printf '2026-07-%02dT00:00:00Z' $((24 - i)))
         printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tgate-a\tall\tgate\t%d\t0\tlinux\n' \
             "$i" "$i" "$i" "$created" "$a" >> "$fixture"
         printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tgate-b\tall\tgate\t%d\t0\tlinux\n' \
             "$i" "$i" "$i" "$created" "$b" >> "$fixture"
-        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tgate-a\tall\tgate\t100\t0\twindows\n' \
+        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tgate-a\tall\tgate\t1000\t0\twindows\n' \
             "$i" "$i" "$i" "$created" >> "$fixture"
+        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tclean-step\tall\tgate\t%d\t0\tlinux\n' \
+            "$i" "$i" "$i" "$created" "$clean" >> "$fixture"
+        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tgate-sub-floor\tall\tgate\t%d\t0\tlinux\n' \
+            "$i" "$i" "$i" "$created" "$sub_floor" >> "$fixture"
+        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tgate-zero-baseline\tall\tgate\t%d\t0\tlinux\n' \
+            "$i" "$i" "$i" "$created" "$zero_baseline" >> "$fixture"
+        printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tgate-noisy\tall\tgate\t%d\t0\tlinux\n' \
+            "$i" "$i" "$i" "$created" "$noisy" >> "$fixture"
         # Both denylisted gates are given a breaching shape -- newest three at
         # 16x the baseline -- so the assertions below prove suppression rather
         # than merely the absence of a signal. A flat series would pass even if
         # the denylist stopped working.
-        if [ "$i" -le 3 ]; then denied=1600; else denied=100; fi
+        if [ "$i" -le 3 ]; then denied=16000; else denied=1000; fi
         printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tstage2 opt1/opt2 build-invariance\tall\tgate\t%d\t0\tlinux\n' \
             "$i" "$i" "$i" "$created" "$denied" >> "$fixture"
         printf 'sha%02d\t%d\thttps://example.test/runs/%d\t%s\tstage2 CLI host-action smoke\tall\tgate\t%d\t0\tlinux\n' \
@@ -337,8 +485,18 @@ self_test() {
     } > "$work/unordered.tsv"
     analyze "$work/unordered.tsv" "$work/unordered.md"
     cmp "$work/report-a.md" "$work/unordered.md"
-    grep -F '| linux | gate-a | 100 ms | 160 ms | 1.600x |' "$work/report-a.md" >/dev/null
+    grep -F '| linux | gate-a | 1000 ms | 1000 ms | 1600 ms | 1.600x |' \
+        "$work/report-a.md" >/dev/null
+    grep -F '| linux | clean-step | 4100 ms | 4100 ms | 12500 ms | 3.049x |' \
+        "$work/report-a.md" >/dev/null
     ! grep -F '| linux | gate-b |' "$work/report-a.md" >/dev/null
+    grep -F '| linux | gate-sub-floor | 200 ms | 400 ms | 2.000x |' \
+        "$work/report-a.md" >/dev/null
+    grep -F '| linux | gate-zero-baseline | 0 ms | 5000 ms |' \
+        "$work/report-a.md" >/dev/null
+    grep -F '| linux | gate-noisy | 1065 ms | 6280 ms | 1600 ms | 1.502x |' \
+        "$work/report-a.md" >/dev/null
+    ! grep -F '999999' "$work/report-a.md" >/dev/null
     ! grep -F 'build-invariance' "$work/report-a.md" >/dev/null
     ! grep -F 'host-action smoke' "$work/report-a.md" >/dev/null
     # Same rows, denylist emptied: both must alert, which is what makes the two
@@ -352,16 +510,25 @@ self_test() {
     grep -F '| windows | gate-a |' "$work/report-a.md" >/dev/null && {
         echo "[ci-timing-trend] host separation self-test unexpectedly alerted" >&2; return 1;
     }
-    [ "$(cat "$work/report-a.md.alert-count")" -eq 1 ]
-    CI_TIMING_TREND_FACTOR=2 CI_TIMING_TREND_RUN_LIMIT=100 \
+    [ "$(cat "$work/report-a.md.alert-count")" -eq 2 ]
+    CI_TIMING_TREND_FACTOR=4 CI_TIMING_TREND_RUN_LIMIT=100 \
         "$0" --offline "$fixture" "$work/recovered.md"
     grep -F '## Status: no sustained regressions' "$work/recovered.md" >/dev/null
+    [ "$(cat "$work/recovered.md.alert-count")" -eq 0 ]
+    CI_TIMING_TREND_MIN_MS=100 "$0" --offline \
+        "$fixture" "$work/lower-floor.md"
+    grep -F '| linux | gate-sub-floor | 200 ms | 200 ms | 400 ms | 2.000x |' \
+        "$work/lower-floor.md" >/dev/null
+    CI_TIMING_TREND_BASELINE_PERCENTILE=50 "$0" --offline \
+        "$fixture" "$work/median-guard.md"
+    grep -F '| linux | gate-noisy | 1065 ms | 1060 ms | 1600 ms | 1.502x |' \
+        "$work/median-guard.md" >/dev/null
     median="$work/median.tsv"
     printf '%s\n' "$HEADER" > "$median"
-    printf 'm1\t1\thttps://example.test/runs/1\t2026-07-04T00:00:00Z\tmedian\tall\tgate\t200\t0\tlinux\n' >> "$median"
-    printf 'm2\t2\thttps://example.test/runs/2\t2026-07-03T00:00:00Z\tmedian\tall\tgate\t100\t0\tlinux\n' >> "$median"
-    printf 'm3\t3\thttps://example.test/runs/3\t2026-07-02T00:00:00Z\tmedian\tall\tgate\t100\t0\tlinux\n' >> "$median"
-    printf 'm4\t4\thttps://example.test/runs/4\t2026-07-01T00:00:00Z\tmedian\tall\tgate\t100\t0\tlinux\n' >> "$median"
+    printf 'm1\t1\thttps://example.test/runs/1\t2026-07-04T00:00:00Z\tmedian\tall\tgate\t2000\t0\tlinux\n' >> "$median"
+    printf 'm2\t2\thttps://example.test/runs/2\t2026-07-03T00:00:00Z\tmedian\tall\tgate\t1000\t0\tlinux\n' >> "$median"
+    printf 'm3\t3\thttps://example.test/runs/3\t2026-07-02T00:00:00Z\tmedian\tall\tgate\t1000\t0\tlinux\n' >> "$median"
+    printf 'm4\t4\thttps://example.test/runs/4\t2026-07-01T00:00:00Z\tmedian\tall\tgate\t1000\t0\tlinux\n' >> "$median"
     CI_TIMING_TREND_RECENT=2 CI_TIMING_TREND_BASELINE=2 \
         CI_TIMING_TREND_FACTOR=1.5 CI_TIMING_TREND_RUN_LIMIT=4 \
         "$0" --offline "$median" "$work/even.md"
@@ -380,6 +547,21 @@ self_test() {
     if CI_TIMING_TREND_FACTOR=1 "$0" --offline \
         "$fixture" "$work/invalid-factor.md" >/dev/null 2>&1; then
         echo "[ci-timing-trend] factor 1 unexpectedly passed" >&2
+        return 1
+    fi
+    if CI_TIMING_TREND_MIN_MS=-1 "$0" --offline \
+        "$fixture" "$work/invalid-minimum.md" >/dev/null 2>&1; then
+        echo "[ci-timing-trend] negative minimum duration unexpectedly passed" >&2
+        return 1
+    fi
+    if CI_TIMING_TREND_BASELINE_PERCENTILE=49 "$0" --offline \
+        "$fixture" "$work/invalid-percentile.md" >/dev/null 2>&1; then
+        echo "[ci-timing-trend] baseline percentile below 50 unexpectedly passed" >&2
+        return 1
+    fi
+    if CI_TIMING_TREND_BASELINE_PERCENTILE=101 "$0" --offline \
+        "$fixture" "$work/invalid-percentile-high.md" >/dev/null 2>&1; then
+        echo "[ci-timing-trend] baseline percentile above 100 unexpectedly passed" >&2
         return 1
     fi
     workflow="$ROOT/.github/workflows/ci-timing-trends.yml"

@@ -22,16 +22,19 @@
 ;; compiler.
 (import stdlib.io)
 (import stdlib.arena)
+(import stdlib.fs)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
 (import compiler_allocation_profile as allocation_profile)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
+(import "compiler_windows_coff_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.text_buf)
 (import sym_i64_env)
 (cfg
   compile-startup-profile
@@ -42,6 +45,16 @@
   ;; vector. Reusing the CLI string vector keeps this hot root within the
   ;; stage-0 compiler's allocation budget.
   (Ok cli_svec.Vec)
+  (Err i64))
+
+(defenum ResultCompileCliWindowsBatchEntryList
+  ;; Windows artifact rows occupy input/object/assembly/mode slots. `mode` is
+  ;; either `auto` (the normalized three-field default) or `force-assembly`.
+  (Ok cli_svec.Vec)
+  (Err i64))
+
+(defenum ResultCompileCliWindowsBatchEntry
+  (Ok String String String)
   (Err i64))
 
 (define compile-cli-allocation-profile-requested : bool
@@ -189,7 +202,9 @@
     CompileCliCfgNames
     CompilerBackendMode
     i64
-    bool))
+    bool
+    bool
+    String))
 
 (defenum ResultCompileCliConfig
   (Ok CompileCliConfig)
@@ -226,7 +241,7 @@
     (string.eq (string.substring value 0 6) "after-")))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
+  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]\n  typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string.append message (string.append "\n\n" (compile-cli-usage))))
@@ -668,7 +683,9 @@
   [has-opt-level : bool]
   [opt-level : i64]
   [backend-mode : CompilerBackendMode]
-  [prefix-cache-stats : bool]) : ResultCompileCliBatchConfig
+  [prefix-cache-stats : bool]
+  [has-windows-coff-plan : bool]
+  [windows-coff-plan-path : String]) : ResultCompileCliBatchConfig
   (match kind
     [(cli_option.CliCommonOptionKind.StdlibRoot)
       (compile-cli-batch-parse-options
@@ -686,7 +703,9 @@
         has-opt-level
         opt-level
         backend-mode
-        prefix-cache-stats)]
+        prefix-cache-stats
+        has-windows-coff-plan
+        windows-coff-plan-path)]
     [(cli_option.CliCommonOptionKind.Cfg)
       (compile-cli-batch-parse-options
         next-idx
@@ -699,7 +718,9 @@
         has-opt-level
         opt-level
         backend-mode
-        prefix-cache-stats)]
+        prefix-cache-stats
+        has-windows-coff-plan
+        windows-coff-plan-path)]
     [(cli_option.CliCommonOptionKind.Target)
       (if has-target
         (ResultCompileCliBatchConfig.Err
@@ -717,7 +738,9 @@
               has-opt-level
               opt-level
               backend-mode
-              prefix-cache-stats)]
+              prefix-cache-stats
+              has-windows-coff-plan
+              windows-coff-plan-path)]
           [(ResultCompileCliTarget.Err message)
             (ResultCompileCliBatchConfig.Err message)]))]
     [(cli_option.CliCommonOptionKind.OptLevel)
@@ -737,7 +760,9 @@
               true
               parsed-level
               backend-mode
-              prefix-cache-stats)]
+              prefix-cache-stats
+              has-windows-coff-plan
+              windows-coff-plan-path)]
           [(ResultCompilerOptimizeLevel.Err)
             (ResultCompileCliBatchConfig.Err
               (compile-cli-invalid-opt-level value))]))]))
@@ -753,18 +778,32 @@
   [has-opt-level : bool]
   [opt-level : i64]
   [backend-mode : CompilerBackendMode]
-  [prefix-cache-stats : bool]) : ResultCompileCliBatchConfig
+  [prefix-cache-stats : bool]
+  [has-windows-coff-plan : bool]
+  [windows-coff-plan-path : String]) : ResultCompileCliBatchConfig
   (if (>= idx count)
-    (ResultCompileCliBatchConfig.Ok
-      (CompileCliBatchConfig.Config
-        batch-path
-        has-target
-        target
-        stdlib-roots
-        cfgs
-        backend-mode
-        opt-level
-        prefix-cache-stats))
+    (if (and
+      has-windows-coff-plan
+      (or (not has-target) (not (compiler-backend-target-windows? target))))
+      (ResultCompileCliBatchConfig.Err
+        "compile: --windows-coff-plan requires --target windows-x86_64")
+      (if (and
+        has-windows-coff-plan
+        (string.eq batch-path windows-coff-plan-path))
+        (ResultCompileCliBatchConfig.Err
+          "compile: --windows-coff-plan result path must differ from the batch input")
+        (ResultCompileCliBatchConfig.Ok
+          (CompileCliBatchConfig.Config
+            batch-path
+            has-target
+            target
+            stdlib-roots
+            cfgs
+            backend-mode
+            opt-level
+            prefix-cache-stats
+            has-windows-coff-plan
+            windows-coff-plan-path))))
     (let
       [current : String (io.arg idx)]
       (match (cli_option.cli-common-option-parse
@@ -789,7 +828,9 @@
             has-opt-level
             opt-level
             backend-mode
-            prefix-cache-stats)]
+            prefix-cache-stats
+            has-windows-coff-plan
+            windows-coff-plan-path)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
             [(string.eq current "-o")
@@ -818,7 +859,9 @@
                       has-opt-level
                       opt-level
                       parsed-mode
-                      prefix-cache-stats)]
+                      prefix-cache-stats
+                      has-windows-coff-plan
+                      windows-coff-plan-path)]
                   [(ResultCompileCliBackendMode.Err message)
                     (ResultCompileCliBatchConfig.Err message)]))]
             [(string.eq current "--prefix-cache-stats")
@@ -833,7 +876,35 @@
                 has-opt-level
                 opt-level
                 backend-mode
-                true)]
+                true
+                has-windows-coff-plan
+                windows-coff-plan-path)]
+            [(string.eq current "--windows-coff-plan")
+              (if has-windows-coff-plan
+                (ResultCompileCliBatchConfig.Err
+                  "compile: --windows-coff-plan was provided more than once")
+                (if (>= (+ idx 1) count)
+                  (ResultCompileCliBatchConfig.Err
+                    "compile: --windows-coff-plan requires a result path")
+                  (let
+                    [plan-path : String (io.arg (+ idx 1))]
+                    (if (compile-cli-flag? plan-path)
+                      (ResultCompileCliBatchConfig.Err
+                        "compile: --windows-coff-plan requires a result path")
+                      (compile-cli-batch-parse-options
+                        (+ idx 2)
+                        count
+                        batch-path
+                        has-target
+                        target
+                        stdlib-roots
+                        cfgs
+                        has-opt-level
+                        opt-level
+                        backend-mode
+                        prefix-cache-stats
+                        true
+                        plan-path)))))]
             [(string.eq current "--profile-allocations")
               (if compile-cli-allocation-profile-requested
                 (ResultCompileCliBatchConfig.Err
@@ -851,7 +922,9 @@
                     has-opt-level
                     opt-level
                     backend-mode
-                    prefix-cache-stats)))]
+                    prefix-cache-stats
+                    has-windows-coff-plan
+                    windows-coff-plan-path)))]
             [else
               (if (compile-cli-flag? current)
                 (ResultCompileCliBatchConfig.Err
@@ -905,7 +978,9 @@
           false
           (compiler-optimize-default-level)
           (CompilerBackendMode.Scalar)
-          false)))))
+          false
+          false
+          "")))))
 
 (define (compile-cli-command-action [count : i64]) : CompileCliAction
   (if (and (> count 2) (string.eq (io.arg 2) "--batch"))
@@ -1171,9 +1246,149 @@
             unit)
           doctest-status)))))
 
+(define (compile-cli-write-windows-batch-artifact
+  [result : ResultCompilerWindowsBatchArtifact]
+  [object-path : String]
+  [assembly-path : String]) : ResultCompileCliWindowsBatchEntry
+  (if (compile-cli-ir-verification-failed?)
+    (ResultCompileCliWindowsBatchEntry.Err 1)
+    (match result
+      [(ResultCompilerWindowsBatchArtifact.CoffObject object)
+        (let
+          [write-status : i64
+            (begin
+              (cfg compile-profile (compiler-driver-profile-start-phase))
+              (match (io.try-write-file (& object-path) (& object))
+                [(io.OkIoUnit) 0]
+                [(io.ErrIoUnit error)
+                  (begin
+                    (io.print-error
+                      (str_cat.str-cat
+                        "compile: cannot write "
+                        object-path
+                        ": "
+                        (io.error-message error)
+                        "\n"))
+                    1)]))]
+          (begin
+            (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+            (compiler-driver-allocation-profile-snapshot! "write")
+            (cfg compile-profile (compiler-driver-profile-finish-total))
+            (if (= write-status 0)
+              (begin
+                (io.print-string
+                  (string.append "Wrote " (string.append object-path "\n")))
+                (ResultCompileCliWindowsBatchEntry.Ok
+                  "coff-object"
+                  object-path
+                  "none"))
+              (ResultCompileCliWindowsBatchEntry.Err write-status))))]
+      [(ResultCompilerWindowsBatchArtifact.Assembly asm category)
+        (let
+          [write-status : i64
+            (begin
+              (cfg compile-profile (compiler-driver-profile-start-phase))
+              (compiler-driver-write-text-buf assembly-path asm))]
+          (begin
+            (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+            (compiler-driver-allocation-profile-snapshot! "write")
+            (cfg compile-profile (compiler-driver-profile-finish-total))
+            (if (= write-status 0)
+              (begin
+                (io.print-string
+                  (string.append "Wrote " (string.append assembly-path "\n")))
+                (ResultCompileCliWindowsBatchEntry.Ok
+                  "assembly"
+                  assembly-path
+                  category))
+              (ResultCompileCliWindowsBatchEntry.Err write-status))))]
+      [(ResultCompilerWindowsBatchArtifact.Err diag)
+        (begin
+          (compiler-driver-allocation-profile-snapshot! "write-error")
+          (cfg compile-profile (compiler-driver-profile-finish-total))
+          (io.print-error
+            (compiler-driver-render-source-diagnostic (box-get diag)))
+          (ResultCompileCliWindowsBatchEntry.Err 1))])))
+
+(define (compile-cli-run-windows-batch-file
+  [state : CompilerDriverState]
+  [input-path : String]
+  [object-path : String]
+  [assembly-path : String]
+  [force-assembly : bool]
+  [stdlib-roots : cli_svec.Vec]
+  [cfgs : CompileCliCfgNames]
+  [backend-mode : CompilerBackendMode]
+  [opt-level : i64]) : ResultCompileCliWindowsBatchEntry
+  (begin
+    ;; Match the legacy batch entry lifecycle exactly through the one-lowering
+    ;; driver boundary. The selected bytes are written before the caller tears
+    ;; down this entry's scratch arena.
+    (if (= (compiler-driver-state-intern-generation state) 0)
+      (ci.intern-compat-state-reset!
+        (compiler-driver-state-owned-interns state))
+      unit)
+    (compiler-driver-state-install-pools! state)
+    (compiler-driver-state-install-interns! state)
+    (cfg
+      compile-startup-profile
+      (startup_profile.compiler-startup-profile-mark-preflight-begin!)
+      unit)
+    (let
+      [doctest-status : i64
+        (compile-cli-typecheck-doctests input-path stdlib-roots)]
+      (if (= doctest-status 0)
+        (begin
+          (cfg
+            compile-startup-profile
+            (startup_profile.compiler-startup-profile-mark-preflight-end!)
+            unit)
+          (compiler-driver-state-reset-file-state! state)
+          (compiler-opt-debug-configure!
+            compile-cli-trace-passes-requested
+            compile-cli-dump-ir-pass
+            compile-cli-verify-ir-requested)
+          (let
+            [emit-cfgs : sym_i64_env.SymI64Env
+              (compile-cli-cfg-names-to-env-with-intern-state
+                cfgs
+                (compiler-driver-state-owned-interns state))]
+            [_file-state-reset-end : unit
+              (cfg
+                compile-startup-profile
+                (startup_profile.compiler-startup-profile-mark-file-state-reset-end!)
+                unit)]
+            [result : ResultCompileCliWindowsBatchEntry
+              (begin
+                (cfg
+                  compile-startup-profile
+                  (startup_profile.compiler-startup-profile-mark-compile-driver-start!)
+                  unit)
+                (compile-cli-write-windows-batch-artifact
+                  (compiler-windows-batch-state-emit-file
+                    state
+                    input-path
+                    stdlib-roots
+                    opt-level
+                    backend-mode
+                    emit-cfgs
+                    force-assembly)
+                  object-path
+                  assembly-path))]
+            (begin
+              (compiler-driver-state-capture-session-floors! state)
+              result)))
+        (begin
+          (cfg
+            compile-startup-profile
+            (startup_profile.compiler-startup-profile-mark-preflight-end!)
+            unit)
+          (ResultCompileCliWindowsBatchEntry.Err doctest-status))))))
+
 (define (compile-cli-run-batch-inline-tests-from
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
+  [stride : i64]
   [target : CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
@@ -1223,7 +1438,8 @@
       (if (= status 0)
         (compile-cli-run-batch-inline-tests-from
           entries
-          (+ index 2)
+          (+ index stride)
+          stride
           target
           stdlib-roots
           cfgs
@@ -1241,6 +1457,21 @@
   (compile-cli-run-batch-inline-tests-from
     (& entries)
     0
+    2
+    target
+    stdlib-roots
+    cfgs
+    false))
+
+(define (compile-cli-run-windows-batch-inline-tests
+  [entries : cli_svec.Vec]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : cli_svec.Vec]
+  [cfgs : CompileCliCfgNames]) : i64
+  (compile-cli-run-batch-inline-tests-from
+    (& entries)
+    0
+    4
     target
     stdlib-roots
     cfgs
@@ -1352,6 +1583,131 @@
     (if (= status 0)
       (ResultCompileCliBatchEntryList.Ok entries)
       (ResultCompileCliBatchEntryList.Err status))))
+
+(define (compile-cli-windows-batch-parse-entries-into!
+  [text : String]
+  [start : i64]
+  [line : i64]
+  [n : i64]
+  [entries : (&mut entries cli_svec.Vec)]) : i64
+  (if (>= start n)
+    0
+    (let
+      [line-end : i64 (compile-cli-batch-line-end text start n)]
+      [next-start : i64 (compile-cli-batch-next-line text line-end n)]
+      (if (= start line-end)
+        (compile-cli-windows-batch-parse-entries-into!
+          text
+          next-start
+          (+ line 1)
+          n
+          entries)
+        (let
+          [input-sep : i64
+            (compile-cli-batch-find-separator text start line-end)]
+          (if (< input-sep 0)
+            (compile-cli-batch-line-error
+              line
+              "expected input|object|assembly[|force-assembly]")
+            (let
+              [object-start : i64 (+ input-sep 1)]
+              [object-sep : i64
+                (compile-cli-batch-find-separator text object-start line-end)]
+              (if (= start input-sep)
+                (compile-cli-batch-line-error line "missing input path")
+                (if (< object-sep 0)
+                  (compile-cli-batch-line-error line "missing assembly path")
+                  (let
+                    [assembly-start : i64 (+ object-sep 1)]
+                    [mode-sep : i64
+                      (compile-cli-batch-find-separator
+                        text
+                        assembly-start
+                        line-end)]
+                    [assembly-end : i64
+                      (if (< mode-sep 0)
+                        line-end
+                        mode-sep)]
+                    (if (= object-start object-sep)
+                      (compile-cli-batch-line-error line "missing object path")
+                      (if (= assembly-start assembly-end)
+                        (compile-cli-batch-line-error
+                          line
+                          "missing assembly path")
+                        (let
+                          [mode-start : i64
+                            (if (< mode-sep 0)
+                              line-end
+                              (+ mode-sep 1))]
+                          [extra-sep : i64
+                            (if (< mode-sep 0)
+                              -1
+                              (compile-cli-batch-find-separator
+                                text
+                                mode-start
+                                line-end))]
+                          [mode : String
+                            (if (< mode-sep 0)
+                              "auto"
+                              (string.substring
+                                text
+                                mode-start
+                                (- line-end mode-start)))]
+                          (if (>= extra-sep 0)
+                            (compile-cli-batch-line-error
+                              line
+                              "too many fields")
+                            (if (and
+                              (>= mode-sep 0)
+                              (not (string.eq mode "force-assembly")))
+                              (compile-cli-batch-line-error
+                                line
+                                "mode must be force-assembly")
+                              (let
+                                [input-path : String
+                                  (string.substring
+                                    text
+                                    start
+                                    (- input-sep start))]
+                                [object-path : String
+                                  (string.substring
+                                    text
+                                    object-start
+                                    (- object-sep object-start))]
+                                [assembly-path : String
+                                  (string.substring
+                                    text
+                                    assembly-start
+                                    (- assembly-end assembly-start))]
+                                (begin
+                                  (cli_svec.push entries input-path)
+                                  (cli_svec.push entries object-path)
+                                  (cli_svec.push entries assembly-path)
+                                  (cli_svec.push entries mode)
+                                  (compile-cli-windows-batch-parse-entries-into!
+                                    text
+                                    next-start
+                                    (+ line 1)
+                                    n
+                                    entries))))))))))))))))))
+
+(define (compile-cli-windows-batch-parse-entries-from
+  [text : String]
+  [start : i64]
+  [line : i64]
+  [n : i64]) : ResultCompileCliWindowsBatchEntryList
+  (let
+    [entries : cli_svec.Vec (cli_svec.new)]
+    [status : i64
+      (compile-cli-windows-batch-parse-entries-into!
+        text
+        start
+        line
+        n
+        (&mut entries))]
+    (if (= status 0)
+      (ResultCompileCliWindowsBatchEntryList.Ok entries)
+      (ResultCompileCliWindowsBatchEntryList.Err status))))
 
 (define (compile-cli-run-batch-entries-from
   [state : CompilerDriverState]
@@ -1468,6 +1824,170 @@
     backend-mode
     opt-level))
 
+(define (compile-cli-run-windows-batch-entries-from
+  [state : CompilerDriverState]
+  [entries : (& entries cli_svec.Vec)]
+  [index : i64]
+  [stdlib-roots : cli_svec.Vec]
+  [cfgs : CompileCliCfgNames]
+  [backend-mode : CompilerBackendMode]
+  [opt-level : i64]
+  [results : (&mut results cli_svec.Vec)]) : i64
+  (if (>= index (cli_svec.len entries))
+    0
+    (let
+      ;; lint-allow: unused-variable
+      [ordinal : i64 (/ index 4)]
+      [_profile-start : unit
+        (cfg
+          compile-profile
+          (compiler-driver-batch-profile-start-entry! ordinal)
+          unit)]
+      [input-path : String (cli_svec.get entries index "")]
+      [object-path : String (cli_svec.get entries (+ index 1) "")]
+      [assembly-path : String (cli_svec.get entries (+ index 2) "")]
+      [force-assembly : bool
+        (string.eq (cli_svec.get entries (+ index 3) "auto") "force-assembly")]
+      [home : arena.Arena (arena.current)]
+      [scratch : arena.Arena (arena.make)]
+      [entry-result : ResultCompileCliWindowsBatchEntry
+        (begin
+          (unsafe
+            (arena.set! scratch))
+          (compile-cli-run-windows-batch-file
+            state
+            input-path
+            object-path
+            assembly-path
+            force-assembly
+            stdlib-roots
+            cfgs
+            backend-mode
+            opt-level))]
+      [_profile-emit : unit
+        (cfg
+          compile-profile
+          (compiler-driver-batch-profile-mark! ordinal "emit-complete")
+          unit)]
+      [scratch-end : arena.Arena (arena.current)]
+      ;; Read the arena-backed result while `scratch` is still mapped. The
+      ;; selected paths come from the outer parsed plan and the kind/category
+      ;; strings are stable literals, so pushing them after restoring `home`
+      ;; leaves no scratch-owned payload in the result vector.
+      [status : i64
+        (begin
+          (unsafe
+            (arena.set! home))
+          (match entry-result
+            [(ResultCompileCliWindowsBatchEntry.Ok kind path category)
+              (begin
+                (cli_svec.push results input-path)
+                (cli_svec.push results kind)
+                (cli_svec.push results path)
+                (cli_svec.push results category)
+                0)]
+            [(ResultCompileCliWindowsBatchEntry.Err entry-status) entry-status]))]
+      (begin
+        (unsafe
+          (arena.set! home))
+        (cfg
+          compile-profile
+          (compiler-driver-state-release-file-state-profiled! state ordinal)
+          (compiler-driver-state-release-file-state! state))
+        (unsafe
+          (begin
+            (arena.set! home)
+            (arena.destroy scratch-end)))
+        (compiler-driver-state-install-pools! state)
+        (compiler-driver-state-install-interns! state)
+        (cfg
+          compile-profile
+          (compiler-driver-batch-profile-mark! ordinal "scratch-destroy-steady")
+          unit)
+        (if (= status 0)
+          (compile-cli-run-windows-batch-entries-from
+            state
+            entries
+            (+ index 4)
+            stdlib-roots
+            cfgs
+            backend-mode
+            opt-level
+            results)
+          (begin
+            (io.print-error
+              (str_cat.str-cat
+                "\ncompile: batch source failed: "
+                input-path
+                "\n"))
+            status))))))
+
+(define (compile-cli-windows-batch-result-plan
+  [results : (& results cli_svec.Vec)]) : String
+  (let
+    [out : text_buf.TextBuf (text_buf.empty)]
+    [index : i64 0]
+    [count : i64 (cli_svec.len results)]
+    (begin
+      (while (< index count)
+        (begin
+          (text_buf.append! out (cli_svec.get results index ""))
+          (text_buf.append! out "|")
+          (text_buf.append! out (cli_svec.get results (+ index 1) ""))
+          (text_buf.append! out "|")
+          (text_buf.append! out (cli_svec.get results (+ index 2) ""))
+          (text_buf.append! out "|")
+          (text_buf.append! out (cli_svec.get results (+ index 3) ""))
+          (text_buf.append! out "\n")
+          (set! index (+ index 4))))
+      (text_buf.render out))))
+
+(define (compile-cli-write-windows-batch-result-plan
+  [plan-path : String]
+  [results : (& results cli_svec.Vec)]) : i64
+  (let
+    [contents : String (compile-cli-windows-batch-result-plan results)]
+    (match (io.try-write-file (& plan-path) (& contents))
+      [(io.OkIoUnit)
+        (begin
+          (io.print-string
+            (string.append "Wrote " (string.append plan-path "\n")))
+          0)]
+      [(io.ErrIoUnit error)
+        (begin
+          (io.print-error
+            (str_cat.str-cat
+              "compile: cannot write Windows COFF result plan "
+              plan-path
+              ": "
+              (io.error-message error)
+              "\n"))
+          1)])))
+
+(define (compile-cli-run-windows-batch-entries
+  [state : CompilerDriverState]
+  [entries : cli_svec.Vec]
+  [result-plan-path : String]
+  [stdlib-roots : cli_svec.Vec]
+  [cfgs : CompileCliCfgNames]
+  [backend-mode : CompilerBackendMode]
+  [opt-level : i64]) : i64
+  (let
+    [results : cli_svec.Vec (cli_svec.new)]
+    [status : i64
+      (compile-cli-run-windows-batch-entries-from
+        state
+        (& entries)
+        0
+        stdlib-roots
+        cfgs
+        backend-mode
+        opt-level
+        (&mut results))]
+    (if (= status 0)
+      (compile-cli-write-windows-batch-result-plan result-plan-path (& results))
+      status)))
+
 (define (compile-cli-run-batch-from
   [state : CompilerDriverState]
   [text : String]
@@ -1501,6 +2021,56 @@
           inline-test-status))]
     [(ResultCompileCliBatchEntryList.Err status) status]))
 
+(define (compile-cli-run-windows-batch-from
+  [state : CompilerDriverState]
+  [text : String]
+  [start : i64]
+  [line : i64]
+  [result-plan-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : cli_svec.Vec]
+  [cfgs : CompileCliCfgNames]
+  [backend-mode : CompilerBackendMode]
+  [opt-level : i64]) : i64
+  (match (compile-cli-windows-batch-parse-entries-from
+    text
+    start
+    line
+    (string.string-length text))
+    [(ResultCompileCliWindowsBatchEntryList.Ok entries)
+      (let
+        [inline-test-status : i64
+          (compile-cli-run-windows-batch-inline-tests
+            entries
+            target
+            stdlib-roots
+            cfgs)]
+        (if (= inline-test-status 0)
+          (compile-cli-run-windows-batch-entries
+            state
+            entries
+            result-plan-path
+            stdlib-roots
+            cfgs
+            backend-mode
+            opt-level)
+          inline-test-status))]
+    [(ResultCompileCliWindowsBatchEntryList.Err status) status]))
+
+(define (compile-cli-remove-stale-windows-batch-plan [plan-path : String]) : i64
+  (match (fs.try-remove-file-if-exists (& plan-path))
+    [(io.OkIoUnit) 0]
+    [(io.ErrIoUnit error)
+      (begin
+        (io.print-error
+          (str_cat.str-cat
+            "compile: cannot remove stale Windows COFF result plan "
+            plan-path
+            ": "
+            (io.error-message error)
+            "\n"))
+        1)]))
+
 (define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
   (let
     [state : CompilerDriverState
@@ -1515,23 +2085,43 @@
           cfgs
           backend-mode
           opt-level
-          prefix-cache-stats)
+          prefix-cache-stats
+          has-windows-coff-plan
+          windows-coff-plan-path)
         (let
           [status : i64
             (begin
               (compiler-driver-state-prefix-cache-enable! state)
               (compiler-driver-state-prefix-cache-clear! state)
-              (compile-cli-run-batch-from
-                state
-                (io.read-file batch-path)
-                0
-                1
-                has-target
-                target
-                stdlib-roots
-                cfgs
-                backend-mode
-                opt-level))]
+              (if has-windows-coff-plan
+                (let
+                  [remove-status : i64
+                    (compile-cli-remove-stale-windows-batch-plan
+                      windows-coff-plan-path)]
+                  (if (= remove-status 0)
+                    (compile-cli-run-windows-batch-from
+                      state
+                      (io.read-file batch-path)
+                      0
+                      1
+                      windows-coff-plan-path
+                      target
+                      stdlib-roots
+                      cfgs
+                      backend-mode
+                      opt-level)
+                    remove-status))
+                (compile-cli-run-batch-from
+                  state
+                  (io.read-file batch-path)
+                  0
+                  1
+                  has-target
+                  target
+                  stdlib-roots
+                  cfgs
+                  backend-mode
+                  opt-level)))]
           (begin
             (if prefix-cache-stats
               (compiler-driver-state-prefix-cache-print-stats

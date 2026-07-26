@@ -460,6 +460,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 math log codegen verifier" scripts/verif
 run_with_compiler "$STAGE2_BIN" "stage2 math trig codegen verifier" scripts/verify-math-trig-codegen.sh
 run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-codegen-target-parity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 backend target assembly parity" scripts/check-backend-target-asm-parity.sh
+run_with_compiler "$STAGE2_BIN" "stage2 Windows COFF batch plan" scripts/verify-compile-batch-windows-coff.sh
 run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-pic-relocations.sh
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
 run_gate "integration manifest validator self-tests" scripts/verify-integration-manifest-validator.sh

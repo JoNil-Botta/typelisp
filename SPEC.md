@@ -6889,6 +6889,7 @@ Environment:
 Selected Command Forms:
   typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic]
   typelisp compile --batch <input-output-list>
+  typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64
   typelisp build <file.tl> [-o <exe>]
   typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
@@ -6907,6 +6908,24 @@ emits the lowered and optimized IR instead of assembly, `--pic` emits
 runtime-free no-entry PIC assembly plus a `<output>.fixups` file, and
 `--batch <file>` reads `input|output` pairs and compiles them in one compiler
 process.
+
+With `--windows-coff-plan <result-plan>` and
+`--target windows-x86_64`, batch input rows instead use
+`input|object|assembly[|force-assembly]`. An automatic row writes a COFF object
+when the compiler-owned image is serializable and linkable by the freestanding
+Windows runtime contract; otherwise it writes assembly. `force-assembly`
+bypasses the object attempt and preserves the legacy assembly bytes.
+
+After every row succeeds, the compiler writes deterministic
+`source|kind|path|reason` result rows in input order. `kind` is `coff-object` or
+`assembly`; an object uses reason `none`, a forced row uses
+`forced-assembly`, and automatic fallback uses one of
+`unsupported-coff-image`, `unsupported-external-relocation`,
+`missing-entry-symbol`, `missing-runtime-entry`, or `empty-text-section`.
+Compile, type, backend, object-serialization, and file-write errors fail the
+batch and do not produce the result plan. Each source is loaded, checked,
+lowered, and optimized once; an automatic assembly fallback renders from that
+same optimized program.
 
 A compiler built with `--cfg compile-profile` additionally writes
 `compile-batch-profile` rows to stderr at stable per-entry boundaries: entry

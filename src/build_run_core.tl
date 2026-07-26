@@ -5,6 +5,7 @@
 (import compiler_object as cobj)
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
+(import "compiler_windows_coff_core.tl")
 (import stdlib.env)
 (import stdlib.fs)
 (import stdlib.io)
@@ -939,86 +940,21 @@
 (define (source-tool-windows-direct-object-extern-linkable?
   [name : String]
   [kind : cobj.CompilerObjectSymbolKind]) : bool
-  (and
-    (cobj.compiler-object-symbol-kind-eq?
-      kind
-      (cobj.CompilerObjectSymbolKind.Function))
-    (or
-      (string.eq name "ExitProcess")
-      (string.eq name "GetCommandLineA")
-      (string.eq name "GetStdHandle")
-      (string.eq name "WriteFile")
-      (string.eq name "VirtualAlloc")
-      (string.eq name "VirtualFree"))))
+  (compiler-windows-coff-extern-linkable? name kind))
 
 (define (source-tool-windows-direct-object-relocation-target-linkable?
   [symbols : cobj.CompilerObjectSymbolList]
   [target : String]) : bool
-  (let
-    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
-    [index : i64 0]
-    [ok : bool true]
-    [done : bool false]
-    (begin
-      (while (and (not done) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref symbols index)
-          [(cobj.CompilerObjectSymbol.Symbol name binding kind _)
-            (if (string.eq name target)
-              (begin
-                (match binding
-                  [(cobj.CompilerObjectSymbolBinding.Extern)
-                    (set!
-                      ok
-                      (source-tool-windows-direct-object-extern-linkable?
-                        name
-                        kind))]
-                  [_ (set! ok true)])
-                (set! done true))
-              (set! index (+ index 1)))]))
-      ok)))
+  (compiler-windows-coff-relocation-target-linkable? symbols target))
 
 (define (source-tool-windows-direct-object-relocations-linkable?
   [symbols : cobj.CompilerObjectSymbolList]
   [relocs : cobj.CompilerObjectRelocationList]) : bool
-  (let
-    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
-    [index : i64 0]
-    [ok : bool true]
-    (begin
-      (while (and ok (< index count))
-        (match (cobj.compiler-object-relocation-list-ref relocs index)
-          [(cobj.CompilerObjectRelocation.Relocation _ _ _ target)
-            (if (source-tool-windows-direct-object-relocation-target-linkable?
-              symbols
-              target)
-              (set! index (+ index 1))
-              (set! ok false))]))
-      ok)))
+  (compiler-windows-coff-relocations-linkable? symbols relocs))
 
 (define (source-tool-windows-direct-object-linkable?
   [image : cobj.CompilerObjectImage]) : bool
-  (and
-    (compiler-object-coff-image-supported? image)
-    (source-tool-windows-direct-object-relocations-linkable?
-      (struct-get image symbols)
-      (struct-get image relocations))
-    (cobj.compiler-object-symbol-list-contains?
-      (struct-get image symbols)
-      "_tl_start"
-      (cobj.CompilerObjectSymbolBinding.Export)
-      (cobj.CompilerObjectSymbolKind.Function))
-    ;; Text labels live in the instruction stream, not the section data records.
-    (>=
-      (compiler-object-coff-section-label-offset
-        image
-        (cobj.CompilerObjectSectionKind.Text)
-        "tl_setup_argv")
-      0)
-    (>
-      (compiler-object-coff-section-raw-size
-        image
-        (cobj.CompilerObjectSectionKind.Text))
-      0)))
+  (compiler-windows-coff-linkable? image))
 
 (define (source-tool-windows-direct-object-unavailable-message) : String
   "windows direct object unavailable: object image lacks encoded .text, _tl_start, or Windows runtime entry body")

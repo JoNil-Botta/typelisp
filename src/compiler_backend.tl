@@ -48628,7 +48628,13 @@
                                       selected-prologue)
                                     ""
                                     ""
-                                    emitted-body
+                                    ;; Last body rewrite: the text is final
+                                    ;; here (prologue spliced, rsp rebased, FPO
+                                    ;; decided) and every text target shares
+                                    ;; this seam, so the scan sees exactly the
+                                    ;; bytes the assembler will.
+                                    (compiler-backend-drop-fallthrough-jumps
+                                      emitted-body)
                                     (compiler-backend-emit-windows-seh-endproc
                                       target)
                                     "\n")))))))]
@@ -57527,6 +57533,201 @@
 
 (define (compiler-backend-assembly-stream-abort!) : unit
   (set! compiler-backend-assembly-stream-active false))
+
+;; Byte length of the emitted direct-jump prefix `"    jmp "`, shared by the
+;; fallthrough-chain recognizer below and its operand-range computation so the
+;; two cannot drift.
+(define (compiler-backend-asm-jmp-prefix-len) : i64
+  8)
+
+;; A line that is a label followed by `:` and nothing else. Whitespace anywhere
+;; (an indented directive, `.globl sym`, a label with a trailing comment) or an
+;; interior colon disqualifies it, so only real label definitions -- the one
+;; thing that emits zero bytes -- can separate a `jmp` from its target.
+(define (compiler-backend-asm-label-def-line?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (if (< (- end start) 2)
+    false
+    (if (not (= (compiler-backend-peephole-byte-at data (- end 1)) 58))
+      false
+      (let
+        [limit : i64 (- end 1)]
+        [i : i64 start]
+        [ok : bool true]
+        (begin
+          (while (and ok (< i limit))
+            (let
+              [b : i64 (compiler-backend-peephole-byte-at data i)]
+              (begin
+                (if (or (= b 32) (= b 9) (= b 58))
+                  (set! ok false)
+                  unit)
+                (set! i (+ i 1)))))
+          ok)))))
+
+;; Does the line begin with the emitted direct-jump prefix `"    jmp "`?
+;; Tested byte-wise, `j` first: this runs on every line of the body, and the `j`
+;; alone rejects all but a handful of them for one load and compare. Comparing a
+;; string literal here instead cost enough per line to move the self_compile
+;; instruction-count row.
+(define (compiler-backend-asm-jmp-prefix-at? [data : (Ptr u8)] [start : i64]) : bool
+  (and
+    (= (compiler-backend-peephole-byte-at data (+ start 4)) 106)
+    (= (compiler-backend-peephole-byte-at data (+ start 5)) 109)
+    (= (compiler-backend-peephole-byte-at data (+ start 6)) 112)
+    (= (compiler-backend-peephole-byte-at data (+ start 7)) 32)
+    (= (compiler-backend-peephole-byte-at data start) 32)
+    (= (compiler-backend-peephole-byte-at data (+ start 1)) 32)
+    (= (compiler-backend-peephole-byte-at data (+ start 2)) 32)
+    (= (compiler-backend-peephole-byte-at data (+ start 3)) 32)))
+
+;; A line that is exactly `    jmp <symbol>`. The operand must be a bare
+;; symbol: `*`, `%`, `(` and `,` reject the indirect register/memory/table
+;; forms, and whitespace rejects operands with a suffix or comment.
+(define (compiler-backend-asm-direct-jmp-line?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [operand-start : i64 (+ start (compiler-backend-asm-jmp-prefix-len))]
+    (if (<= end operand-start)
+      false
+      (if (not (compiler-backend-asm-jmp-prefix-at? data start))
+        false
+        (let
+          [i : i64 operand-start]
+          [ok : bool true]
+          (begin
+            (while (and ok (< i end))
+              (let
+                [b : i64 (compiler-backend-peephole-byte-at data i)]
+                (begin
+                  (if (or (= b 32) (= b 9) (= b 42) (= b 37) (= b 40) (= b 44))
+                    (set! ok false)
+                    unit)
+                  (set! i (+ i 1)))))
+            ok))))))
+
+;; Delete every unconditional `jmp` whose target execution would reach anyway by
+;; falling through nothing but label definitions.
+;;
+;; `compiler-backend-jump-target-is-fallthrough?` can only suppress a
+;; terminator's `jmp` when the target is the IMMEDIATELY next block. When the
+;; target is instead reached through a CHAIN of blocks that each emit zero
+;; instructions, the `jmp` survives and jumps to the very next instruction. That
+;; shape is pervasive: source-level `(if c (begin ...) unit)` leaves an else
+;; block whose own jump was already fallthrough-suppressed and whose phi-edge
+;; copies coalesced to nothing, so the then block's `jmp` lands on `else:`
+;; `merge:` and falls straight through.
+;;
+;; The rewrite is unconditionally correct at the machine level: deleting the
+;; `jmp` makes execution fall through zero emitted bytes to the exact same
+;; label. It runs on the fully assembled function body -- after the prologue
+;; splice, rsp rebase and FPO audit -- so every emitted byte is visible,
+;; including the assembler directives (`.p2align`, `.seh_*`, `.cfi_*`) that must
+;; inhibit it, and both text targets share the one seam. Only a run of pure
+;; label-definition lines may separate the `jmp` from its target; anything else
+;; (instruction, directive, comment, blank line) keeps it, as does a target
+;; never seen scanning forward -- backward jumps, i.e. loop back edges and the
+;; `call tl_oob_abort` / `jmp self` trap loops.
+;;
+;; One forward pass over the lines, examining each exactly once (linear, no
+;; rescans; the self-compile body text is megabytes). At most one candidate
+;; `jmp` is deferred at a time, and it is resolved before the next can start, so
+;; the deleted line ranges are discovered in increasing position order.
+;;
+;; The rewrite only ever DELETES whole lines, so the output is the input minus
+;; those ranges: the buffer is fed the COMPLEMENT, one slice per deletion,
+;; rather than one slice per line. Appending line by line rebuilt the immutable
+;; buffer and its head chunk on every one of the ~10^6 lines of a large module,
+;; which cost more than the pass saved at `--opt-level 1` (few empty blocks, so
+;; few deletions) and moved the gated self_compile row. A body with no deletion
+;; now allocates nothing at all and is returned unchanged, and an unresolved
+;; candidate needs no special case: a backward jump is simply never excised.
+(define (compiler-backend-drop-fallthrough-jumps [asm : String]) : String
+  (let
+    [n : i64 (string.string-length asm)]
+    [asm-data : (Ptr u8)
+      (unsafe
+        (string-data asm))]
+    [i : i64 0]
+    [out : (text_buf_borrowed.TextBufBorrowed asm)
+      (text_buf_borrowed.empty-like (& asm))]
+    ;; First byte not yet handed to `out`; deletions advance it past the
+    ;; excised line.
+    [copy-start : i64 0]
+    ;; Deferred candidate: its own line range and its target operand range.
+    [pending? : bool false]
+    [jmp-start : i64 0]
+    [jmp-stop : i64 0]
+    [target-start : i64 0]
+    [target-stop : i64 0]
+    ;; Did the pending-candidate arm already account for the current line?
+    [consumed? : bool false]
+    [dropped : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
+          [next-start : i64
+            (if (< end n)
+              (+ end 1)
+              end)]
+          (begin
+            (set! consumed? false)
+            (if pending?
+              (if (compiler-backend-asm-label-def-line? asm-data i end)
+                (begin
+                  (set! consumed? true)
+                  (if (compiler-backend-peephole-ranges-eq?
+                    asm-data
+                    target-start
+                    target-stop
+                    asm-data
+                    i
+                    (- end 1))
+                    ;; Target reached across label definitions only: excise the
+                    ;; `jmp` line by copying everything before it and resuming
+                    ;; after it.
+                    (begin
+                      (set!
+                        out
+                        (text_buf_borrowed.append-slice
+                          out
+                          (& asm)
+                          copy-start
+                          (- jmp-start copy-start)))
+                      (set! copy-start jmp-stop)
+                      (set! dropped (+ dropped 1))
+                      (set! pending? false))
+                    unit))
+                ;; Emitted bytes intervene: the `jmp` stays (it is still inside
+                ;; the uncopied region), and the arm below reconsiders this line.
+                (set! pending? false))
+              unit)
+            (if consumed?
+              unit
+              (if (compiler-backend-asm-direct-jmp-line? asm-data i end)
+                (begin
+                  (set! pending? true)
+                  (set! jmp-start i)
+                  (set! jmp-stop next-start)
+                  (set!
+                    target-start
+                    (+ i (compiler-backend-asm-jmp-prefix-len)))
+                  (set! target-stop end))
+                unit))
+            (set! i next-start))))
+      (if (= dropped 0)
+        asm
+        (text_buf_borrowed.render
+          (text_buf_borrowed.append-slice
+            out
+            (& asm)
+            copy-start
+            (- n copy-start)))))))
 
 ;; Streaming peephole over line RECORDS: identical rule set, pair state and
 ;; owner-map handling to the text pass it replaces, except that each surviving

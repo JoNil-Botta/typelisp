@@ -15,6 +15,8 @@
 (import "tlci_core.tl")
 (import stdlib.array)
 (import stdlib.byte_buf_core)
+(import stdlib.hashmap)
+(import (hashmap.hashmap String i64) as tlci_native_string_i64_map)
 (import stdlib.string)
 (cfg test (import stdlib.test))
 
@@ -56,30 +58,6 @@
     kind)
     [(cobj.CompilerObjectSection.Section _ data _) data]))
 
-;; True iff `name` is bound Extern in the image symbol table.
-(define (compiler-tlci-native-extern-symbol?
-  [image : cobj.CompilerObjectImage]
-  [name : String]) : bool
-  (let
-    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
-    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (begin
-          (match (cobj.compiler-object-symbol-list-ref symbols index)
-            [(cobj.CompilerObjectSymbol.Symbol sym-name binding _ _)
-              (if (and
-                (string.eq sym-name name)
-                (match binding
-                  [(cobj.CompilerObjectSymbolBinding.Extern) true]
-                  [_ false]))
-                (set! found true)
-                unit)])
-          (set! index (+ index 1))))
-      found)))
-
 ;; Section base offsets for one layout run, passed by value.
 (defstruct CompilerTlciNativeBases
   (text i64)
@@ -94,6 +72,105 @@
       (array-set! error 0 message)
       unit)
     -1))
+
+;; One layout-local index replaces a full instruction/data/symbol scan at
+;; every relocation. Large generated transformer programs have tens of
+;; thousands of branch relocations, so resolving each target from the start
+;; of the text list makes layout quadratic in the generated code size.
+(defstruct CompilerTlciNativeSymbolIndex
+  (offsets tlci_native_string_i64_map.Map)
+  (externs tlci_native_string_i64_map.Map))
+
+(define (compiler-tlci-native-index-data-labels!
+  [offsets : (&mut offsets tlci_native_string_i64_map.Map)]
+  [records : cobj.CompilerObjectDataRecordList]
+  [base : i64]) : unit
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [offset : i64 base]
+    (while (< index count)
+      (let
+        [record : cobj.CompilerObjectDataRecord
+          (cobj.compiler-object-data-record-list-ref records index)]
+        (begin
+          (match record
+            [(cobj.CompilerObjectDataRecord.Label name)
+              (begin
+                (tlci_native_string_i64_map.insert-if-absent-ref!
+                  offsets
+                  name
+                  offset)
+                unit)]
+            [_ unit])
+          (set!
+            offset
+            (compiler-object-elf-data-record-end-offset record offset))
+          (set! index (+ index 1)))))))
+
+(define (compiler-tlci-native-build-symbol-index
+  [image : cobj.CompilerObjectImage]
+  [bases : CompilerTlciNativeBases]) : CompilerTlciNativeSymbolIndex
+  (let
+    [instrs : cobj.CompilerObjectX64InstrList
+      (compiler-tlci-native-section-instrs
+        image
+        (cobj.CompilerObjectSectionKind.Text))]
+    [instr-count : i64 (cobj.compiler-object-instr-list-count instrs)]
+    [offsets : tlci_native_string_i64_map.Map
+      (tlci_native_string_i64_map.with-capacity (+ instr-count 16))]
+    [instr-index : i64 0]
+    [offset : i64 (struct-get bases text)]
+    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+    [symbol-count : i64 (cobj.compiler-object-symbol-list-count symbols)]
+    [externs : tlci_native_string_i64_map.Map
+      (tlci_native_string_i64_map.with-capacity (+ symbol-count 1))]
+    [symbol-index : i64 0]
+    (begin
+      (while (< instr-index instr-count)
+        (let
+          [instr : cobj.CompilerObjectX64Instr
+            (cobj.compiler-object-instr-list-ref instrs instr-index)]
+          (begin
+            (match instr
+              [(cobj.CompilerObjectX64Instr.Label name)
+                (begin
+                  (tlci_native_string_i64_map.insert-if-absent-ref!
+                    (&mut offsets)
+                    name
+                    offset)
+                  unit)]
+              [_ unit])
+            (set! offset (+ offset (compiler-object-elf-instr-size instr)))
+            (set! instr-index (+ instr-index 1)))))
+      (compiler-tlci-native-index-data-labels!
+        (&mut offsets)
+        (compiler-tlci-native-section-data
+          image
+          (cobj.CompilerObjectSectionKind.Rodata))
+        (struct-get bases rodata))
+      (compiler-tlci-native-index-data-labels!
+        (&mut offsets)
+        (compiler-tlci-native-section-data
+          image
+          (cobj.CompilerObjectSectionKind.Data))
+        (struct-get bases data))
+      (compiler-tlci-native-index-data-labels!
+        (&mut offsets)
+        (compiler-tlci-native-section-data
+          image
+          (cobj.CompilerObjectSectionKind.Bss))
+        (struct-get bases bss))
+      (while (< symbol-index symbol-count)
+        (begin
+          (match (cobj.compiler-object-symbol-list-ref symbols symbol-index)
+            [(cobj.CompilerObjectSymbol.Symbol name binding _ _)
+              (match binding
+                [(cobj.CompilerObjectSymbolBinding.Extern)
+                  (tlci_native_string_i64_map.insert-ref! (&mut externs) name 1)]
+                [_ unit])])
+          (set! symbol-index (+ symbol-index 1))))
+      (CompilerTlciNativeSymbolIndex offsets externs))))
 
 ;; GOT slot offset for extern `name`, allocating on first use. This also keeps
 ;; the borrow-in-loop then consume-after-loop ownership pattern exercised by a
@@ -137,69 +214,47 @@
     "_tl_comptime_host_invoke"
     name))
 
+(define (compiler-tlci-native-index-offset
+  [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
+  [name : (& name str)]) : i64
+  (match (tlci_native_string_i64_map.get-borrowed
+    (& (struct-get symbols offsets))
+    name)
+    [(tlci_native_string_i64_map.LookupFound offset) offset]
+    [(tlci_native_string_i64_map.LookupMissing) -1]))
+
+(define (compiler-tlci-native-index-extern?
+  [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
+  [name : (& name str)]) : bool
+  (tlci_native_string_i64_map.contains-borrowed?
+    (& (struct-get symbols externs))
+    name))
+
 (define (compiler-tlci-native-symbol-offset!
   [import-names : (Array String)]
   [import-offsets : (Array i64)]
   [import-count : (Array i64)]
   [error : (Array String)]
   [bases : CompilerTlciNativeBases]
-  [image : cobj.CompilerObjectImage]
+  [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [name : String]) : i64
   (let
-    [text : i64
-      (compiler-object-elf-instr-label-offset-from
-        (compiler-tlci-native-section-instrs
-          image
-          (cobj.CompilerObjectSectionKind.Text))
-        name
-        (struct-get bases text))]
-    (if (>= text 0)
-      text
+    [offset : i64 (compiler-tlci-native-index-offset symbols (& name))]
+    (if (>= offset 0)
+      offset
       (let
-        [rodata : i64
-          (compiler-object-elf-data-label-offset-from
-            (compiler-tlci-native-section-data
-              image
-              (cobj.CompilerObjectSectionKind.Rodata))
-            name
-            (struct-get bases rodata))]
-        (if (>= rodata 0)
-          rodata
-          (let
-            [data : i64
-              (compiler-object-elf-data-label-offset-from
-                (compiler-tlci-native-section-data
-                  image
-                  (cobj.CompilerObjectSectionKind.Data))
-                name
-                (struct-get bases data))]
-            (if (>= data 0)
-              data
-              (let
-                [bss : i64
-                  (compiler-object-elf-data-label-offset-from
-                    (compiler-tlci-native-section-data
-                      image
-                      (cobj.CompilerObjectSectionKind.Bss))
-                    name
-                    (struct-get bases bss))]
-                (if (>= bss 0)
-                  bss
-                  (if (compiler-tlci-native-extern-symbol?
-                    image
-                    (compiler-tlci-native-extern-alias name))
-                    (compiler-tlci-native-got-slot!
-                      import-names
-                      import-offsets
-                      import-count
-                      error
-                      bases
-                      (compiler-tlci-native-extern-alias name))
-                    (compiler-tlci-native-fail!
-                      error
-                      (string.append
-                        "tlci native image: unresolved symbol "
-                        name))))))))))))
+        [extern-name : String (compiler-tlci-native-extern-alias name)]
+        (if (compiler-tlci-native-index-extern? symbols (& extern-name))
+          (compiler-tlci-native-got-slot!
+            import-names
+            import-offsets
+            import-count
+            error
+            bases
+            extern-name)
+          (compiler-tlci-native-fail!
+            error
+            (string.append "tlci native image: unresolved symbol " name)))))))
 
 ;; Write a little-endian i32 at `offset`.
 (define (compiler-tlci-native-patch-i32!
@@ -220,7 +275,7 @@
   [import-count : (Array i64)]
   [error : (Array String)]
   [bases : CompilerTlciNativeBases]
-  [image : cobj.CompilerObjectImage]
+  [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [bytes : (Array u8)]
   [site : i64]
   [target : String]) : bool
@@ -232,7 +287,7 @@
         import-count
         error
         bases
-        image
+        symbols
         target)]
     (if (< target-offset 0)
       false
@@ -252,6 +307,7 @@
   [import-count : (Array i64)]
   [error : (Array String)]
   [bases : CompilerTlciNativeBases]
+  [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [image : cobj.CompilerObjectImage]
   [bytes : (Array u8)]) : bool
   (let
@@ -271,7 +327,7 @@
           (begin
             (match instr
               [(cobj.CompilerObjectX64Instr.Call target)
-                (if (compiler-tlci-native-extern-symbol? image target)
+                (if (compiler-tlci-native-index-extern? symbols (& target))
                   (begin
                     (compiler-tlci-native-fail!
                       error
@@ -287,12 +343,12 @@
                       import-count
                       error
                       bases
-                      image
+                      symbols
                       bytes
                       (+ offset 1)
                       target)))]
               [(cobj.CompilerObjectX64Instr.TailCall target)
-                (if (compiler-tlci-native-extern-symbol? image target)
+                (if (compiler-tlci-native-index-extern? symbols (& target))
                   (begin
                     (compiler-tlci-native-fail!
                       error
@@ -308,7 +364,7 @@
                       import-count
                       error
                       bases
-                      image
+                      symbols
                       bytes
                       (+ offset 1)
                       target)))]
@@ -321,7 +377,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 1)
                     target))]
@@ -334,7 +390,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 2)
                     target))]
@@ -348,7 +404,7 @@
                       import-count
                       error
                       bases
-                      image
+                      symbols
                       bytes
                       (+ offset 5)
                       true-target))
@@ -361,7 +417,7 @@
                         import-count
                         error
                         bases
-                        image
+                        symbols
                         bytes
                         (+ offset 10)
                         false-target))
@@ -375,7 +431,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -388,7 +444,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -401,7 +457,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -414,7 +470,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -427,7 +483,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -440,7 +496,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -453,7 +509,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -466,7 +522,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -479,7 +535,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -492,7 +548,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 3)
                     target))]
@@ -505,7 +561,7 @@
                     import-count
                     error
                     bases
-                    image
+                    symbols
                     bytes
                     (+ offset 4)
                     target))]
@@ -523,6 +579,7 @@
   [import-count : (Array i64)]
   [error : (Array String)]
   [bases : CompilerTlciNativeBases]
+  [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [image : cobj.CompilerObjectImage]
   [bytes : (Array u8)]
   [kind : cobj.CompilerObjectSectionKind]
@@ -552,7 +609,7 @@
                       import-count
                       error
                       bases
-                      image
+                      symbols
                       target)]
                   (if (< value 0)
                     (set! ok false)
@@ -620,6 +677,8 @@
         bss-base)]
     [bases : CompilerTlciNativeBases
       (CompilerTlciNativeBases 0 rodata-base data-base got-base bss-base)]
+    [symbols-index : CompilerTlciNativeSymbolIndex
+      (compiler-tlci-native-build-symbol-index image bases)]
     [import-names : (Array String)
       (array.make-array String compiler-tlci-native-import-cap)]
     [import-offsets : (Array i64)
@@ -654,6 +713,7 @@
             import-count
             error
             bases
+            (& symbols-index)
             image
             bytes)]
         [rodata-ok : bool
@@ -664,6 +724,7 @@
               import-count
               error
               bases
+              (& symbols-index)
               image
               bytes
               (cobj.CompilerObjectSectionKind.Rodata)
@@ -679,6 +740,7 @@
               import-count
               error
               bases
+              (& symbols-index)
               image
               bytes
               (cobj.CompilerObjectSectionKind.Data)

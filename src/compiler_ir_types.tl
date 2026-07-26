@@ -9,6 +9,9 @@
 (import compiler_builtin_ids as cbi)
 (import "compiler_ast_types.tl")
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.hashmap)
+(import stdlib.arena)
+(import (hashmap.hashmap String i64) as ir_label_map)
 
 (defenum CompilerIrBinOp
   (Add)
@@ -106,6 +109,118 @@
 (define (compiler-ir-test-symbol [name : String]) : i64
   (ci.intern-generated-canonical-name name))
 
+;; Block labels are interned, but into a table the IR owns rather than into the
+;; front end's `intern` pool. That pool is a fixed 131,072 slots sized for source
+;; identifiers and aborts when generated names exhaust it; a whole-program
+;; self-compile creates far more block labels than that. This table grows, so
+;; the id space is bounded by the labels actually created (refs #5718).
+;;
+;; The IR stores the id, not the spelling: identity is an integer compare and a
+;; CFG map is integer-keyed, which is what the optimizer, register allocator and
+;; backend want. Only emission and diagnostics ask for the text back. `-1` is
+;; the absent label, matching the symbol family's negative-id contract.
+(define compiler-ir-label-slots : (Array String)
+  (array.make-array String 1024))
+(define compiler-ir-label-count : i64
+  0)
+(define compiler-ir-label-ids : ir_label_map.Map
+  (ir_label_map.with-capacity 2048))
+(define compiler-ir-label-seeded : bool
+  false)
+
+(define (compiler-ir-label-grow!) : unit
+  (let
+    [old-slots : (Array String) compiler-ir-label-slots]
+    [old-len : i64 (array-length old-slots)]
+    [next : (Array String) (array.make-array String (* old-len 2))]
+    [index : i64 0]
+    (begin
+      (while (< index old-len)
+        (begin
+          (array-set! next index (array-ref old-slots index))
+          (set! index (+ index 1))))
+      (set! compiler-ir-label-slots next))))
+
+;; The table outlives every lowering/optimizer scratch arena and every intern
+;; floor reset -- an id handed to the backend must still render -- so its slots,
+;; its map and its copies of the spellings are bound in a dedicated arena that
+;; is created once and only grows. This is the `compiler-load-provenance-arena`
+;; pattern from CONTRIBUTING.md's compiler arena ownership rule.
+(define compiler-ir-label-arena-handle : i64
+  0)
+
+(define (compiler-ir-label-arena) : i64
+  (begin
+    (if (= compiler-ir-label-arena-handle 0)
+      (set! compiler-ir-label-arena-handle (arena.tl_arena_make))
+      unit)
+    compiler-ir-label-arena-handle))
+
+(define (compiler-ir-label-seed!) : unit
+  (if compiler-ir-label-seeded
+    unit
+    (let
+      [previous-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set (compiler-ir-label-arena)))
+        (set! compiler-ir-label-slots (array.make-array String 1024))
+        (set! compiler-ir-label-ids (ir_label_map.with-capacity 2048))
+        (set! compiler-ir-label-count 0)
+        (set! compiler-ir-label-seeded true)
+        (unsafe
+          (arena.tl_arena_set previous-arena))))))
+
+(define (compiler-ir-label [name : String]) : i64
+  (begin
+    (compiler-ir-label-seed!)
+    (compiler-ir-label-lookup name)))
+
+(define (compiler-ir-label-lookup [name : String]) : i64
+  (match (ir_label_map.get (& compiler-ir-label-ids) name)
+    [(ir_label_map.LookupFound id) id]
+    [(ir_label_map.LookupMissing)
+      (let
+        [id : i64 compiler-ir-label-count]
+        [previous-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set (compiler-ir-label-arena)))
+          (if (< id (array-length compiler-ir-label-slots))
+            unit
+            (compiler-ir-label-grow!))
+          (let
+            [owned : String (string.copy (& name))]
+            (begin
+              (array-set! compiler-ir-label-slots id owned)
+              (ir_label_map.insert-ref!
+                (&mut compiler-ir-label-ids)
+                (array-ref compiler-ir-label-slots id)
+                id)))
+          (set! compiler-ir-label-count (+ id 1))
+          (unsafe
+            (arena.tl_arena_set previous-arena))
+          id))]))
+
+;: Number of distinct labels interned so far. Ids are dense in [0, count),
+;: so a side table indexed by label id needs exactly this many slots.
+(define (compiler-ir-label-count-value) : i64
+  compiler-ir-label-count)
+
+(define (compiler-ir-label-text [label : i64]) : String
+  (if (or (< label 0) (>= label compiler-ir-label-count))
+    ""
+    (array-ref compiler-ir-label-slots label)))
+
+(define (compiler-ir-label-eq? [left : i64] [right : i64]) : bool
+  (= left right))
+
+(define (compiler-ir-label-none) : i64
+  -1)
+
+(define (compiler-ir-label-some? [label : i64]) : bool
+  (>= label 0))
+
 (defenum CompilerIrValue
   (Var i64)
   (Global i64)
@@ -180,7 +295,7 @@
 
 (defstruct CompilerIrPhiInput
   (value CompilerIrValue)
-  (label String))
+  (label i64))
 
 (defstruct CompilerIrPhiInputSeq
   (slots (Array CompilerIrPhiInput))
@@ -188,11 +303,11 @@
 
 (defenum CompilerIrPhiInputList
   (Nil)
-  (Cons CompilerIrValue String (Box CompilerIrPhiInputList))
+  (Cons CompilerIrValue i64 (Box CompilerIrPhiInputList))
   (Array CompilerIrPhiInputSeq))
 
 (defenum CompilerIrSwitchCase
-  (Case i64 String))
+  (Case i64 i64))
 
 (defstruct CompilerIrSwitchCaseSeq
   (slots (Array CompilerIrSwitchCase))
@@ -303,7 +418,7 @@
   (Load i64 CompilerIrValue AstType)
   (StorePtr CompilerIrValue CompilerIrValue AstType)
   (CopyBytes CompilerIrValue CompilerIrValue i64)
-  (BoundsCheck CompilerIrValue CompilerIrValue String)
+  (BoundsCheck CompilerIrValue CompilerIrValue i64)
   (Cast i64 CompilerIrValue AstType AstType)
   (Bitcast i64 CompilerIrValue AstType AstType)
   (BinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
@@ -348,8 +463,8 @@
   (SpmdCall (Box CompilerIrInstrSpmdCallPayload))
   (TailCall i64 CompilerIrCallArgs AstType)
   (Store i64 CompilerIrValue AstType)
-  (Jump String)
-  (Branch CompilerIrValue String String)
+  (Jump i64)
+  (Branch CompilerIrValue i64 i64)
   (Return CompilerIrMaybeValue)
   (Phi i64 CompilerIrPhiInputList AstType)
   ;; Multi-word register groups. A small (<=16 B) inline struct/enum whose fields
@@ -363,7 +478,7 @@
   (Pack i64 CompilerIrValueList AstType)
   (Word i64 CompilerIrValue i64 AstType)
   (TailCallIndirect CompilerIrValue CompilerIrCallArgs AstType)
-  (Switch CompilerIrValue i64 CompilerIrSwitchCaseList String))
+  (Switch CompilerIrValue i64 CompilerIrSwitchCaseList i64))
 
 (define (compiler-ir-descriptor-pair-kind-for-handle-type [ty : AstType]) : CompilerIrMaybeDescriptorPairKind
   (match ty
@@ -574,7 +689,7 @@
   (len i64))
 
 (defenum CompilerIrBlock
-  (Block String CompilerIrInstrSeq))
+  (Block i64 CompilerIrInstrSeq))
 
 (defstruct CompilerIrBlockSeq
   (slots (Array CompilerIrBlock))
@@ -763,13 +878,13 @@
 
 (define (compiler-ir-phi-input-cons-linked
   [value : CompilerIrValue]
-  [label : String]
+  [label : i64]
   [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (CompilerIrPhiInputList.Cons value label (box rest)))
 
 (define (compiler-ir-phi-input-cons
   [value : CompilerIrValue]
-  [label : String]
+  [label : i64]
   [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (let
     [count : i64 (+ 1 (compiler-ir-phi-input-list-count rest))]
@@ -858,7 +973,7 @@
 
 (define (compiler-ir-switch-case-cons-linked
   [tag : i64]
-  [label : String]
+  [label : i64]
   [rest : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (CompilerIrSwitchCaseList.Cons
     (CompilerIrSwitchCase.Case tag label)
@@ -866,7 +981,7 @@
 
 (define (compiler-ir-switch-case-cons
   [tag : i64]
-  [label : String]
+  [label : i64]
   [rest : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (let
     [count : i64 (+ 1 (compiler-ir-switch-case-list-count rest))]
@@ -1126,8 +1241,8 @@
 (defenum CompilerIrInstrScalarFact
   (Other)
   (BinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
-  (Jump String)
-  (Branch CompilerIrValue String String)
+  (Jump i64)
+  (Branch CompilerIrValue i64 i64)
   (Phi i64 CompilerIrPhiInputList AstType))
 
 (define (compiler-ir-instr-scalar-fact [instr : CompilerIrInstr]) : CompilerIrInstrScalarFact
@@ -1184,7 +1299,7 @@
           (set! read (+ read 1))))
       (set! (struct-get instrs len) write))))
 
-(define (compiler-ir-block [label : String] [instrs : CompilerIrInstrList]) : CompilerIrBlock
+(define (compiler-ir-block [label : i64] [instrs : CompilerIrInstrList]) : CompilerIrBlock
   (CompilerIrBlock.Block label (compiler-ir-instr-seq-from-list instrs)))
 
 (define (compiler-ir-block-cons
@@ -2298,7 +2413,7 @@
       (CompilerIrInstr.BoundsCheck
         (compiler-ir-clone-value index)
         (compiler-ir-clone-value length)
-        (clone label))]
+        label)]
     [(CompilerIrInstr.Cast dst src from-ty to-ty)
       (CompilerIrInstr.Cast
         dst
@@ -2651,7 +2766,7 @@
 (define (compiler-ir-clone-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (CompilerIrBlock.Block (clone label) (compiler-ir-clone-instr-seq instrs))]))
+      (CompilerIrBlock.Block label (compiler-ir-clone-instr-seq instrs))]))
 
 (define (compiler-ir-clone-block-list-acc
   [blocks : CompilerIrBlockList]
@@ -3101,7 +3216,10 @@
 (define (compiler-ir-switch-case-render [case : CompilerIrSwitchCase]) : String
   (match case
     [(CompilerIrSwitchCase.Case tag label)
-      (str_cat.str-cat (string.int->string tag) ":" label)]))
+      (str_cat.str-cat
+        (string.int->string tag)
+        ":"
+        (compiler-ir-label-text label))]))
 
 (define (compiler-ir-switch-case-list-render-tail
   [cases : CompilerIrSwitchCaseList]) : String
@@ -3444,7 +3562,7 @@
         "["
         (compiler-ir-value-render value)
         ", "
-        label
+        (compiler-ir-label-text label)
         "]"
         (match (compiler-ir-phi-input-list-force-cons (box-get rest))
           [(CompilerIrPhiInputList.Nil) ""]
@@ -3524,7 +3642,7 @@
         ", "
         (compiler-ir-value-render length)
         " message \""
-        message
+        (compiler-ir-label-text message)
         "\"")]
     [(CompilerIrInstr.Cast dst value from to)
       (str_cat.str-cat
@@ -3918,15 +4036,16 @@
         (string.int->string dst)
         ", "
         (compiler-ir-typed-value-render value ty))]
-    [(CompilerIrInstr.Jump label) (str_cat.str-cat "  jump " label)]
+    [(CompilerIrInstr.Jump label)
+      (str_cat.str-cat "  jump " (compiler-ir-label-text label))]
     [(CompilerIrInstr.Branch test on-true on-false)
       (str_cat.str-cat
         "  branch "
         (compiler-ir-value-render test)
         ", "
-        on-true
+        (compiler-ir-label-text on-true)
         ", "
-        on-false)]
+        (compiler-ir-label-text on-false))]
     [(CompilerIrInstr.Return value)
       (str_cat.str-cat "  return " (compiler-ir-maybe-value-render value))]
     [(CompilerIrInstr.Phi dst inputs ty)
@@ -3961,7 +4080,7 @@
         " ["
         (compiler-ir-switch-case-list-render cases)
         "] default "
-        default-label)]))
+        (compiler-ir-label-text default-label))]))
 
 (define (compiler-ir-instr-seq-render-from
   [instrs : CompilerIrInstrSeq]
@@ -3976,7 +4095,11 @@
 (define (compiler-ir-block-render [block : CompilerIrBlock]) : String
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (str_cat.str-cat label ":\n" (compiler-ir-instr-seq-render-from instrs 0))]))
+      (str_cat.str-cat
+        (compiler-ir-label-text label)
+        ":
+"
+        (compiler-ir-instr-seq-render-from instrs 0))]))
 
 (define (compiler-ir-block-list-render [blocks : CompilerIrBlockList]) : String
   (match (compiler-ir-block-list-force-cons blocks)
@@ -6217,7 +6340,7 @@
         " ["
         (compiler-ir-switch-case-list-render cases)
         "] default "
-        default-label)]
+        (compiler-ir-label-text default-label))]
     [_ "non-vector-mask-instr"]))
 
 (define (compiler-ir-value-var-eq? [value : CompilerIrValue] [want : i64]) : bool
@@ -6270,7 +6393,7 @@
         6
         (compiler-ir-phi-input-cons
           (CompilerIrValue.I64 1)
-          "entry"
+          (compiler-ir-label "entry")
           (CompilerIrPhiInputList.Nil))
         (AstType.I64))
       CompilerIrEffect.Pure)
@@ -6319,7 +6442,7 @@
       (CompilerIrInstr.BoundsCheck
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 1)
-        "bounds_ok")
+        (compiler-ir-label "bounds_ok"))
       CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-is?
       (CompilerIrInstr.TailCall
@@ -6328,10 +6451,13 @@
         (AstType.I64))
       CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Jump "done")
+      (CompilerIrInstr.Jump (compiler-ir-label "done"))
       CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "then" "else")
+      (CompilerIrInstr.Branch
+        (CompilerIrValue.Bool true)
+        (compiler-ir-label "then")
+        (compiler-ir-label "else"))
       CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-is?
       (CompilerIrInstr.Switch
@@ -6339,9 +6465,12 @@
         1
         (compiler-ir-switch-case-cons
           1
-          "one"
-          (compiler-ir-switch-case-cons 2 "two" CompilerIrSwitchCaseList.Nil))
-        "default")
+          (compiler-ir-label "one")
+          (compiler-ir-switch-case-cons
+            2
+            (compiler-ir-label "two")
+            CompilerIrSwitchCaseList.Nil))
+        (compiler-ir-label "default"))
       CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-is?
       (CompilerIrInstr.Return
@@ -6740,10 +6869,17 @@
     [cases : CompilerIrSwitchCaseList
       (compiler-ir-switch-case-cons
         4
-        "four"
-        (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil))]
+        (compiler-ir-label "four")
+        (compiler-ir-switch-case-cons
+          5
+          (compiler-ir-label "five")
+          CompilerIrSwitchCaseList.Nil))]
     [instr : CompilerIrInstr
-      (CompilerIrInstr.Switch (CompilerIrValue.Var 9) 4 cases "other")]
+      (CompilerIrInstr.Switch
+        (CompilerIrValue.Var 9)
+        4
+        cases
+        (compiler-ir-label "other"))]
     (and
       (string.eq
         (compiler-ir-instr-render instr)
@@ -6904,7 +7040,8 @@
   (match (compiler-ir-block-list-force-cons blocks)
     [(CompilerIrBlockList.Cons block _)
       (match block
-        [(CompilerIrBlock.Block label _) (string.eq label want)])]
+        [(CompilerIrBlock.Block label _)
+          (string.eq (compiler-ir-label-text label) want)])]
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Array _) false]))
 
@@ -6917,7 +7054,8 @@
     [(CompilerIrBlockList.Cons block rest)
       (if (= index 0)
         (match block
-          [(CompilerIrBlock.Block label _) (string.eq label want)])
+          [(CompilerIrBlock.Block label _)
+            (string.eq (compiler-ir-label-text label) want)])
         (compiler-ir-block-list-label-at-cons? (box-get rest) (- index 1) want))]
     [(CompilerIrBlockList.Array _) false]))
 
@@ -6990,13 +7128,13 @@
       (set! instrs (compiler-ir-instr-builder-to-seq instr-builder))
       (compiler-ir-block-builder-push!
         (&mut block-builder)
-        (compiler-ir-block "entry" CompilerIrInstrList.Nil))
+        (compiler-ir-block (compiler-ir-label "entry") CompilerIrInstrList.Nil))
       (compiler-ir-block-builder-push!
         (&mut block-builder)
-        (compiler-ir-block "middle" CompilerIrInstrList.Nil))
+        (compiler-ir-block (compiler-ir-label "middle") CompilerIrInstrList.Nil))
       (compiler-ir-block-builder-push!
         (&mut block-builder)
-        (compiler-ir-block "done" CompilerIrInstrList.Nil))
+        (compiler-ir-block (compiler-ir-label "done") CompilerIrInstrList.Nil))
       (set! blocks (compiler-ir-block-builder-to-list block-builder))
       (compiler-ir-function-builder-push!
         (&mut function-builder)
@@ -7289,7 +7427,7 @@
     (let
       [input : CompilerIrPhiInput (array-ref (struct-get seq slots) index)]
       (and
-        (string.eq (struct-get input label) want-label)
+        (string.eq (compiler-ir-label-text (struct-get input label)) want-label)
         (match (struct-get input value)
           [(CompilerIrValue.Var id) (= id want-var)]
           [_ false])))))
@@ -7300,10 +7438,10 @@
       (compiler-ir-phi-input-list-compact
         (compiler-ir-phi-input-cons
           (CompilerIrValue.Var 10)
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 20)
-            "loop"
+            (compiler-ir-label "loop")
             CompilerIrPhiInputList.Nil)))]
     [cloned : CompilerIrPhiInputList (compiler-ir-clone-phi-input-list inputs)]
     [reversed : CompilerIrPhiInputList
@@ -7343,7 +7481,9 @@
     false
     (match (array-ref (struct-get seq slots) index)
       [(CompilerIrSwitchCase.Case tag label)
-        (and (= tag want-tag) (string.eq label want-label))])))
+        (and
+          (= tag want-tag)
+          (string.eq (compiler-ir-label-text label) want-label))])))
 
 (define (compiler-ir-switch-case-dense-order-ok?) : bool
   (let
@@ -7351,8 +7491,11 @@
       (compiler-ir-switch-case-list-compact
         (compiler-ir-switch-case-cons
           4
-          "four"
-          (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil)))]
+          (compiler-ir-label "four")
+          (compiler-ir-switch-case-cons
+            5
+            (compiler-ir-label "five")
+            CompilerIrSwitchCaseList.Nil)))]
     [cloned : CompilerIrSwitchCaseList
       (compiler-ir-clone-switch-case-list cases)]
     [reversed : CompilerIrSwitchCaseList
@@ -7399,7 +7542,7 @@
     [roundtrip : CompilerIrInstrList (compiler-ir-instr-seq-to-list seq)]
     [block-list : CompilerIrBlockList
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         CompilerIrBlockList.Nil)]
     [compact-blocks : CompilerIrBlockList
       (compiler-ir-block-list-compact block-list)]

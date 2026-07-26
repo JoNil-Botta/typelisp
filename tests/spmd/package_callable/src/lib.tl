@@ -40,6 +40,26 @@
   : i64
   value)
 
+(define (literal-constant [_x : i64])
+  (:spmd-callable
+    (specialization
+      (lanes 8)
+      (args varying)
+      (result uniform)
+      (index-param none)))
+  : i64
+  7)
+
+(define (cast-constant [_x : i64])
+  (:spmd-callable
+    (specialization
+      (lanes 8)
+      (args varying)
+      (result uniform)
+      (index-param none)))
+  : i64
+  (cast 11 : i64))
+
 (define (sink [_x : i64])
   (:spmd-callable
     (specialization

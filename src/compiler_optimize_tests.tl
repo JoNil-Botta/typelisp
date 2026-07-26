@@ -4,7 +4,6 @@
 (import stdlib.array)
 (import stdlib.arena)
 (import stdlib.hashmap)
-(import (hashmap.hashmap String i64) as opt_string_i64_map)
 (import (hashmap.hashmap i64 i64) as opt_i64_i64_map)
 (import stdlib.option)
 (import (option.option i64) as option_i64)
@@ -530,7 +529,7 @@
     (AstType.I64)
     frame
     (compiler-ir-block-cons
-      (compiler-ir-block "entry" instrs)
+      (compiler-ir-block (compiler-ir-label "entry") instrs)
       CompilerIrBlockList.Nil)))
 
 (define (opt-spans-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
@@ -765,7 +764,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (opt-inline-span-callee-call symbols)
           (compiler-ir-instr-cons
@@ -789,7 +788,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (opt-inline-span-caller-call symbols)
           (compiler-ir-instr-cons
@@ -869,10 +868,10 @@
 (define (opt-inline-span-branch-phi-inputs) : CompilerIrPhiInputList
   (compiler-ir-phi-input-cons
     (CompilerIrValue.Var 1)
-    "inl.entry.0.then"
+    (compiler-ir-label "inl.entry.0.then")
     (compiler-ir-phi-input-cons
       (CompilerIrValue.I64 42)
-      "inl.entry.0.else"
+      (compiler-ir-label "inl.entry.0.else")
       CompilerIrPhiInputList.Nil)))
 
 (define (compiler-optimize-spans-inline-multiblock-ok?) : bool
@@ -1209,21 +1208,21 @@
 (define (opt-aggregate-phi-flowed-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (opt-aggregate-test-alloc)
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "join")
+          (CompilerIrInstr.Jump (compiler-ir-label "join"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "join"
+        (compiler-ir-label "join")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             2
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (CompilerIrPhiInputList.Nil))
             (AstType.U64))
           (compiler-ir-instr-cons
@@ -1687,7 +1686,7 @@
 (define (opt-aggregate-branch-load-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (opt-aggregate-test-alloc)
         (compiler-ir-instr-cons
@@ -1702,11 +1701,14 @@
               (CompilerIrValue.I64 10)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "then" "else")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool true)
+                (compiler-ir-label "then")
+                (compiler-ir-label "else"))
               CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Gep
             3
@@ -1721,7 +1723,7 @@
               CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -2918,7 +2920,8 @@
 
 (define (opt-dce-clean-array-count [instrs : CompilerIrInstrList]) : i64
   (let
-    [block : CompilerIrBlock (compiler-ir-block "entry" instrs)]
+    [block : CompilerIrBlock
+      (compiler-ir-block (compiler-ir-label "entry") instrs)]
     [used : (Array i64)
       (opt-collect-blocks-uses-array
         64
@@ -3065,15 +3068,18 @@
   [return-result? : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp 2 cmp-op cmp-lhs cmp-rhs (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "safe" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 2)
+            (compiler-ir-label "safe")
+            (compiler-ir-label "exit"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "safe"
+        (compiler-ir-label "safe")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp 3 arith-op arith-lhs arith-rhs arith-ty)
           (compiler-ir-instr-cons
@@ -3081,7 +3087,7 @@
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -3091,7 +3097,7 @@
 (define (opt-divrem-cast-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Cast
           2
@@ -3106,11 +3112,14 @@
             (CompilerIrValue.I64 0)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 3) "safe" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 3)
+              (compiler-ir-label "safe")
+              (compiler-ir-label "exit"))
             CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "safe"
+        (compiler-ir-label "safe")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             4
@@ -3124,7 +3133,7 @@
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -3134,7 +3143,7 @@
 (define (opt-divrem-rhs-redefined-before-branch-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -3145,11 +3154,14 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "safe" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 2)
+              (compiler-ir-label "safe")
+              (compiler-ir-label "exit"))
             CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "safe"
+        (compiler-ir-label "safe")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             3
@@ -3163,7 +3175,7 @@
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -3173,7 +3185,7 @@
 (define (opt-divrem-rhs-redefined-in-safe-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -3182,11 +3194,14 @@
           (CompilerIrValue.I64 0)
           (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "safe" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 2)
+            (compiler-ir-label "safe")
+            (compiler-ir-label "exit"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "safe"
+        (compiler-ir-label "safe")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
@@ -3202,7 +3217,7 @@
               CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -3212,7 +3227,7 @@
 (define (opt-divrem-lhs-not-min-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -3221,11 +3236,14 @@
           (CompilerIrValue.I64 0)
           (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "check_lhs" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 2)
+            (compiler-ir-label "check_lhs")
+            (compiler-ir-label "exit"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "check_lhs"
+        (compiler-ir-label "check_lhs")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             3
@@ -3234,11 +3252,14 @@
             (CompilerIrValue.I64 (opt-signed-min (AstType.I64)))
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 3) "safe" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 3)
+              (compiler-ir-label "safe")
+              (compiler-ir-label "exit"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "safe"
+          (compiler-ir-label "safe")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -3252,7 +3273,7 @@
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -3374,7 +3395,7 @@
         i64-params
         (compiler-ir-block-cons
           (compiler-ir-block
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 2
@@ -3632,7 +3653,7 @@
 (define (opt-const-divisor-test-blocks [symbols : OptConstDivisorTestSymbols]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         ;; mod by a proven constant global -> rewritten to its literal divisor
         (CompilerIrInstr.BinOp
@@ -3870,7 +3891,7 @@
 (define (opt-gvn-diamond-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           10
@@ -3879,23 +3900,26 @@
           (CompilerIrValue.Var 1)
           (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "l" "r")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "l")
+            (compiler-ir-label "r"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "l"
+        (compiler-ir-label "l")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "j")
+          (CompilerIrInstr.Jump (compiler-ir-label "j"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "r"
+          (compiler-ir-label "r")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "j")
+            (CompilerIrInstr.Jump (compiler-ir-label "j"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "j"
+            (compiler-ir-label "j")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 11
@@ -3914,13 +3938,16 @@
 (define (opt-gvn-siblings-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "l" "r")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "l")
+          (compiler-ir-label "r"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "l"
+        (compiler-ir-label "l")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             10
@@ -3929,11 +3956,11 @@
             (CompilerIrValue.Var 1)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "j")
+            (CompilerIrInstr.Jump (compiler-ir-label "j"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "r"
+          (compiler-ir-label "r")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               11
@@ -3942,11 +3969,11 @@
               (CompilerIrValue.Var 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "j")
+              (CompilerIrInstr.Jump (compiler-ir-label "j"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "j"
+            (compiler-ir-label "j")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 12
@@ -3966,7 +3993,7 @@
 (define (opt-gvn-redef-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 5) (AstType.I64))
         (compiler-ir-instr-cons
@@ -3977,11 +4004,11 @@
             (CompilerIrValue.Var 2)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "j")
+            (CompilerIrInstr.Jump (compiler-ir-label "j"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "j"
+        (compiler-ir-label "j")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 7) (AstType.I64))
           (compiler-ir-instr-cons
@@ -4002,13 +4029,13 @@
 (define (opt-gvn-loop-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "h")
+        (CompilerIrInstr.Jump (compiler-ir-label "h"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "h"
+        (compiler-ir-label "h")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             10
@@ -4017,11 +4044,14 @@
             (CompilerIrValue.Var 1)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               11
@@ -4030,11 +4060,11 @@
               (CompilerIrValue.Var 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "h")
+              (CompilerIrInstr.Jump (compiler-ir-label "h"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
@@ -4044,7 +4074,7 @@
 (define (opt-gvn-probe-dominated-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.CpuId
           20
@@ -4054,11 +4084,11 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Xgetbv 21 (CompilerIrValue.I64 0))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "use")
+            (CompilerIrInstr.Jump (compiler-ir-label "use"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.CpuId
             22
@@ -4076,7 +4106,7 @@
 (define (opt-gvn-probe-different-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.CpuId
           20
@@ -4086,11 +4116,11 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Xgetbv 21 (CompilerIrValue.I64 0))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "use")
+            (CompilerIrInstr.Jump (compiler-ir-label "use"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.CpuId
             22
@@ -4234,7 +4264,7 @@
 (define (opt-dce-pack-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Pack
           10
@@ -4297,7 +4327,7 @@
 (define (opt-cmp-sink-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "loop"
+      (compiler-ir-label "loop")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           5
@@ -4312,18 +4342,21 @@
             (CompilerIrValue.I64 8)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "t" "f")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "t")
+              (compiler-ir-label "f"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "t"
+        (compiler-ir-label "t")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "f"
+          (compiler-ir-label "f")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -4335,7 +4368,7 @@
 (define (opt-cmp-sink-blocked-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "loop"
+      (compiler-ir-label "loop")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           5
@@ -4351,18 +4384,21 @@
             (CompilerIrValue.Var 1)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "t" "f")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "t")
+              (compiler-ir-label "f"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "t"
+        (compiler-ir-label "t")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "f"
+          (compiler-ir-label "f")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -4409,7 +4445,7 @@
 (define (opt-successor-sink-positive-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
@@ -4420,11 +4456,14 @@
               CompilerIrValueList.Nil)
             (AstType.Struct (intern "OneWord")))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "use")
+              (compiler-ir-label "other"))
             CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Word 4 (CompilerIrValue.Var 3) 0 (AstType.I64))
           (compiler-ir-instr-cons
@@ -4433,7 +4472,7 @@
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "other"
+          (compiler-ir-label "other")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -4446,7 +4485,7 @@
 (define (opt-successor-sink-remat-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -4476,20 +4515,20 @@
                     0
                     (compiler-ir-switch-case-cons
                       0
-                      "other"
+                      (compiler-ir-label "other")
                       CompilerIrSwitchCaseList.Nil)
-                    "use")
+                    (compiler-ir-label "use"))
                   CompilerIrInstrList.Nil)))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "other"
+          (compiler-ir-label "other")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
@@ -4501,7 +4540,7 @@
 (define (opt-successor-sink-live-range-blocked-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
@@ -4514,18 +4553,21 @@
               (CompilerIrValue.I64 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 0)
+                (compiler-ir-label "use")
+                (compiler-ir-label "other"))
               CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "other"
+          (compiler-ir-label "other")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
@@ -4538,15 +4580,15 @@
 (define (opt-successor-sink-terminator-live-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "preheader"
+      (compiler-ir-label "preheader")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "entry")
+          (CompilerIrInstr.Jump (compiler-ir-label "entry"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Gep
             3
@@ -4573,19 +4615,19 @@
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Branch
                       (CompilerIrValue.Var 7)
-                      "use"
-                      "other")
+                      (compiler-ir-label "use")
+                      (compiler-ir-label "other"))
                     CompilerIrInstrList.Nil)))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "use"
+          (compiler-ir-label "use")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "other"
+            (compiler-ir-label "other")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -4598,15 +4640,15 @@
 (define (opt-successor-sink-external-leaf-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "preheader"
+      (compiler-ir-label "preheader")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "entry")
+          (CompilerIrInstr.Jump (compiler-ir-label "entry"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             3
@@ -4617,18 +4659,21 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 0)
+                (compiler-ir-label "use")
+                (compiler-ir-label "other"))
               CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "use"
+          (compiler-ir-label "use")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "other"
+            (compiler-ir-label "other")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -4640,7 +4685,7 @@
 (define (opt-successor-sink-remat-cap-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -4700,20 +4745,20 @@
                           0
                           (compiler-ir-switch-case-cons
                             0
-                            "other"
+                            (compiler-ir-label "other")
                             CompilerIrSwitchCaseList.Nil)
-                          "use")
+                          (compiler-ir-label "use"))
                         CompilerIrInstrList.Nil))))))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "other"
+          (compiler-ir-label "other")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
@@ -4725,7 +4770,7 @@
 (define (opt-successor-sink-induction-remat-blocks-with-step [step : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "preheader"
+      (compiler-ir-label "preheader")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           10
@@ -4740,20 +4785,20 @@
             (CompilerIrValue.Var 10)
             (AstType.U8))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstr.Jump (compiler-ir-label "header"))
             CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "header"
+        (compiler-ir-label "header")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             12
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 11)
-              "preheader"
+              (compiler-ir-label "preheader")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 13)
-                "merge"
+                (compiler-ir-label "merge")
                 CompilerIrPhiInputList.Nil))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -4761,10 +4806,10 @@
               2
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 0)
-                "preheader"
+                (compiler-ir-label "preheader")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 3)
-                  "merge"
+                  (compiler-ir-label "merge")
                   CompilerIrPhiInputList.Nil))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -4799,26 +4844,26 @@
                           0
                           (compiler-ir-switch-case-cons
                             0
-                            "other"
+                            (compiler-ir-label "other")
                             CompilerIrSwitchCaseList.Nil)
-                          "use")
+                          (compiler-ir-label "use"))
                         CompilerIrInstrList.Nil)))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "use"
+          (compiler-ir-label "use")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "other"
+            (compiler-ir-label "other")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "merge")
+              (CompilerIrInstr.Jump (compiler-ir-label "merge"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "merge"
+              (compiler-ir-label "merge")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
                   3
@@ -4833,7 +4878,7 @@
                     (CompilerIrValue.I64 16)
                     (AstType.U8))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "header")
+                    (CompilerIrInstr.Jump (compiler-ir-label "header"))
                     CompilerIrInstrList.Nil))))
             CompilerIrBlockList.Nil))))))
 
@@ -4844,22 +4889,25 @@
 (define (opt-successor-sink-multi-use-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "left")
+            (compiler-ir-label "right"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "left"
+        (compiler-ir-label "left")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "right"
+          (compiler-ir-label "right")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
@@ -4872,21 +4920,24 @@
 (define (opt-successor-sink-multi-pred-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "left")
+            (compiler-ir-label "right"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "right"
+        (compiler-ir-label "right")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "left")
+          (CompilerIrInstr.Jump (compiler-ir-label "left"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "left"
+          (compiler-ir-label "left")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
@@ -4898,7 +4949,7 @@
 (define (opt-successor-sink-store-barrier-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
@@ -4907,18 +4958,21 @@
             (CompilerIrValue.I64 9)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "use")
+              (compiler-ir-label "other"))
             CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "other"
+          (compiler-ir-label "other")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -4930,7 +4984,7 @@
 (define (opt-successor-sink-trapping-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -4939,18 +4993,21 @@
           (CompilerIrValue.I64 2)
           (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "use")
+            (compiler-ir-label "other"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "other"
+          (compiler-ir-label "other")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -4974,7 +5031,7 @@
 (define (opt-successor-sink-def-label
   [blocks : CompilerIrBlockList]
   [dst : i64]
-  [fallback : String]) : String
+  [fallback : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) fallback]
     [(CompilerIrBlockList.Cons block rest)
@@ -5062,87 +5119,177 @@
         (opt-successor-sink-trapping-blocks))]
     (begin
       (unless
-        (string.eq (opt-successor-sink-def-label positive 2 "") "use")
+        (=
+          (opt-successor-sink-def-label positive 2 (compiler-ir-label-none))
+          (compiler-ir-label "use"))
         (return 1))
       (unless
-        (string.eq (opt-successor-sink-def-label positive 3 "") "use")
+        (=
+          (opt-successor-sink-def-label positive 3 (compiler-ir-label-none))
+          (compiler-ir-label "use"))
         (return 2))
       (unless
-        (string.eq (opt-successor-sink-def-label multi-use 2 "") "entry")
+        (=
+          (opt-successor-sink-def-label multi-use 2 (compiler-ir-label-none))
+          (compiler-ir-label "entry"))
         (return 3))
       (unless
-        (string.eq (opt-successor-sink-def-label multi-pred 2 "") "entry")
+        (=
+          (opt-successor-sink-def-label multi-pred 2 (compiler-ir-label-none))
+          (compiler-ir-label "entry"))
         (return 4))
       (unless
-        (string.eq (opt-successor-sink-def-label store-barrier 2 "") "entry")
+        (=
+          (opt-successor-sink-def-label
+            store-barrier
+            2
+            (compiler-ir-label-none))
+          (compiler-ir-label "entry"))
         (return 5))
       (unless
-        (string.eq (opt-successor-sink-def-label trapping 2 "") "entry")
+        (=
+          (opt-successor-sink-def-label trapping 2 (compiler-ir-label-none))
+          (compiler-ir-label "entry"))
         (return 6))
       (unless (= (opt-function-frame remat-function) 18) (return 7))
       (unless
         (and
-          (string.eq (opt-successor-sink-def-label remat 2 "") "entry")
-          (string.eq (opt-successor-sink-def-label remat 3 "") "entry")
-          (string.eq (opt-successor-sink-def-label remat 4 "") "use")
-          (string.eq (opt-successor-sink-def-label remat 5 "") "use")
-          (string.eq (opt-successor-sink-def-label remat 16 "") "use")
-          (string.eq (opt-successor-sink-def-label remat 17 "") "use"))
+          (=
+            (opt-successor-sink-def-label remat 2 (compiler-ir-label-none))
+            (compiler-ir-label "entry"))
+          (=
+            (opt-successor-sink-def-label remat 3 (compiler-ir-label-none))
+            (compiler-ir-label "entry"))
+          (=
+            (opt-successor-sink-def-label remat 4 (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label remat 5 (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label remat 16 (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label remat 17 (compiler-ir-label-none))
+            (compiler-ir-label "use")))
         (return 8))
       (unless
         (and
-          (string.eq
-            (opt-successor-sink-def-label live-range-blocked 3 "")
-            "entry")
-          (string.eq
-            (opt-successor-sink-def-label live-range-blocked 4 "")
-            "entry"))
+          (=
+            (opt-successor-sink-def-label
+              live-range-blocked
+              3
+              (compiler-ir-label-none))
+            (compiler-ir-label "entry"))
+          (=
+            (opt-successor-sink-def-label
+              live-range-blocked
+              4
+              (compiler-ir-label-none))
+            (compiler-ir-label "entry")))
         (return 9))
       (unless
         (and
-          (string.eq (opt-successor-sink-def-label terminator-live 5 "") "use")
-          (string.eq (opt-successor-sink-def-label terminator-live 6 "") "use"))
+          (=
+            (opt-successor-sink-def-label
+              terminator-live
+              5
+              (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label
+              terminator-live
+              6
+              (compiler-ir-label-none))
+            (compiler-ir-label "use")))
         (return 10))
       (unless
         (and
           (= (opt-function-frame external-leaf-function) 16)
-          (string.eq (opt-successor-sink-def-label external-leaf 4 "") "entry"))
+          (=
+            (opt-successor-sink-def-label
+              external-leaf
+              4
+              (compiler-ir-label-none))
+            (compiler-ir-label "entry")))
         (return 11))
       (unless (= (opt-function-frame remat-cap-function) 16) (return 12))
       (unless
-        (string.eq (opt-successor-sink-def-label remat-cap 8 "") "entry")
+        (=
+          (opt-successor-sink-def-label remat-cap 8 (compiler-ir-label-none))
+          (compiler-ir-label "entry"))
         (return 13))
       (unless
         (and
           (= (array-ref induction-cell 0) 18)
-          (string.eq (opt-successor-sink-def-label induction-direct 6 "") "use")
-          (string.eq (opt-successor-sink-def-label induction-direct 5 "") "use")
-          (string.eq
-            (opt-successor-sink-def-label induction-direct 16 "")
-            "use")
-          (string.eq
-            (opt-successor-sink-def-label induction-direct 17 "")
-            "use"))
+          (=
+            (opt-successor-sink-def-label
+              induction-direct
+              6
+              (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label
+              induction-direct
+              5
+              (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label
+              induction-direct
+              16
+              (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label
+              induction-direct
+              17
+              (compiler-ir-label-none))
+            (compiler-ir-label "use")))
         (return 14))
       (unless
         (and
           (= (opt-function-frame induction-function) 18)
-          (string.eq (opt-successor-sink-def-label induction 6 "") "use")
-          (string.eq (opt-successor-sink-def-label induction 5 "") "use")
-          (string.eq (opt-successor-sink-def-label induction 16 "") "use")
-          (string.eq (opt-successor-sink-def-label induction 17 "") "use"))
+          (=
+            (opt-successor-sink-def-label induction 6 (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label induction 5 (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label induction 16 (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label induction 17 (compiler-ir-label-none))
+            (compiler-ir-label "use")))
         (return 15))
       (unless
         (and
           (= (opt-function-frame induction-step-two-function) 16)
-          (string.eq
-            (opt-successor-sink-def-label induction-step-two 6 "")
-            "use")
-          (string.eq
-            (opt-successor-sink-def-label induction-step-two 5 "")
-            "use")
-          (string.eq (opt-successor-sink-def-label induction-step-two 16 "") "")
-          (string.eq (opt-successor-sink-def-label induction-step-two 17 "") ""))
+          (=
+            (opt-successor-sink-def-label
+              induction-step-two
+              6
+              (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label
+              induction-step-two
+              5
+              (compiler-ir-label-none))
+            (compiler-ir-label "use"))
+          (=
+            (opt-successor-sink-def-label
+              induction-step-two
+              16
+              (compiler-ir-label-none))
+            (compiler-ir-label-none))
+          (=
+            (opt-successor-sink-def-label
+              induction-step-two
+              17
+              (compiler-ir-label-none))
+            (compiler-ir-label-none)))
         (return 16))
       42)))
 
@@ -5288,7 +5435,7 @@
         2
         (compiler-ir-phi-input-cons
           (CompilerIrValue.Var 1)
-          "left"
+          (compiler-ir-label "left")
           CompilerIrPhiInputList.Nil)
         (AstType.I64))
       (CompilerIrInstrList.Nil))))
@@ -5455,12 +5602,12 @@
     (CompilerIrInstr.BoundsCheck
       (CompilerIrValue.Var 0)
       (CompilerIrValue.Var 1)
-      "bounds_ok.0")
+      (compiler-ir-label "bounds_ok.0"))
     (compiler-ir-instr-cons
       (CompilerIrInstr.BoundsCheck
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 1)
-        "bounds_ok.1")
+        (compiler-ir-label "bounds_ok.1"))
       (CompilerIrInstrList.Nil))))
 
 (define (opt-bounds-different-instrs) : CompilerIrInstrList
@@ -5468,12 +5615,12 @@
     (CompilerIrInstr.BoundsCheck
       (CompilerIrValue.Var 0)
       (CompilerIrValue.Var 1)
-      "bounds_ok.0")
+      (compiler-ir-label "bounds_ok.0"))
     (compiler-ir-instr-cons
       (CompilerIrInstr.BoundsCheck
         (CompilerIrValue.Var 1)
         (CompilerIrValue.Var 0)
-        "bounds_ok.1")
+        (compiler-ir-label "bounds_ok.1"))
       (CompilerIrInstrList.Nil))))
 
 (define (opt-bounds-redef-instrs) : CompilerIrInstrList
@@ -5481,14 +5628,14 @@
     (CompilerIrInstr.BoundsCheck
       (CompilerIrValue.Var 0)
       (CompilerIrValue.Var 1)
-      "bounds_ok.0")
+      (compiler-ir-label "bounds_ok.0"))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "bounds_ok.1")
+          (compiler-ir-label "bounds_ok.1"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-bounds-call-instrs) : CompilerIrInstrList
@@ -5496,7 +5643,7 @@
     (CompilerIrInstr.BoundsCheck
       (CompilerIrValue.Var 0)
       (CompilerIrValue.Var 1)
-      "bounds_ok.0")
+      (compiler-ir-label "bounds_ok.0"))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         9
@@ -5507,7 +5654,7 @@
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "bounds_ok.1")
+          (compiler-ir-label "bounds_ok.1"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-bounds-branch-instrs) : CompilerIrInstrList
@@ -5515,14 +5662,17 @@
     (CompilerIrInstr.BoundsCheck
       (CompilerIrValue.Var 0)
       (CompilerIrValue.Var 1)
-      "bounds_ok.0")
+      (compiler-ir-label "bounds_ok.0"))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "ok" "fail")
+      (CompilerIrInstr.Branch
+        (CompilerIrValue.Bool true)
+        (compiler-ir-label "ok")
+        (compiler-ir-label "fail"))
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "bounds_ok.1")
+          (compiler-ir-label "bounds_ok.1"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-bounds-copy-instrs) : CompilerIrInstrList
@@ -5532,12 +5682,12 @@
       (CompilerIrInstr.BoundsCheck
         (CompilerIrValue.Var 2)
         (CompilerIrValue.Var 1)
-        "bounds_ok.0")
+        (compiler-ir-label "bounds_ok.0"))
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "bounds_ok.1")
+          (compiler-ir-label "bounds_ok.1"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-bounds-dce-instrs) : CompilerIrInstrList
@@ -5549,7 +5699,7 @@
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "bounds_ok.0")
+          (compiler-ir-label "bounds_ok.0"))
         (CompilerIrInstrList.Nil)))))
 
 ;; Index-cast canonicalization: two accesses to the same logical index
@@ -5582,7 +5732,7 @@
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 10)
               (CompilerIrValue.Var 13)
-              "bounds_ok.0")
+              (compiler-ir-label "bounds_ok.0"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Cast
                 14
@@ -5610,7 +5760,7 @@
                       (CompilerIrInstr.BoundsCheck
                         (CompilerIrValue.Var 14)
                         (CompilerIrValue.Var 17)
-                        "bounds_ok.1")
+                        (compiler-ir-label "bounds_ok.1"))
                       (CompilerIrInstrList.Nil))))))))))))
 
 ;; Adversarial: redefining the index source (var0) between the two checks must
@@ -5641,7 +5791,7 @@
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 10)
               (CompilerIrValue.Var 13)
-              "bounds_ok.0")
+              (compiler-ir-label "bounds_ok.0"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (AstType.I64))
               (compiler-ir-instr-cons
@@ -5671,27 +5821,27 @@
                         (CompilerIrInstr.BoundsCheck
                           (CompilerIrValue.Var 14)
                           (CompilerIrValue.Var 17)
-                          "bounds_ok.1")
+                          (compiler-ir-label "bounds_ok.1"))
                         (CompilerIrInstrList.Nil)))))))))))))
 
 (define (opt-bounds-cross-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "bounds_ok.0")
+          (compiler-ir-label "bounds_ok.0"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "next"
+        (compiler-ir-label "next")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
-            "bounds_ok.1")
+            (compiler-ir-label "bounds_ok.1"))
           (CompilerIrInstrList.Nil)))
       (CompilerIrBlockList.Nil))))
 
@@ -5745,7 +5895,7 @@
   (compiler-ir-instr-cons
     (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 init) (AstType.I64))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Jump "header")
+      (CompilerIrInstr.Jump (compiler-ir-label "header"))
       (CompilerIrInstrList.Nil))))
 
 (define (opt-loop-bce-test-entry-after-store
@@ -5769,7 +5919,7 @@
   [init : i64]
   [with-call : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
       (compiler-ir-instr-cons
@@ -5792,7 +5942,7 @@
   [init : i64]
   [with-call : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         10
@@ -5849,7 +5999,7 @@
 
 (define (opt-loop-bce-test-header) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         4
@@ -5858,12 +6008,15 @@
         (CompilerIrValue.Var 1)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 4)
+          (compiler-ir-label "body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-loop-bce-test-affine-header [limit : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         4
@@ -5872,12 +6025,15 @@
         (CompilerIrValue.I64 limit)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 4)
+          (compiler-ir-label "body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-loop-bce-test-body) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Gep
         5
@@ -5902,7 +6058,7 @@
               (CompilerIrInstr.BoundsCheck
                 (CompilerIrValue.Var 8)
                 (CompilerIrValue.Var 7)
-                "bounds_ok")
+                (compiler-ir-label "bounds_ok"))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
                   9
@@ -5913,7 +6069,7 @@
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Mov 0 (CompilerIrValue.Var 9) (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "header")
+                    (CompilerIrInstr.Jump (compiler-ir-label "header"))
                     (CompilerIrInstrList.Nil)))))))))))
 
 (define (opt-loop-bce-test-affine-body-instrs [reversed : bool]) : CompilerIrInstrList
@@ -5952,7 +6108,7 @@
               (CompilerIrInstr.BoundsCheck
                 (CompilerIrValue.Var 8)
                 (CompilerIrValue.Var 7)
-                "bounds_ok")
+                (compiler-ir-label "bounds_ok"))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
                   9
@@ -5963,17 +6119,19 @@
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Mov 0 (CompilerIrValue.Var 9) (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "header")
+                    (CompilerIrInstr.Jump (compiler-ir-label "header"))
                     (CompilerIrInstrList.Nil)))))))))))
 
 (define (opt-loop-bce-test-affine-body [reversed : bool]) : CompilerIrBlock
-  (compiler-ir-block "body" (opt-loop-bce-test-affine-body-instrs reversed)))
+  (compiler-ir-block
+    (compiler-ir-label "body")
+    (opt-loop-bce-test-affine-body-instrs reversed)))
 
 (define (opt-loop-bce-test-affine-call-body
   [symbols : OptLoopBceTestSymbols]
   [reversed : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         20
@@ -5984,7 +6142,7 @@
 
 (define (opt-loop-bce-test-exit) : CompilerIrBlock
   (compiler-ir-block
-    "exit"
+    (compiler-ir-label "exit")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Return (CompilerIrMaybeValue.No))
       (CompilerIrInstrList.Nil))))
@@ -6035,7 +6193,7 @@
 
 (define (opt-loop-bce-test-nested-entry [symbols : OptLoopBceTestSymbols]) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         10
@@ -6062,12 +6220,12 @@
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Mov 31 (CompilerIrValue.I64 3) (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "outer_header")
+                    (CompilerIrInstr.Jump (compiler-ir-label "outer_header"))
                     (CompilerIrInstrList.Nil)))))))))))
 
 (define (opt-loop-bce-test-outer-header) : CompilerIrBlock
   (compiler-ir-block
-    "outer_header"
+    (compiler-ir-label "outer_header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         32
@@ -6076,21 +6234,24 @@
         (CompilerIrValue.Var 31)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 32) "outer_body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 32)
+          (compiler-ir-label "outer_body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-loop-bce-test-outer-body) : CompilerIrBlock
   (compiler-ir-block
-    "outer_body"
+    (compiler-ir-label "outer_body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "header")
+        (CompilerIrInstr.Jump (compiler-ir-label "header"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-loop-bce-test-inner-header) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         4
@@ -6099,12 +6260,15 @@
         (CompilerIrValue.Var 1)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "after_inner")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 4)
+          (compiler-ir-label "body")
+          (compiler-ir-label "after_inner"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-loop-bce-test-after-inner) : CompilerIrBlock
   (compiler-ir-block
-    "after_inner"
+    (compiler-ir-label "after_inner")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         33
@@ -6115,7 +6279,7 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 30 (CompilerIrValue.Var 33) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "outer_header")
+          (CompilerIrInstr.Jump (compiler-ir-label "outer_header"))
           (CompilerIrInstrList.Nil))))))
 
 (define (opt-loop-bce-test-nested-blocks [symbols : OptLoopBceTestSymbols]) : CompilerIrBlockList
@@ -6146,7 +6310,7 @@
 
 (define (opt-loop-bce-string-test-entry [init : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Gep
         3
@@ -6158,12 +6322,12 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 init) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstr.Jump (compiler-ir-label "header"))
             (CompilerIrInstrList.Nil)))))))
 
 (define (opt-loop-bce-string-test-header [off-by-one : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (if off-by-one
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
@@ -6180,7 +6344,10 @@
             (CompilerIrValue.Var 14)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 4)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
@@ -6190,7 +6357,10 @@
           (CompilerIrValue.Var 1)
           (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 4)
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit"))
           (CompilerIrInstrList.Nil))))))
 
 (define (opt-loop-bce-string-test-body-instrs [object-var : i64]) : CompilerIrInstrList
@@ -6226,7 +6396,7 @@
                 (CompilerIrInstr.BoundsCheck
                   (CompilerIrValue.Var 10)
                   (CompilerIrValue.Var 9)
-                  "str_bounds_ok")
+                  (compiler-ir-label "str_bounds_ok"))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Gep
                     11
@@ -6251,7 +6421,7 @@
                           (CompilerIrValue.Var 13)
                           (AstType.I64))
                         (compiler-ir-instr-cons
-                          (CompilerIrInstr.Jump "header")
+                          (CompilerIrInstr.Jump (compiler-ir-label "header"))
                           (CompilerIrInstrList.Nil))))))))))))))
 
 (define (opt-loop-bce-string-test-ref-instrs
@@ -6293,7 +6463,7 @@
                 (CompilerIrInstr.BoundsCheck
                   (CompilerIrValue.Var (+ base 5))
                   (CompilerIrValue.Var (+ base 4))
-                  "str_bounds_ok")
+                  (compiler-ir-label "str_bounds_ok"))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Gep
                     (+ base 6)
@@ -6353,7 +6523,7 @@
                   (CompilerIrInstr.BoundsCheck
                     (CompilerIrValue.Var 10)
                     (CompilerIrValue.Var 9)
-                    "str_bounds_ok")
+                    (compiler-ir-label "str_bounds_ok"))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Gep
                       11
@@ -6378,17 +6548,19 @@
                             (CompilerIrValue.Var 13)
                             (AstType.I64))
                           (compiler-ir-instr-cons
-                            (CompilerIrInstr.Jump "header")
+                            (CompilerIrInstr.Jump (compiler-ir-label "header"))
                             (CompilerIrInstrList.Nil)))))))))))))))
 
 (define (opt-loop-bce-string-test-body [object-var : i64]) : CompilerIrBlock
-  (compiler-ir-block "body" (opt-loop-bce-string-test-body-instrs object-var)))
+  (compiler-ir-block
+    (compiler-ir-label "body")
+    (opt-loop-bce-string-test-body-instrs object-var)))
 
 (define (opt-loop-bce-string-test-call-body
   [symbols : OptLoopBceTestSymbols]
   [object-var : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         21
@@ -6399,7 +6571,7 @@
 
 (define (opt-loop-bce-string-test-store-body [object-var : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.StorePtr
         (CompilerIrValue.Var 30)
@@ -6409,7 +6581,7 @@
 
 (define (opt-loop-bce-string-test-reassign-body) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 20) (AstType.String))
       (opt-loop-bce-string-test-body-instrs 2))))
@@ -6430,16 +6602,21 @@
 
 (define (opt-loop-bce-string-test-split-body) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (opt-loop-bce-string-test-ref-instrs
       2
       30
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "tail" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Bool true)
+          (compiler-ir-label "tail")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-loop-bce-string-test-split-tail) : CompilerIrBlock
-  (compiler-ir-block "tail" (opt-loop-bce-string-test-body-instrs 2)))
+  (compiler-ir-block
+    (compiler-ir-label "tail")
+    (opt-loop-bce-string-test-body-instrs 2)))
 
 (define (opt-loop-bce-string-test-split-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -6456,7 +6633,7 @@
 
 (define (opt-loop-bce-string-test-transitive-entry) : CompilerIrBlock
   (compiler-ir-block
-    "entry"
+    (compiler-ir-label "entry")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Gep
         3
@@ -6477,12 +6654,15 @@
                 (CompilerIrValue.I64 0)
                 (AstType.Bool))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 41) "upper" "exit")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 41)
+                  (compiler-ir-label "upper")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil)))))))))
 
 (define (opt-loop-bce-string-test-transitive-upper [with-upper : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "upper"
+    (compiler-ir-label "upper")
     (if with-upper
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
@@ -6492,15 +6672,18 @@
           (CompilerIrValue.Var 1)
           (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 42) "header" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 42)
+            (compiler-ir-label "header")
+            (compiler-ir-label "exit"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "header")
+        (CompilerIrInstr.Jump (compiler-ir-label "header"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-loop-bce-string-test-transitive-header) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         43
@@ -6509,12 +6692,15 @@
         (CompilerIrValue.Var 40)
         (AstType.Bool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 43) "body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 43)
+          (compiler-ir-label "body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (define (opt-loop-bce-string-test-transitive-body) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (opt-loop-bce-string-test-ref-instrs
       2
       50
@@ -6566,70 +6752,73 @@
 (define (opt-bounds-dom-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 1)
           (CompilerIrValue.Var 2)
-          "e_ok")
+          (compiler-ir-label "e_ok"))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "mid")
+          (CompilerIrInstr.Jump (compiler-ir-label "mid"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "mid"
+        (compiler-ir-label "mid")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 1)
             (CompilerIrValue.Var 2)
-            "m_ok")
+            (compiler-ir-label "m_ok"))
           (compiler-ir-instr-cons
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 1)
               (CompilerIrValue.Var 3)
-              "m2_ok")
+              (compiler-ir-label "m2_ok"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 1) (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 0)
+                  (compiler-ir-label "left")
+                  (compiler-ir-label "right"))
                 (CompilerIrInstrList.Nil))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "left"
+          (compiler-ir-label "left")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 1)
               (CompilerIrValue.Var 2)
-              "l_ok")
+              (compiler-ir-label "l_ok"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 2) (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BoundsCheck
                   (CompilerIrValue.Var 5)
                   (CompilerIrValue.Var 2)
-                  "l2_ok")
+                  (compiler-ir-label "l2_ok"))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "join")
+                  (CompilerIrInstr.Jump (compiler-ir-label "join"))
                   (CompilerIrInstrList.Nil))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "right"
+            (compiler-ir-label "right")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BoundsCheck
                 (CompilerIrValue.Var 5)
                 (CompilerIrValue.Var 2)
-                "r_ok")
+                (compiler-ir-label "r_ok"))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "join"
+              (compiler-ir-label "join")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BoundsCheck
                   (CompilerIrValue.Var 1)
                   (CompilerIrValue.Var 2)
-                  "j_ok")
+                  (compiler-ir-label "j_ok"))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -6808,7 +6997,7 @@
         (opt-loop-bce-string-test-blocks
           0
           (compiler-ir-block
-            "body"
+            (compiler-ir-label "body")
             (opt-loop-bce-string-test-affine-body-instrs 2 true))
           false)
         (opt-loop-bce-test-summaries symbols false false))]
@@ -6913,7 +7102,7 @@
     (AstType.I64)
     5
     (compiler-ir-block-cons
-      (compiler-ir-block "entry" instrs)
+      (compiler-ir-block (compiler-ir-label "entry") instrs)
       (CompilerIrBlockList.Nil))))
 
 (define (opt-test-function-named [name : String] [instrs : CompilerIrInstrList]) : CompilerIrFunction
@@ -7164,7 +7353,9 @@
     (AstType.I64)
     10
     (compiler-ir-block-cons
-      (compiler-ir-block "entry" (opt-global-dce-large-return-step 0 value))
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (opt-global-dce-large-return-step 0 value))
       (CompilerIrBlockList.Nil))))
 
 (define (opt-global-dce-program [symbols : OptGlobalDceTestSymbols]) : CompilerIrProgram
@@ -7743,7 +7934,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             2
@@ -7765,7 +7956,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 10) (AstType.I64))
           (compiler-ir-instr-cons
@@ -7799,7 +7990,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 10) (AstType.I64))
           (compiler-ir-instr-cons
@@ -7834,7 +8025,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Pack
             2
@@ -7865,7 +8056,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 99) (AstType.I64))
           (compiler-ir-instr-cons
@@ -7906,7 +8097,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -7956,7 +8147,9 @@
     (AstType.I64)
     (+ (opt-inline-max-body) 2)
     (compiler-ir-block-cons
-      (compiler-ir-block "entry" (opt-inline-large-callee-instrs 0))
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (opt-inline-large-callee-instrs 0))
       CompilerIrBlockList.Nil)))
 
 (define (opt-inline-bounds-callee [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
@@ -7971,12 +8164,12 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
-            "bounds_inline.ok")
+            (compiler-ir-label "bounds_inline.ok"))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -7999,7 +8192,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (opt-inline-call-one 0 (struct-get symbols too-large)))
       CompilerIrBlockList.Nil)))
 
@@ -8011,7 +8204,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             2
@@ -8034,7 +8227,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             2
@@ -8066,17 +8259,17 @@
     0
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.I64 0)
             (CompilerIrValue.I64 4)
-            "dup.ok")
+            (compiler-ir-label "dup.ok"))
           (compiler-ir-instr-cons
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.I64 1)
               (CompilerIrValue.I64 4)
-              "dup.ok")
+              (compiler-ir-label "dup.ok"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -8115,7 +8308,7 @@
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
-          "bounds_leaf.ok")
+          (compiler-ir-label "bounds_leaf.ok"))
         (CompilerIrInstr.Mov
           (+ index 1)
           (CompilerIrValue.I64 index)
@@ -8136,7 +8329,9 @@
       (AstType.Unit)
       (+ body 1)
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" (opt-inline-bounds-leaf-instrs 0 body))
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (opt-inline-bounds-leaf-instrs 0 body))
         CompilerIrBlockList.Nil))))
 
 (define (opt-inline-call-bounds-leaf [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
@@ -8147,7 +8342,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (AstType.I64))
           (compiler-ir-instr-cons
@@ -8183,7 +8378,7 @@
     6
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 10) (AstType.I64))
           (compiler-ir-instr-cons
@@ -8225,7 +8420,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             2
@@ -8248,7 +8443,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 20) (AstType.I64))
           (compiler-ir-instr-cons
@@ -8284,7 +8479,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -8305,7 +8500,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -8331,7 +8526,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
@@ -8354,13 +8549,13 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "exit")
+          (CompilerIrInstr.Jump (compiler-ir-label "exit"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
@@ -8375,7 +8570,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.CallIndirect
             1
@@ -8578,8 +8773,8 @@
           (and
             (= index 0)
             (= length 4)
-            (not (string.eq label ""))
-            (not (string.eq label "bounds_inline.ok")))]
+            (not (not (compiler-ir-label-some? label)))
+            (not (= label (compiler-ir-label "bounds_inline.ok"))))]
         [_ false]))))
 
 (define (compiler-optimize-inline-bounds-labels-distinct-ok?) : bool
@@ -8614,11 +8809,12 @@
                     (= first-length 4)
                     (= second-index 1)
                     (= second-length 4)
-                    (not (string.eq first-label ""))
-                    (not (string.eq second-label ""))
-                    (not (string.eq first-label second-label))
-                    (not (string.eq first-label "bounds_inline.ok"))
-                    (not (string.eq second-label "bounds_inline.ok")))]
+                    (not (not (compiler-ir-label-some? first-label)))
+                    (not (not (compiler-ir-label-some? second-label)))
+                    (not (= first-label second-label))
+                    (not (= first-label (compiler-ir-label "bounds_inline.ok")))
+                    (not
+                      (= second-label (compiler-ir-label "bounds_inline.ok"))))]
                 [_ false])]
             [_ false])]
         [_ false]))))
@@ -8833,13 +9029,16 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "then"
+          (compiler-ir-label "then")
           (compiler-ir-instr-cons
             (opt-inline-branch-callee-mov)
             (compiler-ir-instr-cons
@@ -8848,7 +9047,7 @@
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "else"
+            (compiler-ir-label "else")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
@@ -8870,7 +9069,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (opt-inline-branch-caller-call symbols)
           (compiler-ir-instr-cons
@@ -8897,7 +9096,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             1
@@ -8906,18 +9105,21 @@
             (CompilerIrValue.I64 10)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 1) "yes" "no")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 1)
+              (compiler-ir-label "yes")
+              (compiler-ir-label "no"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "yes"
+          (compiler-ir-label "yes")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Bool true)))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "no"
+            (compiler-ir-label "no")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Bool false)))
@@ -8933,7 +9135,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -8941,11 +9143,14 @@
             (CompilerIrCallArgs.One (CompilerIrValue.I64 7))
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "second" "done")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "second")
+              (compiler-ir-label "done"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "second"
+          (compiler-ir-label "second")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
@@ -8958,7 +9163,7 @@
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "done"
+            (compiler-ir-label "done")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Bool false)))
@@ -9038,19 +9243,22 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "loop" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Bool true)
+              (compiler-ir-label "loop")
+              (compiler-ir-label "exit"))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
@@ -9065,7 +9273,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -9117,25 +9325,28 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
-            "mb_ok")
+            (compiler-ir-label "mb_ok"))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "then" "else")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Bool true)
+              (compiler-ir-label "then")
+              (compiler-ir-label "else"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "then"
+          (compiler-ir-label "then")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "else"
+            (compiler-ir-label "else")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -9154,7 +9365,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             2
@@ -9199,13 +9410,13 @@
         (CompilerIrParam.Param "len" (AstType.I64) 2)
         CompilerIrParamList.Nil))))
 
-(define (opt-inline-switch-cases [zero-label : String] [one-label : String]) : CompilerIrSwitchCaseList
+(define (opt-inline-switch-cases [zero-label : i64] [one-label : i64]) : CompilerIrSwitchCaseList
   (compiler-ir-switch-case-cons
     0
     zero-label
     (compiler-ir-switch-case-cons 1 one-label CompilerIrSwitchCaseList.Nil)))
 
-(define (opt-inline-switch-loop-bounds-instr [ok-label : String]) : CompilerIrInstr
+(define (opt-inline-switch-loop-bounds-instr [ok-label : i64]) : CompilerIrInstr
   (CompilerIrInstr.BoundsCheck
     (CompilerIrValue.Var 1)
     (CompilerIrValue.Var 2)
@@ -9216,10 +9427,10 @@
     3
     (compiler-ir-phi-input-cons
       (CompilerIrValue.I64 10)
-      "zero"
+      (compiler-ir-label "zero")
       (compiler-ir-phi-input-cons
         (CompilerIrValue.I64 20)
-        "one"
+        (compiler-ir-label "one")
         CompilerIrPhiInputList.Nil))
     (AstType.I64)))
 
@@ -9234,37 +9445,40 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
-            (opt-inline-switch-loop-bounds-instr "switch_bounds_ok")
+            (opt-inline-switch-loop-bounds-instr
+              (compiler-ir-label "switch_bounds_ok"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Switch
                 (CompilerIrValue.Var 0)
                 0
-                (opt-inline-switch-cases "zero" "one")
-                "loop")
+                (opt-inline-switch-cases
+                  (compiler-ir-label "zero")
+                  (compiler-ir-label "one"))
+                (compiler-ir-label "loop"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "zero"
+            (compiler-ir-label "zero")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "one"
+              (compiler-ir-label "one")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "join"
+                (compiler-ir-label "join")
                 (compiler-ir-instr-cons
                   (opt-inline-switch-loop-phi-instr)
                   (compiler-ir-instr-cons
@@ -9286,52 +9500,54 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 1)
             (CompilerIrValue.Var 2)
-            "switch_bounds_ok")
+            (compiler-ir-label "switch_bounds_ok"))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Switch
               (CompilerIrValue.Var 0)
               0
-              (opt-inline-switch-cases "zero" "one")
-              "other")
+              (opt-inline-switch-cases
+                (compiler-ir-label "zero")
+                (compiler-ir-label "one"))
+              (compiler-ir-label "other"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "zero"
+          (compiler-ir-label "zero")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "one"
+            (compiler-ir-label "one")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "other"
+              (compiler-ir-label "other")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "join"
+                (compiler-ir-label "join")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Phi
                     3
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.I64 10)
-                      "zero"
+                      (compiler-ir-label "zero")
                       (compiler-ir-phi-input-cons
                         (CompilerIrValue.I64 20)
-                        "one"
+                        (compiler-ir-label "one")
                         (compiler-ir-phi-input-cons
                           (CompilerIrValue.I64 30)
-                          "other"
+                          (compiler-ir-label "other")
                           CompilerIrPhiInputList.Nil)))
                     (AstType.I64))
                   (compiler-ir-instr-cons
@@ -9365,7 +9581,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (opt-inline-switch-caller-call-named callee-name)
           (compiler-ir-instr-cons
@@ -9378,7 +9594,7 @@
   (opt-inline-switch-caller-named symbols (struct-get symbols inline-switch)))
 
 (define (opt-inline-cloned-switch-terminator-ok? [blocks : CompilerIrBlockList]) : bool
-  (match (opt-cfg-find-block blocks "inl.entry.0.entry")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "inl.entry.0.entry"))
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
       (match block
@@ -9387,7 +9603,9 @@
             (match (compiler-ir-instr-seq-ref instrs 0)
               [(CompilerIrInstr.BoundsCheck _ _ ok-label)
                 (and
-                  (string.eq ok-label "inl.entry.0.switch_bounds_ok")
+                  (=
+                    ok-label
+                    (compiler-ir-label "inl.entry.0.switch_bounds_ok"))
                   (match (compiler-ir-instr-seq-ref instrs 1)
                     [(CompilerIrInstr.Switch value tag-base cases default-label)
                       (let
@@ -9399,15 +9617,21 @@
                             [_ false])
                           (= tag-base 0)
                           (= (opt-label-count case-labels) 2)
-                          (opt-label-contains case-labels "inl.entry.0.zero")
-                          (opt-label-contains case-labels "inl.entry.0.one")
-                          (string.eq default-label "inl.entry.0.other")))]
+                          (opt-label-contains
+                            case-labels
+                            (compiler-ir-label "inl.entry.0.zero"))
+                          (opt-label-contains
+                            case-labels
+                            (compiler-ir-label "inl.entry.0.one"))
+                          (=
+                            default-label
+                            (compiler-ir-label "inl.entry.0.other"))))]
                     [_ false]))]
               [_ false])
             false)])]))
 
 (define (opt-inline-cloned-switch-phi-ok? [blocks : CompilerIrBlockList]) : bool
-  (match (opt-cfg-find-block blocks "inl.entry.0.join")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "inl.entry.0.join"))
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
       (match block
@@ -9417,9 +9641,15 @@
               [(CompilerIrInstr.Phi _ inputs _)
                 (and
                   (= (compiler-ir-phi-input-list-count inputs) 3)
-                  (opt-inline-phi-input-label? inputs "inl.entry.0.zero")
-                  (opt-inline-phi-input-label? inputs "inl.entry.0.one")
-                  (opt-inline-phi-input-label? inputs "inl.entry.0.other"))]
+                  (opt-inline-phi-input-label?
+                    inputs
+                    (compiler-ir-label "inl.entry.0.zero"))
+                  (opt-inline-phi-input-label?
+                    inputs
+                    (compiler-ir-label "inl.entry.0.one"))
+                  (opt-inline-phi-input-label?
+                    inputs
+                    (compiler-ir-label "inl.entry.0.other")))]
               [_ false])
             false)])]))
 
@@ -9661,47 +9891,49 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Switch
             (CompilerIrValue.Var 0)
             0
-            (opt-inline-switch-cases "zero" "one")
-            "other")
+            (opt-inline-switch-cases
+              (compiler-ir-label "zero")
+              (compiler-ir-label "one"))
+            (compiler-ir-label "other"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "zero"
+          (compiler-ir-label "zero")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "one"
+            (compiler-ir-label "one")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "other"
+              (compiler-ir-label "other")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "join"
+                (compiler-ir-label "join")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Phi
                     1
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.I64 10)
-                      "zero"
+                      (compiler-ir-label "zero")
                       (compiler-ir-phi-input-cons
                         (CompilerIrValue.I64 20)
-                        "one"
+                        (compiler-ir-label "one")
                         (compiler-ir-phi-input-cons
                           (CompilerIrValue.I64 30)
-                          "other"
+                          (compiler-ir-label "other")
                           CompilerIrPhiInputList.Nil)))
                     (AstType.I64))
                   (compiler-ir-instr-cons
@@ -9718,7 +9950,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -9779,13 +10011,13 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               0
@@ -9796,12 +10028,12 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Bool false)
-                "loop"
-                "exit")
+                (compiler-ir-label "loop")
+                (compiler-ir-label "exit"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -9816,7 +10048,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -9862,7 +10094,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -9870,32 +10102,35 @@
             CompilerIrCallArgs.Nil
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "left" "right")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Bool true)
+              (compiler-ir-label "left")
+              (compiler-ir-label "right"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "left"
+          (compiler-ir-label "left")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "right"
+            (compiler-ir-label "right")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "join"
+              (compiler-ir-label "join")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Phi
                   1
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.I64 7)
-                    "left"
+                    (compiler-ir-label "left")
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.I64 9)
-                      "right"
+                      (compiler-ir-label "right")
                       CompilerIrPhiInputList.Nil))
                   (AstType.I64))
                 (compiler-ir-instr-cons
@@ -9938,13 +10173,16 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "call" "ret")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Bool true)
+            (compiler-ir-label "call")
+            (compiler-ir-label "ret"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "call"
+          (compiler-ir-label "call")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               0
@@ -9957,7 +10195,7 @@
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "ret"
+            (compiler-ir-label "ret")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 3)))
@@ -9972,7 +10210,7 @@
     1
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -10017,13 +10255,16 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "call" "ret")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Bool true)
+            (compiler-ir-label "call")
+            (compiler-ir-label "ret"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "call"
+          (compiler-ir-label "call")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
@@ -10036,7 +10277,7 @@
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "ret"
+            (compiler-ir-label "ret")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Bool false)))
@@ -10052,7 +10293,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
@@ -10060,11 +10301,14 @@
             CompilerIrCallArgs.Nil
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "second" "done")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "second")
+              (compiler-ir-label "done"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "second"
+          (compiler-ir-label "second")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
@@ -10077,7 +10321,7 @@
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "done"
+            (compiler-ir-label "done")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Bool false)))
@@ -10408,15 +10652,13 @@
               [(OptMaybeFunction.No) 41])))]
       [(OptMaybeFunction.No) 43])))
 
-(define (opt-block-list-has-label?
-  [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+(define (opt-block-list-has-label? [blocks : CompilerIrBlockList] [label : i64]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label _)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             true
             (opt-block-list-has-label? (box-get rest) label))])]
     [(CompilerIrBlockList.Array seq)
@@ -10425,13 +10667,13 @@
 (define (opt-block-list-label-at?
   [blocks : CompilerIrBlockList]
   [index : i64]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Cons block rest)
       (if (= index 0)
         (match block
-          [(CompilerIrBlock.Block block-label _) (string.eq block-label label)])
+          [(CompilerIrBlock.Block block-label _) (= block-label label)])
         (opt-block-list-label-at? (box-get rest) (- index 1) label))]
     [(CompilerIrBlockList.Array seq)
       (opt-block-list-label-at? (compiler-ir-block-seq-to-list seq) index label)]))
@@ -10476,7 +10718,7 @@
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [count : i64]
-  [target : String]
+  [target : i64]
   [acc : i64]) : i64
   (if (>= index count)
     acc
@@ -10489,14 +10731,14 @@
         acc
         (match (array-ref slots index)
           [(CompilerIrInstr.Jump label)
-            (if (string.eq label target)
+            (if (= label target)
               1
               0)]
           [_ 0])))))
 
 (define (opt-count-jump-to-instr-seq
   [instrs : CompilerIrInstrSeq]
-  [target : String]) : i64
+  [target : i64]) : i64
   (opt-count-jump-to-instr-seq-from
     (struct-get instrs slots)
     0
@@ -10504,9 +10746,7 @@
     target
     0))
 
-(define (opt-count-jump-to-blocks
-  [blocks : CompilerIrBlockList]
-  [target : String]) : i64
+(define (opt-count-jump-to-blocks [blocks : CompilerIrBlockList] [target : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons block rest)
@@ -10571,7 +10811,7 @@
       2
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.TailCall
               name
@@ -10595,7 +10835,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 3) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "entry")
+            (CompilerIrInstr.Jump (compiler-ir-label "entry"))
             (CompilerIrInstrList.Nil)))))))
 
 (define (compiler-optimize-tailrec-self-test) : i64
@@ -10613,9 +10853,19 @@
       [(not (opt-instr-list-eq rewritten-instrs (opt-tailrec-expected-instrs)))
         2]
       [(not (= (opt-count-tail-call-blocks rewritten-blocks) 0)) 3]
-      [(not (= (opt-count-jump-to-blocks rewritten-blocks "entry") 1)) 4]
+      [(not
+          (=
+            (opt-count-jump-to-blocks
+              rewritten-blocks
+              (compiler-ir-label "entry"))
+            1))
+        4]
       [(not (= (opt-count-tail-call-blocks once-blocks) 0)) 5]
-      [(not (= (opt-count-jump-to-blocks once-blocks "entry") 1)) 6]
+      [(not
+          (=
+            (opt-count-jump-to-blocks once-blocks (compiler-ir-label "entry"))
+            1))
+        6]
       [else 42])))
 
 (define (opt-count-phi-instr-seq-from
@@ -10723,13 +10973,13 @@
 
 (define (opt-count-arith-label-blocks
   [blocks : CompilerIrBlockList]
-  [label : String]) : i64
+  [label : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             (opt-count-arith-instr-seq instrs)
             (opt-count-arith-label-blocks (box-get rest) label))])]
     [(CompilerIrBlockList.Array seq)
@@ -10764,13 +11014,13 @@
 
 (define (opt-count-mul-label-blocks
   [blocks : CompilerIrBlockList]
-  [label : String]) : i64
+  [label : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             (opt-count-mul-instr-seq instrs)
             (opt-count-mul-label-blocks (box-get rest) label))])]
     [(CompilerIrBlockList.Array seq)
@@ -10846,13 +11096,13 @@
 
 (define (opt-count-gep-label-blocks
   [blocks : CompilerIrBlockList]
-  [label : String]) : i64
+  [label : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             (opt-count-gep-instr-seq instrs)
             (opt-count-gep-label-blocks (box-get rest) label))])]
     [(CompilerIrBlockList.Array seq)
@@ -10906,13 +11156,13 @@
 
 (define (opt-count-load-label-blocks
   [blocks : CompilerIrBlockList]
-  [label : String]) : i64
+  [label : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block block-label instrs)
-          (if (string.eq block-label label)
+          (if (= block-label label)
             (opt-count-load-instr-seq instrs)
             (opt-count-load-label-blocks (box-get rest) label))])]
     [(CompilerIrBlockList.Array seq)
@@ -11053,7 +11303,7 @@
 (define (opt-gvn-dominated-diamond-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           3
@@ -11062,11 +11312,14 @@
           (CompilerIrValue.Var 2)
           (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             4
@@ -11075,11 +11328,11 @@
             (CompilerIrValue.Var 2)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               5
@@ -11088,20 +11341,20 @@
               (CompilerIrValue.Var 2)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 6
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 4)
-                  "then"
+                  (compiler-ir-label "then")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 5)
-                    "else"
+                    (compiler-ir-label "else")
                     (CompilerIrPhiInputList.Nil)))
                 (AstType.I64))
               (compiler-ir-instr-cons
@@ -11113,13 +11366,16 @@
 (define (opt-gvn-sibling-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "then")
+          (compiler-ir-label "else"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             3
@@ -11133,7 +11389,7 @@
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -11150,22 +11406,22 @@
 (define (opt-gvn-phi-loop-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             5
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 4)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -11176,11 +11432,14 @@
               (CompilerIrValue.Var 2)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 0)
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -11189,11 +11448,11 @@
               (CompilerIrValue.Var 2)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -11203,15 +11462,15 @@
 (define (opt-gvn-load-barrier-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "use")
+          (CompilerIrInstr.Jump (compiler-ir-label "use"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.I64))
           (compiler-ir-instr-cons
@@ -11223,27 +11482,30 @@
 (define (opt-gvn-load-join-safe-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "join")
+          (CompilerIrInstr.Jump (compiler-ir-label "join"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.I64))
               (compiler-ir-instr-cons
@@ -11255,15 +11517,18 @@
 (define (opt-gvn-checked-ref-store-path-blocks [lose-root? : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (if lose-root?
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 99) (AstType.I64))
@@ -11273,7 +11538,7 @@
                 (CompilerIrValue.I64 9)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-instr-cons
             (CompilerIrInstr.StorePtr
@@ -11281,17 +11546,17 @@
               (CompilerIrValue.I64 9)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.I64))
               (compiler-ir-instr-cons
@@ -11303,32 +11568,35 @@
 (define (opt-gvn-load-store-path-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.StorePtr
             (CompilerIrValue.Var 1)
             (CompilerIrValue.I64 9)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.I64))
               (compiler-ir-instr-cons
@@ -11340,7 +11608,7 @@
 (define (opt-gvn-single-load-store-forward-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Alloc 0 (AstType.I64))
         (compiler-ir-instr-cons
@@ -11355,11 +11623,11 @@
               (CompilerIrValue.I64 9)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "use")
+              (CompilerIrInstr.Jump (compiler-ir-label "use"))
               (CompilerIrInstrList.Nil))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
           (compiler-ir-instr-cons
@@ -11371,15 +11639,18 @@
 (define (opt-gvn-load-call-path-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             9
@@ -11387,17 +11658,17 @@
             (CompilerIrCallArgs.Nil)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.I64))
               (compiler-ir-instr-cons
@@ -11409,15 +11680,15 @@
 (define (opt-gvn-load-address-redef-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "use")
+          (CompilerIrInstr.Jump (compiler-ir-label "use"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 7) (AstType.I64))
           (compiler-ir-instr-cons
@@ -11431,15 +11702,15 @@
 (define (opt-gvn-load-type-mismatch-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "use")
+          (CompilerIrInstr.Jump (compiler-ir-label "use"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.Bool))
           (compiler-ir-instr-cons
@@ -11451,15 +11722,15 @@
 (define (opt-gvn-copy-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.Var 1) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "use")
+          (CompilerIrInstr.Jump (compiler-ir-label "use"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             4
@@ -11476,7 +11747,7 @@
 (define (opt-gvn-cast-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Cast
           3
@@ -11484,11 +11755,11 @@
           (AstType.I64)
           (AstType.I32))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "use")
+          (CompilerIrInstr.Jump (compiler-ir-label "use"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Cast
             4
@@ -11504,7 +11775,7 @@
 (define (opt-gvn-gep-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Gep
           3
@@ -11512,11 +11783,11 @@
           (CompilerIrValue.I64 8)
           (AstType.U8))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "use")
+          (CompilerIrInstr.Jump (compiler-ir-label "use"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Gep
             4
@@ -11549,7 +11820,9 @@
     [doms : OptDomInfo
       (opt-cfg-dominators
         (compiler-ir-block-cons
-          (compiler-ir-block "entry" (CompilerIrInstrList.Nil))
+          (compiler-ir-block
+            (compiler-ir-label "entry")
+            (CompilerIrInstrList.Nil))
           (CompilerIrBlockList.Nil)))]
     (begin
       (array-set!
@@ -11595,7 +11868,7 @@
 (define (opt-gvn-nearest-scope-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           3
@@ -11604,11 +11877,11 @@
           (CompilerIrValue.Var 2)
           (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "mid")
+          (CompilerIrInstr.Jump (compiler-ir-label "mid"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "mid"
+        (compiler-ir-label "mid")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             4
@@ -11617,11 +11890,11 @@
             (CompilerIrValue.Var 2)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "use")
+            (CompilerIrInstr.Jump (compiler-ir-label "use"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "use"
+          (compiler-ir-label "use")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               5
@@ -11650,7 +11923,7 @@
 (define (opt-global-pack-word-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Pack
           2
@@ -11661,11 +11934,11 @@
               CompilerIrValueList.Nil))
           (AstType.Struct (intern "Pair")))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "use")
+          (CompilerIrInstr.Jump (compiler-ir-label "use"))
           CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "use"
+        (compiler-ir-label "use")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Word 3 (CompilerIrValue.Var 2) 1 (AstType.I64))
           (compiler-ir-instr-cons
@@ -11817,7 +12090,11 @@
       [(not (opt-global-expr-hash-collision-guard-ok?)) 24]
       [(not (opt-gvn-hash-collision-guard-ok?)) 25]
       [(not (opt-gvn-scoped-nearest-dominator-ok?)) 26]
-      [(not (= (opt-count-gep-label-blocks global-gep "use") 1)) 27]
+      [(not
+          (=
+            (opt-count-gep-label-blocks global-gep (compiler-ir-label "use"))
+            1))
+        27]
       [(match (opt-global-key-for-instr
           (CompilerIrInstr.Gep
             9
@@ -11853,7 +12130,7 @@
 (define (opt-gvn-global-gep-call-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Gep
           3
@@ -11863,11 +12140,14 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "grow" "use")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "grow")
+              (compiler-ir-label "use"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "grow"
+        (compiler-ir-label "grow")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             5
@@ -11875,11 +12155,11 @@
             (CompilerIrCallArgs.Nil)
             (AstType.Unit))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "use")
+            (CompilerIrInstr.Jump (compiler-ir-label "use"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "use"
+          (compiler-ir-label "use")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Gep
               6
@@ -11897,15 +12177,15 @@
 (define (opt-sccp-cross-block-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 20) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "rhs")
+          (CompilerIrInstr.Jump (compiler-ir-label "rhs"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "rhs"
+        (compiler-ir-label "rhs")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             1
@@ -11922,38 +12202,41 @@
 (define (opt-sccp-diamond-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "then")
+          (compiler-ir-label "else"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 7) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 7) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 3
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 1)
-                  "then"
+                  (compiler-ir-label "then")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 2)
-                    "else"
+                    (compiler-ir-label "else")
                     (CompilerIrPhiInputList.Nil)))
                 (AstType.I64))
               (compiler-ir-instr-cons
@@ -11965,22 +12248,25 @@
 (define (opt-sccp-constant-branch-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 0 (CompilerIrValue.Bool true) (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 2)))
@@ -11990,32 +12276,35 @@
 (define (opt-sccp-loop-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             1
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 0)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 2)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 4)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               2
@@ -12024,11 +12313,11 @@
               (CompilerIrValue.I64 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -12038,7 +12327,7 @@
 (define (opt-sccp-trap-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           1
@@ -12060,7 +12349,7 @@
 (define (opt-sccp-group-word-branch-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Pack
           0
@@ -12080,27 +12369,30 @@
               (CompilerIrValue.I64 0)
               (AstType.Bool))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "then" "else")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 2)
+                (compiler-ir-label "then")
+                (compiler-ir-label "else"))
               (CompilerIrInstrList.Nil))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 2) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstr.Jump (compiler-ir-label "merge"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 3) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "merge")
+              (CompilerIrInstr.Jump (compiler-ir-label "merge"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "merge"
+            (compiler-ir-label "merge")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -12141,9 +12433,10 @@
       [(not (= (opt-count-phi-blocks diamond) 0)) 3]
       [(not (= (opt-blocks-mov-dst-i64-value diamond 3 (- 0 999)) 7)) 4]
       [(not (= (compiler-ir-block-list-count branch) 2)) 5]
-      [(opt-block-list-has-label? branch "else") 6]
+      [(opt-block-list-has-label? branch (compiler-ir-label "else")) 6]
       [(not (= (opt-count-branches-blocks branch) 0)) 7]
-      [(not (= (opt-count-jump-to-blocks branch "then") 1)) 8]
+      [(not (= (opt-count-jump-to-blocks branch (compiler-ir-label "then")) 1))
+        8]
       [(not (= (compiler-ir-block-list-count loop) 4)) 9]
       [(not (= (opt-count-phi-blocks loop) 1)) 10]
       [(not (= (opt-count-mov-dst-blocks loop 1) 0)) 11]
@@ -12152,30 +12445,33 @@
       [(not (= (opt-count-mov-dst-blocks trap 1) 0)) 14]
       [(not (= (compiler-ir-block-list-count group) 4)) 15]
       [(not (= (opt-count-branches-blocks group) 1)) 16]
-      [(not (opt-block-list-has-label? group "then")) 17]
-      [(not (opt-block-list-has-label? group "else")) 18]
+      [(not (opt-block-list-has-label? group (compiler-ir-label "then"))) 17]
+      [(not (opt-block-list-has-label? group (compiler-ir-label "else"))) 18]
       [(not (= (compiler-ir-block-list-count branch-context) 2)) 19]
       [(not branch-context-valid) 20]
-      [(opt-block-list-has-label? branch-context "else") 21]
+      [(opt-block-list-has-label? branch-context (compiler-ir-label "else")) 21]
       [else 42])))
 
 (define (opt-cfg-constant-if-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "then" "else")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Bool true)
+          (compiler-ir-label "then")
+          (compiler-ir-label "else"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 2)))
@@ -12185,25 +12481,28 @@
 (define (opt-cfg-loop-guard-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Bool false) "body" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Bool false)
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -12213,38 +12512,41 @@
 (define (opt-cfg-phi-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "then" "else")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Bool true)
+          (compiler-ir-label "then")
+          (compiler-ir-label "else"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 3
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 1)
-                  "then"
+                  (compiler-ir-label "then")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 2)
-                    "else"
+                    (compiler-ir-label "else")
                     (CompilerIrPhiInputList.Nil)))
                 (AstType.I64))
               (compiler-ir-instr-cons
@@ -12259,28 +12561,31 @@
 (define (opt-cfg-folded-edge-phi-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "header" "tail")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Bool true)
+          (compiler-ir-label "header")
+          (compiler-ir-label "tail"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "header"
+        (compiler-ir-label "header")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "tail")
+          (CompilerIrInstr.Jump (compiler-ir-label "tail"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "tail"
+          (compiler-ir-label "tail")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               1
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 10)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.I64 20)
-                  "header"
+                  (compiler-ir-label "header")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -12292,20 +12597,23 @@
 (define (opt-cfg-trap-path-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "ok" "trap")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "ok")
+          (compiler-ir-label "trap"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "ok"
+        (compiler-ir-label "ok")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "trap"
+          (compiler-ir-label "trap")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               9
@@ -12320,21 +12628,25 @@
 
 (define (opt-cfg-fallthrough-prune-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (compiler-ir-block "entry" (CompilerIrInstrList.Nil))
+    (compiler-ir-block (compiler-ir-label "entry") (CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
-      (compiler-ir-block "reachable-empty" (CompilerIrInstrList.Nil))
+      (compiler-ir-block
+        (compiler-ir-label "reachable-empty")
+        (CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
-          (compiler-ir-block "dead-empty" (CompilerIrInstrList.Nil))
+          (compiler-ir-block
+            (compiler-ir-label "dead-empty")
+            (CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "dead-exit"
+              (compiler-ir-label "dead-exit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.I64 2)))
@@ -12344,11 +12656,11 @@
 (define (opt-cfg-fallthrough-prune-ok? [blocks : CompilerIrBlockList]) : bool
   (and
     (= (compiler-ir-block-list-count blocks) 3)
-    (opt-block-list-has-label? blocks "entry")
-    (opt-block-list-has-label? blocks "reachable-empty")
-    (opt-block-list-has-label? blocks "exit")
-    (not (opt-block-list-has-label? blocks "dead-empty"))
-    (not (opt-block-list-has-label? blocks "dead-exit"))
+    (opt-block-list-has-label? blocks (compiler-ir-label "entry"))
+    (opt-block-list-has-label? blocks (compiler-ir-label "reachable-empty"))
+    (opt-block-list-has-label? blocks (compiler-ir-label "exit"))
+    (not (opt-block-list-has-label? blocks (compiler-ir-label "dead-empty")))
+    (not (opt-block-list-has-label? blocks (compiler-ir-label "dead-exit")))
     (opt-cfg-successor-targets-known? blocks)
     (opt-verify-ok? (opt-verify-function (opt-cfg-test-function blocks)))))
 
@@ -12357,44 +12669,50 @@
   [reuse-condition? : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "compare" "constant")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "compare")
+          (compiler-ir-label "constant"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "compare"
+        (compiler-ir-label "compare")
         (compiler-ir-instr-cons
           condition
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstr.Jump (compiler-ir-label "merge"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "constant"
+          (compiler-ir-label "constant")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstr.Jump (compiler-ir-label "merge"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "merge"
+            (compiler-ir-label "merge")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 4
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 1)
-                  "compare"
+                  (compiler-ir-label "compare")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Bool false)
-                    "constant"
+                    (compiler-ir-label "constant")
                     (CompilerIrPhiInputList.Nil)))
                 (AstType.Bool))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "yes" "no")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 4)
+                  (compiler-ir-label "yes")
+                  (compiler-ir-label "no"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "yes"
+              (compiler-ir-label "yes")
               (if reuse-condition?
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Mov 5 (CompilerIrValue.Var 4) (AstType.Bool))
@@ -12408,7 +12726,7 @@
                   (CompilerIrInstrList.Nil))))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "no"
+                (compiler-ir-label "no")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -12433,66 +12751,72 @@
 (define (opt-bool-branch-constant-phi-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "true-left" "choose")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "true-left")
+          (compiler-ir-label "choose"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "choose"
+        (compiler-ir-label "choose")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Branch
             (CompilerIrValue.Var 1)
-            "false-middle"
-            "true-right")
+            (compiler-ir-label "false-middle")
+            (compiler-ir-label "true-right"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "true-left"
+          (compiler-ir-label "true-left")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstr.Jump (compiler-ir-label "merge"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "false-middle"
+            (compiler-ir-label "false-middle")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "merge")
+              (CompilerIrInstr.Jump (compiler-ir-label "merge"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "true-right"
+              (compiler-ir-label "true-right")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstr.Jump (compiler-ir-label "merge"))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "merge"
+                (compiler-ir-label "merge")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Phi
                     4
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.Bool true)
-                      "true-left"
+                      (compiler-ir-label "true-left")
                       (compiler-ir-phi-input-cons
                         (CompilerIrValue.Bool false)
-                        "false-middle"
+                        (compiler-ir-label "false-middle")
                         (compiler-ir-phi-input-cons
                           (CompilerIrValue.Bool true)
-                          "true-right"
+                          (compiler-ir-label "true-right")
                           (CompilerIrPhiInputList.Nil))))
                     (AstType.Bool))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "yes" "no")
+                    (CompilerIrInstr.Branch
+                      (CompilerIrValue.Var 4)
+                      (compiler-ir-label "yes")
+                      (compiler-ir-label "no"))
                     (CompilerIrInstrList.Nil))))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "yes"
+                  (compiler-ir-label "yes")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Phi
                       5
                       (compiler-ir-phi-input-cons
                         (CompilerIrValue.I64 11)
-                        "merge"
+                        (compiler-ir-label "merge")
                         (CompilerIrPhiInputList.Nil))
                       (AstType.I64))
                     (compiler-ir-instr-cons
@@ -12501,13 +12825,13 @@
                       (CompilerIrInstrList.Nil))))
                 (compiler-ir-block-cons
                   (compiler-ir-block
-                    "no"
+                    (compiler-ir-label "no")
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Phi
                         6
                         (compiler-ir-phi-input-cons
                           (CompilerIrValue.I64 22)
-                          "merge"
+                          (compiler-ir-label "merge")
                           (CompilerIrPhiInputList.Nil))
                         (AstType.I64))
                       (compiler-ir-instr-cons
@@ -12519,49 +12843,55 @@
 (define (opt-bool-branch-nonconstant-phi-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "left")
+          (compiler-ir-label "right"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "left"
+        (compiler-ir-label "left")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "merge")
+          (CompilerIrInstr.Jump (compiler-ir-label "merge"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "right"
+          (compiler-ir-label "right")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstr.Jump (compiler-ir-label "merge"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "merge"
+            (compiler-ir-label "merge")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 4
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 0)
-                  "left"
+                  (compiler-ir-label "left")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 1)
-                    "right"
+                    (compiler-ir-label "right")
                     (CompilerIrPhiInputList.Nil)))
                 (AstType.Bool))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "yes" "no")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 4)
+                  (compiler-ir-label "yes")
+                  (compiler-ir-label "no"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "yes"
+              (compiler-ir-label "yes")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "no"
+                (compiler-ir-label "no")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -12571,34 +12901,37 @@
 (define (opt-bool-branch-multi-phi-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "left")
+          (compiler-ir-label "right"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "left"
+        (compiler-ir-label "left")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "merge")
+          (CompilerIrInstr.Jump (compiler-ir-label "merge"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "right"
+          (compiler-ir-label "right")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstr.Jump (compiler-ir-label "merge"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "merge"
+            (compiler-ir-label "merge")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 3
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.I64 11)
-                  "left"
+                  (compiler-ir-label "left")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.I64 22)
-                    "right"
+                    (compiler-ir-label "right")
                     (CompilerIrPhiInputList.Nil)))
                 (AstType.I64))
               (compiler-ir-instr-cons
@@ -12606,25 +12939,28 @@
                   4
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Bool true)
-                    "left"
+                    (compiler-ir-label "left")
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.Bool false)
-                      "right"
+                      (compiler-ir-label "right")
                       (CompilerIrPhiInputList.Nil)))
                   (AstType.Bool))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "yes" "no")
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 4)
+                    (compiler-ir-label "yes")
+                    (compiler-ir-label "no"))
                   (CompilerIrInstrList.Nil)))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "yes"
+              (compiler-ir-label "yes")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "no"
+                (compiler-ir-label "no")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -12641,8 +12977,8 @@
 
 (define (opt-bool-branch-first-phi-has-label?
   [blocks : CompilerIrBlockList]
-  [block-label : String]
-  [pred-label : String]) : bool
+  [block-label : i64]
+  [pred-label : i64]) : bool
   (match (opt-cfg-find-block blocks block-label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -12697,11 +13033,14 @@
             (CompilerIrValue.Var 5)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 7) "yes" "no")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 7)
+              (compiler-ir-label "yes")
+              (compiler-ir-label "no"))
             (CompilerIrInstrList.Nil))))]
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             3
@@ -12726,13 +13065,13 @@
               entry-tail))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "yes"
+          (compiler-ir-label "yes")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               9
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 11)
-                "entry"
+                (compiler-ir-label "entry")
                 (CompilerIrPhiInputList.Nil))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -12741,13 +13080,13 @@
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "no"
+            (compiler-ir-label "no")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 10
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.I64 22)
-                  "entry"
+                  (compiler-ir-label "entry")
                   (CompilerIrPhiInputList.Nil))
                 (AstType.I64))
               (compiler-ir-instr-cons
@@ -12775,7 +13114,7 @@
 
 (define (opt-bool-branch-chain-compare-branch-block?
   [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -12796,34 +13135,37 @@
 (define (opt-cfg-switch-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Switch
           (CompilerIrValue.Var 0)
           1
           (compiler-ir-switch-case-cons
             1
-            "one"
-            (compiler-ir-switch-case-cons 2 "two" CompilerIrSwitchCaseList.Nil))
-          "other")
+            (compiler-ir-label "one")
+            (compiler-ir-switch-case-cons
+              2
+              (compiler-ir-label "two")
+              CompilerIrSwitchCaseList.Nil))
+          (compiler-ir-label "other"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "one"
+        (compiler-ir-label "one")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "two"
+          (compiler-ir-label "two")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 2)))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "other"
+            (compiler-ir-label "other")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -12871,12 +13213,12 @@
     [successors : OptLabelSet
       (opt-cfg-index-successors
         (opt-cfg-index-build (opt-cfg-switch-blocks))
-        "entry")]
+        (compiler-ir-label "entry"))]
     (and
       (= (opt-label-count successors) 3)
-      (opt-label-contains successors "one")
-      (opt-label-contains successors "two")
-      (opt-label-contains successors "other"))))
+      (opt-label-contains successors (compiler-ir-label "one"))
+      (opt-label-contains successors (compiler-ir-label "two"))
+      (opt-label-contains successors (compiler-ir-label "other")))))
 
 (define (opt-ssa-cond-params) : CompilerIrParamList
   (compiler-ir-param-cons
@@ -12893,38 +13235,41 @@
 (define (opt-ssa-diamond-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "then")
+          (compiler-ir-label "else"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 3
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 1)
-                  "then"
+                  (compiler-ir-label "then")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 2)
-                    "else"
+                    (compiler-ir-label "else")
                     (CompilerIrPhiInputList.Nil)))
                 (AstType.I64))
               (compiler-ir-instr-cons
@@ -12944,30 +13289,33 @@
 (define (opt-ssa-loop-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             1
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 0)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 2)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 4)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               2
@@ -12976,11 +13324,11 @@
               (CompilerIrValue.I64 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -12998,29 +13346,32 @@
 (define (opt-ssa-construct-diamond-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "then")
+          (compiler-ir-label "else"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 20) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -13043,21 +13394,24 @@
 (define (opt-ssa-construct-loop-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 4)
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               1
@@ -13066,11 +13420,11 @@
               (CompilerIrValue.I64 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -13095,27 +13449,30 @@
 (define (opt-ssa-construct-mutated-param-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 1) "then" "else")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 1)
+          (compiler-ir-label "then")
+          (compiler-ir-label "else"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 10) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -13133,7 +13490,7 @@
 (define (opt-ssa-construct-address-taken-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 1) (AstType.I64))
         (compiler-ir-instr-cons
@@ -13168,7 +13525,7 @@
 (define (opt-ssa-entry-backedge-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -13177,11 +13534,14 @@
           (CompilerIrValue.Var 1)
           (AstType.Bool))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "body" "exit")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 2)
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "body"
+        (compiler-ir-label "body")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             3
@@ -13192,11 +13552,11 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 0 (CompilerIrValue.Var 3) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "entry")
+              (CompilerIrInstr.Jump (compiler-ir-label "entry"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -13214,40 +13574,43 @@
 (define (opt-natural-loop-nested-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "outer")
+        (CompilerIrInstr.Jump (compiler-ir-label "outer"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "outer"
+        (compiler-ir-label "outer")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "inner")
+          (CompilerIrInstr.Jump (compiler-ir-label "inner"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "inner"
+          (compiler-ir-label "inner")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Branch
               (CompilerIrValue.Var 4)
-              "inner-body"
-              "outer-latch")
+              (compiler-ir-label "inner-body")
+              (compiler-ir-label "outer-latch"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "inner-body"
+            (compiler-ir-label "inner-body")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "inner")
+              (CompilerIrInstr.Jump (compiler-ir-label "inner"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "outer-latch"
+              (compiler-ir-label "outer-latch")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 8) "outer" "exit")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 8)
+                  (compiler-ir-label "outer")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -13257,25 +13620,31 @@
 (define (opt-natural-loop-irreducible-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "left" "right")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Bool true)
+          (compiler-ir-label "left")
+          (compiler-ir-label "right"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "left"
+        (compiler-ir-label "left")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "right")
+          (CompilerIrInstr.Jump (compiler-ir-label "right"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "right"
+          (compiler-ir-label "right")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "left" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Bool true)
+              (compiler-ir-label "left")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -13285,37 +13654,43 @@
 (define (opt-natural-loop-no-preheader-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "pre-one" "pre-two")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Bool true)
+          (compiler-ir-label "pre-one")
+          (compiler-ir-label "pre-two"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "pre-one"
+        (compiler-ir-label "pre-one")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "pre-two"
+          (compiler-ir-label "pre-two")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "body" "exit")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool true)
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "loop")
+                (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -13325,27 +13700,30 @@
 (define (opt-natural-loop-multi-backedge-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "left" "right")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Bool true)
+            (compiler-ir-label "left")
+            (compiler-ir-label "right"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "left"
+          (compiler-ir-label "left")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "right"
+            (compiler-ir-label "right")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil)))
           (CompilerIrBlockList.Nil))))))
 
@@ -13363,7 +13741,7 @@
 
 (define (opt-natural-loop-maybe-body-contains?
   [maybe : OptMaybeNaturalLoop]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match maybe
     [(OptMaybeNaturalLoop.No) false]
     [(OptMaybeNaturalLoop.Some loop)
@@ -13372,7 +13750,7 @@
 (define (opt-natural-loop-maybe-body-contains-id?
   [index : OptCfgIndex]
   [maybe : OptMaybeNaturalLoop]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match maybe
     [(OptMaybeNaturalLoop.No) false]
     [(OptMaybeNaturalLoop.Some loop)
@@ -13383,7 +13761,7 @@
 (define (opt-natural-loop-maybe-body-block-label-at?
   [maybe : OptMaybeNaturalLoop]
   [index : i64]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match maybe
     [(OptMaybeNaturalLoop.No) false]
     [(OptMaybeNaturalLoop.Some loop)
@@ -13391,12 +13769,12 @@
 
 (define (opt-natural-loop-maybe-preheader-label?
   [maybe : OptMaybeNaturalLoop]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match maybe
     [(OptMaybeNaturalLoop.No) false]
     [(OptMaybeNaturalLoop.Some loop)
       (match (opt-natural-loop-preheader loop)
-        [(OptLoopPreheader.Some actual) (string.eq actual label)]
+        [(OptLoopPreheader.Some actual) (= actual label)]
         [(OptLoopPreheader.No) false])]))
 
 (define (opt-natural-loop-maybe-no-preheader? [maybe : OptMaybeNaturalLoop]) : bool
@@ -13410,15 +13788,15 @@
 (define (opt-loop-rotation-top-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             2
@@ -13427,11 +13805,14 @@
             (CompilerIrValue.I64 10)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 2)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               1
@@ -13440,11 +13821,11 @@
               (CompilerIrValue.I64 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -13454,15 +13835,15 @@
 (define (opt-loop-rotation-false-body-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             2
@@ -13471,11 +13852,14 @@
             (CompilerIrValue.I64 10)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "exit" "body")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 2)
+              (compiler-ir-label "exit")
+              (compiler-ir-label "body"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               1
@@ -13484,11 +13868,11 @@
               (CompilerIrValue.I64 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -13497,9 +13881,9 @@
 
 (define (opt-loop-rotation-successors?
   [blocks : CompilerIrBlockList]
-  [label : String]
-  [left : String]
-  [right : String]) : bool
+  [label : i64]
+  [left : i64]
+  [right : i64]) : bool
   (let
     [successors : OptLabelSet
       (opt-cfg-index-successors (opt-cfg-index-build blocks) label)]
@@ -13559,7 +13943,7 @@
   (opt-licm-store-summary-blocks
     (compiler-ir-block-cons
       (compiler-ir-block
-        "summary"
+        (compiler-ir-label "summary")
         (compiler-ir-instr-cons instr (CompilerIrInstrList.Nil)))
       (CompilerIrBlockList.Nil))
     (opt-licm-store-summary-empty)))
@@ -13567,24 +13951,24 @@
 (define (opt-licm-arithmetic-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             4
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 3)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 CompilerIrPhiInputList.Nil))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -13602,11 +13986,14 @@
                 (CompilerIrValue.I64 2)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 0)
+                  (compiler-ir-label "body")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               5
@@ -13615,11 +14002,11 @@
               (CompilerIrValue.I64 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 11)))
@@ -13629,13 +14016,13 @@
 (define (opt-licm-trap-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             10
@@ -13644,17 +14031,20 @@
             (CompilerIrValue.Var 2)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
@@ -13664,13 +14054,13 @@
 (define (opt-licm-call-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             8
@@ -13685,17 +14075,20 @@
               (CompilerIrValue.Var 1)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 0)
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
@@ -13705,25 +14098,28 @@
 (define (opt-licm-no-preheader-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "pre-one" "pre-two")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "pre-one")
+          (compiler-ir-label "pre-two"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "pre-one"
+        (compiler-ir-label "pre-one")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "pre-two"
+          (compiler-ir-label "pre-two")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 10
@@ -13732,17 +14128,20 @@
                 (CompilerIrValue.Var 2)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 0)
+                  (compiler-ir-label "body")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "loop")
+                (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
@@ -13752,19 +14151,19 @@
 (define (opt-licm-nested-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "outer")
+        (CompilerIrInstr.Jump (compiler-ir-label "outer"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "outer"
+        (compiler-ir-label "outer")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "inner")
+          (CompilerIrInstr.Jump (compiler-ir-label "inner"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "inner"
+          (compiler-ir-label "inner")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               10
@@ -13775,24 +14174,27 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Var 0)
-                "inner-body"
-                "outer-latch")
+                (compiler-ir-label "inner-body")
+                (compiler-ir-label "outer-latch"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "inner-body"
+            (compiler-ir-label "inner-body")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "inner")
+              (CompilerIrInstr.Jump (compiler-ir-label "inner"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "outer-latch"
+              (compiler-ir-label "outer-latch")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "outer" "exit")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 0)
+                  (compiler-ir-label "outer")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil)))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
@@ -13802,7 +14204,7 @@
 (define (opt-licm-load-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
@@ -13813,20 +14215,20 @@
               (CompilerIrValue.I64 99)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             4
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 3)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 CompilerIrPhiInputList.Nil))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -13845,17 +14247,20 @@
                   (CompilerIrValue.I64 1)
                   (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 0)
+                    (compiler-ir-label "body")
+                    (compiler-ir-label "exit"))
                   (CompilerIrInstrList.Nil)))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
@@ -13865,7 +14270,7 @@
 (define (opt-licm-load-store-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
@@ -13876,20 +14281,20 @@
               (CompilerIrValue.I64 99)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             4
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 3)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 CompilerIrPhiInputList.Nil))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -13915,18 +14320,18 @@
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Branch
                       (CompilerIrValue.Var 0)
-                      "body"
-                      "exit")
+                      (compiler-ir-label "body")
+                      (compiler-ir-label "exit"))
                     (CompilerIrInstrList.Nil))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
@@ -13936,7 +14341,7 @@
 (define (opt-licm-load-call-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
@@ -13947,20 +14352,20 @@
               (CompilerIrValue.I64 99)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             4
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 3)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 CompilerIrPhiInputList.Nil))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -13987,18 +14392,18 @@
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Branch
                       (CompilerIrValue.Var 0)
-                      "body"
-                      "exit")
+                      (compiler-ir-label "body")
+                      (compiler-ir-label "exit"))
                     (CompilerIrInstrList.Nil))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
@@ -14008,7 +14413,7 @@
 (define (opt-licm-load-varying-address-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
@@ -14019,20 +14424,20 @@
               (CompilerIrValue.I64 99)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             4
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 3)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 CompilerIrPhiInputList.Nil))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -14051,17 +14456,20 @@
                   (CompilerIrValue.I64 1)
                   (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 0)
+                    (compiler-ir-label "body")
+                    (compiler-ir-label "exit"))
                   (CompilerIrInstrList.Nil)))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
@@ -14073,36 +14481,36 @@
   [ret-var : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             4
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 3)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 CompilerIrPhiInputList.Nil))
             (AstType.I64))
           body))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var ret-var)))
@@ -14118,7 +14526,10 @@
       (CompilerIrValue.I64 1)
       (AstType.I64))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+      (CompilerIrInstr.Branch
+        (CompilerIrValue.Var 0)
+        (compiler-ir-label "body")
+        (compiler-ir-label "exit"))
       (CompilerIrInstrList.Nil))))
 
 (define (opt-licm-header-load-element-store-blocks) : CompilerIrBlockList
@@ -14462,7 +14873,10 @@
         (CompilerIrValue.I64 1)
         (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "body")
+          (compiler-ir-label "exit"))
         (CompilerIrInstrList.Nil)))))
 
 (cfg
@@ -14473,24 +14887,24 @@
     [barrier-mode : i64]) : CompilerIrBlockList
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               6
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 7)
-                  "body"
+                  (compiler-ir-label "body")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -14517,13 +14931,13 @@
                       (opt-licm-checked-root-loop-tail))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "body"
+            (compiler-ir-label "body")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
@@ -14535,7 +14949,7 @@
   (define (opt-licm-checked-root-fresh-blocks) : CompilerIrBlockList
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
@@ -14545,20 +14959,20 @@
               (CompilerIrCallArgs.Nil)
               (AstType.U64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               6
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 7)
-                  "body"
+                  (compiler-ir-label "body")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -14583,13 +14997,13 @@
                     (opt-licm-checked-root-loop-tail)))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "body"
+            (compiler-ir-label "body")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
@@ -14601,7 +15015,7 @@
   (define (opt-licm-checked-root-fresh-header-blocks) : CompilerIrBlockList
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
@@ -14611,20 +15025,20 @@
               (CompilerIrCallArgs.One (CompilerIrValue.I64 16))
               (AstType.DynArray 0))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               6
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 7)
-                  "body"
+                  (compiler-ir-label "body")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -14660,13 +15074,13 @@
                         (opt-licm-checked-root-loop-tail)))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "body"
+            (compiler-ir-label "body")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
@@ -14680,21 +15094,24 @@
       [ref-ty : AstType (ast-ty-ref 0 (AstType.I64))]
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "left")
+              (compiler-ir-label "right"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "left"
+            (compiler-ir-label "left")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov 5 (CompilerIrValue.Var 1) ref-ty)
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "right"
+              (compiler-ir-label "right")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Mov
                   6
@@ -14704,20 +15121,20 @@
                       1))
                   ref-ty)
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "join")
+                  (CompilerIrInstr.Jump (compiler-ir-label "join"))
                   (CompilerIrInstrList.Nil))))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "join"
+                (compiler-ir-label "join")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Phi
                     7
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.Var 5)
-                      "left"
+                      (compiler-ir-label "left")
                       (compiler-ir-phi-input-cons
                         (CompilerIrValue.Var 6)
-                        "right"
+                        (compiler-ir-label "right")
                         (CompilerIrPhiInputList.Nil)))
                     ref-ty)
                   (compiler-ir-instr-cons
@@ -14726,20 +15143,20 @@
                       (CompilerIrValue.I64 0)
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                       (CompilerIrInstrList.Nil)))))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "loop"
+                  (compiler-ir-label "loop")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Phi
                       9
                       (compiler-ir-phi-input-cons
                         (CompilerIrValue.Var 8)
-                        "join"
+                        (compiler-ir-label "join")
                         (compiler-ir-phi-input-cons
                           (CompilerIrValue.Var 10)
-                          "body"
+                          (compiler-ir-label "body")
                           (CompilerIrPhiInputList.Nil)))
                       (AstType.I64))
                     (compiler-ir-instr-cons
@@ -14774,18 +15191,18 @@
                               (compiler-ir-instr-cons
                                 (CompilerIrInstr.Branch
                                   (CompilerIrValue.Var 0)
-                                  "body"
-                                  "exit")
+                                  (compiler-ir-label "body")
+                                  (compiler-ir-label "exit"))
                                 (CompilerIrInstrList.Nil)))))))))
                 (compiler-ir-block-cons
                   (compiler-ir-block
-                    "body"
+                    (compiler-ir-label "body")
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                       (CompilerIrInstrList.Nil)))
                   (compiler-ir-block-cons
                     (compiler-ir-block
-                      "exit"
+                      (compiler-ir-label "exit")
                       (compiler-ir-instr-cons
                         (CompilerIrInstr.Return
                           (CompilerIrMaybeValue.Some (CompilerIrValue.Var 12)))
@@ -14897,23 +15314,93 @@
       [mixed-join : CompilerIrBlockList (opt-function-blocks mixed-join-func)]
       (cond
         [(not (opt-verify-ok? (opt-verify-function ref-distinct-func))) 1]
-        [(not (= (opt-count-load-label-blocks ref-distinct "entry") 1)) 2]
-        [(not (= (opt-count-load-label-blocks ref-distinct "loop") 0)) 3]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                ref-distinct
+                (compiler-ir-label "entry"))
+              1))
+          2]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                ref-distinct
+                (compiler-ir-label "loop"))
+              0))
+          3]
         [(not (opt-verify-ok? (opt-verify-function mut-distinct-func))) 4]
-        [(not (= (opt-count-load-label-blocks mut-distinct "entry") 1)) 5]
-        [(not (= (opt-count-load-label-blocks mut-distinct "loop") 0)) 6]
-        [(not (= (opt-count-load-label-blocks same "loop") 1)) 7]
-        [(not (= (opt-count-load-label-blocks shared-store "loop") 1)) 8]
-        [(not (= (opt-count-load-label-blocks raw-store "loop") 1)) 9]
-        [(not (= (opt-count-load-label-blocks copybytes "loop") 1)) 10]
-        [(not (= (opt-count-load-label-blocks call-blocks "loop") 1)) 11]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                mut-distinct
+                (compiler-ir-label "entry"))
+              1))
+          5]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                mut-distinct
+                (compiler-ir-label "loop"))
+              0))
+          6]
+        [(not
+            (= (opt-count-load-label-blocks same (compiler-ir-label "loop")) 1))
+          7]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                shared-store
+                (compiler-ir-label "loop"))
+              1))
+          8]
+        [(not
+            (=
+              (opt-count-load-label-blocks raw-store (compiler-ir-label "loop"))
+              1))
+          9]
+        [(not
+            (=
+              (opt-count-load-label-blocks copybytes (compiler-ir-label "loop"))
+              1))
+          10]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                call-blocks
+                (compiler-ir-label "loop"))
+              1))
+          11]
         [(not (opt-verify-ok? (opt-verify-function fresh-func))) 12]
-        [(not (= (opt-count-load-label-blocks fresh "entry") 1)) 13]
-        [(not (= (opt-count-load-label-blocks fresh "loop") 0)) 14]
+        [(not
+            (=
+              (opt-count-load-label-blocks fresh (compiler-ir-label "entry"))
+              1))
+          13]
+        [(not
+            (= (opt-count-load-label-blocks fresh (compiler-ir-label "loop")) 0))
+          14]
         [(not (opt-verify-ok? (opt-verify-function join-func))) 15]
-        [(not (= (opt-count-load-label-blocks join-blocks "join") 1)) 16]
-        [(not (= (opt-count-load-label-blocks join-blocks "loop") 0)) 17]
-        [(not (= (opt-count-load-label-blocks mixed-join "loop") 1)) 18]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                join-blocks
+                (compiler-ir-label "join"))
+              1))
+          16]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                join-blocks
+                (compiler-ir-label "loop"))
+              0))
+          17]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                mixed-join
+                (compiler-ir-label "loop"))
+              1))
+          18]
         [(not
             (opt-licm-summary-memory-barrier?
               (CompilerIrInstr.Store
@@ -14945,8 +15432,20 @@
               (CompilerIrInstr.Syscall 90 (CompilerIrCallArgs.Nil))))
           22]
         [(not (opt-verify-ok? (opt-verify-function fresh-header-func))) 23]
-        [(not (= (opt-count-load-label-blocks fresh-header "entry") 2)) 24]
-        [(not (= (opt-count-load-label-blocks fresh-header "loop") 0)) 25]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                fresh-header
+                (compiler-ir-label "entry"))
+              2))
+          24]
+        [(not
+            (=
+              (opt-count-load-label-blocks
+                fresh-header
+                (compiler-ir-label "loop"))
+              0))
+          25]
         [else 42]))))
 
 (define (compiler-optimize-licm-self-test) : i64
@@ -15063,30 +15562,86 @@
         8)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function arith-func))) 1]
-      [(not (= (opt-count-arith-label-blocks arith "entry") 2)) 2]
-      [(not (= (opt-count-arith-label-blocks arith "loop") 0)) 3]
-      [(not (= (opt-count-arith-label-blocks arith "body") 1)) 4]
+      [(not
+          (= (opt-count-arith-label-blocks arith (compiler-ir-label "entry")) 2))
+        2]
+      [(not
+          (= (opt-count-arith-label-blocks arith (compiler-ir-label "loop")) 0))
+        3]
+      [(not
+          (= (opt-count-arith-label-blocks arith (compiler-ir-label "body")) 1))
+        4]
       [(not (opt-verify-ok? (opt-verify-function trap-func))) 5]
-      [(not (= (opt-count-arith-label-blocks trap "loop") 1)) 6]
+      [(not
+          (= (opt-count-arith-label-blocks trap (compiler-ir-label "loop")) 1))
+        6]
       [(not (opt-verify-ok? (opt-verify-function call-func))) 7]
-      [(not (= (opt-count-arith-label-blocks call-blocks "loop") 1)) 8]
+      [(not
+          (=
+            (opt-count-arith-label-blocks
+              call-blocks
+              (compiler-ir-label "loop"))
+            1))
+        8]
       [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 9]
-      [(not (= (opt-count-arith-label-blocks no-preheader "loop") 1)) 10]
+      [(not
+          (=
+            (opt-count-arith-label-blocks
+              no-preheader
+              (compiler-ir-label "loop"))
+            1))
+        10]
       [(not (= (opt-count-arith-blocks no-preheader) 1)) 11]
       [(not (opt-verify-ok? (opt-verify-function nested-func))) 12]
-      [(not (= (opt-count-arith-label-blocks nested "inner") 0)) 13]
+      [(not
+          (=
+            (opt-count-arith-label-blocks nested (compiler-ir-label "inner"))
+            0))
+        13]
       [(not (= (opt-count-arith-blocks nested) 1)) 14]
       [(not (opt-verify-ok? (opt-verify-function load-func))) 15]
-      [(not (= (opt-count-gep-label-blocks load-blocks "entry") 1)) 16]
-      [(not (= (opt-count-load-label-blocks load-blocks "entry") 1)) 17]
-      [(not (= (opt-count-load-label-blocks load-blocks "loop") 0)) 18]
+      [(not
+          (=
+            (opt-count-gep-label-blocks load-blocks (compiler-ir-label "entry"))
+            1))
+        16]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              load-blocks
+              (compiler-ir-label "entry"))
+            1))
+        17]
+      [(not
+          (=
+            (opt-count-load-label-blocks load-blocks (compiler-ir-label "loop"))
+            0))
+        18]
       [(not (opt-verify-ok? (opt-verify-function load-store-func))) 19]
-      [(not (= (opt-count-load-label-blocks load-store "loop") 1)) 20]
-      [(not (= (opt-count-load-label-blocks load-store "entry") 0)) 21]
+      [(not
+          (=
+            (opt-count-load-label-blocks load-store (compiler-ir-label "loop"))
+            1))
+        20]
+      [(not
+          (=
+            (opt-count-load-label-blocks load-store (compiler-ir-label "entry"))
+            0))
+        21]
       [(not (opt-verify-ok? (opt-verify-function load-call-func))) 22]
-      [(not (= (opt-count-load-label-blocks load-call "loop") 1)) 23]
+      [(not
+          (=
+            (opt-count-load-label-blocks load-call (compiler-ir-label "loop"))
+            1))
+        23]
       [(not (opt-verify-ok? (opt-verify-function load-varying-func))) 24]
-      [(not (= (opt-count-load-label-blocks load-varying "loop") 1)) 25]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              load-varying
+              (compiler-ir-label "loop"))
+            1))
+        25]
       [(opt-licm-value-invariant?
           (opt_i64_i64_map.with-capacity 4)
           (opt_i64_i64_map.with-capacity 4)
@@ -15102,30 +15657,126 @@
       [(opt-licm-store-summary-clean? element-summary) 34]
       [(not (struct-get element-summary element-only-store?)) 35]
       [(not (opt-verify-ok? (opt-verify-function header-element-func))) 36]
-      [(not (= (opt-count-load-label-blocks header-element "entry") 2)) 37]
-      [(not (= (opt-count-load-label-blocks header-element "loop") 0)) 38]
-      [(not (= (opt-count-gep-label-blocks header-element "entry") 2)) 39]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-element
+              (compiler-ir-label "entry"))
+            2))
+        37]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-element
+              (compiler-ir-label "loop"))
+            0))
+        38]
+      [(not
+          (=
+            (opt-count-gep-label-blocks
+              header-element
+              (compiler-ir-label "entry"))
+            2))
+        39]
       [(not (opt-verify-ok? (opt-verify-function header-store-func))) 40]
-      [(not (= (opt-count-load-label-blocks header-store "loop") 1)) 41]
-      [(not (= (opt-count-load-label-blocks header-store "entry") 0)) 43]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-store
+              (compiler-ir-label "loop"))
+            1))
+        41]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-store
+              (compiler-ir-label "entry"))
+            0))
+        43]
       [(not (opt-verify-ok? (opt-verify-function copybytes-func))) 44]
-      [(not (= (opt-count-load-label-blocks copybytes-blocks "loop") 1)) 45]
-      [(not (= (opt-count-load-label-blocks copybytes-blocks "entry") 0)) 46]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              copybytes-blocks
+              (compiler-ir-label "loop"))
+            1))
+        45]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              copybytes-blocks
+              (compiler-ir-label "entry"))
+            0))
+        46]
       [(not (opt-verify-ok? (opt-verify-function header-call-func))) 47]
-      [(not (= (opt-count-load-label-blocks header-call "loop") 2)) 48]
-      [(not (= (opt-count-load-label-blocks header-call "entry") 0)) 49]
+      [(not
+          (=
+            (opt-count-load-label-blocks header-call (compiler-ir-label "loop"))
+            2))
+        48]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-call
+              (compiler-ir-label "entry"))
+            0))
+        49]
       [(not (opt-verify-ok? (opt-verify-function header-clean-call-func))) 50]
-      [(not (= (opt-count-load-label-blocks header-clean-call "entry") 2)) 51]
-      [(not (= (opt-count-load-label-blocks header-clean-call "loop") 0)) 52]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-clean-call
+              (compiler-ir-label "entry"))
+            2))
+        51]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-clean-call
+              (compiler-ir-label "loop"))
+            0))
+        52]
       [(not (opt-verify-ok? (opt-verify-function unknown-store-func))) 53]
-      [(not (= (opt-count-load-label-blocks unknown-store "loop") 1)) 54]
-      [(not (= (opt-count-load-label-blocks unknown-store "entry") 0)) 55]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              unknown-store
+              (compiler-ir-label "loop"))
+            1))
+        54]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              unknown-store
+              (compiler-ir-label "entry"))
+            0))
+        55]
       [(not (opt-verify-ok? (opt-verify-function element-load-func))) 56]
-      [(not (= (opt-count-load-label-blocks element-load "entry") 1)) 57]
-      [(not (= (opt-count-load-label-blocks element-load "loop") 1)) 58]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              element-load
+              (compiler-ir-label "entry"))
+            1))
+        57]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              element-load
+              (compiler-ir-label "loop"))
+            1))
+        58]
       [(not (opt-verify-ok? (opt-verify-function raw-slot-func))) 59]
-      [(not (= (opt-count-load-label-blocks raw-slot "entry") 0)) 60]
-      [(not (= (opt-count-load-label-blocks raw-slot "loop") 2)) 61]
+      [(not
+          (=
+            (opt-count-load-label-blocks raw-slot (compiler-ir-label "entry"))
+            0))
+        60]
+      [(not
+          (=
+            (opt-count-load-label-blocks raw-slot (compiler-ir-label "loop"))
+            2))
+        61]
       [(not
           (opt_i64_i64_map.contains?
             (& direct-clean-built)
@@ -15142,13 +15793,36 @@
       ;; A descriptor load crosses the two-Gep data-buffer store chain.
       [(not (opt-verify-ok? (opt-verify-function header-element-chain-func)))
         65]
-      [(not (= (opt-count-load-label-blocks header-element-chain "entry") 2))
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-element-chain
+              (compiler-ir-label "entry"))
+            2))
         66]
-      [(not (= (opt-count-load-label-blocks header-element-chain "loop") 0)) 67]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              header-element-chain
+              (compiler-ir-label "loop"))
+            0))
+        67]
       ;; The corresponding unknown-pointer chain must remain a barrier.
       [(not (opt-verify-ok? (opt-verify-function unknown-gep-store-func))) 68]
-      [(not (= (opt-count-load-label-blocks unknown-gep-store "entry") 0)) 69]
-      [(not (= (opt-count-load-label-blocks unknown-gep-store "loop") 1)) 70]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              unknown-gep-store
+              (compiler-ir-label "entry"))
+            0))
+        69]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              unknown-gep-store
+              (compiler-ir-label "loop"))
+            1))
+        70]
       [else 42])))
 
 (define (opt-induction-params) : CompilerIrParamList
@@ -15174,30 +15848,33 @@
 (define (opt-induction-offset-blocks [step : i64] [scale : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -15220,11 +15897,11 @@
                   (CompilerIrValue.I64 step)
                   (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "loop")
+                  (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                   (CompilerIrInstrList.Nil))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15234,30 +15911,33 @@
 (define (opt-induction-gep-blocks [step : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Gep
               4
@@ -15274,11 +15954,11 @@
                   (CompilerIrValue.I64 step)
                   (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "loop")
+                  (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                   (CompilerIrInstrList.Nil))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15292,30 +15972,33 @@
   [scale : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -15345,11 +16028,11 @@
                     (CompilerIrValue.I64 step)
                     (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "loop")
+                    (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                     (CompilerIrInstrList.Nil)))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15362,30 +16045,33 @@
   [offset : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -15409,11 +16095,11 @@
                     (CompilerIrValue.I64 step)
                     (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "loop")
+                    (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                     (CompilerIrInstrList.Nil)))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15428,30 +16114,33 @@
         8)]
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               3
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 1)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 5)
-                  "body"
+                  (compiler-ir-label "body")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 0)
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "body"
+            (compiler-ir-label "body")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 4
@@ -15488,11 +16177,11 @@
                         (CompilerIrValue.I64 1)
                         (AstType.I64))
                       (compiler-ir-instr-cons
-                        (CompilerIrInstr.Jump "loop")
+                        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                         (CompilerIrInstrList.Nil))))))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15502,30 +16191,33 @@
 (define (opt-induction-multi-gep-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Gep
               4
@@ -15550,11 +16242,11 @@
                       (CompilerIrValue.I64 1)
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                       (CompilerIrInstrList.Nil))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15564,30 +16256,33 @@
 (define (opt-induction-unsupported-step-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -15610,11 +16305,11 @@
                   (CompilerIrValue.I64 2)
                   (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "loop")
+                  (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                   (CompilerIrInstrList.Nil))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15624,30 +16319,33 @@
 (define (opt-induction-call-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -15676,11 +16374,11 @@
                     (CompilerIrValue.I64 1)
                     (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "loop")
+                    (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                     (CompilerIrInstrList.Nil)))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15693,30 +16391,33 @@
 (define (opt-induction-mov-latch-scaled-gep-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 7)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -15745,11 +16446,11 @@
                       (CompilerIrValue.Var 5)
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                       (CompilerIrInstrList.Nil))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15759,30 +16460,33 @@
 (define (opt-induction-store-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -15803,11 +16507,11 @@
                   (CompilerIrValue.I64 1)
                   (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "loop")
+                  (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                   (CompilerIrInstrList.Nil))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15817,30 +16521,33 @@
 (define (opt-induction-loop-local-base-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 1)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 7 (CompilerIrValue.I64 100) (AstType.U64))
             (compiler-ir-instr-cons
@@ -15859,11 +16566,11 @@
                     (CompilerIrValue.I64 1)
                     (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "loop")
+                    (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                     (CompilerIrInstrList.Nil)))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -15873,45 +16580,51 @@
 (define (opt-induction-no-preheader-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "pre-one" "pre-two")
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "pre-one")
+          (compiler-ir-label "pre-two"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "pre-one"
+        (compiler-ir-label "pre-one")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "pre-two"
+          (compiler-ir-label "pre-two")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             (CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "loop"
+            (compiler-ir-label "loop")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 3
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 1)
-                  "pre-one"
+                  (compiler-ir-label "pre-one")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 1)
-                    "pre-two"
+                    (compiler-ir-label "pre-two")
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.Var 5)
-                      "body"
+                      (compiler-ir-label "body")
                       (CompilerIrPhiInputList.Nil))))
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 0)
+                  (compiler-ir-label "body")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "body"
+              (compiler-ir-label "body")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
                   4
@@ -15934,11 +16647,11 @@
                       (CompilerIrValue.I64 1)
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                       (CompilerIrInstrList.Nil))))))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "exit"
+                (compiler-ir-label "exit")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -16017,84 +16730,154 @@
       [(not (opt-verify-ok? (opt-verify-function func))) 1]
       [(not (= (opt-count-phi-blocks out) 2)) 2]
       [(not (= (opt-blocks-mov-src-var out 4 (- 0 1)) 33)) 3]
-      [(not (= (opt-count-mul-label-blocks out "body") 0)) 4]
+      [(not (= (opt-count-mul-label-blocks out (compiler-ir-label "body")) 0))
+        4]
       [(not (opt-verify-ok? (opt-verify-function nonunit-func))) 5]
       [(not (= (opt-blocks-mov-src-var nonunit 4 (- 0 1)) 33)) 6]
-      [(not (= (opt-count-mul-label-blocks nonunit "body") 0)) 7]
+      [(not
+          (= (opt-count-mul-label-blocks nonunit (compiler-ir-label "body")) 0))
+        7]
       [(not (opt-verify-ok? (opt-verify-function negative-func))) 8]
       [(not (= (opt-blocks-mov-src-var negative 4 (- 0 1)) 33)) 9]
-      [(not (= (opt-count-mul-label-blocks negative "body") 0)) 10]
+      [(not
+          (= (opt-count-mul-label-blocks negative (compiler-ir-label "body")) 0))
+        10]
       [(not (opt-verify-ok? (opt-verify-function gep-func))) 11]
       ;; A scale-1 gep folds into the x86 addressing mode, so an address IV
       ;; only costs a latch add: the affine Gep derived no longer fires.
-      [(not (= (opt-count-gep-label-blocks gep "body") 1)) 12]
+      [(not (= (opt-count-gep-label-blocks gep (compiler-ir-label "body")) 1))
+        12]
       [(not (= (opt-blocks-mov-src-var gep 4 (- 0 1)) (- 0 1))) 13]
       [(not (opt-verify-ok? (opt-verify-function unsupported-func))) 14]
       [(not (= (opt-blocks-mov-src-var unsupported 4 (- 0 1)) (- 0 1))) 15]
-      [(not (= (opt-count-mul-label-blocks unsupported "body") 2)) 16]
+      [(not
+          (=
+            (opt-count-mul-label-blocks unsupported (compiler-ir-label "body"))
+            2))
+        16]
       [(not (opt-verify-ok? (opt-verify-function call-func))) 17]
       ;; A loop with a call keeps its plain recurrence: a derived phi would be
       ;; loop-live across the call and spill more than the mul costs.
       [(not (= (opt-blocks-mov-src-var call-blocks 4 (- 0 1)) (- 0 1))) 18]
-      [(not (= (opt-count-mul-label-blocks call-blocks "body") 1)) 19]
+      [(not
+          (=
+            (opt-count-mul-label-blocks call-blocks (compiler-ir-label "body"))
+            1))
+        19]
       [(not (= (opt-count-direct-call-name-blocks call-blocks "tl_noop") 1)) 20]
       [(not (opt-verify-ok? (opt-verify-function store-func))) 21]
       [(not (= (opt-blocks-mov-src-var store-blocks 4 (- 0 1)) 33)) 22]
-      [(not (= (opt-count-mul-label-blocks store-blocks "body") 0)) 23]
+      [(not
+          (=
+            (opt-count-mul-label-blocks store-blocks (compiler-ir-label "body"))
+            0))
+        23]
       [(not (opt-verify-ok? (opt-verify-function local-base-func))) 24]
       [(not (= (opt-blocks-mov-src-var local-base 4 (- 0 1)) (- 0 1))) 25]
-      [(not (= (opt-count-gep-label-blocks local-base "body") 1)) 26]
+      [(not
+          (=
+            (opt-count-gep-label-blocks local-base (compiler-ir-label "body"))
+            1))
+        26]
       [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 27]
       [(not (= (opt-count-phi-blocks no-preheader) 1)) 28]
-      [(not (= (opt-count-mul-label-blocks no-preheader "body") 1)) 29]
+      [(not
+          (=
+            (opt-count-mul-label-blocks no-preheader (compiler-ir-label "body"))
+            1))
+        29]
       [(not (opt-verify-ok? (opt-verify-function multi-offset-func))) 30]
       [(not (= (opt-function-frame multi-offset-func) 38)) 31]
       [(not (= (opt-count-phi-blocks multi-offset) 3)) 32]
       [(not (= (opt-blocks-mov-src-var multi-offset 4 (- 0 1)) 33)) 33]
       [(not (= (opt-blocks-mov-src-var multi-offset 7 (- 0 1)) 36)) 34]
-      [(not (= (opt-count-mul-label-blocks multi-offset "body") 0)) 35]
+      [(not
+          (=
+            (opt-count-mul-label-blocks multi-offset (compiler-ir-label "body"))
+            0))
+        35]
       [(not (opt-verify-ok? (opt-verify-function duplicate-offset-func))) 36]
       [(not (= (opt-function-frame duplicate-offset-func) 35)) 37]
       [(not (= (opt-count-phi-blocks duplicate-offset) 2)) 38]
       [(not (= (opt-blocks-mov-src-var duplicate-offset 4 (- 0 1)) 33)) 39]
       [(not (= (opt-blocks-mov-src-var duplicate-offset 7 (- 0 1)) 33)) 40]
-      [(not (= (opt-count-mul-label-blocks duplicate-offset "body") 0)) 41]
+      [(not
+          (=
+            (opt-count-mul-label-blocks
+              duplicate-offset
+              (compiler-ir-label "body"))
+            0))
+        41]
       [(not (opt-verify-ok? (opt-verify-function multi-gep-func))) 42]
       ;; Both geps fold (u8 and i64 elements), so no address IVs fire.
       [(not (= (opt-function-frame multi-gep-func) 32)) 43]
       [(not (= (opt-count-phi-blocks multi-gep) 1)) 44]
       [(not (= (opt-blocks-mov-src-var multi-gep 4 (- 0 1)) (- 0 1))) 45]
       [(not (= (opt-blocks-mov-src-var multi-gep 7 (- 0 1)) (- 0 1))) 46]
-      [(not (= (opt-count-gep-label-blocks multi-gep "body") 2)) 47]
+      [(not
+          (=
+            (opt-count-gep-label-blocks multi-gep (compiler-ir-label "body"))
+            2))
+        47]
       [(not (opt-verify-ok? (opt-verify-function offset-add-mul-func))) 48]
       [(not (= (opt-function-frame offset-add-mul-func) 36)) 49]
       [(not (= (opt-count-phi-blocks offset-add-mul) 2)) 50]
       [(not (= (opt-blocks-mov-src-var offset-add-mul 6 (- 0 1)) 34)) 51]
-      [(not (= (opt-count-mul-label-blocks offset-add-mul "body") 0)) 52]
+      [(not
+          (=
+            (opt-count-mul-label-blocks
+              offset-add-mul
+              (compiler-ir-label "body"))
+            0))
+        52]
       [(not (opt-verify-ok? (opt-verify-function offset-sub-mul-func))) 53]
       [(not (= (opt-function-frame offset-sub-mul-func) 36)) 54]
       [(not (= (opt-count-phi-blocks offset-sub-mul) 2)) 55]
       [(not (= (opt-blocks-mov-src-var offset-sub-mul 6 (- 0 1)) 34)) 56]
-      [(not (= (opt-count-mul-label-blocks offset-sub-mul "body") 0)) 57]
+      [(not
+          (=
+            (opt-count-mul-label-blocks
+              offset-sub-mul
+              (compiler-ir-label "body"))
+            0))
+        57]
       [(not (opt-verify-ok? (opt-verify-function offset-gep-func))) 58]
       ;; The affine u8 gep folds, so no address IV fires.
       [(not (= (opt-function-frame offset-gep-func) 32)) 59]
       [(not (= (opt-count-phi-blocks offset-gep) 1)) 60]
       [(not (= (opt-blocks-mov-src-var offset-gep 6 (- 0 1)) (- 0 1))) 61]
-      [(not (= (opt-count-gep-label-blocks offset-gep "body") 1)) 62]
+      [(not
+          (=
+            (opt-count-gep-label-blocks offset-gep (compiler-ir-label "body"))
+            1))
+        62]
       [(not (opt-verify-ok? (opt-verify-function unsupported-offset-func))) 63]
       [(not (= (opt-function-frame unsupported-offset-func) 32)) 64]
       [(not (= (opt-blocks-mov-src-var unsupported-offset 6 (- 0 1)) (- 0 1)))
         65]
-      [(not (= (opt-count-mul-label-blocks unsupported-offset "body") 1)) 66]
+      [(not
+          (=
+            (opt-count-mul-label-blocks
+              unsupported-offset
+              (compiler-ir-label "body"))
+            1))
+        66]
       [(not (opt-verify-ok? (opt-verify-function mov-scaled-func))) 67]
       [(not (= (opt-function-frame mov-scaled-func) 36)) 68]
       [(not (= (opt-count-phi-blocks mov-scaled) 2)) 69]
       ;; The copy-chased fact plus the 16-byte stride produce a scaled
       ;; address IV at var 34; the fetch gep rewrites to a copy of it.
       [(not (= (opt-blocks-mov-src-var mov-scaled 6 (- 0 1)) 34)) 70]
-      [(not (= (opt-count-mul-label-blocks mov-scaled "body") 1)) 71]
-      [(not (= (opt-count-gep-label-blocks mov-scaled "body") 1)) 72]
+      [(not
+          (=
+            (opt-count-mul-label-blocks mov-scaled (compiler-ir-label "body"))
+            1))
+        71]
+      [(not
+          (=
+            (opt-count-gep-label-blocks mov-scaled (compiler-ir-label "body"))
+            1))
+        72]
       [else 42])))
 
 (define (opt-unroll-test-params) : CompilerIrParamList
@@ -16107,22 +16890,22 @@
 (define (opt-unroll-test-blocks [step : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "body")
+        (CompilerIrInstr.Jump (compiler-ir-label "body"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "body"
+        (compiler-ir-label "body")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             2
             (compiler-ir-phi-input-cons
               (CompilerIrValue.I64 0)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -16130,10 +16913,10 @@
               3
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 0)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 4)
-                  "body"
+                  (compiler-ir-label "body")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -16160,12 +16943,12 @@
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Branch
                       (CompilerIrValue.Var 6)
-                      "body"
-                      "exit")
+                      (compiler-ir-label "body")
+                      (compiler-ir-label "exit"))
                     (CompilerIrInstrList.Nil))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -16185,22 +16968,22 @@
 (define (opt-unroll-vector-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "body")
+        (CompilerIrInstr.Jump (compiler-ir-label "body"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "body"
+        (compiler-ir-label "body")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             2
             (compiler-ir-phi-input-cons
               (CompilerIrValue.I64 0)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 13)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -16208,10 +16991,10 @@
               3
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 0)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 12)
-                  "body"
+                  (compiler-ir-label "body")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -16291,12 +17074,12 @@
                                   (compiler-ir-instr-cons
                                     (CompilerIrInstr.Branch
                                       (CompilerIrValue.Var 14)
-                                      "body"
-                                      "exit")
+                                      (compiler-ir-label "body")
+                                      (compiler-ir-label "exit"))
                                     (CompilerIrInstrList.Nil))))))))))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -16306,10 +17089,10 @@
 ;; The SPMD lowerer keeps vectors mutable instead of placing them in SSA phis.
 ;; After loop rotation its gang loop is one self-loop block with the next
 ;; vector index already computed on entry, then a `mov/add/le` latch.
-(define (opt-unroll-mutable-vector-test-blocks) : CompilerIrBlockList
+(define (opt-unroll-mutable-vector-test-blocks [loop-local-base? : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
@@ -16329,59 +17112,68 @@
                 (CompilerIrValue.Var 0)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "body" "exit")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 5)
+                  (compiler-ir-label "body")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil)))))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "body"
+        (compiler-ir-label "body")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.VectorLoad
-            6
-            (CompilerIrValue.Var 1)
-            (CompilerIrValue.Var 2)
-            4
-            (AstType.I64))
+          ;; A body-local base is valid mutable IR, but cannot be hoisted into
+          ;; the unrolled block's leading shared Gep.
+          (CompilerIrInstr.Mov 9 (CompilerIrValue.Var 1) (AstType.I64))
           (compiler-ir-instr-cons
-            (ir-instr-vector-bin-op
-              7
-              (CompilerIrBinOp.Add)
-              (CompilerIrValue.Var 6)
-              (CompilerIrValue.Var 3)
+            (CompilerIrInstr.VectorLoad
+              6
+              (if loop-local-base?
+                (CompilerIrValue.Var 9)
+                (CompilerIrValue.Var 1))
+              (CompilerIrValue.Var 2)
               4
               (AstType.I64))
             (compiler-ir-instr-cons
               (ir-instr-vector-bin-op
-                3
+                7
                 (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 6)
                 (CompilerIrValue.Var 3)
-                (CompilerIrValue.Var 7)
                 4
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 4) (AstType.I64))
+                (ir-instr-vector-bin-op
+                  3
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 3)
+                  (CompilerIrValue.Var 7)
+                  4
+                  (AstType.I64))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.BinOp
-                    4
-                    (CompilerIrBinOp.Add)
-                    (CompilerIrValue.Var 2)
-                    (CompilerIrValue.I64 4)
-                    (AstType.I64))
+                  (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 4) (AstType.I64))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.BinOp
-                      5
-                      (CompilerIrBinOp.Le)
-                      (CompilerIrValue.Var 4)
-                      (CompilerIrValue.Var 0)
+                      4
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 2)
+                      (CompilerIrValue.I64 4)
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Branch
-                        (CompilerIrValue.Var 5)
-                        "body"
-                        "exit")
-                      (CompilerIrInstrList.Nil)))))))))
+                      (CompilerIrInstr.BinOp
+                        5
+                        (CompilerIrBinOp.Le)
+                        (CompilerIrValue.Var 4)
+                        (CompilerIrValue.Var 0)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Var 5)
+                          (compiler-ir-label "body")
+                          (compiler-ir-label "exit"))
+                        (CompilerIrInstrList.Nil))))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.VectorReduce
               8
@@ -16411,13 +17203,13 @@
     15
     (opt-unroll-vector-test-blocks)))
 
-(define (opt-unroll-mutable-vector-test-function) : CompilerIrFunction
+(define (opt-unroll-mutable-vector-test-function [loop-local-base? : bool]) : CompilerIrFunction
   (CompilerIrFunction.Function
     (opt-test-symbol "unroll_mutable_vector_fixture")
     (opt-unroll-vector-test-params)
     (AstType.I64)
-    9
-    (opt-unroll-mutable-vector-test-blocks)))
+    10
+    (opt-unroll-mutable-vector-test-blocks loop-local-base?)))
 
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -16461,7 +17253,7 @@
 
 (define (opt-unroll-test-count-vector-in-block
   [blocks : CompilerIrBlockList]
-  [label : String]) : i64
+  [label : i64]) : i64
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) (- 0 1)]
     [(OptMaybeBlock.Some block)
@@ -16471,7 +17263,7 @@
 
 (define (opt-unroll-test-count-add-in-block
   [blocks : CompilerIrBlockList]
-  [label : String]) : i64
+  [label : i64]) : i64
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) (- 0 1)]
     [(OptMaybeBlock.Some block)
@@ -16493,15 +17285,23 @@
       (opt-unroll-function (opt-unroll-vector-test-function))]
     [vector-out : CompilerIrBlockList (opt-function-blocks vector-func)]
     [mutable-vector-func : CompilerIrFunction
-      (opt-unroll-function (opt-unroll-mutable-vector-test-function))]
+      (opt-unroll-function (opt-unroll-mutable-vector-test-function false))]
     [mutable-vector-out : CompilerIrBlockList
       (opt-function-blocks mutable-vector-func)]
+    [local-base-func : CompilerIrFunction
+      (opt-unroll-function (opt-unroll-mutable-vector-test-function true))]
+    [local-base-out : CompilerIrBlockList (opt-function-blocks local-base-func)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function func))) 1]
       ;; entry, guard, unrolled body, remainder loop, exit.
       [(not (= (compiler-ir-block-list-count out) 5)) 2]
       ;; sixteen acc adds + sixteen counter adds.
-      [(< (opt-unroll-test-count-add-in-block out "body__unroll_body") 32) 3]
+      [(<
+          (opt-unroll-test-count-add-in-block
+            out
+            (compiler-ir-label "body__unroll_body"))
+          32)
+        3]
       ;; a non-unit counter step is not canonical: blocks stay untouched.
       [(not (= (compiler-ir-block-list-count nonunit) 3)) 4]
       ;; Bounds-check labels must remain unique at the sixteen-copy factor.
@@ -16514,7 +17314,7 @@
           (=
             (opt-unroll-test-count-vector-in-block
               vector-out
-              "body__unroll_body")
+              (compiler-ir-label "body__unroll_body"))
             128))
         9]
       ;; Store-bearing SIMD loops remain outside this unroller.
@@ -16534,9 +17334,12 @@
           (=
             (opt-unroll-test-count-vector-in-block
               mutable-vector-out
-              "body__unroll_body")
+              (compiler-ir-label "body__unroll_body"))
             48))
         13]
+      ;; A base defined inside the loop cannot feed the shared pre-body Gep.
+      [(not (opt-verify-ok? (opt-verify-final-function local-base-func))) 14]
+      [(not (= (compiler-ir-block-list-count local-base-out) 3)) 15]
       [else 42])))
 
 ;; --- bounds-check loop versioning self-test ------------------------------------
@@ -16555,22 +17358,22 @@
 (define (opt-bce-version-test-blocks [derivable : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.I64 0)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 6)
-                "loop"
+                (compiler-ir-label "loop")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -16578,10 +17381,10 @@
               4
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 0)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 5)
-                  "loop"
+                  (compiler-ir-label "loop")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -16597,7 +17400,7 @@
                     (CompilerIrValue.Var 3)
                     (CompilerIrValue.Var 5))
                   (CompilerIrValue.Var 1)
-                  "bce_version_ok")
+                  (compiler-ir-label "bce_version_ok"))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
                     6
@@ -16615,18 +17418,18 @@
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Branch
                         (CompilerIrValue.Var 7)
-                        "loop"
-                        "done")
+                        (compiler-ir-label "loop")
+                        (compiler-ir-label "done"))
                       (CompilerIrInstrList.Nil)))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "done"
+          (compiler-ir-label "done")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Phi
               8
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "loop"
+                (compiler-ir-label "loop")
                 (CompilerIrPhiInputList.Nil))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -16645,7 +17448,7 @@
 
 (define (opt-bce-version-test-block-checks
   [blocks : CompilerIrBlockList]
-  [label-want : String]) : i64
+  [label-want : i64]) : i64
   (match (opt-cfg-find-block blocks label-want)
     [(OptMaybeBlock.No) (- 0 1)]
     [(OptMaybeBlock.Some block)
@@ -16659,7 +17462,7 @@
 
 (define (opt-bce-version-test-exit-phi-inputs
   [blocks : CompilerIrBlockList]
-  [label-want : String]) : i64
+  [label-want : i64]) : i64
   (match (opt-cfg-find-block blocks label-want)
     [(OptMaybeBlock.No) (- 0 1)]
     [(OptMaybeBlock.Some block)
@@ -16684,10 +17487,26 @@
       ;; entry, guard, fast, slow loop, exit.
       [(not (= (compiler-ir-block-list-count out) 5)) 2]
       ;; the fast clone dropped its check; the slow loop keeps it.
-      [(not (= (opt-bce-version-test-block-checks out "loop__bce_fast") 0)) 3]
-      [(not (= (opt-bce-version-test-block-checks out "loop") 1)) 4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler-ir-label "loop__bce_fast"))
+            0))
+        3]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks out (compiler-ir-label "loop"))
+            1))
+        4]
       ;; the exit phi gained the parallel fast-edge input.
-      [(not (= (opt-bce-version-test-exit-phi-inputs out "done") 2)) 5]
+      [(not
+          (=
+            (opt-bce-version-test-exit-phi-inputs
+              out
+              (compiler-ir-label "done"))
+            2))
+        5]
       ;; a non-derivable index rejects: blocks stay untouched.
       [(not (= (compiler-ir-block-list-count unchanged-out) 3)) 6]
       [else 42])))
@@ -16698,17 +17517,17 @@
 (define (opt-bce-version-while-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstr.Jump (compiler-ir-label "header"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "header"
+        (compiler-ir-label "header")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             5
@@ -16717,16 +17536,19 @@
             (CompilerIrValue.Var 0)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 4)
               (CompilerIrValue.Var 1)
-              "bce_while_ok")
+              (compiler-ir-label "bce_while_ok"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Gep
                 6
@@ -16760,11 +17582,11 @@
                           (CompilerIrValue.Var 9)
                           (AstType.I64))
                         (compiler-ir-instr-cons
-                          (CompilerIrInstr.Jump "header")
+                          (CompilerIrInstr.Jump (compiler-ir-label "header"))
                           (CompilerIrInstrList.Nil))))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -16783,10 +17605,12 @@
       (opt-bce-version-test-prefix-from? label prefix (+ index 1))
       false)))
 
-(define (opt-bce-version-test-has-prefix? [label : String] [prefix : String]) : bool
-  (and
-    (>= (string.string-length label) (string.string-length prefix))
-    (opt-bce-version-test-prefix-from? label prefix 0)))
+(define (opt-bce-version-test-has-prefix? [label : i64] [prefix : String]) : bool
+  (let
+    [text : String (compiler-ir-label-text label)]
+    (and
+      (>= (string.string-length text) (string.string-length prefix))
+      (opt-bce-version-test-prefix-from? text prefix 0))))
 
 (define (opt-bce-version-test-prefix-checks
   [blocks : CompilerIrBlockList]
@@ -16829,7 +17653,7 @@
     (cond
       [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
       ;; the fast clone exists ...
-      [(match (opt-cfg-find-block blocks "body__bce_fast")
+      [(match (opt-cfg-find-block blocks (compiler-ir-label "body__bce_fast"))
           [(OptMaybeBlock.No) true]
           [(OptMaybeBlock.Some _) false])
         2]
@@ -16839,7 +17663,10 @@
           (= (opt-bce-version-test-prefix-checks blocks "body__bce_fast" 0) 0))
         3]
       ;; ... and the slow original keeps its per-iteration check.
-      [(< (opt-bce-version-test-block-checks blocks "body") 1) 4]
+      [(<
+          (opt-bce-version-test-block-checks blocks (compiler-ir-label "body"))
+          1)
+        4]
       [else 42])))
 
 ;; --- multi-block bce-version self-tests -------------------------------------------
@@ -16858,16 +17685,16 @@
 ;; through a phi so the paired rewrite must fail verification and roll back.
 (define (opt-bce-mb-test-header-block [variant : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Phi
         3
         (compiler-ir-phi-input-cons
           (CompilerIrValue.I64 0)
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 8)
-            "merge"
+            (compiler-ir-label "merge")
             (CompilerIrPhiInputList.Nil)))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -16875,17 +17702,17 @@
           4
           (compiler-ir-phi-input-cons
             (CompilerIrValue.I64 0)
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 7)
-              "merge"
+              (compiler-ir-label "merge")
               (CompilerIrPhiInputList.Nil)))
           (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 3)
             (CompilerIrValue.Var 1)
-            "mb_ok0")
+            (compiler-ir-label "mb_ok0"))
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               5
@@ -16907,10 +17734,10 @@
                   0
                   (compiler-ir-switch-case-cons
                     0
-                    "else"
+                    (compiler-ir-label "else")
                     (compiler-ir-switch-case-cons
                       1
-                      "then"
+                      (compiler-ir-label "then")
                       CompilerIrSwitchCaseList.Nil))
                   (if (or
                     (= variant 5)
@@ -16919,9 +17746,12 @@
                     (= variant 8)
                     (= variant 9)
                     (= variant 10))
-                    "match_total_enum_default"
-                    "match_total_trap"))
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "then" "else"))
+                    (compiler-ir-label "match_total_enum_default")
+                    (compiler-ir-label "match_total_trap")))
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 5)
+                  (compiler-ir-label "then")
+                  (compiler-ir-label "else")))
               (CompilerIrInstrList.Nil))))))))
 
 (define (opt-bce-mb-test-then-block [variant : i64]) : CompilerIrBlock
@@ -16935,7 +17765,7 @@
     ;; total-enum-dispatch case; 7 inserts a store between the checks and 8
     ;; gives the second check a different invariant length.
     (compiler-ir-block
-      "then"
+      (compiler-ir-label "then")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           6
@@ -16947,7 +17777,7 @@
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 6)
             (CompilerIrValue.Var 1)
-            "mb_pair_ok0")
+            (compiler-ir-label "mb_pair_ok0"))
           (compiler-ir-instr-cons
             (if (= variant 7)
               (CompilerIrInstr.StorePtr
@@ -16968,16 +17798,16 @@
                   (if (= variant 8)
                     (CompilerIrValue.Var 2)
                     (CompilerIrValue.Var 1))
-                  "mb_pair_ok1")
+                  (compiler-ir-label "mb_pair_ok1"))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump "merge")
+                  (CompilerIrInstr.Jump (compiler-ir-label "merge"))
                   (CompilerIrInstrList.Nil))))))))
     (if (= variant 1)
       ;; The underivable-but-clean partial case: check store+1, defined before
       ;; the check. The counter check in "body" still derives, so the loop
       ;; partially versions and this check STAYS in the fast clone.
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             6
@@ -16989,19 +17819,19 @@
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 6)
               (CompilerIrValue.Var 1)
-              "mb_ok1")
+              (compiler-ir-label "mb_ok1"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstr.Jump (compiler-ir-label "merge"))
                 (CompilerIrInstrList.Nil))))))
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 4)
             (CompilerIrValue.Var 1)
-            "mb_ok1")
+            (compiler-ir-label "mb_ok1"))
           (compiler-ir-instr-cons
             (if (= variant 2)
               (CompilerIrInstr.Call
@@ -17018,19 +17848,19 @@
                 (CompilerIrValue.I64 1)
                 (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstr.Jump (compiler-ir-label "merge"))
                 (CompilerIrInstrList.Nil)))))))))
 
 (define (opt-bce-mb-test-else-block) : CompilerIrBlock
   (compiler-ir-block
-    "else"
+    (compiler-ir-label "else")
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Jump "merge")
+      (CompilerIrInstr.Jump (compiler-ir-label "merge"))
       (CompilerIrInstrList.Nil))))
 
 (define (opt-bce-mb-test-merge-block [variant : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "merge"
+    (compiler-ir-label "merge")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Phi
         7
@@ -17039,10 +17869,10 @@
             (if (= variant 10)
               13
               6))
-          "then"
+          (compiler-ir-label "then")
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 4)
-            "else"
+            (compiler-ir-label "else")
             (CompilerIrPhiInputList.Nil)))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -17063,18 +17893,21 @@
             (CompilerIrValue.Var 0)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 9) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 9)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil)))))))
 
 (define (opt-bce-mb-test-exit-block) : CompilerIrBlock
   (compiler-ir-block
-    "exit"
+    (compiler-ir-label "exit")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Phi
         10
         (compiler-ir-phi-input-cons
           (CompilerIrValue.Var 7)
-          "merge"
+          (compiler-ir-label "merge")
           (CompilerIrPhiInputList.Nil))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -17086,7 +17919,7 @@
   (let
     ;; Every marked Switch default must name a real final-arm block. The shared
     ;; verifier now checks Switch successors before SSA dominance/use facts.
-    [label : String
+    [label : i64
       (if (or
         (= variant 5)
         (= variant 6)
@@ -17094,8 +17927,8 @@
         (= variant 8)
         (= variant 9)
         (= variant 10))
-        "match_total_enum_default"
-        "match_total_trap")]
+        (compiler-ir-label "match_total_enum_default")
+        (compiler-ir-label "match_total_trap"))]
     (compiler-ir-block
       label
       (compiler-ir-instr-cons
@@ -17111,7 +17944,7 @@
 (define (opt-bce-mb-test-blocks [variant : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (if (= variant 9)
           ;; A valid single-predecessor loop preheader whose final terminator
@@ -17120,8 +17953,8 @@
             (CompilerIrValue.I64 0)
             0
             CompilerIrSwitchCaseList.Nil
-            "body")
-          (CompilerIrInstr.Jump "body"))
+            (compiler-ir-label "body"))
+          (CompilerIrInstr.Jump (compiler-ir-label "body")))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (opt-bce-mb-test-header-block variant)
@@ -17154,7 +17987,7 @@
     14
     blocks))
 
-(define (opt-bce-mb-test-jump-block [label : String] [target : String]) : CompilerIrBlock
+(define (opt-bce-mb-test-jump-block [label : i64] [target : i64]) : CompilerIrBlock
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
@@ -17165,46 +17998,62 @@
 ;; derivable counted loop must stay unversioned.
 (define (opt-bce-mb-test-chain-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-bce-mb-test-jump-block "entry" "body")
+    (opt-bce-mb-test-jump-block
+      (compiler-ir-label "entry")
+      (compiler-ir-label "body"))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "body"
+        (compiler-ir-label "body")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             3
             (compiler-ir-phi-input-cons
               (CompilerIrValue.I64 0)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 8)
-                "latch"
+                (compiler-ir-label "latch")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 3)
               (CompilerIrValue.Var 1)
-              "mb_chain_ok")
+              (compiler-ir-label "mb_chain_ok"))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "b1")
+              (CompilerIrInstr.Jump (compiler-ir-label "b1"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
-        (opt-bce-mb-test-jump-block "b1" "b2")
+        (opt-bce-mb-test-jump-block
+          (compiler-ir-label "b1")
+          (compiler-ir-label "b2"))
         (compiler-ir-block-cons
-          (opt-bce-mb-test-jump-block "b2" "b3")
+          (opt-bce-mb-test-jump-block
+            (compiler-ir-label "b2")
+            (compiler-ir-label "b3"))
           (compiler-ir-block-cons
-            (opt-bce-mb-test-jump-block "b3" "b4")
+            (opt-bce-mb-test-jump-block
+              (compiler-ir-label "b3")
+              (compiler-ir-label "b4"))
             (compiler-ir-block-cons
-              (opt-bce-mb-test-jump-block "b4" "b5")
+              (opt-bce-mb-test-jump-block
+                (compiler-ir-label "b4")
+                (compiler-ir-label "b5"))
               (compiler-ir-block-cons
-                (opt-bce-mb-test-jump-block "b5" "b6")
+                (opt-bce-mb-test-jump-block
+                  (compiler-ir-label "b5")
+                  (compiler-ir-label "b6"))
                 (compiler-ir-block-cons
-                  (opt-bce-mb-test-jump-block "b6" "b7")
+                  (opt-bce-mb-test-jump-block
+                    (compiler-ir-label "b6")
+                    (compiler-ir-label "b7"))
                   (compiler-ir-block-cons
-                    (opt-bce-mb-test-jump-block "b7" "latch")
+                    (opt-bce-mb-test-jump-block
+                      (compiler-ir-label "b7")
+                      (compiler-ir-label "latch"))
                     (compiler-ir-block-cons
                       (compiler-ir-block
-                        "latch"
+                        (compiler-ir-label "latch")
                         (compiler-ir-instr-cons
                           (CompilerIrInstr.BinOp
                             8
@@ -17222,12 +18071,12 @@
                             (compiler-ir-instr-cons
                               (CompilerIrInstr.Branch
                                 (CompilerIrValue.Var 9)
-                                "body"
-                                "exit")
+                                (compiler-ir-label "body")
+                                (compiler-ir-label "exit"))
                               (CompilerIrInstrList.Nil)))))
                       (compiler-ir-block-cons
                         (compiler-ir-block
-                          "exit"
+                          (compiler-ir-label "exit")
                           (compiler-ir-instr-cons
                             (CompilerIrInstr.Return
                               (CompilerIrMaybeValue.Some
@@ -17246,21 +18095,47 @@
       ;; entry + guard + four fast clones + four slow blocks + exit
       [(not (= (compiler-ir-block-list-count out) 11)) 2]
       ;; the fast region dropped every check ...
-      [(not (= (opt-bce-version-test-block-checks out "body__bce_fast") 0)) 3]
-      [(not (= (opt-bce-version-test-block-checks out "then__bce_fast") 0)) 4]
-      [(match (opt-cfg-find-block out "merge__bce_fast")
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler-ir-label "body__bce_fast"))
+            0))
+        3]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler-ir-label "then__bce_fast"))
+            0))
+        4]
+      [(match (opt-cfg-find-block out (compiler-ir-label "merge__bce_fast"))
           [(OptMaybeBlock.No) true]
           [(OptMaybeBlock.Some _) false])
         5]
-      [(match (opt-cfg-find-block out "body__bce_guard")
+      [(match (opt-cfg-find-block out (compiler-ir-label "body__bce_guard"))
           [(OptMaybeBlock.No) true]
           [(OptMaybeBlock.Some _) false])
         6]
       ;; ... while the slow loop keeps both of its checks.
-      [(not (= (opt-bce-version-test-block-checks out "body") 1)) 7]
-      [(not (= (opt-bce-version-test-block-checks out "then") 1)) 8]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks out (compiler-ir-label "body"))
+            1))
+        7]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks out (compiler-ir-label "then"))
+            1))
+        8]
       ;; the exit phi gained the parallel fast-edge input.
-      [(not (= (opt-bce-version-test-exit-phi-inputs out "exit") 2)) 9]
+      [(not
+          (=
+            (opt-bce-version-test-exit-phi-inputs
+              out
+              (compiler-ir-label "exit"))
+            2))
+        9]
       [else 42])))
 
 (define (opt-bce-mb-test-cloned-switch-cases-ok?
@@ -17271,7 +18146,7 @@
         [(CompilerIrSwitchCase.Case first-tag first-label)
           (and
             (= first-tag 0)
-            (string.eq first-label "else__bce_fast")
+            (= first-label (compiler-ir-label "else__bce_fast"))
             (match (compiler-ir-switch-case-list-force-cons
               (box-get first-rest))
               [(CompilerIrSwitchCaseList.Cons second second-rest)
@@ -17279,7 +18154,7 @@
                   [(CompilerIrSwitchCase.Case second-tag second-label)
                     (and
                       (= second-tag 1)
-                      (string.eq second-label "then__bce_fast")
+                      (= second-label (compiler-ir-label "then__bce_fast"))
                       (match (compiler-ir-switch-case-list-force-cons
                         (box-get second-rest))
                         [(CompilerIrSwitchCaseList.Nil) true]
@@ -17288,7 +18163,7 @@
     [_ false]))
 
 (define (opt-bce-mb-test-cloned-switch-ok? [blocks : CompilerIrBlockList]) : bool
-  (match (opt-cfg-find-block blocks "body__bce_fast")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "body__bce_fast"))
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
       (match block
@@ -17307,7 +18182,7 @@
                     (opt-bce-mb-test-cloned-switch-cases-ok? cases)
                     ;; The no-return trap is outside the natural loop and stays
                     ;; shared; all in-loop case targets are remapped above.
-                    (string.eq default-label "match_total_trap"))]
+                    (= default-label (compiler-ir-label "match_total_trap")))]
                 [_ false])))])]))
 
 (define (compiler-optimize-bce-version-mb-switch-self-test) : i64
@@ -17325,12 +18200,21 @@
       ;; Original seven blocks + guard + four fast loop blocks.
       [(not (= (compiler-ir-block-list-count out) 12)) 2]
       [(not (opt-bce-mb-test-cloned-switch-ok? out)) 3]
-      [(not (= (opt-bce-version-test-block-checks out "body__bce_fast") 0)) 4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler-ir-label "body__bce_fast"))
+            0))
+        4]
       ;; A lowering-proven exhaustive enum dispatch is totalized after BCE;
       ;; cloning its high-fanout loop here would collapse vm_run allocation.
       [(not (opt-verify-ok? (opt-verify-function marked))) 5]
       [(not (= (compiler-ir-block-list-count marked-out) 7)) 6]
-      [(opt-block-list-has-label? marked-out "body__bce_fast") 7]
+      [(opt-block-list-has-label?
+          marked-out
+          (compiler-ir-label "body__bce_fast"))
+        7]
       [else 42])))
 
 (define (opt-bce-mb-pair-test-guard-has-len-fact-from?
@@ -17371,7 +18255,7 @@
 
 (define (opt-bce-mb-pair-test-guard-has-len-fact?
   [blocks : CompilerIrBlockList]) : bool
-  (match (opt-cfg-find-block blocks "entry")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "entry"))
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
       (match block
@@ -17379,7 +18263,7 @@
           (opt-bce-mb-pair-test-guard-has-len-fact-from? instrs 0)])]))
 
 (define (opt-bce-mb-pair-test-guard-short [blocks : CompilerIrBlockList]) : CompilerIrMaybeValue
-  (match (opt-cfg-find-block blocks "entry")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "entry"))
     [(OptMaybeBlock.No) (CompilerIrMaybeValue.No)]
     [(OptMaybeBlock.Some block)
       (match block
@@ -17406,7 +18290,7 @@
 (define (opt-bce-mb-pair-test-body-uses-length?
   [blocks : CompilerIrBlockList]
   [length : CompilerIrValue]) : bool
-  (match (opt-cfg-find-block blocks "then")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "then"))
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
       (match block
@@ -17445,8 +18329,17 @@
     (cond
       [(not (opt-verify-ok? (opt-verify-function positive))) 1]
       [(not (= (compiler-ir-block-list-count positive-out) 7)) 2]
-      [(opt-block-list-has-label? positive-out "body__bce_fast") 3]
-      [(not (= (opt-bce-version-test-block-checks positive-out "then") 1)) 4]
+      [(opt-block-list-has-label?
+          positive-out
+          (compiler-ir-label "body__bce_fast"))
+        3]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              positive-out
+              (compiler-ir-label "then"))
+            1))
+        4]
       [(not (opt-bce-mb-pair-test-guard-has-len-fact? positive-out)) 5]
       [(match (opt-bce-mb-pair-test-guard-short positive-out)
           [(CompilerIrMaybeValue.Some short-length)
@@ -17456,19 +18349,43 @@
         6]
       [(not (opt-verify-ok? (opt-verify-function stored))) 7]
       [(not (= (compiler-ir-block-list-count stored-out) 7)) 8]
-      [(not (= (opt-bce-version-test-block-checks stored-out "then") 2)) 9]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              stored-out
+              (compiler-ir-label "then"))
+            2))
+        9]
       [(opt-bce-mb-pair-test-guard-has-len-fact? stored-out) 10]
       [(not (opt-verify-ok? (opt-verify-function different))) 11]
       [(not (= (compiler-ir-block-list-count different-out) 7)) 12]
-      [(not (= (opt-bce-version-test-block-checks different-out "then") 2)) 13]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              different-out
+              (compiler-ir-label "then"))
+            2))
+        13]
       [(opt-bce-mb-pair-test-guard-has-len-fact? different-out) 14]
       [(not (opt-verify-ok? (opt-verify-function no-fact))) 15]
       [(not (= (compiler-ir-block-list-count no-fact-out) 7)) 16]
-      [(not (= (opt-bce-version-test-block-checks no-fact-out "then") 2)) 17]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              no-fact-out
+              (compiler-ir-label "then"))
+            2))
+        17]
       [(opt-bce-mb-pair-test-guard-has-len-fact? no-fact-out) 18]
       [(not (opt-verify-ok? (opt-verify-function rollback))) 19]
       [(not (= (compiler-ir-block-list-count rollback-out) 7)) 20]
-      [(not (= (opt-bce-version-test-block-checks rollback-out "then") 2)) 21]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              rollback-out
+              (compiler-ir-label "then"))
+            2))
+        21]
       [(opt-bce-mb-pair-test-guard-has-len-fact? rollback-out) 22]
       ;; Common-base offsets identify var6 (phi-1) / var13 (phi-2), with the
       ;; later operand as the smaller index.
@@ -17521,14 +18438,40 @@
       ;; entry + guard + four fast clones + four slow blocks + exit
       [(not (= (compiler-ir-block-list-count out) 11)) 2]
       ;; the derivable counter check is gone from the fast header...
-      [(not (= (opt-bce-version-test-block-checks out "body__bce_fast") 0)) 3]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler-ir-label "body__bce_fast"))
+            0))
+        3]
       ;; ... while the underivable swap check STAYS in the fast clone ...
-      [(not (= (opt-bce-version-test-block-checks out "then__bce_fast") 1)) 4]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              out
+              (compiler-ir-label "then__bce_fast"))
+            1))
+        4]
       ;; ... and the slow loop keeps both of its checks.
-      [(not (= (opt-bce-version-test-block-checks out "body") 1)) 5]
-      [(not (= (opt-bce-version-test-block-checks out "then") 1)) 6]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks out (compiler-ir-label "body"))
+            1))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks out (compiler-ir-label "then"))
+            1))
+        6]
       ;; the exit phi gained the parallel fast-edge input.
-      [(not (= (opt-bce-version-test-exit-phi-inputs out "exit") 2)) 7]
+      [(not
+          (=
+            (opt-bce-version-test-exit-phi-inputs
+              out
+              (compiler-ir-label "exit"))
+            2))
+        7]
       [else 42])))
 
 ;; --- Gep use-splitting self-tests --------------------------------------------
@@ -17564,7 +18507,7 @@
 (define (opt-gep-split-test-shared-blocks [other-use : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Gep
           3
@@ -17602,7 +18545,7 @@
   [other-use : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 2) offset elem-ty)
         (compiler-ir-instr-cons
@@ -17758,17 +18701,17 @@
 (define (opt-bce-mb-pipeline-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstr.Jump (compiler-ir-label "header"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "header"
+        (compiler-ir-label "header")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             5
@@ -17777,16 +18720,19 @@
             (CompilerIrValue.Var 0)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BoundsCheck
               (CompilerIrValue.Var 3)
               (CompilerIrValue.Var 1)
-              "mbp_ok0")
+              (compiler-ir-label "mbp_ok0"))
             (compiler-ir-instr-cons
               (CompilerIrInstr.StorePtr
                 (CompilerIrValue.Var 2)
@@ -17800,16 +18746,19 @@
                   (CompilerIrValue.I64 4)
                   (AstType.Bool))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Branch (CompilerIrValue.Var 6) "then" "else")
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 6)
+                    (compiler-ir-label "then")
+                    (compiler-ir-label "else"))
                   (CompilerIrInstrList.Nil))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "then"
+            (compiler-ir-label "then")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BoundsCheck
                 (CompilerIrValue.Var 4)
                 (CompilerIrValue.Var 1)
-                "mbp_ok1")
+                (compiler-ir-label "mbp_ok1"))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
                   7
@@ -17820,13 +18769,15 @@
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Mov 4 (CompilerIrValue.Var 7) (AstType.I64))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump "merge")
+                    (CompilerIrInstr.Jump (compiler-ir-label "merge"))
                     (CompilerIrInstrList.Nil))))))
           (compiler-ir-block-cons
-            (opt-bce-mb-test-jump-block "else" "merge")
+            (opt-bce-mb-test-jump-block
+              (compiler-ir-label "else")
+              (compiler-ir-label "merge"))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "merge"
+                (compiler-ir-label "merge")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
                     8
@@ -17840,11 +18791,11 @@
                       (CompilerIrValue.Var 8)
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "header")
+                      (CompilerIrInstr.Jump (compiler-ir-label "header"))
                       (CompilerIrInstrList.Nil)))))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "exit"
+                  (compiler-ir-label "exit")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
                       (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
@@ -17874,8 +18825,8 @@
       true
       (opt-bce-mb-test-label-contains-from? label needle (+ off 1)))))
 
-(define (opt-bce-mb-test-label-contains? [label : String] [needle : String]) : bool
-  (opt-bce-mb-test-label-contains-from? label needle 0))
+(define (opt-bce-mb-test-label-contains? [label : i64] [needle : String]) : bool
+  (opt-bce-mb-test-label-contains-from? (compiler-ir-label-text label) needle 0))
 
 ;; Count blocks whose label contains needle.
 (define (opt-bce-mb-test-matching-blocks
@@ -17952,11 +18903,11 @@
 (define (opt-unroll-mb-read-only-test-body) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "read_only"
+      (compiler-ir-label "read_only")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 9 (CompilerIrValue.Var 2) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "read_only_exit")
+          (CompilerIrInstr.Jump (compiler-ir-label "read_only_exit"))
           (CompilerIrInstrList.Nil))))
     (CompilerIrBlockList.Nil)))
 
@@ -18013,7 +18964,7 @@
   (let
     [name : i64 (opt-test-symbol "merged_loop_caller")]
     [prefix : String "inl.absorbed.0"]
-    [cont : String "inl.absorbed.0.cont"]
+    [cont : i64 (compiler-ir-label "inl.absorbed.0.cont")]
     (match (opt-inline-clone-multiblock-blocks
       (opt-merged-loop-test-callee-blocks)
       prefix
@@ -18026,7 +18977,7 @@
           [entry-blocks : CompilerIrBlockList
             (compiler-ir-block-cons
               (compiler-ir-block
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
                     4
@@ -18037,11 +18988,13 @@
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Branch
                       (CompilerIrValue.Var 4)
-                      "call_site"
-                      "caller_exit")
+                      (compiler-ir-label "call_site")
+                      (compiler-ir-label "caller_exit"))
                     (CompilerIrInstrList.Nil))))
               (compiler-ir-block-cons
-                (opt-bce-mb-test-jump-block "call_site" "inl.absorbed.0.entry")
+                (opt-bce-mb-test-jump-block
+                  (compiler-ir-label "call_site")
+                  (compiler-ir-label "inl.absorbed.0.entry"))
                 (CompilerIrBlockList.Nil)))]
           [tail-blocks : CompilerIrBlockList
             (compiler-ir-block-cons
@@ -18064,7 +19017,7 @@
                       (CompilerIrInstrList.Nil)))))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "caller_exit"
+                  (compiler-ir-label "caller_exit")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
                       (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -18098,7 +19051,10 @@
     [merged-blocks : CompilerIrBlockList (opt-function-blocks merged)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
-      [(not (opt-block-list-has-label? blocks "body__bce_fast__unroll2_guard"))
+      [(not
+          (opt-block-list-has-label?
+            blocks
+            (compiler-ir-label "body__bce_fast__unroll2_guard")))
         2]
       ;; Arm-local swap/update work is deliberately not if-converted: both
       ;; four-block unrolled diamonds remain intact.
@@ -18133,14 +19089,18 @@
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
-            "unroll_mb_check"))
+            (compiler-ir-label "unroll_mb_check")))
         11]
       [(not (opt-verify-ok? (opt-verify-function merged))) 12]
-      [(not (opt-block-list-has-label? merged-blocks "entry__ssa_entry")) 13]
       [(not
           (opt-block-list-has-label?
             merged-blocks
-            "inl.absorbed.0.body__bce_fast__unroll2_guard"))
+            (compiler-ir-label "entry__ssa_entry")))
+        13]
+      [(not
+          (opt-block-list-has-label?
+            merged-blocks
+            (compiler-ir-label "inl.absorbed.0.body__bce_fast__unroll2_guard")))
         14]
       [(not
           (= (opt-bce-mb-test-matching-blocks merged-blocks "__unroll2_0" 0) 4))
@@ -18166,7 +19126,7 @@
 (define (opt-ssa-preexisting-test-blocks [dup-phi-dst : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 5) (AstType.I64))
         (compiler-ir-instr-cons
@@ -18177,36 +19137,39 @@
             (CompilerIrValue.I64 1)
             (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 0)
+              (compiler-ir-label "then")
+              (compiler-ir-label "else"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "then"
+        (compiler-ir-label "then")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 7) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstr.Jump (compiler-ir-label "join"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "else"
+          (compiler-ir-label "else")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 11) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "join"
+            (compiler-ir-label "join")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Phi
                 4
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 3)
-                  "then"
+                  (compiler-ir-label "then")
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 3)
-                    "else"
+                    (compiler-ir-label "else")
                     (CompilerIrPhiInputList.Nil)))
                 (AstType.I64))
               (compiler-ir-instr-cons
@@ -18253,7 +19216,7 @@
 
 ;; The join block's first phi's two inputs; Nil when missing.
 (define (opt-ssa-preexisting-test-phi-inputs [blocks : CompilerIrBlockList]) : CompilerIrValueList
-  (match (opt-cfg-find-block blocks "join")
+  (match (opt-cfg-find-block blocks (compiler-ir-label "join"))
     [(OptMaybeBlock.No) (CompilerIrValueList.Nil)]
     [(OptMaybeBlock.Some block)
       (match block
@@ -18311,16 +19274,16 @@
 
 (define (opt-licm-multi-exit-header-block) : CompilerIrBlock
   (compiler-ir-block
-    "header"
+    (compiler-ir-label "header")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Phi
         3
         (compiler-ir-phi-input-cons
           (CompilerIrValue.I64 0)
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 10)
-            "next"
+            (compiler-ir-label "next")
             (CompilerIrPhiInputList.Nil)))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -18328,10 +19291,10 @@
           4
           (compiler-ir-phi-input-cons
             (CompilerIrValue.I64 0)
-            "entry"
+            (compiler-ir-label "entry")
             (compiler-ir-phi-input-cons
               (CompilerIrValue.Var 11)
-              "next"
+              (compiler-ir-label "next")
               (CompilerIrPhiInputList.Nil)))
           (AstType.I64))
         (compiler-ir-instr-cons
@@ -18342,7 +19305,10 @@
             (CompilerIrValue.Var 2)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 5)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil)))))))
 
 (define (opt-licm-multi-exit-body-tail [mode : i64]) : CompilerIrInstrList
@@ -18363,13 +19329,16 @@
           (AstType.Bool))
         (compiler-ir-instr-cons
           (if (= mode 0)
-            (CompilerIrInstr.Jump "next")
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 14) "found" "next"))
+            (CompilerIrInstr.Jump (compiler-ir-label "next"))
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 14)
+              (compiler-ir-label "found")
+              (compiler-ir-label "next")))
           (CompilerIrInstrList.Nil))))))
 
 (define (opt-licm-multi-exit-body-block [mode : i64]) : CompilerIrBlock
   (compiler-ir-block
-    "body"
+    (compiler-ir-label "body")
     (compiler-ir-instr-cons
       (CompilerIrInstr.Gep
         6
@@ -18382,7 +19351,7 @@
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 3)
             (CompilerIrValue.Var 7)
-            "licm_multi_exit_ok")
+            (compiler-ir-label "licm_multi_exit_ok"))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Gep
               8
@@ -18395,7 +19364,7 @@
 
 (define (opt-licm-multi-exit-next-block [with-store : bool]) : CompilerIrBlock
   (compiler-ir-block
-    "next"
+    (compiler-ir-label "next")
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
         10
@@ -18417,10 +19386,10 @@
               (CompilerIrValue.I64 0)
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "header")
+              (CompilerIrInstr.Jump (compiler-ir-label "header"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstr.Jump (compiler-ir-label "header"))
             (CompilerIrInstrList.Nil)))))))
 
 (define (opt-licm-multi-exit-found-block [mode : i64]) : CompilerIrBlock
@@ -18429,7 +19398,7 @@
     ;; memory work) and returns -- still a short-trip SEARCH, so the invariant
     ;; load hoist is suppressed (the put! shape: gep/load/store then return).
     (compiler-ir-block
-      "found"
+      (compiler-ir-label "found")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load 16 (CompilerIrValue.Var 12) (AstType.I64))
         (compiler-ir-instr-cons
@@ -18444,7 +19413,7 @@
     ;; break-shaped side exit: the continuation calls out to unbounded work,
     ;; marking a long-trip kernel -- the hoist stays.
     (compiler-ir-block
-      "found"
+      (compiler-ir-label "found")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Call
           16
@@ -18460,7 +19429,7 @@
   (let
     [exit-block : CompilerIrBlock
       (compiler-ir-block
-        "exit"
+        (compiler-ir-label "exit")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
@@ -18474,9 +19443,9 @@
 (define (opt-licm-multi-exit-test-blocks [mode : i64] [with-store : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "header")
+        (CompilerIrInstr.Jump (compiler-ir-label "header"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (opt-licm-multi-exit-header-block)
@@ -18511,7 +19480,7 @@
 
 (define (opt-licm-multi-exit-count-loads
   [blocks : CompilerIrBlockList]
-  [label-want : String]) : i64
+  [label-want : i64]) : i64
   (match (opt-cfg-find-block blocks label-want)
     [(OptMaybeBlock.No) (- 0 1)]
     [(OptMaybeBlock.Some block)
@@ -18549,19 +19518,55 @@
       [(not (opt-verify-ok? (opt-verify-function single))) 1]
       ;; single-exit search loop: the invariant ptr/len loads hoist; only the
       ;; varying element load stays in the body.
-      [(not (= (opt-licm-multi-exit-count-loads single-blocks "body") 1)) 2]
-      [(not (= (opt-licm-multi-exit-count-loads single-blocks "entry") 2)) 3]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              single-blocks
+              (compiler-ir-label "body"))
+            1))
+        2]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              single-blocks
+              (compiler-ir-label "entry"))
+            2))
+        3]
       ;; a RETURN-SHAPED side exit (early-return probe that does bounded
       ;; gep/load/store work then returns -- the put! shape) suppresses the
       ;; load hoist: short trips make it pure register pressure (see the
       ;; measured note at opt-licm-apply-loop).
-      [(not (= (opt-licm-multi-exit-count-loads ret-blocks "body") 3)) 4]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              ret-blocks
+              (compiler-ir-label "body"))
+            3))
+        4]
       ;; a BREAK-shaped side exit (continuation calls out to unbounded work)
       ;; marks a long-trip kernel: the hoist stays.
-      [(not (= (opt-licm-multi-exit-count-loads brk-blocks "body") 1)) 5]
-      [(not (= (opt-licm-multi-exit-count-loads brk-blocks "entry") 2)) 6]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              brk-blocks
+              (compiler-ir-label "body"))
+            1))
+        5]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              brk-blocks
+              (compiler-ir-label "entry"))
+            2))
+        6]
       ;; an in-loop store blocks the hoist entirely.
-      [(not (= (opt-licm-multi-exit-count-loads stored-blocks "body") 3)) 7]
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              stored-blocks
+              (compiler-ir-label "body"))
+            3))
+        7]
       [else 42])))
 
 ;; --- affine chain folding self-test -------------------------------------------
@@ -18596,12 +19601,15 @@
 (define (opt-affine-test-first-block [blocks : CompilerIrBlockList]) : CompilerIrBlock
   (match blocks
     [(CompilerIrBlockList.Cons block _) block]
-    [_ (compiler-ir-block "missing" (CompilerIrInstrList.Nil))]))
+    [_
+      (compiler-ir-block
+        (compiler-ir-label "missing")
+        (CompilerIrInstrList.Nil))]))
 
 (define (opt-affine-lcg-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -18653,7 +19661,7 @@
 (define (opt-affine-counter-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           1
@@ -18686,7 +19694,7 @@
 (define (opt-affine-two-use-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           2
@@ -18735,22 +19743,22 @@
 (define (opt-affine-lcg-loop-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "body")
+        (CompilerIrInstr.Jump (compiler-ir-label "body"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "body"
+        (compiler-ir-label "body")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             2
             (compiler-ir-phi-input-cons
               (CompilerIrValue.I64 0)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 5)
-                "body"
+                (compiler-ir-label "body")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -18758,10 +19766,10 @@
               3
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.I64 1)
-                "entry"
+                (compiler-ir-label "entry")
                 (compiler-ir-phi-input-cons
                   (CompilerIrValue.Var 7)
-                  "body"
+                  (compiler-ir-label "body")
                   (CompilerIrPhiInputList.Nil)))
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -18795,12 +19803,12 @@
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Branch
                         (CompilerIrValue.Var 8)
-                        "body"
-                        "exit")
+                        (compiler-ir-label "body")
+                        (compiler-ir-label "exit"))
                       (CompilerIrInstrList.Nil)))))))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "exit"
+          (compiler-ir-label "exit")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
@@ -18849,17 +19857,17 @@
 (define (opt-affine-lcg-while-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 1) (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstr.Jump (compiler-ir-label "header"))
             (CompilerIrInstrList.Nil)))))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "header"
+        (compiler-ir-label "header")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             3
@@ -18868,11 +19876,14 @@
             (CompilerIrValue.Var 0)
             (AstType.Bool))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 3) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 3)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               4
@@ -18902,11 +19913,11 @@
                       (CompilerIrValue.Var 6)
                       (AstType.I64))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Jump "header")
+                      (CompilerIrInstr.Jump (compiler-ir-label "header"))
                       (CompilerIrInstrList.Nil))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 7
@@ -18927,7 +19938,7 @@
   [fail-count : i64]) : i64
   (let
     [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
-    (match (opt-cfg-find-block blocks "body__unroll_body")
+    (match (opt-cfg-find-block blocks (compiler-ir-label "body__unroll_body"))
       [(OptMaybeBlock.No) fail-missing]
       [(OptMaybeBlock.Some block)
         (match block
@@ -19001,14 +20012,14 @@
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
         (CompilerIrInstr.Return
           (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "dead"
+        (compiler-ir-label "dead")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.I64 2)))
@@ -19031,38 +20042,41 @@
     16
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "then"
+          (compiler-ir-label "then")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "else"
+            (compiler-ir-label "else")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "join"
+              (compiler-ir-label "join")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Phi
                   3
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 1)
-                    "then"
+                    (compiler-ir-label "then")
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.Var 2)
-                      "ghost"
+                      (compiler-ir-label "ghost")
                       (CompilerIrPhiInputList.Nil)))
                   (AstType.I64))
                 (compiler-ir-instr-cons
@@ -19079,14 +20093,14 @@
     0
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "entry"
+          (compiler-ir-label "entry")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 2)))
@@ -19101,9 +20115,9 @@
     0
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "missing")
+          (CompilerIrInstr.Jump (compiler-ir-label "missing"))
           (CompilerIrInstrList.Nil)))
       (CompilerIrBlockList.Nil))))
 
@@ -19115,7 +20129,7 @@
     2
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 1) (AstType.I64))
           (compiler-ir-instr-cons
@@ -19134,7 +20148,7 @@
     vars
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov var (CompilerIrValue.I64 1) (AstType.I64))
           (compiler-ir-instr-cons
@@ -19151,7 +20165,7 @@
     0
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
@@ -19166,27 +20180,30 @@
     16
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           (CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "then"
+          (compiler-ir-label "then")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "else"
+            (compiler-ir-label "else")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "join"
+              (compiler-ir-label "join")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -19199,15 +20216,24 @@
     [single-loops : OptNaturalLoopList
       (opt-cfg-natural-loops (opt-ssa-loop-blocks))]
     [single : OptMaybeNaturalLoop
-      (opt-natural-loop-find single-loops "loop" "body")]
+      (opt-natural-loop-find
+        single-loops
+        (compiler-ir-label "loop")
+        (compiler-ir-label "body"))]
     [nested-index : OptCfgIndex
       (opt-cfg-index-build (opt-natural-loop-nested-blocks))]
     [nested-loops : OptNaturalLoopList
       (opt-cfg-natural-loops (opt-natural-loop-nested-blocks))]
     [inner : OptMaybeNaturalLoop
-      (opt-natural-loop-find nested-loops "inner" "inner-body")]
+      (opt-natural-loop-find
+        nested-loops
+        (compiler-ir-label "inner")
+        (compiler-ir-label "inner-body"))]
     [outer : OptMaybeNaturalLoop
-      (opt-natural-loop-find nested-loops "outer" "outer-latch")]
+      (opt-natural-loop-find
+        nested-loops
+        (compiler-ir-label "outer")
+        (compiler-ir-label "outer-latch"))]
     [diamond-loops : OptNaturalLoopList
       (opt-cfg-natural-loops (opt-ssa-diamond-blocks))]
     [irreducible-loops : OptNaturalLoopList
@@ -19215,15 +20241,24 @@
     [no-preheader-loops : OptNaturalLoopList
       (opt-cfg-natural-loops (opt-natural-loop-no-preheader-blocks))]
     [no-preheader : OptMaybeNaturalLoop
-      (opt-natural-loop-find no-preheader-loops "loop" "body")]
+      (opt-natural-loop-find
+        no-preheader-loops
+        (compiler-ir-label "loop")
+        (compiler-ir-label "body"))]
     [multi-index : OptCfgIndex
       (opt-cfg-index-build (opt-natural-loop-multi-backedge-blocks))]
     [multi-loops : OptNaturalLoopList
       (opt-cfg-natural-loops (opt-natural-loop-multi-backedge-blocks))]
     [multi-left : OptMaybeNaturalLoop
-      (opt-natural-loop-find multi-loops "loop" "left")]
+      (opt-natural-loop-find
+        multi-loops
+        (compiler-ir-label "loop")
+        (compiler-ir-label "left"))]
     [multi-right : OptMaybeNaturalLoop
-      (opt-natural-loop-find multi-loops "loop" "right")]
+      (opt-natural-loop-find
+        multi-loops
+        (compiler-ir-label "loop")
+        (compiler-ir-label "right"))]
     [preheadered-single-blocks : CompilerIrBlockList
       (opt-loop-preheaders-blocks (opt-ssa-loop-blocks))]
     [preheadered-nested-blocks : CompilerIrBlockList
@@ -19235,7 +20270,10 @@
     [synth-index : OptCfgIndex (opt-cfg-index-build synth-blocks)]
     [synth-loops : OptNaturalLoopList (opt-cfg-natural-loops synth-blocks)]
     [synth-loop : OptMaybeNaturalLoop
-      (opt-natural-loop-find synth-loops "loop" "body")]
+      (opt-natural-loop-find
+        synth-loops
+        (compiler-ir-label "loop")
+        (compiler-ir-label "body"))]
     [preheadered-induction : CompilerIrFunction
       (opt-loop-preheaders-function
         (opt-induction-test-function (opt-induction-no-preheader-blocks)))]
@@ -19248,20 +20286,64 @@
     (cond
       [(not (= (opt-natural-loop-list-count single-loops) 1)) 1]
       [(not (= (opt-natural-loop-maybe-body-count single) 2)) 2]
-      [(not (opt-natural-loop-maybe-body-contains? single "loop")) 3]
-      [(not (opt-natural-loop-maybe-body-contains? single "body")) 4]
-      [(not (opt-natural-loop-maybe-preheader-label? single "entry")) 5]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            single
+            (compiler-ir-label "loop")))
+        3]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            single
+            (compiler-ir-label "body")))
+        4]
+      [(not
+          (opt-natural-loop-maybe-preheader-label?
+            single
+            (compiler-ir-label "entry")))
+        5]
       [(not (= (opt-natural-loop-list-count nested-loops) 2)) 6]
       [(not (= (opt-natural-loop-maybe-body-count inner) 2)) 7]
-      [(not (opt-natural-loop-maybe-body-contains? inner "inner")) 8]
-      [(not (opt-natural-loop-maybe-body-contains? inner "inner-body")) 9]
-      [(not (opt-natural-loop-maybe-preheader-label? inner "outer")) 10]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            inner
+            (compiler-ir-label "inner")))
+        8]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            inner
+            (compiler-ir-label "inner-body")))
+        9]
+      [(not
+          (opt-natural-loop-maybe-preheader-label?
+            inner
+            (compiler-ir-label "outer")))
+        10]
       [(not (= (opt-natural-loop-maybe-body-count outer) 4)) 11]
-      [(not (opt-natural-loop-maybe-body-contains? outer "outer")) 12]
-      [(not (opt-natural-loop-maybe-body-contains? outer "inner")) 13]
-      [(not (opt-natural-loop-maybe-body-contains? outer "inner-body")) 14]
-      [(not (opt-natural-loop-maybe-body-contains? outer "outer-latch")) 15]
-      [(not (opt-natural-loop-maybe-preheader-label? outer "entry")) 16]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            outer
+            (compiler-ir-label "outer")))
+        12]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            outer
+            (compiler-ir-label "inner")))
+        13]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            outer
+            (compiler-ir-label "inner-body")))
+        14]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            outer
+            (compiler-ir-label "outer-latch")))
+        15]
+      [(not
+          (opt-natural-loop-maybe-preheader-label?
+            outer
+            (compiler-ir-label "entry")))
+        16]
       [(not (= (opt-natural-loop-list-count diamond-loops) 0)) 17]
       [(not (= (opt-natural-loop-list-count irreducible-loops) 0)) 18]
       [(not (= (opt-natural-loop-list-count no-preheader-loops) 1)) 19]
@@ -19269,50 +20351,119 @@
       [(not (opt-natural-loop-maybe-no-preheader? no-preheader)) 21]
       [(not (= (opt-natural-loop-list-count multi-loops) 2)) 22]
       [(not (= (opt-natural-loop-maybe-body-count multi-left) 2)) 23]
-      [(not (opt-natural-loop-maybe-body-contains? multi-left "left")) 24]
-      [(not (opt-natural-loop-maybe-body-contains? multi-left "loop")) 25]
-      [(not (= (opt-natural-loop-maybe-body-count multi-right) 2)) 26]
-      [(not (opt-natural-loop-maybe-body-contains? multi-right "right")) 27]
-      [(not (opt-natural-loop-maybe-body-contains? multi-right "loop")) 28]
-      [(not (= (opt-natural-loop-maybe-body-block-count single) 2)) 29]
-      [(not (opt-natural-loop-maybe-body-block-label-at? single 0 "loop")) 30]
-      [(not (opt-natural-loop-maybe-body-block-label-at? single 1 "body")) 31]
       [(not
-          (opt-natural-loop-maybe-body-contains-id? single-index single "loop"))
+          (opt-natural-loop-maybe-body-contains?
+            multi-left
+            (compiler-ir-label "left")))
+        24]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            multi-left
+            (compiler-ir-label "loop")))
+        25]
+      [(not (= (opt-natural-loop-maybe-body-count multi-right) 2)) 26]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            multi-right
+            (compiler-ir-label "right")))
+        27]
+      [(not
+          (opt-natural-loop-maybe-body-contains?
+            multi-right
+            (compiler-ir-label "loop")))
+        28]
+      [(not (= (opt-natural-loop-maybe-body-block-count single) 2)) 29]
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            single
+            0
+            (compiler-ir-label "loop")))
+        30]
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            single
+            1
+            (compiler-ir-label "body")))
+        31]
+      [(not
+          (opt-natural-loop-maybe-body-contains-id?
+            single-index
+            single
+            (compiler-ir-label "loop")))
         32]
       [(not
-          (opt-natural-loop-maybe-body-contains-id? single-index single "body"))
+          (opt-natural-loop-maybe-body-contains-id?
+            single-index
+            single
+            (compiler-ir-label "body")))
         33]
-      [(opt-natural-loop-maybe-body-contains-id? single-index single "entry")
+      [(opt-natural-loop-maybe-body-contains-id?
+          single-index
+          single
+          (compiler-ir-label "entry"))
         34]
       [(not (= (opt-natural-loop-maybe-body-block-count outer) 4)) 35]
-      [(not (opt-natural-loop-maybe-body-block-label-at? outer 0 "outer")) 36]
-      [(not (opt-natural-loop-maybe-body-block-label-at? outer 1 "inner")) 37]
-      [(not (opt-natural-loop-maybe-body-block-label-at? outer 2 "inner-body"))
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            outer
+            0
+            (compiler-ir-label "outer")))
+        36]
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            outer
+            1
+            (compiler-ir-label "inner")))
+        37]
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            outer
+            2
+            (compiler-ir-label "inner-body")))
         38]
-      [(not (opt-natural-loop-maybe-body-block-label-at? outer 3 "outer-latch"))
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            outer
+            3
+            (compiler-ir-label "outer-latch")))
         39]
       [(not
           (opt-natural-loop-maybe-body-contains-id?
             nested-index
             outer
-            "outer-latch"))
+            (compiler-ir-label "outer-latch")))
         40]
       [(not (= (opt-natural-loop-maybe-body-block-count multi-left) 2)) 41]
-      [(not (opt-natural-loop-maybe-body-block-label-at? multi-left 0 "loop"))
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            multi-left
+            0
+            (compiler-ir-label "loop")))
         43]
-      [(not (opt-natural-loop-maybe-body-block-label-at? multi-left 1 "left"))
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            multi-left
+            1
+            (compiler-ir-label "left")))
         44]
       [(not (= (opt-natural-loop-maybe-body-block-count multi-right) 2)) 45]
-      [(not (opt-natural-loop-maybe-body-block-label-at? multi-right 0 "loop"))
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            multi-right
+            0
+            (compiler-ir-label "loop")))
         46]
-      [(not (opt-natural-loop-maybe-body-block-label-at? multi-right 1 "right"))
+      [(not
+          (opt-natural-loop-maybe-body-block-label-at?
+            multi-right
+            1
+            (compiler-ir-label "right")))
         47]
       [(not
           (opt-natural-loop-maybe-body-contains-id?
             multi-index
             multi-right
-            "right"))
+            (compiler-ir-label "right")))
         48]
       [(not (opt-block-list-eq preheadered-single-blocks (opt-ssa-loop-blocks)))
         49]
@@ -19327,23 +20478,31 @@
             (opt-natural-loop-multi-backedge-blocks)))
         51]
       [(not (= (compiler-ir-block-list-count synth-blocks) 7)) 52]
-      [(not (opt-block-list-has-label? synth-blocks "loop__preheader")) 53]
       [(not
-          (opt-natural-loop-maybe-preheader-label? synth-loop "loop__preheader"))
+          (opt-block-list-has-label?
+            synth-blocks
+            (compiler-ir-label "loop__preheader")))
+        53]
+      [(not
+          (opt-natural-loop-maybe-preheader-label?
+            synth-loop
+            (compiler-ir-label "loop__preheader")))
         54]
       [(not
           (opt-label-contains
-            (opt-cfg-index-successors synth-index "pre-one")
-            "loop__preheader"))
+            (opt-cfg-index-successors synth-index (compiler-ir-label "pre-one"))
+            (compiler-ir-label "loop__preheader")))
         55]
       [(opt-label-contains
-          (opt-cfg-index-successors synth-index "pre-one")
-          "loop")
+          (opt-cfg-index-successors synth-index (compiler-ir-label "pre-one"))
+          (compiler-ir-label "loop"))
         56]
       [(not
           (opt-label-contains
-            (opt-cfg-index-successors synth-index "loop__preheader")
-            "loop"))
+            (opt-cfg-index-successors
+              synth-index
+              (compiler-ir-label "loop__preheader"))
+            (compiler-ir-label "loop")))
         57]
       [(not
           (opt-verify-ok?
@@ -19353,11 +20512,13 @@
       [(not
           (opt-block-list-has-label?
             preheadered-induction-blocks
-            "loop__preheader"))
+            (compiler-ir-label "loop__preheader")))
         60]
       [(not
           (=
-            (opt-count-mul-label-blocks induction-after-preheader-blocks "body")
+            (opt-count-mul-label-blocks
+              induction-after-preheader-blocks
+              (compiler-ir-label "body"))
             0))
         61]
       [else 42])))
@@ -19380,22 +20541,37 @@
     [with-phi : CompilerIrBlockList (opt-ssa-loop-blocks)]
     (cond
       [(not (= (compiler-ir-block-list-count rotated) 3)) 1]
-      [(opt-block-list-has-label? rotated "loop") 2]
-      [(not (opt-loop-rotation-successors? rotated "entry" "body" "exit")) 3]
-      [(not (opt-loop-rotation-successors? rotated "body" "body" "exit")) 4]
-      [(not (= (opt-count-jump-to-blocks rotated "loop") 0)) 5]
+      [(opt-block-list-has-label? rotated (compiler-ir-label "loop")) 2]
+      [(not
+          (opt-loop-rotation-successors?
+            rotated
+            (compiler-ir-label "entry")
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit")))
+        3]
+      [(not
+          (opt-loop-rotation-successors?
+            rotated
+            (compiler-ir-label "body")
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit")))
+        4]
+      [(not (= (opt-count-jump-to-blocks rotated (compiler-ir-label "loop")) 0))
+        5]
       [(not (= (opt-count-branches-blocks rotated) 2)) 6]
-      [(opt-block-list-has-label? false-body-rotated "loop") 7]
+      [(opt-block-list-has-label? false-body-rotated (compiler-ir-label "loop"))
+        7]
       [(not
           (opt-loop-rotation-successors?
             false-body-rotated
-            "entry"
-            "body"
-            "exit"))
+            (compiler-ir-label "entry")
+            (compiler-ir-label "body")
+            (compiler-ir-label "exit")))
         8]
       [(not (opt-verify-ok? (opt-verify-function ssa))) 9]
       [(not (> (opt-count-phi-blocks ssa-blocks) 0)) 10]
-      [(opt-block-list-has-label? optimized-blocks "loop") 11]
+      [(opt-block-list-has-label? optimized-blocks (compiler-ir-label "loop"))
+        11]
       [(not (opt-cfg-successor-targets-known? optimized-blocks)) 12]
       [(not
           (opt-block-list-eq
@@ -19485,7 +20661,8 @@
                           (CompilerIrValue.Var 17)
                           (AstType.I64))
                         (compiler-ir-instr-cons
-                          (CompilerIrInstr.Jump "inner_head")
+                          (CompilerIrInstr.Jump
+                            (compiler-ir-label "inner_head"))
                           (CompilerIrInstrList.Nil))))))))))))))
 
 (define (opt-ssa-nested-loop-function) : CompilerIrFunction
@@ -19496,17 +20673,17 @@
     32
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "outer_head")
+              (CompilerIrInstr.Jump (compiler-ir-label "outer_head"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "outer_head"
+          (compiler-ir-label "outer_head")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               6
@@ -19517,20 +20694,20 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Var 6)
-                "outer_body"
-                "exit")
+                (compiler-ir-label "outer_body")
+                (compiler-ir-label "exit"))
               (CompilerIrInstrList.Nil))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "outer_body"
+            (compiler-ir-label "outer_body")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "inner_head")
+                (CompilerIrInstr.Jump (compiler-ir-label "inner_head"))
                 (CompilerIrInstrList.Nil))))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "inner_head"
+              (compiler-ir-label "inner_head")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
                   7
@@ -19541,14 +20718,16 @@
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Branch
                     (CompilerIrValue.Var 7)
-                    "inner_body"
-                    "outer_latch")
+                    (compiler-ir-label "inner_body")
+                    (compiler-ir-label "outer_latch"))
                   (CompilerIrInstrList.Nil))))
             (compiler-ir-block-cons
-              (compiler-ir-block "inner_body" (opt-ssa-nested-loop-inner-body))
+              (compiler-ir-block
+                (compiler-ir-label "inner_body")
+                (opt-ssa-nested-loop-inner-body))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "outer_latch"
+                  (compiler-ir-label "outer_latch")
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.BinOp
                       18
@@ -19562,11 +20741,11 @@
                         (CompilerIrValue.Var 18)
                         (AstType.I64))
                       (compiler-ir-instr-cons
-                        (CompilerIrInstr.Jump "outer_head")
+                        (CompilerIrInstr.Jump (compiler-ir-label "outer_head"))
                         (CompilerIrInstrList.Nil)))))
                 (compiler-ir-block-cons
                   (compiler-ir-block
-                    "exit"
+                    (compiler-ir-label "exit")
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Return
                         (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
@@ -19581,22 +20760,22 @@
 (define (opt-rotate-ssa-test-blocks [side-exit : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "header")
+        (CompilerIrInstr.Jump (compiler-ir-label "header"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "header"
+        (compiler-ir-label "header")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Phi
             1
             (compiler-ir-phi-input-cons
               (CompilerIrValue.I64 0)
-              "entry"
+              (compiler-ir-label "entry")
               (compiler-ir-phi-input-cons
                 (CompilerIrValue.Var 2)
-                "latch"
+                (compiler-ir-label "latch")
                 (CompilerIrPhiInputList.Nil)))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -19607,11 +20786,14 @@
               (CompilerIrValue.Var 0)
               (AstType.Bool))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 3) "body" "exit")
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Var 3)
+                (compiler-ir-label "body")
+                (compiler-ir-label "exit"))
               (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               2
@@ -19623,21 +20805,21 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Branch
                   (CompilerIrValue.Bool true)
-                  "latch"
-                  "exit")
+                  (compiler-ir-label "latch")
+                  (compiler-ir-label "exit"))
                 (CompilerIrInstrList.Nil))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "latch")
+                (CompilerIrInstr.Jump (compiler-ir-label "latch"))
                 (CompilerIrInstrList.Nil)))))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "latch"
+            (compiler-ir-label "latch")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "header")
+              (CompilerIrInstr.Jump (compiler-ir-label "header"))
               (CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -19665,7 +20847,7 @@
 
 (define (opt-rotate-ssa-test-starts-with-phi?
   [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+  [label : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -19679,8 +20861,8 @@
 
 (define (opt-rotate-ssa-test-single-jump-to?
   [blocks : CompilerIrBlockList]
-  [label : String]
-  [target : String]) : bool
+  [label : i64]
+  [target : i64]) : bool
   (match (opt-cfg-find-block blocks label)
     [(OptMaybeBlock.No) false]
     [(OptMaybeBlock.Some block)
@@ -19688,8 +20870,7 @@
         [(CompilerIrBlock.Block _ instrs)
           (if (= (compiler-ir-instr-seq-count instrs) 1)
             (match (compiler-ir-instr-seq-ref instrs 0)
-              [(CompilerIrInstr.Jump jump-target)
-                (string.eq jump-target target)]
+              [(CompilerIrInstr.Jump jump-target) (= jump-target target)]
               [_ false])
             false)])]))
 
@@ -19701,22 +20882,35 @@
     [side-exit-blocks : CompilerIrBlockList (opt-function-blocks side-exit)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function rotated))) 1]
-      [(opt-block-list-has-label? rotated-blocks "header") 2]
+      [(opt-block-list-has-label? rotated-blocks (compiler-ir-label "header"))
+        2]
       [(not (= (compiler-ir-block-list-count rotated-blocks) 5)) 3]
-      [(not (opt-rotate-ssa-test-starts-with-phi? rotated-blocks "exit")) 4]
-      [(not (opt-rotate-ssa-test-starts-with-phi? rotated-blocks "body")) 5]
+      [(not
+          (opt-rotate-ssa-test-starts-with-phi?
+            rotated-blocks
+            (compiler-ir-label "exit")))
+        4]
+      [(not
+          (opt-rotate-ssa-test-starts-with-phi?
+            rotated-blocks
+            (compiler-ir-label "body")))
+        5]
       [(not
           (opt-rotate-ssa-test-single-jump-to?
             rotated-blocks
-            "header__rotate_land"
-            "body"))
+            (compiler-ir-label "header__rotate_land")
+            (compiler-ir-label "body")))
         6]
       [(not (> (opt-function-frame rotated) 4)) 7]
       [(not
           (opt-block-list-eq side-exit-blocks (opt-rotate-ssa-test-blocks true)))
         8]
       [(not (= (compiler-ir-block-list-count side-exit-blocks) 5)) 9]
-      [(not (opt-block-list-has-label? side-exit-blocks "header")) 10]
+      [(not
+          (opt-block-list-has-label?
+            side-exit-blocks
+            (compiler-ir-label "header")))
+        10]
       [else 42])))
 
 (define (compiler-optimize-ssa-self-test) : i64
@@ -19725,14 +20919,14 @@
     [diamond-index : OptCfgIndex (opt-cfg-index-build diamond-blocks)]
     [diamond-doms : OptDomInfo (opt-cfg-dominators diamond-blocks)]
     [then-frontier : OptLabelSet
-      (opt-cfg-dominance-frontier diamond-blocks "then")]
+      (opt-cfg-dominance-frontier diamond-blocks (compiler-ir-label "then"))]
     [else-frontier : OptLabelSet
-      (opt-cfg-dominance-frontier diamond-blocks "else")]
+      (opt-cfg-dominance-frontier diamond-blocks (compiler-ir-label "else"))]
     [loop-blocks : CompilerIrBlockList (opt-ssa-loop-blocks)]
     [loop-index : OptCfgIndex (opt-cfg-index-build loop-blocks)]
     [loop-doms : OptDomInfo (opt-cfg-dominators loop-blocks)]
     [loop-frontier : OptLabelSet
-      (opt-cfg-dominance-frontier loop-blocks "loop")]
+      (opt-cfg-dominance-frontier loop-blocks (compiler-ir-label "loop"))]
     [unreachable-index : OptCfgIndex
       (opt-cfg-index-build (opt-ssa-unreachable-blocks))]
     [unreachable-order : CompilerIrBlockList
@@ -19774,35 +20968,72 @@
       (opt-function-blocks pipeline-nested)]
     (cond
       [(not
-          (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
+          (=
+            (opt-label-count
+              (opt-cfg-predecessors diamond-blocks (compiler-ir-label "join")))
+            2))
         1]
       [(not (= (opt-cfg-index-block-count diamond-index) 4)) 2]
       [(not (opt-verify-ok? (opt-verify-function (opt-ssa-diamond-function))))
         3]
       [(not
           (opt-label-set-eq?
-            (opt-cfg-index-predecessors diamond-index "join")
-            (opt-cfg-predecessors-scan diamond-blocks "join")))
+            (opt-cfg-index-predecessors
+              diamond-index
+              (compiler-ir-label "join"))
+            (opt-cfg-predecessors-scan
+              diamond-blocks
+              (compiler-ir-label "join"))))
         4]
       [(not
           (opt-label-set-eq?
-            (opt-cfg-index-successors diamond-index "entry")
-            (opt-cfg-blocks-successors-scan diamond-blocks "entry")))
+            (opt-cfg-index-successors diamond-index (compiler-ir-label "entry"))
+            (opt-cfg-blocks-successors-scan
+              diamond-blocks
+              (compiler-ir-label "entry"))))
         5]
       [(not (= (struct-get unreachable-index reach-count) 1)) 6]
-      [(not (opt-cfg-index-reachable? unreachable-index "entry")) 7]
-      [(opt-cfg-index-reachable? unreachable-index "dead") 8]
-      [(not (string.eq (opt-cfg-index-rpo-label unreachable-index 0) "entry"))
+      [(not
+          (opt-cfg-index-reachable?
+            unreachable-index
+            (compiler-ir-label "entry")))
+        7]
+      [(opt-cfg-index-reachable? unreachable-index (compiler-ir-label "dead"))
+        8]
+      [(not
+          (=
+            (opt-cfg-index-rpo-label unreachable-index 0)
+            (compiler-ir-label "entry")))
         9]
-      [(not (string.eq (opt-cfg-index-rpo-label loop-index 0) "entry")) 10]
-      [(not (opt-dom-dominates? diamond-doms "entry" "join")) 11]
-      [(opt-dom-dominates? diamond-doms "then" "join") 12]
-      [(not (opt-label-contains then-frontier "join")) 13]
-      [(not (opt-label-contains else-frontier "join")) 14]
-      [(not (opt-dom-dominates? loop-doms "loop" "body")) 15]
-      [(not (opt-label-contains loop-frontier "loop")) 16]
+      [(not
+          (= (opt-cfg-index-rpo-label loop-index 0) (compiler-ir-label "entry")))
+        10]
+      [(not
+          (opt-dom-dominates?
+            diamond-doms
+            (compiler-ir-label "entry")
+            (compiler-ir-label "join")))
+        11]
+      [(opt-dom-dominates?
+          diamond-doms
+          (compiler-ir-label "then")
+          (compiler-ir-label "join"))
+        12]
+      [(not (opt-label-contains then-frontier (compiler-ir-label "join"))) 13]
+      [(not (opt-label-contains else-frontier (compiler-ir-label "join"))) 14]
+      [(not
+          (opt-dom-dominates?
+            loop-doms
+            (compiler-ir-label "loop")
+            (compiler-ir-label "body")))
+        15]
+      [(not (opt-label-contains loop-frontier (compiler-ir-label "loop"))) 16]
       [(not (= (compiler-ir-block-list-count unreachable-order) 1)) 17]
-      [(not (opt-block-list-has-label? unreachable-order "entry")) 18]
+      [(not
+          (opt-block-list-has-label?
+            unreachable-order
+            (compiler-ir-label "entry")))
+        18]
       [(not (opt-verify-ok? (opt-verify-function (opt-ssa-loop-function)))) 19]
       [(not
           (opt-verify-ok? (opt-verify-function (opt-ssa-unreachable-function))))
@@ -19877,7 +21108,9 @@
       [(not (opt-verify-ok? (opt-verify-function pipeline-nested))) 56]
       [(not
           (=
-            (opt-count-load-label-blocks pipeline-nested-blocks "inner_body")
+            (opt-count-load-label-blocks
+              pipeline-nested-blocks
+              (compiler-ir-label "inner_body"))
             1))
         57]
       [(not
@@ -20037,30 +21270,47 @@
         [(OptBoolBranchFunctionResult.Result _ changed) changed])]
     (begin
       (unless (= (compiler-ir-block-list-count constant-if) 2) (return 1))
-      (unless (not (opt-block-list-has-label? constant-if "else")) (return 2))
-      (unless (= (opt-count-jump-to-blocks constant-if "then") 1) (return 3))
+      (unless
+        (not (opt-block-list-has-label? constant-if (compiler-ir-label "else")))
+        (return 2))
+      (unless
+        (= (opt-count-jump-to-blocks constant-if (compiler-ir-label "then")) 1)
+        (return 3))
       (unless (= (opt-count-branches-blocks constant-if) 0) (return 4))
       (unless (= (compiler-ir-block-list-count loop-guard) 3) (return 5))
-      (unless (not (opt-block-list-has-label? loop-guard "body")) (return 6))
-      (unless (= (opt-count-jump-to-blocks loop-guard "exit") 1) (return 7))
+      (unless
+        (not (opt-block-list-has-label? loop-guard (compiler-ir-label "body")))
+        (return 6))
+      (unless
+        (= (opt-count-jump-to-blocks loop-guard (compiler-ir-label "exit")) 1)
+        (return 7))
       (unless (= (compiler-ir-block-list-count phi-blocks) 3) (return 8))
-      (unless (not (opt-block-list-has-label? phi-blocks "else")) (return 9))
+      (unless
+        (not (opt-block-list-has-label? phi-blocks (compiler-ir-label "else")))
+        (return 9))
       (unless (= (opt-count-phi-blocks phi-blocks) 0) (return 10))
       (unless (= (opt-count-mov-dst-blocks phi-cfg 3) 1) (return 11))
       (unless (= (compiler-ir-block-list-count trap-blocks) 3) (return 12))
-      (unless (opt-block-list-has-label? trap-blocks "trap") (return 13))
+      (unless
+        (opt-block-list-has-label? trap-blocks (compiler-ir-label "trap"))
+        (return 13))
       (unless (= (opt-count-branches-blocks trap-blocks) 1) (return 14))
       (unless (opt-cfg-fallthrough-prune-ok? fallthrough-blocks) (return 15))
       (unless (opt-cfg-switch-successors-ok?) (return 16))
       (unless (opt-cfg-index-numbering-ok?) (return 40))
       (unless bool-branch-changed (return 17))
       (unless
-        (not (opt-block-list-has-label? bool-branch-blocks "merge"))
+        (not
+          (opt-block-list-has-label?
+            bool-branch-blocks
+            (compiler-ir-label "merge")))
         (return 18))
       (unless (= (opt-count-branches-blocks bool-branch-blocks) 2) (return 19))
       (unless (not call-branch-changed) (return 20))
       (unless
-        (opt-block-list-has-label? call-branch-blocks "merge")
+        (opt-block-list-has-label?
+          call-branch-blocks
+          (compiler-ir-label "merge"))
         (return 21))
       (unless (= (opt-count-branches-blocks call-branch-blocks) 2) (return 22))
       (unless
@@ -20075,7 +21325,9 @@
         (return 24))
       (unless (not reused-branch-changed) (return 25))
       (unless
-        (opt-block-list-has-label? reused-branch-blocks "merge")
+        (opt-block-list-has-label?
+          reused-branch-blocks
+          (compiler-ir-label "merge"))
         (return 26))
       (unless
         (opt-verify-ok?
@@ -20090,26 +21342,37 @@
         (return 30))
       (unless constant-phi-changed (return 31))
       (unless
-        (not (opt-block-list-has-label? constant-phi-blocks "merge"))
+        (not
+          (opt-block-list-has-label?
+            constant-phi-blocks
+            (compiler-ir-label "merge")))
         (return 32))
       (unless
-        (= (opt-count-jump-to-blocks constant-phi-blocks "yes") 2)
+        (=
+          (opt-count-jump-to-blocks
+            constant-phi-blocks
+            (compiler-ir-label "yes"))
+          2)
         (return 33))
       (unless
-        (= (opt-count-jump-to-blocks constant-phi-blocks "no") 1)
+        (=
+          (opt-count-jump-to-blocks
+            constant-phi-blocks
+            (compiler-ir-label "no"))
+          1)
         (return 34))
       (unless (= (opt-count-phi-blocks constant-phi-blocks) 1) (return 35))
       (unless
         (opt-bool-branch-first-phi-has-label?
           constant-phi-blocks
-          "yes"
-          "true-left")
+          (compiler-ir-label "yes")
+          (compiler-ir-label "true-left"))
         (return 36))
       (unless
         (opt-bool-branch-first-phi-has-label?
           constant-phi-blocks
-          "yes"
-          "true-right")
+          (compiler-ir-label "yes")
+          (compiler-ir-label "true-right"))
         (return 37))
       (unless
         (opt-verify-ok? (opt-verify-function constant-phi-optimized))
@@ -20118,7 +21381,7 @@
       (unless
         (opt-block-list-has-label?
           (opt-function-blocks nonconstant-phi-optimized)
-          "merge")
+          (compiler-ir-label "merge"))
         (return 40))
       (unless
         (opt-function-eq nonconstant-phi-function nonconstant-phi-optimized)
@@ -20128,7 +21391,7 @@
         (and
           (opt-block-list-has-label?
             (opt-function-blocks multi-phi-optimized)
-            "merge")
+            (compiler-ir-label "merge"))
           (= (opt-count-phi-blocks (opt-function-blocks multi-phi-optimized)) 2)
           (opt-function-eq multi-phi-function multi-phi-optimized))
         (return 43))
@@ -20145,34 +21408,39 @@
         (return 49))
       (unless
         (and
-          (opt-bool-branch-chain-compare-branch-block? and-chain-blocks "entry")
           (opt-bool-branch-chain-compare-branch-block?
             and-chain-blocks
-            "entry__bool_and.0")
+            (compiler-ir-label "entry"))
           (opt-bool-branch-chain-compare-branch-block?
             and-chain-blocks
-            "entry__bool_and.1"))
+            (compiler-ir-label "entry__bool_and.0"))
+          (opt-bool-branch-chain-compare-branch-block?
+            and-chain-blocks
+            (compiler-ir-label "entry__bool_and.1")))
         (return 50))
       (unless
         (and
           (opt-bool-branch-first-phi-has-label?
             and-chain-blocks
-            "yes"
-            "entry__bool_and.1")
+            (compiler-ir-label "yes")
+            (compiler-ir-label "entry__bool_and.1"))
           (not
             (opt-bool-branch-first-phi-has-label?
               and-chain-blocks
-              "yes"
-              "entry"))
-          (opt-bool-branch-first-phi-has-label? and-chain-blocks "no" "entry")
+              (compiler-ir-label "yes")
+              (compiler-ir-label "entry")))
           (opt-bool-branch-first-phi-has-label?
             and-chain-blocks
-            "no"
-            "entry__bool_and.0")
+            (compiler-ir-label "no")
+            (compiler-ir-label "entry"))
           (opt-bool-branch-first-phi-has-label?
             and-chain-blocks
-            "no"
-            "entry__bool_and.1"))
+            (compiler-ir-label "no")
+            (compiler-ir-label "entry__bool_and.0"))
+          (opt-bool-branch-first-phi-has-label?
+            and-chain-blocks
+            (compiler-ir-label "no")
+            (compiler-ir-label "entry__bool_and.1")))
         (return 51))
       (unless
         (opt-verify-ok? (opt-verify-function and-chain-function))
@@ -20262,27 +21530,30 @@
 (define (opt-scratch-loop-candidate-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "loop")
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "loop"
+        (compiler-ir-label "loop")
         (compiler-ir-instr-cons
           (opt-scratch-test-alloc)
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "body" "exit")
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Bool true)
+              (compiler-ir-label "body")
+              (compiler-ir-label "exit"))
             CompilerIrInstrList.Nil)))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "body"
+          (compiler-ir-label "body")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstr.Jump (compiler-ir-label "loop"))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "exit"
+            (compiler-ir-label "exit")
             (compiler-ir-instr-cons
               (opt-scratch-test-return-zero)
               CompilerIrInstrList.Nil))
@@ -20309,14 +21580,17 @@
 
 (define (opt-scratch-reset-header-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "body" "exit")
+    (CompilerIrInstr.Branch
+      (CompilerIrValue.Bool true)
+      (compiler-ir-label "body")
+      (compiler-ir-label "exit"))
     CompilerIrInstrList.Nil))
 
 (define (opt-scratch-reset-body-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (opt-scratch-test-ir-alloc)
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Jump "loop")
+      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
       CompilerIrInstrList.Nil)))
 
 (define (opt-scratch-reset-unknown-alloc) : CompilerIrInstr
@@ -20330,29 +21604,31 @@
   (compiler-ir-instr-cons
     (opt-scratch-reset-unknown-alloc)
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Jump "loop")
+      (CompilerIrInstr.Jump (compiler-ir-label "loop"))
       CompilerIrInstrList.Nil)))
 
 (define (opt-scratch-reset-blocks-with-body [body-instrs : CompilerIrInstrList]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "preheader")
+        (CompilerIrInstr.Jump (compiler-ir-label "preheader"))
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "preheader"
+        (compiler-ir-label "preheader")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
-        (compiler-ir-block "loop" (opt-scratch-reset-header-instrs))
+        (compiler-ir-block
+          (compiler-ir-label "loop")
+          (opt-scratch-reset-header-instrs))
         (compiler-ir-block-cons
-          (compiler-ir-block "body" body-instrs)
+          (compiler-ir-block (compiler-ir-label "body") body-instrs)
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (opt-scratch-test-return-zero)
                 CompilerIrInstrList.Nil))
@@ -20393,37 +21669,37 @@
           (CompilerIrCallArgs.Nil)
           (AstType.Unit))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           CompilerIrInstrList.Nil)))))
 
 (define (opt-scratch-reset-header-alloc-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "preheader")
+        (CompilerIrInstr.Jump (compiler-ir-label "preheader"))
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "preheader"
+        (compiler-ir-label "preheader")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "loop"
+          (compiler-ir-label "loop")
           (compiler-ir-instr-cons
             (opt-scratch-test-ir-alloc)
             (opt-scratch-reset-header-instrs)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "body"
+            (compiler-ir-label "body")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "exit"
+              (compiler-ir-label "exit")
               (compiler-ir-instr-cons
                 (opt-scratch-test-return-zero)
                 CompilerIrInstrList.Nil))
@@ -20432,44 +21708,46 @@
 (define (opt-scratch-reset-early-exit-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
-      "entry"
+      (compiler-ir-label "entry")
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "preheader")
+        (CompilerIrInstr.Jump (compiler-ir-label "preheader"))
         CompilerIrInstrList.Nil))
     (compiler-ir-block-cons
       (compiler-ir-block
-        "preheader"
+        (compiler-ir-label "preheader")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Jump "loop")
+          (CompilerIrInstr.Jump (compiler-ir-label "loop"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
-        (compiler-ir-block "loop" (opt-scratch-reset-header-instrs))
+        (compiler-ir-block
+          (compiler-ir-label "loop")
+          (opt-scratch-reset-header-instrs))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "body"
+            (compiler-ir-label "body")
             (compiler-ir-instr-cons
               (opt-scratch-test-ir-alloc)
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Branch
                   (CompilerIrValue.Bool true)
-                  "ret"
-                  "latch")
+                  (compiler-ir-label "ret")
+                  (compiler-ir-label "latch"))
                 CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "latch"
+              (compiler-ir-label "latch")
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "loop")
+                (CompilerIrInstr.Jump (compiler-ir-label "loop"))
                 CompilerIrInstrList.Nil))
             (compiler-ir-block-cons
               (compiler-ir-block
-                "ret"
+                (compiler-ir-label "ret")
                 (compiler-ir-instr-cons
                   (opt-scratch-test-return-zero)
                   CompilerIrInstrList.Nil))
               (compiler-ir-block-cons
                 (compiler-ir-block
-                  "exit"
+                  (compiler-ir-label "exit")
                   (compiler-ir-instr-cons
                     (opt-scratch-test-return-zero)
                     CompilerIrInstrList.Nil))
@@ -20803,7 +22081,7 @@
           (CompilerIrParam.Param "ys" (AstType.DynArray 0) 1)
           (CompilerIrParamList.Nil)))
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         (CompilerIrBlockList.Nil)))
     (opt-load-cse-empty-state-for-size (compiler-ir-instr-list-count instrs))
     instrs))
@@ -20815,7 +22093,7 @@
     (opt-load-header-set-from-function
       params
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         (CompilerIrBlockList.Nil)))
     (opt-load-cse-state-with-caps-and-facts
       (opt-load-cse-table-cap-for-size (compiler-ir-instr-list-count instrs))
@@ -20831,7 +22109,7 @@
     (opt-load-header-set-from-function
       params
       (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
+        (compiler-ir-block (compiler-ir-label "entry") instrs)
         (CompilerIrBlockList.Nil)))
     (opt_i64_i64_map.with-capacity 1)
     call-memory
@@ -20882,7 +22160,7 @@
             (CompilerIrParam.Param "ys" (AstType.DynArray 0) 1)
             (CompilerIrParamList.Nil)))
         (compiler-ir-block-cons
-          (compiler-ir-block "entry" instrs)
+          (compiler-ir-block (compiler-ir-label "entry") instrs)
           (CompilerIrBlockList.Nil)))
       (compiler-ir-instr-seq-from-list instrs))))
 
@@ -21088,7 +22366,9 @@
       (opt-dead-store-run-with-array-param (opt-dead-store-call-blocked-instrs))]
     [pipeline : CompilerIrBlock
       (optimize-block
-        (compiler-ir-block "entry" (opt-dead-store-overwritten-instrs)))]
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (opt-dead-store-overwritten-instrs)))]
     [pipeline-instrs : CompilerIrInstrList
       (match pipeline
         [(CompilerIrBlock.Block _ instrs)
@@ -21861,7 +23141,7 @@
     (AstType.Unit)
     16
     (compiler-ir-block-cons
-      (compiler-ir-block "entry" instrs)
+      (compiler-ir-block (compiler-ir-label "entry") instrs)
       (CompilerIrBlockList.Nil))))
 
 (define (opt-call-memory-test-functions
@@ -22152,7 +23432,9 @@
       (opt-load-cse-run (opt-load-cse-vector-data-pointer-instrs))]
     [pipeline : CompilerIrBlock
       (optimize-block
-        (compiler-ir-block "entry" (opt-load-cse-positive-instrs)))]
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (opt-load-cse-positive-instrs)))]
     ;; Self-test inspection of optimize-block output, not a hot pass path.
     [pipeline-instrs : CompilerIrInstrList
       (match pipeline

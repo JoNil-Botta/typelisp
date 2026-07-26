@@ -501,7 +501,7 @@
 ")
     (compiler-typecheck-rendered-error-ok?
       (compiler-typecheck-escape-with-arena-diagnostic-source)
-      "error[E0200]: typecheck: region-tagged value cannot escape with-arena 'phase'
+      "error[E0205]: typecheck: region-tagged value cannot escape with-arena 'phase'
   --> :4:21
    |
  4 |   (with-arena phase (string.int->string 42)))

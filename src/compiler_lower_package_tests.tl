@@ -74,6 +74,70 @@
   : i64
   x)")
 
+(define (compiler-lower-spmd-package-literal-return-source) : String
+  "(module spmd_fixture)
+(define (helper [_x : i64])
+  (:spmd-callable
+    (specialization (lanes 8) (args varying) (result uniform) (index-param none)))
+  : i64
+  7)")
+
+(define (compiler-lower-spmd-package-cast-return-source) : String
+  "(module spmd_fixture)
+(define (helper [_x : i64])
+  (:spmd-callable
+    (specialization (lanes 8) (args varying) (result uniform) (index-param none)))
+  : i64
+  (cast 7 : i64))")
+
+(define (compiler-lower-spmd-package-uniform-helper-render
+  [functions : CompilerIrFunctionList]) : String
+  (match functions
+    [(CompilerIrFunctionList.Nil) ""]
+    [(CompilerIrFunctionList.Array seq)
+      (compiler-lower-spmd-package-uniform-helper-render
+        (compiler-ir-function-seq-to-list seq))]
+    [(CompilerIrFunctionList.Cons function rest)
+      (match function
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (if (lower-string-prefix-at?
+            (compiler-ir-symbol-text name)
+            "__tl_spmd_ret_uniform___tl_spmd_pkg_"
+            0)
+            (compiler-ir-function-render function)
+            (compiler-lower-spmd-package-uniform-helper-render (box-get rest)))])]))
+
+(define (compiler-lower-spmd-package-return-context-source-ok?
+  [source : String]) : bool
+  (let
+    [_package : unit (lower-spmd-set-package-name! "spmd_fixture")]
+    [result : ResultCompilerLower
+      (lower-compiler-source-with-mode source (CompilerLowerMode.Avx512))]
+    (begin
+      (lower-spmd-clear-package-name!)
+      (match result
+        [(ResultCompilerLower.Ok program _)
+          (match program
+            [(CompilerIrProgram.Program _ functions _)
+              (let
+                [rendered : String
+                  (compiler-lower-spmd-package-uniform-helper-render functions)]
+                [splat-i64 : String "splat 7 lanes 8 : i64"]
+                [splat-i32 : String "splat 7 lanes 8 : i32"]
+                [reduce-i64 : String "vector_reduce_min"]
+                (and
+                  (string.contains (& rendered) (& splat-i64))
+                  (not (string.contains (& rendered) (& splat-i32)))
+                  (string.contains (& rendered) (& reduce-i64))))])]
+        [(ResultCompilerLower.Err _) false]))))
+
+(define (compiler-lower-spmd-package-return-context-ok?) : bool
+  (and
+    (compiler-lower-spmd-package-return-context-source-ok?
+      (compiler-lower-spmd-package-literal-return-source))
+    (compiler-lower-spmd-package-return-context-source-ok?
+      (compiler-lower-spmd-package-cast-return-source))))
+
 (define (compiler-lower-spmd-package-callable-error-ok?
   [source : String]
   [mode : CompilerLowerMode]
@@ -218,4 +282,5 @@
     (compiler-lower-spmd-package-helper-count-ok?
       (compiler-lower-spmd-package-scalar-collapse-source)
       (CompilerLowerMode.Avx512)
-      2)))
+      2)
+    (compiler-lower-spmd-package-return-context-ok?)))

@@ -6,17 +6,16 @@
 ;; compiler-path benchmark: opt2 self-compile is sensitive to liveness set
 ;; iteration and copy costs.
 (import stdlib.io)
-(import stdlib.string)
 (import "compiler_ir_types.tl")
 (import stdlib.hashmap)
-(import (hashmap.hashmap String i64) as live_label_map)
+(import (hashmap.hashmap i64 i64) as live_label_map)
 
 (defstruct CompilerLiveI64Set
   (words (Array i64)))
 
 (defenum CompilerLiveLabelSet
   (Nil)
-  (Cons String (Box CompilerLiveLabelSet)))
+  (Cons i64 (Box CompilerLiveLabelSet)))
 
 (defstruct CompilerLiveIndexVec
   (items (Array i64)))
@@ -26,7 +25,7 @@
 
 (defenum CompilerLiveBlock
   (Block
-    String
+    i64
     CompilerLiveI64Set
     CompilerLiveI64Set
     CompilerLiveI64Set
@@ -642,17 +641,17 @@
 
 (define (compiler-live-label-set-contains?
   [set : CompilerLiveLabelSet]
-  [value : String]) : bool
+  [value : i64]) : bool
   (match set
     [(CompilerLiveLabelSet.Nil) false]
     [(CompilerLiveLabelSet.Cons head rest)
-      (if (string.eq head value)
+      (if (= head value)
         true
         (compiler-live-label-set-contains? (box-get rest) value))]))
 
 (define (compiler-live-label-set-insert
   [set : CompilerLiveLabelSet]
-  [value : String]) : CompilerLiveLabelSet
+  [value : i64]) : CompilerLiveLabelSet
   (if (compiler-live-label-set-contains? set value)
     set
     (CompilerLiveLabelSet.Cons value (box set))))
@@ -1087,8 +1086,8 @@
 
 (define (compiler-live-label-id-map-get
   [ids : (& ids live_label_map.Map)]
-  [label : String]) : i64
-  (match (live_label_map.get-borrowed ids (& label))
+  [label : i64]) : i64
+  (match (live_label_map.get-borrowed ids label)
     [(live_label_map.LookupFound slot) slot]
     [(live_label_map.LookupMissing) -1]))
 
@@ -1211,7 +1210,7 @@
 
 (define (compiler-live-graph-find-block
   [graph : CompilerLiveBlockGraph]
-  [label : String]) : CompilerLiveMaybeBlock
+  [label : i64]) : CompilerLiveMaybeBlock
   (let
     [slot : i64
       (compiler-live-label-id-map-get (& (struct-get graph ids)) label)]
@@ -1819,14 +1818,14 @@
 
 (define (compiler-live-function-block-index
   [liveness : CompilerFunctionLiveness]
-  [label : String]) : i64
+  [label : i64]) : i64
   (match liveness
     [(CompilerFunctionLiveness.Liveness ids _)
       (compiler-live-label-id-map-get (& ids) label)]))
 
 (define (compiler-live-function-find-block
   [liveness : CompilerFunctionLiveness]
-  [label : String]) : CompilerLiveMaybeBlock
+  [label : i64]) : CompilerLiveMaybeBlock
   (match liveness
     [(CompilerFunctionLiveness.Liveness ids blocks)
       (let
@@ -1835,7 +1834,7 @@
           (CompilerLiveMaybeBlock.Some (array-ref blocks index))
           CompilerLiveMaybeBlock.No))]))
 
-(define (compiler-live-block-label [block : CompilerLiveBlock]) : String
+(define (compiler-live-block-label [block : CompilerLiveBlock]) : i64
   (match block
     [(CompilerLiveBlock.Block label _ _ _ _ _ _) label]))
 
@@ -1874,7 +1873,7 @@
 
 (define (compiler-live-after
   [liveness : CompilerFunctionLiveness]
-  [label : String]
+  [label : i64]
   [index : i64]) : CompilerLiveI64Set
   (match (compiler-live-function-find-block liveness label)
     [(CompilerLiveMaybeBlock.Some block)
@@ -1894,7 +1893,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (compiler-live-i64-ty))
           (compiler-ir-instr-cons
@@ -1918,20 +1917,23 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "then")
+            (compiler-ir-label "else"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "then"
+          (compiler-ir-label "then")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "else"
+            (compiler-ir-label "else")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
@@ -1946,44 +1948,47 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 0)
+            (compiler-ir-label "left")
+            (compiler-ir-label "right"))
           CompilerIrInstrList.Nil))
       (compiler-ir-block-cons
         (compiler-ir-block
-          "left"
+          (compiler-ir-label "left")
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               1
               (CompilerIrValue.I64 10)
               (compiler-live-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstr.Jump (compiler-ir-label "join"))
               CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
-            "right"
+            (compiler-ir-label "right")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Mov
                 2
                 (CompilerIrValue.I64 20)
                 (compiler-live-i64-ty))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstr.Jump (compiler-ir-label "join"))
                 CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
-              "join"
+              (compiler-ir-label "join")
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Phi
                   3
                   (compiler-ir-phi-input-cons
                     (CompilerIrValue.Var 1)
-                    "left"
+                    (compiler-ir-label "left")
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.Var 2)
-                      "right"
+                      (compiler-ir-label "right")
                       CompilerIrPhiInputList.Nil))
                   (compiler-live-i64-ty))
                 (compiler-ir-instr-cons
@@ -2023,13 +2028,16 @@
                 (CompilerIrValue.Var 14)
                 (compiler-live-i64-ty))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 15) "a" "b")
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 15)
+                  (compiler-ir-label "a")
+                  (compiler-ir-label "b"))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Phi
                     4
                     (compiler-ir-phi-input-cons
                       (CompilerIrValue.Var 16)
-                      "a"
+                      (compiler-ir-label "a")
                       CompilerIrPhiInputList.Nil)
                     (compiler-live-i64-ty))
                   (compiler-ir-instr-cons
@@ -2131,7 +2139,9 @@
   (let
     [liveness : CompilerFunctionLiveness
       (compiler-live-analyze-function (compiler-live-straight-function))]
-    (match (compiler-live-function-find-block liveness "entry")
+    (match (compiler-live-function-find-block
+      liveness
+      (compiler-ir-label "entry"))
       [(CompilerLiveMaybeBlock.Some block)
         (and
           (compiler-live-set-eq?
@@ -2147,13 +2157,13 @@
             (compiler-live-block-live-out block)
             (compiler-live-set-empty))
           (compiler-live-set-eq?
-            (compiler-live-after liveness "entry" 0)
+            (compiler-live-after liveness (compiler-ir-label "entry") 0)
             (compiler-live-set2 0 2))
           (compiler-live-set-eq?
-            (compiler-live-after liveness "entry" 1)
+            (compiler-live-after liveness (compiler-ir-label "entry") 1)
             (compiler-live-set1 1))
           (compiler-live-set-eq?
-            (compiler-live-after liveness "entry" 2)
+            (compiler-live-after liveness (compiler-ir-label "entry") 2)
             (compiler-live-set-empty)))]
       [(CompilerLiveMaybeBlock.No) false])))
 
@@ -2161,7 +2171,9 @@
   (let
     [liveness : CompilerFunctionLiveness
       (compiler-live-analyze-function (compiler-live-branch-function))]
-    (match (compiler-live-function-find-block liveness "entry")
+    (match (compiler-live-function-find-block
+      liveness
+      (compiler-ir-label "entry"))
       [(CompilerLiveMaybeBlock.Some block)
         (and
           (=
@@ -2170,10 +2182,10 @@
             2)
           (compiler-live-label-set-contains?
             (compiler-live-block-successor-labels block)
-            "then")
+            (compiler-ir-label "then"))
           (compiler-live-label-set-contains?
             (compiler-live-block-successor-labels block)
-            "else")
+            (compiler-ir-label "else"))
           (compiler-live-set-eq?
             (compiler-live-block-live-in block)
             (compiler-live-set3 0 1 2)))]
@@ -2183,7 +2195,9 @@
   (let
     [liveness : CompilerFunctionLiveness
       (compiler-live-analyze-function (compiler-live-phi-function))]
-    (match (compiler-live-function-find-block liveness "join")
+    (match (compiler-live-function-find-block
+      liveness
+      (compiler-ir-label "join"))
       [(CompilerLiveMaybeBlock.Some block)
         (and
           (compiler-live-set-eq?
@@ -2196,13 +2210,15 @@
             (compiler-live-block-live-in block)
             (compiler-live-set2 1 2))
           (compiler-live-set-eq?
-            (compiler-live-after liveness "join" 0)
+            (compiler-live-after liveness (compiler-ir-label "join") 0)
             (compiler-live-set1 3))
-          (match (compiler-live-function-find-block liveness "left")
+          (match (compiler-live-function-find-block
+            liveness
+            (compiler-ir-label "left"))
             [(CompilerLiveMaybeBlock.Some left-block)
               (compiler-live-label-set-contains?
                 (compiler-live-block-successor-labels left-block)
-                "join")]
+                (compiler-ir-label "join"))]
             [(CompilerLiveMaybeBlock.No) false]))]
       [(CompilerLiveMaybeBlock.No) false])))
 
@@ -2212,17 +2228,25 @@
       (compiler-live-analyze-function (compiler-live-phi-function))]
     [edge-precise : CompilerFunctionLiveness
       (compiler-live-analyze-function-edge-precise (compiler-live-phi-function))]
-    (match (compiler-live-function-find-block baseline "join")
+    (match (compiler-live-function-find-block
+      baseline
+      (compiler-ir-label "join"))
       [(CompilerLiveMaybeBlock.Some baseline-join)
-        (match (compiler-live-function-find-block edge-precise "join")
+        (match (compiler-live-function-find-block
+          edge-precise
+          (compiler-ir-label "join"))
           [(CompilerLiveMaybeBlock.Some edge-precise-join)
-            (match (compiler-live-function-find-block baseline "left")
+            (match (compiler-live-function-find-block
+              baseline
+              (compiler-ir-label "left"))
               [(CompilerLiveMaybeBlock.Some baseline-left)
-                (match (compiler-live-function-find-block edge-precise "left")
+                (match (compiler-live-function-find-block
+                  edge-precise
+                  (compiler-ir-label "left"))
                   [(CompilerLiveMaybeBlock.Some edge-precise-left)
                     (match (compiler-live-function-find-block
                       edge-precise
-                      "right")
+                      (compiler-ir-label "right"))
                       [(CompilerLiveMaybeBlock.Some edge-precise-right)
                         (and
                           (compiler-live-set-eq?
@@ -2254,13 +2278,21 @@
     [cases : CompilerIrSwitchCaseList
       (compiler-ir-switch-case-cons
         4
-        "four"
-        (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil))]
+        (compiler-ir-label "four")
+        (compiler-ir-switch-case-cons
+          5
+          (compiler-ir-label "five")
+          CompilerIrSwitchCaseList.Nil))]
     [instr : CompilerIrInstr
-      (CompilerIrInstr.Switch (CompilerIrValue.Var 9) 4 cases "other")]
+      (CompilerIrInstr.Switch
+        (CompilerIrValue.Var 9)
+        4
+        cases
+        (compiler-ir-label "other"))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)]
-    [block : CompilerIrBlock (compiler-ir-block "entry" instrs)]
+    [block : CompilerIrBlock
+      (compiler-ir-block (compiler-ir-label "entry") instrs)]
     [successors : CompilerLiveLabelSet (compiler-live-block-successors block)]
     (match (compiler-live-block-use-def instrs)
       [(CompilerLiveUseDef.Def uses defs)
@@ -2268,9 +2300,15 @@
           (compiler-live-set-eq? uses (compiler-live-set1 9))
           (compiler-live-set-eq? defs (compiler-live-set-empty))
           (= (compiler-live-label-set-count successors) 3)
-          (compiler-live-label-set-contains? successors "four")
-          (compiler-live-label-set-contains? successors "five")
-          (compiler-live-label-set-contains? successors "other"))])))
+          (compiler-live-label-set-contains?
+            successors
+            (compiler-ir-label "four"))
+          (compiler-live-label-set-contains?
+            successors
+            (compiler-ir-label "five"))
+          (compiler-live-label-set-contains?
+            successors
+            (compiler-ir-label "other")))])))
 
 (define (compiler-live-self-test) : i64
   (if (and

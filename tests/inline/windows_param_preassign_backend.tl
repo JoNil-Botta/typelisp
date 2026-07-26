@@ -54,7 +54,7 @@
     4
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store pa (CompilerIrValue.Var 0) (AstType.I64))
           (compiler-ir-instr-cons
@@ -95,7 +95,7 @@
     3
     (compiler-ir-block-cons
       (compiler-ir-block
-        "entry"
+        (compiler-ir-label "entry")
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             2

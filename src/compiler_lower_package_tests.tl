@@ -104,7 +104,9 @@
             (compiler-ir-symbol-text name)
             "__tl_spmd_ret_uniform___tl_spmd_pkg_"
             0)
-            (compiler-ir-function-render function)
+            (compiler-ir-function-render
+              (ast-node-pool-reader-type-segment-bases)
+              function)
             (compiler-lower-spmd-package-uniform-helper-render (box-get rest)))])]))
 
 (define (compiler-lower-spmd-package-return-context-source-ok?

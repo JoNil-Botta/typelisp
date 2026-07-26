@@ -316,7 +316,8 @@
                     unit)
                   (set! i (+ i 1)))))
             (let
-              [near-idx : i64 (lsp-nearest-inlay-hint-index 1 (+ total-off 3))]
+              [near-idx : i64
+                (lsp-nearest-inlay-hint-index src 1 (+ total-off 3))]
               (if (>= near-idx 0)
                 (set!
                   near-ok

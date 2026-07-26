@@ -1658,20 +1658,71 @@
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
   (doc-test-check-example-with-roots path example (doc_svec.new)))
 
-(define (doc-test-typecheck-example-with-roots
+(define (doc-test-typecheck-example-with-roots-and-cfg
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : doc_svec.Vec]) : DocTestMaybeFailure
+  [stdlib-roots : doc_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
     [expectation : DocTestExpectation (doc-test-example-expectation example)]
     [expect-error : bool (doc-test-expectation-error? expectation)]
     [code : String (doc-test-example-code example)]
-    (match (compiler-check-source-with-roots
+    (match (compiler-check-source-with-roots-and-cfg
       (doc-test-example-virtual-path path index)
       code
-      stdlib-roots)
+      stdlib-roots
+      cfgs)
+      [(ResultCompilerCheck.Ok _)
+        (if expect-error
+          (DocTestMaybeFailure.Some
+            (DocTestRunFailure.Failure
+              path
+              source-line
+              index
+              (doc-test-unexpected-pass-message index)))
+          (DocTestMaybeFailure.No))]
+      [(ResultCompilerCheck.Err diag)
+        (if expect-error
+          (DocTestMaybeFailure.No)
+          (DocTestMaybeFailure.Some
+            (DocTestRunFailure.Failure
+              path
+              source-line
+              index
+              (doc-test-unexpected-error-message index (box-get diag)))))])))
+
+(define (doc-test-typecheck-example-with-roots
+  [path : String]
+  [example : DocTestExample]
+  [stdlib-roots : doc_svec.Vec]) : DocTestMaybeFailure
+  (doc-test-typecheck-example-with-roots-and-cfg
+    path
+    example
+    stdlib-roots
+    (compiler-check-language-cfgs)))
+
+(define (doc-test-typecheck-package-example-with-roots-and-cfg
+  [path : String]
+  [example : DocTestExample]
+  [stdlib-roots : doc_svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestMaybeFailure
+  (let
+    [index : i64 (doc-test-example-index example)]
+    [source-line : i64 (doc-test-example-source-line example)]
+    [expectation : DocTestExpectation (doc-test-example-expectation example)]
+    [expect-error : bool (doc-test-expectation-error? expectation)]
+    [code : String (doc-test-example-code example)]
+    (match (compiler-check-package-source-with-roots-and-cfg
+      (doc-test-example-virtual-path path index)
+      code
+      stdlib-roots
+      manifest-dir
+      deps
+      cfgs)
       [(ResultCompilerCheck.Ok _)
         (if expect-error
           (DocTestMaybeFailure.Some
@@ -1697,36 +1748,13 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestMaybeFailure
-  (let
-    [index : i64 (doc-test-example-index example)]
-    [source-line : i64 (doc-test-example-source-line example)]
-    [expectation : DocTestExpectation (doc-test-example-expectation example)]
-    [expect-error : bool (doc-test-expectation-error? expectation)]
-    [code : String (doc-test-example-code example)]
-    (match (compiler-check-package-source-with-roots
-      (doc-test-example-virtual-path path index)
-      code
-      stdlib-roots
-      manifest-dir
-      deps)
-      [(ResultCompilerCheck.Ok _)
-        (if expect-error
-          (DocTestMaybeFailure.Some
-            (DocTestRunFailure.Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-pass-message index)))
-          (DocTestMaybeFailure.No))]
-      [(ResultCompilerCheck.Err diag)
-        (if expect-error
-          (DocTestMaybeFailure.No)
-          (DocTestMaybeFailure.Some
-            (DocTestRunFailure.Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-error-message index (box-get diag)))))])))
+  (doc-test-typecheck-package-example-with-roots-and-cfg
+    path
+    example
+    stdlib-roots
+    manifest-dir
+    deps
+    (compiler-check-language-cfgs)))
 
 (define (doc-test-typecheck-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
   (doc-test-typecheck-example-with-roots path example (doc_svec.new)))
@@ -1783,26 +1811,33 @@
   [examples : doc_example_vec.Vec]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]
-  [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
+  [stdlib-roots : doc_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
       [example : DocTestExample (doc-test-example-list-ref examples index)]
-      (match (doc-test-typecheck-example-with-roots path example stdlib-roots)
+      (match (doc-test-typecheck-example-with-roots-and-cfg
+        path
+        example
+        stdlib-roots
+        cfgs)
         [(DocTestMaybeFailure.No)
           (doc-test-typecheck-examples-with-roots-from
             path
             examples
             (+ index 1)
             failures
-            stdlib-roots)]
+            stdlib-roots
+            cfgs)]
         [(DocTestMaybeFailure.Some failure)
           (doc-test-typecheck-examples-with-roots-from
             path
             examples
             (+ index 1)
             (doc-test-run-failure-list-append failures failure)
-            stdlib-roots)]))))
+            stdlib-roots
+            cfgs)]))))
 
 (define (doc-test-typecheck-examples-with-roots
   [path : String]
@@ -1814,7 +1849,22 @@
     examples
     0
     failures
-    stdlib-roots))
+    stdlib-roots
+    (compiler-check-language-cfgs)))
+
+(define (doc-test-typecheck-examples-with-roots-and-cfg
+  [path : String]
+  [examples : doc_example_vec.Vec]
+  [failures : doc_run_failure_vec.Vec]
+  [stdlib-roots : doc_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
+  (doc-test-typecheck-examples-with-roots-from
+    path
+    examples
+    0
+    failures
+    stdlib-roots
+    cfgs))
 
 (define (doc-test-typecheck-package-examples-with-roots-from
   [path : String]
@@ -1823,17 +1873,19 @@
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : doc_run_failure_vec.Vec
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
       [example : DocTestExample (doc-test-example-list-ref examples index)]
-      (match (doc-test-typecheck-package-example-with-roots
+      (match (doc-test-typecheck-package-example-with-roots-and-cfg
         path
         example
         stdlib-roots
         manifest-dir
-        deps)
+        deps
+        cfgs)
         [(DocTestMaybeFailure.No)
           (doc-test-typecheck-package-examples-with-roots-from
             path
@@ -1842,7 +1894,8 @@
             failures
             stdlib-roots
             manifest-dir
-            deps)]
+            deps
+            cfgs)]
         [(DocTestMaybeFailure.Some failure)
           (doc-test-typecheck-package-examples-with-roots-from
             path
@@ -1851,7 +1904,8 @@
             (doc-test-run-failure-list-append failures failure)
             stdlib-roots
             manifest-dir
-            deps)]))))
+            deps
+            cfgs)]))))
 
 (define (doc-test-typecheck-package-examples-with-roots
   [path : String]
@@ -1867,7 +1921,26 @@
     failures
     stdlib-roots
     manifest-dir
-    deps))
+    deps
+    (compiler-check-language-cfgs)))
+
+(define (doc-test-typecheck-package-examples-with-roots-and-cfg
+  [path : String]
+  [examples : doc_example_vec.Vec]
+  [failures : doc_run_failure_vec.Vec]
+  [stdlib-roots : doc_svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
+  (doc-test-typecheck-package-examples-with-roots-from
+    path
+    examples
+    0
+    failures
+    stdlib-roots
+    manifest-dir
+    deps
+    cfgs))
 
 ;; A malformed/empty/unterminated fence is a runner failure too; it has no
 ;; example index, so it is recorded with index `-1`.
@@ -1936,18 +2009,30 @@
   [path : String]
   [source : String]
   [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
+  (doc-test-typecheck-source-with-roots-and-cfg
+    path
+    source
+    stdlib-roots
+    (compiler-check-language-cfgs)))
+
+(define (doc-test-typecheck-source-with-roots-and-cfg
+  [path : String]
+  [source : String]
+  [stdlib-roots : doc_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
         (doc-test-example-list-count examples)
-        (doc-test-typecheck-examples-with-roots
+        (doc-test-typecheck-examples-with-roots-and-cfg
           path
           examples
           (doc-test-errors-to-failures
             path
             errors
             (doc-test-run-failure-list-empty))
-          stdlib-roots))]))
+          stdlib-roots
+          cfgs))]))
 
 (define (doc-test-typecheck-package-source-with-roots
   [path : String]
@@ -1955,11 +2040,26 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
+  (doc-test-typecheck-package-source-with-roots-and-cfg
+    path
+    source
+    stdlib-roots
+    manifest-dir
+    deps
+    (compiler-check-language-cfgs)))
+
+(define (doc-test-typecheck-package-source-with-roots-and-cfg
+  [path : String]
+  [source : String]
+  [stdlib-roots : doc_svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
         (doc-test-example-list-count examples)
-        (doc-test-typecheck-package-examples-with-roots
+        (doc-test-typecheck-package-examples-with-roots-and-cfg
           path
           examples
           (doc-test-errors-to-failures
@@ -1968,7 +2068,8 @@
             (doc-test-run-failure-list-empty))
           stdlib-roots
           manifest-dir
-          deps))]))
+          deps
+          cfgs))]))
 
 (define (doc-test-typecheck-file [path : String]) : DocTestRunReport
   (doc-test-typecheck-source path (io.read-file path)))
@@ -1977,6 +2078,16 @@
   [path : String]
   [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
   (doc-test-typecheck-source-with-roots path (io.read-file path) stdlib-roots))
+
+(define (doc-test-typecheck-file-with-roots-and-cfg
+  [path : String]
+  [stdlib-roots : doc_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
+  (doc-test-typecheck-source-with-roots-and-cfg
+    path
+    (io.read-file path)
+    stdlib-roots
+    cfgs))
 
 (define (doc-test-path-under-root? [path : String] [root : String]) : bool
   (let
@@ -2014,6 +2125,7 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]
   [last-path : String]
   [count : i64]) : DocTestRunReport
   (match (ast-decl-path-list-step paths)
@@ -2063,13 +2175,15 @@
                 rooted
                 stdlib-roots
                 manifest-dir
-                deps)]
+                deps
+                cfgs)]
             (if (doc-test-run-report-ok? report)
               (doc-test-typecheck-package-path-list-with-roots-from
                 rest
                 stdlib-roots
                 manifest-dir
                 deps
+                cfgs
                 rooted
                 (+ count (doc-test-run-report-count report)))
               (doc-test-run-report-add-prefix-count count report)))
@@ -2078,6 +2192,7 @@
             stdlib-roots
             manifest-dir
             deps
+            cfgs
             last-path
             count)))]))
 
@@ -2085,28 +2200,44 @@
   [path : String]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestRunReport
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match (io.try-read-file (& path))
     [(io.ErrIoString _)
       (DocTestRunReport.Report 0 (doc-test-run-failure-list-empty))]
     [(io.OkIoString text)
-      (doc-test-typecheck-package-source-with-roots
+      (doc-test-typecheck-package-source-with-roots-and-cfg
         path
         text
         stdlib-roots
         manifest-dir
-        deps)]))
+        deps
+        cfgs)]))
 
 (define (doc-test-typecheck-package-paths-with-roots
   [paths : AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
+  (doc-test-typecheck-package-paths-with-roots-and-cfg
+    paths
+    stdlib-roots
+    manifest-dir
+    deps
+    (compiler-check-language-cfgs)))
+
+(define (doc-test-typecheck-package-paths-with-roots-and-cfg
+  [paths : AstDeclPathList]
+  [stdlib-roots : doc_svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (doc-test-typecheck-package-path-list-with-roots-from
     paths
     stdlib-roots
     manifest-dir
     deps
+    cfgs
     ""
     0))
 

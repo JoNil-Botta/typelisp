@@ -168,8 +168,8 @@ contains|_tl_selfhost_check_config_from:
 contains|_tl_selfhost_check_file:
 contains|selfhost_check_package:
 contains|_tl_compiler_check_file_with_roots:
-contains|_tl_compiler_check_core_compiler_check_package_entry_file_with_roots:
-contains|_tl_doc_test_typecheck_file_with_roots:
+contains|_tl_compiler_check_core_compiler_check_package_entry_file_with_roots_and_cfg:
+contains|_tl_doc_test_doc_test_typecheck_file_with_roots_and_cfg:
 contains|package_source_discover
 contains|selfhost-check: cannot combine input path with --manifest-path
 contains|selfhost-check: --stdlib-root requires a value
@@ -305,6 +305,8 @@ end
 # decision row rather than a direct compile case.
 decision|src/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/compiler_build_identity.tl|deterministic running-compiler source identity (#5525): shares the generated Git hash across CLI package producers and embedded frontend-surface admission without importing the main dispatcher
+decision|src/compiler_cfg_core.tl|parser-independent cfg environment primitives (#5663): main-less, imported by the parser and shared target cfg construction; exercised through compiler check/driver cases, command gates, and the selfhost_main import graph
+decision|src/compiler_target_cfg_core.tl|shared target aliases and user cfg construction (#5663): main-less, imported by compiler emission plus check/lint/fmt/LSP tooling; exercised through compiler check/driver cases, command gates, and the selfhost_main import graph
 decision|src/cli_option_core.tl|shared parsing for common CLI value options (--stdlib-root, --cfg, --target, and --opt-level); main-less, imported by command-specific CLI modules and exercised through the selfhost_main case
 decision|src/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by src/main.tl and exercised through the selfhost_main case

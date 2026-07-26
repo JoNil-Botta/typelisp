@@ -311,6 +311,11 @@ platform-specific code. Target OS predicates are enabled automatically:
 `linux`/`unix`/`target-linux`/`os-linux` and
 `windows`/`target-windows`/`os-windows`.
 
+`check`, `lint`, and `fmt` accept the same `--target` and repeated `--cfg`
+selection (the CST formatter still formats every branch). The LSP defaults to
+the server host and accepts `target` plus a string-array `cfg` in
+`initializationOptions`, either directly or nested below `typelisp`.
+
 ### Expression forms
 
 `if`, `when`, `unless`, `let`, scalar `for`, `while` (with unit

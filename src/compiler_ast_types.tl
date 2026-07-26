@@ -6405,7 +6405,16 @@
         name
         (ast-compaction-remap-type remap ty)
         variadic
-        type-kinds)]))
+        (ast-compaction-copy-macro-type-kind-list type-kinds))]))
+
+(define (ast-compaction-copy-macro-type-kind-list
+  [kinds : AstMacroTypeKindList]) : AstMacroTypeKindList
+  (match kinds
+    [(AstMacroTypeKindList.Nil) AstMacroTypeKindList.Nil]
+    [(AstMacroTypeKindList.Cons kind rest)
+      (AstMacroTypeKindList.Cons
+        kind
+        (box (ast-compaction-copy-macro-type-kind-list (box-get rest))))]))
 
 (define (ast-compaction-remap-macro-param-list
   [remap : AstProgramCompactionRemap]

@@ -93,7 +93,8 @@ Keep these at the top level while their owning gate references them.
 Active optional tools stay at the top level when they support recurring work:
 the compiler and CLI benchmarks, selfhost size report, compile-memory and RSS
 tools, instruction-count runners, ISPC/SPMD comparisons, LSP latency,
-typecheck-prefix-cache measurements, and platform profilers. See
+typecheck-prefix-cache measurements, the `run-bounded-process.ps1` job-memory
+cap wrapper, and platform profilers. See
 `src/TESTING.md`, `perf/README.md`, and `benchmarks/README.md` for their
 workload-specific instructions.
 

@@ -2,7 +2,8 @@
 set -eu
 
 # check-tlci-op-numbers.sh - fail closed on duplicate tlci host callback op
-# numbers and drift between the implementation and SPEC catalog.
+# numbers, producer-side raw ids, and drift between the implementation and
+# SPEC catalog.
 #
 # The host callback ops are additive ABI constants in a single source-bound
 # binary: the producer emits an op number and `compiler-comptime-host-invoke-step`
@@ -152,6 +153,40 @@ check_source() {
     return 0
 }
 
+# Producer entries are generated source, so a stale numeric id still compiles
+# and is only discovered when the entry executes against a newer host catalog.
+# Replacing every legacy id with its long catalog name regressed the Linux
+# self-compile instruction count by 0.588%, so the existing append-only ABI
+# literals remain frozen instead. New or changed raw ids alter this source-order
+# signature and must either become named constants or receive explicit review.
+producer_raw_ops() {
+    awk -v max_op="$2" '
+        {
+            rest = $0
+            while (match(rest, /[0-9][0-9]*/)) {
+                value = substr(rest, RSTART, RLENGTH)
+                if ((value + 0) >= 100 && (value + 0) <= max_op) {
+                    print value
+                }
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+        }
+    ' "$1"
+}
+
+check_producer_raw_ops() {
+    observed=$(producer_raw_ops "$1" "$2" | cksum)
+    if [ "$observed" != "$3" ]; then
+        count=$(producer_raw_ops "$1" "$2" | wc -l | tr -d ' ')
+        echo "tlci producer raw callback signature changed in $1:" >&2
+        echo "  expected: $3" >&2
+        echo "  observed: $observed ($count callback-range integers)" >&2
+        echo "use tlci-host-callback-op-* constants for new sites; update the signature only after explicit ABI review" >&2
+        return 1
+    fi
+    return 0
+}
+
 if [ "$SELF_TEST" -eq 1 ]; then
     WORKDIR=target/tlci-op-numbers-selftest
     rm -rf "$WORKDIR"
@@ -248,6 +283,23 @@ FIXTURE
         echo "self-test: mismatched SPEC catalog name was not rejected" >&2
         exit 1
     fi
+    RAW_PRODUCER="$WORKDIR/producer-raw-op.tl"
+    cat > "$RAW_PRODUCER" <<'FIXTURE'
+(comptime-host-invoke host session 252 0 0 0)
+FIXTURE
+    RAW_SIGNATURE=$(producer_raw_ops "$RAW_PRODUCER" 261 | cksum)
+    if ! check_producer_raw_ops "$RAW_PRODUCER" 261 "$RAW_SIGNATURE"; then
+        echo "self-test: unchanged producer raw-op signature was rejected" >&2
+        exit 1
+    fi
+    MUTATED_PRODUCER="$WORKDIR/producer-mutated-op.tl"
+    cat > "$MUTATED_PRODUCER" <<'FIXTURE'
+(comptime-host-invoke host session 253 0 0 0)
+FIXTURE
+    if check_producer_raw_ops "$MUTATED_PRODUCER" 261 "$RAW_SIGNATURE" 2>/dev/null; then
+        echo "self-test: changed producer raw-op signature was not rejected" >&2
+        exit 1
+    fi
     COUNT=$(extract_ops "$SOURCE" | wc -l | tr -d ' ')
     if [ "$COUNT" -lt 100 ]; then
         echo "self-test: only $COUNT op declarations found in $SOURCE" >&2
@@ -259,4 +311,10 @@ fi
 
 check_source "$SOURCE"
 check_spec_catalog "$SOURCE" "$SPEC"
+MAX_OP=$(extract_ops "$SOURCE" | sort -n | tail -n 1 | cut -f1)
+EXPECTED_PRODUCER_RAW_OP_SIGNATURE="936215337 608"
+check_producer_raw_ops \
+    src/compiler_tlci_native_producer.tl \
+    "$MAX_OP" \
+    "$EXPECTED_PRODUCER_RAW_OP_SIGNATURE"
 echo "tlci host callback catalog matches SPEC ($(extract_ops "$SOURCE" | wc -l | tr -d ' ') unique declarations)"

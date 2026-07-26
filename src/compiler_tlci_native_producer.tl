@@ -1730,7 +1730,7 @@
         (embedded-native-template-push!
           ops
           ops-count
-          253
+          tlci-host-callback-op-type-ref
           (string.int->string mutable)
           (embedded-native-name-arg region)
           (string.int->string (string.string-length region)))
@@ -1756,7 +1756,7 @@
     [(AstType.Array elem-id count)
       (embedded-native-template-type-wrap-ops
         elem-id
-        252
+        tlci-host-callback-op-type-array
         (string.int->string count)
         ops
         ops-count)]

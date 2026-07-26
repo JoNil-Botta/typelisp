@@ -216,6 +216,39 @@
         "I64I64 growth keeps late insert"))))
 
 (test
+  hashmap-macro-i64-i64-grow-rehashes-live-slots-only
+  (let
+    [m : map_i64_i64.Map (map_i64_i64.with-capacity 8)]
+    (begin
+      (map_i64_i64.insert! m 11 110)
+      (map_i64_i64.insert! m 22 220)
+      (map_i64_i64.insert! m 33 330)
+      (test.assert-true
+        (map_i64_i64.remove-ok? (map_i64_i64.remove! m 22))
+        "I64I64 removes the tombstone source")
+      (map_i64_i64.grow! (&mut m))
+      (test.assert-i64-eq
+        (map_i64_i64.capacity (& m))
+        16
+        "I64I64 direct grow doubles capacity")
+      (test.assert-i64-eq
+        (map_i64_i64.deleted (& m))
+        0
+        "I64I64 direct grow drops tombstones")
+      (test.assert-i64-eq
+        (map_i64_i64.get-value-or (& m) 11 -1)
+        110
+        "I64I64 direct grow keeps first live slot")
+      (test.assert-i64-eq
+        (map_i64_i64.get-value-or (& m) 33 -1)
+        330
+        "I64I64 direct grow keeps second live slot")
+      (test.assert-i64-eq
+        (map_i64_i64.get-value-or (& m) 22 -1)
+        -1
+        "I64I64 direct grow does not revive tombstones"))))
+
+(test
   hashmap-macro-i64-i64-bang-evaluates-arguments-once
   (let
     [m : map_i64_i64.Map (map_i64_i64.new)]

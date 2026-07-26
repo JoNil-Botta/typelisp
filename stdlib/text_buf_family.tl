@@ -69,15 +69,6 @@
                 (struct-get right chunks)
                 (struct-get left chunks))
               (+ left-len right-len))))))
-    (define (chunks-render-rev [chunks : TextBufChunkList] [out : String]) : String
-      (match chunks
-        [(TextBufChunkNil) out]
-        [(TextBufChunkCons chunk rest)
-          (stdlib.text_buf.chunks-render-rev
-            (box-get rest)
-            ;; This is the low-level fallback that implements text_buf itself.
-            ;; lint-allow: deprecated-string-concat
-            (string.append chunk out))]))
     (define (chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
       (match chunks
         [(TextBufChunkNil) count]
@@ -96,27 +87,6 @@
               (box-get rest)
               items
               (- index 1)))]))
-    (define (chunks-render-array-range
-      [items : (Array String)]
-      [lo : i64]
-      [hi : i64]) : String
-      (if (>= lo hi)
-        ""
-        (if (= (+ lo 1) hi)
-          (array-ref items lo)
-          (let
-            [mid : i64 (/ (+ lo hi) 2)]
-            ;; This is the low-level fallback that implements text_buf itself.
-            ;; lint-allow: deprecated-string-concat
-            (string.append
-              (stdlib.text_buf.chunks-render-array-range items lo mid)
-              (stdlib.text_buf.chunks-render-array-range items mid hi))))))
-    (define (chunks-render-balanced [chunks : TextBufChunkList] [count : i64]) : String
-      (let
-        [items : (Array String) (array.make-array String count)]
-        (begin
-          (stdlib.text_buf.chunks-fill-array-rev chunks items (- count 1))
-          (stdlib.text_buf.chunks-render-array-range items 0 count))))
     (define (copy-chunk-into
       [chunk : (& chunk str)]
       [dst : (MutPtr u8)]
@@ -151,6 +121,54 @@
                   (ptr-read (ptr-offset src b))))
               (set! b (+ b 1))))
           unit)))
+    (define (chunks-render-array-range
+      [items : (Array String)]
+      [lo : i64]
+      [hi : i64]) : String
+      (if (>= lo hi)
+        ""
+        (let
+          [index : i64 lo]
+          [len : i64 0]
+          (begin
+            (while (< index hi)
+              (begin
+                (set! len (+ len (string-length (array-ref items index))))
+                (set! index (+ index 1))))
+            (if (= len 0)
+              ""
+              (let
+                [out : (Array u8) (array.make-array u8 len)]
+                [dst : (MutPtr u8)
+                  (unsafe
+                    (array-data out))]
+                [copy-index : i64 lo]
+                [pos : i64 0]
+                (begin
+                  (while (< copy-index hi)
+                    (let
+                      [chunk : String (array-ref items copy-index)]
+                      [clen : i64 (string-length (& chunk))]
+                      (begin
+                        (stdlib.text_buf.copy-chunk-into (& chunk) dst pos)
+                        (set! pos (+ pos clen))
+                        (set! copy-index (+ copy-index 1)))))
+                  (unsafe
+                    (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))))))
+    (define (chunks-render-rev [chunks : TextBufChunkList] [out : String]) : String
+      (let
+        [count : i64 (stdlib.text_buf.chunk-count chunks 0)]
+        [items : (Array String) (array.make-array String (+ count 1))]
+        (begin
+          (stdlib.text_buf.chunks-fill-array-rev chunks items (- count 1))
+          (array-set! items count out)
+          (stdlib.text_buf.chunks-render-array-range items 0 (+ count 1)))))
+    (define (chunks-render-balanced [chunks : TextBufChunkList] [count : i64]) : String
+      (let
+        [items : (Array String) (array.make-array String count)]
+        (begin
+          (stdlib.text_buf.chunks-fill-array-rev chunks items (- count 1))
+          (stdlib.text_buf.chunks-render-array-range items 0 count))))
     (define (render-small-chunk-limit) : i64
       16)
     (define (fill-rev-into

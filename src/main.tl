@@ -260,6 +260,7 @@ Options:
   "Usage:
     typelisp compile <file.tl> [-o <file>] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
     typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
 
 Summary:
     Generate assembly, an IR summary, or a deterministic textual IR dump.
@@ -267,6 +268,7 @@ Summary:
 Options:
     -o <file>                      Output assembly or IR file
     --batch <file>                 Read input|output pairs and compile them in one process
+    --windows-coff-plan <file>     Read input|object|assembly[|force-assembly] rows and write source|kind|path|reason results
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --emit-ir                      Emit intermediate representation
     --dump-ir [after-<pass>]       Emit textual IR, optionally after a pass

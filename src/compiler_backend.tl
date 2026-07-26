@@ -55256,6 +55256,17 @@
                   emit-entry)]
               [program-index : CompilerBackendProgramIndex
                 (compiler-backend-program-index-build entry-functions externs)]
+              ;; Object lowering performs the same aggregate group discovery as
+              ;; assembly lowering. Install this image's maps before that walk:
+              ;; a prior batch entry may have left arena-owned maps in the
+              ;; register allocator globals, and aggregate functions are the
+              ;; first consumers that dereference them.
+              [_ra-groups : unit
+                (compiler-reg-set-group-counts!
+                  (struct-get program-index group-word-counts))]
+              [_ra-group-masks : unit
+                (compiler-reg-set-group-class-masks!
+                  (struct-get program-index group-word-class-masks))]
               (match (compiler-backend-validate-function-symbols
                 globals
                 entry-functions

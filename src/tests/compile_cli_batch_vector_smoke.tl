@@ -44,8 +44,72 @@
       (= empty-status 0)
       (= (cli_svec.len (& empty)) 0))))
 
+(define (compile-cli-windows-batch-entry-at?
+  [entries : (& entries cli_svec.Vec)]
+  [index : i64]
+  [input-path : String]
+  [object-path : String]
+  [assembly-path : String]
+  [mode : String]) : bool
+  (let
+    [slot : i64 (* index 4)]
+    (and
+      (string.eq (cli_svec.get entries slot "") input-path)
+      (string.eq (cli_svec.get entries (+ slot 1) "") object-path)
+      (string.eq (cli_svec.get entries (+ slot 2) "") assembly-path)
+      (string.eq (cli_svec.get entries (+ slot 3) "") mode))))
+
+(define (compile-cli-windows-batch-vector-contract-ok?) : bool
+  (let
+    [source : String
+      "auto.tl|auto.obj|auto.s\r\nforced.tl|forced.obj|forced.s|force-assembly"]
+    [entries : cli_svec.Vec (cli_svec.new)]
+    [status : i64
+      (compile-cli-windows-batch-parse-entries-into!
+        source
+        0
+        1
+        (string.string-length source)
+        (&mut entries))]
+    [results : cli_svec.Vec (cli_svec.new)]
+    (begin
+      (cli_svec.push (&mut results) "auto.tl")
+      (cli_svec.push (&mut results) "coff-object")
+      (cli_svec.push (&mut results) "auto.obj")
+      (cli_svec.push (&mut results) "none")
+      (cli_svec.push (&mut results) "forced.tl")
+      (cli_svec.push (&mut results) "assembly")
+      (cli_svec.push (&mut results) "forced.s")
+      (cli_svec.push (&mut results) "forced-assembly")
+      (and
+        (= status 0)
+        (= (cli_svec.len (& entries)) 8)
+        (compile-cli-windows-batch-entry-at?
+          (& entries)
+          0
+          "auto.tl"
+          "auto.obj"
+          "auto.s"
+          "auto")
+        (compile-cli-windows-batch-entry-at?
+          (& entries)
+          1
+          "forced.tl"
+          "forced.obj"
+          "forced.s"
+          "force-assembly")
+        (string.eq
+          (compile-cli-windows-batch-result-plan (& results))
+          "auto.tl|coff-object|auto.obj|none\nforced.tl|assembly|forced.s|forced-assembly\n")))))
+
 (test
   compile-cli-batch-entry-generated-vector-growth-order
   (unless
     (compile-cli-batch-vector-growth-order-ok?)
     (panic "compile: batch entry generated vector growth/order smoke failed")))
+
+(test
+  compile-cli-windows-batch-plan-contract
+  (unless
+    (compile-cli-windows-batch-vector-contract-ok?)
+    (panic "compile: Windows batch plan contract smoke failed")))

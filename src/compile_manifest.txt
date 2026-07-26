@@ -553,6 +553,8 @@ contains|typecheck: return type mismatch
 contains|source-level type parameters
 end
 
+decision|src/compiler_windows_coff_core.tl|shared Windows COFF linkability policy and one-optimization object-or-assembly emission; main-less, imported by compile_cli_core.tl and build_run_core.tl and exercised through the selfhost_main case plus the required Windows COFF batch verifier
+
 case|selfhost_doc_extract|src/doc_extract.tl|assembly|skip|direct
 contains|_tl_doc_extract_file:
 contains|_tl_doc_extract_source:

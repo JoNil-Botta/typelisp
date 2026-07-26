@@ -12341,6 +12341,51 @@
           (CompilerIrInstrList.Nil))))
     (CompilerIrBlockList.Nil)))
 
+;; SCCP is the first pass where the lowered constant-index dynamic-array access
+;; has both bounds operands available as literals. Pin all three decisions: an
+;; in-range literal check disappears, an out-of-range literal check remains a
+;; trap, and a data-dependent check is untouched.
+(define (opt-sccp-constant-bounds-blocks [index : i64] [length : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 index) (AstType.U64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 length) (AstType.U64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (compiler-ir-label "bounds_ok"))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              (CompilerIrInstrList.Nil))))))
+    (CompilerIrBlockList.Nil)))
+
+(define (opt-sccp-dynamic-bounds-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "index" (AstType.U64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "length" (AstType.U64) 1)
+      (CompilerIrParamList.Nil))))
+
+(define (opt-sccp-dynamic-bounds-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (compiler-ir-label "bounds_ok"))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+          (CompilerIrInstrList.Nil))))
+    (CompilerIrBlockList.Nil)))
+
 ;; Regression guard: a branch conditioned on an IrInstrWord-extracted enum
 ;; tag. Pack/Word dsts must be bound Overdefined in the SCCP lattice; when they
 ;; stayed Unknown the branch marked NO successor executable and both arms were
@@ -12427,6 +12472,18 @@
       (opt-sccp-blocks
         (CompilerIrParamList.Nil)
         (opt-sccp-group-word-branch-blocks))]
+    [in-range-bounds : CompilerIrBlockList
+      (opt-sccp-blocks
+        (CompilerIrParamList.Nil)
+        (opt-sccp-constant-bounds-blocks 0 64))]
+    [out-of-range-bounds : CompilerIrBlockList
+      (opt-sccp-blocks
+        (CompilerIrParamList.Nil)
+        (opt-sccp-constant-bounds-blocks 64 64))]
+    [dynamic-bounds : CompilerIrBlockList
+      (opt-sccp-blocks
+        (opt-sccp-dynamic-bounds-params)
+        (opt-sccp-dynamic-bounds-blocks))]
     (cond
       [(not (= (opt-count-arith-blocks cross) 0)) 1]
       [(not (= (opt-blocks-mov-dst-i64-value cross 1 (- 0 999)) 42)) 2]
@@ -12450,6 +12507,9 @@
       [(not (= (compiler-ir-block-list-count branch-context) 2)) 19]
       [(not branch-context-valid) 20]
       [(opt-block-list-has-label? branch-context (compiler-ir-label "else")) 21]
+      [(not (= (opt-count-bounds-blocks in-range-bounds) 0)) 22]
+      [(not (= (opt-count-bounds-blocks out-of-range-bounds) 1)) 23]
+      [(not (= (opt-count-bounds-blocks dynamic-bounds) 1)) 24]
       [else 42])))
 
 (define (opt-cfg-constant-if-blocks) : CompilerIrBlockList

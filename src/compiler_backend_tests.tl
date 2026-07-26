@@ -2892,11 +2892,13 @@
 
 (define (compiler-backend-c-abi-call-result-store-bool-ok?) : bool
   (match (compiler-backend-emit-c-abi-call-result-store
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-call-result-store-bool-assignments)
     0
     (AstType.Bool)
     1
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil))
     [(ResultCompilerBackend.Ok asm)
@@ -2905,11 +2907,13 @@
 
 (define (compiler-backend-typelisp-call-result-store-bool-ok?) : bool
   (match (compiler-backend-emit-call-result-store
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-call-result-store-bool-assignments)
     0
     (AstType.Bool)
     1
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil))
     [(ResultCompilerBackend.Ok asm)
@@ -3038,6 +3042,7 @@
         (set! compiler-backend-emit-current-count 1))]
     [result : ResultCompilerBackend
       (compiler-backend-emit-indirect-c-call
+        (ast-node-pool-reader-type-segment-bases)
         target
         2
         func
@@ -3050,6 +3055,7 @@
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         3
@@ -3189,6 +3195,7 @@
         (set! compiler-backend-emit-current-count 1))]
     [result : ResultCompilerBackend
       (compiler-backend-emit-indirect-c-abi-store-result-call
+        (ast-node-pool-reader-type-segment-bases)
         target
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 1)
@@ -3201,6 +3208,7 @@
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         3
@@ -3283,7 +3291,12 @@
           assignments)
         (set! compiler-backend-emit-instr-post-base 1)
         (set! compiler-backend-emit-current-count 1))]
-    [asm : String (compiler-backend-emit-c-abi-return-stores 0 slots "")]
+    [asm : String
+      (compiler-backend-emit-c-abi-return-stores
+        (ast-node-pool-reader-type-segment-bases)
+        0
+        slots
+        "")]
     [result : bool
       (and
         (compiler-backend-string-contains? asm "    movq 0(%rsp), %r9\n")
@@ -3454,6 +3467,7 @@
 
 (define (compiler-backend-pack-immediate-word-shape-ok?) : bool
   (match (compiler-backend-emit-pack-words
+    (ast-node-pool-reader-type-segment-bases)
     CompilerRegAssignmentList.Nil
     (CompilerIrValue.I64 7)
     (CompilerIrValue.Bool true)
@@ -3466,6 +3480,7 @@
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok stack-asm)
       (match (compiler-backend-emit-pack-words
+        (ast-node-pool-reader-type-segment-bases)
         CompilerRegAssignmentList.Nil
         (CompilerIrValue.I64 9)
         (CompilerIrValue.Char 'A')
@@ -3516,6 +3531,7 @@
             (CompilerRegLocation.Register "%xmm4"))
           CompilerRegAssignmentList.Nil))]
     (match (compiler-backend-emit-pack-words
+      (ast-node-pool-reader-type-segment-bases)
       gp-assignments
       (CompilerIrValue.Var 0)
       (CompilerIrValue.Var 1)
@@ -3528,6 +3544,7 @@
       (compiler-diagnostic-at-start "" ""))
       [(ResultCompilerBackend.Ok gp-asm)
         (match (compiler-backend-emit-pack-words
+          (ast-node-pool-reader-type-segment-bases)
           xmm-assignments
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
@@ -4250,6 +4267,7 @@
         CompilerRegAssignmentList.Nil)]
     [ok : bool
       (match (compiler-backend-emit-compare-branch
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         "cmp"
         (CompilerIrBinOp.Lt)
@@ -4335,7 +4353,10 @@
         (compiler-backend-emit-store-var-with-plan assignments 1 "%rax")
         "    movq %rax, %r9\n")
       (string.eq
-        (compiler-backend-emit-load-register "%r8" (AstType.U32))
+        (compiler-backend-emit-load-register
+          (ast-node-pool-reader-type-segment-bases)
+          "%r8"
+          (AstType.U32))
         "    movl %r8d, %eax\n")
       (not (compiler-backend-plan-uses-callee-regs? assignments))
       (= (compiler-backend-frame-slots 2 assignments) 2))))
@@ -4870,11 +4891,13 @@
         (compiler-backend-emit-store-f64-var-with-plan assignments 1 "%xmm0")
         "    movsd %xmm0, %xmm2\n")
       (match (compiler-backend-emit-mov
+        (ast-node-pool-reader-type-segment-bases)
         coalesced
         2
         (CompilerIrValue.Var 0)
         (AstType.I64)
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         8
@@ -4882,6 +4905,7 @@
         [(ResultCompilerBackend.Ok asm) (string.eq asm "")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
+        (ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler-ir-label "entry")
         coalesced
@@ -4890,6 +4914,7 @@
         (AstType.I64)
         (AstType.I64)
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         ""
@@ -4898,6 +4923,7 @@
         [(ResultCompilerBackend.Ok asm) (string.eq asm "")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
+        (ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler-ir-label "entry")
         casted
@@ -4906,6 +4932,7 @@
         (AstType.I64)
         (AstType.U64)
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         ""
@@ -4914,6 +4941,7 @@
         [(ResultCompilerBackend.Ok asm) (string.eq asm "    movq %r12, %r13\n")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
+        (ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler-ir-label "entry")
         casted
@@ -4922,6 +4950,7 @@
         (AstType.I32)
         (AstType.I64)
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         ""
@@ -4943,10 +4972,12 @@
         CompilerRegAssignmentList.Nil)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)]
     (and
       (match (compiler-backend-emit-mov
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         0
         (CompilerIrValue.I64 0)
@@ -4958,6 +4989,7 @@
           (string.eq asm "    xorl %r12d, %r12d\n")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-mov
+        (ast-node-pool-reader-type-segment-bases)
         CompilerRegAssignmentList.Nil
         1
         (CompilerIrValue.I64 7)
@@ -4973,6 +5005,7 @@
   (let
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)]
     [int-assignments : CompilerRegAssignmentList
@@ -4989,6 +5022,7 @@
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-mov
+        (ast-node-pool-reader-type-segment-bases)
         int-assignments
         1
         (CompilerIrValue.Var 0)
@@ -5003,6 +5037,7 @@
             (not (compiler-backend-string-contains? asm "%rax")))]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-mov
+        (ast-node-pool-reader-type-segment-bases)
         float-assignments
         1
         (CompilerIrValue.Var 0)
@@ -5026,6 +5061,7 @@
   (let
     [ty : AstType (compiler-backend-register-group-test-type)]
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           (ci.intern "main")
@@ -5056,6 +5092,7 @@
   (let
     [ty : AstType (compiler-backend-register-group-f64-test-type)]
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           (ci.intern "main")
@@ -5088,7 +5125,15 @@
     [ty : AstType (compiler-backend-register-group-test-type)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
-    (match (compiler-backend-emit-mov assignments 1 src ty index 4 "")
+    (match (compiler-backend-emit-mov
+      (ast-node-pool-reader-type-segment-bases)
+      assignments
+      1
+      src
+      ty
+      index
+      4
+      "")
       [(ResultCompilerBackend.Err diag)
         (string.eq (compiler-diagnostic-message (box-get diag)) want)]
       [(ResultCompilerBackend.Ok _) false])))
@@ -5099,6 +5144,7 @@
     [index : CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
     (match (compiler-backend-emit-call-args
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendTarget.Linux)
       CompilerRegAssignmentList.Nil
       (CompilerIrCallArgs.One (CompilerIrValue.I64 7))
@@ -5305,7 +5351,10 @@
     [index : CompilerBackendProgramIndex
       (match program
         [(CompilerIrProgram.Program _ functions externs)
-          (compiler-backend-program-index-build functions externs)])]
+          (compiler-backend-program-index-build
+            (ast-node-pool-reader-type-segment-bases)
+            functions
+            externs)])]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
@@ -5326,6 +5375,7 @@
           (compiler-live-set-empty)))]
     [packed : ResultCompilerBackend
       (compiler-backend-emit-pack
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         0
         (compiler-ir-value-cons
@@ -5341,6 +5391,7 @@
         (compiler-diagnostic-at-start "" ""))]
     [data : ResultCompilerBackend
       (compiler-backend-emit-word
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         1
         (CompilerIrValue.Var 0)
@@ -5351,6 +5402,7 @@
         (compiler-diagnostic-at-start "" ""))]
     [length : ResultCompilerBackend
       (compiler-backend-emit-word
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         2
         (CompilerIrValue.Var 0)
@@ -5385,7 +5437,10 @@
     [index : CompilerBackendProgramIndex
       (match program
         [(CompilerIrProgram.Program _ functions externs)
-          (compiler-backend-program-index-build functions externs)])]
+          (compiler-backend-program-index-build
+            (ast-node-pool-reader-type-segment-bases)
+            functions
+            externs)])]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
@@ -5412,6 +5467,7 @@
           (compiler-live-set-empty)))]
     [packed : ResultCompilerBackend
       (compiler-backend-emit-pack
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         0
         (compiler-ir-value-cons
@@ -5427,6 +5483,7 @@
         (compiler-diagnostic-at-start "" ""))]
     [data : ResultCompilerBackend
       (compiler-backend-emit-word
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         1
         (CompilerIrValue.Var 0)
@@ -5437,6 +5494,7 @@
         (compiler-diagnostic-at-start "" ""))]
     [length : ResultCompilerBackend
       (compiler-backend-emit-word
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         2
         (CompilerIrValue.Var 0)
@@ -5447,6 +5505,7 @@
         (compiler-diagnostic-at-start "" ""))]
     [copied : ResultCompilerBackend
       (compiler-backend-emit-mov
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         3
         (CompilerIrValue.Var 0)
@@ -5571,11 +5630,23 @@
     [program-index : CompilerBackendProgramIndex
       (match program
         [(CompilerIrProgram.Program _ functions externs)
-          (compiler-backend-program-index-build functions externs)])]
+          (compiler-backend-program-index-build
+            (ast-node-pool-reader-type-segment-bases)
+            functions
+            externs)])]
     (and
       ;; The materialized String still consumes one ordinary ABI slot.
-      (= (compiler-backend-group-word-count program-index (AstType.String)) 1)
-      (not (compiler-backend-group-type? program-index (AstType.String)))
+      (=
+        (compiler-backend-group-word-count
+          (ast-node-pool-reader-type-segment-bases)
+          program-index
+          (AstType.String))
+        1)
+      (not
+        (compiler-backend-group-type?
+          (ast-node-pool-reader-type-segment-bases)
+          program-index
+          (AstType.String)))
       (match (compiler-backend-emit-program-for-target program target)
         [(ResultCompilerBackend.Ok asm)
           (compiler-backend-string-contains? asm "    call _tl_f1\n")]
@@ -5855,6 +5926,7 @@
             CompilerIrGlobalList.Nil)]
         [collections : CompilerBackendProgramCollections
           (compiler-backend-collect-program-collections
+            (ast-node-pool-reader-type-segment-bases)
             (CompilerIrProgram.Program
               globals
               functions
@@ -5889,7 +5961,10 @@
 (define (compiler-backend-ir-walker-group-metadata-array-ok?) : bool
   (let
     [ty : AstType (compiler-backend-register-group-test-type)]
-    [name : String (compiler-backend-aggregate-type-name ty)]
+    [name : String
+      (compiler-backend-aggregate-type-name
+        (ast-node-pool-reader-type-segment-bases)
+        ty)]
     [words : CompilerIrValueList
       (compiler-ir-value-cons
         (CompilerIrValue.I64 1)
@@ -5920,10 +5995,12 @@
             CompilerIrFunctionList.Nil)))]
     [counts : backend_test_string_i64_map.Map
       (compiler-backend-collect-group-counts-functions
+        (ast-node-pool-reader-type-segment-bases)
         (backend_test_string_i64_map.with-capacity 4)
         functions)]
     [masks : backend_test_string_i64_map.Map
       (compiler-backend-collect-group-class-masks-functions
+        (ast-node-pool-reader-type-segment-bases)
         (backend_test_string_i64_map.with-capacity 4)
         functions)]
     (and
@@ -5940,6 +6017,7 @@
     [ty : AstType (compiler-backend-register-group-test-type)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)]
     [values : CompilerIrValueList
@@ -5950,6 +6028,7 @@
           CompilerIrValueList.Nil))]
     [packed : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-instr
+        (ast-node-pool-reader-type-segment-bases)
         (object_target.compiler-backend-object-parts-empty)
         (CompilerBackendTarget.Linux)
         "main"
@@ -5961,6 +6040,7 @@
         index)]
     [worded : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-instr
+        (ast-node-pool-reader-type-segment-bases)
         packed
         (CompilerBackendTarget.Linux)
         "main"
@@ -6014,6 +6094,7 @@
     [assignments : CompilerRegAssignmentList
       (compiler-backend-peephole-assignments)]
     (match (compiler-backend-emit-binop
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerRegVarTypeList.Nil)
       (CompilerBackendGlobalTypeList.Nil)
       assignments
@@ -6024,6 +6105,7 @@
       (AstType.I64))
       [(ResultCompilerBackend.Ok add-asm)
         (match (compiler-backend-emit-binop
+          (ast-node-pool-reader-type-segment-bases)
           (CompilerRegVarTypeList.Nil)
           (CompilerBackendGlobalTypeList.Nil)
           assignments
@@ -6034,6 +6116,7 @@
           (AstType.I64))
           [(ResultCompilerBackend.Ok mul-asm)
             (match (compiler-backend-emit-binop
+              (ast-node-pool-reader-type-segment-bases)
               (CompilerRegVarTypeList.Nil)
               (CompilerBackendGlobalTypeList.Nil)
               assignments
@@ -6044,6 +6127,7 @@
               (AstType.I64))
               [(ResultCompilerBackend.Ok shl-asm)
                 (match (compiler-backend-emit-binop
+                  (ast-node-pool-reader-type-segment-bases)
                   (CompilerRegVarTypeList.Nil)
                   (CompilerBackendGlobalTypeList.Nil)
                   assignments
@@ -6628,6 +6712,7 @@
   (let
     [ty : AstType (compiler-backend-register-group-test-type)]
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           (ci.intern "group_seed")
@@ -6683,6 +6768,7 @@
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
     (compiler-backend-emit-instrs
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
         (CompilerBackendTarget.Linux)
         "_tl_test"
@@ -6712,6 +6798,7 @@
     instrs
     vars
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)))
 
@@ -6832,6 +6919,7 @@
         compiler-backend-long-block-instr-count
         blocks)]
     (match (compiler-backend-emit-instrs
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
         (CompilerBackendTarget.Linux)
         "_tl_test"
@@ -6847,6 +6935,7 @@
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
@@ -6874,6 +6963,7 @@
           (CompilerRegVarType.Type 1 (AstType.I64))
           CompilerRegVarTypeList.Nil))]
     (match (compiler-backend-emit-binop
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerRegVarTypeList.Nil)
       (CompilerBackendGlobalTypeList.Nil)
       rhs-spill
@@ -6884,6 +6974,7 @@
       (AstType.I64))
       [(ResultCompilerBackend.Ok add-asm)
         (match (compiler-backend-emit-binop
+          (ast-node-pool-reader-type-segment-bases)
           cmp-types
           (CompilerBackendGlobalTypeList.Nil)
           rhs-spill
@@ -7067,6 +7158,7 @@
         CompilerRegAssignmentList.Nil)]
     [ok : bool
       (match (compiler-backend-emit-compare-branch
+        (ast-node-pool-reader-type-segment-bases)
         rhs-rax
         "cmp"
         (CompilerIrBinOp.Lt)
@@ -7392,6 +7484,7 @@
 (define (compiler-backend-zero-compare-ok?) : bool
   (and
     (match (compiler-backend-emit-binop
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerRegVarTypeList.Nil)
       (CompilerBackendGlobalTypeList.Nil)
       (compiler-backend-peephole-assignments)
@@ -7408,6 +7501,7 @@
           (not (compiler-backend-string-contains? asm "    cmpq $0")))]
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-binop
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerRegVarTypeList.Nil)
       (CompilerBackendGlobalTypeList.Nil)
       (compiler-backend-peephole-assignments)
@@ -7424,6 +7518,7 @@
           (not (compiler-backend-string-contains? asm "    cmpq $0")))]
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-binop
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerRegVarTypeList.Nil)
       (CompilerBackendGlobalTypeList.Nil)
       (compiler-backend-peephole-assignments)
@@ -7562,6 +7657,7 @@
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
     (and
       (match (compiler-backend-emit-word
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         1
         (CompilerIrValue.Var 2)
@@ -7881,6 +7977,7 @@
       (compiler-backend-phi-target-labels-for-blocks
         (compiler-backend-branch-phi-blocks)))
     (match (compiler-backend-emit-compare-branch-with-phi-copies
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-backend-branch-phi-assignments)
       "phi_edge"
       (compiler-backend-branch-phi-blocks)
@@ -7893,6 +7990,7 @@
       (compiler-ir-label "exit")
       (CompilerBackendMaybeLabel.No)
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)
       4
@@ -7921,11 +8019,13 @@
 
 (define (compiler-backend-phi-immediate-stack-copy-ok?) : bool
   (match (compiler-backend-emit-phi-edge-copies
+    (ast-node-pool-reader-type-segment-bases)
     CompilerRegAssignmentList.Nil
     (compiler-backend-branch-phi-blocks)
     (compiler-ir-label "body")
     (compiler-ir-label "entry")
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     4
@@ -7942,6 +8042,7 @@
 
 (define (compiler-backend-phi-direct-scalar-copy-ok?) : bool
   (match (compiler-backend-emit-phi-edge-copies
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -7953,6 +8054,7 @@
     (compiler-ir-label "body")
     (compiler-ir-label "body")
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     4
@@ -7961,6 +8063,7 @@
     "")
     [(ResultCompilerBackend.Ok reg-reg)
       (match (compiler-backend-emit-phi-edge-copies
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
@@ -7972,6 +8075,7 @@
         (compiler-ir-label "body")
         (compiler-ir-label "body")
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         4
@@ -7980,6 +8084,7 @@
         "")
         [(ResultCompilerBackend.Ok spill-reg)
           (match (compiler-backend-emit-phi-edge-copies
+            (ast-node-pool-reader-type-segment-bases)
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 0
@@ -7993,6 +8098,7 @@
             (compiler-ir-label "body")
             (compiler-ir-label "body")
             (compiler-backend-program-index-build
+              (ast-node-pool-reader-type-segment-bases)
               CompilerIrFunctionList.Nil
               CompilerIrExternList.Nil)
             4
@@ -8035,6 +8141,7 @@
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
     (compiler-backend-emit-instrs
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
         (CompilerBackendTarget.Linux)
         "_tl_test"
@@ -8050,6 +8157,7 @@
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
@@ -8299,6 +8407,7 @@
     [blocks : CompilerIrBlockList (compiler-backend-mov-phi-copy-blocks)]
     [use-counts : (Array i64) (compiler-backend-function-use-counts 3 blocks)]
     (match (compiler-backend-emit-instrs
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
         (CompilerBackendTarget.Linux)
         "_tl_test"
@@ -8314,6 +8423,7 @@
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
@@ -8340,11 +8450,13 @@
         (set! compiler-backend-cycle-temp-base-offset -512))]
     [ok : bool
       (match (compiler-backend-emit-phi-edge-copies
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-backend-phi-same-home-assignments)
         (compiler-backend-phi-same-home-blocks)
         (compiler-ir-label "join")
         (compiler-ir-label "entry")
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         0
@@ -8353,11 +8465,13 @@
         "")
         [(ResultCompilerBackend.Ok same-home)
           (match (compiler-backend-emit-phi-edge-copies
+            (ast-node-pool-reader-type-segment-bases)
             CompilerRegAssignmentList.Nil
             (compiler-backend-phi-cycle-blocks)
             (compiler-ir-label "join")
             (compiler-ir-label "back")
             (compiler-backend-program-index-build
+              (ast-node-pool-reader-type-segment-bases)
               CompilerIrFunctionList.Nil
               CompilerIrExternList.Nil)
             0
@@ -8400,6 +8514,7 @@
         (set! compiler-backend-cycle-temp-base-offset -512))]
     [ok : bool
       (match (compiler-backend-emit-phi-edge-copies
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-backend-phi-group-cycle-assignments)
         (compiler-backend-phi-group-cycle-blocks)
         (compiler-ir-label "join")
@@ -8461,6 +8576,7 @@
           (compiler-live-set-empty)))]
     [copied : ResultCompilerBackend
       (compiler-backend-emit-phi-edge-copies
+        (ast-node-pool-reader-type-segment-bases)
         CompilerRegAssignmentList.Nil
         blocks
         (compiler-ir-label "join")
@@ -8493,11 +8609,13 @@
     [ok : bool
       (and
         (match (compiler-backend-emit-phi-edge-copies
+          (ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-f64-cycle-assignments)
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler-ir-label "join")
           (compiler-ir-label "back")
           (compiler-backend-program-index-build
+            (ast-node-pool-reader-type-segment-bases)
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
           2
@@ -8519,11 +8637,13 @@
               (not (compiler-backend-string-contains? cycle "%xmm15")))]
           [(ResultCompilerBackend.Err _) false])
         (match (compiler-backend-emit-phi-edge-copies
+          (ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-f64-cycle-assignments)
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler-ir-label "join")
           (compiler-ir-label "back")
           (compiler-backend-program-index-build
+            (ast-node-pool-reader-type-segment-bases)
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
           2
@@ -8540,11 +8660,13 @@
                 "    movsd -512(%rbp), %xmm3\n"))]
           [(ResultCompilerBackend.Err _) false])
         (match (compiler-backend-emit-phi-edge-copies
+          (ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-f32-three-cycle-assignments)
           (compiler-backend-phi-f32-three-cycle-blocks)
           (compiler-ir-label "join")
           (compiler-ir-label "back")
           (compiler-backend-program-index-build
+            (ast-node-pool-reader-type-segment-bases)
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
           3
@@ -8561,11 +8683,13 @@
               (not (compiler-backend-string-contains? cycle "movsd")))]
           [(ResultCompilerBackend.Err _) false])
         (match (compiler-backend-emit-phi-edge-copies
+          (ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-f64-spill-cycle-assignments)
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler-ir-label "join")
           (compiler-ir-label "back")
           (compiler-backend-program-index-build
+            (ast-node-pool-reader-type-segment-bases)
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
           2
@@ -8581,6 +8705,7 @@
                   "    movsd -16(%rbp), %xmm4\n")))]
           [(ResultCompilerBackend.Err _) false])
         (match (compiler-backend-emit-phi-edge-copies
+          (ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-group-f64-cycle-assignments)
           (compiler-backend-phi-group-f64-cycle-blocks)
           (compiler-ir-label "join")
@@ -8673,6 +8798,7 @@
     [args : CompilerIrCallArgs
       (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
     (match (compiler-backend-emit-call-args
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendTarget.Linux)
       assignments
       args
@@ -8686,6 +8812,7 @@
       ""
       (compiler-diagnostic-at-start "" "")
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)
       2)
@@ -8711,6 +8838,7 @@
     [args : CompilerIrCallArgs
       (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
     (match (compiler-backend-emit-call-args
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendTarget.Linux)
       assignments
       args
@@ -8724,6 +8852,7 @@
       ""
       (compiler-diagnostic-at-start "" "")
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)
       2)
@@ -8748,6 +8877,7 @@
     [args : CompilerIrCallArgs
       (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
     (match (compiler-backend-emit-call-args
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendTarget.Linux)
       assignments
       args
@@ -8761,6 +8891,7 @@
       ""
       (compiler-diagnostic-at-start "" "")
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)
       2)
@@ -10147,6 +10278,7 @@
 
 (define (compiler-backend-avx2-stack-splat-i64-ok?) : bool
   (match (compiler-backend-emit-avx2-splat
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-dst-only-assignments)
     0
     (CompilerIrValue.Var 1)
@@ -10164,6 +10296,7 @@
 
 (define (compiler-backend-avx2-stack-splat-f64-spill-ok?) : bool
   (match (compiler-backend-emit-avx2-splat
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-spill-assignments -40)
     0
     (CompilerIrValue.Var 1)
@@ -10180,6 +10313,7 @@
 
 (define (compiler-backend-avx512-stack-splat-i64-ok?) : bool
   (match (compiler-backend-emit-avx512-splat
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-dst-only-assignments)
     0
     (CompilerIrValue.Var 1)
@@ -10197,6 +10331,7 @@
 
 (define (compiler-backend-avx512-stack-splat-f64-spill-ok?) : bool
   (match (compiler-backend-emit-avx512-splat
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-spill-assignments -40)
     0
     (CompilerIrValue.Var 1)
@@ -10214,6 +10349,7 @@
 (define (compiler-backend-register-splat-fallback-ok?) : bool
   (and
     (match (compiler-backend-emit-avx2-splat
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-register-assignments)
       0
       (CompilerIrValue.Var 1)
@@ -10231,6 +10367,7 @@
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-avx2-splat
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-float-register-assignments)
       0
       (CompilerIrValue.Var 1)
@@ -10247,6 +10384,7 @@
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-avx512-splat
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-register-assignments)
       0
       (CompilerIrValue.Var 1)
@@ -10261,6 +10399,7 @@
           (not (compiler-backend-string-contains? asm "%rax")))]
       [(ResultCompilerBackend.Err _) false])
     (match (compiler-backend-emit-avx512-splat
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-float-register-assignments)
       0
       (CompilerIrValue.Var 1)
@@ -10305,6 +10444,7 @@
 
 (define (compiler-backend-avx2-vector-load-spill-dst-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-load
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
     (CompilerIrValue.Var 0)
@@ -10322,6 +10462,7 @@
 
 (define (compiler-backend-avx2-vector-binop-spill-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
     (CompilerIrBinOp.Add)
@@ -10558,6 +10699,7 @@
   [ordinal : i64]
   [var : i64]) : CompilerRegScratchRequirement
   (compiler-reg-scratch-requirement-local
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerRegTargetAbi.Linux)
     (compiler-reg-scratch-policy
       (CompilerRegTargetAbi.Linux)
@@ -10649,6 +10791,7 @@
 
 (define (compiler-backend-avx512-predicated-load-spill-dst-ok?) : bool
   (match (compiler-backend-emit-avx512-predicated-load
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
     (CompilerIrValue.Var 0)
@@ -10667,6 +10810,7 @@
 
 (define (compiler-backend-avx512-select-spill-ok?) : bool
   (match (compiler-backend-emit-avx512-select
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
     (CompilerIrValue.Var 4)
@@ -10683,6 +10827,7 @@
 
 (define (compiler-backend-avx2-vector-reduce-spill-source-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-reduce
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     5
     (CompilerIrVectorReduceOp.Sum)
@@ -10703,6 +10848,7 @@
 
 (define (compiler-backend-avx512-vector-reduce-spill-source-ok?) : bool
   (match (compiler-backend-emit-avx512-vector-reduce
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     5
     (CompilerIrVectorReduceOp.Sum)
@@ -10849,6 +10995,7 @@
   [want-asm : String]
   [want-addr : String]) : bool
   (match (compiler-backend-emit-simd-indexed-address
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     base
     index
@@ -10912,6 +11059,7 @@
     [before-pending : i64 compiler-backend-emergency-pending-count]
     [before-used : i64 compiler-backend-emergency-used-count]
     (match (compiler-backend-emit-simd-indexed-address
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-backend-simd-address-assignments)
       (CompilerIrValue.Var 7)
       (CompilerIrValue.Var 8)
@@ -10920,6 +11068,7 @@
       "%r13")
       [(ResultCompilerBackendSimdIndexedAddress.Ok dynamic)
         (match (compiler-backend-emit-simd-indexed-address
+          (ast-node-pool-reader-type-segment-bases)
           (compiler-backend-simd-address-assignments)
           (CompilerIrValue.Var 7)
           (CompilerIrValue.I64 4)
@@ -10928,6 +11077,7 @@
           "%r13")
           [(ResultCompilerBackendSimdIndexedAddress.Ok constant)
             (match (compiler-backend-emit-simd-indexed-address
+              (ast-node-pool-reader-type-segment-bases)
               (compiler-backend-simd-address-assignments)
               (CompilerIrValue.Var 0)
               (CompilerIrValue.I64 4)
@@ -10958,6 +11108,7 @@
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-load
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     3
     (CompilerIrValue.Var 0)
@@ -10973,6 +11124,7 @@
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-store
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     (CompilerIrValue.Var 0)
     (CompilerIrValue.Var 1)
@@ -10988,6 +11140,7 @@
 
 (define (compiler-backend-avx512-predicated-load-address-ok?) : bool
   (match (compiler-backend-emit-avx512-predicated-load
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     3
     (CompilerIrValue.Var 0)
@@ -11082,6 +11235,7 @@
 
 (define (compiler-backend-avx512-select-true-alias-ok?) : bool
   (match (compiler-backend-emit-avx512-select
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-select-alias-assignments)
     0
     (CompilerIrValue.Var 1)
@@ -11102,6 +11256,7 @@
 
 (define (compiler-backend-avx512-select-false-alias-ok?) : bool
   (match (compiler-backend-emit-avx512-select
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-select-false-alias-assignments)
     0
     (CompilerIrValue.Var 1)
@@ -11127,6 +11282,7 @@
 
 (define (compiler-backend-avx512-mask-load-temp-ok?) : bool
   (match (compiler-backend-emit-avx512-mask-load
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-load-temp-assignments)
     0
     (CompilerIrValue.Var 2)
@@ -11164,6 +11320,7 @@
 
 (define (compiler-backend-avx512-mask-store-temp-ok?) : bool
   (match (compiler-backend-emit-avx512-mask-store
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-store-temp-assignments)
     (CompilerIrValue.Var 2)
     (CompilerIrValue.I64 0)
@@ -11739,6 +11896,7 @@
 
 (define (compiler-backend-avx2-vector-reduce-direct-stack-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-reduce
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-reduce-direct-assignments
       (CompilerRegLocation.Spill -40))
     1
@@ -11764,6 +11922,7 @@
 
 (define (compiler-backend-avx2-vector-reduce-direct-register-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-reduce
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-reduce-direct-assignments
       (CompilerRegLocation.Register "%r12"))
     1
@@ -11788,6 +11947,7 @@
 
 (define (compiler-backend-avx512-vector-reduce-direct-stack-ok?) : bool
   (match (compiler-backend-emit-avx512-vector-reduce
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-reduce-direct-assignments
       (CompilerRegLocation.Spill -40))
     1
@@ -11814,6 +11974,7 @@
 
 (define (compiler-backend-avx512-vector-reduce-direct-register-ok?) : bool
   (match (compiler-backend-emit-avx512-vector-reduce
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-reduce-direct-assignments
       (CompilerRegLocation.Register "%r12"))
     1
@@ -11978,6 +12139,7 @@
   [lanes : i64]
   [want : String]) : bool
   (match (compiler-backend-emit-avx512-tail-mask
+    (ast-node-pool-reader-type-segment-bases)
     "_tl_tail"
     (compiler-ir-label "entry")
     (compiler-backend-avx512-tail-mask-assignments)
@@ -11991,6 +12153,7 @@
 
 (define (compiler-backend-avx512-tail-mask-dynamic-zero-ok?) : bool
   (match (compiler-backend-emit-avx512-tail-mask
+    (ast-node-pool-reader-type-segment-bases)
     "_tl_tail"
     (compiler-ir-label "entry")
     (compiler-backend-avx512-tail-mask-assignments)
@@ -12048,6 +12211,7 @@
 
 (define (compiler-backend-avx512-mask-not-emits? [lanes : i64] [want : String]) : bool
   (match (compiler-backend-emit-avx512-mask-not
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-not-assignments)
     1
     (CompilerIrValue.Var 0)
@@ -12083,6 +12247,7 @@
   [op : CompilerIrMaskBinOp]
   [want : String]) : bool
   (match (compiler-backend-emit-avx512-mask-binop
+    (ast-node-pool-reader-type-segment-bases)
     assignments
     dst
     op
@@ -12128,6 +12293,7 @@
   [lanes : i64]
   [want : String]) : bool
   (match (compiler-backend-emit-avx512-mask-reduce
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-reduce-assignments)
     1
     op
@@ -12180,6 +12346,7 @@
       (compiler-backend-set-current-mode! (CompilerBackendMode.Avx512))]
     [ok : bool
       (match (compiler-backend-emit-vector-compare
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-backend-avx512-mask-spill-compare-assignments)
         2
         (CompilerIrBinOp.Eq)
@@ -12203,6 +12370,7 @@
 
 (define (compiler-backend-avx512-mask-spill-binop-emits-ok?) : bool
   (match (compiler-backend-emit-avx512-mask-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-spill-assignments)
     2
     (CompilerIrMaskBinOp.And)
@@ -12224,6 +12392,7 @@
 
 (define (compiler-backend-avx512-mask-spill-not-emits-ok?) : bool
   (match (compiler-backend-emit-avx512-mask-not
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-spill-assignments)
     2
     (CompilerIrValue.Var 0)
@@ -12240,6 +12409,7 @@
 
 (define (compiler-backend-avx512-mask-spill-reduce-emits-ok?) : bool
   (match (compiler-backend-emit-avx512-mask-reduce
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-spill-assignments)
     3
     (CompilerIrMaskReduceOp.Any)
@@ -12255,6 +12425,7 @@
 
 (define (compiler-backend-avx512-mask-spill-load-store-emits-ok?) : bool
   (match (compiler-backend-emit-avx512-mask-load
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-spill-assignments)
     2
     (CompilerIrValue.Var 3)
@@ -12266,6 +12437,7 @@
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok load-asm)
       (match (compiler-backend-emit-avx512-mask-store
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-backend-avx512-mask-spill-assignments)
         (CompilerIrValue.Var 3)
         (CompilerIrValue.I64 0)
@@ -12581,6 +12753,7 @@
   [lanes : i64]
   [want : String]) : bool
   (match (compiler-backend-emit-avx2-vector-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
     op
@@ -12598,6 +12771,7 @@
   [lanes : i64]
   [want : String]) : bool
   (match (compiler-backend-emit-avx512-vector-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
     op
@@ -12615,6 +12789,7 @@
   [lanes : i64]
   [want : String]) : bool
   (match (compiler-backend-emit-avx2-vector-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
     op
@@ -12633,6 +12808,7 @@
   [lanes : i64]
   [want : String]) : bool
   (match (compiler-backend-emit-avx512-vector-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
     2
     op
@@ -13024,6 +13200,7 @@
         (set! compiler-backend-emit-instrs-continue-pending false)
         (set! compiler-backend-identity-tail-forwarder-active false))]
     (match (compiler-backend-emit-instr
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
         (CompilerBackendTarget.Linux)
         "_tl_test"
@@ -13047,6 +13224,7 @@
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
@@ -13161,6 +13339,7 @@
     [_addr-forward : unit
       (compiler-backend-addr-of-forwarding-enable! vars blocks use-counts)]
     (match (compiler-backend-emit-instrs
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendEmissionContext
         (CompilerBackendTarget.Linux)
         "_tl_test"
@@ -13176,6 +13355,7 @@
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
@@ -15020,10 +15200,12 @@
         CompilerRegAssignmentList.Nil)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)]
     (and
       (match (compiler-backend-emit-store-ptr
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         (CompilerIrValue.Var 0)
         (CompilerIrValue.I64 7)
@@ -15037,6 +15219,7 @@
             (not (compiler-backend-string-contains? asm "%r10")))]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-store-to-gep
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         (CompilerIrValue.Var 0)
         (CompilerIrValue.I64 1)
@@ -15054,6 +15237,7 @@
             (not (compiler-backend-string-contains? asm "%r10")))]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-store-ptr
+        (ast-node-pool-reader-type-segment-bases)
         r11-assignments
         (CompilerIrValue.Var 0)
         (CompilerIrValue.I64 11)
@@ -15686,6 +15870,7 @@
   (let
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)]
     [reg-src : CompilerRegAssignmentList
@@ -15706,6 +15891,7 @@
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-cast
+        (ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler-ir-label "entry")
         reg-src
@@ -15721,6 +15907,7 @@
           (string.eq asm "    movsbq %r12b, %rbx\n")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
+        (ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (compiler-ir-label "entry")
         stack-src
@@ -15843,6 +16030,7 @@
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
     (and
       (match (compiler-backend-emit-pack
+        (ast-node-pool-reader-type-segment-bases)
         direct-assignments
         2
         words
@@ -15856,6 +16044,7 @@
           (string.eq asm "    movq %r12, %r14\n    movq %rbx, %r15\n")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-pack
+        (ast-node-pool-reader-type-segment-bases)
         noop-assignments
         2
         words
@@ -16087,6 +16276,7 @@
   (let
     [folded : CompilerIrBlockList
       (compiler-backend-gep-fold-blocks
+        (ast-node-pool-reader-type-segment-bases)
         8
         (compiler-backend-gep-fold-test-blocks false))]
     [result : bool
@@ -16113,6 +16303,7 @@
   (let
     [folded : CompilerIrBlockList
       (compiler-backend-gep-fold-blocks
+        (ast-node-pool-reader-type-segment-bases)
         8
         (compiler-backend-gep-fold-test-blocks true))]
     [result : bool
@@ -16151,6 +16342,7 @@
   (let
     [_folded : CompilerIrBlockList
       (compiler-backend-gep-fold-blocks
+        (ast-node-pool-reader-type-segment-bases)
         8
         (compiler-backend-gep-fold-test-blocks false))]
     [result : bool
@@ -16158,7 +16350,10 @@
         false
         (begin
           ;; wrong scale: recorded scale is 8 (i64), consume with u8.
-          (compiler-backend-gep-fold-next! (CompilerIrValue.Var 1) (AstType.U8))
+          (compiler-backend-gep-fold-next!
+            (ast-node-pool-reader-type-segment-bases)
+            (CompilerIrValue.Var 1)
+            (AstType.U8))
           (compiler-backend-gep-fold-drift?)))]
     (begin
       (compiler-backend-gep-fold-disable!)
@@ -16654,6 +16849,7 @@
   [from-ty : AstType]
   [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
+    (ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
@@ -16670,6 +16866,7 @@
     from-ty
     to-ty
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -16707,6 +16904,7 @@
   [from-ty : AstType]
   [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
+    (ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
@@ -16721,6 +16919,7 @@
     from-ty
     to-ty
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -16762,6 +16961,7 @@
 
 (define (compiler-backend-direct-int-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
+    (ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
@@ -16776,6 +16976,7 @@
     (AstType.I64)
     to-ty
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -16803,6 +17004,7 @@
 
 (define (compiler-backend-spill-int-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
+    (ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
@@ -16815,6 +17017,7 @@
     (AstType.I64)
     to-ty
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -16848,6 +17051,7 @@
 
 (define (compiler-backend-spill-u64-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
+    (ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
@@ -16860,6 +17064,7 @@
     (AstType.U64)
     to-ty
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -16901,6 +17106,7 @@
 
 (define (compiler-backend-direct-float-to-int-cast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
+    (ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
@@ -16917,6 +17123,7 @@
     from-ty
     (AstType.I64)
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -16944,6 +17151,7 @@
 
 (define (compiler-backend-spill-float-to-int-cast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
+    (ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
@@ -16958,6 +17166,7 @@
     from-ty
     (AstType.I64)
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -16991,6 +17200,7 @@
 
 (define (compiler-backend-spill-int-cast-home-ok?) : bool
   (match (compiler-backend-emit-cast
+    (ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
@@ -17003,6 +17213,7 @@
     (AstType.I32)
     (AstType.I64)
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -17061,6 +17272,7 @@
   [src-home : String]
   [dst-home : String]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -17075,6 +17287,7 @@
     from-ty
     to-ty
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -17134,6 +17347,7 @@
 
 (define (compiler-backend-spill-float-to-int-bitcast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -17146,6 +17360,7 @@
     from-ty
     (AstType.U64)
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -17174,6 +17389,7 @@
 
 (define (compiler-backend-spill-int-to-float-bitcast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -17184,6 +17400,7 @@
     (AstType.U64)
     to-ty
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -17214,6 +17431,7 @@
 
 (define (compiler-backend-spill-float-to-float-bitcast-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
@@ -17226,6 +17444,7 @@
     ty
     ty
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -17256,6 +17475,7 @@
 
 (define (compiler-backend-spill-int-to-int-bitcast-home-ok?) : bool
   (match (compiler-backend-emit-bitcast
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
       (compiler-reg-assignment-cons
@@ -17266,6 +17486,7 @@
     (AstType.I64)
     (AstType.U64)
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     ""
@@ -18337,6 +18558,7 @@
   [op : CompilerIrBinOp]
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 ty)
       (compiler-reg-var-type-cons
@@ -18396,6 +18618,7 @@
 
 (define (compiler-backend-spill-float-arith-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 ty)
       (compiler-reg-var-type-cons
@@ -18455,6 +18678,7 @@
 
 (define (compiler-backend-direct-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 ty)
       (compiler-reg-var-type-cons
@@ -18514,6 +18738,7 @@
 
 (define (compiler-backend-spill-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 ty)
       (compiler-reg-var-type-cons
@@ -18577,6 +18802,7 @@
 
 (define (compiler-backend-fallback-float-self-rhs-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 ty)
       (compiler-reg-var-type-cons
@@ -18600,6 +18826,7 @@
 
 (define (compiler-backend-fallback-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 ty)
       (compiler-reg-var-type-cons
@@ -18660,6 +18887,7 @@
   [lhs-home : String]
   [rhs-home : String]) : ResultCompilerBackend
   (compiler-backend-emit-binop-return
+    (ast-node-pool-reader-type-segment-bases)
     (ci.intern "ret_float")
     CompilerIrBlockList.Nil
     (compiler-reg-var-type-cons
@@ -18714,6 +18942,7 @@
 
 (define (compiler-backend-float-return-compare-home-asm) : ResultCompilerBackend
   (compiler-backend-emit-binop-return
+    (ast-node-pool-reader-type-segment-bases)
     (ci.intern "ret_float_cmp")
     CompilerIrBlockList.Nil
     (compiler-reg-var-type-cons
@@ -18739,6 +18968,7 @@
 
 (define (compiler-backend-float-return-compare-spill-asm) : ResultCompilerBackend
   (compiler-backend-emit-binop-return
+    (ast-node-pool-reader-type-segment-bases)
     (ci.intern "ret_float_cmp")
     CompilerIrBlockList.Nil
     (compiler-reg-var-type-cons
@@ -18821,6 +19051,7 @@
         (set! compiler-backend-emit-current-count 1))]
     [result : ResultCompilerBackend
       (compiler-backend-emit-binop-return
+        (ast-node-pool-reader-type-segment-bases)
         (ci.intern "ret_int")
         CompilerIrBlockList.Nil
         CompilerRegVarTypeList.Nil
@@ -19024,6 +19255,7 @@
     [assignments : CompilerRegAssignmentList
       (compiler-backend-direct-compare-branch-assignments)]
     (match (compiler-backend-emit-compare-branch
+      (ast-node-pool-reader-type-segment-bases)
       assignments
       "cmp_branch"
       (CompilerIrBinOp.Lt)
@@ -19035,6 +19267,7 @@
       (CompilerBackendMaybeLabel.No))
       [(ResultCompilerBackend.Ok reg-asm)
         (match (compiler-backend-emit-compare-branch
+          (ast-node-pool-reader-type-segment-bases)
           assignments
           "cmp_branch"
           (CompilerIrBinOp.Ne)
@@ -19141,6 +19374,7 @@
   (and
     (backend-and4
       (match (compiler-backend-binop-immediate-asm
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrBinOp.BitAnd)
         "$255"
         (AstType.I64)
@@ -19151,6 +19385,7 @@
           (string.eq asm "    movzbq %al, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
       (match (compiler-backend-binop-immediate-asm
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrBinOp.BitAnd)
         "$65535"
         (AstType.I64)
@@ -19161,6 +19396,7 @@
           (string.eq asm "    movzwq %ax, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
       (match (compiler-backend-binop-immediate-asm
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrBinOp.BitAnd)
         "$255"
         (AstType.U32)
@@ -19171,6 +19407,7 @@
           (string.eq asm "    movzbl %al, %eax\n")]
         [(CompilerBackendMaybeAsm.No) false])
       (match (compiler-backend-binop-immediate-asm
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrBinOp.BitAnd)
         "$65535"
         (AstType.U32)
@@ -19182,6 +19419,7 @@
         [(CompilerBackendMaybeAsm.No) false]))
     (backend-and4
       (match (compiler-backend-binop-immediate-asm
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrBinOp.BitAnd)
         "$254"
         (AstType.I64)
@@ -19192,6 +19430,7 @@
           (string.eq asm "    andq $254, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
       (match (compiler-backend-binop-immediate-asm
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrBinOp.BitAnd)
         "$256"
         (AstType.I64)
@@ -19202,6 +19441,7 @@
           (string.eq asm "    andq $256, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
       (match (compiler-backend-binop-immediate-asm
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrBinOp.BitAnd)
         "$65280"
         (AstType.I64)
@@ -19212,6 +19452,7 @@
           (string.eq asm "    andq $65280, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
       (match (compiler-backend-binop-immediate-asm
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrBinOp.BitOr)
         "$255"
         (AstType.I64)
@@ -19224,6 +19465,7 @@
 
 (define (compiler-backend-bit-and-low-mask-direct-asm [rhs : CompilerIrValue]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.I64))
       CompilerRegVarTypeList.Nil)
@@ -19276,6 +19518,7 @@
 
 (define (compiler-backend-direct-compare-asm [rhs : CompilerIrValue]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.I64))
       (compiler-reg-var-type-cons
@@ -19327,6 +19570,7 @@
   [op : CompilerIrBinOp]
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 ty)
       (compiler-reg-var-type-cons
@@ -19374,6 +19618,7 @@
 
 (define (compiler-backend-direct-rcx-shift-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.I64))
       (compiler-reg-var-type-cons
@@ -19435,6 +19680,7 @@
   [op : CompilerIrBinOp]
   [result-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.I64))
       (compiler-reg-var-type-cons
@@ -19482,6 +19728,7 @@
   [op : CompilerIrBinOp]
   [result-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.I64))
       (compiler-reg-var-type-cons
@@ -20080,6 +20327,7 @@
   [rhs : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-divrem-binop-types ty)
     (CompilerBackendGlobalTypeList.Nil)
     CompilerRegAssignmentList.Nil
@@ -20123,6 +20371,7 @@
             (CompilerRegLocation.Register "%rax"))
           CompilerRegAssignmentList.Nil))]
     (match (compiler-backend-emit-binop
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-backend-divrem-binop-types (AstType.I64))
       (CompilerBackendGlobalTypeList.Nil)
       assignments
@@ -20361,6 +20610,7 @@
   [needle : String]
   [bad : String]) : bool
   (match (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-narrow-binop-types lhs-ty rhs-ty)
     (CompilerBackendGlobalTypeList.Nil)
     CompilerRegAssignmentList.Nil
@@ -20499,6 +20749,7 @@
 
 (define (compiler-backend-global-compare-binop-ok?) : bool
   (match (compiler-backend-emit-binop
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerRegVarTypeList.Nil)
     (compiler-backend-global-compare-types)
     CompilerRegAssignmentList.Nil
@@ -20586,6 +20837,7 @@
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-binop
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerRegVarTypeList.Nil)
       (CompilerBackendGlobalTypeList.Nil)
       rhs-spill
@@ -20921,6 +21173,7 @@
 
 (define (compiler-backend-immediate-stack-call-args-ok?) : bool
   (match (compiler-backend-emit-call-args
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerBackendTarget.Linux)
     CompilerRegAssignmentList.Nil
     (compiler-backend-i64-immediate-call-args8)
@@ -20934,6 +21187,7 @@
     ""
     (compiler-diagnostic-at-start "" "")
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
     0)
@@ -20953,6 +21207,7 @@
           (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-scalar-stack-call-arg
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendTarget.Linux)
       assignments
       (CompilerIrValue.Var 0)
@@ -21011,6 +21266,7 @@
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-param-spills
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
         reg-assignments
         params
@@ -21034,6 +21290,7 @@
                 "    movq 24(%rbp), %rdx\n")))]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-param-spills
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
         CompilerRegAssignmentList.Nil
         params
@@ -21234,6 +21491,7 @@
 (define (compiler-backend-direct-tail-immediate-stack-target-ok?
   [target : CompilerBackendTarget]) : bool
   (match (compiler-backend-emit-direct-tail-call-args
+    (ast-node-pool-reader-type-segment-bases)
     target
     CompilerRegAssignmentList.Nil
     (compiler-backend-i64-immediate-call-args8)
@@ -21420,6 +21678,7 @@
         (set! compiler-backend-emit-current-count 1))]
     [result : ResultCompilerBackend
       (compiler-backend-emit-tail-indirect-call
+        (ast-node-pool-reader-type-segment-bases)
         target
         (ci.intern "indirect_tail_call_r11_callee_shape")
         blocks
@@ -21434,6 +21693,7 @@
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-diagnostic-at-start "" ""))]
@@ -21506,12 +21766,16 @@
           abi)
         CompilerIrExternList.Nil)]
     [index : CompilerBackendProgramIndex
-      (compiler-backend-program-index-build CompilerIrFunctionList.Nil externs)]
+      (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
+        CompilerIrFunctionList.Nil
+        externs)]
     (match (compiler-backend-runtime-plan-for
       CompilerIrFunctionList.Nil
       externs)
       [(ResultBackendRuntimePlan.Ok plan)
         (compiler-backend-emit-tail-call
+          (ast-node-pool-reader-type-segment-bases)
           target
           (ci.intern "caller")
           CompilerIrBlockList.Nil
@@ -21707,6 +21971,7 @@
 
 (define (compiler-backend-known-function-call-index) : CompilerBackendProgramIndex
   (compiler-backend-program-index-build
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-known-function-call-functions)
     CompilerIrExternList.Nil))
 
@@ -21724,6 +21989,7 @@
     [index : CompilerBackendProgramIndex
       (compiler-backend-known-function-call-index)]
     (compiler-backend-emit-indirect-call
+      (ast-node-pool-reader-type-segment-bases)
       target
       0
       (CompilerIrValue.Function (ci.intern "known_target"))
@@ -21747,6 +22013,7 @@
     [index : CompilerBackendProgramIndex
       (compiler-backend-known-function-call-index)]
     (compiler-backend-emit-indirect-call
+      (ast-node-pool-reader-type-segment-bases)
       target
       0
       (CompilerIrValue.Var 1)
@@ -22712,6 +22979,7 @@
     [fn-id : i64 (ci.intern fn-name)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-ir-function-cons
           (CompilerIrFunction.Function
             fn-id
@@ -22744,6 +23012,7 @@
     [missing-id : i64 (ci.intern "missing_backend_index_name")]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-backend-program-index-test-functions)
         (compiler-backend-program-index-test-externs
           provided-id
@@ -22815,6 +23084,7 @@
       [source-count-before : i64 (ci.intern-pool-len)]
       [index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           (compiler-ir-function-cons
             (CompilerIrFunction.Function
               fn-id
@@ -24093,6 +24363,7 @@
   (let
     [ty : AstType (AstType.Struct (ci.intern "ScratchMixedAggregate"))]
     (compiler-backend-program-index-build
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
           (ci.intern "scratch_mixed_aggregate_index")
@@ -24409,6 +24680,7 @@
   [types : CompilerRegVarTypeList]
   [assignments : CompilerRegAssignmentList]) : CompilerRegScratchPlanResult
   (compiler-reg-plan-with-scratch-vreg-result
+    (ast-node-pool-reader-type-segment-bases)
     abi
     (CompilerIrFunction.Function
       (ci.intern name)
@@ -24426,6 +24698,7 @@
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : CompilerRegScratchPlanResult
   (compiler-reg-plan-with-scratch-vreg-result
+    (ast-node-pool-reader-type-segment-bases)
     abi
     (CompilerIrFunction.Function
       (ci.intern name)
@@ -24824,9 +25097,11 @@
             CompilerRegAssignmentList.Nil))]
       [index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)]
       (match (compiler-backend-emit-pack-words
+        (ast-node-pool-reader-type-segment-bases)
         cycle-assignments
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 1)
@@ -24839,6 +25114,7 @@
         (compiler-diagnostic-at-start "" ""))
         [(ResultCompilerBackend.Ok aggregate)
           (match (compiler-backend-emit-scalar-stack-call-arg
+            (ast-node-pool-reader-type-segment-bases)
             (CompilerBackendTarget.Linux)
             scalar-assignments
             (CompilerIrValue.Var 0)
@@ -24848,6 +25124,7 @@
             "%r14")
             [(ResultCompilerBackend.Ok call-stage)
               (match (compiler-backend-emit-phi-edge-copies
+                (ast-node-pool-reader-type-segment-bases)
                 phi-stage-assignments
                 (compiler-backend-phi-same-home-blocks)
                 (compiler-ir-label "join")
@@ -24859,6 +25136,7 @@
                 "")
                 [(ResultCompilerBackend.Ok phi-stage)
                   (match (compiler-backend-emit-phi-edge-copies
+                    (ast-node-pool-reader-type-segment-bases)
                     cycle-assignments
                     (compiler-backend-phi-cycle-blocks)
                     (compiler-ir-label "join")
@@ -24936,11 +25214,13 @@
               CompilerRegAssignmentList.Nil)))]
       [index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)]
       (match (compiler-backend-emit-addr-of assignments 2 0 "%r14")
         [(ResultCompilerBackend.Ok addr-of)
           (match (compiler-backend-emit-gep
+            (ast-node-pool-reader-type-segment-bases)
             assignments
             2
             (CompilerIrValue.Var 0)
@@ -24951,6 +25231,7 @@
             "%r15")
             [(ResultCompilerBackend.Ok gep)
               (match (compiler-backend-emit-load-instr
+                (ast-node-pool-reader-type-segment-bases)
                 assignments
                 1
                 (CompilerIrValue.Var 0)
@@ -24959,6 +25240,7 @@
                 "%r15")
                 [(ResultCompilerBackend.Ok load)
                   (match (compiler-backend-emit-store-ptr
+                    (ast-node-pool-reader-type-segment-bases)
                     assignments
                     (CompilerIrValue.Var 0)
                     (CompilerIrValue.Var 1)
@@ -24968,6 +25250,7 @@
                     "%r15")
                     [(ResultCompilerBackend.Ok store)
                       (match (compiler-backend-emit-copy-bytes
+                        (ast-node-pool-reader-type-segment-bases)
                         assignments
                         (CompilerIrValue.Var 0)
                         (CompilerIrValue.Var 1)
@@ -25036,6 +25319,7 @@
       [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
       [pack : ResultCompilerBackend
         (compiler-backend-emit-pack-words
+          (ast-node-pool-reader-type-segment-bases)
           assignments
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
@@ -25052,6 +25336,7 @@
           (compiler-live-set-empty))]
       [word : ResultCompilerBackend
         (compiler-backend-emit-word
+          (ast-node-pool-reader-type-segment-bases)
           assignments
           2
           (CompilerIrValue.Var 0)
@@ -25063,6 +25348,7 @@
       [_group-disable : unit (compiler-backend-group-vars-disable!)]
       [copy : ResultCompilerBackend
         (compiler-backend-emit-copy-bytes
+          (ast-node-pool-reader-type-segment-bases)
           assignments
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var 1)
@@ -25407,6 +25693,7 @@
           CompilerIrExternList.Nil)]
       [_index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           externs)]
       [assignments : CompilerRegAssignmentList
@@ -25570,9 +25857,11 @@
         (compiler-backend-scratch-vreg-float-memory-test-assignments)]
       [index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)]
       (match (compiler-backend-emit-load-instr
+        (ast-node-pool-reader-type-segment-bases)
         assignments
         0
         (CompilerIrValue.Var 1)
@@ -25581,6 +25870,7 @@
         "%xmm14")
         [(ResultCompilerBackend.Ok load)
           (match (compiler-backend-emit-store-ptr
+            (ast-node-pool-reader-type-segment-bases)
             assignments
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
@@ -25590,6 +25880,7 @@
             "%xmm15")
             [(ResultCompilerBackend.Ok store-ptr)
               (match (compiler-backend-emit-store-value-to-address
+                (ast-node-pool-reader-type-segment-bases)
                 assignments
                 (CompilerIrValue.Var 0)
                 (AstType.F64)
@@ -25765,6 +26056,7 @@
           0)
         (=
           (compiler-reg-scratch-vreg-slots
+            (ast-node-pool-reader-type-segment-bases)
             (CompilerRegTargetAbi.Linux)
             direct-arith-assignments
             f64-types
@@ -25780,6 +26072,7 @@
           0)
         (=
           (compiler-reg-scratch-vreg-slots
+            (ast-node-pool-reader-type-segment-bases)
             (CompilerRegTargetAbi.Windows)
             direct-compare-assignments
             f64-compare-types
@@ -25882,6 +26175,7 @@
         "%xmm14")
         [(ResultCompilerBackend.Ok arith)
           (match (compiler-backend-emit-binop-with-plan
+            (ast-node-pool-reader-type-segment-bases)
             (compiler-backend-scratch-float-types
               (AstType.Bool)
               (AstType.F32)
@@ -26283,6 +26577,7 @@
             CompilerRegAssignmentList.Nil))]
       [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
       (match (compiler-backend-emit-vector-splat
+        (ast-node-pool-reader-type-segment-bases)
         splat-assignments
         1
         (CompilerIrValue.Var 0)
@@ -26293,6 +26588,7 @@
         diag)
         [(ResultCompilerBackend.Ok splat)
           (match (compiler-backend-emit-vector-reduce
+            (ast-node-pool-reader-type-segment-bases)
             reduce-assignments
             1
             (CompilerIrVectorReduceOp.Sum)
@@ -26304,6 +26600,7 @@
             diag)
             [(ResultCompilerBackend.Ok avx2)
               (match (compiler-backend-emit-vector-reduce
+                (ast-node-pool-reader-type-segment-bases)
                 reduce-assignments
                 1
                 (CompilerIrVectorReduceOp.Sum)
@@ -26443,6 +26740,7 @@
         (not (= (compiler-reg-xmm-family-index mov-xmm) 6))
         (=
           (compiler-reg-scratch-cast-slot-count
+            (ast-node-pool-reader-type-segment-bases)
             same-home
             1
             (CompilerIrValue.Var 0)
@@ -26451,6 +26749,7 @@
           0)
         (=
           (compiler-reg-scratch-vreg-slots
+            (ast-node-pool-reader-type-segment-bases)
             (CompilerRegTargetAbi.Linux)
             same-home
             CompilerRegVarTypeList.Nil
@@ -26512,6 +26811,7 @@
     (let
       [index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
+          (ast-node-pool-reader-type-segment-bases)
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)]
       [cast-assignments : CompilerRegAssignmentList
@@ -26523,6 +26823,7 @@
       [mov-assignments : CompilerRegAssignmentList
         (compiler-backend-scratch-vreg-float-mov-test-assignments)]
       (match (compiler-backend-emit-cast
+        (ast-node-pool-reader-type-segment-bases)
         "test_cast"
         (compiler-ir-label "entry")
         cast-assignments
@@ -26536,6 +26837,7 @@
         "%r15")
         [(ResultCompilerBackend.Ok cast-asm)
           (match (compiler-backend-emit-cast
+            (ast-node-pool-reader-type-segment-bases)
             "test_cast_gp"
             (compiler-ir-label "entry")
             gp-only-assignments
@@ -26549,6 +26851,7 @@
             "")
             [(ResultCompilerBackend.Ok gp-only-asm)
               (match (compiler-backend-emit-bitcast
+                (ast-node-pool-reader-type-segment-bases)
                 bitcast-assignments
                 1
                 (CompilerIrValue.Var 0)
@@ -26559,6 +26862,7 @@
                 "%r14")
                 [(ResultCompilerBackend.Ok bitcast-asm)
                   (match (compiler-backend-emit-mov
+                    (ast-node-pool-reader-type-segment-bases)
                     mov-assignments
                     1
                     (CompilerIrValue.Var 0)
@@ -27446,6 +27750,7 @@
           (CompilerRegLocation.Register "%r9"))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-param-spills
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendTarget.Windows)
       assignments
       params
@@ -27454,6 +27759,7 @@
       0
       0
       (compiler-backend-program-index-build
+        (ast-node-pool-reader-type-segment-bases)
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)
       5)
@@ -27734,6 +28040,7 @@
             [value : String (compiler-reg-scratch-plan-register plan 0 1)]
             [test : String (compiler-reg-scratch-plan-register plan 0 2)]
             (match (compiler-backend-emit-scalar-select
+              (ast-node-pool-reader-type-segment-bases)
               assignments
               3
               (CompilerIrValue.Var 0)
@@ -27808,12 +28115,14 @@
       [fallthrough : CompilerBackendMaybeLabel (CompilerBackendMaybeLabel.No)]
       [div-guard : String
         (compiler-backend-div-overflow-guard-asm-with-plan
+          (ast-node-pool-reader-type-segment-bases)
           (AstType.I64)
           "%r8"
           "%r12"
           "%r13")]
       [literal-ok : bool
         (match (compiler-backend-binop-literal-divmod-asm-here-with-plan
+          (ast-node-pool-reader-type-segment-bases)
           (CompilerIrBinOp.Mod)
           (CompilerIrValue.I64 7)
           (AstType.I64)
@@ -27842,6 +28151,7 @@
         literal-ok
         (compiler-backend-scratch-vreg-result-contains?
           (compiler-backend-emit-binop-spill-direct-shift
+            (ast-node-pool-reader-type-segment-bases)
             assignments
             2
             (CompilerIrBinOp.Shl)
@@ -27854,6 +28164,7 @@
           "    movq -16(%rbp), %rcx\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler-backend-emit-binop-spill-direct-shift
+            (ast-node-pool-reader-type-segment-bases)
             assignments
             2
             (CompilerIrBinOp.Shl)
@@ -27866,6 +28177,7 @@
           "    shlq %cl, %r14\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler-backend-emit-binop-spill-direct-shift
+            (ast-node-pool-reader-type-segment-bases)
             shift-register-assignments
             2
             (CompilerIrBinOp.Shl)
@@ -27879,6 +28191,7 @@
         (not
           (compiler-backend-scratch-vreg-result-contains?
             (compiler-backend-emit-binop-spill-direct-shift
+              (ast-node-pool-reader-type-segment-bases)
               shift-register-assignments
               2
               (CompilerIrBinOp.Shl)
@@ -27901,6 +28214,7 @@
           "    testq %r14, %r14\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler-backend-emit-compare-branch-with-plan
+            (ast-node-pool-reader-type-segment-bases)
             assignments
             "scratch_compare"
             (CompilerIrBinOp.Eq)
@@ -27915,6 +28229,7 @@
           "    movq -16(%rbp), %r15\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler-backend-emit-compare-branch-with-plan
+            (ast-node-pool-reader-type-segment-bases)
             assignments
             "scratch_compare_collision"
             (CompilerIrBinOp.Eq)
@@ -27930,6 +28245,7 @@
         (not
           (compiler-backend-scratch-vreg-result-contains?
             (compiler-backend-emit-compare-branch-with-plan
+              (ast-node-pool-reader-type-segment-bases)
               assignments
               "scratch_compare_collision"
               (CompilerIrBinOp.Eq)
@@ -27944,6 +28260,7 @@
             "    cmpq %r14, %r14\n"))
         (compiler-backend-scratch-vreg-result-contains?
           (compiler-backend-emit-binop-direct-compare
+            (ast-node-pool-reader-type-segment-bases)
             assignments
             2
             "%r14"
@@ -27956,6 +28273,7 @@
         (not
           (compiler-backend-scratch-vreg-result-contains?
             (compiler-backend-emit-binop-direct-compare
+              (ast-node-pool-reader-type-segment-bases)
               assignments
               2
               "%r14"
@@ -27981,6 +28299,7 @@
           "    cmpq %r15, (%r14)\n")
         (compiler-backend-scratch-vreg-result-contains?
           (compiler-backend-emit-gep-load-compare-branch-with-plan
+            (ast-node-pool-reader-type-segment-bases)
             assignments
             "scratch_gep_compare"
             (CompilerIrValue.Var 0)

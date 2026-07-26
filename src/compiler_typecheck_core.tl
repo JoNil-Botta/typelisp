@@ -26599,7 +26599,8 @@
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
-          (ast-type-strip-consuming-param
+          (ast-type-strip-consuming-param-with-pools
+            (tc-context-pools ctx)
             (ty-node-get
               (ast-type-list-get params index (ast-type-id-fallback))))]
         (if (tc-lifetime-subst-formal-inert? ctx want)
@@ -28730,7 +28731,8 @@
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
-          (ast-type-strip-consuming-param
+          (ast-type-strip-consuming-param-with-pools
+            (tc-context-pools ctx)
             (ty-node-get
               (ast-type-list-get params index (ast-type-id-fallback))))]
         (match (tc-call-effective-arg-expr ctx env arg want)
@@ -75715,7 +75717,8 @@
             out
             (AstParam.Param
               name
-              (ast-type-strip-consuming-param
+              (ast-type-strip-consuming-param-with-pools
+                (tc-context-pools ctx)
                 (tc-context-type-get
                   ctx
                   (ast-type-list-get types index (ast-type-id-fallback))))

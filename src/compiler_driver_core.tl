@@ -1469,6 +1469,7 @@
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriver
   (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+    (ast-node-pool-reader-context-current)
     input-path
     program
     spans
@@ -1480,6 +1481,7 @@
     false))
 
 (define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+  [pools : AstNodePoolContext]
   [input-path : String]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -1489,21 +1491,25 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
-  (if (ast-node-pool-reader-type-exhausted?)
+  (if (ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
-      (match (optimize-program-with-spans-and-level program spans opt-level)
+      (match (optimize-program-with-spans-and-pools-and-level
+        pools
+        program
+        spans
+        opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ast-node-pool-reader-type-exhausted?)
+            (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriver.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -1511,14 +1517,16 @@
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
                 (cfg compile-profile (compiler-driver-profile-start-phase))
                 (match (if has-target
-                  (compiler-backend-emit-program-target-with-mode-and-crt
+                  (compiler-backend-emit-program-target-with-mode-with-pools-and-crt
+                    pools
                     optimized
                     target
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry)
-                  (compiler-backend-emit-program-target-with-mode-and-crt
+                  (compiler-backend-emit-program-target-with-mode-with-pools-and-crt
+                    pools
                     optimized
                     (CompilerBackendTarget.Linux)
                     mode
@@ -1552,6 +1560,7 @@
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
+    (ast-node-pool-reader-context-current)
     input-path
     program
     spans
@@ -1563,6 +1572,7 @@
     false))
 
 (define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
+  [pools : AstNodePoolContext]
   [input-path : String]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -1572,14 +1582,18 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverBuffer
-  (if (ast-node-pool-reader-type-exhausted?)
+  (if (ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
-      (match (optimize-program-with-spans-and-level program spans opt-level)
+      (match (optimize-program-with-spans-and-pools-and-level
+        pools
+        program
+        spans
+        opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
@@ -1587,7 +1601,7 @@
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-allocation-profile-snapshot! "optimize")
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ast-node-pool-reader-type-exhausted?)
+            (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriverBuffer.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -1595,14 +1609,16 @@
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
                 (cfg compile-profile (compiler-driver-profile-start-phase))
                 (match (if has-target
-                  (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+                  (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt
+                    pools
                     optimized
                     target
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry)
-                  (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+                  (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt
+                    pools
                     optimized
                     (CompilerBackendTarget.Linux)
                     mode
@@ -1629,6 +1645,7 @@
                             input-path))))]))))]))))
 
 (define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+  [pools : AstNodePoolContext]
   [input-path : String]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -1638,21 +1655,25 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
-  (if (ast-node-pool-reader-type-exhausted?)
+  (if (ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverObject.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
-      (match (optimize-program-with-spans-and-level program spans opt-level)
+      (match (optimize-program-with-spans-and-pools-and-level
+        pools
+        program
+        spans
+        opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ast-node-pool-reader-type-exhausted?)
+            (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriverObject.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -1660,14 +1681,16 @@
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
                 (cfg compile-profile (compiler-driver-profile-start-phase))
                 (match (if has-target
-                  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+                  (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt
+                    pools
                     optimized
                     target
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry)
-                  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+                  (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt
+                    pools
                     optimized
                     (CompilerBackendTarget.Linux)
                     mode
@@ -1692,6 +1715,7 @@
                             input-path))))]))))]))))
 
 (define (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
+  [pools : AstNodePoolContext]
   [input-path : String]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -1701,21 +1725,25 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
-  (if (ast-node-pool-reader-type-exhausted?)
+  (if (ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriverPic.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
-      (match (optimize-program-with-spans-and-level program spans opt-level)
+      (match (optimize-program-with-spans-and-pools-and-level
+        pools
+        program
+        spans
+        opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ast-node-pool-reader-type-exhausted?)
+            (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriverPic.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -1723,14 +1751,16 @@
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
                 (cfg compile-profile (compiler-driver-profile-start-phase))
                 (match (if has-target
-                  (compiler-backend-emit-program-pic-target-with-mode-and-crt
+                  (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt
+                    pools
                     optimized
                     target
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry)
-                  (compiler-backend-emit-program-pic-target-with-mode-and-crt
+                  (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt
+                    pools
                     optimized
                     (CompilerBackendTarget.Linux)
                     mode
@@ -1824,7 +1854,7 @@
           (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler-ir-clone-program-shell program)
+            (compiler-ir-clone-program-shell pools program)
             program)]
         [_profile-program-finish : unit
           (cfg
@@ -1853,6 +1883,7 @@
               compile-profile
               (compiler-driver-profile-finish-phase "retain.release"))
             (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+              pools
               input-path
               emit-program
               emit-spans
@@ -1889,7 +1920,7 @@
           (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler-ir-clone-program-shell program)
+            (compiler-ir-clone-program-shell pools program)
             program)]
         [_profile-program-finish : unit
           (cfg
@@ -1917,7 +1948,8 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "retain.release"))
-            (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
+            (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
+              pools
               input-path
               emit-program
               emit-spans
@@ -1925,7 +1957,8 @@
               has-target
               mode
               opt-level
-              emit-entry))]
+              emit-entry
+              false))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -1952,7 +1985,7 @@
       (let
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler-ir-clone-program-shell program)
+            (compiler-ir-clone-program-shell pools program)
             program)]
         [emit-spans : CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -1965,6 +1998,7 @@
               (compiler-driver-retire-lowered-source-arena!)
               unit)
             (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+              pools
               input-path
               emit-program
               emit-spans
@@ -2000,7 +2034,7 @@
       (let
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler-ir-clone-program-shell program)
+            (compiler-ir-clone-program-shell pools program)
             program)]
         [emit-spans : CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -2013,6 +2047,7 @@
               (compiler-driver-retire-lowered-source-arena!)
               unit)
             (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
+              pools
               input-path
               emit-program
               emit-spans
@@ -3691,20 +3726,25 @@
         ""))))
 
 (define (compiler-driver-emit-ir-summary-lowered-with-level
+  [pools : AstNodePoolContext]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [opt-level : i64]) : ResultCompilerDriver
-  (if (ast-node-pool-reader-type-exhausted?)
+  (if (ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
-      (match (optimize-program-with-spans-and-level program spans opt-level)
+      (match (optimize-program-with-spans-and-pools-and-level
+        pools
+        program
+        spans
+        opt-level)
         [(CompilerOptimizedProgram.Program optimized _)
           (begin
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ast-node-pool-reader-type-exhausted?)
+            (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriver.Err
                 (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
               (ResultCompilerDriver.Ok
@@ -3719,7 +3759,7 @@
       (let
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler-ir-clone-program-shell program)
+            (compiler-ir-clone-program-shell pools program)
             program)]
         [emit-spans : CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3732,6 +3772,7 @@
               (compiler-driver-retire-lowered-source-arena!)
               unit)
             (compiler-driver-emit-ir-summary-lowered-with-level
+              pools
               emit-program
               emit-spans
               opt-level))]
@@ -3784,6 +3825,7 @@
     opt-level))
 
 (define (compiler-driver-ir-text-result
+  [type-segment-bases : i64]
   [optimized : CompilerIrProgram]
   [dump-pass : String]) : ResultCompilerDriver
   (let
@@ -3798,7 +3840,7 @@
         [text : String
           (if (> (string.string-length dump-pass) 0)
             (compiler-opt-debug-dump-result)
-            (compiler-ir-program-render optimized))]
+            (compiler-ir-program-render type-segment-bases optimized))]
         (if (and
           (> (string.string-length dump-pass) 0)
           (= (string.string-length text) 0))
@@ -3810,24 +3852,32 @@
           (ResultCompilerDriver.Ok text))))))
 
 (define (compiler-driver-emit-ir-text-lowered-with-level
+  [pools : AstNodePoolContext]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [opt-level : i64]
   [dump-pass : String]) : ResultCompilerDriver
-  (if (ast-node-pool-reader-type-exhausted?)
+  (if (ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
-      (match (optimize-program-with-spans-and-level program spans opt-level)
+      (match (optimize-program-with-spans-and-pools-and-level
+        pools
+        program
+        spans
+        opt-level)
         [(CompilerOptimizedProgram.Program optimized _)
           (begin
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ast-node-pool-reader-type-exhausted?)
+            (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriver.Err
                 (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
-              (compiler-driver-ir-text-result optimized dump-pass)))]))))
+              (compiler-driver-ir-text-result
+                (ast-node-pool-context-type-segment-bases pools)
+                optimized
+                dump-pass)))]))))
 
 (define (compiler-driver-emit-ir-text-lowered-result-with-level
   [lowered : ResultCompilerDriverLowered]
@@ -3838,7 +3888,7 @@
       (let
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler-ir-clone-program-shell program)
+            (compiler-ir-clone-program-shell pools program)
             program)]
         [emit-spans : CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3851,6 +3901,7 @@
               (compiler-driver-retire-lowered-source-arena!)
               unit)
             (compiler-driver-emit-ir-text-lowered-with-level
+              pools
               emit-program
               emit-spans
               opt-level

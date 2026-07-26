@@ -46454,7 +46454,8 @@
                                                 CompilerIrValue.Unit
                                                 (AstType.Unit)))]
                                           [_
-                                            (if (ast-type-eq?
+                                            (if (ast-type-eq-with-pools?
+                                              (tc-context-pools ctx)
                                               (tc-type-without-regions body-ty)
                                               (tc-type-without-regions rest-ty))
                                               (lower-avx512-masked-match-select
@@ -46690,7 +46691,8 @@
         [(ResultLowerExpr.Ok rest-lowered)
           (match rest-lowered
             [(LowerExpr.Expr rest-state rest-value rest-ty)
-              (if (ast-type-eq?
+              (if (ast-type-eq-with-pools?
+                (tc-context-pools ctx)
                 (tc-type-without-regions body-ty)
                 (tc-type-without-regions rest-ty))
                 (lower-avx512-masked-match-select
@@ -54508,7 +54510,9 @@
         (arena.tl_arena_set (lower-ir-arena-get)))
       (let
         [escaped : CompilerIrFunctionList
-          (compiler-ir-clone-function-list functions)]
+          (compiler-ir-clone-function-list
+            (ast-node-pool-reader-context-current)
+            functions)]
         (begin
           (set! lower-ir-arena (arena.tl_arena_current))
           (unsafe
@@ -55097,7 +55101,8 @@
     (ast-type-list-new)
     (ast-type-cons
       (tc-type-without-regions
-        (ast-type-strip-consuming-param
+        (ast-type-strip-consuming-param-with-pools
+          (tc-context-pools ctx)
           (tc-context-type-get
             ctx
             (ast-type-list-get types index (ast-type-id-fallback)))))

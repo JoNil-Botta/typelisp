@@ -1,5 +1,6 @@
 ;; compiler_driver_smoke_tests.tl - Shared driver/lowering integration smokes.
 (import stdlib.string)
+(import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import "compiler_driver_core.tl")
@@ -294,6 +295,262 @@
       (begin
         (write-file fallback-path contents)
         fallback-path))))
+
+(define (compiler-driver-reader-context-smoke-write-fixture) : String
+  (let
+    [path : String "target/compiler_driver_reader_context_fixture.tl"]
+    [fallback-path : String "compiler_driver_reader_context_fixture.tl"]
+    [contents : String
+      "(define (square [value : i64]) : i64
+  (* value value))
+(define (main) : i64
+  (+ (square 6) 6))"]
+    (if (compiler-driver-pic-smoke-write-fixture-at? path contents)
+      path
+      (begin
+        (write-file fallback-path contents)
+        fallback-path))))
+
+(define (compiler-driver-reader-context-smoke-installed?
+  [expr-segment-bases : i64]
+  [type-segment-bases : i64]
+  [base-arena : i64]) : bool
+  (let
+    [installed : AstNodePoolContext (ast-node-pool-reader-context-current)]
+    (and
+      (=
+        (ast-node-pool-context-expr-segment-bases installed)
+        expr-segment-bases)
+      (=
+        (ast-node-pool-context-type-segment-bases installed)
+        type-segment-bases)
+      (= (ast-node-pool-context-base-arena installed) base-arena))))
+
+(define (compiler-driver-reader-context-smoke-fail [message : String]) : bool
+  (begin
+    (io.print-string (string.append "driver reader-context smoke: " message))
+    (io.print-string "\n")
+    false))
+
+(define (compiler-driver-reader-context-smoke-emit
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target-with-mode-with-pools-and-crt
+    pools
+    program
+    (CompilerBackendTarget.Linux)
+    (CompilerBackendMode.Scalar)
+    spans
+    true
+    false))
+
+(define (compiler-driver-reader-context-smoke-backends-ok?
+  [pools-a : AstNodePoolContext]
+  [program-a : CompilerIrProgram]
+  [spans-a : CompilerSourceSpans]
+  [pools-b : AstNodePoolContext]
+  [program-b : CompilerIrProgram]
+  [spans-b : CompilerSourceSpans]
+  [expr-segment-bases : i64]
+  [type-segment-bases : i64]
+  [base-arena : i64]) : bool
+  ;; Emit in the opposite order from optimization. Register allocation runs
+  ;; inside each backend call.
+  (match (compiler-driver-reader-context-smoke-emit pools-b program-b spans-b)
+    [(ResultCompilerBackend.Ok asm-b)
+      (if (not
+        (compiler-driver-reader-context-smoke-installed?
+          expr-segment-bases
+          type-segment-bases
+          base-arena))
+        (compiler-driver-reader-context-smoke-fail
+          "reader changed during state B backend")
+        (match (compiler-driver-reader-context-smoke-emit
+          pools-a
+          program-a
+          spans-a)
+          [(ResultCompilerBackend.Ok asm-a)
+            (cond
+              [(not
+                  (compiler-driver-reader-context-smoke-installed?
+                    expr-segment-bases
+                    type-segment-bases
+                    base-arena))
+                (compiler-driver-reader-context-smoke-fail
+                  "reader changed during state A backend")]
+              [(not (string.eq asm-a asm-b))
+                (compiler-driver-reader-context-smoke-fail
+                  "state assemblies differ")]
+              [else true])]
+          [(ResultCompilerBackend.Err diag)
+            (compiler-driver-reader-context-smoke-fail
+              (string.append
+                "state A backend failed: "
+                (compiler-diagnostic-render (box-get diag))))]))]
+    [(ResultCompilerBackend.Err diag)
+      (compiler-driver-reader-context-smoke-fail
+        (string.append
+          "state B backend failed: "
+          (compiler-diagnostic-render (box-get diag))))]))
+
+(define (compiler-driver-reader-context-smoke-optimized-ok?
+  [pools-a : AstNodePoolContext]
+  [program-a : CompilerIrProgram]
+  [spans-a : CompilerSourceSpans]
+  [pools-b : AstNodePoolContext]
+  [program-b : CompilerIrProgram]
+  [spans-b : CompilerSourceSpans]
+  [expr-segment-bases : i64]
+  [type-segment-bases : i64]
+  [base-arena : i64]) : bool
+  (match (optimize-program-with-spans-and-pools-and-level
+    pools-a
+    program-a
+    spans-a
+    1)
+    [(CompilerOptimizedProgram.Program optimized-a optimized-spans-a)
+      (if (not
+        (compiler-driver-reader-context-smoke-installed?
+          expr-segment-bases
+          type-segment-bases
+          base-arena))
+        (compiler-driver-reader-context-smoke-fail
+          "reader changed during state A optimization")
+        (match (optimize-program-with-spans-and-pools-and-level
+          pools-b
+          program-b
+          spans-b
+          1)
+          [(CompilerOptimizedProgram.Program optimized-b optimized-spans-b)
+            (if (not
+              (compiler-driver-reader-context-smoke-installed?
+                expr-segment-bases
+                type-segment-bases
+                base-arena))
+              (compiler-driver-reader-context-smoke-fail
+                "reader changed during state B optimization")
+              (compiler-driver-reader-context-smoke-backends-ok?
+                pools-a
+                optimized-a
+                optimized-spans-a
+                pools-b
+                optimized-b
+                optimized-spans-b
+                expr-segment-bases
+                type-segment-bases
+                base-arena))]))]))
+
+(define (compiler-driver-reader-context-smoke-lowered-ok?
+  [lowered-a : ResultCompilerDriverLowered]
+  [lowered-b : ResultCompilerDriverLowered]) : bool
+  (match lowered-a
+    [(ResultCompilerDriverLowered.Ok program-a spans-a pools-a)
+      (match lowered-b
+        [(ResultCompilerDriverLowered.Ok program-b spans-b pools-b)
+          (let
+            [restore-reader : AstNodePoolContext
+              (ast-node-pool-reader-context-current)]
+            [sentinel : AstNodePoolContext
+              (ast-node-pool-context-new-with-capacities 1 1)]
+            [expr-segment-bases : i64
+              (ast-node-pool-context-expr-segment-bases sentinel)]
+            [type-segment-bases : i64
+              (ast-node-pool-context-type-segment-bases sentinel)]
+            [base-arena : i64 (ast-node-pool-context-base-arena sentinel)]
+            [_install-sentinel : unit (ast-node-pool-reader-use! sentinel)]
+            [ok : bool
+              (begin
+                (compiler-backend-set-scalar-registers! true)
+                (compiler-driver-reader-context-smoke-optimized-ok?
+                  pools-a
+                  program-a
+                  spans-a
+                  pools-b
+                  program-b
+                  spans-b
+                  expr-segment-bases
+                  type-segment-bases
+                  base-arena))]
+            (begin
+              (ast-node-pool-reader-use! restore-reader)
+              ok))]
+        [(ResultCompilerDriverLowered.Err diag)
+          (compiler-driver-reader-context-smoke-fail
+            (string.append
+              "state B lower failed: "
+              (compiler-diagnostic-render (box-get diag))))])]
+    [(ResultCompilerDriverLowered.Err diag)
+      (compiler-driver-reader-context-smoke-fail
+        (string.append
+          "state A lower failed: "
+          (compiler-diagnostic-render (box-get diag))))]))
+
+(define (compiler-driver-reader-context-smoke-prepare-state!
+  [state : CompilerDriverState]) : unit
+  (begin
+    (if (= (compiler-driver-state-intern-generation state) 0)
+      (ci.intern-compat-state-reset!
+        (compiler-driver-state-owned-interns state))
+      unit)
+    (compiler-driver-state-install-pools! state)
+    (compiler-driver-state-install-interns! state)
+    (compiler-driver-state-reset-file-state! state)
+    unit))
+
+(define (compiler-driver-reader-context-smoke-ok?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [source : String (compiler-driver-reader-context-smoke-write-fixture)]
+    [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
+    [mode : CompilerBackendMode (CompilerBackendMode.Scalar)]
+    [roots-a : svec.Vec (compiler-driver-pic-smoke-roots)]
+    (begin
+      (compiler-driver-reader-context-smoke-prepare-state! state-a)
+      (let
+        [lowered-a : ResultCompilerDriverLowered
+          (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
+            state-a
+            source
+            target
+            roots-a
+            mode
+            (compiler-driver-state-target-cfgs
+              state-a
+              target
+              (compiler-cfg-empty))
+            true)]
+        ;; The frontend still has separately tracked state-isolation work
+        ;; (#4723, #4960-#4962). Fork the completed lower result into a second
+        ;; state-owned reader context here, then interleave the phases covered
+        ;; by this smoke: optimizer, regalloc, and backend.
+        (match lowered-a
+          [(ResultCompilerDriverLowered.Ok program-a spans-a pools-a)
+            (let
+              [pools-b : AstNodePoolContext
+                (ast-node-pool-context-clone-types-only pools-a)]
+              [program-b : CompilerIrProgram
+                (compiler-ir-clone-program-shell pools-b program-a)]
+              [spans-b : CompilerSourceSpans (clone spans-a)]
+              (begin
+                (compiler-driver-state-adopt-pools! state-b pools-b)
+                (compiler-driver-reader-context-smoke-lowered-ok?
+                  lowered-a
+                  (ResultCompilerDriverLowered.Ok program-b spans-b pools-b))))]
+          [(ResultCompilerDriverLowered.Err diag)
+            (compiler-driver-reader-context-smoke-fail
+              (string.append
+                "state A lower failed: "
+                (compiler-diagnostic-render (box-get diag))))])))))
+
+(define (compiler-driver-reader-context-smoke-main) : i64
+  (begin
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (if (compiler-driver-reader-context-smoke-ok?)
+      42
+      1)))
 
 (define (compiler-driver-pic-smoke-extern-reject-ok?) : bool
   (match (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg

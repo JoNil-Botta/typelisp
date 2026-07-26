@@ -121,6 +121,7 @@
   (box (compiler-diagnostic-with-path (box-get diag) input-path)))
 
 (define (compiler-windows-batch-emit-assembly
+  [pools : AstNodePoolContext]
   [input-path : String]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -128,7 +129,8 @@
   [category : String]) : ResultCompilerWindowsBatchArtifact
   (begin
     (cfg compile-profile (compiler-driver-profile-start-phase))
-    (match (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+    (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt
+      pools
       program
       (CompilerBackendTarget.Windows)
       mode
@@ -153,6 +155,7 @@
             (compiler-windows-batch-backend-diagnostic input-path diag)))])))
 
 (define (compiler-windows-batch-emit-optimized
+  [pools : AstNodePoolContext]
   [input-path : String]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -160,6 +163,7 @@
   [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (if force-assembly
     (compiler-windows-batch-emit-assembly
+      pools
       input-path
       program
       spans
@@ -167,7 +171,8 @@
       "forced-assembly")
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
-      (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+      (match (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt
+        pools
         program
         (CompilerBackendTarget.Windows)
         mode
@@ -209,6 +214,7 @@
                               message))))]))]
               [(CompilerWindowsCoffLinkability.Unavailable category)
                 (compiler-windows-batch-emit-assembly
+                  pools
                   input-path
                   program
                   spans
@@ -225,20 +231,25 @@
               (compiler-windows-batch-backend-diagnostic input-path diag)))]))))
 
 (define (compiler-windows-batch-emit-lowered
+  [pools : AstNodePoolContext]
   [input-path : String]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [mode : CompilerBackendMode]
   [opt-level : i64]
   [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
-  (if (ast-node-pool-reader-type-exhausted?)
+  (if (ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerWindowsBatchArtifact.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
-      (match (optimize-program-with-spans-and-level program spans opt-level)
+      (match (optimize-program-with-spans-and-pools-and-level
+        pools
+        program
+        spans
+        opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
@@ -246,13 +257,14 @@
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-allocation-profile-snapshot! "optimize")
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ast-node-pool-reader-type-exhausted?)
+            (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerWindowsBatchArtifact.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
                 (compiler-windows-batch-emit-optimized
+                  pools
                   input-path
                   optimized
                   optimized-spans
@@ -270,7 +282,7 @@
       (let
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler-ir-clone-program-shell program)
+            (compiler-ir-clone-program-shell pools program)
             program)]
         [emit-spans : CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -283,6 +295,7 @@
               (compiler-driver-retire-lowered-source-arena!)
               unit)
             (compiler-windows-batch-emit-lowered
+              pools
               input-path
               emit-program
               emit-spans

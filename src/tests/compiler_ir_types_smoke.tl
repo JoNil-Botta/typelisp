@@ -206,7 +206,7 @@
         (AstType.Unit)
         6
         CompilerIrBlockList.Nil)]
-    [cloned : CompilerIrFunction (compiler-ir-clone-function func)]
+    [cloned : CompilerIrFunction (compiler-ir-clone-function (ast-node-pool-reader-context-current) func)]
     (and
       (match func
         [(CompilerIrFunction.Function _ stored _ _ _)
@@ -302,7 +302,7 @@
     [array-reversed-globals : CompilerIrGlobalList
       (compiler-ir-global-list-compact-reversed compact-globals)]
     [cloned-globals : CompilerIrGlobalList
-      (compiler-ir-clone-global-list compact-globals)]
+      (compiler-ir-clone-global-list (ast-node-pool-reader-context-current) compact-globals)]
     [first-extern : CompilerIrExtern
       (compiler-ir-extern-default-id
         (compiler-ir-smoke-symbol-id "first-extern")
@@ -322,7 +322,7 @@
     [array-reversed-externs : CompilerIrExternList
       (compiler-ir-extern-list-compact-reversed compact-externs)]
     [cloned-externs : CompilerIrExternList
-      (compiler-ir-clone-extern-list compact-externs)]
+      (compiler-ir-clone-extern-list (ast-node-pool-reader-context-current) compact-externs)]
     [summary : CompilerIrSummary
       (compiler-ir-program-summary
         (CompilerIrProgram.Program
@@ -384,7 +384,7 @@
         (compiler-ir-function-cons second CompilerIrFunctionList.Nil))]
     [compact : CompilerIrFunctionList
       (compiler-ir-function-list-compact functions)]
-    [cloned : CompilerIrFunctionList (compiler-ir-clone-function-list compact)]
+    [cloned : CompilerIrFunctionList (compiler-ir-clone-function-list (ast-node-pool-reader-context-current) compact)]
     [summary : CompilerIrSummary
       (compiler-ir-program-summary
         (CompilerIrProgram.Program
@@ -529,10 +529,10 @@
         span)]
     (and
       (string.eq
-        (compiler-ir-instr-render instr)
+        (compiler-ir-instr-render (ast-node-pool-reader-type-segment-bases) instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) : varying i64")
       (string.eq
-        (compiler-ir-instr-describe instr)
+        (compiler-ir-instr-describe (ast-node-pool-reader-type-segment-bases) instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
       (match instr
         [(CompilerIrInstr.SpmdCall payload-box)
@@ -546,8 +546,8 @@
       (compiler-ir-effect-is? instr CompilerIrEffect.Unknown)
       (= (compiler-ir-instr-call-arg-count instr) 2)
       (string.eq
-        (compiler-ir-instr-render (compiler-ir-clone-instr instr))
-        (compiler-ir-instr-render instr))
+        (compiler-ir-instr-render (ast-node-pool-reader-type-segment-bases) (compiler-ir-clone-instr (ast-node-pool-reader-context-current) instr))
+        (compiler-ir-instr-render (ast-node-pool-reader-type-segment-bases) instr))
       (match (compiler-source-spans-lookup-instr spans 7 instr)
         [(CompilerMaybeSourceSpan.Some found)
           (and

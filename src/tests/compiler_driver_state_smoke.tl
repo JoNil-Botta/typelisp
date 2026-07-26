@@ -5,8 +5,8 @@
 ;; table's arena floor and pool counters stay untouched. The same session
 ;; wired to the installed state reads the live compatibility count, matching
 ;; the legacy global path exactly (refs #4705).
-(import "../compiler_load.tl")
-(import compiler_intern as ci)
+(import "../compiler_driver_smoke_tests.tl")
+(import "../compiler_intern.tl" as ci)
 (import stdlib.io)
 
 (define (driver-state-smoke-global-floor-mark) : i64
@@ -54,15 +54,19 @@
         (intern-pool-len)))))
 
 (define (main) : i64
-  (let
-    [a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [b : ci.InternCompatState (ci.intern-compat-state-new)]
+  (if (not (= (compiler-driver-reader-context-smoke-main) 42))
     (begin
-      (ci.intern-compat-state-install! a)
-      (if (and
-        (driver-state-smoke-non-installed-ok? a b)
-        (driver-state-smoke-installed-ok? a))
-        0
-        (begin
-          (io.print-string "driver state isolation smoke failed\n")
-          1)))))
+      (io.print-string "driver state reader-context isolation smoke failed\n")
+      1)
+    (let
+      [a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [b : ci.InternCompatState (ci.intern-compat-state-new)]
+      (begin
+        (ci.intern-compat-state-install! a)
+        (if (and
+          (driver-state-smoke-non-installed-ok? a b)
+          (driver-state-smoke-installed-ok? a))
+          0
+          (begin
+            (io.print-string "driver state isolation smoke failed\n")
+            1))))))

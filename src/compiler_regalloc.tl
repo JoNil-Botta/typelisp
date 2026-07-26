@@ -3983,7 +3983,9 @@
             (box-get rest)
             (compiler-live-set-insert set var))])]))
 
-(define (compiler-reg-integer-param-type? [ty : AstType]) : bool
+(define (compiler-reg-integer-param-type?
+  [type-segment-bases : i64]
+  [ty : AstType]) : bool
   (and
     ;; GAP3b: pin-eligibility matches greedy-eligibility
     ;; (compiler-reg-param-greedy-eligible?). An 8-byte handle (Array/String/
@@ -3999,7 +4001,7 @@
     ;; base-ineligible (compiler-reg-param-pin-safe?).
     (compiler-reg-register-eligible-type? ty)
     (not (compiler-reg-float-type? ty))
-    (not (compiler-reg-type-register-group? ty))))
+    (not (compiler-reg-type-register-group? type-segment-bases ty))))
 
 ;; M-A (RC1): a non-group register-eligible param that did NOT get
 ;; an ABI pin stays OUT of the ineligible/blocked sets and becomes an ordinary
@@ -4011,10 +4013,12 @@
 ;; descriptors) qualify exactly like scalars. Floats use the same rule over the
 ;; ABI XMM bank: SysV has no nonvolatile suffix, while Win64 may keep an unpinned
 ;; parameter in XMM6-XMM15. Two-word register groups keep the legacy stack home.
-(define (compiler-reg-param-greedy-eligible? [ty : AstType]) : bool
+(define (compiler-reg-param-greedy-eligible?
+  [type-segment-bases : i64]
+  [ty : AstType]) : bool
   (and
     (compiler-reg-register-eligible-type? ty)
-    (not (compiler-reg-type-register-group? ty))))
+    (not (compiler-reg-type-register-group? type-segment-bases ty))))
 
 (define (compiler-reg-param-int-reg
   [abi : CompilerRegTargetAbi]
@@ -4188,6 +4192,7 @@
       [(CompilerRegMaybeInterval.No) false])))
 
 (define (compiler-reg-param-assign-walk
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [params : CompilerIrParamList]
   [interval-index : CompilerRegIntervalIndex]
@@ -4206,6 +4211,7 @@
       (CompilerRegParamAssignPlan.Plan assignments ineligible blocked)]
     [(CompilerIrParamList.Array seq)
       (compiler-reg-param-assign-walk
+        type-segment-bases
         abi
         (compiler-ir-param-seq-to-list seq)
         interval-index
@@ -4224,7 +4230,8 @@
         [(CompilerIrParam.Param _ ty var-id)
           (let
             [is-float : bool (compiler-reg-float-type? ty)]
-            [is-group : bool (compiler-reg-type-register-group? ty)]
+            [is-group : bool
+              (compiler-reg-type-register-group? type-segment-bases ty)]
             [next-int : i64
               (if is-float
                 int-idx
@@ -4242,7 +4249,7 @@
               (if (and pins-ok? (not is-group))
                 (if is-float
                   (compiler-reg-param-float-reg abi float-idx position)
-                  (if (compiler-reg-integer-param-type? ty)
+                  (if (compiler-reg-integer-param-type? type-segment-bases ty)
                     (compiler-reg-param-int-reg abi int-idx position)
                     CompilerRegMaybeString.No))
                 CompilerRegMaybeString.No)]
@@ -4272,6 +4279,7 @@
                     var-id
                     home))
                   (compiler-reg-param-assign-walk
+                    type-segment-bases
                     abi
                     (box-get rest)
                     interval-index
@@ -4292,6 +4300,7 @@
                   ;; are greedy-eligible -- leave it out of
                   ;; ineligible/blocked so the greedy may home it callee-saved.
                   (compiler-reg-param-assign-walk
+                    type-segment-bases
                     abi
                     (box-get rest)
                     interval-index
@@ -4312,8 +4321,9 @@
                 ;; group/otherwise-ineligible params keep the legacy
                 ;; stack home. base-ineligible members (address-taken, stack
                 ;; call args, ...) are already in both sets and stay excluded.
-                (if (compiler-reg-param-greedy-eligible? ty)
+                (if (compiler-reg-param-greedy-eligible? type-segment-bases ty)
                   (compiler-reg-param-assign-walk
+                    type-segment-bases
                     abi
                     (box-get rest)
                     interval-index
@@ -4328,6 +4338,7 @@
                     div-points
                     shift-points)
                   (compiler-reg-param-assign-walk
+                    type-segment-bases
                     abi
                     (box-get rest)
                     interval-index
@@ -4343,6 +4354,7 @@
                     shift-points))]))])]))
 
 (define (compiler-reg-param-assign-plan
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [interval-index : CompilerRegIntervalIndex]
@@ -4362,6 +4374,7 @@
             [assignments : CompilerRegAssignmentTable
               (compiler-reg-assignment-table-make vars)]
             (compiler-reg-param-assign-walk
+              type-segment-bases
               abi
               (compiler-ir-param-seq-to-list seq)
               interval-index
@@ -4374,9 +4387,9 @@
               true
               (if ignore-single-cold-call?
                 (compiler-live-set-empty)
-                (compiler-reg-clobber-kind-points func 0))
-              (compiler-reg-clobber-kind-points func 1)
-              (compiler-reg-clobber-kind-points func 2)))]
+                (compiler-reg-clobber-kind-points type-segment-bases func 0))
+              (compiler-reg-clobber-kind-points type-segment-bases func 1)
+              (compiler-reg-clobber-kind-points type-segment-bases func 2)))]
         [(CompilerIrParamList.Cons _ _)
           (let
             [assignments : CompilerRegAssignmentTable
@@ -4396,6 +4409,7 @@
             ;; may extend the pinned register's effective range past a
             ;; clobber; compiler-reg-param-pins-demote!).
             (compiler-reg-param-assign-walk
+              type-segment-bases
               abi
               params
               interval-index
@@ -4408,9 +4422,9 @@
               true
               (if ignore-single-cold-call?
                 (compiler-live-set-empty)
-                (compiler-reg-clobber-kind-points func 0))
-              (compiler-reg-clobber-kind-points func 1)
-              (compiler-reg-clobber-kind-points func 2)))])]))
+                (compiler-reg-clobber-kind-points type-segment-bases func 0))
+              (compiler-reg-clobber-kind-points type-segment-bases func 1)
+              (compiler-reg-clobber-kind-points type-segment-bases func 2)))])]))
 
 (define (compiler-reg-ineligible-instr
   [instr : CompilerIrInstr]
@@ -4680,6 +4694,7 @@
 ;; compiler-backend-types-all-gp-int? (the parallel-move precondition); keep the two
 ;; in sync.
 (define (compiler-reg-call-arg-gp-class?
+  [type-segment-bases : i64]
   [value : CompilerIrValue]
   [types : CompilerRegVarTypeList]) : bool
   (match value
@@ -4688,13 +4703,14 @@
         [(CompilerRegMaybeType.Some ty)
           (and
             (not (compiler-reg-float-type? ty))
-            (not (compiler-reg-type-register-group? ty)))]
+            (not (compiler-reg-type-register-group? type-segment-bases ty)))]
         [(CompilerRegMaybeType.No) false])]
     [(CompilerIrValue.F64 _) false]
     [(CompilerIrValue.Unit) false]
     [_ true]))
 
 (define (compiler-reg-call-args-array-gp-class?
+  [type-segment-bases : i64]
   [values : (Array CompilerIrValue)]
   [types : CompilerRegVarTypeList]
   [index : i64]
@@ -4702,21 +4718,32 @@
   (if (>= index count)
     true
     (and
-      (compiler-reg-call-arg-gp-class? (array-ref values index) types)
-      (compiler-reg-call-args-array-gp-class? values types (+ index 1) count))))
+      (compiler-reg-call-arg-gp-class?
+        type-segment-bases
+        (array-ref values index)
+        types)
+      (compiler-reg-call-args-array-gp-class?
+        type-segment-bases
+        values
+        types
+        (+ index 1)
+        count))))
 
 (define (compiler-reg-call-args-gp-class?
+  [type-segment-bases : i64]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]) : bool
   (match args
     [(CompilerIrCallArgs.Nil) false]
-    [(CompilerIrCallArgs.One v) (compiler-reg-call-arg-gp-class? v types)]
+    [(CompilerIrCallArgs.One v)
+      (compiler-reg-call-arg-gp-class? type-segment-bases v types)]
     [(CompilerIrCallArgs.Two a b)
       (and
-        (compiler-reg-call-arg-gp-class? a types)
-        (compiler-reg-call-arg-gp-class? b types))]
+        (compiler-reg-call-arg-gp-class? type-segment-bases a types)
+        (compiler-reg-call-arg-gp-class? type-segment-bases b types))]
     [(CompilerIrCallArgs.Array values)
       (compiler-reg-call-args-array-gp-class?
+        type-segment-bases
         values
         types
         0
@@ -4729,6 +4756,7 @@
 ;; 8-byte handles alike, they are the same GP register class -- may stay
 ;; register-homed. Mirrors compiler-backend-call-args-gp-parallel-from?.
 (define (compiler-reg-call-gp-parallel-from?
+  [type-segment-bases : i64]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]
   [start : i64]
@@ -4738,7 +4766,7 @@
     (and
       (> count 0)
       (<= (+ start count) limit)
-      (compiler-reg-call-args-gp-class? args types))))
+      (compiler-reg-call-args-gp-class? type-segment-bases args types))))
 
 (define (compiler-reg-call-arg-float?
   [value : CompilerIrValue]
@@ -4752,37 +4780,53 @@
     [_ false]))
 
 (define (compiler-reg-call-arg-group?
+  [type-segment-bases : i64]
   [value : CompilerIrValue]
   [types : CompilerRegVarTypeList]) : bool
   (match value
     [(CompilerIrValue.Var id)
       (match (compiler-reg-var-type-lookup types id)
-        [(CompilerRegMaybeType.Some ty) (compiler-reg-type-register-group? ty)]
+        [(CompilerRegMaybeType.Some ty)
+          (compiler-reg-type-register-group? type-segment-bases ty)]
         [(CompilerRegMaybeType.No) true])]
     [_ false]))
 
 (define (compiler-reg-call-args-array-has-group?
+  [type-segment-bases : i64]
   [values : (Array CompilerIrValue)]
   [types : CompilerRegVarTypeList]
   [i : i64]) : bool
   (if (>= i (array-length values))
     false
     (or
-      (compiler-reg-call-arg-group? (array-ref values i) types)
-      (compiler-reg-call-args-array-has-group? values types (+ i 1)))))
+      (compiler-reg-call-arg-group?
+        type-segment-bases
+        (array-ref values i)
+        types)
+      (compiler-reg-call-args-array-has-group?
+        type-segment-bases
+        values
+        types
+        (+ i 1)))))
 
 (define (compiler-reg-call-args-have-group?
+  [type-segment-bases : i64]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]) : bool
   (match args
     [(CompilerIrCallArgs.Nil) false]
-    [(CompilerIrCallArgs.One a) (compiler-reg-call-arg-group? a types)]
+    [(CompilerIrCallArgs.One a)
+      (compiler-reg-call-arg-group? type-segment-bases a types)]
     [(CompilerIrCallArgs.Two a b)
       (or
-        (compiler-reg-call-arg-group? a types)
-        (compiler-reg-call-arg-group? b types))]
+        (compiler-reg-call-arg-group? type-segment-bases a types)
+        (compiler-reg-call-arg-group? type-segment-bases b types))]
     [(CompilerIrCallArgs.Array values)
-      (compiler-reg-call-args-array-has-group? values types 0)]))
+      (compiler-reg-call-args-array-has-group?
+        type-segment-bases
+        values
+        types
+        0)]))
 
 ;; The backend's current float marshaller is ordered rather than a parallel-move
 ;; solver. A register-passed float may nevertheless enter the greedy: after
@@ -4896,22 +4940,25 @@
         start)]))
 
 (define (compiler-reg-call-arg-vars-unless-gp-parallel
+  [type-segment-bases : i64]
   [out : CompilerLiveI64Set]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]
   [start : i64]
   [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
   (if (compiler-reg-call-gp-parallel-from?
+    type-segment-bases
     args
     types
     start
     (compiler-reg-arg-reg-limit-for-abi abi))
     out
-    (if (compiler-reg-call-args-have-group? args types)
+    (if (compiler-reg-call-args-have-group? type-segment-bases args types)
       (compiler-live-set-union out (compiler-live-call-args-vars args))
       (compiler-reg-call-arg-vars-selective out args types abi start))))
 
 (define (compiler-reg-call-arg-vars-instr-seq-scalar
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [set : CompilerLiveI64Set]
   [types : CompilerRegVarTypeList]
@@ -4939,6 +4986,7 @@
                 ;; XMM greedy, but its final home is retained only when it equals
                 ;; the ABI target; every other float home is demoted later.
                 (compiler-reg-call-arg-vars-unless-gp-parallel
+                  type-segment-bases
                   out
                   args
                   types
@@ -4952,6 +5000,7 @@
                       args
                       _)
                     (compiler-reg-call-arg-vars-unless-gp-parallel
+                      type-segment-bases
                       (compiler-live-value-vars-into out base)
                       args
                       types
@@ -4965,6 +5014,7 @@
                       args
                       _)
                     (compiler-reg-call-arg-vars-unless-gp-parallel
+                      type-segment-bases
                       (compiler-live-value-vars-into
                         (compiler-live-value-vars-into out base)
                         func)
@@ -4988,6 +5038,7 @@
               ;; args use the same exact-target-or-demote contract as direct calls.
               [(CompilerIrInstr.TailCall _ args _)
                 (compiler-reg-call-arg-vars-unless-gp-parallel
+                  type-segment-bases
                   out
                   args
                   types
@@ -5000,6 +5051,7 @@
               ;; memory-sourced.
               [(CompilerIrInstr.TailCallIndirect func args _)
                 (compiler-reg-call-arg-vars-unless-gp-parallel
+                  type-segment-bases
                   (compiler-live-value-vars-into out func)
                   args
                   types
@@ -5012,6 +5064,7 @@
               ;; after argument setup.
               [(CompilerIrInstr.CallIndirect _ func args _)
                 (compiler-reg-call-arg-vars-unless-gp-parallel
+                  type-segment-bases
                   (compiler-live-value-vars-into out func)
                   args
                   types
@@ -5019,6 +5072,7 @@
                   abi)]
               [(CompilerIrInstr.CallIndirectC _ func args _)
                 (compiler-reg-call-arg-vars-unless-gp-parallel
+                  type-segment-bases
                   (compiler-live-value-vars-into out func)
                   args
                   types
@@ -5029,6 +5083,7 @@
       out)))
 
 (define (compiler-reg-call-arg-vars-blocks-scalar
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [set : CompilerLiveI64Set]
   [types : CompilerRegVarTypeList]
@@ -5039,8 +5094,14 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-call-arg-vars-blocks-scalar
+            type-segment-bases
             (box-get rest)
-            (compiler-reg-call-arg-vars-instr-seq-scalar instrs set types abi)
+            (compiler-reg-call-arg-vars-instr-seq-scalar
+              type-segment-bases
+              instrs
+              set
+              types
+              abi)
             types
             abi)])]
     [(CompilerIrBlockList.Array seq)
@@ -5056,6 +5117,7 @@
                   (set!
                     out
                     (compiler-reg-call-arg-vars-instr-seq-scalar
+                      type-segment-bases
                       instrs
                       out
                       types
@@ -5071,6 +5133,7 @@
 ;; the call. The scalar zero-call extension is layered on later and separately
 ;; rejects any interval spanning a modeled caller-clobber point.
 (define (compiler-reg-ineligible-vars-non-params
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [types : CompilerRegVarTypeList]
   [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
@@ -5079,6 +5142,7 @@
       (compiler-reg-ineligible-memory
         blocks
         (compiler-reg-call-arg-vars-blocks-scalar
+          type-segment-bases
           blocks
           (compiler-reg-ineligible-non-scalars
             types
@@ -7944,7 +8008,9 @@
 ;; spills/static reloads where the value could stay register-resident). The emit-
 ;; time scavenge freeness self-check is the soundness net. caller-clobber-instr?
 ;; stays true for Pack (remat conservatism), same split as bounds checks.
-(define (compiler-reg-backend-clobber-point-instr? [instr : CompilerIrInstr]) : bool
+(define (compiler-reg-backend-clobber-point-instr?
+  [type-segment-bases : i64]
+  [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.BoundsCheck _ _ _) false]
     [(CompilerIrInstr.Pack _ _ _) false]
@@ -8089,6 +8155,7 @@
     [_ false]))
 
 (define (compiler-reg-clobber-instr-kind?
+  [type-segment-bases : i64]
   [instr : CompilerIrInstr]
   [kind : i64]) : bool
   (match instr
@@ -8107,10 +8174,11 @@
     [(CompilerIrInstr.Switch _ _ _ _) (= kind 3)]
     [_
       (if (= kind 0)
-        (compiler-reg-backend-clobber-point-instr? instr)
+        (compiler-reg-backend-clobber-point-instr? type-segment-bases instr)
         false)]))
 
 (define (compiler-reg-clobber-kind-points-seq
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [point : i64]
   [set : CompilerLiveI64Set]
@@ -8124,7 +8192,10 @@
     (begin
       (while (< index count)
         (begin
-          (if (compiler-reg-clobber-instr-kind? (array-ref slots index) kind)
+          (if (compiler-reg-clobber-instr-kind?
+            type-segment-bases
+            (array-ref slots index)
+            kind)
             (set! out (compiler-live-set-insert out p))
             unit)
           (set! p (+ p 2))
@@ -8132,6 +8203,7 @@
       (CompilerRegCallScan.Scan p out))))
 
 (define (compiler-reg-clobber-kind-points-blocks
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [point : i64]
   [set : CompilerLiveI64Set]
@@ -8141,9 +8213,15 @@
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
-          (match (compiler-reg-clobber-kind-points-seq instrs point set kind)
+          (match (compiler-reg-clobber-kind-points-seq
+            type-segment-bases
+            instrs
+            point
+            set
+            kind)
             [(CompilerRegCallScan.Scan p2 s2)
               (compiler-reg-clobber-kind-points-blocks
+                type-segment-bases
                 (box-get rest)
                 p2
                 s2
@@ -8160,6 +8238,7 @@
               (match (compiler-ir-block-seq-ref seq i)
                 [(CompilerIrBlock.Block _ instrs)
                   (match (compiler-reg-clobber-kind-points-seq
+                    type-segment-bases
                     instrs
                     out-point
                     out-set
@@ -8172,11 +8251,13 @@
           (CompilerRegCallScan.Scan out-point out-set)))]))
 
 (define (compiler-reg-clobber-kind-points
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [kind : i64]) : CompilerLiveI64Set
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (compiler-reg-clobber-kind-points-blocks
+        type-segment-bases
         blocks
         0
         (compiler-live-set-empty)
@@ -10389,6 +10470,7 @@
       found)))
 
 (define (compiler-reg-loop-split-region-crosses-kind-seq?
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [point : i64]
   [kind : i64]
@@ -10405,7 +10487,10 @@
         (begin
           (if (and
             (>= p start)
-            (compiler-reg-clobber-instr-kind? (array-ref slots index) kind))
+            (compiler-reg-clobber-instr-kind?
+              type-segment-bases
+              (array-ref slots index)
+              kind))
             (set! found true)
             unit)
           (set! p (+ p 2))
@@ -10413,6 +10498,7 @@
       found)))
 
 (define (compiler-reg-loop-split-region-crosses-kind-blocks?
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [point : i64]
   [kind : i64]
@@ -10430,12 +10516,14 @@
               [(>= point end) false]
               [(<= next-point start)
                 (compiler-reg-loop-split-region-crosses-kind-blocks?
+                  type-segment-bases
                   (box-get rest)
                   next-point
                   kind
                   start
                   end)]
               [(compiler-reg-loop-split-region-crosses-kind-seq?
+                  type-segment-bases
                   instrs
                   point
                   kind
@@ -10444,6 +10532,7 @@
                 true]
               [else
                 (compiler-reg-loop-split-region-crosses-kind-blocks?
+                  type-segment-bases
                   (box-get rest)
                   next-point
                   kind
@@ -10466,6 +10555,7 @@
                     (if (and
                       (> next-point start)
                       (compiler-reg-loop-split-region-crosses-kind-seq?
+                        type-segment-bases
                         instrs
                         p
                         kind
@@ -10478,6 +10568,7 @@
           found))]))
 
 (define (compiler-reg-loop-split-region-crosses-kind?
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [kind : i64]
   [start : i64]
@@ -10485,6 +10576,7 @@
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-loop-split-region-crosses-kind-blocks?
+        type-segment-bases
         blocks
         0
         kind
@@ -10492,16 +10584,30 @@
         end)]))
 
 (define (compiler-reg-loop-split-region-rcx-safe?
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [start : i64]
   [end : i64]) : bool
-  (not (compiler-reg-loop-split-region-crosses-kind? func 2 start end)))
+  (not
+    (compiler-reg-loop-split-region-crosses-kind?
+      type-segment-bases
+      func
+      2
+      start
+      end)))
 
 (define (compiler-reg-loop-split-region-rdx-safe?
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [start : i64]
   [end : i64]) : bool
-  (not (compiler-reg-loop-split-region-crosses-kind? func 4 start end)))
+  (not
+    (compiler-reg-loop-split-region-crosses-kind?
+      type-segment-bases
+      func
+      4
+      start
+      end)))
 
 (define (compiler-reg-loop-split-cons-if
   [enabled : bool]
@@ -11228,6 +11334,7 @@
           evicted)])))
 
 (define (compiler-reg-loop-split-select-blocks
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
@@ -11259,8 +11366,16 @@
             [candidate-regs : CompilerRegStringList
               (compiler-reg-loop-split-candidate-regs
                 (not (compiler-reg-loop-split-seq-has-call-or-syscall? instrs))
-                (compiler-reg-loop-split-region-rcx-safe? func point next-point)
-                (compiler-reg-loop-split-region-rdx-safe? func point next-point))]
+                (compiler-reg-loop-split-region-rcx-safe?
+                  type-segment-bases
+                  func
+                  point
+                  next-point)
+                (compiler-reg-loop-split-region-rdx-safe?
+                  type-segment-bases
+                  func
+                  point
+                  next-point))]
             (if (and
               (< block-index (array-length live-blocks))
               (> depth 0)
@@ -11296,6 +11411,7 @@
                 weights)
                 [(CompilerRegLoopSplitCandidate.NoCandidate)
                   (compiler-reg-loop-split-select-blocks
+                    type-segment-bases
                     abi
                     func
                     (box-get rest)
@@ -11327,6 +11443,7 @@
                     copies
                     evicted)])
               (compiler-reg-loop-split-select-blocks
+                type-segment-bases
                 abi
                 func
                 (box-get rest)
@@ -11345,6 +11462,7 @@
                 weights)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-split-select-blocks-seq
+        type-segment-bases
         abi
         func
         seq
@@ -11363,6 +11481,7 @@
         weights)]))
 
 (define (compiler-reg-loop-split-select-blocks-seq
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [seq : CompilerIrBlockSeq]
@@ -11403,8 +11522,16 @@
                   (compiler-reg-loop-split-candidate-regs
                     (not
                       (compiler-reg-loop-split-seq-has-call-or-syscall? instrs))
-                    (compiler-reg-loop-split-region-rcx-safe? func p next-point)
-                    (compiler-reg-loop-split-region-rdx-safe? func p next-point))]
+                    (compiler-reg-loop-split-region-rcx-safe?
+                      type-segment-bases
+                      func
+                      p
+                      next-point)
+                    (compiler-reg-loop-split-region-rdx-safe?
+                      type-segment-bases
+                      func
+                      p
+                      next-point))]
                 (begin
                   (if (and
                     (< b (array-length live-blocks))
@@ -11786,6 +11913,7 @@
 ;; body B=h+1 is entered ONLY from h (pred-count 1) and at loop depth>0, then try
 ;; to home one of its phi-carried groups.
 (define (compiler-reg-loop-phi-mb-select-headers
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]
   [block-array : (Array CompilerIrBlock)]
@@ -11827,10 +11955,12 @@
                   h
                   end-idx))
               (compiler-reg-loop-split-region-rcx-safe?
+                type-segment-bases
                 func
                 region-start
                 region-end)
               (compiler-reg-loop-split-region-rdx-safe?
+                type-segment-bases
                 func
                 region-start
                 region-end))]
@@ -11857,6 +11987,7 @@
             weights)
             [(CompilerRegLoopSplitCandidate.NoCandidate)
               (compiler-reg-loop-phi-mb-select-headers
+                type-segment-bases
                 func
                 liveness
                 block-array
@@ -11875,6 +12006,7 @@
             [(CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)
               (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)]))
         (compiler-reg-loop-phi-mb-select-headers
+          type-segment-bases
           func
           liveness
           block-array
@@ -11896,6 +12028,7 @@
 ;; labels) or NoCandidate. Called as the fallback after the single-block
 ;; select-blocks finds nothing, so the single-block paths stay byte-identical.
 (define (compiler-reg-loop-phi-mb-select
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [liveness : CompilerFunctionLiveness]
@@ -11915,6 +12048,7 @@
     (if (<= count 1)
       (CompilerRegLoopSplitCandidate.NoCandidate)
       (compiler-reg-loop-phi-mb-select-headers
+        type-segment-bases
         func
         liveness
         block-array
@@ -11950,6 +12084,7 @@
       (compiler-reg-depths-have-loop? depths (+ index 1)))))
 
 (define (compiler-reg-loop-split-rewrite-one
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
@@ -11975,6 +12110,7 @@
           [liveness-handle : CompilerRegLivenessHandle
             (compiler-reg-liveness-handle-make func false)]
           (compiler-reg-loop-split-rewrite-fueled
+            type-segment-bases
             abi
             func
             liveness-handle
@@ -11986,6 +12122,7 @@
             (compiler-reg-callee-saved-integer-register-count-for-abi abi)))))))
 
 (define (compiler-reg-loop-split-rewrite-fueled
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [liveness-handle : CompilerRegLivenessHandle]
@@ -12008,7 +12145,7 @@
       [assignments : CompilerRegAssignmentList
         (compiler-reg-plan-assignments plan)]
       [group-vars : CompilerLiveI64Set
-        (compiler-reg-function-group-vars func types)]
+        (compiler-reg-function-group-vars type-segment-bases func types)]
       (match selection
         [(CompilerRegIntervalSelection.Selection _ intervals)
           (let
@@ -12026,6 +12163,7 @@
             (match liveness
               [(CompilerFunctionLiveness.Liveness _ live-blocks)
                 (match (match (compiler-reg-loop-split-select-blocks
+                  type-segment-bases
                   abi
                   func
                   blocks
@@ -12049,6 +12187,7 @@
                   ;; all non-phi / read-only codegen -- byte-identical.
                   [(CompilerRegLoopSplitCandidate.NoCandidate)
                     (compiler-reg-loop-phi-mb-select
+                      type-segment-bases
                       func
                       blocks
                       liveness
@@ -12079,6 +12218,7 @@
                     (CompilerRegLoopSplitRewriteResult.Result
                       (compiler-reg-loop-split-noop blocks vars)
                       (compiler-reg-loop-split-refused-select-blocks
+                        type-segment-bases
                         func
                         blocks
                         liveness
@@ -12140,6 +12280,7 @@
                                     applied)]
                                 [rest : CompilerRegLoopSplitRewriteResult
                                   (compiler-reg-loop-split-rewrite-fueled
+                                    type-segment-bases
                                     abi
                                     new-func
                                     (compiler-reg-liveness-handle-make
@@ -12340,6 +12481,7 @@
         r))))
 
 (define (compiler-reg-loop-split-refused-select-blocks
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [liveness : CompilerFunctionLiveness]
@@ -12369,8 +12511,16 @@
             [candidate-regs : CompilerRegStringList
               (compiler-reg-loop-split-candidate-regs
                 (not (compiler-reg-loop-split-seq-has-call-or-syscall? instrs))
-                (compiler-reg-loop-split-region-rcx-safe? func point next-point)
-                (compiler-reg-loop-split-region-rdx-safe? func point next-point))]
+                (compiler-reg-loop-split-region-rcx-safe?
+                  type-segment-bases
+                  func
+                  point
+                  next-point)
+                (compiler-reg-loop-split-region-rdx-safe?
+                  type-segment-bases
+                  func
+                  point
+                  next-point))]
             (if (and
               (< block-index (array-length live-blocks))
               (> depth 0)
@@ -12401,6 +12551,7 @@
                     merged-roots)]
                 (if (= r (compiler-ir-label-none))
                   (compiler-reg-loop-split-refused-select-blocks
+                    type-segment-bases
                     func
                     (box-get rest)
                     liveness
@@ -12417,6 +12568,7 @@
                     merged-roots)
                   r))
               (compiler-reg-loop-split-refused-select-blocks
+                type-segment-bases
                 func
                 (box-get rest)
                 liveness
@@ -12433,6 +12585,7 @@
                 merged-roots)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-split-refused-select-blocks-seq
+        type-segment-bases
         func
         seq
         liveness
@@ -12449,6 +12602,7 @@
         merged-roots)]))
 
 (define (compiler-reg-loop-split-refused-select-blocks-seq
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [seq : CompilerIrBlockSeq]
   [liveness : CompilerFunctionLiveness]
@@ -12464,6 +12618,7 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]) : i64
   (compiler-reg-loop-split-refused-select-blocks-seq-from
+    type-segment-bases
     func
     seq
     liveness
@@ -12481,6 +12636,7 @@
     0))
 
 (define (compiler-reg-loop-split-refused-select-blocks-seq-from
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [seq : CompilerIrBlockSeq]
   [liveness : CompilerFunctionLiveness]
@@ -12510,8 +12666,16 @@
           [candidate-regs : CompilerRegStringList
             (compiler-reg-loop-split-candidate-regs
               (not (compiler-reg-loop-split-seq-has-call-or-syscall? instrs))
-              (compiler-reg-loop-split-region-rcx-safe? func point next-point)
-              (compiler-reg-loop-split-region-rdx-safe? func point next-point))]
+              (compiler-reg-loop-split-region-rcx-safe?
+                type-segment-bases
+                func
+                point
+                next-point)
+              (compiler-reg-loop-split-region-rdx-safe?
+                type-segment-bases
+                func
+                point
+                next-point))]
           (if (and
             (< block-index (array-length live-blocks))
             (> depth 0)
@@ -12542,6 +12706,7 @@
                   merged-roots)]
               (if (= r (compiler-ir-label-none))
                 (compiler-reg-loop-split-refused-select-blocks-seq-from
+                  type-segment-bases
                   func
                   seq
                   liveness
@@ -12559,6 +12724,7 @@
                   (+ index 1))
                 r))
             (compiler-reg-loop-split-refused-select-blocks-seq-from
+              type-segment-bases
               func
               seq
               liveness
@@ -12583,6 +12749,7 @@
   (+ (compiler-reg-callee-saved-integer-register-count-for-abi abi) 6))
 
 (define (compiler-reg-loop-split-rewrite-rounds
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
@@ -12612,6 +12779,7 @@
       [round-type-info : CompilerRegVarTypes
         (compiler-reg-function-var-types func)]
       (match (compiler-reg-loop-split-rewrite-one
+        type-segment-bases
         abi
         func
         blocks
@@ -12648,6 +12816,7 @@
                       (match func
                         [(CompilerIrFunction.Function name params ret-ty _ _)
                           (compiler-reg-loop-split-rewrite-rounds
+                            type-segment-bases
                             abi
                             (CompilerIrFunction.Function
                               name
@@ -12687,6 +12856,7 @@
                           next-vars
                           next-blocks)]
                       (compiler-reg-loop-split-rewrite-rounds
+                        type-segment-bases
                         abi
                         next-func
                         next-blocks
@@ -12698,12 +12868,14 @@
                         (- rounds-left 1)))]))])]))))
 
 (define (compiler-reg-loop-split-rewrite-blocks
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [vars : i64]
   [_type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
   (compiler-reg-loop-split-rewrite-blocks-for-abi
+    type-segment-bases
     CompilerRegTargetAbi.Linux
     func
     blocks
@@ -12712,6 +12884,7 @@
     plan))
 
 (define (compiler-reg-loop-split-rewrite-blocks-for-abi
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
@@ -12719,6 +12892,7 @@
   [_type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
   (compiler-reg-loop-split-rewrite-rounds
+    type-segment-bases
     abi
     func
     blocks
@@ -12792,12 +12966,14 @@
 ;; Region boundary = kind-0 clobber (all caller-saved registers die). This
 ;; matches the greedy's kind-0 classification exactly: div/shift BinOps are
 ;; kind-1/2 (rax:rdx / rcx only) and NOT boundaries; BoundsCheck/Pack are not
-;; clobber points at all (compiler-reg-backend-clobber-point-instr? excludes
+;; clobber points at all (compiler-reg-backend-clobber-point-instr? type-segment-bases excludes
 ;; them).
-(define (compiler-reg-call-region-boundary-instr? [instr : CompilerIrInstr]) : bool
+(define (compiler-reg-call-region-boundary-instr?
+  [type-segment-bases : i64]
+  [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.BinOp _ _ _ _ _) false]
-    [_ (compiler-reg-backend-clobber-point-instr? instr)]))
+    [_ (compiler-reg-backend-clobber-point-instr? type-segment-bases instr)]))
 
 ;; Shadow register pool: caller-saved registers with NO fixed-use hazard
 ;; inside a kind-0-free region. Unlike loop-split's guarded rcx/rdx widening,
@@ -13461,7 +13637,9 @@
 ;; caller-saved home and executes no boundary copies.  Float/vector call masks
 ;; are intentionally unchanged.
 ;; ---------------------------------------------------------------------------
-(define (compiler-reg-cold-call-clobber-count-seq [instrs : CompilerIrInstrSeq]) : i64
+(define (compiler-reg-cold-call-clobber-count-seq
+  [type-segment-bases : i64]
+  [instrs : CompilerIrInstrSeq]) : i64
   (let
     [i : i64 0]
     [count : i64 0]
@@ -13469,13 +13647,16 @@
       (while (< i (compiler-ir-instr-seq-count instrs))
         (begin
           (if (compiler-reg-call-region-boundary-instr?
+            type-segment-bases
             (compiler-ir-instr-seq-ref instrs i))
             (set! count (+ count 1))
             unit)
           (set! i (+ i 1))))
       count)))
 
-(define (compiler-reg-cold-call-find-candidate [seq : CompilerIrBlockSeq]) : CompilerRegColdCallCandidate
+(define (compiler-reg-cold-call-find-candidate
+  [type-segment-bases : i64]
+  [seq : CompilerIrBlockSeq]) : CompilerRegColdCallCandidate
   (let
     [b : i64 0]
     [clobbers : i64 0]
@@ -13489,7 +13670,11 @@
               (begin
                 (set!
                   clobbers
-                  (+ clobbers (compiler-reg-cold-call-clobber-count-seq instrs)))
+                  (+
+                    clobbers
+                    (compiler-reg-cold-call-clobber-count-seq
+                      type-segment-bases
+                      instrs)))
                 (if (= (compiler-ir-instr-seq-count instrs) 2)
                   (match (compiler-ir-instr-seq-ref instrs 0)
                     [(CompilerIrInstr.Call _ _ _ _)
@@ -13618,17 +13803,20 @@
       (> (compiler-reg-cold-call-predecessor-count seq join-label (- 0 1)) 1)
       (> (compiler-reg-cold-call-predecessor-count seq join-label call-block) 0))))
 
-(define (compiler-reg-cold-call-protectable-type? [ty : AstType]) : bool
+(define (compiler-reg-cold-call-protectable-type?
+  [type-segment-bases : i64]
+  [ty : AstType]) : bool
   (and
     (compiler-reg-register-eligible-type? ty)
     (not (compiler-reg-float-type? ty))
-    (not (compiler-reg-type-register-group? ty))))
+    (not (compiler-reg-type-register-group? type-segment-bases ty))))
 
 ;; Fill `selected` in ascending var-id order.  Returning cap+1 means either the
 ;; bounded budget was exceeded or a live GP register-group could not be carried
 ;; in one stack word.  Edge-precise liveness keeps loop-phi back-edge inputs off
 ;; this preheader boundary.
 (define (compiler-reg-cold-call-select-live!
+  [type-segment-bases : i64]
   [live-after : CompilerLiveI64Set]
   [defs : CompilerLiveI64Set]
   [memory-vars : CompilerLiveI64Set]
@@ -13648,7 +13836,9 @@
             (not (compiler-live-set-contains? memory-vars v)))
             (match (compiler-reg-var-types-lookup type-info v)
               [(CompilerRegMaybeType.Some ty)
-                (if (compiler-reg-cold-call-protectable-type? ty)
+                (if (compiler-reg-cold-call-protectable-type?
+                  type-segment-bases
+                  ty)
                   (begin
                     (if (< count (array-length selected))
                       (array-set! selected count v)
@@ -13727,12 +13917,14 @@
           (set! i (+ i 1))))
       (CompilerIrInstrSeq out out-count))))
 
-(define (compiler-reg-cold-call-rewrite-function [func : CompilerIrFunction]) : CompilerRegColdCallRewrite
+(define (compiler-reg-cold-call-rewrite-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerRegColdCallRewrite
   (match func
     [(CompilerIrFunction.Function name params ret-ty vars blocks)
       (let
         [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
-        (match (compiler-reg-cold-call-find-candidate seq)
+        (match (compiler-reg-cold-call-find-candidate type-segment-bases seq)
           [(CompilerRegColdCallCandidate.NoCandidate)
             (CompilerRegColdCallRewrite.Rewrite func (- 0 1))]
           [(CompilerRegColdCallCandidate.Candidate call-block join-label)
@@ -13757,6 +13949,7 @@
                 [selected : (Array i64) (array.make-array i64 12)]
                 [selected-count : i64
                   (compiler-reg-cold-call-select-live!
+                    type-segment-bases
                     (compiler-live-after
                       liveness
                       (compiler-reg-cold-call-block-label
@@ -13929,6 +14122,7 @@
 ;; EDGES in predecessor blocks and their defs land in the home slot, so they
 ;; are never region members).
 (define (compiler-reg-call-region-collect!
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [depths : (Array i64)]
   [cand : (Array i64)]
@@ -14003,7 +14197,9 @@
                   (let
                     [instr : CompilerIrInstr (array-ref islots i)]
                     (begin
-                      (if (compiler-reg-call-region-boundary-instr? instr)
+                      (if (compiler-reg-call-region-boundary-instr?
+                        type-segment-bases
+                        instr)
                         (set! rid (+ rid 1))
                         (match instr
                           [(CompilerIrInstr.Phi _ _ _) unit]
@@ -14323,6 +14519,7 @@
 ;; is returned UNCHANGED (shadow roots stay spilled; the region table drives
 ;; the backend rewrite).
 (define (compiler-reg-assign-caller-saved-call-spanning
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [candidates : CompilerRegIntervalList]
@@ -14339,7 +14536,8 @@
       (if (< n 1)
         1
         n)]
-    [kind0 : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 0)]
+    [kind0 : CompilerLiveI64Set
+      (compiler-reg-clobber-kind-points type-segment-bases func 0)]
     [remat-cands : (Array i64)
       (struct-get (compiler-reg-remat-table-build func) candidates)]
     [root-has-remat : (Array i64) (array.make-array i64 an)]
@@ -14465,6 +14663,7 @@
                             (compiler-reg-call-region-stat-seq-empty))
                           (set! bi (+ bi 1)))))
                     (compiler-reg-call-region-collect!
+                      type-segment-bases
                       blocks
                       depths
                       cand
@@ -15309,29 +15508,44 @@
 
 ;; The aggregate type name a value carries (mirror of
 ;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
-(define (compiler-reg-aggregate-type-name [ty : AstType]) : String
+(define (compiler-reg-aggregate-type-name-with-seg-bases
+  [type-segment-bases : i64]
+  [ty : AstType]) : String
   (match ty
     [(AstType.Struct name) (ast-nominal-name-id-display name)]
     [(AstType.StructArgs name _) (ast-nominal-name-id-display name)]
     [(AstType.Enum name) (ast-nominal-name-id-display name)]
     [(AstType.EnumArgs name _) (ast-nominal-name-id-display name)]
     [(AstType.Region _ inner)
-      (compiler-reg-aggregate-type-name (ast-node-pool-reader-type-get inner))]
+      (compiler-reg-aggregate-type-name-with-seg-bases
+        type-segment-bases
+        (ast-type-segment-bases-get type-segment-bases inner))]
     [_ ""]))
 
+(define (compiler-reg-aggregate-type-name [ty : AstType]) : String
+  (compiler-reg-aggregate-type-name-with-seg-bases
+    (ast-node-pool-reader-type-segment-bases)
+    ty))
+
 ;; True when a var's type is a >=2-word register-group per the program map.
-(define (compiler-reg-type-register-group? [ty : AstType]) : bool
+(define (compiler-reg-type-register-group?
+  [type-segment-bases : i64]
+  [ty : AstType]) : bool
   (let
-    [name : String (compiler-reg-aggregate-type-name ty)]
+    [name : String
+      (compiler-reg-aggregate-type-name-with-seg-bases type-segment-bases ty)]
     (if (string.eq name "")
       false
       (match (reg_string_i64_map.get (& compiler-reg-group-counts) name)
         [(reg_string_i64_map.LookupFound count) (> count 1)]
         [(reg_string_i64_map.LookupMissing) false]))))
 
-(define (compiler-reg-type-register-group-has-sse? [ty : AstType]) : bool
+(define (compiler-reg-type-register-group-has-sse?
+  [type-segment-bases : i64]
+  [ty : AstType]) : bool
   (let
-    [name : String (compiler-reg-aggregate-type-name ty)]
+    [name : String
+      (compiler-reg-aggregate-type-name-with-seg-bases type-segment-bases ty)]
     (if (string.eq name "")
       false
       (match (reg_string_i64_map.get (& compiler-reg-group-class-masks) name)
@@ -15339,10 +15553,12 @@
         [(reg_string_i64_map.LookupMissing) false]))))
 
 (define (compiler-reg-type-register-group-word-sse?
+  [type-segment-bases : i64]
   [ty : AstType]
   [word-index : i64]) : bool
   (let
-    [name : String (compiler-reg-aggregate-type-name ty)]
+    [name : String
+      (compiler-reg-aggregate-type-name-with-seg-bases type-segment-bases ty)]
     (if (or (string.eq name "") (< word-index 0) (> word-index 1))
       false
       (match (reg_string_i64_map.get (& compiler-reg-group-class-masks) name)
@@ -15358,16 +15574,18 @@
         [(reg_string_i64_map.LookupMissing) false]))))
 
 (define (compiler-reg-var-register-group-has-sse?
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypes]
   [var : i64]) : bool
   (match (compiler-reg-var-types-lookup types var)
     [(CompilerRegMaybeType.Some ty)
-      (compiler-reg-type-register-group-has-sse? ty)]
+      (compiler-reg-type-register-group-has-sse? type-segment-bases ty)]
     [(CompilerRegMaybeType.No) false]))
 
 ;; Array-view form of the seed below: same ascending-id visit order, indexed
 ;; instead of walked.
 (define (compiler-reg-group-vars-from-types-seq
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypes]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
@@ -15381,7 +15599,9 @@
         (begin
           (if (= (array-ref present index) 0)
             unit
-            (if (compiler-reg-type-register-group? (array-ref items index))
+            (if (compiler-reg-type-register-group?
+              type-segment-bases
+              (array-ref items index))
               (set! out (compiler-live-set-insert out index))
               unit))
           (set! index (+ index 1))))
@@ -15390,28 +15610,32 @@
 ;; Seed every var whose TYPE is a 2-word register-group (the type-based group
 ;; vars the structural Pack/Word scan misses).
 (define (compiler-reg-group-vars-from-types
+  [type-segment-bases : i64]
   [types : CompilerRegVarTypeList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match types
     [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-group-vars-from-types-seq seq set)]
+      (compiler-reg-group-vars-from-types-seq type-segment-bases seq set)]
     [(CompilerRegVarTypeList.Nil) set]
     [(CompilerRegVarTypeList.Cons item rest)
       (match item
         [(CompilerRegVarType.Type var ty)
           (compiler-reg-group-vars-from-types
+            type-segment-bases
             (box-get rest)
-            (if (compiler-reg-type-register-group? ty)
+            (if (compiler-reg-type-register-group? type-segment-bases ty)
               (compiler-live-set-insert set var)
               set))])]))
 
 (define (compiler-reg-function-group-vars
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-group-vars-fixpoint
         (compiler-reg-group-vars-from-types
+          type-segment-bases
           types
           (compiler-reg-group-vars-blocks (compiler-live-set-empty) blocks))
         blocks)]))
@@ -18907,6 +19131,7 @@
 ;; invalid xmm<->gp movsd (the class mask registry is the same data the
 ;; backend's group-word-sse? reads).
 (define (compiler-reg-group-pair-member-ok?
+  [type-segment-bases : i64]
   [v : i64]
   [type-info : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
@@ -18918,13 +19143,15 @@
     (compiler-live-set-contains? group-vars v)
     (not (compiler-live-set-contains? excluded v))
     (not (array-ref poisoned v))
-    (not (compiler-reg-var-register-group-has-sse? type-info v))
+    (not
+      (compiler-reg-var-register-group-has-sse? type-segment-bases type-info v))
     (>= (array-ref starts v) 0)
     (match (compiler-reg-assignment-table-lookup assignments v)
       [(CompilerRegMaybeLocation.Some _) false]
       [(CompilerRegMaybeLocation.No) true])))
 
 (define (compiler-reg-assign-group-pairs
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [type-info : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
@@ -18975,6 +19202,7 @@
               (if (and
                 (= (compiler-reg-group-pair-find parents v) v)
                 (compiler-reg-group-pair-member-ok?
+                  type-segment-bases
                   v
                   type-info
                   group-vars
@@ -18983,6 +19211,7 @@
                   poisoned
                   assignments))
                 (compiler-reg-assign-group-pair-component
+                  type-segment-bases
                   v
                   vars
                   type-info
@@ -19010,6 +19239,7 @@
 ;; interfering scalar must be strictly colder than the component's hottest
 ;; member and is demoted to its ordinary spill slot before the pair is assigned.
 (define (compiler-reg-assign-group-pair-component
+  [type-segment-bases : i64]
   [r : i64]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
@@ -19038,6 +19268,7 @@
           (if (= (compiler-reg-group-pair-find parents w) r)
             (begin
               (if (compiler-reg-group-pair-member-ok?
+                type-segment-bases
                 w
                 type-info
                 group-vars
@@ -19274,6 +19505,7 @@
         shift-points)]))
 
 (define (compiler-reg-plan-from
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [liveness-handle : CompilerRegLivenessHandle]
   [type-info : CompilerRegVarTypes]
@@ -19316,7 +19548,7 @@
     [clobber-points : CompilerLiveI64Set
       (if ignore-single-cold-call?
         (compiler-live-set-empty)
-        (compiler-reg-clobber-kind-points func 0))]
+        (compiler-reg-clobber-kind-points type-segment-bases func 0))]
     ;; Per-register clobber point sets (15c): kind 1 = idiv (rax:rdx), kind 2 =
     ;; variable shift (rcx). Bound once here and reused both for the destructive
     ;; tie exclusion below and for the GAP3c pin demotion / greedy further down;
@@ -19324,9 +19556,10 @@
     ;; `compiler-reg-clobber-kind-points` is a pure fold over the function's
     ;; blocks and `compiler-live-set-union` never writes through its operands,
     ;; so the shared sets are the same values the two walks produced.
-    [div-points : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 1)]
+    [div-points : CompilerLiveI64Set
+      (compiler-reg-clobber-kind-points type-segment-bases func 1)]
     [shift-points : CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points func 2)]
+      (compiler-reg-clobber-kind-points type-segment-bases func 2)]
     [destructive-fixed-points : CompilerLiveI64Set
       (compiler-live-set-union div-points shift-points)]
     [destructive-clobber-points : CompilerLiveI64Set
@@ -19355,7 +19588,7 @@
         raw-moves
         storage-identity-vars)]
     [group-vars : CompilerLiveI64Set
-      (compiler-reg-function-group-vars func types)]
+      (compiler-reg-function-group-vars type-segment-bases func types)]
     ;; Same-value overlap-coalescing exclusion points. This is the KIND-0
     ;; (call-like: call/syscall/cpuid/xgetbv) point set, NOT the coarse merged
     ;; caller-clobber set. A value that spans only a div/mod or shift is safely
@@ -19473,6 +19706,7 @@
     ;; index/types/table by identity and does not grow the worklist.
     [early-scratch-model : CompilerRegEarlyScratchModel
       (compiler-reg-early-scratch-model
+        type-segment-bases
         abi
         func
         eff-index
@@ -19697,6 +19931,7 @@
       (if (= early-scratch-count 0)
         early-scratch-model
         (compiler-reg-early-scratch-model
+          type-segment-bases
           abi
           func
           eff-index
@@ -19760,6 +19995,7 @@
         allow-caller-saved-zero-call
         (compiler-reg-assignment-table-has-spill? integer-assignments))
         (compiler-reg-assign-caller-saved-call-spanning
+          type-segment-bases
           abi
           func
           integer-candidates
@@ -19938,6 +20174,7 @@
         (match abi
           [(CompilerRegTargetAbi.Linux)
             (compiler-reg-assign-group-pairs
+              type-segment-bases
               func
               type-info
               group-vars
@@ -19959,7 +20196,8 @@
 ;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
 ;; intervals + the call-live-conservative ineligibility, keeping AVX backend
 ;; golden output byte-identical.
-(define (compiler-reg-plan-function-for-abi
+(define (compiler-reg-plan-function-with-type-segment-bases-for-abi
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]) : CompilerRegPlan
   (let
@@ -19976,6 +20214,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
     (compiler-reg-plan-from
+      type-segment-bases
       func
       liveness-handle
       type-info
@@ -19991,10 +20230,19 @@
       false
       (- 0 1))))
 
+(define (compiler-reg-plan-function-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]) : CompilerRegPlan
+  (compiler-reg-plan-function-with-type-segment-bases-for-abi
+    (ast-node-pool-reader-type-segment-bases)
+    abi
+    func))
+
 (define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-for-abi CompilerRegTargetAbi.Linux func))
 
-(define (compiler-reg-plan-function-avx2-for-abi
+(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]) : CompilerRegPlan
   (let
@@ -20011,6 +20259,7 @@
       (match func
         [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
     (compiler-reg-plan-from
+      type-segment-bases
       func
       liveness-handle
       type-info
@@ -20025,6 +20274,14 @@
       abi
       false
       (- 0 1))))
+
+(define (compiler-reg-plan-function-avx2-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]) : CompilerRegPlan
+  (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi
+    (ast-node-pool-reader-type-segment-bases)
+    abi
+    func))
 
 (define (compiler-reg-scalar-full-intervals? [func : CompilerIrFunction]) : bool
   (match func
@@ -20146,7 +20403,8 @@
 ;; `type-info` must be `(compiler-reg-function-var-types func)`. The backend
 ;; already needs that view for its caller-save rewrite, so it computes it once
 ;; and passes it in rather than having both walk the function.
-(define (compiler-reg-plan-function-scalar-cold-for-abi-with-types
+(define (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [forced-spill-from : i64]
@@ -20194,12 +20452,17 @@
           [base-ineligible : CompilerLiveI64Set
             (let
               [base : CompilerLiveI64Set
-                (compiler-reg-ineligible-vars-non-params func types abi)]
+                (compiler-reg-ineligible-vars-non-params
+                  type-segment-bases
+                  func
+                  types
+                  abi)]
               (if cold-split?
                 (compiler-reg-live-set-insert-range base forced-spill-from vars)
                 base))]
           [param-plan : CompilerRegParamAssignPlan
             (compiler-reg-param-assign-plan
+              type-segment-bases
               abi
               func
               interval-index
@@ -20209,6 +20472,7 @@
           (match param-plan
             [(CompilerRegParamAssignPlan.Plan preassignments ineligible blocked)
               (compiler-reg-plan-from
+                type-segment-bases
                 func
                 liveness-handle
                 type-info
@@ -20223,6 +20487,18 @@
                 abi
                 cold-split?
                 forced-spill-from)]))])))
+
+(define (compiler-reg-plan-function-scalar-cold-for-abi-with-types
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [forced-spill-from : i64]
+  [type-info : CompilerRegVarTypes]) : CompilerRegPlan
+  (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types
+    (ast-node-pool-reader-type-segment-bases)
+    abi
+    func
+    forced-spill-from
+    type-info))
 
 (define (compiler-reg-plan-function-scalar-for-abi
   [abi : CompilerRegTargetAbi]
@@ -20717,6 +20993,7 @@
 ;; miscompile (compiler-live-set-minus-words). Only type-identical variables
 ;; may merge.
 (define (compiler-reg-color-find-slot
+  [type-segment-bases : i64]
   [slot-ends : (Array i64)]
   [slot-tys : (Array AstType)]
   [ty : AstType]
@@ -20727,9 +21004,13 @@
     used
     (if (and
       (< (array-ref slot-ends index) start)
-      (ast-type-eq? (array-ref slot-tys index) ty))
+      (ast-type-eq-with-seg-bases?
+        type-segment-bases
+        (array-ref slot-tys index)
+        ty))
       index
       (compiler-reg-color-find-slot
+        type-segment-bases
         slot-ends
         slot-tys
         ty
@@ -20738,6 +21019,7 @@
         (+ index 1)))))
 
 (define (compiler-reg-color-walk
+  [type-segment-bases : i64]
   [items : (Array CompilerRegInterval)]
   [count : i64]
   [index : i64]
@@ -20774,6 +21056,7 @@
                 [_ true])]
             [(CompilerRegMaybeLocation.No) false]))
           (compiler-reg-color-walk
+            type-segment-bases
             items
             count
             (+ index 1)
@@ -20793,7 +21076,14 @@
             ;; skipping param-pinned ids so sparse parameter ids leave no hole.
             [ty : AstType (array-ref var-tys var)]
             [found : i64
-              (compiler-reg-color-find-slot slot-ends slot-tys ty used start 0)]
+              (compiler-reg-color-find-slot
+                type-segment-bases
+                slot-ends
+                slot-tys
+                ty
+                used
+                start
+                0)]
             [slot : i64
               (if (>= found used)
                 (compiler-reg-color-next-free-slot slot-ends used)
@@ -20810,6 +21100,7 @@
                 unit)
               (array-set! remap var slot)
               (compiler-reg-color-walk
+                type-segment-bases
                 items
                 count
                 (+ index 1)
@@ -21929,6 +22220,7 @@
         (compiler-reg-color-hull-bounds (box-get rest) starts ends))]))
 
 (define (compiler-reg-color-group-mov-alias-instr!
+  [type-segment-bases : i64]
   [instr : CompilerIrInstr]
   [alias : (Array i64)]
   [group-vars : CompilerLiveI64Set]
@@ -21957,7 +22249,10 @@
             (>= (array-ref hull-starts dst) 0)
             (>= (array-ref hull-starts src-var) 0)
             (= (array-ref hull-ends src-var) (array-ref hull-starts dst))
-            (ast-type-eq? (array-ref var-tys dst) (array-ref var-tys src-var))
+            (ast-type-eq-with-seg-bases?
+              type-segment-bases
+              (array-ref var-tys dst)
+              (array-ref var-tys src-var))
             (match (compiler-reg-assignment-index-lookup assignment-index dst)
               [(CompilerRegMaybeLocation.Some _) false]
               [(CompilerRegMaybeLocation.No) true])
@@ -21972,6 +22267,7 @@
     [_ unit]))
 
 (define (compiler-reg-color-group-mov-alias-seq!
+  [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [alias : (Array i64)]
   [group-vars : CompilerLiveI64Set]
@@ -21988,6 +22284,7 @@
     (while (< i len)
       (begin
         (compiler-reg-color-group-mov-alias-instr!
+          type-segment-bases
           (array-ref slots i)
           alias
           group-vars
@@ -22000,6 +22297,7 @@
         (set! i (+ i 1))))))
 
 (define (compiler-reg-color-group-mov-alias-blocks!
+  [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [alias : (Array i64)]
   [group-vars : CompilerLiveI64Set]
@@ -22016,6 +22314,7 @@
         (match block
           [(CompilerIrBlock.Block _ instrs)
             (compiler-reg-color-group-mov-alias-seq!
+              type-segment-bases
               instrs
               alias
               group-vars
@@ -22026,6 +22325,7 @@
               hull-starts
               hull-ends)])
         (compiler-reg-color-group-mov-alias-blocks!
+          type-segment-bases
           (box-get rest)
           alias
           group-vars
@@ -22043,6 +22343,7 @@
             (match (compiler-ir-block-seq-ref seq i)
               [(CompilerIrBlock.Block _ instrs)
                 (compiler-reg-color-group-mov-alias-seq!
+                  type-segment-bases
                   instrs
                   alias
                   group-vars
@@ -22078,6 +22379,7 @@
 ;; dense slot above them, and register-homed variables move to ids that are not
 ;; used by a stack slot. The assignment table is rebuilt on the new keys.
 (define (compiler-reg-color-stack-slots
+  [type-segment-bases : i64]
   [plan : CompilerRegPlan]
   [group-vars : CompilerLiveI64Set]
   [params : CompilerIrParamList]
@@ -22155,6 +22457,7 @@
             (compiler-reg-color-extent-ends sorted vars)]
           [stack-prefix : i64
             (compiler-reg-color-walk
+              type-segment-bases
               sorted
               (array-length sorted)
               0
@@ -22196,6 +22499,7 @@
                     (set! i (+ i 1))))
                 (compiler-reg-color-hull-bounds intervals hull-starts hull-ends)
                 (compiler-reg-color-group-mov-alias-blocks!
+                  type-segment-bases
                   blocks
                   alias
                   group-vars
@@ -23387,13 +23691,14 @@
       [else 0])))
 
 (define (compiler-reg-scratch-cast-slot-count
+  [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : i64
   (if (and
-    (ast-type-eq? from-ty to-ty)
+    (ast-type-eq-with-seg-bases? type-segment-bases from-ty to-ty)
     (compiler-reg-scratch-value-same-home? assignments dst src))
     0
     (+
@@ -23482,6 +23787,7 @@
       [_ false])))
 
 (define (compiler-reg-scratch-vreg-slots
+  [type-segment-bases : i64]
   [_abi : CompilerRegTargetAbi]
   [_assignments : CompilerRegAssignmentList]
   [_types : CompilerRegVarTypeList]
@@ -23694,6 +24000,7 @@
           0)]
       [(CompilerIrInstr.Cast dst src from-ty to-ty)
         (compiler-reg-scratch-cast-slot-count
+          type-segment-bases
           _assignments
           dst
           src
@@ -23765,6 +24072,7 @@
     0))
 
 (define (compiler-reg-scratch-vreg-count-seq
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
@@ -23785,6 +24093,7 @@
             (+
               out
               (compiler-reg-scratch-vreg-slots
+                type-segment-bases
                 abi
                 assignments
                 types
@@ -23796,6 +24105,7 @@
       out)))
 
 (define (compiler-reg-scratch-vreg-count-blocks
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
@@ -23809,6 +24119,7 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-scratch-vreg-count-blocks
+            type-segment-bases
             abi
             assignments
             types
@@ -23816,6 +24127,7 @@
             phi-targets
             phi-xmm-targets
             (compiler-reg-scratch-vreg-count-seq
+              type-segment-bases
               abi
               assignments
               types
@@ -23836,6 +24148,7 @@
                   (set!
                     out
                     (compiler-reg-scratch-vreg-count-seq
+                      type-segment-bases
                       abi
                       assignments
                       types
@@ -24521,6 +24834,7 @@
       (compiler-reg-scratch-phi-dst-registers-block-seq-from assignments seq 0)]))
 
 (define (compiler-reg-scratch-requirement-local
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
@@ -24641,7 +24955,10 @@
           policy
           assignments
           instr
-          (compiler-reg-type-register-group-word-sse? ty ordinal))
+          (compiler-reg-type-register-group-word-sse?
+            type-segment-bases
+            ty
+            ordinal))
         point
         (+ point 1)
         var)]
@@ -25139,6 +25456,7 @@
 ;; This keeps a later sibling result home from aliasing an earlier planned
 ;; scratch register even when ordinary IR liveness ends at the sibling point.
 (define (compiler-reg-scratch-requirement
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
@@ -25154,6 +25472,7 @@
   (let
     [local : CompilerRegScratchRequirement
       (compiler-reg-scratch-requirement-local
+        type-segment-bases
         abi
         policy
         assignments
@@ -25604,6 +25923,7 @@
         last))))
 
 (define (compiler-reg-scratch-fill-slots!
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
@@ -25630,6 +25950,7 @@
       [item-index : i64 (+ item-start slot)]
       [requirement : CompilerRegScratchRequirement
         (compiler-reg-scratch-requirement
+          type-segment-bases
           abi
           policy
           assignments
@@ -25655,6 +25976,7 @@
           types
           requirement)
         (compiler-reg-scratch-fill-slots!
+          type-segment-bases
           abi
           policy
           assignments
@@ -25677,6 +25999,7 @@
           types)))))
 
 (define (compiler-reg-scratch-fill-seq!
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
@@ -25718,6 +26041,7 @@
               group-last)]
           [n : i64
             (compiler-reg-scratch-vreg-slots
+              type-segment-bases
               abi
               assignments
               var-types
@@ -25729,6 +26053,7 @@
             (array-set! firsts instruction item)
             (array-set! slot-counts instruction n)
             (compiler-reg-scratch-fill-slots!
+              type-segment-bases
               abi
               policy
               assignments
@@ -25755,6 +26080,7 @@
       (CompilerRegScratchFillState.State instruction item))))
 
 (define (compiler-reg-scratch-fill-blocks!
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
@@ -25780,6 +26106,7 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-scratch-fill-seq!
+            type-segment-bases
             abi
             policy
             assignments
@@ -25800,6 +26127,7 @@
             types)
             [(CompilerRegScratchFillState.State next-instruction next-item)
               (compiler-reg-scratch-fill-blocks!
+                type-segment-bases
                 abi
                 policy
                 assignments
@@ -25830,6 +26158,7 @@
               (match (compiler-ir-block-seq-ref seq i)
                 [(CompilerIrBlock.Block _ instrs)
                   (match (compiler-reg-scratch-fill-seq!
+                    type-segment-bases
                     abi
                     policy
                     assignments
@@ -25940,6 +26269,7 @@
       (struct-get requirement var))))
 
 (define (compiler-reg-early-scratch-mark-one!
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
@@ -25960,6 +26290,7 @@
     [requirement : CompilerRegScratchRequirement
       (compiler-reg-early-scratch-expansion-requirement
         (compiler-reg-scratch-requirement-local
+          type-segment-bases
           abi
           policy
           assignment-list
@@ -25992,6 +26323,7 @@
           unit)))))
 
 (define (compiler-reg-early-scratch-fill-seq!
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
@@ -26027,6 +26359,7 @@
                   (while (< ordinal 5)
                     (begin
                       (compiler-reg-early-scratch-mark-one!
+                        type-segment-bases
                         abi
                         policy
                         assignment-list
@@ -26059,6 +26392,7 @@
       (CompilerRegScratchFillState.State instruction scratch))))
 
 (define (compiler-reg-early-scratch-fill-blocks!
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
@@ -26084,6 +26418,7 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (match (compiler-reg-early-scratch-fill-seq!
+            type-segment-bases
             abi
             policy
             assignment-list
@@ -26103,6 +26438,7 @@
             scratch-excluded)
             [(CompilerRegScratchFillState.State next-instruction next-scratch)
               (compiler-reg-early-scratch-fill-blocks!
+                type-segment-bases
                 abi
                 policy
                 assignment-list
@@ -26133,6 +26469,7 @@
               (match (compiler-ir-block-seq-ref seq i)
                 [(CompilerIrBlock.Block _ instrs)
                   (match (compiler-reg-early-scratch-fill-seq!
+                    type-segment-bases
                     abi
                     policy
                     assignment-list
@@ -26161,6 +26498,7 @@
           (CompilerRegScratchFillState.State instruction scratch)))]))
 
 (define (compiler-reg-early-scratch-model
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [base-index : CompilerRegIntervalIndex]
@@ -26229,6 +26567,7 @@
                 (struct-get base-types items)
                 0)
               (compiler-reg-early-scratch-fill-blocks!
+                type-segment-bases
                 abi
                 policy
                 assignment-list
@@ -26718,6 +27057,7 @@
             assignments))))))
 
 (define (compiler-reg-plan-with-scratch-vreg-result
+  [type-segment-bases : i64]
   [_abi : CompilerRegTargetAbi]
   [_func : CompilerIrFunction]
   [plan : CompilerRegPlan]
@@ -26733,6 +27073,7 @@
             (compiler-reg-scratch-phi-xmm-targets-blocks blocks)]
           [scratch-count : i64
             (compiler-reg-scratch-vreg-count-blocks
+              type-segment-bases
               _abi
               (compiler-reg-plan-assignments plan)
               (compiler-reg-plan-types plan)
@@ -26814,6 +27155,7 @@
                         (struct-get base-type-info items)
                         0)
                       (compiler-reg-scratch-fill-blocks!
+                        type-segment-bases
                         _abi
                         scratch-policy
                         (compiler-reg-plan-assignments plan)
@@ -26914,11 +27256,17 @@
     (CompilerRegScratchPlanResult.Result plan (compiler-reg-scratch-plan-empty))))
 
 (define (compiler-reg-plan-with-scratch-vregs
+  [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [plan : CompilerRegPlan]
   [vars : i64]) : CompilerRegPlan
-  (match (compiler-reg-plan-with-scratch-vreg-result abi func plan vars)
+  (match (compiler-reg-plan-with-scratch-vreg-result
+    type-segment-bases
+    abi
+    func
+    plan
+    vars)
     [(CompilerRegScratchPlanResult.Result out-plan _) out-plan]))
 
 (define (compiler-reg-caller-save-remap-fill!
@@ -28055,6 +28403,7 @@
             [_ (compiler-reg-assignments-have-spill? (box-get rest))])])]))
 
 (define (compiler-reg-remat-rewrite-blocks
+  [type-segment-bases : i64]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [vars : i64]
@@ -28072,7 +28421,7 @@
       [table : CompilerRegRematTable (compiler-reg-remat-table-build func)]
       [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
       [group-vars : CompilerLiveI64Set
-        (compiler-reg-function-group-vars func types)]
+        (compiler-reg-function-group-vars type-segment-bases func types)]
       [liveness-handle : CompilerRegLivenessHandle
         (compiler-reg-liveness-handle-make func false)]
       [liveness : CompilerFunctionLiveness
@@ -28439,6 +28788,7 @@
       (compiler-live-analyze-function func))
       [(CompilerRegIntervalSelection.Selection _ index)
         (compiler-reg-early-scratch-model
+          (ast-node-pool-reader-type-segment-bases)
           abi
           func
           index
@@ -31437,7 +31787,10 @@
               func
               (compiler-reg-same-value-eligible-vars
                 interval-index
-                (compiler-reg-clobber-kind-points func 0)))]
+                (compiler-reg-clobber-kind-points
+                  (ast-node-pool-reader-type-segment-bases)
+                  func
+                  0)))]
           (not (compiler-reg-same-value-class? parents 0 2)))])))
 
 ;; M-C (part 1): build the extended relation the way plan-from does (precise
@@ -31452,7 +31805,10 @@
         func
         (compiler-reg-same-value-eligible-vars
           interval-index
-          (compiler-reg-clobber-kind-points func 0))
+          (compiler-reg-clobber-kind-points
+            (ast-node-pool-reader-type-segment-bases)
+            func
+            0))
         (compiler-reg-function-var-types func)
         interval-index)]))
 
@@ -32054,6 +32410,7 @@
 
 (define (compiler-reg-color-spill-slot-sharing-ok?) : bool
   (match (compiler-reg-color-stack-slots
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerRegPlan.Plan
       (compiler-reg-color-spill-sharing-assignments 3)
       (compiler-live-set-empty)
@@ -32068,6 +32425,7 @@
     3)
     [(CompilerRegColoring.Remap share-remap share-slots)
       (match (compiler-reg-color-stack-slots
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerRegPlan.Plan
           (compiler-reg-color-spill-sharing-assignments 2)
           (compiler-live-set-empty)
@@ -32092,6 +32450,7 @@
 
 (define (compiler-reg-color-spill-param-pins-ok?) : bool
   (match (compiler-reg-color-stack-slots
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerRegPlan.Plan
       (compiler-reg-color-spill-sharing-assignments 3)
       (compiler-live-set-empty)
@@ -32116,6 +32475,7 @@
 
 (define (compiler-reg-color-spill-hole-demand-ok?) : bool
   (match (compiler-reg-color-stack-slots
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerRegPlan.Plan
       (compiler-reg-color-spill-sharing-assignments 1)
       (compiler-live-set-empty)
@@ -32144,6 +32504,7 @@
         (CompilerIrParam.Param "real" (AstType.I64) 0)
         CompilerIrParamList.Nil)]
     (match (compiler-reg-color-stack-slots
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerRegPlan.Plan
         (compiler-reg-color-spill-sharing-assignments 2)
         (compiler-live-set-empty)
@@ -32202,6 +32563,7 @@
   (match (compiler-reg-color-vector-stack-function)
     [(CompilerIrFunction.Function _ params _ vars blocks)
       (match (compiler-reg-color-stack-slots
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerRegPlan.Plan
           CompilerRegAssignmentList.Nil
           (compiler-live-set-empty)
@@ -32289,6 +32651,7 @@
   (match (compiler-reg-color-storage-function)
     [(CompilerIrFunction.Function _ params _ vars blocks)
       (match (compiler-reg-color-stack-slots
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerRegPlan.Plan
           (compiler-reg-color-pointer-assignments)
           (compiler-live-set-empty)
@@ -32315,6 +32678,7 @@
     [group-var : i64 7]
     [coloring : CompilerRegColoring
       (compiler-reg-color-stack-slots
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerRegPlan.Plan
           (compiler-reg-color-register-assignments-to (- group-var 1))
           (compiler-live-set-empty)

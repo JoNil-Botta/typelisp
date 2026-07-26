@@ -61,6 +61,10 @@
     [(string.eq name "lower-symbol-identity")
       (compiler-lower-symbol-identity-smoke-main)]
     [(string.eq name "driver-pic") (compiler-driver-pic-smoke-main)]
+    [(string.eq name "driver-reader-context")
+      (begin
+        (cbi.compiler-builtin-initialize-for-parse!)
+        (compiler-driver-reader-context-smoke-main))]
     [else 1]))
 
 (define (main) : i64
@@ -100,4 +104,7 @@
       (compiler-smoke-suite-require-child
         "driver-pic"
         "compiler smoke suite: compiler_driver_pic_smoke failed")
+      (compiler-smoke-suite-require-child
+        "driver-reader-context"
+        "compiler smoke suite: compiler_driver_reader_context_smoke failed")
       42)))

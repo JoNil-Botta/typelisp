@@ -10545,6 +10545,8 @@
     (AstType.I64)
     "%r14"
     "%xmm14"
+    "%xmm0"
+    "%xmm1"
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -10578,6 +10580,8 @@
         (AstType.I64)
         "%r14"
         "%xmm14"
+        "%xmm0"
+        "%xmm1"
         (compiler-diagnostic-at-start "" ""))
         [(ResultCompilerBackend.Ok asm)
           (and
@@ -10602,6 +10606,8 @@
         (AstType.Bool)
         "%r14"
         "%xmm14"
+        "%xmm0"
+        "%xmm1"
         (compiler-diagnostic-at-start "" ""))
         [(ResultCompilerBackend.Ok asm)
           (and
@@ -10626,6 +10632,8 @@
     (AstType.Bool)
     "%r14"
     "%xmm14"
+    "%xmm0"
+    "%xmm1"
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -10663,6 +10671,8 @@
         (AstType.I64)
         "%r14"
         "%xmm14"
+        "%xmm0"
+        "%xmm1"
         (compiler-diagnostic-at-start "" ""))
         [(ResultCompilerBackend.Ok asm)
           (and
@@ -10695,6 +10705,8 @@
         (AstType.I32)
         "%r14"
         "%xmm14"
+        "%xmm0"
+        "%xmm1"
         (compiler-diagnostic-at-start "" ""))
         [(ResultCompilerBackend.Ok asm)
           (and
@@ -10710,6 +10722,66 @@
             (compiler-backend-string-contains?
               asm
               "    vpbroadcastd %r14d, %zmm0\n"))]
+        [(ResultCompilerBackend.Err _) false]))))
+
+(define (compiler-backend-vector-prefix-planned-work-registers-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-vector-prefix-spill-assignments)]
+    [prev-mode : CompilerBackendMode compiler-backend-current-mode]
+    [_avx2-mode : unit
+      (compiler-backend-set-current-mode! (CompilerBackendMode.Avx2))]
+    [avx2-result : ResultCompilerBackend
+      (compiler-backend-emit-vector-prefix
+        assignments
+        2
+        (CompilerIrVectorPrefixOp.Min)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        4
+        (AstType.I64)
+        "%r14"
+        "%xmm14"
+        "%xmm3"
+        "%xmm4"
+        (compiler-diagnostic-at-start "" ""))]
+    [_avx512-mode : unit
+      (compiler-backend-set-current-mode! (CompilerBackendMode.Avx512))]
+    [avx512-result : ResultCompilerBackend
+      (compiler-backend-emit-vector-prefix
+        assignments
+        2
+        (CompilerIrVectorPrefixOp.Min)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        8
+        (AstType.I64)
+        "%r14"
+        "%xmm14"
+        "%xmm3"
+        "%xmm4"
+        (compiler-diagnostic-at-start "" ""))]
+    [_restore-mode : unit (compiler-backend-set-current-mode! prev-mode)]
+    (and
+      (match avx2-result
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "%ymm3")
+            (compiler-backend-string-contains? asm "%ymm4")
+            (not (compiler-backend-string-contains? asm "%ymm0,"))
+            (not (compiler-backend-string-contains? asm "%ymm0\n"))
+            (not (compiler-backend-string-contains? asm "%ymm1,"))
+            (not (compiler-backend-string-contains? asm "%ymm1\n")))]
+        [(ResultCompilerBackend.Err _) false])
+      (match avx512-result
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "%zmm3")
+            (compiler-backend-string-contains? asm "%zmm4")
+            (not (compiler-backend-string-contains? asm "%zmm0,"))
+            (not (compiler-backend-string-contains? asm "%zmm0\n"))
+            (not (compiler-backend-string-contains? asm "%zmm1,"))
+            (not (compiler-backend-string-contains? asm "%zmm1\n")))]
         [(ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-assignments) : CompilerRegAssignmentList
@@ -10790,6 +10862,8 @@
         (AstType.Bool)
         "%r14"
         "%r13"
+        "%xmm0"
+        "%xmm1"
         diag)
         [(ResultCompilerBackend.Ok asm)
           (and
@@ -10815,6 +10889,8 @@
         (AstType.Bool)
         "%r14"
         "%r13"
+        "%xmm0"
+        "%xmm1"
         diag)
         [(ResultCompilerBackend.Ok asm)
           (and
@@ -10912,6 +10988,7 @@
     (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?)
     (compiler-backend-avx2-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-vector-prefix-numeric-spill-ok?)
+    (compiler-backend-vector-prefix-planned-work-registers-ok?)
     (compiler-backend-avx512-vector-prefix-bool-scratch-classes-ok?)
     (compiler-backend-avx512-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-predicated-load-spill-dst-ok?)
@@ -26353,6 +26430,8 @@
       [reduce-temp : String (compiler-backend-scratch-test-register reduce 1)]
       [prefix-gp : String (compiler-backend-scratch-test-register prefix 0)]
       [prefix-xmm : String (compiler-backend-scratch-test-register prefix 1)]
+      [prefix-work0 : String (compiler-backend-scratch-test-register prefix 2)]
+      [prefix-work1 : String (compiler-backend-scratch-test-register prefix 3)]
       (and
         (= (compiler-backend-scratch-test-plan-count splat) 2)
         (= (compiler-backend-scratch-test-success-count splat) 2)
@@ -26381,18 +26460,31 @@
         (string.eq
           reduce-temp
           (compiler-backend-scratch-test-register reduce-dense 1))
-        (= (compiler-backend-scratch-test-plan-count prefix) 2)
-        (= (compiler-backend-scratch-test-success-count prefix) 2)
+        (= (compiler-backend-scratch-test-plan-count prefix) 4)
+        (= (compiler-backend-scratch-test-success-count prefix) 4)
         (not (string.eq prefix-gp ""))
         (not (string.eq prefix-xmm ""))
+        (not (string.eq prefix-work0 ""))
+        (not (string.eq prefix-work1 ""))
         (not (string.eq prefix-gp "%r8"))
         (not (= (compiler-reg-xmm-family-index prefix-xmm) 6))
+        (not (= (compiler-reg-xmm-family-index prefix-work0) 6))
+        (not (= (compiler-reg-xmm-family-index prefix-work1) 6))
+        (not (compiler-reg-registers-overlap? prefix-xmm prefix-work0))
+        (not (compiler-reg-registers-overlap? prefix-xmm prefix-work1))
+        (not (compiler-reg-registers-overlap? prefix-work0 prefix-work1))
         (string.eq
           prefix-gp
           (compiler-backend-scratch-test-register prefix-dense 0))
         (string.eq
           prefix-xmm
           (compiler-backend-scratch-test-register prefix-dense 1))
+        (string.eq
+          prefix-work0
+          (compiler-backend-scratch-test-register prefix-dense 2))
+        (string.eq
+          prefix-work1
+          (compiler-backend-scratch-test-register prefix-dense 3))
         (match splat
           [(CompilerRegScratchPlanResult.Result _ plan)
             (and
@@ -26431,6 +26523,16 @@
                 (struct-get (array-ref (struct-get plan items) 1) requirement)
                 role)
                 [(CompilerRegScratchRole.VectorPrefixValue) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 2) requirement)
+                role)
+                [(CompilerRegScratchRole.VectorPrefixWork0) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 3) requirement)
+                role)
+                [(CompilerRegScratchRole.VectorPrefixWork1) true]
                 [_ false]))])))
     true))
 

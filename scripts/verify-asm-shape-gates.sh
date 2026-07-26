@@ -420,10 +420,14 @@ check_licm_desc_hoist() {
 check_group_copy_direct() {
     _asm=$(compile_gate group_copy_direct tests/integration/group_copy_direct.tl)
     _body=$(function_body "$_asm" _tl_group_copy_direct_wrap)
-    assert_contains "$_body" 'movups (%rdi), %xmm2' group-copy-direct
-    assert_contains "$_body" 'movups %xmm2, 8(%rdx)' group-copy-direct
-    assert_contains "$_body" 'movq 16(%rdi), %r8' group-copy-direct
-    assert_contains "$_body" 'movq %r8, 24(%rdx)' group-copy-direct
+    _xmm=$(awk '$1 == "movups" && $2 == "(%rdi)," &&
+        $3 ~ /^%xmm([0-9]|1[0-5])$/ { print $3; exit }' "$_body")
+    [ -n "$_xmm" ] || fail "group-copy-direct missing direct SIMD load"
+    assert_contains "$_body" "movups $_xmm, 8(%rdx)" group-copy-direct
+    _gp=$(awk '$1 == "movq" && $2 == "16(%rdi)," &&
+        $3 ~ /^%r[a-z0-9]+$/ { print $3; exit }' "$_body")
+    [ -n "$_gp" ] || fail "group-copy-direct missing direct scalar load"
+    assert_contains "$_body" "movq $_gp, 24(%rdx)" group-copy-direct
     assert_not_matches "$_body" '^[[:space:]]+movq %r(di|dx), %r(9|10|11)$' group-copy-direct
 }
 

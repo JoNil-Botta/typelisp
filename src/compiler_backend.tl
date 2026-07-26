@@ -5728,16 +5728,23 @@
       (and (= lanes 32) (compiler-backend-vector-prefix-bool-op? op))]
     [_ false]))
 
+(define (compiler-backend-vector-prefix-work [xmm : String] [family : String]) : String
+  (compiler-backend-xmm-family-register xmm family))
+
 (define (compiler-backend-avx2-vector-prefix-numeric-combine
   [op : CompilerIrVectorPrefixOp]
   [elem-ty : AstType]
   [dst-reg : String]
-  [blend-mask : i64]) : String
+  [blend-mask : i64]
+  [work0-xmm : String]
+  [work1-xmm : String]) : String
   (let
+    [work0 : String (compiler-backend-vector-prefix-work work0-xmm "ymm")]
+    [work1 : String (compiler-backend-vector-prefix-work work1-xmm "ymm")]
     [blend? : bool (>= blend-mask 0)]
     [out-reg : String
       (if blend?
-        "%ymm0"
+        work0
         dst-reg)]
     [combine : String
       (match op
@@ -5747,7 +5754,9 @@
             (match elem-ty
               [(AstType.I32) "vpaddd"]
               [_ "vpaddq"])
-            " %ymm0, "
+            " "
+            work0
+            ", "
             dst-reg
             ", "
             out-reg
@@ -5755,39 +5764,95 @@
         [(CompilerIrVectorPrefixOp.Min)
           (match elem-ty
             [(AstType.I32)
-              (str_cat.str-cat "    vpminsd %ymm0, " dst-reg ", " out-reg "\n")]
+              (str_cat.str-cat
+                "    vpminsd "
+                work0
+                ", "
+                dst-reg
+                ", "
+                out-reg
+                "\n")]
             [_
               (str_cat.str-cat
-                "    vpcmpgtq %ymm0, "
+                "    vpcmpgtq "
+                work0
+                ", "
                 dst-reg
-                ", %ymm1\n    vpand %ymm1, %ymm0, %ymm0\n    vpandn "
+                ", "
+                work1
+                "\n    vpand "
+                work1
+                ", "
+                work0
+                ", "
+                work0
+                "\n    vpandn "
                 dst-reg
-                ", %ymm1, %ymm1\n    vpor %ymm1, %ymm0, %ymm0\n"
+                ", "
+                work1
+                ", "
+                work1
+                "\n    vpor "
+                work1
+                ", "
+                work0
+                ", "
+                work0
+                "\n"
                 (if blend?
                   ""
-                  (str_cat.str-cat "    vmovdqu %ymm0, " dst-reg "\n")))])]
+                  (str-cat "    vmovdqu " work0 ", " dst-reg "\n")))])]
         [(CompilerIrVectorPrefixOp.Max)
           (match elem-ty
             [(AstType.I32)
-              (str_cat.str-cat "    vpmaxsd %ymm0, " dst-reg ", " out-reg "\n")]
+              (str_cat.str-cat
+                "    vpmaxsd "
+                work0
+                ", "
+                dst-reg
+                ", "
+                out-reg
+                "\n")]
             [_
               (str_cat.str-cat
                 "    vpcmpgtq "
                 dst-reg
-                ", %ymm0, %ymm1\n    vpand %ymm1, %ymm0, %ymm0\n    vpandn "
+                ", "
+                work0
+                ", "
+                work1
+                "\n    vpand "
+                work1
+                ", "
+                work0
+                ", "
+                work0
+                "\n    vpandn "
                 dst-reg
-                ", %ymm1, %ymm1\n    vpor %ymm1, %ymm0, %ymm0\n"
+                ", "
+                work1
+                ", "
+                work1
+                "\n    vpor "
+                work1
+                ", "
+                work0
+                ", "
+                work0
+                "\n"
                 (if blend?
                   ""
-                  (str_cat.str-cat "    vmovdqu %ymm0, " dst-reg "\n")))])]
+                  (str-cat "    vmovdqu " work0 ", " dst-reg "\n")))])]
         [_ ""])]
     (str_cat.str-cat
       combine
       (if blend?
-        (str_cat.str-cat
+        (str-cat
           "    vpblendd $"
           (string.int->string blend-mask)
-          ", %ymm0, "
+          ", "
+          work0
+          ", "
           dst-reg
           ", "
           dst-reg
@@ -5797,119 +5862,228 @@
 (define (compiler-backend-avx2-vector-prefix-numeric-body
   [op : CompilerIrVectorPrefixOp]
   [elem-ty : AstType]
-  [dst-reg : String]) : String
-  (match elem-ty
-    [(AstType.I32)
-      (str_cat.str-cat
-        "    vpslldq $4, "
-        dst-reg
-        ", %ymm0\n"
-        (compiler-backend-avx2-vector-prefix-numeric-combine
-          op
-          elem-ty
+  [dst-reg : String]
+  [work0-xmm : String]
+  [work1-xmm : String]) : String
+  (let
+    [work0 : String (compiler-backend-vector-prefix-work work0-xmm "ymm")]
+    (match elem-ty
+      [(AstType.I32)
+        (str_cat.str-cat
+          "    vpslldq $4, "
           dst-reg
-          (match op
-            [(CompilerIrVectorPrefixOp.Sum) -1]
-            [_ 238]))
-        "    vpslldq $8, "
-        dst-reg
-        ", %ymm0\n"
-        (compiler-backend-avx2-vector-prefix-numeric-combine
-          op
-          elem-ty
+          ", "
+          work0
+          "\n"
+          (compiler-backend-avx2-vector-prefix-numeric-combine
+            op
+            elem-ty
+            dst-reg
+            (match op
+              [(CompilerIrVectorPrefixOp.Sum) -1]
+              [_ 238])
+            work0-xmm
+            work1-xmm)
+          "    vpslldq $8, "
           dst-reg
-          (match op
-            [(CompilerIrVectorPrefixOp.Sum) -1]
-            [_ 204]))
-        "    vperm2i128 $0, "
-        dst-reg
-        ", "
-        dst-reg
-        ", %ymm0\n    vpshufd $255, %ymm0, %ymm0\n"
-        (compiler-backend-avx2-vector-prefix-numeric-combine
-          op
-          elem-ty
+          ", "
+          work0
+          "\n"
+          (compiler-backend-avx2-vector-prefix-numeric-combine
+            op
+            elem-ty
+            dst-reg
+            (match op
+              [(CompilerIrVectorPrefixOp.Sum) -1]
+              [_ 204])
+            work0-xmm
+            work1-xmm)
+          "    vperm2i128 $0, "
           dst-reg
-          240))]
-    [_
-      (str_cat.str-cat
-        "    vpslldq $8, "
-        dst-reg
-        ", %ymm0\n"
-        (compiler-backend-avx2-vector-prefix-numeric-combine
-          op
-          elem-ty
+          ", "
           dst-reg
-          (match op
-            [(CompilerIrVectorPrefixOp.Sum) -1]
-            [_ 204]))
-        "    vperm2i128 $0, "
-        dst-reg
-        ", "
-        dst-reg
-        ", %ymm0\n    vpermq $85, %ymm0, %ymm0\n"
-        (compiler-backend-avx2-vector-prefix-numeric-combine
-          op
-          elem-ty
+          ", "
+          work0
+          "\n    vpshufd $255, "
+          work0
+          ", "
+          work0
+          "\n"
+          (compiler-backend-avx2-vector-prefix-numeric-combine
+            op
+            elem-ty
+            dst-reg
+            240
+            work0-xmm
+            work1-xmm))]
+      [_
+        (str_cat.str-cat
+          "    vpslldq $8, "
           dst-reg
-          240))]))
+          ", "
+          work0
+          "\n"
+          (compiler-backend-avx2-vector-prefix-numeric-combine
+            op
+            elem-ty
+            dst-reg
+            (match op
+              [(CompilerIrVectorPrefixOp.Sum) -1]
+              [_ 204])
+            work0-xmm
+            work1-xmm)
+          "    vperm2i128 $0, "
+          dst-reg
+          ", "
+          dst-reg
+          ", "
+          work0
+          "\n    vpermq $85, "
+          work0
+          ", "
+          work0
+          "\n"
+          (compiler-backend-avx2-vector-prefix-numeric-combine
+            op
+            elem-ty
+            dst-reg
+            240
+            work0-xmm
+            work1-xmm))])))
 
 (define (compiler-backend-avx2-vector-prefix-bool-stage
   [op : CompilerIrVectorPrefixOp]
   [dst-reg : String]
-  [shift : i64]) : String
-  (str_cat.str-cat
-    "    vpslldq $"
-    (string.int->string shift)
-    ", "
-    dst-reg
-    ", %ymm0\n"
-    (match op
-      [(CompilerIrVectorPrefixOp.Any)
-        (str_cat.str-cat "    vpor %ymm0, " dst-reg ", " dst-reg "\n")]
-      [_
-        (str_cat.str-cat
-          "    vpand "
-          dst-reg
-          ", %ymm0, %ymm0\n    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpslldq $"
-          (string.int->string shift)
-          ", %ymm1, %ymm1\n    vpand %ymm1, %ymm0, %ymm0\n    vpandn "
-          dst-reg
-          ", %ymm1, %ymm1\n    vpor %ymm1, %ymm0, "
-          dst-reg
-          "\n")])))
+  [shift : i64]
+  [work0-xmm : String]
+  [work1-xmm : String]) : String
+  (let
+    [work0 : String (compiler-backend-vector-prefix-work work0-xmm "ymm")]
+    [work1 : String (compiler-backend-vector-prefix-work work1-xmm "ymm")]
+    (str_cat.str-cat
+      "    vpslldq $"
+      (string.int->string shift)
+      ", "
+      dst-reg
+      ", "
+      work0
+      "\n"
+      (match op
+        [(CompilerIrVectorPrefixOp.Any)
+          (str-cat "    vpor " work0 ", " dst-reg ", " dst-reg "\n")]
+        [_
+          (str-cat
+            "    vpand "
+            dst-reg
+            ", "
+            work0
+            ", "
+            work0
+            "\n    vpcmpeqd "
+            work1
+            ", "
+            work1
+            ", "
+            work1
+            "\n    vpslldq $"
+            (string.int->string shift)
+            ", "
+            work1
+            ", "
+            work1
+            "\n    vpand "
+            work1
+            ", "
+            work0
+            ", "
+            work0
+            "\n    vpandn "
+            dst-reg
+            ", "
+            work1
+            ", "
+            work1
+            "\n    vpor "
+            work1
+            ", "
+            work0
+            ", "
+            dst-reg
+            "\n")]))))
 
 (define (compiler-backend-avx2-vector-prefix-bool-body
   [op : CompilerIrVectorPrefixOp]
-  [dst-reg : String]) : String
-  (str_cat.str-cat
-    (compiler-backend-avx2-vector-prefix-bool-stage op dst-reg 1)
-    (compiler-backend-avx2-vector-prefix-bool-stage op dst-reg 2)
-    (compiler-backend-avx2-vector-prefix-bool-stage op dst-reg 4)
-    (compiler-backend-avx2-vector-prefix-bool-stage op dst-reg 8)
-    "    vperm2i128 $0, "
-    dst-reg
-    ", "
-    dst-reg
-    ", %ymm0\n    vpsrldq $15, %ymm0, %ymm0\n    vpbroadcastb %xmm0, %ymm0\n    "
-    (match op
-      [(CompilerIrVectorPrefixOp.Any) "vpor"]
-      [_ "vpand"])
-    " %ymm0, "
-    dst-reg
-    ", %ymm0\n    vpblendd $240, %ymm0, "
-    dst-reg
-    ", "
-    dst-reg
-    "\n"))
+  [dst-reg : String]
+  [work0-xmm : String]
+  [work1-xmm : String]) : String
+  (let
+    [work0 : String (compiler-backend-vector-prefix-work work0-xmm "ymm")]
+    (str_cat.str-cat
+      (compiler-backend-avx2-vector-prefix-bool-stage
+        op
+        dst-reg
+        1
+        work0-xmm
+        work1-xmm)
+      (compiler-backend-avx2-vector-prefix-bool-stage
+        op
+        dst-reg
+        2
+        work0-xmm
+        work1-xmm)
+      (compiler-backend-avx2-vector-prefix-bool-stage
+        op
+        dst-reg
+        4
+        work0-xmm
+        work1-xmm)
+      (compiler-backend-avx2-vector-prefix-bool-stage
+        op
+        dst-reg
+        8
+        work0-xmm
+        work1-xmm)
+      "    vperm2i128 $0, "
+      dst-reg
+      ", "
+      dst-reg
+      ", "
+      work0
+      "\n    vpsrldq $15, "
+      work0
+      ", "
+      work0
+      "\n    vpbroadcastb "
+      work0-xmm
+      ", "
+      work0
+      "\n    "
+      (match op
+        [(CompilerIrVectorPrefixOp.Any) "vpor"]
+        [_ "vpand"])
+      " "
+      work0
+      ", "
+      dst-reg
+      ", "
+      work0
+      "\n    vpblendd $240, "
+      work0
+      ", "
+      dst-reg
+      ", "
+      dst-reg
+      "\n")))
 
 (define (compiler-backend-avx2-vector-prefix-bool-carry
   [assignments : CompilerRegAssignmentList]
   [carry : CompilerIrValue]
   [dst-reg : String]
   [op : CompilerIrVectorPrefixOp]
-  [planned-gp : String]) : ResultCompilerBackend
+  [planned-gp : String]
+  [work0-xmm : String]) : ResultCompilerBackend
   (let
+    [work0 : String (compiler-backend-vector-prefix-work work0-xmm "ymm")]
     [exclude : (Array String)
       (compiler-backend-scavenge-exclude-ops2
         assignments
@@ -5938,11 +6112,19 @@
             gp32
             "\n    vmovd "
             gp32
-            ", %xmm0\n    vpbroadcastb %xmm0, %ymm0\n    "
+            ", "
+            work0-xmm
+            "\n    vpbroadcastb "
+            work0-xmm
+            ", "
+            work0
+            "\n    "
             (match op
               [(CompilerIrVectorPrefixOp.Any) "vpor"]
               [_ "vpand"])
-            " %ymm0, "
+            " "
+            work0
+            ", "
             dst-reg
             ", "
             dst-reg
@@ -5953,51 +6135,60 @@
   [assignments : CompilerRegAssignmentList]
   [carry : CompilerIrValue]
   [elem-ty : AstType]
-  [planned-gp : String]) : ResultCompilerBackend
-  (match (compiler-backend-splat-memory-load assignments carry elem-ty)
-    [(CompilerBackendMaybeAsm.Some asm)
-      (ResultCompilerBackend.Ok (str_cat.str-cat asm "%ymm0\n"))]
-    [(CompilerBackendMaybeAsm.No)
-      (let
-        [exclude : (Array String)
-          (compiler-backend-scavenge-exclude-ops2
+  [planned-gp : String]
+  [work0-xmm : String]) : ResultCompilerBackend
+  (let
+    [work0 : String (compiler-backend-vector-prefix-work work0-xmm "ymm")]
+    (match (compiler-backend-splat-memory-load assignments carry elem-ty)
+      [(CompilerBackendMaybeAsm.Some asm)
+        (ResultCompilerBackend.Ok (str_cat.str-cat asm work0 "\n"))]
+      [(CompilerBackendMaybeAsm.No)
+        (let
+          [exclude : (Array String)
+            (compiler-backend-scavenge-exclude-ops2
+              assignments
+              carry
+              CompilerIrValue.Unit)]
+          [gp-reg : String
+            (compiler-backend-planned-or-scavenge-reg
+              planned-gp
+              -1
+              exclude
+              7
+              "%r10")]
+          [gp-part : String
+            (compiler-backend-reg-part
+              gp-reg
+              (match elem-ty
+                [(AstType.I32) 4]
+                [_ 8]))]
+          (match (compiler-backend-emit-load-value-with-plan
             assignments
             carry
-            CompilerIrValue.Unit)]
-        [gp-reg : String
-          (compiler-backend-planned-or-scavenge-reg
-            planned-gp
-            -1
-            exclude
-            7
-            "%r10")]
-        [gp-part : String
-          (compiler-backend-reg-part
-            gp-reg
-            (match elem-ty
-              [(AstType.I32) 4]
-              [_ 8]))]
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          carry
-          gp-reg)
-          [(ResultCompilerBackend.Ok carry-asm)
-            (ResultCompilerBackend.Ok
-              (str_cat.str-cat
-                carry-asm
-                "    "
-                (match elem-ty
-                  [(AstType.I32) "vmovd"]
-                  [_ "vmovq"])
-                " "
-                gp-part
-                ", %xmm0\n    "
-                (match elem-ty
-                  [(AstType.I32) "vpbroadcastd"]
-                  [_ "vpbroadcastq"])
-                " %xmm0, %ymm0\n"))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)]))]))
+            gp-reg)
+            [(ResultCompilerBackend.Ok carry-asm)
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat
+                  carry-asm
+                  "    "
+                  (match elem-ty
+                    [(AstType.I32) "vmovd"]
+                    [_ "vmovq"])
+                  " "
+                  gp-part
+                  ", "
+                  work0-xmm
+                  "\n    "
+                  (match elem-ty
+                    [(AstType.I32) "vpbroadcastd"]
+                    [_ "vpbroadcastq"])
+                  " "
+                  work0-xmm
+                  ", "
+                  work0
+                  "\n"))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))])))
 
 (define (compiler-backend-emit-avx2-vector-prefix
   [assignments : CompilerRegAssignmentList]
@@ -6009,6 +6200,8 @@
   [elem-ty : AstType]
   [planned-gp : String]
   [planned-xmm : String]
+  [work0-xmm : String]
+  [work1-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (not (compiler-backend-avx2-vector-prefix-shape-ok? op lanes elem-ty))
     (ResultCompilerBackend.Err
@@ -6060,12 +6253,16 @@
                         [(AstType.Bool)
                           (compiler-backend-avx2-vector-prefix-bool-body
                             op
-                            dst-reg)]
+                            dst-reg
+                            work0-xmm
+                            work1-xmm)]
                         [_
                           (compiler-backend-avx2-vector-prefix-numeric-body
                             op
                             elem-ty
-                            dst-reg)])]
+                            dst-reg
+                            work0-xmm
+                            work1-xmm)])]
                     (match elem-ty
                       [(AstType.Bool)
                         (match (compiler-backend-avx2-vector-prefix-bool-carry
@@ -6073,7 +6270,8 @@
                           carry
                           dst-reg
                           op
-                          planned-gp)
+                          planned-gp
+                          work0-xmm)
                           [(ResultCompilerBackend.Ok carry-asm)
                             (ResultCompilerBackend.Ok
                               (str_cat.str-cat
@@ -6098,7 +6296,8 @@
                           assignments
                           carry
                           elem-ty
-                          planned-gp)
+                          planned-gp
+                          work0-xmm)
                           [(ResultCompilerBackend.Ok carry-asm)
                             (ResultCompilerBackend.Ok
                               (str_cat.str-cat
@@ -6110,7 +6309,9 @@
                                   op
                                   elem-ty
                                   dst-reg
-                                  -1)
+                                  -1
+                                  work0-xmm
+                                  work1-xmm)
                                 (compiler-backend-vector-store-dst
                                   assignments
                                   dst
@@ -6165,8 +6366,10 @@
   [op : CompilerIrVectorPrefixOp]
   [elem-ty : AstType]
   [dst-reg : String]
-  [offset : i64]) : String
+  [offset : i64]
+  [work0-xmm : String]) : String
   (let
+    [work0 : String (compiler-backend-vector-prefix-work work0-xmm "zmm")]
     [masked? : bool
       (and
         (>= offset 0)
@@ -6183,7 +6386,9 @@
         "")
       "    "
       (compiler-backend-avx512-vector-prefix-numeric-mnemonic op elem-ty)
-      " %zmm0, "
+      " "
+      work0
+      ", "
       dst-reg
       ", "
       dst-reg
@@ -6197,78 +6402,112 @@
   [elem-ty : AstType]
   [dst-reg : String]
   [offset : i64]
-  [align : i64]) : String
-  (str_cat.str-cat
-    "    "
-    (match elem-ty
-      [(AstType.I32) "valignd"]
-      [_ "valignq"])
-    " $"
-    (string.int->string align)
-    ", %zmm1, "
-    dst-reg
-    ", %zmm0\n"
-    (compiler-backend-avx512-vector-prefix-numeric-combine
-      op
-      elem-ty
+  [align : i64]
+  [work0-xmm : String]
+  [work1-xmm : String]) : String
+  (let
+    [work0 : String (compiler-backend-vector-prefix-work work0-xmm "zmm")]
+    [work1 : String (compiler-backend-vector-prefix-work work1-xmm "zmm")]
+    (str_cat.str-cat
+      "    "
+      (match elem-ty
+        [(AstType.I32) "valignd"]
+        [_ "valignq"])
+      " $"
+      (string.int->string align)
+      ", "
+      work1
+      ", "
       dst-reg
-      offset)))
+      ", "
+      work0
+      "\n"
+      (compiler-backend-avx512-vector-prefix-numeric-combine
+        op
+        elem-ty
+        dst-reg
+        offset
+        work0-xmm))))
 
 ;; VALIGN with a zero high source shifts the current prefix toward higher lane
 ;; numbers. Doubling the offset after each combine covers the whole ZMM.
 (define (compiler-backend-avx512-vector-prefix-numeric-body
   [op : CompilerIrVectorPrefixOp]
   [elem-ty : AstType]
-  [dst-reg : String]) : String
-  (str_cat.str-cat
-    "    vpxord %zmm1, %zmm1, %zmm1\n"
-    (match elem-ty
-      [(AstType.I32)
-        (str_cat.str-cat
-          (compiler-backend-avx512-vector-prefix-numeric-stage
-            op
-            elem-ty
-            dst-reg
-            1
-            15)
-          (compiler-backend-avx512-vector-prefix-numeric-stage
-            op
-            elem-ty
-            dst-reg
-            2
-            14)
-          (compiler-backend-avx512-vector-prefix-numeric-stage
-            op
-            elem-ty
-            dst-reg
-            4
-            12)
-          (compiler-backend-avx512-vector-prefix-numeric-stage
-            op
-            elem-ty
-            dst-reg
-            8
-            8))]
-      [_
-        (str_cat.str-cat
-          (compiler-backend-avx512-vector-prefix-numeric-stage
-            op
-            elem-ty
-            dst-reg
-            1
-            7)
-          (compiler-backend-avx512-vector-prefix-numeric-stage
-            op
-            elem-ty
-            dst-reg
-            2
-            6)
-          (compiler-backend-avx512-vector-prefix-numeric-stage
-            op
-            elem-ty
-            dst-reg
-            4
-            4))])))
+  [dst-reg : String]
+  [work0-xmm : String]
+  [work1-xmm : String]) : String
+  (let
+    [work1 : String (compiler-backend-vector-prefix-work work1-xmm "zmm")]
+    (str_cat.str-cat
+      "    vpxord "
+      work1
+      ", "
+      work1
+      ", "
+      work1
+      "\n"
+      (match elem-ty
+        [(AstType.I32)
+          (str_cat.str-cat
+            (compiler-backend-avx512-vector-prefix-numeric-stage
+              op
+              elem-ty
+              dst-reg
+              1
+              15
+              work0-xmm
+              work1-xmm)
+            (compiler-backend-avx512-vector-prefix-numeric-stage
+              op
+              elem-ty
+              dst-reg
+              2
+              14
+              work0-xmm
+              work1-xmm)
+            (compiler-backend-avx512-vector-prefix-numeric-stage
+              op
+              elem-ty
+              dst-reg
+              4
+              12
+              work0-xmm
+              work1-xmm)
+            (compiler-backend-avx512-vector-prefix-numeric-stage
+              op
+              elem-ty
+              dst-reg
+              8
+              8
+              work0-xmm
+              work1-xmm))]
+        [_
+          (str_cat.str-cat
+            (compiler-backend-avx512-vector-prefix-numeric-stage
+              op
+              elem-ty
+              dst-reg
+              1
+              7
+              work0-xmm
+              work1-xmm)
+            (compiler-backend-avx512-vector-prefix-numeric-stage
+              op
+              elem-ty
+              dst-reg
+              2
+              6
+              work0-xmm
+              work1-xmm)
+            (compiler-backend-avx512-vector-prefix-numeric-stage
+              op
+              elem-ty
+              dst-reg
+              4
+              4
+              work0-xmm
+              work1-xmm))]))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-stage
   [bits-gp : String]
@@ -6461,6 +6700,8 @@
   [elem-ty : AstType]
   [planned-gp : String]
   [planned-xmm : String]
+  [work0-xmm : String]
+  [work1-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [no-exclude : (Array String) (array.make-array String 0)]
@@ -6505,27 +6746,34 @@
                     planned-gp
                     planned-xmm)
                     [(ResultCompilerBackend.Ok carry-asm)
-                      (ResultCompilerBackend.Ok
-                        (str_cat.str-cat
-                          src-asm
-                          copy-asm
-                          (compiler-backend-avx512-vector-prefix-numeric-body
-                            op
-                            elem-ty
-                            dst-reg)
-                          carry-asm
-                          "%zmm0\n"
-                          (compiler-backend-avx512-vector-prefix-numeric-combine
-                            op
-                            elem-ty
-                            dst-reg
-                            -1)
-                          (compiler-backend-vector-store-dst
-                            assignments
-                            dst
-                            "zmm"
-                            elem-ty
-                            dst-reg)))]
+                      (let
+                        [work0 : String
+                          (compiler-backend-vector-prefix-work work0-xmm "zmm")]
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            src-asm
+                            copy-asm
+                            (compiler-backend-avx512-vector-prefix-numeric-body
+                              op
+                              elem-ty
+                              dst-reg
+                              work0-xmm
+                              work1-xmm)
+                            carry-asm
+                            work0
+                            "\n"
+                            (compiler-backend-avx512-vector-prefix-numeric-combine
+                              op
+                              elem-ty
+                              dst-reg
+                              -1
+                              work0-xmm)
+                            (compiler-backend-vector-store-dst
+                              assignments
+                              dst
+                              "zmm"
+                              elem-ty
+                              dst-reg))))]
                     [(ResultCompilerBackend.Err message)
                       (ResultCompilerBackend.Err
                         (box
@@ -6549,6 +6797,8 @@
   [elem-ty : AstType]
   [planned-gp : String]
   [planned-xmm : String]
+  [work0-xmm : String]
+  [work1-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (not (compiler-backend-avx512-vector-prefix-shape-ok? op lanes elem-ty))
     (ResultCompilerBackend.Err
@@ -6578,6 +6828,8 @@
           elem-ty
           planned-gp
           planned-xmm
+          work0-xmm
+          work1-xmm
           instr-diag)])))
 
 (define (compiler-backend-emit-vector-prefix
@@ -6590,30 +6842,64 @@
   [elem-ty : AstType]
   [planned-gp : String]
   [planned-xmm : String]
+  [planned-work0 : String]
+  [planned-work1 : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (if (compiler-backend-current-mode-avx2?)
-    (compiler-backend-emit-avx2-vector-prefix
-      assignments
-      dst
-      op
-      src
-      carry
-      lanes
-      elem-ty
-      planned-gp
-      planned-xmm
-      instr-diag)
-    (compiler-backend-emit-avx512-vector-prefix
-      assignments
-      dst
-      op
-      src
-      carry
-      lanes
-      elem-ty
-      planned-gp
-      planned-xmm
-      instr-diag)))
+  (let
+    [avx2? : bool (compiler-backend-current-mode-avx2?)]
+    [needs-xmm-work : bool
+      (or avx2? (not (compiler-backend-vector-prefix-bool-op? op)))]
+    [operand-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-ops2 assignments src carry)]
+    [dst-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-append operand-exclude 7 planned-xmm)]
+    [work0 : String
+      (if needs-xmm-work
+        (compiler-backend-planned-or-scavenge-xmm-reg
+          planned-work0
+          dst
+          dst-exclude
+          8
+          "%xmm0")
+        "%xmm0")]
+    [work1-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-append dst-exclude 8 work0)]
+    [work1 : String
+      (if needs-xmm-work
+        (compiler-backend-planned-or-scavenge-xmm-reg
+          planned-work1
+          dst
+          work1-exclude
+          9
+          "%xmm1")
+        "%xmm1")]
+    (if avx2?
+      (compiler-backend-emit-avx2-vector-prefix
+        assignments
+        dst
+        op
+        src
+        carry
+        lanes
+        elem-ty
+        planned-gp
+        planned-xmm
+        work0
+        work1
+        instr-diag)
+      (compiler-backend-emit-avx512-vector-prefix
+        assignments
+        dst
+        op
+        src
+        carry
+        lanes
+        elem-ty
+        planned-gp
+        planned-xmm
+        work0
+        work1
+        instr-diag))))
 
 (define (compiler-backend-avx512-partial-mask [active-lanes : i64]) : i64
   (let
@@ -13677,10 +13963,22 @@
         abi-reg1)
       abi-reg1)))
 
-(define (compiler-backend-group-copy-word-scratch [sse? : bool]) : String
-  (if sse?
-    "%xmm0"
-    "%rax"))
+(define (compiler-backend-group-copy-xmm-scratch
+  [dst : i64]
+  [src0 : String]
+  [src1 : String]
+  [dst0 : String]
+  [dst1 : String]
+  [sibling : String]
+  [fallback : String]) : String
+  ;; Aggregate word copies are internal compiler sequences, not ABI returns.
+  ;; Select their SSE staging registers through the interval-aware scavenger so
+  ;; allocator-owned XMM0/XMM1 homes cannot be silently clobbered.
+  (compiler-backend-scavenge-xmm-reg
+    dst
+    (make-array src0 src1 dst0 dst1 sibling)
+    5
+    fallback))
 
 ;; Copy an internal two-word aggregate without treating it as an ABI return.
 ;; Preserve the historical split-register sequence when its second register is
@@ -13730,13 +14028,33 @@
                             ty
                             1)]
                         [reg0 : String
-                          (compiler-backend-group-copy-word-scratch sse0?)]
+                          (if sse0?
+                            (compiler-backend-group-copy-xmm-scratch
+                              dst
+                              src0
+                              src1
+                              dst0
+                              dst1
+                              ""
+                              "%xmm0")
+                            "%rax")]
                         [reg1 : String
-                          (compiler-backend-group-copy-reg1
-                            type-segment-bases
-                            program-index
-                            ty
-                            reg0)]
+                          (if sse1?
+                            (compiler-backend-group-copy-xmm-scratch
+                              dst
+                              src0
+                              src1
+                              dst0
+                              dst1
+                              reg0
+                              (if sse0?
+                                "%xmm1"
+                                "%xmm0"))
+                            (compiler-backend-group-copy-reg1
+                              type-segment-bases
+                              program-index
+                              ty
+                              reg0))]
                         (ResultCompilerBackend.Ok
                           (if (string.eq dst0 src1)
                             (str-cat
@@ -36377,6 +36695,8 @@
               elem-ty
               planned-scratch0
               planned-scratch1
+              planned-scratch2
+              planned-scratch3
               instr-diag)])]
       [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
         (compiler-backend-emit-vector-reduce

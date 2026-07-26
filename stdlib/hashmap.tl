@@ -152,6 +152,66 @@
       (if (string.eq key-kind "i64")
         (string.eq value-kind "i64")
         false)]
+    ;; Scalar slots are bitwise-movable. Rehash through raw pointers so the
+    ;; capacity invariants discharge bounds once, then copy each contiguous
+    ;; 32-byte slot through aggregate ptr-write!; lowering emits two 16-byte
+    ;; load/store chunks. Other families reconstruct slots so String and
+    ;; aggregate keys/values receive their required owned copies.
+    [grow-rehash-body : comptime.Expr
+      (if scalar-family
+        `(let
+          [old-data : (Ptr GeneratedHashmapSlot)
+            (unsafe
+              (ptr-cast
+                (array-data (struct-get map slots))
+                : (Ptr GeneratedHashmapSlot)))]
+          [fresh-data : (MutPtr GeneratedHashmapSlot)
+            (unsafe
+              (ptr-cast (array-data fresh) : (MutPtr GeneratedHashmapSlot)))]
+          (while (< scan old-capacity)
+            (begin
+              (let
+                [old-slot : GeneratedHashmapSlot
+                  (unsafe
+                    (ptr-read (ptr-offset old-data scan)))]
+                (match old-slot
+                  [(GeneratedHashmapSlot.Occupied _ _ hash)
+                    (let
+                      [index : i64 (bit-and hash mask)]
+                      (begin
+                        (while (match (unsafe
+                          (ptr-read (ptr-offset fresh-data index)))
+                          [GeneratedHashmapSlot.Empty false]
+                          [_ true])
+                          (set! index (bit-and (+ index 1) mask)))
+                        (unsafe
+                          (ptr-write! (ptr-offset fresh-data index) old-slot))))]
+                  [_ unit]))
+              (set! scan (+ scan 1)))))
+        `(let
+          [old-slots : (& map (Array GeneratedHashmapSlot))
+            (& (struct-get map slots))]
+          [old-count : i64 (array_ops.length old-slots)]
+          (while (< scan old-count)
+            (begin
+              (match (array-ref old-slots scan)
+                [(GeneratedHashmapSlot.Occupied key value hash)
+                  (let
+                    [index : i64 (bit-and hash mask)]
+                    (begin
+                      (while (match (array-ref fresh index)
+                        [GeneratedHashmapSlot.Empty false]
+                        [_ true])
+                        (set! index (bit-and (+ index 1) mask)))
+                      (array-set!
+                        fresh
+                        index
+                        (GeneratedHashmapSlot.Occupied
+                          ,key-copy
+                          ,value-copy
+                          hash))))]
+                [_ unit])
+              (set! scan (+ scan 1))))))]
     [get-value-or-body : comptime.Expr
       (if scalar-family
         `(let
@@ -610,35 +670,7 @@
             [mask : i64 (- cap 1)]
             (begin
               (if (>= cap 1)
-                ;; Bind the old slot array once and take the scan bound off that
-                ;; binding, so the loop guard and the bounds check on
-                ;; `array-ref old-slots scan` compare against the SAME value.
-                ;; Read off the map separately they are two loads of one field,
-                ;; and nothing can relate the guard to the check.
-                (let
-                  [old-slots : (& map (Array GeneratedHashmapSlot))
-                    (& (struct-get map slots))]
-                  [old-count : i64 (array_ops.length old-slots)]
-                  (while (< scan old-count)
-                    (begin
-                      (match (array-ref old-slots scan)
-                        [(GeneratedHashmapSlot.Occupied key value hash)
-                          (let
-                            [index : i64 (bit-and hash mask)]
-                            (begin
-                              (while (match (array-ref fresh index)
-                                [GeneratedHashmapSlot.Empty false]
-                                [_ true])
-                                (set! index (bit-and (+ index 1) mask)))
-                              (array-set!
-                                fresh
-                                index
-                                (GeneratedHashmapSlot.Occupied
-                                  ,key-copy
-                                  ,value-copy
-                                  hash))))]
-                        [_ unit])
-                      (set! scan (+ scan 1)))))
+                ,grow-rehash-body
                 unit)
               (set! (struct-get map slots) fresh)
               (set! (struct-get map deleted) 0))))

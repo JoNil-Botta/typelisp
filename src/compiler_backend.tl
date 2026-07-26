@@ -2047,6 +2047,16 @@
     [(AstType.F32) "vmovups"]
     [_ "vmovdqu"]))
 
+(define (compiler-backend-avx2-masked-move-mnemonic [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstType.I64) "vpmaskmovq"]
+    [(AstType.U64) "vpmaskmovq"]
+    [(AstType.F64) "vmaskmovpd"]
+    [(AstType.I32) "vpmaskmovd"]
+    [(AstType.U32) "vpmaskmovd"]
+    [(AstType.F32) "vmaskmovps"]
+    [_ ""]))
+
 (define (compiler-backend-avx2-vector-binop-mnemonic
   [op : CompilerIrBinOp]
   [elem-ty : AstType]) : String
@@ -8264,18 +8274,12 @@
                                     mask-asm
                                     false-asm
                                     true-asm
-                                    "    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpxor "
+                                    "    vpblendvb "
                                     mask-reg
-                                    ", %ymm1, %ymm1\n    vpand "
-                                    false-reg
-                                    ", %ymm1, %ymm1\n    vpand "
+                                    ", "
                                     true-reg
                                     ", "
-                                    mask-reg
-                                    ", "
-                                    dst-reg
-                                    "\n    vpor %ymm1, "
-                                    dst-reg
+                                    false-reg
                                     ", "
                                     dst-reg
                                     "\n"
@@ -8781,33 +8785,56 @@
                     (let
                       [addr-asm : String (struct-get addr-plan asm)]
                       [addr : String (struct-get addr-plan addr)]
-                      [lanes-asm : String
-                        (compiler-backend-avx2-predicated-load-lanes
-                          function
-                          current-label
-                          dst
-                          addr
-                          0
-                          lanes
-                          elem-ty
-                          "")]
-                      (ResultCompilerBackend.Ok
-                        (str_cat.str-cat
-                          mask-asm
-                          addr-asm
-                          "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n    vpmovmskb "
-                          mask-reg
-                          ", %r11d\n"
-                          lanes-asm
-                          "    vmovdqu (%rsp), "
-                          dst-reg
-                          "\n    addq $32, %rsp\n"
-                          (compiler-backend-vector-store-dst
-                            assignments
-                            dst
-                            "ymm"
-                            (AstType.I8)
-                            dst-reg))))]
+                      [masked-move : String
+                        (compiler-backend-avx2-masked-move-mnemonic elem-ty)]
+                      (if (string.eq masked-move "")
+                        (let
+                          [lanes-asm : String
+                            (compiler-backend-avx2-predicated-load-lanes
+                              function
+                              current-label
+                              dst
+                              addr
+                              0
+                              lanes
+                              elem-ty
+                              "")]
+                          (ResultCompilerBackend.Ok
+                            (str_cat.str-cat
+                              mask-asm
+                              addr-asm
+                              "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n    vpmovmskb "
+                              mask-reg
+                              ", %r11d\n"
+                              lanes-asm
+                              "    vmovdqu (%rsp), "
+                              dst-reg
+                              "\n    addq $32, %rsp\n"
+                              (compiler-backend-vector-store-dst
+                                assignments
+                                dst
+                                "ymm"
+                                (AstType.I8)
+                                dst-reg))))
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            mask-asm
+                            addr-asm
+                            "    "
+                            masked-move
+                            " "
+                            addr
+                            ", "
+                            mask-reg
+                            ", "
+                            dst-reg
+                            "\n"
+                            (compiler-backend-vector-store-dst
+                              assignments
+                              dst
+                              "ymm"
+                              elem-ty
+                              dst-reg)))))]
                   [(ResultCompilerBackendSimdIndexedAddress.Err message)
                     (ResultCompilerBackend.Err
                       (box
@@ -8918,28 +8945,47 @@
                       [(ResultBackendVectorUse.Ok value-use)
                         (match value-use
                           [(CompilerBackendVectorUse.Use value-asm value-reg)
-                            (ResultCompilerBackend.Ok
-                              (str_cat.str-cat
-                                value-asm
-                                mask-asm
-                                addr-asm
-                                "    subq $32, %rsp\n    vmovdqu "
-                                value-reg
-                                ", (%rsp)\n    vpmovmskb "
-                                mask-reg
-                                ", %r11d\n"
-                                (compiler-backend-avx2-predicated-store-lanes
-                                  function
-                                  current-label
-                                  (-
-                                    compiler-backend-emit-instr-post-base
-                                    compiler-backend-emit-current-count)
-                                  addr
-                                  0
-                                  lanes
-                                  elem-ty
-                                  "")
-                                "    addq $32, %rsp\n"))])]
+                            (let
+                              [masked-move : String
+                                (compiler-backend-avx2-masked-move-mnemonic
+                                  elem-ty)]
+                              (if (string.eq masked-move "")
+                                (ResultCompilerBackend.Ok
+                                  (str_cat.str-cat
+                                    value-asm
+                                    mask-asm
+                                    addr-asm
+                                    "    subq $32, %rsp\n    vmovdqu "
+                                    value-reg
+                                    ", (%rsp)\n    vpmovmskb "
+                                    mask-reg
+                                    ", %r11d\n"
+                                    (compiler-backend-avx2-predicated-store-lanes
+                                      function
+                                      current-label
+                                      (-
+                                        compiler-backend-emit-instr-post-base
+                                        compiler-backend-emit-current-count)
+                                      addr
+                                      0
+                                      lanes
+                                      elem-ty
+                                      "")
+                                    "    addq $32, %rsp\n"))
+                                (ResultCompilerBackend.Ok
+                                  (str_cat.str-cat
+                                    value-asm
+                                    mask-asm
+                                    addr-asm
+                                    "    "
+                                    masked-move
+                                    " "
+                                    value-reg
+                                    ", "
+                                    mask-reg
+                                    ", "
+                                    addr
+                                    "\n"))))])]
                       [(ResultBackendVectorUse.Err message)
                         (ResultCompilerBackend.Err
                           (box
@@ -9090,6 +9136,14 @@
         lanes
         (str_cat.str-cat acc lane-asm)))))
 
+(define (compiler-backend-avx2-qword-tail-mask-asm [dst-reg : String]) : String
+  (str_cat.str-cat
+    "    vmovq %r8, %xmm0\n    vpbroadcastq %xmm0, %ymm0\n    vpaddq "
+    (compiler-backend-avx2-i64-lane-id-label)
+    "(%rip), %ymm0, %ymm0\n    vmovq %r9, %xmm1\n    vpbroadcastq %xmm1, %ymm1\n    vpcmpgtq %ymm0, %ymm1, "
+    dst-reg
+    "\n"))
+
 (define (compiler-backend-emit-avx2-tail-mask
   [type-segment-bases : i64]
   [function : String]
@@ -9127,17 +9181,20 @@
                   (str_cat.str-cat
                     index-asm
                     end-asm
-                    "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n"
-                    (compiler-backend-avx2-tail-mask-fill-lanes
-                      function
-                      current-label
-                      dst
-                      0
-                      lanes
-                      "")
-                    "    vmovdqu (%rsp), "
-                    dst-reg
-                    "\n    addq $32, %rsp\n"
+                    (if (= lanes 4)
+                      (compiler-backend-avx2-qword-tail-mask-asm dst-reg)
+                      (str_cat.str-cat
+                        "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n"
+                        (compiler-backend-avx2-tail-mask-fill-lanes
+                          function
+                          current-label
+                          dst
+                          0
+                          lanes
+                          "")
+                        "    vmovdqu (%rsp), "
+                        dst-reg
+                        "\n    addq $32, %rsp\n"))
                     (compiler-backend-vector-store-dst
                       assignments
                       dst
@@ -51748,10 +51805,15 @@
                 selector-low)
               selector-high)
             active-lanes)])]
-    [(CompilerIrInstr.TailMask _ index length _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections index)
-        length)]
+    [(CompilerIrInstr.TailMask _ index length lanes)
+      (let
+        [values : CompilerBackendProgramCollections
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections index)
+            length)]
+        (if (= lanes 4)
+          (compiler-backend-program-collections-mark-avx2-i64-lane-id values)
+          values))]
     [(CompilerIrInstr.CpuId _ leaf subleaf _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections leaf)

@@ -10479,6 +10479,148 @@
               (CompilerRegLocation.Register "%k1"))
             CompilerRegAssignmentList.Nil))))))
 
+(define (compiler-backend-avx2-native-mask-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%vec6"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Spill -64))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%vec7"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                5
+                (CompilerRegLocation.Register "%vec8"))
+              CompilerRegAssignmentList.Nil)))))))
+
+(define (compiler-backend-avx2-native-mask-emission-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-avx2-native-mask-assignments)]
+    [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+    (and
+      (string.eq
+        (compiler-backend-avx2-masked-move-mnemonic (AstType.I32))
+        "vpmaskmovd")
+      (string.eq
+        (compiler-backend-avx2-masked-move-mnemonic (AstType.U32))
+        "vpmaskmovd")
+      (string.eq
+        (compiler-backend-avx2-masked-move-mnemonic (AstType.I64))
+        "vpmaskmovq")
+      (string.eq
+        (compiler-backend-avx2-masked-move-mnemonic (AstType.U64))
+        "vpmaskmovq")
+      (string.eq
+        (compiler-backend-avx2-masked-move-mnemonic (AstType.F32))
+        "vmaskmovps")
+      (string.eq
+        (compiler-backend-avx2-masked-move-mnemonic (AstType.F64))
+        "vmaskmovpd")
+      (string.eq (compiler-backend-avx2-masked-move-mnemonic (AstType.I16)) "")
+      (match (compiler-backend-emit-avx2-predicated-load
+        (ast-node-pool-reader-type-segment-bases)
+        "native_mask"
+        (compiler-ir-label "entry")
+        assignments
+        3
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (CompilerIrValue.Var 4)
+        4
+        (AstType.I64)
+        ""
+        ""
+        diag)
+        [(ResultCompilerBackend.Ok asm)
+          (string.eq
+            asm
+            "    vpmaskmovq (%rdi), %ymm7, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-avx2-predicated-store
+        (ast-node-pool-reader-type-segment-bases)
+        "native_mask"
+        (compiler-ir-label "entry")
+        assignments
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (CompilerIrValue.Var 2)
+        (CompilerIrValue.Var 4)
+        4
+        (AstType.I64)
+        ""
+        ""
+        diag)
+        [(ResultCompilerBackend.Ok asm)
+          (string.eq asm "    vpmaskmovq %ymm6, %ymm7, (%rdi)\n")]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-avx2-select
+        (ast-node-pool-reader-type-segment-bases)
+        assignments
+        3
+        (CompilerIrValue.Var 4)
+        (CompilerIrValue.Var 2)
+        (CompilerIrValue.Var 5)
+        4
+        (AstType.I64)
+        diag)
+        [(ResultCompilerBackend.Ok asm)
+          (string.eq
+            asm
+            "    vpblendvb %ymm7, %ymm6, %ymm8, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-avx2-predicated-load
+        (ast-node-pool-reader-type-segment-bases)
+        "narrow_mask"
+        (compiler-ir-label "entry")
+        assignments
+        3
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (CompilerIrValue.Var 4)
+        16
+        (AstType.I16)
+        ""
+        ""
+        diag)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    vpmovmskb %ymm7, %r11d\n")
+            (compiler-backend-string-contains? asm "_load_skip_15")
+            (not (compiler-backend-string-contains? asm "vpmaskmov")))]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-avx2-predicated-store
+        (ast-node-pool-reader-type-segment-bases)
+        "narrow_mask"
+        (compiler-ir-label "entry")
+        assignments
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (CompilerIrValue.Var 2)
+        (CompilerIrValue.Var 4)
+        16
+        (AstType.I16)
+        ""
+        ""
+        diag)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    vpmovmskb %ymm7, %r11d\n")
+            (compiler-backend-string-contains? asm "_store_skip_15")
+            (not (compiler-backend-string-contains? asm "vpmaskmov")))]
+        [(ResultCompilerBackend.Err _) false]))))
+
 (define (compiler-backend-avx2-vector-load-spill-dst-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-load
     (ast-node-pool-reader-type-segment-bases)
@@ -12239,6 +12381,85 @@
       "    movq $7, %rax\n    kmovq %rax, %k1\n")
     (compiler-backend-avx512-tail-mask-dynamic-zero-ok?)))
 
+(define (compiler-backend-avx2-tail-mask-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r13"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-avx2-tail-mask-emits [lanes : i64]) : ResultCompilerBackend
+  (compiler-backend-emit-avx2-tail-mask
+    (ast-node-pool-reader-type-segment-bases)
+    "_tl_tail"
+    (compiler-ir-label "entry")
+    (compiler-backend-avx2-tail-mask-assignments)
+    0
+    (CompilerIrValue.Var 1)
+    (CompilerIrValue.Var 2)
+    lanes
+    (compiler-diagnostic-at-start "" "")))
+
+(define (compiler-backend-avx2-tail-mask-ok?) : bool
+  (and
+    (match (compiler-backend-avx2-tail-mask-emits 4)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              "    vpbroadcastq %xmm0, %ymm0\n")
+            (compiler-backend-string-contains?
+              asm
+              (str_cat.str-cat
+                "    vpaddq "
+                (compiler-backend-avx2-i64-lane-id-label)
+                "(%rip), %ymm0, %ymm0\n"))
+            (compiler-backend-string-contains?
+              asm
+              "    vpcmpgtq %ymm0, %ymm1, %ymm6\n")
+            (not (compiler-backend-string-contains? asm "(%rsp)")))
+          (not (compiler-backend-string-contains? asm "_tail_skip_")))]
+      [(ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-avx2-tail-mask-emits 8)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (backend-and4
+            (compiler-backend-string-contains? asm "    subq $32, %rsp\n")
+            (compiler-backend-string-contains? asm "_tail_skip_0")
+            (compiler-backend-string-contains? asm "    movl $-1, ")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-avx2-i64-lane-id-label))))
+          (not (compiler-backend-string-contains? asm "    vpcmpgtq ")))]
+      [(ResultCompilerBackend.Err _) false])
+    (let
+      [qword : CompilerBackendProgramCollections
+        (compiler-backend-collect-instr-collections
+          (compiler-backend-program-collections-new)
+          (CompilerIrInstr.TailMask
+            0
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            4))]
+      [dword : CompilerBackendProgramCollections
+        (compiler-backend-collect-instr-collections
+          (compiler-backend-program-collections-new)
+          (CompilerIrInstr.TailMask
+            0
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            8))]
+      (and
+        (compiler-backend-program-collections-uses-avx2-i64-lane-id? qword)
+        (not
+          (compiler-backend-program-collections-uses-avx2-i64-lane-id? dword))))))
+
 (define (compiler-backend-avx512-mask-not-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k1"))
@@ -13116,6 +13337,7 @@
     (compiler-backend-avx512-mask-homes-ok?)
     (compiler-backend-avx512-mask-load-temp-ok?)
     (compiler-backend-avx512-mask-store-temp-ok?)
+    (compiler-backend-avx2-tail-mask-ok?)
     (compiler-backend-avx512-tail-mask-ok?)
     (compiler-backend-avx512-mask-not-shortens-ok?)
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
@@ -13123,6 +13345,7 @@
     (compiler-backend-avx512-mask-spill-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
     (compiler-backend-avx2-data-pointer-cse-ok?)
+    (compiler-backend-avx2-native-mask-emission-ok?)
     (compiler-backend-simd-indexed-address-ok?)
     (compiler-backend-simd-indexed-address-users-ok?)
     (compiler-backend-stack-splat-broadcast-ok?)

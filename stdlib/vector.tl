@@ -83,7 +83,14 @@
 ;: suitable for append-oriented compiler-private collections and does not
 ;: instantiate clone-dependent operations such as `pop` or generated equality
 ;: for `contains?`.
-(defmacro (vector [T : type] [capabilities : Expr ...]) : Module
+;: The kind constraint is the complete storable `type-kind` vocabulary.
+;: Future kinds must be added here when vector backing storage supports them;
+;: `never`, `region`, and unresolved `type-var` are intentionally excluded.
+(defmacro (vector
+  [T
+    : type
+    (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char string unit array dyn-array box function tuple struct enum str ptr mut-ptr ref mut-ref)]
+  [capabilities : Expr ...]) : Module
   (let
     [capability-count : i64 (expr-list-length capabilities)]
     [core-only : bool
@@ -109,7 +116,7 @@
           (type-key T)))]
     [cleanup-owning : bool (type-cleanup-owning? T)]
     [cleanup-function : String
-      (if cleanup-owning
+      (if (type-cleanup-owning? T)
         (type-cleanup-function T)
         "")]
     [cleanup-function-expr : Expr (expr-var cleanup-function)]

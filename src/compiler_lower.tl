@@ -38432,11 +38432,11 @@
     (if (or
       (and
         (lower-mode-avx512? mode)
-        (not varying-enum-match)
         (or
           varying-if
           varying-while
           varying-match
+          varying-enum-match
           bool-array-lane
           out-of-line-call))
       (and
@@ -44263,10 +44263,10 @@
         expr
         "non-dynamic-array writes inside masked branches")]))
 
-;; AVX2 has no mask registers and this slice deliberately does not introduce
-;; enum gather IR. Keep a varying enum lane as the address of the gang's first
-;; contiguous element; tag and payload vectors are assembled below from
-;; active-lane-only scalar loads.
+;; Keep a varying enum lane as the address of the gang's first contiguous
+;; element. Tag and payload vectors are assembled below from active-lane-only
+;; scalar loads, avoiding a dedicated enum gather representation in both SIMD
+;; backends.
 (define (lower-avx2-masked-enum-source
   [ctx : TcContext]
   [state : LowerState]
@@ -44424,7 +44424,9 @@
         (let
           [init : AstExpr (lower-context-expr-get ctx init-box)]
           [enum-source : ResultLowerMaskedEnumSource
-            (if (lower-mode-avx2? (lower-state-mode state))
+            (if (or
+              (lower-mode-avx2? (lower-state-mode state))
+              (lower-mode-avx512? (lower-state-mode state)))
               (lower-avx2-masked-enum-source
                 ctx
                 state
@@ -44840,7 +44842,7 @@
                           (ResultLowerExpr.Err message)])])])])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-avx2-masked-index-mod
+(define (lower-simd-masked-index-mod
   [state : LowerState]
   [index-var : i64]
   [index-offset : i64]
@@ -45464,13 +45466,15 @@
           (lower-masked-vector-index-literal-offset ctx right)]
         [index-offset : i64 (lower-masked-vector-index-offset ctx index left)]
         (if (and
-          (lower-mode-avx2? (lower-state-mode state))
+          (or
+            (lower-mode-avx2? (lower-state-mode state))
+            (and (lower-mode-avx512? (lower-state-mode state)) (< divisor 0)))
           (> positive-divisor 0)
           (>= index-offset 0)
           (=
             lanes
             (lower-simd-lanes-for-elem (lower-state-mode state) (AstType.I64))))
-          (lower-avx2-masked-index-mod
+          (lower-simd-masked-index-mod
             state
             index-var
             index-offset
@@ -45653,12 +45657,18 @@
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-avx2-enum-mask-lane-type [lanes : i64]) : AstType
-  (cond
-    [(= lanes 4) (AstType.I64)]
-    [(= lanes 8) (AstType.I32)]
-    [(= lanes 16) (AstType.I16)]
-    [else (AstType.I8)]))
+(define (lower-enum-mask-lane-type [mode : CompilerLowerMode] [lanes : i64]) : AstType
+  (if (lower-mode-avx512? mode)
+    (cond
+      [(= lanes 8) (AstType.I64)]
+      [(= lanes 16) (AstType.I32)]
+      [(= lanes 32) (AstType.I16)]
+      [else (AstType.I8)])
+    (cond
+      [(= lanes 4) (AstType.I64)]
+      [(= lanes 8) (AstType.I32)]
+      [(= lanes 16) (AstType.I16)]
+      [else (AstType.I8)])))
 
 (define (lower-avx2-enum-zero-value [ty : AstType]) : CompilerIrValue
   (match (tc-type-without-regions ty)
@@ -45776,12 +45786,33 @@
                   lanes
                   lane-ty)
                   [(LowerExpr.Expr splat-state splat-value _)
-                    (lower-emit-mask-binop
-                      splat-state
-                      (CompilerIrMaskBinOp.And)
-                      one-lane-mask
-                      splat-value
-                      lanes)]))])])]))
+                    (if (lower-mode-avx512? (lower-state-mode splat-state))
+                      (match (lower-emit-splat
+                        splat-state
+                        (CompilerIrValue.I64 0)
+                        lanes
+                        lane-ty)
+                        [(LowerExpr.Expr zero-state zero-value _)
+                          (match (lower-emit-vector-compare
+                            zero-state
+                            (CompilerIrBinOp.Ne)
+                            splat-value
+                            zero-value
+                            lanes
+                            lane-ty)
+                            [(LowerExpr.Expr mask-state condition-mask _)
+                              (lower-emit-mask-binop
+                                mask-state
+                                (CompilerIrMaskBinOp.And)
+                                one-lane-mask
+                                condition-mask
+                                lanes)])])
+                      (lower-emit-mask-binop
+                        splat-state
+                        (CompilerIrMaskBinOp.And)
+                        one-lane-mask
+                        splat-value
+                        lanes))]))])])]))
 
 ;; Reconstruct one payload field as a varying vector without adding a gather
 ;; opcode: load each active lane and select its splat into a one-lane mask.
@@ -45794,8 +45825,9 @@
   [lanes : i64]
   [field-ty : AstType]) : LowerExpr
   (let
+    [lane-ty : AstType
+      (lower-enum-mask-lane-type (lower-state-mode state) lanes)]
     [s : LowerState state]
-    [lane-ty : AstType (lower-avx2-enum-mask-lane-type lanes)]
     [lane-id : CompilerIrValue CompilerIrValue.Unit]
     [result : CompilerIrValue CompilerIrValue.Unit]
     [lane : i64 0]
@@ -46086,7 +46118,7 @@
           (box
             (lower-diagnostic-at-expr
               expr
-              "lower: unsupported AVX2 varying enum match pattern")))])))
+              "lower: unsupported SIMD varying enum match pattern")))])))
 
 (define (lower-avx2-enum-bind-payloads
   [ctx : TcContext]
@@ -46243,7 +46275,7 @@
                 (box
                   (lower-diagnostic-at-expr
                     expr
-                    "lower: AVX2 varying enum payload patterns support bindings and wildcards")))]))))))
+                    "lower: SIMD varying enum payload patterns support bindings and wildcards")))]))))))
 
 (define (lower-avx2-enum-bind-pattern
   [ctx : TcContext]
@@ -46313,7 +46345,7 @@
         (box
           (lower-diagnostic-at-expr
             expr
-            "lower: unsupported AVX2 varying enum match pattern")))]))
+            "lower: unsupported SIMD varying enum match pattern")))]))
 
 (define (lower-avx2-enum-match-arms
   [ctx : TcContext]
@@ -46335,7 +46367,7 @@
   (if (ast-match-arm-list-empty? (& arms))
     (lower-avx512-masked-unsupported
       expr
-      "AVX2 varying enum match with no arms")
+      "SIMD varying enum match with no arms")
     (match (ast-match-arm-list-get (& arms) 0 (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
@@ -46436,7 +46468,7 @@
                                                 expr)
                                               (lower-avx512-masked-unsupported
                                                 expr
-                                                "mixed AVX2 varying enum match arm result types"))])])]
+                                                "mixed SIMD varying enum match arm result types"))])])]
                                   [(ResultLowerExpr.Err message)
                                     (ResultLowerExpr.Err message)]))])]
                         [(ResultLowerExpr.Err message)
@@ -46473,7 +46505,8 @@
       (match source
         [(LowerMaskedEnumSource.Source source-state base enum-ty)
           (let
-            [lane-ty : AstType (lower-avx2-enum-mask-lane-type lanes)]
+            [lane-ty : AstType
+              (lower-enum-mask-lane-type (lower-state-mode source-state) lanes)]
             (match (lower-emit-lane-id source-state lanes lane-ty)
               [(LowerExpr.Expr lane-state lane-id _)
                 (lower-avx2-enum-match-arms
@@ -46497,7 +46530,7 @@
     [(ResultLowerMaskedEnumSource.No)
       (lower-avx512-masked-unsupported
         expr
-        "an AVX2 varying enum match source outside a contiguous array lane")]))
+        "a SIMD varying enum match source outside a contiguous array lane")]))
 
 (define (lower-avx512-masked-match-literal-mask
   [state : LowerState]
@@ -46861,16 +46894,14 @@
   [expr : AstExpr]
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]) : ResultLowerExpr
-  (if (and
-    (lower-mode-avx2? (lower-state-mode state))
-    (match (lower-expr-result-type-or-check
-      ctx
-      env
-      type-env
-      (lower-state-type-cache state)
-      scrutinee)
-      [(ResultTcType.Ok scrut-ty) (lower-spmd-enum-type? scrut-ty)]
-      [(ResultTcType.Err _) false]))
+  (if (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    scrutinee)
+    [(ResultTcType.Ok scrut-ty) (lower-spmd-enum-type? scrut-ty)]
+    [(ResultTcType.Err _) false])
     (lower-avx2-masked-enum-match
       ctx
       state
@@ -50082,23 +50113,13 @@
                     type-env
                     index
                     body)
-                  (if (lower-mode-avx2? (lower-state-mode state))
-                    (ResultLowerExpr.Err
-                      (box
-                        (lower-diagnostic-at-expr
-                          body
-                          "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings")))
-                    (lower-scalar-foreach-lowered
-                      ctx
-                      state
-                      env
-                      type-env
-                      index-id
-                      index
-                      index-ty
-                      start-value
-                      end-value
-                      body))]
+                  (ResultLowerExpr.Err
+                    (box
+                      (lower-diagnostic-at-expr
+                        body
+                        (if (lower-mode-avx2? (lower-state-mode state))
+                          "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
+                          "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
                 [(lower-masked-vector-body-has-varying-match?
                     ctx
                     (lower-state-mode state)

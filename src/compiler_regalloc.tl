@@ -19882,6 +19882,15 @@
     [vector-assignments : CompilerRegAssignmentTable
       (match vector-state
         [(CompilerRegAssignState.State _ assignments) assignments])]
+    [_mask-class-reset
+      : unit
+      ;; The scalar greedy provisionally homes mask values in GP registers.
+      ;; Clear those homes before fixed k-register allocation so excess mask
+      ;; pressure remains unassigned and is emitted through the existing
+      ;; stack-slot spill path instead of reaching the backend as a GP home.
+      (compiler-reg-unassign-special-candidates!
+        vector-assignments
+        (compiler-reg-special-candidates intervals mask-candidate-vars blocked))]
     [mask-state : CompilerRegAssignState
       (if vector-mask-empty?
         (CompilerRegAssignState.State
@@ -30151,6 +30160,43 @@
                     CompilerIrInstrList.Nil)))))))
       CompilerIrBlockList.Nil)))
 
+(define (compiler-reg-mask-pressure-uses [index : i64]) : CompilerIrInstrList
+  (if (>= index 7)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Return
+        (CompilerIrMaybeValue.Some (CompilerIrValue.Var 13)))
+      CompilerIrInstrList.Nil)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.MaskReduce
+        (+ 7 index)
+        (CompilerIrMaskReduceOp.Any)
+        (CompilerIrValue.Var index)
+        8)
+      (compiler-reg-mask-pressure-uses (+ index 1)))))
+
+(define (compiler-reg-mask-pressure-defs [index : i64]) : CompilerIrInstrList
+  (if (>= index 7)
+    (compiler-reg-mask-pressure-uses 0)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.TailMask
+        index
+        (CompilerIrValue.I64 index)
+        (CompilerIrValue.I64 8)
+        8)
+      (compiler-reg-mask-pressure-defs (+ index 1)))))
+
+(define (compiler-reg-mask-pressure-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (compiler-ir-test-symbol "mask_pressure")
+    CompilerIrParamList.Nil
+    (AstType.Bool)
+    14
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-reg-mask-pressure-defs 0))
+      CompilerIrBlockList.Nil)))
+
 (define (compiler-reg-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-reuse-function))
     [(CompilerRegPlan.Plan assignments _ _ _ _ _)
@@ -31522,6 +31568,16 @@
                           "%k1"))]
                     (and vector-ok gp-clobber-ok select-ok mask-ok))])])])]))
 
+(define (compiler-reg-mask-pressure-spill-home-ok?) : bool
+  (match (compiler-reg-plan-function (compiler-reg-mask-pressure-function))
+    [(CompilerRegPlan.Plan assignments _ _ _ _ _)
+      ;; Six architectural homes are allocatable (%k1..%k6); the seventh
+      ;; simultaneously-live mask must stay unassigned for the backend's
+      ;; stack-slot mask spill path.
+      (match (compiler-reg-assignment-lookup assignments 6)
+        [(CompilerRegMaybeLocation.No) true]
+        [_ false])]))
+
 (define (compiler-reg-target-clobbers-ok?) : bool
   (let
     [_rbp-off : unit (compiler-reg-set-rbp-pool-enabled! false)]
@@ -32358,6 +32414,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-vector-mask-homes-ok?"
       (compiler-reg-vector-mask-homes-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-mask-pressure-spill-home-ok?"
+      (compiler-reg-mask-pressure-spill-home-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-segmented-interference-ok?"
       (compiler-reg-segmented-interference-ok?))

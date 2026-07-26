@@ -5026,8 +5026,10 @@
   (test
     regalloc-vector-mask-homes
     (test.assert-true
-      (compiler-reg-vector-mask-homes-ok?)
-      "expanded vector pool preserves vector and mask home reuse")))
+      (and
+        (compiler-reg-vector-mask-homes-ok?)
+        (compiler-reg-mask-pressure-spill-home-ok?))
+      "expanded vector/mask pools preserve homes and spill excess k-mask pressure")))
 
 (cfg
   test

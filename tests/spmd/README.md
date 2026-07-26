@@ -126,9 +126,12 @@ compile and run in `avx2` and `avx512`.
 - `varying_match_i64.tl` - AVX2/AVX-512 value-producing varying `match` over
   scalar i64 literal patterns, wildcard fallback, and catch-all lane binding.
   Exit 42.
-- `varying_match_enum_payload.tl` - scalar/AVX2 varying `match` over enum tag
-  arms and supported i64 payload bindings, including mixed arms and a tail.
-  AVX-512 retains the scalar reference path. Exit 42.
+- `varying_match_enum_payload.tl` - scalar/AVX2/AVX-512 varying `match` over
+  enum tag arms and supported i64 payload bindings, including mixed arms and a
+  tail. Exit 42.
+- `varying_match_enum_helper_reject.tl` - scalar reference for an enum value
+  returned by a helper; AVX2/AVX-512 must diagnose this non-contiguous varying
+  enum source instead of silently scalarizing. Scalar exits 42.
 - `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
   compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
   documented 8-bit lane multiplication diagnostic.
@@ -206,7 +209,7 @@ Coverage map:
 - AVX2/AVX-512 scalar-lane varying `match` coverage lives in
   `varying_match_i64.tl` and `masked_if_match_i64.tl`; enum tag/payload
   varying-match coverage lives in `varying_match_enum_payload.tl` through the
-  AVX2 masked-gang lowering and scalar/AVX-512 reference paths.
+  AVX2/AVX-512 masked-gang lowering and scalar reference path.
 - AVX2/AVX-512 varying `while` coverage lives in `varying_while_i64.tl`,
   `varying_while_f32_i32.tl`, `masked_if_varying_while_i64.tl`, and
   `varying_while_nested_i64.tl`. The nested fixture covers zero, sub-gang,

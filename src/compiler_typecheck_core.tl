@@ -17995,49 +17995,69 @@
     " is only valid inside a foreach body or spmd-reduce value expression"))
 
 (define (tc-source-expr-list-spmd-broadcast-scope-ok
+  [expr-bases : i64]
   [exprs : AstExprList]
   [allow : bool]) : ResultTcUnit
-  (tc-source-expr-list-spmd-broadcast-scope-ok-at (& exprs) 0 allow))
+  (tc-source-expr-list-spmd-broadcast-scope-ok-at expr-bases (& exprs) 0 allow))
 
 (define (tc-source-expr-list-spmd-broadcast-scope-ok-at
+  [expr-bases : i64]
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [allow : bool]) : ResultTcUnit
   (if (>= index (struct-get exprs len))
     ResultTcUnit.Ok
     (let
-      [expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
-      (match (tc-source-expr-spmd-broadcast-scope-ok expr allow)
+      [expr : AstExpr
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))]
+      (match (tc-source-expr-spmd-broadcast-scope-ok expr-bases expr allow)
         [(ResultTcUnit.Ok)
           (tc-source-expr-list-spmd-broadcast-scope-ok-at
+            expr-bases
             exprs
             (+ index 1)
             allow)]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))))
 
 (define (tc-source-expr-pair-spmd-broadcast-scope-ok
+  [expr-bases : i64]
   [left : AstExpr]
   [right : AstExpr]
   [allow : bool]) : ResultTcUnit
-  (match (tc-source-expr-spmd-broadcast-scope-ok left allow)
-    [(ResultTcUnit.Ok) (tc-source-expr-spmd-broadcast-scope-ok right allow)]
+  (match (tc-source-expr-spmd-broadcast-scope-ok expr-bases left allow)
+    [(ResultTcUnit.Ok)
+      (tc-source-expr-spmd-broadcast-scope-ok expr-bases right allow)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-source-expr-triple-spmd-broadcast-scope-ok
+  [expr-bases : i64]
   [first : AstExpr]
   [second : AstExpr]
   [third : AstExpr]
   [allow : bool]) : ResultTcUnit
-  (match (tc-source-expr-pair-spmd-broadcast-scope-ok first second allow)
-    [(ResultTcUnit.Ok) (tc-source-expr-spmd-broadcast-scope-ok third allow)]
+  (match (tc-source-expr-pair-spmd-broadcast-scope-ok
+    expr-bases
+    first
+    second
+    allow)
+    [(ResultTcUnit.Ok)
+      (tc-source-expr-spmd-broadcast-scope-ok expr-bases third allow)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-source-let-binding-list-spmd-broadcast-scope-ok
+  [expr-bases : i64]
   [bindings : AstLetBindingList]
   [allow : bool]) : ResultTcUnit
-  (tc-source-let-binding-list-spmd-broadcast-scope-ok-at (& bindings) allow 0))
+  (tc-source-let-binding-list-spmd-broadcast-scope-ok-at
+    expr-bases
+    (& bindings)
+    allow
+    0))
 
 (define (tc-source-let-binding-list-spmd-broadcast-scope-ok-at
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [allow : bool]
   [index : i64]) : ResultTcUnit
@@ -18046,24 +18066,28 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding _ _ init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          (match (tc-source-expr-spmd-broadcast-scope-ok init allow)
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (match (tc-source-expr-spmd-broadcast-scope-ok expr-bases init allow)
             [(ResultTcUnit.Ok)
               (tc-source-let-binding-list-spmd-broadcast-scope-ok-at
+                expr-bases
                 bindings
                 allow
                 (+ index 1))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-source-resource-binding-list-spmd-broadcast-scope-ok
+  [expr-bases : i64]
   [bindings : AstResourceBindingList]
   [allow : bool]) : ResultTcUnit
   (tc-source-resource-binding-list-spmd-broadcast-scope-ok-at
+    expr-bases
     (& bindings)
     allow
     0))
 
 (define (tc-source-resource-binding-list-spmd-broadcast-scope-ok-at
+  [expr-bases : i64]
   [bindings : (& bindings AstResourceBindingList)]
   [allow : bool]
   [index : i64]) : ResultTcUnit
@@ -18075,25 +18099,34 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
           (match (tc-source-expr-pair-spmd-broadcast-scope-ok
+            expr-bases
             init
             cleanup
             allow)
             [(ResultTcUnit.Ok)
               (tc-source-resource-binding-list-spmd-broadcast-scope-ok-at
+                expr-bases
                 bindings
                 allow
                 (+ index 1))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
 (define (tc-source-match-arm-list-spmd-broadcast-scope-ok
+  [expr-bases : i64]
   [arms : AstMatchArmList]
   [allow : bool]) : ResultTcUnit
-  (tc-source-match-arm-list-spmd-broadcast-scope-ok-at (& arms) allow 0))
+  (tc-source-match-arm-list-spmd-broadcast-scope-ok-at
+    expr-bases
+    (& arms)
+    allow
+    0))
 
 (define (tc-source-match-arm-list-spmd-broadcast-scope-ok-at
+  [expr-bases : i64]
   [arms : (& arms AstMatchArmList)]
   [allow : bool]
   [index : i64]) : ResultTcUnit
@@ -18102,43 +18135,52 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
-          (match (tc-source-expr-spmd-broadcast-scope-ok body allow)
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+          (match (tc-source-expr-spmd-broadcast-scope-ok expr-bases body allow)
             [(ResultTcUnit.Ok)
               (tc-source-match-arm-list-spmd-broadcast-scope-ok-at
+                expr-bases
                 arms
                 allow
                 (+ index 1))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])))
 
-(define (tc-source-expr-spmd-broadcast-scope-ok [expr : AstExpr] [allow : bool]) : ResultTcUnit
+(define (tc-source-expr-spmd-broadcast-scope-ok
+  [expr-bases : i64]
+  [expr : AstExpr]
+  [allow : bool]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok left right allow))]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          left
+          right
+          allow))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
-        (match (tc-source-expr-spmd-broadcast-scope-ok func allow)
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
+        (match (tc-source-expr-spmd-broadcast-scope-ok expr-bases func allow)
           [(ResultTcUnit.Ok)
-            (tc-source-expr-list-spmd-broadcast-scope-ok args allow)]
+            (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases args allow)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.If cond-box then-box else-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-box)]
-        [else-branch : AstExpr (ast-node-get else-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr (ast-expr-segment-bases-get expr-bases then-box)]
+        [else-branch : AstExpr (ast-expr-segment-bases-get expr-bases else-box)]
         (tc-source-expr-triple-spmd-broadcast-scope-ok
+          expr-bases
           cond
           then-branch
           else-branch
@@ -18147,120 +18189,151 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (tc-source-let-binding-list-spmd-broadcast-scope-ok
+              expr-bases
               bindings
               allow)
               [(ResultTcUnit.Ok)
-                (tc-source-expr-spmd-broadcast-scope-ok body allow)]
+                (tc-source-expr-spmd-broadcast-scope-ok expr-bases body allow)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda _ _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
-            (tc-source-expr-spmd-broadcast-scope-ok body false))])]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (tc-source-expr-spmd-broadcast-scope-ok expr-bases body false))])]
     [(AstExpr.Tuple exprs)
-      (tc-source-expr-list-spmd-broadcast-scope-ok exprs allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
     [(AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok tuple allow))]
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases tuple allow))]
     [(AstExpr.Array exprs)
-      (tc-source-expr-list-spmd-broadcast-scope-ok exprs allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
     [(AstExpr.DynArray exprs)
-      (tc-source-expr-list-spmd-broadcast-scope-ok exprs allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
     [(AstExpr.MakeArray _ len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok len allow))]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases len allow))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok array index allow))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          array
+          index
+          allow))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-source-expr-triple-spmd-broadcast-scope-ok array index value allow))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-source-expr-triple-spmd-broadcast-scope-ok
+          expr-bases
+          array
+          index
+          value
+          allow))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [live : AstExpr (ast-node-get live-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-source-expr-triple-spmd-broadcast-scope-ok array live index allow))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-source-expr-triple-spmd-broadcast-scope-ok
+          expr-bases
+          array
+          live
+          index
+          allow))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok array value allow))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          array
+          value
+          allow))]
     [(AstExpr.StringRef str-box index-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok str index allow))]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok expr-bases str index allow))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok cond body allow))]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok expr-bases cond body allow))]
     [(AstExpr.Begin exprs)
-      (tc-source-expr-list-spmd-broadcast-scope-ok exprs allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
     [(AstExpr.Unsafe exprs)
-      (tc-source-expr-list-spmd-broadcast-scope-ok exprs allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
     [(AstExpr.Set _ value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok value allow))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases value allow))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.Borrow _ _ place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok place allow))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases place allow))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
           (let
-            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-            (match (tc-source-expr-spmd-broadcast-scope-ok scrutinee allow)
+            [scrutinee : AstExpr
+              (ast-expr-segment-bases-get expr-bases scrutinee-box)]
+            (match (tc-source-expr-spmd-broadcast-scope-ok
+              expr-bases
+              scrutinee
+              allow)
               [(ResultTcUnit.Ok)
-                (tc-source-match-arm-list-spmd-broadcast-scope-ok arms allow)]
+                (tc-source-match-arm-list-spmd-broadcast-scope-ok
+                  expr-bases
+                  arms
+                  allow)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach _ _ start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-source-expr-pair-spmd-broadcast-scope-ok start end false)
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-source-expr-pair-spmd-broadcast-scope-ok
+              expr-bases
+              start
+              end
+              false)
               [(ResultTcUnit.Ok)
-                (tc-source-expr-spmd-broadcast-scope-ok body true)]
+                (tc-source-expr-spmd-broadcast-scope-ok expr-bases body true)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
             (match (tc-source-expr-triple-spmd-broadcast-scope-ok
+              expr-bases
               start
               end
               init
               false)
               [(ResultTcUnit.Ok)
-                (tc-source-expr-spmd-broadcast-scope-ok value true)]
+                (tc-source-expr-spmd-broadcast-scope-ok expr-bases value true)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
@@ -18276,35 +18349,50 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (tc-source-expr-triple-spmd-broadcast-scope-ok
+              expr-bases
               start
               end
               init
               false)
               [(ResultTcUnit.Ok)
-                (match (tc-source-expr-spmd-broadcast-scope-ok value false)
+                (match (tc-source-expr-spmd-broadcast-scope-ok
+                  expr-bases
+                  value
+                  false)
                   [(ResultTcUnit.Ok)
-                    (tc-source-expr-spmd-broadcast-scope-ok body true)]
+                    (tc-source-expr-spmd-broadcast-scope-ok
+                      expr-bases
+                      body
+                      true)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (if allow
         (let
-          [value : AstExpr (ast-node-get value-box)]
-          [lane : AstExpr (ast-node-get lane-box)]
-          (tc-source-expr-pair-spmd-broadcast-scope-ok value lane true))
+          [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+          [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+          (tc-source-expr-pair-spmd-broadcast-scope-ok
+            expr-bases
+            value
+            lane
+            true))
         (ResultTcUnit.Err (tc-spmd-broadcast-scope-message)))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (if allow
         (let
-          [value : AstExpr (ast-node-get value-box)]
-          [lane : AstExpr (ast-node-get lane-box)]
-          (tc-source-expr-pair-spmd-broadcast-scope-ok value lane true))
+          [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+          [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+          (tc-source-expr-pair-spmd-broadcast-scope-ok
+            expr-bases
+            value
+            lane
+            true))
         (ResultTcUnit.Err (tc-spmd-shuffle-scope-message)))]
     [(AstExpr.SpmdProgramIndex)
       (if allow
@@ -18316,160 +18404,194 @@
         (ResultTcUnit.Err (tc-spmd-lane-scope-message "program-count")))]
     [(AstExpr.StructGet receiver-box _)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok receiver allow))]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases receiver allow))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok receiver value allow))]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          receiver
+          value
+          allow))]
     [(AstExpr.WithRegion _ body)
-      (tc-source-expr-list-spmd-broadcast-scope-ok body allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases body allow)]
     [(AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
-        (match (tc-source-expr-spmd-broadcast-scope-ok scratch allow)
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
+        (match (tc-source-expr-spmd-broadcast-scope-ok expr-bases scratch allow)
           [(ResultTcUnit.Ok)
-            (tc-source-expr-list-spmd-broadcast-scope-ok body allow)]
+            (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases body allow)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.WithScratch body)
-      (tc-source-expr-list-spmd-broadcast-scope-ok body allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases body allow)]
     [(AstExpr.InArena arena-box body)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
-        (match (tc-source-expr-spmd-broadcast-scope-ok arena allow)
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
+        (match (tc-source-expr-spmd-broadcast-scope-ok expr-bases arena allow)
           [(ResultTcUnit.Ok)
-            (tc-source-expr-list-spmd-broadcast-scope-ok body allow)]
+            (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases body allow)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (match (tc-source-resource-binding-list-spmd-broadcast-scope-ok
+            expr-bases
             bindings
             allow)
             [(ResultTcUnit.Ok)
-              (tc-source-expr-list-spmd-broadcast-scope-ok body allow)]
+              (tc-source-expr-list-spmd-broadcast-scope-ok
+                expr-bases
+                body
+                allow)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok inner value allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          inner
+          value
+          allow))]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.Quote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.Quasiquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.Unquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.UnquoteSplicing inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.BracketClause items)
-      (tc-source-expr-list-spmd-broadcast-scope-ok items allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases items allow)]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.PtrNullCheck inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.PtrAddrOf inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.PtrRead inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok inner allow))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases inner allow))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok ptr value allow))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok expr-bases ptr value allow))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok ptr offset allow))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          ptr
+          offset
+          allow))]
     [(AstExpr.PtrCast ptr-box _)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok ptr allow))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases ptr allow))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok ptr allow))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases ptr allow))]
     [(AstExpr.IntToPtr value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok value allow))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases value allow))]
     [(AstExpr.StringData str-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok str allow))]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases str allow))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok ptr len allow))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok expr-bases ptr len allow))]
     [(AstExpr.ArrayData array-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok array allow))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases array allow))]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok leaf subleaf allow))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          leaf
+          subleaf
+          allow))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok leaf subleaf allow))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          leaf
+          subleaf
+          allow))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok leaf subleaf allow))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          leaf
+          subleaf
+          allow))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (tc-source-expr-pair-spmd-broadcast-scope-ok leaf subleaf allow))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (tc-source-expr-pair-spmd-broadcast-scope-ok
+          expr-bases
+          leaf
+          subleaf
+          allow))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-source-expr-spmd-broadcast-scope-ok index allow))]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases index allow))]
     [(AstExpr.Syscall args)
-      (tc-source-expr-list-spmd-broadcast-scope-ok args allow)]
+      (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases args allow)]
     [_ ResultTcUnit.Ok]))
 
 (define (tc-source-lambda-signature-policy-ok
@@ -18895,7 +19017,10 @@
                   "typecheck: storing references in top-level values requires lifetime support")
                 (match (tc-source-expr-policy-ok ctx expr-bases expr)
                   [(ResultTcUnit.Ok)
-                    (tc-source-expr-spmd-broadcast-scope-ok expr false)]
+                    (tc-source-expr-spmd-broadcast-scope-ok
+                      expr-bases
+                      expr
+                      false)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
       [(AstDecl.DefFn decl-meta _ params ret body-box _)
@@ -18917,6 +19042,7 @@
                           (match (tc-source-expr-policy-ok ctx expr-bases body)
                             [(ResultTcUnit.Ok)
                               (tc-source-expr-spmd-broadcast-scope-ok
+                                expr-bases
                                 body
                                 false)]
                             [(ResultTcUnit.Err message)
@@ -18934,7 +19060,10 @@
                 [(ResultTcUnit.Ok)
                   (match (tc-source-expr-policy-ok ctx expr-bases body)
                     [(ResultTcUnit.Ok)
-                      (tc-source-expr-spmd-broadcast-scope-ok body false)]
+                      (tc-source-expr-spmd-broadcast-scope-ok
+                        expr-bases
+                        body
+                        false)]
                     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
@@ -20918,6 +21047,7 @@
 
 (define (tc-type-env-local-cache-lambda-capture-smoke?) : bool
   (let
+    [expr-bases : i64 (ast-node-pool-active-expr-segment-bases)]
     [body : AstExpr (AstExpr.Var (intern "captured"))]
     [base : TcTypeEnv (tc-env-with-cache (tc-empty-env))]
     [env : TcTypeEnv
@@ -20930,18 +21060,24 @@
     [scoped : TcTypeEnvScopedCarrier
       (tc-type-env-scoped-carrier-from-marker-visible-env deep)]
     (and
-      (tc-lambda-captures-reference? deep (ast-param-list-new) body)
+      (tc-lambda-captures-reference? expr-bases deep (ast-param-list-new) body)
       (tc-type-env-scoped-carrier-lambda-captures-reference?
+        expr-bases
         scoped
         (ast-param-list-new)
         body)
-      (match (tc-check-lambda-region-captures deep (ast-param-list-new) body)
+      (match (tc-check-lambda-region-captures
+        expr-bases
+        deep
+        (ast-param-list-new)
+        body)
         [(ResultTcUnit.Err message)
           (string.eq
             message
             "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")]
         [_ false])
       (match (tc-check-lambda-region-captures-allow-refs
+        expr-bases
         deep
         (ast-param-list-new)
         body)
@@ -28350,6 +28486,7 @@
     reason))
 
 (define (tc-check-thread-safe-spawn-captures-scan-root
+  [expr-bases : i64]
   [spawn-name : String]
   [ctx : TcContext]
   [root : TcTypeEnv]
@@ -28360,6 +28497,7 @@
     [(TcTypeEnvMarkerStep.Done) ResultTcUnit.Ok]
     [(TcTypeEnvMarkerStep.Cache rest-env)
       (tc-check-thread-safe-spawn-captures-scan-root
+        expr-bases
         spawn-name
         ctx
         root
@@ -28381,21 +28519,23 @@
               (tc-atomic-arena-owner-marker-entry? key ty)
               (not (tc-env-key-has-name-id? key)))
             (tc-check-thread-safe-spawn-captures-scan-root
+              expr-bases
               spawn-name
               ctx
               root
               rest-env
               bound
               body)]
-          [(not (tc-expr-uses-free-name? body name bound))
+          [(not (tc-expr-uses-free-name? expr-bases body name bound))
             (tc-check-thread-safe-spawn-captures-scan-root
+              expr-bases
               spawn-name
               ctx
               root
               rest-env
               bound
               body)]
-          [(tc-expr-sets-free-name? body name bound)
+          [(tc-expr-sets-free-name? expr-bases body name bound)
             (ResultTcUnit.Err
               (str_cat.str-cat
                 "typecheck: "
@@ -28427,6 +28567,7 @@
                     reason))]
               [_
                 (tc-check-thread-safe-spawn-captures-scan-root
+                  expr-bases
                   spawn-name
                   ctx
                   root
@@ -28441,6 +28582,7 @@
   [params : AstParamList]
   [body : AstExpr]) : ResultTcUnit
   (tc-check-thread-safe-spawn-captures-scan-root
+    (tc-context-expr-bases ctx)
     spawn-name
     ctx
     env
@@ -28449,6 +28591,7 @@
     body))
 
 (define (tc-thread-safe-spawn-captured-owner-regions-scan-root
+  [expr-bases : i64]
   [root : TcTypeEnv]
   [env : TcTypeEnv]
   [bound : TcStringList]
@@ -28458,6 +28601,7 @@
     [(TcTypeEnvMarkerStep.Done) owners]
     [(TcTypeEnvMarkerStep.Cache rest-env)
       (tc-thread-safe-spawn-captured-owner-regions-scan-root
+        expr-bases
         root
         rest-env
         bound
@@ -28478,13 +28622,15 @@
               (tc-atomic-arena-owner-marker-entry? key ty)
               (not (tc-env-key-has-name-id? key)))
             (tc-thread-safe-spawn-captured-owner-regions-scan-root
+              expr-bases
               root
               rest-env
               bound
               body
               owners)]
-          [(not (tc-expr-uses-free-name? body name bound))
+          [(not (tc-expr-uses-free-name? expr-bases body name bound))
             (tc-thread-safe-spawn-captured-owner-regions-scan-root
+              expr-bases
               root
               rest-env
               bound
@@ -28492,6 +28638,7 @@
               owners)]
           [else
             (tc-thread-safe-spawn-captured-owner-regions-scan-root
+              expr-bases
               root
               rest-env
               bound
@@ -28503,10 +28650,12 @@
                 (tc-type-atomic-arena-owner-regions root ty)))]))]))
 
 (define (tc-thread-safe-spawn-captured-owner-regions
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : TcNameIdList
   (tc-thread-safe-spawn-captured-owner-regions-scan-root
+    expr-bases
     env
     (tc-type-env-marker-start env)
     (tc-param-bound-names params)
@@ -28514,6 +28663,7 @@
     TcNameIdList.Nil))
 
 (define (tc-thread-safe-spawn-direct-lambda-owner-regions
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [arg : AstExpr]) : TcNameIdList
   (match (ast-expr-unspan arg)
@@ -28522,9 +28672,10 @@
         [(AstLambda.Lambda params _ body-box)
           (if (= (ast-param-list-len (& params)) 0)
             (tc-thread-safe-spawn-captured-owner-regions
+              expr-bases
               env
               params
-              (ast-node-get body-box))
+              (ast-expr-segment-bases-get expr-bases body-box))
             TcNameIdList.Nil)])]
     [_ TcNameIdList.Nil]))
 
@@ -28605,7 +28756,10 @@
                 arg)
                 [(ResultTcUnit.Ok)
                   (ResultTcNameIdList.Ok
-                    (tc-thread-safe-spawn-direct-lambda-owner-regions env arg))]
+                    (tc-thread-safe-spawn-direct-lambda-owner-regions
+                      (tc-context-expr-bases ctx)
+                      env
+                      arg))]
                 [(ResultTcUnit.Err message) (ResultTcNameIdList.Err message)]))
             (ResultTcNameIdList.Err
               (str_cat.str-cat
@@ -30583,15 +30737,18 @@
             [(ResultTcType.Err message) (ResultTcEnv.Err message)]))])))
 
 (define (tc-lambda-captures-reference?
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : bool
   (tc-type-env-scoped-carrier-lambda-captures-reference?
+    expr-bases
     (tc-type-env-scoped-carrier-from-marker-visible-env env)
     params
     body))
 
 (define (tc-type-env-scoped-lambda-captures-reference-scan
+  [expr-bases : i64]
   [cursor : TcTypeEnvScopedMarkerCursor]
   [bound : TcStringList]
   [body : AstExpr]) : bool
@@ -30604,46 +30761,55 @@
         (tc-cleanup-owner-marker-entry? key ty)
         (not (tc-env-key-has-name-id? key)))
         (tc-type-env-scoped-lambda-captures-reference-scan
+          expr-bases
           rest-cursor
           bound
           body)
         (if (and
-          (tc-expr-uses-free-name? body (intern-str key) bound)
+          (tc-expr-uses-free-name? expr-bases body (intern-str key) bound)
           (tc-type-contains-reference? ty))
           true
           (tc-type-env-scoped-lambda-captures-reference-scan
+            expr-bases
             rest-cursor
             bound
             body)))]))
 
 (define (tc-type-env-scoped-carrier-lambda-captures-reference?
+  [expr-bases : i64]
   [carrier : TcTypeEnvScopedCarrier]
   [params : AstParamList]
   [body : AstExpr]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (tc-type-env-scoped-lambda-captures-reference-scan
+      expr-bases
       (tc-type-env-scoped-carrier-marker-cursor carrier)
       (tc-param-bound-names params)
       body)))
 
-(define (tc-ref-capturing-lambda-init? [env : TcTypeEnv] [init : AstExpr]) : bool
+(define (tc-ref-capturing-lambda-init?
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [init : AstExpr]) : bool
   (match (ast-expr-unspan init)
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
-            (tc-lambda-captures-reference? env params body))])]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (tc-lambda-captures-reference? expr-bases env params body))])]
     [_ false]))
 
 (define (tc-ref-closure-expr-list-local-uses-ok?
+  [expr-bases : i64]
   [exprs : AstExprList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-ref-closure-expr-list-local-uses-ok-at? (& exprs) 0 name bound))
+  (tc-ref-closure-expr-list-local-uses-ok-at? expr-bases (& exprs) 0 name bound))
 
 (define (tc-ref-closure-expr-list-local-uses-ok-at?
+  [expr-bases : i64]
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [name : String]
@@ -30652,18 +30818,33 @@
     true
     (and
       (tc-ref-closure-local-uses-ok?
-        (ast-node-get (ast-expr-list-get exprs index 0))
+        expr-bases
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))
         name
         bound)
-      (tc-ref-closure-expr-list-local-uses-ok-at? exprs (+ index 1) name bound))))
+      (tc-ref-closure-expr-list-local-uses-ok-at?
+        expr-bases
+        exprs
+        (+ index 1)
+        name
+        bound))))
 
 (define (tc-ref-closure-let-binding-list-local-uses-ok?
+  [expr-bases : i64]
   [bindings : AstLetBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-ref-closure-let-binding-list-local-uses-ok-at? (& bindings) name bound 0))
+  (tc-ref-closure-let-binding-list-local-uses-ok-at?
+    expr-bases
+    (& bindings)
+    name
+    bound
+    0))
 
 (define (tc-ref-closure-let-binding-list-local-uses-ok-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [name : String]
   [bound : TcStringList]
@@ -30673,21 +30854,24 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding bind-name _ init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           (and
-            (tc-ref-closure-local-uses-ok? init name bound)
+            (tc-ref-closure-local-uses-ok? expr-bases init name bound)
             (tc-ref-closure-let-binding-list-local-uses-ok-at?
+              expr-bases
               bindings
               name
               (tc-string-list-add bound (intern-str bind-name))
               (+ index 1))))])))
 
 (define (tc-ref-closure-let-rest-and-body-local-uses-ok?
+  [expr-bases : i64]
   [bindings : AstLetBindingList]
   [body : AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
   (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+    expr-bases
     (& bindings)
     body
     name
@@ -30695,20 +30879,22 @@
     0))
 
 (define (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [body : AstExpr]
   [name : String]
   [bound : TcStringList]
   [index : i64]) : bool
   (if (>= index (ast-let-binding-list-len bindings))
-    (tc-ref-closure-local-uses-ok? body name bound)
+    (tc-ref-closure-local-uses-ok? expr-bases body name bound)
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding bind-name _ init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           (and
-            (tc-ref-closure-local-uses-ok? init name bound)
+            (tc-ref-closure-local-uses-ok? expr-bases init name bound)
             (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+              expr-bases
               bindings
               body
               name
@@ -30716,16 +30902,19 @@
               (+ index 1))))])))
 
 (define (tc-ref-closure-resource-binding-list-local-uses-ok?
+  [expr-bases : i64]
   [bindings : AstResourceBindingList]
   [name : String]
   [bound : TcStringList]) : bool
   (tc-ref-closure-resource-binding-list-local-uses-ok-at?
+    expr-bases
     (& bindings)
     name
     bound
     0))
 
 (define (tc-ref-closure-resource-binding-list-local-uses-ok-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstResourceBindingList)]
   [name : String]
   [bound : TcStringList]
@@ -30738,24 +30927,28 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
           (and
-            (tc-ref-closure-local-uses-ok? init name bound)
-            (tc-ref-closure-local-uses-ok? cleanup name bound)
+            (tc-ref-closure-local-uses-ok? expr-bases init name bound)
+            (tc-ref-closure-local-uses-ok? expr-bases cleanup name bound)
             (tc-ref-closure-resource-binding-list-local-uses-ok-at?
+              expr-bases
               bindings
               name
               (tc-string-list-add bound (intern-str bind-name))
               (+ index 1))))])))
 
 (define (tc-ref-closure-match-arms-local-uses-ok?
+  [expr-bases : i64]
   [arms : AstMatchArmList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-ref-closure-match-arms-local-uses-ok-at? (& arms) name bound 0))
+  (tc-ref-closure-match-arms-local-uses-ok-at? expr-bases (& arms) name bound 0))
 
 (define (tc-ref-closure-match-arms-local-uses-ok-at?
+  [expr-bases : i64]
   [arms : (& arms AstMatchArmList)]
   [name : String]
   [bound : TcStringList]
@@ -30765,13 +30958,15 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
           (and
             (tc-ref-closure-local-uses-ok?
+              expr-bases
               body
               name
               (tc-pattern-add-bound-names pattern bound))
             (tc-ref-closure-match-arms-local-uses-ok-at?
+              expr-bases
               arms
               name
               bound
@@ -30789,14 +30984,15 @@
     [_ false]))
 
 (define (tc-ref-closure-local-uses-ok?
+  [expr-bases : i64]
   [expr : AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Var var-name)
       (not
         (and
@@ -30804,45 +31000,47 @@
           (not (tc-string-list-contains bound name))))]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
         (and
-          (tc-ref-closure-local-uses-ok? left name bound)
-          (tc-ref-closure-local-uses-ok? right name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases left name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases right name bound)))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
         (if (tc-ref-closure-direct-call? func name bound)
-          (tc-ref-closure-expr-list-local-uses-ok? args name bound)
+          (tc-ref-closure-expr-list-local-uses-ok? expr-bases args name bound)
           (and
-            (tc-ref-closure-local-uses-ok? func name bound)
-            (tc-ref-closure-expr-list-local-uses-ok? args name bound))))]
+            (tc-ref-closure-local-uses-ok? expr-bases func name bound)
+            (tc-ref-closure-expr-list-local-uses-ok? expr-bases args name bound))))]
     [(AstExpr.BracketClause items)
-      (tc-ref-closure-expr-list-local-uses-ok? items name bound)]
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases items name bound)]
     [(AstExpr.If cond-box then-box else-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-box)]
-        [else-branch : AstExpr (ast-node-get else-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr (ast-expr-segment-bases-get expr-bases then-box)]
+        [else-branch : AstExpr (ast-expr-segment-bases-get expr-bases else-box)]
         (and
-          (tc-ref-closure-local-uses-ok? cond name bound)
-          (tc-ref-closure-local-uses-ok? then-branch name bound)
-          (tc-ref-closure-local-uses-ok? else-branch name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases cond name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases then-branch name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases else-branch name bound)))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (and
               (tc-ref-closure-let-binding-list-local-uses-ok?
+                expr-bases
                 bindings
                 name
                 bound)
               (tc-ref-closure-local-uses-ok?
+                expr-bases
                 body
                 name
                 (tc-let-binding-list-add-bound-names bindings bound))))])]
@@ -30850,135 +31048,142 @@
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (not
               (tc-expr-uses-free-name?
+                expr-bases
                 body
                 name
                 (tc-param-list-add-bound-names params bound))))])]
     [(AstExpr.Tuple exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
     [(AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
-        (tc-ref-closure-local-uses-ok? tuple name bound))]
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases tuple name bound))]
     [(AstExpr.Array exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
     [(AstExpr.DynArray exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
     [(AstExpr.MakeArray _ len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
-        (tc-ref-closure-local-uses-ok? len name bound))]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases len name bound))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (and
-          (tc-ref-closure-local-uses-ok? array name bound)
-          (tc-ref-closure-local-uses-ok? index name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases array name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases index name bound)))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (and
-          (tc-ref-closure-local-uses-ok? array name bound)
-          (tc-ref-closure-local-uses-ok? index name bound)
-          (tc-ref-closure-local-uses-ok? value name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases array name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases index name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [live : AstExpr (ast-node-get live-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (and
-          (tc-ref-closure-local-uses-ok? array name bound)
-          (tc-ref-closure-local-uses-ok? live name bound)
-          (tc-ref-closure-local-uses-ok? index name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases array name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases live name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases index name bound)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (and
-          (tc-ref-closure-local-uses-ok? array name bound)
-          (tc-ref-closure-local-uses-ok? value name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases array name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
     [(AstExpr.StringRef str-box index-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (and
-          (tc-ref-closure-local-uses-ok? str name bound)
-          (tc-ref-closure-local-uses-ok? index name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases str name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases index name bound)))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
         (and
-          (tc-ref-closure-local-uses-ok? cond name bound)
-          (tc-ref-closure-local-uses-ok? body name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases cond name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases body name bound)))]
     [(AstExpr.Begin exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
     [(AstExpr.Unsafe exprs)
-      (tc-ref-closure-expr-list-local-uses-ok? exprs name bound)]
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
     [(AstExpr.Set var-name value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (and
           (not
             (and
               (string.eq (tc-env-key-name-text var-name) name)
               (not (tc-string-list-contains bound name))))
-          (tc-ref-closure-local-uses-ok? value name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Borrow _ _ place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-ref-closure-local-uses-ok? place name bound))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases place name bound))]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (and
-          (tc-ref-closure-local-uses-ok? inner name bound)
-          (tc-ref-closure-local-uses-ok? value name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases inner name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
           (let
-            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            [scrutinee : AstExpr
+              (ast-expr-segment-bases-get expr-bases scrutinee-box)]
             (and
-              (tc-ref-closure-local-uses-ok? scrutinee name bound)
-              (tc-ref-closure-match-arms-local-uses-ok? arms name bound)))])]
+              (tc-ref-closure-local-uses-ok? expr-bases scrutinee name bound)
+              (tc-ref-closure-match-arms-local-uses-ok?
+                expr-bases
+                arms
+                name
+                bound)))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach index _ start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (and
-              (tc-ref-closure-local-uses-ok? start name bound)
-              (tc-ref-closure-local-uses-ok? end name bound)
+              (tc-ref-closure-local-uses-ok? expr-bases start name bound)
+              (tc-ref-closure-local-uses-ok? expr-bases end name bound)
               (tc-ref-closure-local-uses-ok?
+                expr-bases
                 body
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
@@ -30986,15 +31191,16 @@
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ index _ start-box end-box init-box value-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
             (and
-              (tc-ref-closure-local-uses-ok? start name bound)
-              (tc-ref-closure-local-uses-ok? end name bound)
-              (tc-ref-closure-local-uses-ok? init name bound)
+              (tc-ref-closure-local-uses-ok? expr-bases start name bound)
+              (tc-ref-closure-local-uses-ok? expr-bases end name bound)
+              (tc-ref-closure-local-uses-ok? expr-bases init name bound)
               (tc-ref-closure-local-uses-ok?
+                expr-bases
                 value
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
@@ -31012,198 +31218,204 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             [index-bound : TcStringList
               (tc-string-list-add bound (tc-env-key-name-text index))]
             [body-bound : TcStringList
               (tc-string-list-add index-bound (tc-env-key-name-text prefix))]
             (and
-              (tc-ref-closure-local-uses-ok? start name bound)
-              (tc-ref-closure-local-uses-ok? end name bound)
-              (tc-ref-closure-local-uses-ok? init name bound)
-              (tc-ref-closure-local-uses-ok? value name index-bound)
-              (tc-ref-closure-local-uses-ok? body name body-bound)))])]
+              (tc-ref-closure-local-uses-ok? expr-bases start name bound)
+              (tc-ref-closure-local-uses-ok? expr-bases end name bound)
+              (tc-ref-closure-local-uses-ok? expr-bases init name bound)
+              (tc-ref-closure-local-uses-ok? expr-bases value name index-bound)
+              (tc-ref-closure-local-uses-ok? expr-bases body name body-bound)))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
         (and
-          (tc-ref-closure-local-uses-ok? value name bound)
-          (tc-ref-closure-local-uses-ok? lane name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases value name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases lane name bound)))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
         (and
-          (tc-ref-closure-local-uses-ok? value name bound)
-          (tc-ref-closure-local-uses-ok? lane name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases value name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases lane name bound)))]
     [(AstExpr.StructGet receiver-box _)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        (tc-ref-closure-local-uses-ok? receiver name bound))]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases receiver name bound))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (and
-          (tc-ref-closure-local-uses-ok? receiver name bound)
-          (tc-ref-closure-local-uses-ok? value name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases receiver name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
     [(AstExpr.WithRegion _ body)
-      (tc-ref-closure-expr-list-local-uses-ok? body name bound)]
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)]
     [(AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
         (and
-          (tc-ref-closure-local-uses-ok? scratch name bound)
-          (tc-ref-closure-expr-list-local-uses-ok? body name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases scratch name bound)
+          (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)))]
     [(AstExpr.WithScratch body)
-      (tc-ref-closure-expr-list-local-uses-ok? body name bound)]
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)]
     [(AstExpr.InArena arena-box body)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
         (and
-          (tc-ref-closure-local-uses-ok? arena name bound)
-          (tc-ref-closure-expr-list-local-uses-ok? body name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases arena name bound)
+          (tc-ref-closure-expr-list-local-uses-ok? expr-bases body name bound)))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (and
             (tc-ref-closure-resource-binding-list-local-uses-ok?
+              expr-bases
               bindings
               name
               bound)
             (tc-ref-closure-expr-list-local-uses-ok?
+              expr-bases
               body
               name
               (tc-resource-binding-list-add-bound-names bindings bound)))])]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Quote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Quasiquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Unquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.UnquoteSplicing inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.PtrNullCheck inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-ref-closure-local-uses-ok? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases inner name bound))]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-ref-closure-local-uses-ok? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases ptr name bound))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (and
-          (tc-ref-closure-local-uses-ok? ptr name bound)
-          (tc-ref-closure-local-uses-ok? value name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases ptr name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases value name bound)))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
         (and
-          (tc-ref-closure-local-uses-ok? ptr name bound)
-          (tc-ref-closure-local-uses-ok? offset name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases ptr name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases offset name bound)))]
     [(AstExpr.PtrCast ptr-box _)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-ref-closure-local-uses-ok? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases ptr name bound))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-ref-closure-local-uses-ok? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases ptr name bound))]
     [(AstExpr.IntToPtr value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-ref-closure-local-uses-ok? value name bound))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases value name bound))]
     [(AstExpr.StringData str-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        (tc-ref-closure-local-uses-ok? str name bound))]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases str name bound))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
         (and
-          (tc-ref-closure-local-uses-ok? ptr name bound)
-          (tc-ref-closure-local-uses-ok? len name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases ptr name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases len name bound)))]
     [(AstExpr.ArrayData array-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        (tc-ref-closure-local-uses-ok? array name bound))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases array name bound))]
     [(AstExpr.BinaryData _) true]
     [(AstExpr.SpmdProgramIndex) true]
     [(AstExpr.SpmdProgramCount) true]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (and
-          (tc-ref-closure-local-uses-ok? leaf name bound)
-          (tc-ref-closure-local-uses-ok? subleaf name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases leaf name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (and
-          (tc-ref-closure-local-uses-ok? leaf name bound)
-          (tc-ref-closure-local-uses-ok? subleaf name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases leaf name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (and
-          (tc-ref-closure-local-uses-ok? leaf name bound)
-          (tc-ref-closure-local-uses-ok? subleaf name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases leaf name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (and
-          (tc-ref-closure-local-uses-ok? leaf name bound)
-          (tc-ref-closure-local-uses-ok? subleaf name bound)))]
+          (tc-ref-closure-local-uses-ok? expr-bases leaf name bound)
+          (tc-ref-closure-local-uses-ok? expr-bases subleaf name bound)))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-ref-closure-local-uses-ok? index name bound))]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases index name bound))]
     [(AstExpr.Syscall args)
-      (tc-ref-closure-expr-list-local-uses-ok? args name bound)]
-    [_ (not (tc-expr-uses-free-name? expr name bound))]))
+      (tc-ref-closure-expr-list-local-uses-ok? expr-bases args name bound)]
+    [_ (not (tc-expr-uses-free-name? expr-bases expr name bound))]))
 
 (define (tc-reference-closure-escape-message) : String
   "typecheck: reference-capturing closure value would escape lexical scope")
 
 (define (tc-let-binding-ref-closure-scope-ok
+  [expr-bases : i64]
   [rest : AstLetBindingList]
   [body : AstExpr]
   [name : String]) : ResultTcUnit
   (if (tc-ref-closure-let-rest-and-body-local-uses-ok?
+    expr-bases
     rest
     body
     name
@@ -31212,11 +31424,13 @@
     (ResultTcUnit.Err (tc-reference-closure-escape-message))))
 
 (define (tc-let-binding-ref-closure-scope-ok-at
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [index : i64]
   [body : AstExpr]
   [name : String]) : ResultTcUnit
   (if (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
+    expr-bases
     bindings
     body
     name
@@ -31333,14 +31547,17 @@
   [index : i64]
   [body : AstExpr]) : ResultTcType
   (let
-    [init : AstExpr (ast-node-get init-id)]
-    [ref-capturing-lambda : bool (tc-ref-capturing-lambda-init? env init)]
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    [init : AstExpr (ast-expr-segment-bases-get expr-bases init-id)]
+    [ref-capturing-lambda : bool
+      (tc-ref-capturing-lambda-init? expr-bases env init)]
     (match maybe-ty
       [(AstMaybeType.Some want)
         (let
           [resolved-want : AstType (tc-resolve-type ctx want)]
           (if ref-capturing-lambda
             (match (tc-let-binding-ref-closure-scope-ok-at
+              expr-bases
               bindings
               index
               body
@@ -31369,6 +31586,7 @@
       [(AstMaybeType.No)
         (if ref-capturing-lambda
           (match (tc-let-binding-ref-closure-scope-ok-at
+            expr-bases
             bindings
             index
             body
@@ -35359,12 +35577,14 @@
           (+ index 1))])))
 
 (define (tc-expr-list-uses-free-name?
+  [expr-bases : i64]
   [exprs : AstExprList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-expr-list-uses-free-name-at? (& exprs) 0 name bound))
+  (tc-expr-list-uses-free-name-at? expr-bases (& exprs) 0 name bound))
 
 (define (tc-expr-list-uses-free-name-at?
+  [expr-bases : i64]
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [name : String]
@@ -35373,18 +35593,23 @@
     false
     (or
       (tc-expr-uses-free-name?
-        (ast-node-get (ast-expr-list-get exprs index 0))
+        expr-bases
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))
         name
         bound)
-      (tc-expr-list-uses-free-name-at? exprs (+ index 1) name bound))))
+      (tc-expr-list-uses-free-name-at? expr-bases exprs (+ index 1) name bound))))
 
 (define (tc-let-binding-list-uses-free-name?
+  [expr-bases : i64]
   [bindings : AstLetBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-let-binding-list-uses-free-name-at? (& bindings) name bound 0))
+  (tc-let-binding-list-uses-free-name-at? expr-bases (& bindings) name bound 0))
 
 (define (tc-let-binding-list-uses-free-name-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [name : String]
   [bound : TcStringList]
@@ -35394,22 +35619,30 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding bind-name _ init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           (or
-            (tc-expr-uses-free-name? init name bound)
+            (tc-expr-uses-free-name? expr-bases init name bound)
             (tc-let-binding-list-uses-free-name-at?
+              expr-bases
               bindings
               name
               (tc-string-list-add bound (intern-str bind-name))
               (+ index 1))))])))
 
 (define (tc-resource-binding-list-uses-free-name?
+  [expr-bases : i64]
   [bindings : AstResourceBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-resource-binding-list-uses-free-name-at? (& bindings) name bound 0))
+  (tc-resource-binding-list-uses-free-name-at?
+    expr-bases
+    (& bindings)
+    name
+    bound
+    0))
 
 (define (tc-resource-binding-list-uses-free-name-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstResourceBindingList)]
   [name : String]
   [bound : TcStringList]
@@ -35422,24 +35655,28 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
           (or
-            (tc-expr-uses-free-name? init name bound)
-            (tc-expr-uses-free-name? cleanup name bound)
+            (tc-expr-uses-free-name? expr-bases init name bound)
+            (tc-expr-uses-free-name? expr-bases cleanup name bound)
             (tc-resource-binding-list-uses-free-name-at?
+              expr-bases
               bindings
               name
               (tc-string-list-add bound (intern-str bind-name))
               (+ index 1))))])))
 
 (define (tc-match-arms-use-free-name?
+  [expr-bases : i64]
   [arms : AstMatchArmList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-match-arms-use-free-name-at? (& arms) name bound 0))
+  (tc-match-arms-use-free-name-at? expr-bases (& arms) name bound 0))
 
 (define (tc-match-arms-use-free-name-at?
+  [expr-bases : i64]
   [arms : (& arms AstMatchArmList)]
   [name : String]
   [bound : TcStringList]
@@ -35449,23 +35686,30 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
           (or
             (tc-expr-uses-free-name?
+              expr-bases
               body
               name
               (tc-pattern-add-bound-names pattern bound))
-            (tc-match-arms-use-free-name-at? arms name bound (+ index 1))))])))
+            (tc-match-arms-use-free-name-at?
+              expr-bases
+              arms
+              name
+              bound
+              (+ index 1))))])))
 
 (define (tc-expr-uses-free-name?
+  [expr-bases : i64]
   [expr : AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Literal _) false]
     [(AstExpr.Var var-name)
       (and
@@ -35473,42 +35717,49 @@
         (not (tc-string-list-contains bound name)))]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
         (or
-          (tc-expr-uses-free-name? left name bound)
-          (tc-expr-uses-free-name? right name bound)))]
+          (tc-expr-uses-free-name? expr-bases left name bound)
+          (tc-expr-uses-free-name? expr-bases right name bound)))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
         (or
-          (tc-expr-uses-free-name? func name bound)
-          (tc-expr-list-uses-free-name? args name bound)))]
+          (tc-expr-uses-free-name? expr-bases func name bound)
+          (tc-expr-list-uses-free-name? expr-bases args name bound)))]
     [(AstExpr.BracketClause items)
-      (tc-expr-list-uses-free-name? items name bound)]
+      (tc-expr-list-uses-free-name? expr-bases items name bound)]
     [(AstExpr.TypeLiteral _) false]
     [(AstExpr.Init _) false]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases else-branch-box)]
         (or
-          (tc-expr-uses-free-name? cond name bound)
-          (tc-expr-uses-free-name? then-branch name bound)
-          (tc-expr-uses-free-name? else-branch name bound)))]
+          (tc-expr-uses-free-name? expr-bases cond name bound)
+          (tc-expr-uses-free-name? expr-bases then-branch name bound)
+          (tc-expr-uses-free-name? expr-bases else-branch name bound)))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (tc-let-binding-list-uses-free-name? bindings name bound)
+              (tc-let-binding-list-uses-free-name?
+                expr-bases
+                bindings
+                name
+                bound)
               (tc-expr-uses-free-name?
+                expr-bases
                 body
                 name
                 (tc-let-binding-list-add-bound-names bindings bound))))])]
@@ -35516,128 +35767,136 @@
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (tc-expr-uses-free-name?
+              expr-bases
               body
               name
               (tc-param-list-add-bound-names params bound)))])]
-    [(AstExpr.Tuple exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+    [(AstExpr.Tuple exprs)
+      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
     [(AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
-        (tc-expr-uses-free-name? tuple name bound))]
-    [(AstExpr.Array exprs) (tc-expr-list-uses-free-name? exprs name bound)]
-    [(AstExpr.DynArray exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        (tc-expr-uses-free-name? expr-bases tuple name bound))]
+    [(AstExpr.Array exprs)
+      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+    [(AstExpr.DynArray exprs)
+      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
     [(AstExpr.MakeArray _ len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
-        (tc-expr-uses-free-name? len name bound))]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-uses-free-name? expr-bases len name bound))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-uses-free-name? array name bound)
-          (tc-expr-uses-free-name? index name bound)))]
+          (tc-expr-uses-free-name? expr-bases array name bound)
+          (tc-expr-uses-free-name? expr-bases index name bound)))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name? array name bound)
-          (tc-expr-uses-free-name? index name bound)
-          (tc-expr-uses-free-name? value name bound)))]
+          (tc-expr-uses-free-name? expr-bases array name bound)
+          (tc-expr-uses-free-name? expr-bases index name bound)
+          (tc-expr-uses-free-name? expr-bases value name bound)))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [live : AstExpr (ast-node-get live-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-uses-free-name? array name bound)
-          (tc-expr-uses-free-name? live name bound)
-          (tc-expr-uses-free-name? index name bound)))]
+          (tc-expr-uses-free-name? expr-bases array name bound)
+          (tc-expr-uses-free-name? expr-bases live name bound)
+          (tc-expr-uses-free-name? expr-bases index name bound)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name? array name bound)
-          (tc-expr-uses-free-name? value name bound)))]
+          (tc-expr-uses-free-name? expr-bases array name bound)
+          (tc-expr-uses-free-name? expr-bases value name bound)))]
     [(AstExpr.StringRef str-box index-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-uses-free-name? str name bound)
-          (tc-expr-uses-free-name? index name bound)))]
+          (tc-expr-uses-free-name? expr-bases str name bound)
+          (tc-expr-uses-free-name? expr-bases index name bound)))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
         (or
-          (tc-expr-uses-free-name? cond name bound)
-          (tc-expr-uses-free-name? body name bound)))]
-    [(AstExpr.Begin exprs) (tc-expr-list-uses-free-name? exprs name bound)]
-    [(AstExpr.Unsafe exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+          (tc-expr-uses-free-name? expr-bases cond name bound)
+          (tc-expr-uses-free-name? expr-bases body name bound)))]
+    [(AstExpr.Begin exprs)
+      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+    [(AstExpr.Unsafe exprs)
+      (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
     [(AstExpr.Set var-name value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
           (and
             (string.eq (tc-env-key-name-text var-name) name)
             (not (tc-string-list-contains bound name)))
-          (tc-expr-uses-free-name? value name bound)))]
+          (tc-expr-uses-free-name? expr-bases value name bound)))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Borrow _ _ place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-expr-uses-free-name? place name bound))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-expr-uses-free-name? expr-bases place name bound))]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name? inner name bound)
-          (tc-expr-uses-free-name? value name bound)))]
+          (tc-expr-uses-free-name? expr-bases inner name bound)
+          (tc-expr-uses-free-name? expr-bases value name bound)))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
           (let
-            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            [scrutinee : AstExpr
+              (ast-expr-segment-bases-get expr-bases scrutinee-box)]
             (or
-              (tc-expr-uses-free-name? scrutinee name bound)
-              (tc-match-arms-use-free-name? arms name bound)))])]
+              (tc-expr-uses-free-name? expr-bases scrutinee name bound)
+              (tc-match-arms-use-free-name? expr-bases arms name bound)))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach index _ start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (tc-expr-uses-free-name? start name bound)
-              (tc-expr-uses-free-name? end name bound)
+              (tc-expr-uses-free-name? expr-bases start name bound)
+              (tc-expr-uses-free-name? expr-bases end name bound)
               (tc-expr-uses-free-name?
+                expr-bases
                 body
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
@@ -35645,15 +35904,16 @@
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ index _ start-box end-box init-box value-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
             (or
-              (tc-expr-uses-free-name? start name bound)
-              (tc-expr-uses-free-name? end name bound)
-              (tc-expr-uses-free-name? init name bound)
+              (tc-expr-uses-free-name? expr-bases start name bound)
+              (tc-expr-uses-free-name? expr-bases end name bound)
+              (tc-expr-uses-free-name? expr-bases init name bound)
               (tc-expr-uses-free-name?
+                expr-bases
                 value
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
@@ -35671,66 +35931,75 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             [value-bound : TcStringList
               (tc-string-list-add bound (tc-env-key-name-text index))]
             [body-bound : TcStringList
               (tc-string-list-add value-bound (tc-env-key-name-text prefix))]
             (or
-              (tc-expr-uses-free-name? start name bound)
-              (tc-expr-uses-free-name? end name bound)
-              (tc-expr-uses-free-name? init name bound)
-              (tc-expr-uses-free-name? value name value-bound)
-              (tc-expr-uses-free-name? body name body-bound)))])]
+              (tc-expr-uses-free-name? expr-bases start name bound)
+              (tc-expr-uses-free-name? expr-bases end name bound)
+              (tc-expr-uses-free-name? expr-bases init name bound)
+              (tc-expr-uses-free-name? expr-bases value name value-bound)
+              (tc-expr-uses-free-name? expr-bases body name body-bound)))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
         (or
-          (tc-expr-uses-free-name? value name bound)
-          (tc-expr-uses-free-name? lane name bound)))]
+          (tc-expr-uses-free-name? expr-bases value name bound)
+          (tc-expr-uses-free-name? expr-bases lane name bound)))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
         (or
-          (tc-expr-uses-free-name? value name bound)
-          (tc-expr-uses-free-name? lane name bound)))]
+          (tc-expr-uses-free-name? expr-bases value name bound)
+          (tc-expr-uses-free-name? expr-bases lane name bound)))]
     [(AstExpr.StructGet receiver-box _)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        (tc-expr-uses-free-name? receiver name bound))]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (tc-expr-uses-free-name? expr-bases receiver name bound))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name? receiver name bound)
-          (tc-expr-uses-free-name? value name bound)))]
-    [(AstExpr.WithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
+          (tc-expr-uses-free-name? expr-bases receiver name bound)
+          (tc-expr-uses-free-name? expr-bases value name bound)))]
+    [(AstExpr.WithRegion _ body)
+      (tc-expr-list-uses-free-name? expr-bases body name bound)]
     [(AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
         (or
-          (tc-expr-uses-free-name? scratch name bound)
-          (tc-expr-list-uses-free-name? body name bound)))]
-    [(AstExpr.WithScratch body) (tc-expr-list-uses-free-name? body name bound)]
+          (tc-expr-uses-free-name? expr-bases scratch name bound)
+          (tc-expr-list-uses-free-name? expr-bases body name bound)))]
+    [(AstExpr.WithScratch body)
+      (tc-expr-list-uses-free-name? expr-bases body name bound)]
     [(AstExpr.InArena arena-box body)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
         (or
-          (tc-expr-uses-free-name? arena name bound)
-          (tc-expr-list-uses-free-name? body name bound)))]
+          (tc-expr-uses-free-name? expr-bases arena name bound)
+          (tc-expr-list-uses-free-name? expr-bases body name bound)))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (or
-            (tc-resource-binding-list-uses-free-name? bindings name bound)
+            (tc-resource-binding-list-uses-free-name?
+              expr-bases
+              bindings
+              name
+              bound)
             (tc-expr-list-uses-free-name?
+              expr-bases
               body
               name
               (tc-resource-binding-list-add-bound-names bindings bound)))])]
@@ -35738,88 +36007,88 @@
     [(AstExpr.Init _) false]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Quote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Quasiquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Unquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.UnquoteSplicing inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.Break) false]
     [(AstExpr.Continue) false]
     [(AstExpr.PtrNull _) false]
     [(AstExpr.PtrNullCheck inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-uses-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-name? expr-bases inner name bound))]
     [(AstExpr.PtrAddrOf place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-expr-uses-free-name? place name bound))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-expr-uses-free-name? expr-bases place name bound))]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-expr-uses-free-name? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-name? expr-bases ptr name bound))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-uses-free-name? ptr name bound)
-          (tc-expr-uses-free-name? value name bound)))]
+          (tc-expr-uses-free-name? expr-bases ptr name bound)
+          (tc-expr-uses-free-name? expr-bases value name bound)))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
         (or
-          (tc-expr-uses-free-name? ptr name bound)
-          (tc-expr-uses-free-name? offset name bound)))]
+          (tc-expr-uses-free-name? expr-bases ptr name bound)
+          (tc-expr-uses-free-name? expr-bases offset name bound)))]
     [(AstExpr.PtrCast ptr-box _)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-expr-uses-free-name? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-name? expr-bases ptr name bound))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-expr-uses-free-name? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-name? expr-bases ptr name bound))]
     [(AstExpr.IntToPtr value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-expr-uses-free-name? value name bound))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-expr-uses-free-name? expr-bases value name bound))]
     [(AstExpr.StringData str-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        (tc-expr-uses-free-name? str name bound))]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        (tc-expr-uses-free-name? expr-bases str name bound))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
         (or
-          (tc-expr-uses-free-name? ptr name bound)
-          (tc-expr-uses-free-name? len name bound)))]
+          (tc-expr-uses-free-name? expr-bases ptr name bound)
+          (tc-expr-uses-free-name? expr-bases len name bound)))]
     [(AstExpr.ArrayData array-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        (tc-expr-uses-free-name? array name bound))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (tc-expr-uses-free-name? expr-bases array name bound))]
     [(AstExpr.BinaryData _) false]
     [(AstExpr.SpmdProgramIndex) false]
     [(AstExpr.SpmdProgramCount) false]
@@ -35828,49 +36097,52 @@
     [(AstExpr.ProgramEnvp) false]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-uses-free-name? leaf name bound)
-          (tc-expr-uses-free-name? subleaf name bound)))]
+          (tc-expr-uses-free-name? expr-bases leaf name bound)
+          (tc-expr-uses-free-name? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-uses-free-name? leaf name bound)
-          (tc-expr-uses-free-name? subleaf name bound)))]
+          (tc-expr-uses-free-name? expr-bases leaf name bound)
+          (tc-expr-uses-free-name? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-uses-free-name? leaf name bound)
-          (tc-expr-uses-free-name? subleaf name bound)))]
+          (tc-expr-uses-free-name? expr-bases leaf name bound)
+          (tc-expr-uses-free-name? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-uses-free-name? leaf name bound)
-          (tc-expr-uses-free-name? subleaf name bound)))]
+          (tc-expr-uses-free-name? expr-bases leaf name bound)
+          (tc-expr-uses-free-name? expr-bases subleaf name bound)))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-expr-uses-free-name? index name bound))]
-    [(AstExpr.Syscall args) (tc-expr-list-uses-free-name? args name bound)]))
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-expr-uses-free-name? expr-bases index name bound))]
+    [(AstExpr.Syscall args)
+      (tc-expr-list-uses-free-name? expr-bases args name bound)]))
 
 ;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
 ;; when the expression assigns to the free name. Lambda capture checks use this
 ;; to reject mutation of captured bindings while allowing local parameter/let
 ;; assignment inside the lambda.
 (define (tc-expr-list-sets-free-name?
+  [expr-bases : i64]
   [exprs : AstExprList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-expr-list-sets-free-name-at? (& exprs) 0 name bound))
+  (tc-expr-list-sets-free-name-at? expr-bases (& exprs) 0 name bound))
 
 (define (tc-expr-list-sets-free-name-at?
+  [expr-bases : i64]
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [name : String]
@@ -35879,18 +36151,23 @@
     false
     (or
       (tc-expr-sets-free-name?
-        (ast-node-get (ast-expr-list-get exprs index 0))
+        expr-bases
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))
         name
         bound)
-      (tc-expr-list-sets-free-name-at? exprs (+ index 1) name bound))))
+      (tc-expr-list-sets-free-name-at? expr-bases exprs (+ index 1) name bound))))
 
 (define (tc-let-binding-list-sets-free-name?
+  [expr-bases : i64]
   [bindings : AstLetBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-let-binding-list-sets-free-name-at? (& bindings) name bound 0))
+  (tc-let-binding-list-sets-free-name-at? expr-bases (& bindings) name bound 0))
 
 (define (tc-let-binding-list-sets-free-name-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [name : String]
   [bound : TcStringList]
@@ -35900,22 +36177,30 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding bind-name _ init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           (or
-            (tc-expr-sets-free-name? init name bound)
+            (tc-expr-sets-free-name? expr-bases init name bound)
             (tc-let-binding-list-sets-free-name-at?
+              expr-bases
               bindings
               name
               (tc-string-list-add bound (intern-str bind-name))
               (+ index 1))))])))
 
 (define (tc-resource-binding-list-sets-free-name?
+  [expr-bases : i64]
   [bindings : AstResourceBindingList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-resource-binding-list-sets-free-name-at? (& bindings) name bound 0))
+  (tc-resource-binding-list-sets-free-name-at?
+    expr-bases
+    (& bindings)
+    name
+    bound
+    0))
 
 (define (tc-resource-binding-list-sets-free-name-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstResourceBindingList)]
   [name : String]
   [bound : TcStringList]
@@ -35928,24 +36213,28 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
           (or
-            (tc-expr-sets-free-name? init name bound)
-            (tc-expr-sets-free-name? cleanup name bound)
+            (tc-expr-sets-free-name? expr-bases init name bound)
+            (tc-expr-sets-free-name? expr-bases cleanup name bound)
             (tc-resource-binding-list-sets-free-name-at?
+              expr-bases
               bindings
               name
               (tc-string-list-add bound (intern-str bind-name))
               (+ index 1))))])))
 
 (define (tc-match-arms-set-free-name?
+  [expr-bases : i64]
   [arms : AstMatchArmList]
   [name : String]
   [bound : TcStringList]) : bool
-  (tc-match-arms-set-free-name-at? (& arms) name bound 0))
+  (tc-match-arms-set-free-name-at? expr-bases (& arms) name bound 0))
 
 (define (tc-match-arms-set-free-name-at?
+  [expr-bases : i64]
   [arms : (& arms AstMatchArmList)]
   [name : String]
   [bound : TcStringList]
@@ -35955,61 +36244,75 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
           (or
             (tc-expr-sets-free-name?
+              expr-bases
               body
               name
               (tc-pattern-add-bound-names pattern bound))
-            (tc-match-arms-set-free-name-at? arms name bound (+ index 1))))])))
+            (tc-match-arms-set-free-name-at?
+              expr-bases
+              arms
+              name
+              bound
+              (+ index 1))))])))
 
 (define (tc-expr-sets-free-name?
+  [expr-bases : i64]
   [expr : AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Literal _) false]
     [(AstExpr.Var _) false]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
         (or
-          (tc-expr-sets-free-name? left name bound)
-          (tc-expr-sets-free-name? right name bound)))]
+          (tc-expr-sets-free-name? expr-bases left name bound)
+          (tc-expr-sets-free-name? expr-bases right name bound)))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
         (or
-          (tc-expr-sets-free-name? func name bound)
-          (tc-expr-list-sets-free-name? args name bound)))]
+          (tc-expr-sets-free-name? expr-bases func name bound)
+          (tc-expr-list-sets-free-name? expr-bases args name bound)))]
     [(AstExpr.BracketClause items)
-      (tc-expr-list-sets-free-name? items name bound)]
+      (tc-expr-list-sets-free-name? expr-bases items name bound)]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases else-branch-box)]
         (or
-          (tc-expr-sets-free-name? cond name bound)
-          (tc-expr-sets-free-name? then-branch name bound)
-          (tc-expr-sets-free-name? else-branch name bound)))]
+          (tc-expr-sets-free-name? expr-bases cond name bound)
+          (tc-expr-sets-free-name? expr-bases then-branch name bound)
+          (tc-expr-sets-free-name? expr-bases else-branch name bound)))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (tc-let-binding-list-sets-free-name? bindings name bound)
+              (tc-let-binding-list-sets-free-name?
+                expr-bases
+                bindings
+                name
+                bound)
               (tc-expr-sets-free-name?
+                expr-bases
                 body
                 name
                 (tc-let-binding-list-add-bound-names bindings bound))))])]
@@ -36017,128 +36320,136 @@
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (tc-expr-sets-free-name?
+              expr-bases
               body
               name
               (tc-param-list-add-bound-names params bound)))])]
-    [(AstExpr.Tuple exprs) (tc-expr-list-sets-free-name? exprs name bound)]
+    [(AstExpr.Tuple exprs)
+      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
     [(AstExpr.TupleRef tuple-box _)
       (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
-        (tc-expr-sets-free-name? tuple name bound))]
-    [(AstExpr.Array exprs) (tc-expr-list-sets-free-name? exprs name bound)]
-    [(AstExpr.DynArray exprs) (tc-expr-list-sets-free-name? exprs name bound)]
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        (tc-expr-sets-free-name? expr-bases tuple name bound))]
+    [(AstExpr.Array exprs)
+      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
+    [(AstExpr.DynArray exprs)
+      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
     [(AstExpr.MakeArray _ len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
-        (tc-expr-sets-free-name? len name bound))]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-sets-free-name? expr-bases len name bound))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-sets-free-name? array name bound)
-          (tc-expr-sets-free-name? index name bound)))]
+          (tc-expr-sets-free-name? expr-bases array name bound)
+          (tc-expr-sets-free-name? expr-bases index name bound)))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-sets-free-name? array name bound)
-          (tc-expr-sets-free-name? index name bound)
-          (tc-expr-sets-free-name? value name bound)))]
+          (tc-expr-sets-free-name? expr-bases array name bound)
+          (tc-expr-sets-free-name? expr-bases index name bound)
+          (tc-expr-sets-free-name? expr-bases value name bound)))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [live : AstExpr (ast-node-get live-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-sets-free-name? array name bound)
-          (tc-expr-sets-free-name? live name bound)
-          (tc-expr-sets-free-name? index name bound)))]
+          (tc-expr-sets-free-name? expr-bases array name bound)
+          (tc-expr-sets-free-name? expr-bases live name bound)
+          (tc-expr-sets-free-name? expr-bases index name bound)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-sets-free-name? array name bound)
-          (tc-expr-sets-free-name? value name bound)))]
+          (tc-expr-sets-free-name? expr-bases array name bound)
+          (tc-expr-sets-free-name? expr-bases value name bound)))]
     [(AstExpr.StringRef str-box index-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (tc-expr-sets-free-name? str name bound)
-          (tc-expr-sets-free-name? index name bound)))]
+          (tc-expr-sets-free-name? expr-bases str name bound)
+          (tc-expr-sets-free-name? expr-bases index name bound)))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
         (or
-          (tc-expr-sets-free-name? cond name bound)
-          (tc-expr-sets-free-name? body name bound)))]
-    [(AstExpr.Begin exprs) (tc-expr-list-sets-free-name? exprs name bound)]
-    [(AstExpr.Unsafe exprs) (tc-expr-list-sets-free-name? exprs name bound)]
+          (tc-expr-sets-free-name? expr-bases cond name bound)
+          (tc-expr-sets-free-name? expr-bases body name bound)))]
+    [(AstExpr.Begin exprs)
+      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
+    [(AstExpr.Unsafe exprs)
+      (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
     [(AstExpr.Set var-name value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
           (and
             (string.eq (tc-env-key-name-text var-name) name)
             (not (tc-string-list-contains bound name)))
-          (tc-expr-sets-free-name? value name bound)))]
+          (tc-expr-sets-free-name? expr-bases value name bound)))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Borrow _ _ place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-expr-sets-free-name? place name bound))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-expr-sets-free-name? expr-bases place name bound))]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-sets-free-name? inner name bound)
-          (tc-expr-sets-free-name? value name bound)))]
+          (tc-expr-sets-free-name? expr-bases inner name bound)
+          (tc-expr-sets-free-name? expr-bases value name bound)))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
           (let
-            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            [scrutinee : AstExpr
+              (ast-expr-segment-bases-get expr-bases scrutinee-box)]
             (or
-              (tc-expr-sets-free-name? scrutinee name bound)
-              (tc-match-arms-set-free-name? arms name bound)))])]
+              (tc-expr-sets-free-name? expr-bases scrutinee name bound)
+              (tc-match-arms-set-free-name? expr-bases arms name bound)))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach index _ start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (tc-expr-sets-free-name? start name bound)
-              (tc-expr-sets-free-name? end name bound)
+              (tc-expr-sets-free-name? expr-bases start name bound)
+              (tc-expr-sets-free-name? expr-bases end name bound)
               (tc-expr-sets-free-name?
+                expr-bases
                 body
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
@@ -36146,15 +36457,16 @@
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ index _ start-box end-box init-box value-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
             (or
-              (tc-expr-sets-free-name? start name bound)
-              (tc-expr-sets-free-name? end name bound)
-              (tc-expr-sets-free-name? init name bound)
+              (tc-expr-sets-free-name? expr-bases start name bound)
+              (tc-expr-sets-free-name? expr-bases end name bound)
+              (tc-expr-sets-free-name? expr-bases init name bound)
               (tc-expr-sets-free-name?
+                expr-bases
                 value
                 name
                 (tc-string-list-add bound (tc-env-key-name-text index)))))])]
@@ -36172,66 +36484,75 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             [value-bound : TcStringList
               (tc-string-list-add bound (tc-env-key-name-text index))]
             [body-bound : TcStringList
               (tc-string-list-add value-bound (tc-env-key-name-text prefix))]
             (or
-              (tc-expr-sets-free-name? start name bound)
-              (tc-expr-sets-free-name? end name bound)
-              (tc-expr-sets-free-name? init name bound)
-              (tc-expr-sets-free-name? value name value-bound)
-              (tc-expr-sets-free-name? body name body-bound)))])]
+              (tc-expr-sets-free-name? expr-bases start name bound)
+              (tc-expr-sets-free-name? expr-bases end name bound)
+              (tc-expr-sets-free-name? expr-bases init name bound)
+              (tc-expr-sets-free-name? expr-bases value name value-bound)
+              (tc-expr-sets-free-name? expr-bases body name body-bound)))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
         (or
-          (tc-expr-sets-free-name? value name bound)
-          (tc-expr-sets-free-name? lane name bound)))]
+          (tc-expr-sets-free-name? expr-bases value name bound)
+          (tc-expr-sets-free-name? expr-bases lane name bound)))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
         (or
-          (tc-expr-sets-free-name? value name bound)
-          (tc-expr-sets-free-name? lane name bound)))]
+          (tc-expr-sets-free-name? expr-bases value name bound)
+          (tc-expr-sets-free-name? expr-bases lane name bound)))]
     [(AstExpr.StructGet receiver-box _)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        (tc-expr-sets-free-name? receiver name bound))]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (tc-expr-sets-free-name? expr-bases receiver name bound))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-sets-free-name? receiver name bound)
-          (tc-expr-sets-free-name? value name bound)))]
-    [(AstExpr.WithRegion _ body) (tc-expr-list-sets-free-name? body name bound)]
+          (tc-expr-sets-free-name? expr-bases receiver name bound)
+          (tc-expr-sets-free-name? expr-bases value name bound)))]
+    [(AstExpr.WithRegion _ body)
+      (tc-expr-list-sets-free-name? expr-bases body name bound)]
     [(AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
         (or
-          (tc-expr-sets-free-name? scratch name bound)
-          (tc-expr-list-sets-free-name? body name bound)))]
-    [(AstExpr.WithScratch body) (tc-expr-list-sets-free-name? body name bound)]
+          (tc-expr-sets-free-name? expr-bases scratch name bound)
+          (tc-expr-list-sets-free-name? expr-bases body name bound)))]
+    [(AstExpr.WithScratch body)
+      (tc-expr-list-sets-free-name? expr-bases body name bound)]
     [(AstExpr.InArena arena-box body)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
         (or
-          (tc-expr-sets-free-name? arena name bound)
-          (tc-expr-list-sets-free-name? body name bound)))]
+          (tc-expr-sets-free-name? expr-bases arena name bound)
+          (tc-expr-list-sets-free-name? expr-bases body name bound)))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (or
-            (tc-resource-binding-list-sets-free-name? bindings name bound)
+            (tc-resource-binding-list-sets-free-name?
+              expr-bases
+              bindings
+              name
+              bound)
             (tc-expr-list-sets-free-name?
+              expr-bases
               body
               name
               (tc-resource-binding-list-add-bound-names bindings bound)))])]
@@ -36239,88 +36560,88 @@
     [(AstExpr.Init _) false]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Quote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Quasiquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Unquote inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.UnquoteSplicing inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.Break) false]
     [(AstExpr.Continue) false]
     [(AstExpr.PtrNull _) false]
     [(AstExpr.PtrNullCheck inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-expr-sets-free-name? inner name bound))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-sets-free-name? expr-bases inner name bound))]
     [(AstExpr.PtrAddrOf place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-expr-sets-free-name? place name bound))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-expr-sets-free-name? expr-bases place name bound))]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-expr-sets-free-name? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-sets-free-name? expr-bases ptr name bound))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (tc-expr-sets-free-name? ptr name bound)
-          (tc-expr-sets-free-name? value name bound)))]
+          (tc-expr-sets-free-name? expr-bases ptr name bound)
+          (tc-expr-sets-free-name? expr-bases value name bound)))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
         (or
-          (tc-expr-sets-free-name? ptr name bound)
-          (tc-expr-sets-free-name? offset name bound)))]
+          (tc-expr-sets-free-name? expr-bases ptr name bound)
+          (tc-expr-sets-free-name? expr-bases offset name bound)))]
     [(AstExpr.PtrCast ptr-box _)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-expr-sets-free-name? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-sets-free-name? expr-bases ptr name bound))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-expr-sets-free-name? ptr name bound))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-sets-free-name? expr-bases ptr name bound))]
     [(AstExpr.IntToPtr value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (tc-expr-sets-free-name? value name bound))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-expr-sets-free-name? expr-bases value name bound))]
     [(AstExpr.StringData str-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        (tc-expr-sets-free-name? str name bound))]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        (tc-expr-sets-free-name? expr-bases str name bound))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
         (or
-          (tc-expr-sets-free-name? ptr name bound)
-          (tc-expr-sets-free-name? len name bound)))]
+          (tc-expr-sets-free-name? expr-bases ptr name bound)
+          (tc-expr-sets-free-name? expr-bases len name bound)))]
     [(AstExpr.ArrayData array-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        (tc-expr-sets-free-name? array name bound))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (tc-expr-sets-free-name? expr-bases array name bound))]
     [(AstExpr.BinaryData _) false]
     [(AstExpr.SpmdProgramIndex) false]
     [(AstExpr.SpmdProgramCount) false]
@@ -36329,37 +36650,38 @@
     [(AstExpr.ProgramEnvp) false]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-sets-free-name? leaf name bound)
-          (tc-expr-sets-free-name? subleaf name bound)))]
+          (tc-expr-sets-free-name? expr-bases leaf name bound)
+          (tc-expr-sets-free-name? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-sets-free-name? leaf name bound)
-          (tc-expr-sets-free-name? subleaf name bound)))]
+          (tc-expr-sets-free-name? expr-bases leaf name bound)
+          (tc-expr-sets-free-name? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-sets-free-name? leaf name bound)
-          (tc-expr-sets-free-name? subleaf name bound)))]
+          (tc-expr-sets-free-name? expr-bases leaf name bound)
+          (tc-expr-sets-free-name? expr-bases subleaf name bound)))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (or
-          (tc-expr-sets-free-name? leaf name bound)
-          (tc-expr-sets-free-name? subleaf name bound)))]
+          (tc-expr-sets-free-name? expr-bases leaf name bound)
+          (tc-expr-sets-free-name? expr-bases subleaf name bound)))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (tc-expr-sets-free-name? index name bound))]
-    [(AstExpr.Syscall args) (tc-expr-list-sets-free-name? args name bound)]))
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-expr-sets-free-name? expr-bases index name bound))]
+    [(AstExpr.Syscall args)
+      (tc-expr-list-sets-free-name? expr-bases args name bound)]))
 
 (define (tc-name-is-free-cleanup-owner?
   [owners : TcStringList]
@@ -36620,6 +36942,7 @@
     ResultTcUnit.Ok))
 
 (define (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+  [expr-bases : i64]
   [carrier : TcTypeEnvScopedCarrier]
   [cursor : TcTypeEnvScopedMarkerCursor]
   [bound : TcStringList]
@@ -36638,19 +36961,21 @@
               (tc-ordinary-arena-owner-marker-entry? key ty)
               (tc-atomic-arena-owner-marker-entry? key ty))
             (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+              expr-bases
               carrier
               rest-cursor
               bound
               body
               allow-immutable-reference-captures)]
-          [(not (tc-expr-uses-free-name? body name bound))
+          [(not (tc-expr-uses-free-name? expr-bases body name bound))
             (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+              expr-bases
               carrier
               rest-cursor
               bound
               body
               allow-immutable-reference-captures)]
-          [(tc-expr-sets-free-name? body name bound)
+          [(tc-expr-sets-free-name? expr-bases body name bound)
             (ResultTcUnit.Err
               "typecheck: lambda cannot assign captured binding")]
           [(tc-type-env-scoped-carrier-cleanup-owner-active? carrier key)
@@ -36662,6 +36987,7 @@
           [(tc-type-contains-reference? ty)
             (if allow-immutable-reference-captures
               (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+                expr-bases
                 carrier
                 rest-cursor
                 bound
@@ -36674,6 +37000,7 @@
               (tc-type-env-scoped-carrier-env carrier)
               ty)
               (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+                expr-bases
                 carrier
                 rest-cursor
                 bound
@@ -36683,6 +37010,7 @@
                 "typecheck: lambda cannot capture region-tagged value; region value would escape"))]
           [else
             (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+              expr-bases
               carrier
               rest-cursor
               bound
@@ -36690,6 +37018,7 @@
               allow-immutable-reference-captures)]))]))
 
 (define (tc-type-env-scoped-carrier-check-lambda-region-captures
+  [expr-bases : i64]
   [carrier : TcTypeEnvScopedCarrier]
   [bound : TcStringList]
   [body : AstExpr]
@@ -36697,6 +37026,7 @@
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+      expr-bases
       carrier
       (tc-type-env-scoped-carrier-marker-cursor carrier)
       bound
@@ -36704,31 +37034,37 @@
       allow-immutable-reference-captures)))
 
 (define (tc-check-lambda-region-captures-scan
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (tc-type-env-scoped-carrier-check-lambda-region-captures
+    expr-bases
     (tc-type-env-scoped-carrier-from-marker-visible-env env)
     bound
     body
     allow-immutable-reference-captures))
 
 (define (tc-check-lambda-region-captures
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : ResultTcUnit
   (tc-check-lambda-region-captures-scan
+    expr-bases
     env
     (tc-param-bound-names params)
     body
     false))
 
 (define (tc-check-lambda-region-captures-allow-refs
+  [expr-bases : i64]
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : ResultTcUnit
   (tc-check-lambda-region-captures-scan
+    expr-bases
     env
     (tc-param-bound-names params)
     body
@@ -43974,8 +44310,16 @@
   [body : AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcType
   (match (if allow-immutable-reference-captures
-    (tc-check-lambda-region-captures-allow-refs env params body)
-    (tc-check-lambda-region-captures env params body))
+    (tc-check-lambda-region-captures-allow-refs
+      (tc-context-expr-bases ctx)
+      env
+      params
+      body)
+    (tc-check-lambda-region-captures
+      (tc-context-expr-bases ctx)
+      env
+      params
+      body))
     [(ResultTcUnit.Ok)
       (let
         [lambda-env : TcTypeEnv
@@ -48273,7 +48617,9 @@
                   [(ResultTcUnit.Ok)
                     (if (or
                       (tc-macro-param-list-needs-call-context? params)
-                      (macro-expr-uses-expr-type? body))
+                      (macro-expr-uses-expr-type?
+                        (tc-context-expr-bases ctx)
+                        body))
                       ResultTcUnit.Ok
                       (begin
                         (tc-context-capture-active-pools! ctx)
@@ -50811,7 +51157,7 @@
                 seen
                 remaining
                 body)]
-            [(not (tc-expr-uses-free-name? body name bound))
+            [(not (tc-expr-uses-free-name? expr-bases body name bound))
               (tc-move-check-lambda-owner-captures-scan
                 ctx
                 expr-bases
@@ -53413,6 +53759,7 @@
     [_ (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]))
 
 (define (tc-borrow-check-env-lifetime-used-in-exprs?
+  [expr-bases : i64]
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]
@@ -53426,6 +53773,7 @@
     [(TcTypeEnvMarkerStep.Done) false]
     [(TcTypeEnvMarkerStep.Cache rest-env)
       (tc-borrow-check-env-lifetime-used-in-exprs?
+        expr-bases
         ctx
         rest-env
         exprs
@@ -53440,6 +53788,7 @@
           [name : String (tc-env-key-name-text name-id)]
           (if (tc-string-list-contains seen name)
             (tc-borrow-check-env-lifetime-used-in-exprs?
+              expr-bases
               ctx
               rest-env
               exprs
@@ -53447,9 +53796,14 @@
               seen)
             (if (and
               (tc-borrow-check-binding-stores-lifetime? ctx ty lifetime)
-              (tc-expr-list-uses-free-name? exprs name TcStringList.Nil))
+              (tc-expr-list-uses-free-name?
+                expr-bases
+                exprs
+                name
+                TcStringList.Nil))
               true
               (tc-borrow-check-env-lifetime-used-in-exprs?
+                expr-bases
                 ctx
                 rest-env
                 exprs
@@ -53457,6 +53811,7 @@
                 (tc-string-list-add seen name))))))]))
 
 (define (tc-borrow-check-lifetime-used-in-exprs?
+  [expr-bases : i64]
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]
@@ -53466,6 +53821,7 @@
     (let
       [used : bool
         (tc-borrow-check-env-lifetime-used-in-exprs?
+          expr-bases
           ctx
           env
           exprs
@@ -53731,6 +54087,7 @@
       [TcMoveConflict.No false])))
 
 (define (tc-borrow-check-prune-before-exprs-loop
+  [expr-bases : i64]
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]
@@ -53756,6 +54113,7 @@
             (match (tc-borrow-check-lending-binding (tc-moved-paths out) path)
               [(TcMaybeNameId.Some lending-binding-id)
                 (if (tc-expr-list-uses-free-name?
+                  expr-bases
                   exprs
                   (tc-env-key-name-text lending-binding-id)
                   TcStringList.Nil)
@@ -53763,6 +54121,7 @@
                   (tc-borrow-check-remove-borrow-path out path))]
               [(TcMaybeNameId.No)
                 (if (tc-borrow-check-lifetime-used-in-exprs?
+                  expr-bases
                   ctx
                   env
                   exprs
@@ -53770,6 +54129,7 @@
                   out
                   (tc-borrow-check-remove-borrow-path out path))]))]
         (tc-borrow-check-prune-before-exprs-loop
+          expr-bases
           ctx
           env
           exprs
@@ -53778,6 +54138,7 @@
           out2))]))
 
 (define (tc-borrow-check-prune-before-exprs
+  [expr-bases : i64]
   [ctx : TcContext]
   [env : TcTypeEnv]
   [borrowed : TcMovedSet]
@@ -53786,6 +54147,7 @@
   (if (or (ast-expr-list-empty? (& exprs)) (= (tc-moved-len borrowed) 0))
     borrowed
     (tc-borrow-check-prune-before-exprs-loop
+      expr-bases
       ctx
       env
       exprs
@@ -55573,7 +55935,13 @@
     (TcBorrowCheckResult.Err message)
     (let
       [borrowed0 : TcMovedSet
-        (tc-borrow-check-prune-before-exprs ctx env borrowed protected exprs)]
+        (tc-borrow-check-prune-before-exprs
+          expr-bases
+          ctx
+          env
+          borrowed
+          protected
+          exprs)]
       (if (= (tc-moved-len borrowed0) (tc-moved-len borrowed))
         (TcBorrowCheckResult.Err message)
         (match (tc-borrow-check-expr ctx expr-bases env locals borrowed0 head)
@@ -56119,7 +56487,13 @@
     (TcBorrowCheckResult.Err message)
     (let
       [borrowed0 : TcMovedSet
-        (tc-borrow-check-prune-before-exprs ctx env borrowed protected exprs)]
+        (tc-borrow-check-prune-before-exprs
+          expr-bases
+          ctx
+          env
+          borrowed
+          protected
+          exprs)]
       (if (= (tc-moved-len borrowed0) (tc-moved-len borrowed))
         (TcBorrowCheckResult.Err message)
         (match (tc-borrow-check-expr-loop
@@ -59491,14 +59865,15 @@
 
 (define (macro-live-prescan-ensure-current! [decls : AstDeclList]) : unit
   (let
+    [expr-bases : i64 (ast-node-pool-active-expr-segment-bases)]
     [has-defmacro : bool (macro-program-has-defmacro? decls)]
-    [needs-expansion : bool (macro-program-needs-expansion? decls)]
+    [needs-expansion : bool (macro-program-needs-expansion? expr-bases decls)]
     (begin
       (set! macro-live-prescan-has-defmacro has-defmacro)
       (set!
         macro-live-prescan-expr-type-names
         (if has-defmacro
-          (macro-collect-expr-type-macro-names decls)
+          (macro-collect-expr-type-macro-names expr-bases decls)
           (TcNameIdList.Nil)))
       (set! macro-live-prescan-needs-expansion needs-expansion)
       (set!
@@ -63889,6 +64264,7 @@
             "typecheck: Decls macro transformer did not produce Expr")))]))
 
 (define (macro-hygiene-ctfe-output
+  [expr-bases : i64]
   [value : CompilerCtfeValue]
   [hygiene : MacroHygieneContext]
   [params : AstMacroParamList]
@@ -63896,7 +64272,7 @@
   (match value
     [(CompilerCtfeValue.Expr node produced)
       (let
-        [expr : AstExpr (ast-node-get node)]
+        [expr : AstExpr (ast-expr-segment-bases-get expr-bases node)]
         [param-env : MacroHygieneEnv
           (macro-hygiene-output-macro-param-env
             (& params)
@@ -63905,7 +64281,7 @@
         [output-env : MacroHygieneEnv
           (macro-hygiene-output-decl-env expr param-env)]
         (CompilerCtfeValue.Expr
-          (macro-hygiene-expr expr output-env hygiene depth)
+          (macro-hygiene-expr expr-bases expr output-env hygiene depth)
           produced))]
     [_ value]))
 
@@ -64352,79 +64728,146 @@
             (macro-surface-call-decl-cache-put! target-module-id base-id result)
             result))])))
 
-(define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
+(define (macro-expr-uses-expr-type? [expr-bases : i64] [expr : AstExpr]) : bool
   (or
-    (tc-expr-uses-free-name? expr "expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime.expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime/expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib.comptime.expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib.comptime/expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib/comptime.expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib/comptime/expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "expr-string?" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime.expr-string?" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime/expr-string?" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr-bases expr "expr-type" TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "comptime.expr-type"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "comptime/expr-type"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "stdlib.comptime.expr-type"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "stdlib.comptime/expr-type"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "stdlib/comptime.expr-type"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "stdlib/comptime/expr-type"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name? expr-bases expr "expr-string?" TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "comptime.expr-string?"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "comptime/expr-string?"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib.comptime.expr-string?"
       TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib.comptime/expr-string?"
       TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib/comptime.expr-string?"
       TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "expr-string-value" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime.expr-string-value" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime/expr-string-value" TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "expr-string-value"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "comptime.expr-string-value"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "comptime/expr-string-value"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib.comptime.expr-string-value"
       TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib.comptime/expr-string-value"
       TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib/comptime.expr-string-value"
       TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "string-slice" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime.string-slice" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "comptime/string-slice" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr-bases expr "string-slice" TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "comptime.string-slice"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
+      expr
+      "comptime/string-slice"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib.comptime.string-slice"
       TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib.comptime/string-slice"
       TcStringList.Nil)
     (tc-expr-uses-free-name?
+      expr-bases
       expr
       "stdlib/comptime.string-slice"
       TcStringList.Nil)))
 
 (define (macro-collect-expr-type-decl-name
+  [expr-bases : i64]
   [decl : AstDecl]
   [module-id : i64]
   [acc : TcNameIdList]) : TcNameIdList
   (match decl
     [(AstDecl.DefMacro decl-meta name _ _ body-box)
       (let
-        [body : AstExpr (ast-node-get body-box)]
-        (if (macro-expr-uses-expr-type? body)
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (if (macro-expr-uses-expr-type? expr-bases body)
           (tc-name-id-list-add
             acc
             (compiler-symbol-module-key-id-by-id module-id name))
           acc))]
     [(AstDecl.Unsafe inner-box)
-      (macro-collect-expr-type-decl-name (box-get inner-box) module-id acc)]
+      (macro-collect-expr-type-decl-name
+        expr-bases
+        (box-get inner-box)
+        module-id
+        acc)]
     [_ acc]))
 
 (define (macro-collect-expr-type-macro-names-in
+  [expr-bases : i64]
   [decls : AstDeclList]
   [module-id : i64]
   [acc : TcNameIdList]) : TcNameIdList
@@ -64443,12 +64886,19 @@
                 [_
                   (set!
                     out
-                    (macro-collect-expr-type-decl-name decl cur-module-id out))])
+                    (macro-collect-expr-type-decl-name
+                      expr-bases
+                      decl
+                      cur-module-id
+                      out))])
               (set! cur rest))]))
       out)))
 
-(define (macro-collect-expr-type-macro-names [decls : AstDeclList]) : TcNameIdList
+(define (macro-collect-expr-type-macro-names
+  [expr-bases : i64]
+  [decls : AstDeclList]) : TcNameIdList
   (macro-collect-expr-type-macro-names-in
+    expr-bases
     decls
     cbi.compiler-builtin-id-fix-empty
     TcNameIdList.Nil))
@@ -65103,6 +65553,7 @@
       (MacroHygieneName.Name name-id env))))
 
 (define (macro-hygiene-expr-list
+  [expr-bases : i64]
   [exprs : AstExprList]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65110,10 +65561,18 @@
   (let
     [out : AstExprList (ast-expr-list-with-capacity (struct-get (& exprs) len))]
     (begin
-      (macro-hygiene-expr-list-into (& exprs) 0 env macro-name depth (&mut out))
+      (macro-hygiene-expr-list-into
+        expr-bases
+        (& exprs)
+        0
+        env
+        macro-name
+        depth
+        (&mut out))
       out)))
 
 (define (macro-hygiene-expr-list-into
+  [expr-bases : i64]
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [env : MacroHygieneEnv]
@@ -65126,13 +65585,24 @@
       (ast-expr-list-push
         out
         (macro-hygiene-expr
-          (ast-node-get (ast-expr-list-get exprs index 0))
+          expr-bases
+          (ast-expr-segment-bases-get
+            expr-bases
+            (ast-expr-list-get exprs index 0))
           env
           macro-name
           depth))
-      (macro-hygiene-expr-list-into exprs (+ index 1) env macro-name depth out))))
+      (macro-hygiene-expr-list-into
+        expr-bases
+        exprs
+        (+ index 1)
+        env
+        macro-name
+        depth
+        out))))
 
 (define (macro-hygiene-module-call-args
+  [expr-bases : i64]
   [exprs : AstExprList]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65148,7 +65618,10 @@
             (if (= index 0)
               (ast-expr-list-get (& exprs) index 0)
               (macro-hygiene-expr
-                (ast-node-get (ast-expr-list-get (& exprs) index 0))
+                expr-bases
+                (ast-expr-segment-bases-get
+                  expr-bases
+                  (ast-expr-list-get (& exprs) index 0))
                 env
                 macro-name
                 depth)))
@@ -65156,6 +65629,7 @@
       out)))
 
 (define (macro-hygiene-output-call-env
+  [expr-bases : i64]
   [func : AstExpr]
   [args : (& args AstExprList)]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
@@ -65181,7 +65655,9 @@
                 1
                 (= tag (compiler-parse-tag-decl-defenum))
                 (macro-hygiene-output-signature-env
-                  (ast-node-get (ast-expr-list-get args 0 0))
+                  (ast-expr-segment-bases-get
+                    expr-bases
+                    (ast-expr-list-get args 0 0))
                   env))
               env)]
           [(or
@@ -65191,7 +65667,9 @@
               (= tag (compiler-parse-tag-decl-defdispatch)))
             (if (> count 0)
               (macro-hygiene-output-signature-env
-                (ast-node-get (ast-expr-list-get args 0 0))
+                (ast-expr-segment-bases-get
+                  expr-bases
+                  (ast-expr-list-get args 0 0))
                 env)
               env)]
           [else env]))]
@@ -65465,6 +65943,7 @@
       (MacroHygienePattern.Pattern (AstPattern.Literal lit) env)]))
 
 (define (macro-hygiene-let-bindings
+  [expr-bases : i64]
   [bindings : AstLetBindingList]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65475,6 +65954,7 @@
         (ast-let-binding-list-len (& bindings)))]
     [final-env : MacroHygieneEnv
       (macro-hygiene-let-bindings-into
+        expr-bases
         (& bindings)
         env
         macro-name
@@ -65484,6 +65964,7 @@
     (MacroHygieneLetBindings.LetBindings out final-env)))
 
 (define (macro-hygiene-let-bindings-into
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65495,8 +65976,9 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [ninit : i64
+            (macro-hygiene-expr expr-bases init env macro-name depth)]
           [nmaybe-ty : AstMaybeType
             (macro-hygiene-maybe-type maybe-ty env macro-name)]
           (match (macro-hygiene-bind-name-id env macro-name depth name)
@@ -65506,6 +65988,7 @@
                   out
                   (ast-let-binding-id renamed-id nmaybe-ty ninit))
                 (macro-hygiene-let-bindings-into
+                  expr-bases
                   bindings
                   next-env
                   macro-name
@@ -65514,6 +65997,7 @@
                   out))]))])))
 
 (define (macro-hygiene-resource-bindings
+  [expr-bases : i64]
   [bindings : AstResourceBindingList]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65524,6 +66008,7 @@
         (ast-resource-binding-list-len (& bindings)))]
     [final-env : MacroHygieneEnv
       (macro-hygiene-resource-bindings-into
+        expr-bases
         (& bindings)
         env
         macro-name
@@ -65533,6 +66018,7 @@
     (MacroHygieneResourceBindings.ResourceBindings out final-env)))
 
 (define (macro-hygiene-resource-bindings-into
+  [expr-bases : i64]
   [bindings : (& bindings AstResourceBindingList)]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65547,10 +66033,13 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
-          [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
-          [ncleanup : i64 (macro-hygiene-expr cleanup env macro-name depth)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
+          [ninit : i64
+            (macro-hygiene-expr expr-bases init env macro-name depth)]
+          [ncleanup : i64
+            (macro-hygiene-expr expr-bases cleanup env macro-name depth)]
           (match (macro-hygiene-bind-name-id env macro-name depth name)
             [(MacroHygieneName.Name renamed-id next-env)
               (begin
@@ -65562,6 +66051,7 @@
                     ncleanup
                     move-aware?))
                 (macro-hygiene-resource-bindings-into
+                  expr-bases
                   bindings
                   next-env
                   macro-name
@@ -65570,6 +66060,7 @@
                   out))]))])))
 
 (define (macro-hygiene-arm-list
+  [expr-bases : i64]
   [arms : AstMatchArmList]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65578,10 +66069,18 @@
     [out : AstMatchArmList
       (ast-match-arm-list-with-capacity (struct-get (& arms) len))]
     (begin
-      (macro-hygiene-arm-list-into (& arms) 0 env macro-name depth (&mut out))
+      (macro-hygiene-arm-list-into
+        expr-bases
+        (& arms)
+        0
+        env
+        macro-name
+        depth
+        (&mut out))
       out)))
 
 (define (macro-hygiene-arm-list-into
+  [expr-bases : i64]
   [arms : (& arms AstMatchArmList)]
   [index : i64]
   [env : MacroHygieneEnv]
@@ -65600,11 +66099,13 @@
                 (ast-match-arm
                   npattern
                   (macro-hygiene-expr
-                    (ast-node-get body-box)
+                    expr-bases
+                    (ast-expr-segment-bases-get expr-bases body-box)
                     arm-env
                     macro-name
                     depth)))
               (macro-hygiene-arm-list-into
+                expr-bases
                 arms
                 (+ index 1)
                 env
@@ -65616,6 +66117,7 @@
 ;; whole. The walker recurses through this entry, so the region helpers are
 ;; depth-guarded and only the outermost activation accumulates.
 (define (macro-hygiene-expr
+  [expr-bases : i64]
   [expr : AstExpr]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65623,12 +66125,14 @@
   (begin
     (cfg compile-profile (compiler-tc-walk-hygiene-start!))
     (let
-      [result : i64 (macro-hygiene-expr-inner expr env macro-name depth)]
+      [result : i64
+        (macro-hygiene-expr-inner expr-bases expr env macro-name depth)]
       (begin
         (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
         result))))
 
 (define (macro-hygiene-expr-inner
+  [expr-bases : i64]
   [expr : AstExpr]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -65636,192 +66140,225 @@
   (match expr
     [(AstExpr.Spanned inner-box span)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-spanned (macro-hygiene-expr inner env macro-name depth) span))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-spanned
+          (macro-hygiene-expr expr-bases inner env macro-name depth)
+          span))]
     [(AstExpr.Var name)
       (ast-node-push
         (AstExpr.Var (macro-hygiene-rename-var-id env macro-name name)))]
     [(AstExpr.Binary op left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
         (ast-expr-binary
           op
-          (macro-hygiene-expr left env macro-name depth)
-          (macro-hygiene-expr right env macro-name depth)))]
+          (macro-hygiene-expr expr-bases left env macro-name depth)
+          (macro-hygiene-expr expr-bases right env macro-name depth)))]
     [(AstExpr.Unary op inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-unary op (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-unary
+          op
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
         [call-env : MacroHygieneEnv
-          (macro-hygiene-output-call-env func (& args) env)]
+          (macro-hygiene-output-call-env expr-bases func (& args) env)]
         (ast-expr-call
-          (macro-hygiene-expr func env macro-name depth)
+          (macro-hygiene-expr expr-bases func env macro-name depth)
           (match (ast-expr-unspan func)
             [(AstExpr.Var name-id)
               (if (=
                 (tc-hygiene-template-source-id-or name-id name-id)
                 cbi.compiler-builtin-id-fix-module)
-                (macro-hygiene-module-call-args args env macro-name depth)
-                (macro-hygiene-expr-list args call-env macro-name depth))]
-            [_ (macro-hygiene-expr-list args call-env macro-name depth)])))]
+                (macro-hygiene-module-call-args
+                  expr-bases
+                  args
+                  env
+                  macro-name
+                  depth)
+                (macro-hygiene-expr-list
+                  expr-bases
+                  args
+                  call-env
+                  macro-name
+                  depth))]
+            [_
+              (macro-hygiene-expr-list
+                expr-bases
+                args
+                call-env
+                macro-name
+                depth)])))]
     [(AstExpr.BracketClause items)
       (ast-expr-bracket-clause
-        (macro-hygiene-expr-list items env macro-name depth))]
+        (macro-hygiene-expr-list expr-bases items env macro-name depth))]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases else-branch-box)]
         (ast-expr-if
-          (macro-hygiene-expr cond env macro-name depth)
-          (macro-hygiene-expr then-branch env macro-name depth)
-          (macro-hygiene-expr else-branch env macro-name depth)))]
+          (macro-hygiene-expr expr-bases cond env macro-name depth)
+          (macro-hygiene-expr expr-bases then-branch env macro-name depth)
+          (macro-hygiene-expr expr-bases else-branch env macro-name depth)))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
-            (match (macro-hygiene-let-bindings bindings env macro-name depth)
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (match (macro-hygiene-let-bindings
+              expr-bases
+              bindings
+              env
+              macro-name
+              depth)
               [(MacroHygieneLetBindings.LetBindings nbindings body-env)
                 (ast-expr-let
                   nbindings
-                  (macro-hygiene-expr body body-env macro-name depth))]))])]
+                  (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params maybe-ret body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (macro-hygiene-param-list params env macro-name depth)
               [(MacroHygieneParams.Params nparams body-env)
                 (ast-expr-lambda
                   nparams
                   (macro-hygiene-maybe-type maybe-ret body-env macro-name)
-                  (macro-hygiene-expr body body-env macro-name depth))]))])]
+                  (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(AstExpr.Tuple exprs)
       (ast-node-push
-        (AstExpr.Tuple (macro-hygiene-expr-list exprs env macro-name depth)))]
+        (AstExpr.Tuple
+          (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
     [(AstExpr.TupleRef tuple-expr-box index)
       (let
-        [tuple-expr : AstExpr (ast-node-get tuple-expr-box)]
+        [tuple-expr : AstExpr
+          (ast-expr-segment-bases-get expr-bases tuple-expr-box)]
         (ast-expr-tuple-ref
-          (macro-hygiene-expr tuple-expr env macro-name depth)
+          (macro-hygiene-expr expr-bases tuple-expr env macro-name depth)
           index))]
     [(AstExpr.Array exprs)
       (ast-node-push
-        (AstExpr.Array (macro-hygiene-expr-list exprs env macro-name depth)))]
+        (AstExpr.Array
+          (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
     [(AstExpr.DynArray exprs)
       (ast-node-push
-        (AstExpr.DynArray (macro-hygiene-expr-list exprs env macro-name depth)))]
+        (AstExpr.DynArray
+          (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
     [(AstExpr.MakeArray ty len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
         (ast-expr-make-array
           (macro-hygiene-type ty env macro-name)
-          (macro-hygiene-expr len env macro-name depth)))]
+          (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (ast-expr-array-ref
-          (macro-hygiene-expr array env macro-name depth)
-          (macro-hygiene-expr index env macro-name depth)))]
+          (macro-hygiene-expr expr-bases array env macro-name depth)
+          (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (ast-expr-array-set
-          (macro-hygiene-expr array env macro-name depth)
-          (macro-hygiene-expr index env macro-name depth)
-          (macro-hygiene-expr value env macro-name depth)))]
+          (macro-hygiene-expr expr-bases array env macro-name depth)
+          (macro-hygiene-expr expr-bases index env macro-name depth)
+          (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [live : AstExpr (ast-node-get live-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (ast-expr-array-take
-          (macro-hygiene-expr array env macro-name depth)
-          (macro-hygiene-expr live env macro-name depth)
-          (macro-hygiene-expr index env macro-name depth)))]
+          (macro-hygiene-expr expr-bases array env macro-name depth)
+          (macro-hygiene-expr expr-bases live env macro-name depth)
+          (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (ast-expr-array-push
-          (macro-hygiene-expr array env macro-name depth)
-          (macro-hygiene-expr value env macro-name depth)))]
+          (macro-hygiene-expr expr-bases array env macro-name depth)
+          (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(AstExpr.StringRef text-box index-box)
       (let
-        [text : AstExpr (ast-node-get text-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [text : AstExpr (ast-expr-segment-bases-get expr-bases text-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (ast-expr-string-ref
-          (macro-hygiene-expr text env macro-name depth)
-          (macro-hygiene-expr index env macro-name depth)))]
+          (macro-hygiene-expr expr-bases text env macro-name depth)
+          (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
         (ast-expr-while
-          (macro-hygiene-expr cond env macro-name depth)
-          (macro-hygiene-expr body env macro-name depth)))]
+          (macro-hygiene-expr expr-bases cond env macro-name depth)
+          (macro-hygiene-expr expr-bases body env macro-name depth)))]
     [(AstExpr.Begin exprs)
       (ast-node-push
-        (AstExpr.Begin (macro-hygiene-expr-list exprs env macro-name depth)))]
+        (AstExpr.Begin
+          (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
     [(AstExpr.Unsafe exprs)
       (ast-node-push
-        (AstExpr.Unsafe (macro-hygiene-expr-list exprs env macro-name depth)))]
+        (AstExpr.Unsafe
+          (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
     [(AstExpr.Set name rhs-box)
       (let
-        [rhs : AstExpr (ast-node-get rhs-box)]
+        [rhs : AstExpr (ast-expr-segment-bases-get expr-bases rhs-box)]
         (ast-expr-set-id
           (macro-hygiene-rename-var-id env macro-name name)
-          (macro-hygiene-expr rhs env macro-name depth)))]
+          (macro-hygiene-expr expr-bases rhs env macro-name depth)))]
     [(AstExpr.Ann inner-box ty)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (ast-expr-ann
-          (macro-hygiene-expr inner env macro-name depth)
+          (macro-hygiene-expr expr-bases inner env macro-name depth)
           (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.Cast inner-box ty)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (ast-expr-cast
-          (macro-hygiene-expr inner env macro-name depth)
+          (macro-hygiene-expr expr-bases inner env macro-name depth)
           (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.Borrow mutable lifetime place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
         (ast-expr-borrow
           mutable
           (macro-hygiene-borrow-lifetime lifetime env macro-name)
-          (macro-hygiene-expr place env macro-name depth)))]
+          (macro-hygiene-expr expr-bases place env macro-name depth)))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
-            [scrut : AstExpr (ast-node-get scrut-box)]
+            [scrut : AstExpr (ast-expr-segment-bases-get expr-bases scrut-box)]
             (ast-expr-match
-              (macro-hygiene-expr scrut env macro-name depth)
-              (macro-hygiene-arm-list arms env macro-name depth)))])]
+              (macro-hygiene-expr expr-bases scrut env macro-name depth)
+              (macro-hygiene-arm-list expr-bases arms env macro-name depth)))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast-expr-foreach-id
                   nindex-id
                   (macro-hygiene-type index-ty env macro-name)
-                  (macro-hygiene-expr start env macro-name depth)
-                  (macro-hygiene-expr end env macro-name depth)
-                  (macro-hygiene-expr body body-env macro-name depth))]))])]
+                  (macro-hygiene-expr expr-bases start env macro-name depth)
+                  (macro-hygiene-expr expr-bases end env macro-name depth)
+                  (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce
@@ -65833,20 +66370,25 @@
             init-box
             value-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast-expr-spmd-reduce-id
                   op
                   nindex-id
                   (macro-hygiene-type index-ty env macro-name)
-                  (macro-hygiene-expr start env macro-name depth)
-                  (macro-hygiene-expr end env macro-name depth)
-                  (macro-hygiene-expr init env macro-name depth)
-                  (macro-hygiene-expr value body-env macro-name depth))]))])]
+                  (macro-hygiene-expr expr-bases start env macro-name depth)
+                  (macro-hygiene-expr expr-bases end env macro-name depth)
+                  (macro-hygiene-expr expr-bases init env macro-name depth)
+                  (macro-hygiene-expr
+                    expr-bases
+                    value
+                    body-env
+                    macro-name
+                    depth))]))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan
@@ -65861,11 +66403,11 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id value-env)
                 (match (macro-hygiene-bind-name-id
@@ -65878,93 +66420,121 @@
                       op
                       nindex-id
                       (macro-hygiene-type index-ty env macro-name)
-                      (macro-hygiene-expr start env macro-name depth)
-                      (macro-hygiene-expr end env macro-name depth)
+                      (macro-hygiene-expr expr-bases start env macro-name depth)
+                      (macro-hygiene-expr expr-bases end env macro-name depth)
                       nprefix-id
                       (macro-hygiene-type prefix-ty value-env macro-name)
-                      (macro-hygiene-expr init env macro-name depth)
-                      (macro-hygiene-expr value value-env macro-name depth)
-                      (macro-hygiene-expr body body-env macro-name depth))])]))])]
+                      (macro-hygiene-expr expr-bases init env macro-name depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        value
+                        value-env
+                        macro-name
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        body
+                        body-env
+                        macro-name
+                        depth))])]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
         (ast-expr-spmd-broadcast
-          (macro-hygiene-expr value env macro-name depth)
-          (macro-hygiene-expr lane env macro-name depth)))]
+          (macro-hygiene-expr expr-bases value env macro-name depth)
+          (macro-hygiene-expr expr-bases lane env macro-name depth)))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
         (ast-expr-spmd-shuffle
-          (macro-hygiene-expr value env macro-name depth)
-          (macro-hygiene-expr lane env macro-name depth)))]
+          (macro-hygiene-expr expr-bases value env macro-name depth)
+          (macro-hygiene-expr expr-bases lane env macro-name depth)))]
     [(AstExpr.StructGet inner-box field)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (ast-expr-struct-get-id
-          (macro-hygiene-expr inner env macro-name depth)
+          (macro-hygiene-expr expr-bases inner env macro-name depth)
           field))]
     [(AstExpr.StructSet inner-box field value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (ast-expr-struct-set-id
-          (macro-hygiene-expr inner env macro-name depth)
+          (macro-hygiene-expr expr-bases inner env macro-name depth)
           field
-          (macro-hygiene-expr value env macro-name depth)))]
+          (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(AstExpr.WithRegion name body)
       (match (macro-hygiene-bind-name-id env macro-name depth name)
         [(MacroHygieneName.Name nname-id body-env)
           (ast-node-push
             (AstExpr.WithRegion
               nname-id
-              (macro-hygiene-expr-list body body-env macro-name depth)))])]
+              (macro-hygiene-expr-list
+                expr-bases
+                body
+                body-env
+                macro-name
+                depth)))])]
     [(AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
         (ast-expr-with-escape
-          (macro-hygiene-expr scratch env macro-name depth)
-          (macro-hygiene-expr-list body env macro-name depth)))]
+          (macro-hygiene-expr expr-bases scratch env macro-name depth)
+          (macro-hygiene-expr-list expr-bases body env macro-name depth)))]
     [(AstExpr.WithScratch body)
       (ast-expr-with-scratch
-        (macro-hygiene-expr-list body env macro-name depth))]
+        (macro-hygiene-expr-list expr-bases body env macro-name depth))]
     [(AstExpr.InArena arena-box body)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
         (ast-expr-in-arena
-          (macro-hygiene-expr arena env macro-name depth)
-          (macro-hygiene-expr-list body env macro-name depth)))]
+          (macro-hygiene-expr expr-bases arena env macro-name depth)
+          (macro-hygiene-expr-list expr-bases body env macro-name depth)))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
-          (match (macro-hygiene-resource-bindings bindings env macro-name depth)
+          (match (macro-hygiene-resource-bindings
+            expr-bases
+            bindings
+            env
+            macro-name
+            depth)
             [(MacroHygieneResourceBindings.ResourceBindings nbindings body-env)
               (ast-node-push
                 (AstExpr.WithResource
                   (box
                     (AstWithResource.WithResource
                       nbindings
-                      (macro-hygiene-expr-list body body-env macro-name depth)))))])])]
+                      (macro-hygiene-expr-list
+                        expr-bases
+                        body
+                        body-env
+                        macro-name
+                        depth)))))])])]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-box (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-box
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-box-get (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-box-get
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-box-take (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-box-take
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (ast-expr-box-set
-          (macro-hygiene-expr inner env macro-name depth)
-          (macro-hygiene-expr value env macro-name depth)))]
+          (macro-hygiene-expr expr-bases inner env macro-name depth)
+          (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(AstExpr.TypeLiteral ty)
       (ast-node-push
         (AstExpr.TypeLiteral (macro-hygiene-type ty env macro-name)))]
@@ -65972,113 +66542,123 @@
       (ast-expr-init-maybe (macro-hygiene-maybe-type maybe-ty env macro-name))]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-comptime (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-comptime
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-return (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-return
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-try (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-try
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.PtrNull ty)
       (ast-node-push (AstExpr.PtrNull (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.PtrNullCheck ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (ast-expr-ptr-null-check (macro-hygiene-expr ptr env macro-name depth)))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (ast-expr-ptr-null-check
+          (macro-hygiene-expr expr-bases ptr env macro-name depth)))]
     [(AstExpr.PtrAddrOf place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
         (ast-expr-ptr-addr-of-id
-          (macro-hygiene-expr place env macro-name depth)))]
+          (macro-hygiene-expr expr-bases place env macro-name depth)))]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (ast-expr-ptr-read (macro-hygiene-expr ptr env macro-name depth)))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (ast-expr-ptr-read
+          (macro-hygiene-expr expr-bases ptr env macro-name depth)))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (ast-expr-ptr-write
-          (macro-hygiene-expr ptr env macro-name depth)
-          (macro-hygiene-expr value env macro-name depth)))]
+          (macro-hygiene-expr expr-bases ptr env macro-name depth)
+          (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
         (ast-expr-ptr-offset
-          (macro-hygiene-expr ptr env macro-name depth)
-          (macro-hygiene-expr offset env macro-name depth)))]
+          (macro-hygiene-expr expr-bases ptr env macro-name depth)
+          (macro-hygiene-expr expr-bases offset env macro-name depth)))]
     [(AstExpr.PtrCast ptr-box ty)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
         (ast-expr-ptr-cast
-          (macro-hygiene-expr ptr env macro-name depth)
+          (macro-hygiene-expr expr-bases ptr env macro-name depth)
           (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (ast-expr-ptr-to-int (macro-hygiene-expr ptr env macro-name depth)))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (ast-expr-ptr-to-int
+          (macro-hygiene-expr expr-bases ptr env macro-name depth)))]
     [(AstExpr.IntToPtr value-box ty)
       (let
-        [value : AstExpr (ast-node-get value-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (ast-expr-int-to-ptr
-          (macro-hygiene-expr value env macro-name depth)
+          (macro-hygiene-expr expr-bases value env macro-name depth)
           (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.StringData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-string-data (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-string-data
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
         (ast-expr-string-from-bytes
-          (macro-hygiene-expr ptr env macro-name depth)
-          (macro-hygiene-expr len env macro-name depth)))]
+          (macro-hygiene-expr expr-bases ptr env macro-name depth)
+          (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(AstExpr.ArrayData inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-array-data (macro-hygiene-expr inner env macro-name depth)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (ast-expr-array-data
+          (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.BinaryData bytes) (ast-node-push (AstExpr.BinaryData bytes))]
     [(AstExpr.SpmdProgramIndex) (ast-expr-spmd-program-index)]
     [(AstExpr.SpmdProgramCount) (ast-expr-spmd-program-count)]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (ast-expr-cpuid-eax
-          (macro-hygiene-expr leaf env macro-name depth)
-          (macro-hygiene-expr subleaf env macro-name depth)))]
+          (macro-hygiene-expr expr-bases leaf env macro-name depth)
+          (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (ast-expr-cpuid-ebx
-          (macro-hygiene-expr leaf env macro-name depth)
-          (macro-hygiene-expr subleaf env macro-name depth)))]
+          (macro-hygiene-expr expr-bases leaf env macro-name depth)
+          (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (ast-expr-cpuid-ecx
-          (macro-hygiene-expr leaf env macro-name depth)
-          (macro-hygiene-expr subleaf env macro-name depth)))]
+          (macro-hygiene-expr expr-bases leaf env macro-name depth)
+          (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
         (ast-expr-cpuid-edx
-          (macro-hygiene-expr leaf env macro-name depth)
-          (macro-hygiene-expr subleaf env macro-name depth)))]
+          (macro-hygiene-expr expr-bases leaf env macro-name depth)
+          (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (ast-expr-xgetbv (macro-hygiene-expr index env macro-name depth)))]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (ast-expr-xgetbv
+          (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(AstExpr.Syscall args)
-      (ast-expr-syscall (macro-hygiene-expr-list args env macro-name depth))]
+      (ast-expr-syscall
+        (macro-hygiene-expr-list expr-bases args env macro-name depth))]
     [(AstExpr.Quote _) (ast-node-push expr)]
     [(AstExpr.Quasiquote _) (ast-node-push expr)]
     [(AstExpr.Unquote _) (ast-node-push expr)]
@@ -69830,7 +70410,11 @@
   [depth : i64]
   [expr-id : i64]) : ResultMacroExpr
   (let
-    [expr : AstExpr (ast-node-get expr-id)]
+    ;; A transformer result may live in its scratch pool rather than `ctx`.
+    ;; Capture the installed table after evaluation and keep it for this
+    ;; read-only fire scan.
+    [expr-bases : i64 (ast-node-pool-active-expr-segment-bases)]
+    [expr : AstExpr (ast-expr-segment-bases-get expr-bases expr-id)]
     (if (not (ctfe-result-may-contain-macro?))
       (begin
         (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
@@ -69840,7 +70424,7 @@
         ;; pool before that scratch storage is released.
         (ResultMacroExpr.Ok (ast-node-push expr)))
       (let
-        [fires : bool (macro-expr-might-fire? expr)]
+        [fires : bool (macro-expr-might-fire? expr-bases expr)]
         (begin
           (cfg
             compile-profile
@@ -69907,6 +70491,7 @@
                 (begin
                   (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                   (let
+                    [expr-bases : i64 (ast-node-pool-active-expr-segment-bases)]
                     [rewalk-result : ResultMacroExpr
                       (macro-expand-produced-node
                         ctx
@@ -69916,7 +70501,8 @@
                         (if (= expanded (ctfe-result-hygiene-free-node-id))
                           expanded
                           (macro-hygiene-expr
-                            (ast-node-get expanded)
+                            expr-bases
+                            (ast-expr-segment-bases-get expr-bases expanded)
                             MacroHygieneEnv.Nil
                             (MacroHygieneContext
                               macro-name-id
@@ -69941,6 +70527,8 @@
                   (tc-context-capture-active-pools! ctx)
                   (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                   (let
+                    [expr-bases : i64
+                      (ast-node-pool-context-expr-segment-bases pools)]
                     [rewalk-result : ResultMacroExpr
                       (macro-expand-produced-node
                         ctx
@@ -69950,7 +70538,8 @@
                         (if (= expanded (ctfe-result-hygiene-free-node-id))
                           expanded
                           (macro-hygiene-expr
-                            (ast-node-get expanded)
+                            expr-bases
+                            (ast-expr-segment-bases-get expr-bases expanded)
                             MacroHygieneEnv.Nil
                             (MacroHygieneContext
                               macro-name-id
@@ -70071,7 +70660,7 @@
           [body-fires : bool
             (if (<= index first-fire-index)
               (= index first-fire-index)
-              (macro-expr-might-fire? body))]
+              (macro-expr-might-fire? (tc-context-expr-bases ctx) body))]
           (if (not body-fires)
             (match (macro-expand-node-with-fire-decision
               ctx
@@ -70384,7 +70973,7 @@
   (begin
     (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
     (let
-      [fires : bool (macro-expr-might-fire? expr)]
+      [fires : bool (macro-expr-might-fire? (tc-context-expr-bases ctx) expr)]
       (if (or (not fires) (< (macro-expand-depth-limit) depth))
         (if (not fires)
           (ResultMacroExpr.Ok (ast-node-push expr))
@@ -70409,7 +70998,7 @@
   [expr-id : i64]) : ResultMacroExpr
   (let
     [expr : AstExpr (ast-node-get expr-id)]
-    [fires : bool (macro-expr-might-fire? expr)]
+    [fires : bool (macro-expr-might-fire? (tc-context-expr-bases ctx) expr)]
     (macro-expand-node-with-fire-decision
       ctx
       env
@@ -70571,7 +71160,10 @@
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
-            [first-fire-index : i64 (macro-match-arms-first-fire-index arms)]
+            [first-fire-index : i64
+              (macro-match-arms-first-fire-index
+                (tc-context-expr-bases ctx)
+                arms)]
             (match (macro-expand-node ctx env decls depth scrut-box)
               [(ResultMacroExpr.Ok nscrut)
                 (if (< first-fire-index 0)
@@ -71784,6 +72376,7 @@
                                       (compiler-parse-dispatch-env)]
                                     (match (macro-decls-from-ctfe-value
                                       (macro-hygiene-ctfe-output
+                                        (ast-node-pool-active-expr-segment-bases)
                                         value
                                         (MacroHygieneContext
                                           macro-name
@@ -72008,6 +72601,7 @@
                                             (compiler-parse-dispatch-env)]
                                           (match (macro-module-decls-from-ctfe-value
                                             (macro-hygiene-ctfe-output
+                                              (ast-node-pool-active-expr-segment-bases)
                                               value
                                               (MacroHygieneContext
                                                 macro-name
@@ -72730,22 +73324,30 @@
 ;; every expression position from which a macro can fire. Whether a transformer
 ;; asks for an operand's type changes how that call is evaluated, not how the
 ;; call is represented, so expr-type macros use the same syntactic call gate.
-(define (macro-expr-list-might-fire? [exprs : AstExprList]) : bool
-  (macro-expr-list-might-fire-at? (& exprs) 0))
+(define (macro-expr-list-might-fire? [expr-bases : i64] [exprs : AstExprList]) : bool
+  (macro-expr-list-might-fire-at? expr-bases (& exprs) 0))
 
 (define (macro-expr-list-might-fire-at?
+  [expr-bases : i64]
   [exprs : (& exprs AstExprList)]
   [index : i64]) : bool
   (if (>= index (struct-get exprs len))
     false
     (or
-      (macro-expr-might-fire? (ast-node-get (ast-expr-list-get exprs index 0)))
-      (macro-expr-list-might-fire-at? exprs (+ index 1)))))
+      (macro-expr-might-fire?
+        expr-bases
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0)))
+      (macro-expr-list-might-fire-at? expr-bases exprs (+ index 1)))))
 
-(define (macro-let-binding-list-might-fire? [bindings : AstLetBindingList]) : bool
-  (macro-let-binding-list-might-fire-at? (& bindings) 0))
+(define (macro-let-binding-list-might-fire?
+  [expr-bases : i64]
+  [bindings : AstLetBindingList]) : bool
+  (macro-let-binding-list-might-fire-at? expr-bases (& bindings) 0))
 
 (define (macro-let-binding-list-might-fire-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstLetBindingList)]
   [index : i64]) : bool
   (if (>= index (ast-let-binding-list-len bindings))
@@ -72753,18 +73355,26 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding _ _ init-box)
         (let
-          [init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           (or
-            (macro-expr-might-fire? init)
-            (macro-let-binding-list-might-fire-at? bindings (+ index 1))))])))
+            (macro-expr-might-fire? expr-bases init)
+            (macro-let-binding-list-might-fire-at?
+              expr-bases
+              bindings
+              (+ index 1))))])))
 
-(define (macro-match-arms-might-fire? [arms : AstMatchArmList]) : bool
-  (not (= (macro-match-arms-first-fire-index arms) -1)))
+(define (macro-match-arms-might-fire?
+  [expr-bases : i64]
+  [arms : AstMatchArmList]) : bool
+  (not (= (macro-match-arms-first-fire-index expr-bases arms) -1)))
 
-(define (macro-match-arms-first-fire-index [arms : AstMatchArmList]) : i64
-  (macro-match-arms-first-fire-index-at (& arms) 0))
+(define (macro-match-arms-first-fire-index
+  [expr-bases : i64]
+  [arms : AstMatchArmList]) : i64
+  (macro-match-arms-first-fire-index-at expr-bases (& arms) 0))
 
 (define (macro-match-arms-first-fire-index-at
+  [expr-bases : i64]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : i64
   (if (>= index (struct-get arms len))
@@ -72772,16 +73382,18 @@
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
         (let
-          [body : AstExpr (ast-node-get body-box)]
-          (if (macro-expr-might-fire? body)
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+          (if (macro-expr-might-fire? expr-bases body)
             index
-            (macro-match-arms-first-fire-index-at arms (+ index 1))))])))
+            (macro-match-arms-first-fire-index-at expr-bases arms (+ index 1))))])))
 
 (define (macro-resource-binding-list-might-fire?
+  [expr-bases : i64]
   [bindings : AstResourceBindingList]) : bool
-  (macro-resource-binding-list-might-fire-at? (& bindings) 0))
+  (macro-resource-binding-list-might-fire-at? expr-bases (& bindings) 0))
 
 (define (macro-resource-binding-list-might-fire-at?
+  [expr-bases : i64]
   [bindings : (& bindings AstResourceBindingList)]
   [index : i64]) : bool
   (if (>= index (ast-resource-binding-list-len bindings))
@@ -72792,166 +73404,186 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
-          [init : AstExpr (ast-node-get init-box)]
-          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
           (or
-            (macro-expr-might-fire? init)
-            (macro-expr-might-fire? cleanup)
-            (macro-resource-binding-list-might-fire-at? bindings (+ index 1))))])))
+            (macro-expr-might-fire? expr-bases init)
+            (macro-expr-might-fire? expr-bases cleanup)
+            (macro-resource-binding-list-might-fire-at?
+              expr-bases
+              bindings
+              (+ index 1))))])))
 
-(define (macro-expr-might-fire? [expr : AstExpr]) : bool
+(define (macro-expr-might-fire? [expr-bases : i64] [expr : AstExpr]) : bool
   (begin
     (cfg compile-profile (compiler-tc-walk-note-fire-touch!))
-    (macro-expr-might-fire-uncounted? expr)))
+    (macro-expr-might-fire-uncounted? expr-bases expr)))
 
-(define (macro-expr-might-fire-uncounted? [expr : AstExpr]) : bool
+(define (macro-expr-might-fire-uncounted? [expr-bases : i64] [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.Literal _) false]
     [(AstExpr.Var _) false]
     [(AstExpr.Call func-box args)
       (let
-        [func : AstExpr (ast-node-get func-box)]
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
         (or
           (macro-call-callee-maybe-macro? func)
-          (macro-expr-might-fire? func)
-          (macro-expr-list-might-fire? args)))]
-    [(AstExpr.BracketClause items) (macro-expr-list-might-fire? items)]
+          (macro-expr-might-fire? expr-bases func)
+          (macro-expr-list-might-fire? expr-bases args)))]
+    [(AstExpr.BracketClause items)
+      (macro-expr-list-might-fire? expr-bases items)]
     [(AstExpr.Binary _ left-box right-box)
       (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
-        (or (macro-expr-might-fire? left) (macro-expr-might-fire? right)))]
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        (or
+          (macro-expr-might-fire? expr-bases left)
+          (macro-expr-might-fire? expr-bases right)))]
     [(AstExpr.Unary _ inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases else-branch-box)]
         (or
-          (macro-expr-might-fire? cond)
-          (macro-expr-might-fire? then-branch)
-          (macro-expr-might-fire? else-branch)))]
+          (macro-expr-might-fire? expr-bases cond)
+          (macro-expr-might-fire? expr-bases then-branch)
+          (macro-expr-might-fire? expr-bases else-branch)))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (macro-let-binding-list-might-fire? bindings)
-              (macro-expr-might-fire? body)))])]
+              (macro-let-binding-list-might-fire? expr-bases bindings)
+              (macro-expr-might-fire? expr-bases body)))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda _ _ body-box)
           (let
-            [body : AstExpr (ast-node-get body-box)]
-            (macro-expr-might-fire? body))])]
-    [(AstExpr.Tuple exprs) (macro-expr-list-might-fire? exprs)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (macro-expr-might-fire? expr-bases body))])]
+    [(AstExpr.Tuple exprs) (macro-expr-list-might-fire? expr-bases exprs)]
     [(AstExpr.TupleRef tuple-box index-box)
       (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (or (macro-expr-might-fire? tuple) (macro-expr-might-fire? index)))]
-    [(AstExpr.Array exprs) (macro-expr-list-might-fire? exprs)]
-    [(AstExpr.DynArray exprs) (macro-expr-list-might-fire? exprs)]
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (macro-expr-might-fire? expr-bases tuple)
+          (macro-expr-might-fire? expr-bases index)))]
+    [(AstExpr.Array exprs) (macro-expr-list-might-fire? expr-bases exprs)]
+    [(AstExpr.DynArray exprs) (macro-expr-list-might-fire? expr-bases exprs)]
     [(AstExpr.MakeArray _ len-box)
       (let
-        [len : AstExpr (ast-node-get len-box)]
-        (macro-expr-might-fire? len))]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (macro-expr-might-fire? expr-bases len))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (or (macro-expr-might-fire? array) (macro-expr-might-fire? index)))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (macro-expr-might-fire? expr-bases array)
+          (macro-expr-might-fire? expr-bases index)))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (or
-          (macro-expr-might-fire? array)
-          (macro-expr-might-fire? index)
-          (macro-expr-might-fire? value)))]
+          (macro-expr-might-fire? expr-bases array)
+          (macro-expr-might-fire? expr-bases index)
+          (macro-expr-might-fire? expr-bases value)))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [live : AstExpr (ast-node-get live-box)]
-        [index : AstExpr (ast-node-get index-box)]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
         (or
-          (macro-expr-might-fire? array)
-          (macro-expr-might-fire? live)
-          (macro-expr-might-fire? index)))]
+          (macro-expr-might-fire? expr-bases array)
+          (macro-expr-might-fire? expr-bases live)
+          (macro-expr-might-fire? expr-bases index)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (or (macro-expr-might-fire? array) (macro-expr-might-fire? value)))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (macro-expr-might-fire? expr-bases array)
+          (macro-expr-might-fire? expr-bases value)))]
     [(AstExpr.StringRef str-box index-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (or (macro-expr-might-fire? str) (macro-expr-might-fire? index)))]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (macro-expr-might-fire? expr-bases str)
+          (macro-expr-might-fire? expr-bases index)))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (or (macro-expr-might-fire? cond) (macro-expr-might-fire? body)))]
-    [(AstExpr.Begin exprs) (macro-expr-list-might-fire? exprs)]
-    [(AstExpr.Unsafe exprs) (macro-expr-list-might-fire? exprs)]
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (or
+          (macro-expr-might-fire? expr-bases cond)
+          (macro-expr-might-fire? expr-bases body)))]
+    [(AstExpr.Begin exprs) (macro-expr-list-might-fire? expr-bases exprs)]
+    [(AstExpr.Unsafe exprs) (macro-expr-list-might-fire? expr-bases exprs)]
     [(AstExpr.Set _ value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (macro-expr-might-fire? value))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (macro-expr-might-fire? expr-bases value))]
     [(AstExpr.Ann inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.Cast inner-box _)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.Borrow _ _ place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (macro-expr-might-fire? place))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (macro-expr-might-fire? expr-bases place))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
           (let
-            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            [scrutinee : AstExpr
+              (ast-expr-segment-bases-get expr-bases scrutinee-box)]
             (or
-              (macro-expr-might-fire? scrutinee)
-              (macro-match-arms-might-fire? arms)))])]
+              (macro-expr-might-fire? expr-bases scrutinee)
+              (macro-match-arms-might-fire? expr-bases arms)))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach _ _ start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (macro-expr-might-fire? start)
-              (macro-expr-might-fire? end)
-              (macro-expr-might-fire? body)))])]
+              (macro-expr-might-fire? expr-bases start)
+              (macro-expr-might-fire? expr-bases end)
+              (macro-expr-might-fire? expr-bases body)))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
             (or
-              (macro-expr-might-fire? start)
-              (macro-expr-might-fire? end)
-              (macro-expr-might-fire? init)
-              (macro-expr-might-fire? value)))])]
+              (macro-expr-might-fire? expr-bases start)
+              (macro-expr-might-fire? expr-bases end)
+              (macro-expr-might-fire? expr-bases init)
+              (macro-expr-might-fire? expr-bases value)))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan
@@ -72966,159 +73598,187 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
             (or
-              (macro-expr-might-fire? start)
-              (macro-expr-might-fire? end)
-              (macro-expr-might-fire? init)
-              (macro-expr-might-fire? value)
-              (macro-expr-might-fire? body)))])]
+              (macro-expr-might-fire? expr-bases start)
+              (macro-expr-might-fire? expr-bases end)
+              (macro-expr-might-fire? expr-bases init)
+              (macro-expr-might-fire? expr-bases value)
+              (macro-expr-might-fire? expr-bases body)))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (or (macro-expr-might-fire? value) (macro-expr-might-fire? lane)))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (or
+          (macro-expr-might-fire? expr-bases value)
+          (macro-expr-might-fire? expr-bases lane)))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (or (macro-expr-might-fire? value) (macro-expr-might-fire? lane)))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (or
+          (macro-expr-might-fire? expr-bases value)
+          (macro-expr-might-fire? expr-bases lane)))]
     [(AstExpr.StructGet receiver-box _)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        (macro-expr-might-fire? receiver))]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (macro-expr-might-fire? expr-bases receiver))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (or (macro-expr-might-fire? receiver) (macro-expr-might-fire? value)))]
-    [(AstExpr.WithRegion _ body) (macro-expr-list-might-fire? body)]
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (macro-expr-might-fire? expr-bases receiver)
+          (macro-expr-might-fire? expr-bases value)))]
+    [(AstExpr.WithRegion _ body) (macro-expr-list-might-fire? expr-bases body)]
     [(AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : AstExpr (ast-node-get scratch-box)]
-        (or (macro-expr-might-fire? scratch) (macro-expr-list-might-fire? body)))]
-    [(AstExpr.WithScratch body) (macro-expr-list-might-fire? body)]
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
+        (or
+          (macro-expr-might-fire? expr-bases scratch)
+          (macro-expr-list-might-fire? expr-bases body)))]
+    [(AstExpr.WithScratch body) (macro-expr-list-might-fire? expr-bases body)]
     [(AstExpr.InArena arena-box body)
       (let
-        [arena : AstExpr (ast-node-get arena-box)]
-        (or (macro-expr-might-fire? arena) (macro-expr-list-might-fire? body)))]
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
+        (or
+          (macro-expr-might-fire? expr-bases arena)
+          (macro-expr-list-might-fire? expr-bases body)))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (or
-            (macro-resource-binding-list-might-fire? bindings)
-            (macro-expr-list-might-fire? body))])]
+            (macro-resource-binding-list-might-fire? expr-bases bindings)
+            (macro-expr-list-might-fire? expr-bases body))])]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (or (macro-expr-might-fire? inner) (macro-expr-might-fire? value)))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (macro-expr-might-fire? expr-bases inner)
+          (macro-expr-might-fire? expr-bases value)))]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.PtrNullCheck inner-box)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (macro-expr-might-fire? inner))]
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-expr-might-fire? expr-bases inner))]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (macro-expr-might-fire? ptr))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (macro-expr-might-fire? expr-bases ptr))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [value : AstExpr (ast-node-get value-box)]
-        (or (macro-expr-might-fire? ptr) (macro-expr-might-fire? value)))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (macro-expr-might-fire? expr-bases ptr)
+          (macro-expr-might-fire? expr-bases value)))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [offset : AstExpr (ast-node-get offset-box)]
-        (or (macro-expr-might-fire? ptr) (macro-expr-might-fire? offset)))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
+        (or
+          (macro-expr-might-fire? expr-bases ptr)
+          (macro-expr-might-fire? expr-bases offset)))]
     [(AstExpr.PtrCast ptr-box _)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (macro-expr-might-fire? ptr))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (macro-expr-might-fire? expr-bases ptr))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        (macro-expr-might-fire? ptr))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (macro-expr-might-fire? expr-bases ptr))]
     [(AstExpr.IntToPtr value-box _)
       (let
-        [value : AstExpr (ast-node-get value-box)]
-        (macro-expr-might-fire? value))]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (macro-expr-might-fire? expr-bases value))]
     [(AstExpr.StringData str-box)
       (let
-        [str : AstExpr (ast-node-get str-box)]
-        (macro-expr-might-fire? str))]
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        (macro-expr-might-fire? expr-bases str))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-node-get ptr-box)]
-        [len : AstExpr (ast-node-get len-box)]
-        (or (macro-expr-might-fire? ptr) (macro-expr-might-fire? len)))]
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (or
+          (macro-expr-might-fire? expr-bases ptr)
+          (macro-expr-might-fire? expr-bases len)))]
     [(AstExpr.ArrayData array-box)
       (let
-        [array : AstExpr (ast-node-get array-box)]
-        (macro-expr-might-fire? array))]
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (macro-expr-might-fire? expr-bases array))]
     [(AstExpr.BinaryData _) false]
     [(AstExpr.SpmdProgramIndex) false]
     [(AstExpr.SpmdProgramCount) false]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (or (macro-expr-might-fire? leaf) (macro-expr-might-fire? subleaf)))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (macro-expr-might-fire? expr-bases leaf)
+          (macro-expr-might-fire? expr-bases subleaf)))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (or (macro-expr-might-fire? leaf) (macro-expr-might-fire? subleaf)))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (macro-expr-might-fire? expr-bases leaf)
+          (macro-expr-might-fire? expr-bases subleaf)))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (or (macro-expr-might-fire? leaf) (macro-expr-might-fire? subleaf)))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (macro-expr-might-fire? expr-bases leaf)
+          (macro-expr-might-fire? expr-bases subleaf)))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-node-get leaf-box)]
-        [subleaf : AstExpr (ast-node-get subleaf-box)]
-        (or (macro-expr-might-fire? leaf) (macro-expr-might-fire? subleaf)))]
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (macro-expr-might-fire? expr-bases leaf)
+          (macro-expr-might-fire? expr-bases subleaf)))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-node-get index-box)]
-        (macro-expr-might-fire? index))]
-    [(AstExpr.Syscall args) (macro-expr-list-might-fire? args)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (macro-expr-might-fire? expr-bases index))]
+    [(AstExpr.Syscall args) (macro-expr-list-might-fire? expr-bases args)]
     [(AstExpr.TypeLiteral _) false]
     [(AstExpr.Init _) false]
     [(AstExpr.PtrNull _) false]
     [(AstExpr.PtrAddrOf place-box)
       (let
-        [place : AstExpr (ast-node-get place-box)]
-        (macro-expr-might-fire? place))]
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (macro-expr-might-fire? expr-bases place))]
     [(AstExpr.ProgramArgc) false]
     [(AstExpr.ProgramArgv) false]
     [(AstExpr.ProgramEnvp) false]
@@ -73131,24 +73791,30 @@
 ;; returns false so it falls through to the precise `macro-expand-decl-with-path`
 ;; path (which shares or expands import placeholders, splices, defmacro, unsafe,
 ;; comptime templates, etc. correctly).
-(define (macro-decl-cannot-fire? [decl : AstDecl]) : bool
+(define (macro-decl-cannot-fire? [expr-bases : i64] [decl : AstDecl]) : bool
   (if (ast-decl-comptime-only? decl)
     false
     (match decl
       [(AstDecl.Def decl-meta _ _ expr-box)
-        (not (macro-expr-might-fire? (ast-node-get expr-box)))]
+        (not
+          (macro-expr-might-fire?
+            expr-bases
+            (ast-expr-segment-bases-get expr-bases expr-box)))]
       [(AstDecl.DefFn decl-meta _ _ _ body-box _)
-        (not (macro-expr-might-fire? (ast-node-get body-box)))]
+        (not
+          (macro-expr-might-fire?
+            expr-bases
+            (ast-expr-segment-bases-get expr-bases body-box)))]
       [(AstDecl.Test _ _ _) false]
       [_ false])))
 
 ;; Profile-instrumented wrapper for the per-decl share gate; non-profile
 ;; builds see a plain call.
-(define (macro-decl-cannot-fire-gate? [decl : AstDecl]) : bool
+(define (macro-decl-cannot-fire-gate? [expr-bases : i64] [decl : AstDecl]) : bool
   (begin
     (cfg compile-profile (compiler-tc-walk-decl-gate-start!))
     (let
-      [result : bool (macro-decl-cannot-fire? decl)]
+      [result : bool (macro-decl-cannot-fire? expr-bases decl)]
       (begin
         (cfg compile-profile (compiler-tc-walk-decl-gate-finish!))
         result))))
@@ -74379,7 +75045,11 @@
                                     result
                                     (ResultMacroDeclsWithPaths.Err diag))
                                   (set! done true))])))]
-                      [(and cur-can-share (macro-decl-cannot-fire-gate? decl))
+                      [(and
+                          cur-can-share
+                          (macro-decl-cannot-fire-gate?
+                            (tc-context-expr-bases cur-ctx)
+                            decl))
                         ;; Predict-skip: a macro-free value decl can never fire a
                         ;; macro, so share it unchanged (like the AstDecl.Module
                         ;; arm) instead of copying it through the expander. This
@@ -74454,21 +75124,21 @@
                                 (set! done true))]))])]))])))
       result)))
 
-(define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
+(define (macro-expr-needs-compat-expansion? [expr-bases : i64] [expr : AstExpr]) : bool
   (or
-    (tc-expr-uses-free-name? expr "when" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "unless" TcStringList.Nil)))
+    (tc-expr-uses-free-name? expr-bases expr "when" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr-bases expr "unless" TcStringList.Nil)))
 
-(define (macro-decl-needs-expansion? [decl : AstDecl]) : bool
+(define (macro-decl-needs-expansion? [expr-bases : i64] [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.Def decl-meta _ _ expr-box)
       (let
-        [expr : AstExpr (ast-node-get expr-box)]
-        (macro-expr-needs-compat-expansion? expr))]
+        [expr : AstExpr (ast-expr-segment-bases-get expr-bases expr-box)]
+        (macro-expr-needs-compat-expansion? expr-bases expr))]
     [(AstDecl.DefFn decl-meta _ _ _ body-box _)
       (let
-        [body : AstExpr (ast-node-get body-box)]
-        (macro-expr-needs-compat-expansion? body))]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (macro-expr-needs-compat-expansion? expr-bases body))]
     [(AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(AstDecl.Test _ _ _) false]
     [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
@@ -74479,7 +75149,7 @@
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (macro-decl-needs-expansion? inner))]
+        (macro-decl-needs-expansion? expr-bases inner))]
     [_ false]))
 
 (define (macro-decl-has-defmacro? [decl : AstDecl]) : bool
@@ -74492,15 +75162,17 @@
     [_ false]))
 
 ;; Whether a program needs the macro expansion pass.
-(define (macro-program-needs-expansion? [decls : AstDeclList]) : bool
+(define (macro-program-needs-expansion?
+  [expr-bases : i64]
+  [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList rest]
         (or
-          (macro-decl-needs-expansion? decl)
-          (macro-program-needs-expansion? rest)))]))
+          (macro-decl-needs-expansion? expr-bases decl)
+          (macro-program-needs-expansion? expr-bases rest)))]))
 
 (define (macro-program-has-defmacro? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
@@ -74510,23 +75182,31 @@
         [rest : AstDeclList rest]
         (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
 
-(define (macro-decl-might-fire-expression-macro? [decl : AstDecl]) : bool
+(define (macro-decl-might-fire-expression-macro?
+  [expr-bases : i64]
+  [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.Def decl-meta _ _ expr-box)
-      (macro-expr-might-fire? (ast-node-get expr-box))]
+      (macro-expr-might-fire?
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases expr-box))]
     [(AstDecl.DefFn decl-meta _ _ _ body-box _)
-      (macro-expr-might-fire? (ast-node-get body-box))]
+      (macro-expr-might-fire?
+        expr-bases
+        (ast-expr-segment-bases-get expr-bases body-box))]
     [(AstDecl.Unsafe inner-box)
-      (macro-decl-might-fire-expression-macro? (box-get inner-box))]
+      (macro-decl-might-fire-expression-macro? expr-bases (box-get inner-box))]
     [_ false]))
 
-(define (macro-program-might-fire-expression-macro? [decls : AstDeclList]) : bool
+(define (macro-program-might-fire-expression-macro?
+  [expr-bases : i64]
+  [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (or
-        (macro-decl-might-fire-expression-macro? decl)
-        (macro-program-might-fire-expression-macro? rest))]))
+        (macro-decl-might-fire-expression-macro? expr-bases decl)
+        (macro-program-might-fire-expression-macro? expr-bases rest))]))
 
 (define (macro-import-kind-summary-backed? [kind : AstImportKind]) : bool
   (match kind
@@ -74735,7 +75415,9 @@
             (if has-summary-macro-import
               (begin
                 (macro-expand-set-macro-names! prescan-macro-names)
-                (macro-program-might-fire-expression-macro? decls))
+                (macro-program-might-fire-expression-macro?
+                  (ast-node-pool-context-expr-segment-bases pools)
+                  decls))
               false)]
           (begin
             ;; The CTFE-env cache is reset once per program at the macro-expand

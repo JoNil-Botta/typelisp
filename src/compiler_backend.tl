@@ -47831,6 +47831,24 @@
             (not (string.eq shrinkwrap-planned-guard ""))
             (not (string.eq shrinkwrap-incoming-guard ""))
             (not (string.eq (compiler-ir-symbol-text name) "main")))]
+        ;; Const-hoist register admission must see every cfg-gated scratch-vreg
+        ;; home over its exact point range. The published scratch reg-plan keeps
+        ;; only unique callee-saved homes for prologue accounting, so append the
+        ;; complete scratch plan as fresh synthetic vars for this occupancy
+        ;; query. Otherwise a caller-saved scratch such as %r9 can be selected
+        ;; for a loop magic and then overwrite that magic at a divmod site.
+        [const-hoist-occupancy-vars : i64
+          (compiler-backend-scratch-plan-extend-vars scratch-plan scratch-vars)]
+        [const-hoist-occupancy-assignments : CompilerRegAssignmentList
+          (compiler-backend-scratch-plan-extend-assignments
+            scratch-plan
+            scratch-vars
+            assignments)]
+        [const-hoist-occupancy-intervals : CompilerRegIntervalList
+          (compiler-backend-scratch-plan-extend-intervals
+            scratch-plan
+            scratch-vars
+            scavenge-intervals)]
         ;; M-F: loop-hoisted divmod magic constants. Built over the FINAL
         ;; emitted IR + the same fresh intervals the scavenge occupancy uses,
         ;; so a hoist register is provably free over its whole loop region and
@@ -47850,9 +47868,9 @@
             (compiler-backend-const-hoist-build!
               target
               emit-blocks-list
-              assignments
-              scavenge-intervals
-              scratch-vars
+              const-hoist-occupancy-assignments
+              const-hoist-occupancy-intervals
+              const-hoist-occupancy-vars
               (compiler-backend-frame-slots-emergency-max
                 slot-vars
                 has-group-vars))

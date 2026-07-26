@@ -27059,6 +27059,65 @@
           (CompilerBackendTarget.Windows))
         "%rdi"))))
 
+;; The scratch-vreg result publishes caller-saved homes only through its
+;; per-instruction plan. Const-hoist admission extends that plan into synthetic
+;; assignments + intervals, so an overlapping %r9 scratch cannot also carry a
+;; loop's magic constant. This is the reduced form of the Win64 self-host
+;; corruption in string.int->string.
+(define (compiler-backend-const-hoist-respects-scratch-plan-ok?) : bool
+  (let
+    [items : (Array CompilerRegScratchAssignment)
+      (make-array CompilerRegScratchAssignment 1)]
+    [first : (Array i64) (make-array i64 1)]
+    [slots : (Array i64) (make-array i64 1)]
+    [_item : unit
+      (array-set!
+        items
+        0
+        (CompilerRegScratchAssignment
+          (CompilerRegScratchRequirement
+            4
+            0
+            (CompilerRegScratchRole.ScalarPrimary)
+            (CompilerRegScratchConstraint
+              (CompilerRegScratchClass.Gp)
+              CompilerRegStringList.Nil
+              CompilerRegStringList.Nil
+              "")
+            4
+            8
+            1)
+          "%r9"))]
+    [scratch : CompilerRegScratchPlan
+      (CompilerRegScratchPlan items first slots)]
+    [base-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r8"))
+        CompilerRegAssignmentList.Nil)]
+    [base-intervals : CompilerRegIntervalList
+      (compiler-reg-interval-cons
+        (CompilerRegInterval.Interval 0 0 10)
+        CompilerRegIntervalList.Nil)]
+    [vars : i64 (compiler-backend-scratch-plan-extend-vars scratch 1)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-scratch-plan-extend-assignments
+        scratch
+        1
+        base-assignments)]
+    [intervals : CompilerRegIntervalList
+      (compiler-backend-scratch-plan-extend-intervals scratch 1 base-intervals)]
+    (match (compiler-reg-loop-split-first-register
+      (compiler-backend-const-hoist-candidate-regs
+        (CompilerBackendTarget.Windows))
+      assignments
+      (compiler-reg-interval-index-build intervals vars)
+      (compiler-reg-loop-split-region-interval -1 4 8)
+      -1)
+      [(CompilerRegMaybeString.Some reg) (string.eq reg "%rbx")]
+      [(CompilerRegMaybeString.No) false])))
+
 ;; Regression for the opt1-built compiler crash exposed by
 ;; integration_spmd_gather_read/fill-lane-offset-gather. The reduced IR keeps
 ;; its entry guard -> non-phi preheader -> parameter-fed loop phi shape. A
@@ -28024,6 +28083,7 @@
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-emit-current-count-gate-ok?)
         (compiler-backend-const-hoist-candidates-abi-ok?)
+        (compiler-backend-const-hoist-respects-scratch-plan-ok?)
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)

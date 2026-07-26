@@ -119,6 +119,7 @@ tests/spmd/masked_if_varying_while_i64.tl
 tests/spmd/varying_while_nested_i64.tl
 tests/spmd/varying_match_i64.tl
 tests/spmd/varying_match_enum_payload.tl
+tests/spmd/varying_match_enum_helper_reject.tl
 tests/spmd/bool_lanes.tl
 tests/spmd/map_fused_reduce_i64.tl
 tests/integration/spmd_foreach.tl
@@ -154,6 +155,9 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/private_helper_i64.tl:avx2 | tests/spmd/private_helper_f64.tl:avx2 | tests/spmd/private_helper_bool.tl:avx2 | tests/spmd/private_helper_masked_load.tl:avx2 | tests/spmd/private_helper_store.tl:avx2 | tests/spmd/private_helper_effects.tl:avx2)
             printf '%s\n' "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512"
+            ;;
+        tests/spmd/varying_match_enum_helper_reject.tl:avx2 | tests/spmd/varying_match_enum_helper_reject.tl:avx512)
+            printf '%s\n' "lower: SPMD masked if does not support a SIMD varying enum match source outside a contiguous array lane"
             ;;
         *) return 1 ;;
     esac
@@ -487,6 +491,28 @@ verify_avx2_varying_enum_match_shape() {
     fi
 }
 
+verify_avx512_varying_enum_match_shape() {
+    compile_spmd_mode tests/spmd/varying_match_enum_payload.tl avx512
+    _tag=tests_spmd_varying_match_enum_payload_tl
+    _asm="$WORKDIR/$_tag.avx512.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] varying-enum-match AVX-512 shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/varying_match_enum_payload.tl avx512 (shape compile)" >> "$FAILURES"
+        return
+    fi
+    for shape in spmd_match_lane_load kortest zmm '%k'; do
+        if ! grep -F -- "$shape" "$_asm" > /dev/null; then
+            echo "[spmd-simd] varying-enum-match AVX-512 assembly missing $shape" >&2
+            echo "tests/spmd/varying_match_enum_payload.tl avx512 (missing $shape)" >> "$FAILURES"
+        fi
+    done
+    if grep -F -- foreach_header "$_asm" > /dev/null; then
+        echo "[spmd-simd] varying-enum-match AVX-512 assembly scalarized the foreach" >&2
+        echo "tests/spmd/varying_match_enum_payload.tl avx512 (scalar foreach)" >> "$FAILURES"
+    fi
+}
+
 verify_masked_bitwise_shape() {
     _mode=$1
     compile_spmd_mode tests/spmd/masked_if_bitwise_value_types.tl "$_mode"
@@ -679,6 +705,7 @@ done
 
 verify_avx2_varying_while_shape
 verify_avx2_varying_enum_match_shape
+verify_avx512_varying_enum_match_shape
 verify_masked_bitwise_shape avx2
 verify_masked_bitwise_shape avx512
 verify_masked_shift_shape avx2

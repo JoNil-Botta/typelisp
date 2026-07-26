@@ -6642,7 +6642,7 @@ in documentation passes.
   nested branch-mask composition, value-producing selects, and guarded native
   `i32`/`u32`/`i64`/`u64` shifts with active-lane-only invalid-count traps;
   AVX2/AVX-512
-  scalar-lane varying `match`; AVX2 enum tag/payload varying `match` with
+  scalar-lane varying `match`; AVX2/AVX-512 enum tag/payload varying `match` with
   active-lane-only scalar field loads; AVX2/AVX-512
   standalone bool dynamic-array lanes, including bool copies and numeric
   comparison results stored to bool arrays; AVX2/AVX-512 varying `while` with

@@ -440,7 +440,7 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   full gangs and resuming with an in-order scalar tail.
 - Masked varying `if` (including nested masks and value-producing selects),
   varying `while` with loop-carried active masks, and varying `match`
-  (including AVX2 enum tags and scalar-lane payload bindings) run in the
+  (including AVX2/AVX-512 enum tags and scalar-lane payload bindings) run in the
   documented scalar, AVX2, and AVX-512 subsets. Unsupported early exits and
   other deferred control-flow shapes report explicit diagnostics instead of
   silently scalarizing.

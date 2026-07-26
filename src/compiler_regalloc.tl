@@ -28563,6 +28563,7 @@
       [func : CompilerIrFunction (compiler-reg-switch-scratch-test-function)]
       [plan : CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
       (match (compiler-reg-plan-with-scratch-vreg-result
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerRegTargetAbi.Linux)
         func
         plan
@@ -28610,6 +28611,7 @@
       [func : CompilerIrFunction (compiler-reg-bounds-scratch-test-function)]
       [plan : CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
       (match (compiler-reg-plan-with-scratch-vreg-result
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerRegTargetAbi.Linux)
         func
         plan
@@ -28674,6 +28676,7 @@
   (cfg
     scratch-vreg
     (match (compiler-reg-plan-with-scratch-vreg-result
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerRegTargetAbi.Linux)
       (compiler-reg-memory-scratch-test-function)
       (compiler-reg-memory-scratch-test-plan)

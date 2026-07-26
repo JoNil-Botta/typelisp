@@ -177,7 +177,12 @@ use.
 - `hashmap.tl`: generated hashmap modules (collections v1, #817) over
   open-addressed linear-probing slot arrays. Every specialization emits its
   complete slot, probe, map, lookup, mutation, and iteration implementation;
-  there are no manually maintained concrete backing families. Import a
+  there are no manually maintained concrete backing families. Slots are
+  `Empty | Tombstone | Occupied(K, V, hash)`; the `i64 -> i64` family stores
+  `Occupied(K, V)` and recomputes the hash on growth, since an i64 `key-eq?` is
+  a single compare and the stored word guarded nothing. Both share the hash,
+  capacity policy, probe order, tombstone rule, and growth condition, so slot
+  indices and iteration order are identical under either. Import a
   specialization such as `(import (hashmap.hashmap String i64) as map)` and use its
   `Map`, `with-capacity`, `get`, `contains?`, `len`, `capacity`, bucket-order
   cursor helpers, and place-taking `insert!`, `insert-or-update!`, `remove!`,

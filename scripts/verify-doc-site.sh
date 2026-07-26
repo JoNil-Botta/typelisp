@@ -295,10 +295,10 @@ stdlib_pages=$(find "$SITE" -maxdepth 1 -type f -name 'stdlib-*.html' | wc -l)
 [ "$stdlib_pages" -ge 1 ] || fail "no stdlib-*.html module pages were generated"
 
 # Completeness (#5689): every top-level stdlib module has a published page and
-# no published page is stale. The pages are derived from
-# tools/doc-site/doc_site_stdlib_manifest.tl, so comparing them against stdlib/
-# pins that manifest too. Module names separate words with `_`; page names use
-# `-`.
+# no published page is stale. The site derives this set from stdlib/ through
+# tools/doc-site/doc_site_stdlib_manifest.tl; this independent shell derivation
+# catches a broken walk in either direction. Module names separate words with
+# `_`; page names use `-`.
 EXPECTED_STDLIB_PAGES="$WORK/.stdlib-pages.expected"
 ACTUAL_STDLIB_PAGES="$WORK/.stdlib-pages.actual"
 find stdlib -maxdepth 1 -type f -name '*.tl' \
@@ -313,7 +313,7 @@ find "$SITE" -maxdepth 1 -type f -name 'stdlib-*.html' \
 if ! cmp -s "$EXPECTED_STDLIB_PAGES" "$ACTUAL_STDLIB_PAGES"; then
     echo "docs-site stdlib pages do not match stdlib/ (-expected +published):" >&2
     diff -u "$EXPECTED_STDLIB_PAGES" "$ACTUAL_STDLIB_PAGES" >&2 || true
-    fail "update tools/doc-site/doc_site_stdlib_manifest.tl so every stdlib module is published"
+    fail "derived docs-site stdlib pages must match every stdlib module"
 fi
 expected_stdlib_modules=$(wc -l < "$EXPECTED_STDLIB_PAGES" | tr -d ' ')
 echo "[doc-site] published all $expected_stdlib_modules top-level stdlib module(s)"

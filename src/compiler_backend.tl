@@ -329,34 +329,34 @@
   (r14 i64)
   (r15 i64))
 
+;; Transient per-line descriptor for the streaming peephole. Every pair-rule
+;; transfer copies this struct, and one is built for every assembly line, so it
+;; stores only what the rules read and packs the small members into shared
+;; words. The derived spellings are the `-desc-` accessors beside `parse-line`.
+;;  * `span`      start in the low 32 bits, end in the high 32. Group texts are
+;;                orders of magnitude below 2^31 bytes and both halves stay
+;;                non-negative, so the shifts never touch the sign bit.
+;;  * `mnemonic`  mnemonic start in the low 32 bits, its length in the high 32.
+;;  * `flags`     the nine line predicates, one bit each.
+;;  * `op-src-start` / `op-src-end` / `op-dst-start` the operand split. Only
+;;                movq/zext lines split (the `has-operands` flag); the
+;;                destination always runs to the line end, so it needs no field.
+;;  * `op-flags`  source operand flags in bits 0..3, destination in bits 4..7.
+;;  * `regs`      source / destination / last-operand register indices, biased
+;;                by one so the -1 "none" sentinel packs, one byte each.
 (defstruct CompilerBackendPeepholeLine
   (src String)
   (data (Ptr u8))
-  (start i64)
-  (end i64)
-  (newline bool)
-  (owned bool)
-  (mnemonic-start i64)
-  (mnemonic-len i64)
-  (has-operands bool)
+  (span i64)
+  (mnemonic i64)
+  (flags i64)
   (op-src-start i64)
   (op-src-end i64)
   (op-dst-start i64)
-  (op-dst-end i64)
-  (op-src-reg i64)
-  (op-dst-reg i64)
-  (op-src-flags i64)
-  (op-dst-flags i64)
   (op-src-key i64)
   (op-dst-key i64)
-  (movq bool)
-  (label bool)
-  (noreturn-abort bool)
-  (clears-owners bool)
-  (call bool)
-  (single-dest bool)
-  (last-reg i64)
-  (zext-dst i64))
+  (op-flags i64)
+  (regs i64))
 
 ;; Per-line GAP5 extraction result. Every offset is the RAW in-text frame
 ;; displacement (delta 0); the sweep subtracts its running rsp delta.
@@ -406,6 +406,17 @@
 (defstruct CompilerBackendPeepholeEmitRecordResult
   (lines CompilerBackendPeepholeLineVec)
   (owners CompilerBackendPeepholeOwners))
+
+;; The physical chunks the streaming peephole parses in place, in emission
+;; order, plus their combined byte count. A group chunk is one whole emitted
+;; function/adapter text and is newline terminated, so an assembly line never
+;; spans two chunks and each record can reference its own chunk as `src`.
+;; `chunks-normalize` restores that invariant for any caller that appends a
+;; partial line, so the walk itself never has to join across a boundary.
+(defstruct CompilerBackendPeepholeChunkArray
+  (items (Array String))
+  (count i64)
+  (total i64))
 
 ;; One raw-assembly group plus already-optimized output chunks. A group ends at
 ;; a function-level `.globl` chunk, where peephole owner state is
@@ -56328,35 +56339,252 @@
           (set! i (+ i 1))))
       found)))
 
+;; ---- transient line descriptor packing -------------------------------------
+;; Low/high halves of the `span` and `mnemonic` words.
+(define compiler-backend-peephole-desc-pack-shift : i64
+  32)
+(define compiler-backend-peephole-desc-pack-mask : i64
+  4294967295)
+
+;; One bit per line predicate in `flags`.
+(define compiler-backend-peephole-desc-flag-newline : i64
+  1)
+(define compiler-backend-peephole-desc-flag-owned : i64
+  2)
+(define compiler-backend-peephole-desc-flag-movq : i64
+  4)
+(define compiler-backend-peephole-desc-flag-label : i64
+  8)
+(define compiler-backend-peephole-desc-flag-noreturn-abort : i64
+  16)
+(define compiler-backend-peephole-desc-flag-clears-owners : i64
+  32)
+(define compiler-backend-peephole-desc-flag-call : i64
+  64)
+(define compiler-backend-peephole-desc-flag-single-dest : i64
+  128)
+(define compiler-backend-peephole-desc-flag-zext : i64
+  256)
+(define compiler-backend-peephole-desc-flag-has-operands : i64
+  512)
+
+;; `op-flags` holds the 4-bit operand flag sets side by side.
+(define compiler-backend-peephole-desc-op-flags-mask : i64
+  15)
+(define compiler-backend-peephole-desc-op-flags-dst-shift : i64
+  4)
+
+;; `regs` holds three 1-biased register indices (-1 becomes 0).
+(define compiler-backend-peephole-desc-reg-mask : i64
+  255)
+(define compiler-backend-peephole-desc-reg-dst-shift : i64
+  8)
+(define compiler-backend-peephole-desc-reg-last-shift : i64
+  16)
+
+(define (compiler-backend-peephole-desc-start
+  [line : CompilerBackendPeepholeLine]) : i64
+  (bit-and (struct-get line span) compiler-backend-peephole-desc-pack-mask))
+
+(define (compiler-backend-peephole-desc-end
+  [line : CompilerBackendPeepholeLine]) : i64
+  (bit-and
+    (shr (struct-get line span) compiler-backend-peephole-desc-pack-shift)
+    compiler-backend-peephole-desc-pack-mask))
+
+(define (compiler-backend-peephole-desc-mnemonic-start
+  [line : CompilerBackendPeepholeLine]) : i64
+  (bit-and (struct-get line mnemonic) compiler-backend-peephole-desc-pack-mask))
+
+(define (compiler-backend-peephole-desc-mnemonic-len
+  [line : CompilerBackendPeepholeLine]) : i64
+  (bit-and
+    (shr (struct-get line mnemonic) compiler-backend-peephole-desc-pack-shift)
+    compiler-backend-peephole-desc-pack-mask))
+
+(define (compiler-backend-peephole-desc-newline?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and
+        (struct-get line flags)
+        compiler-backend-peephole-desc-flag-newline)
+      0)))
+
+(define (compiler-backend-peephole-desc-owned?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and
+        (struct-get line flags)
+        compiler-backend-peephole-desc-flag-owned)
+      0)))
+
+(define (compiler-backend-peephole-desc-movq?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and (struct-get line flags) compiler-backend-peephole-desc-flag-movq)
+      0)))
+
+(define (compiler-backend-peephole-desc-label?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and
+        (struct-get line flags)
+        compiler-backend-peephole-desc-flag-label)
+      0)))
+
+(define (compiler-backend-peephole-desc-noreturn-abort?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and
+        (struct-get line flags)
+        compiler-backend-peephole-desc-flag-noreturn-abort)
+      0)))
+
+(define (compiler-backend-peephole-desc-clears-owners?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and
+        (struct-get line flags)
+        compiler-backend-peephole-desc-flag-clears-owners)
+      0)))
+
+(define (compiler-backend-peephole-desc-call?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and (struct-get line flags) compiler-backend-peephole-desc-flag-call)
+      0)))
+
+(define (compiler-backend-peephole-desc-single-dest?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and
+        (struct-get line flags)
+        compiler-backend-peephole-desc-flag-single-dest)
+      0)))
+
+(define (compiler-backend-peephole-desc-has-operands?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (not
+    (=
+      (bit-and
+        (struct-get line flags)
+        compiler-backend-peephole-desc-flag-has-operands)
+      0)))
+
+(define (compiler-backend-peephole-desc-op-src-start
+  [line : CompilerBackendPeepholeLine]) : i64
+  (struct-get line op-src-start))
+
+(define (compiler-backend-peephole-desc-op-src-end
+  [line : CompilerBackendPeepholeLine]) : i64
+  (struct-get line op-src-end))
+
+(define (compiler-backend-peephole-desc-op-dst-start
+  [line : CompilerBackendPeepholeLine]) : i64
+  (struct-get line op-dst-start))
+
+;; The destination operand always runs to the end of the line.
+(define (compiler-backend-peephole-desc-op-dst-end
+  [line : CompilerBackendPeepholeLine]) : i64
+  (bit-and
+    (shr (struct-get line span) compiler-backend-peephole-desc-pack-shift)
+    compiler-backend-peephole-desc-pack-mask))
+
+(define (compiler-backend-peephole-desc-op-src-flags
+  [line : CompilerBackendPeepholeLine]) : i64
+  (bit-and
+    (struct-get line op-flags)
+    compiler-backend-peephole-desc-op-flags-mask))
+
+(define (compiler-backend-peephole-desc-op-dst-flags
+  [line : CompilerBackendPeepholeLine]) : i64
+  (bit-and
+    (shr
+      (struct-get line op-flags)
+      compiler-backend-peephole-desc-op-flags-dst-shift)
+    compiler-backend-peephole-desc-op-flags-mask))
+
+(define (compiler-backend-peephole-desc-op-src-reg
+  [line : CompilerBackendPeepholeLine]) : i64
+  (- (bit-and (struct-get line regs) compiler-backend-peephole-desc-reg-mask) 1))
+
+(define (compiler-backend-peephole-desc-op-dst-reg
+  [line : CompilerBackendPeepholeLine]) : i64
+  (-
+    (bit-and
+      (shr (struct-get line regs) compiler-backend-peephole-desc-reg-dst-shift)
+      compiler-backend-peephole-desc-reg-mask)
+    1))
+
+(define (compiler-backend-peephole-desc-last-reg
+  [line : CompilerBackendPeepholeLine]) : i64
+  (-
+    (bit-and
+      (shr (struct-get line regs) compiler-backend-peephole-desc-reg-last-shift)
+      compiler-backend-peephole-desc-reg-mask)
+    1))
+
+;; The zext pair rule reads the widening move's destination register; it is the
+;; last-operand register of a `movzb{q,l}` line and "none" everywhere else.
+(define (compiler-backend-peephole-desc-zext-dst
+  [line : CompilerBackendPeepholeLine]) : i64
+  (if (=
+    (bit-and (struct-get line flags) compiler-backend-peephole-desc-flag-zext)
+    0)
+    -1
+    (-
+      (bit-and
+        (shr
+          (struct-get line regs)
+          compiler-backend-peephole-desc-reg-last-shift)
+        compiler-backend-peephole-desc-reg-mask)
+      1)))
+
 (define (compiler-backend-peephole-line-mnemonic-eq?
   [line : CompilerBackendPeepholeLine]
   [name : String]) : bool
-  (compiler-backend-peephole-range-eq?
-    (struct-get line data)
-    (struct-get line mnemonic-start)
-    (+ (struct-get line mnemonic-start) (struct-get line mnemonic-len))
-    name))
+  (let
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
+    (compiler-backend-peephole-range-eq?
+      (struct-get line data)
+      ms
+      (+ ms (compiler-backend-peephole-desc-mnemonic-len line))
+      name)))
 
 (define (compiler-backend-peephole-line-text
   [line : CompilerBackendPeepholeLine]) : String
-  (string.substring
-    (struct-get line src)
-    (struct-get line start)
-    (- (struct-get line end) (struct-get line start))))
+  (let
+    [start : i64 (compiler-backend-peephole-desc-start line)]
+    (string.substring
+      (struct-get line src)
+      start
+      (- (compiler-backend-peephole-desc-end line) start))))
 
 (define (compiler-backend-peephole-line-op-src-text
   [line : CompilerBackendPeepholeLine]) : String
-  (string.substring
-    (struct-get line src)
-    (struct-get line op-src-start)
-    (- (struct-get line op-src-end) (struct-get line op-src-start))))
+  (let
+    [start : i64 (compiler-backend-peephole-desc-op-src-start line)]
+    (string.substring
+      (struct-get line src)
+      start
+      (- (compiler-backend-peephole-desc-op-src-end line) start))))
 
 (define (compiler-backend-peephole-line-op-dst-text
   [line : CompilerBackendPeepholeLine]) : String
-  (string.substring
-    (struct-get line src)
-    (struct-get line op-dst-start)
-    (- (struct-get line op-dst-end) (struct-get line op-dst-start))))
+  (let
+    [start : i64 (compiler-backend-peephole-desc-op-dst-start line)]
+    (string.substring
+      (struct-get line src)
+      start
+      (- (compiler-backend-peephole-desc-op-dst-end line) start))))
 
 (define (compiler-backend-peephole-mnemonic-zext?
   [data : (Ptr u8)]
@@ -56532,35 +56760,71 @@
             (CompilerBackendPeepholeLine
               src
               data
-              start
-              end
-              newline
-              owned
-              ms
-              mlen
-              has-operands
+              (bit-or start (shl end compiler-backend-peephole-desc-pack-shift))
+              (bit-or ms (shl mlen compiler-backend-peephole-desc-pack-shift))
+              (bit-or
+                (bit-or
+                  (if newline
+                    compiler-backend-peephole-desc-flag-newline
+                    0)
+                  (bit-or
+                    (if owned
+                      compiler-backend-peephole-desc-flag-owned
+                      0)
+                    (if is-movq
+                      compiler-backend-peephole-desc-flag-movq
+                      0)))
+                (bit-or
+                  (bit-or
+                    (if is-label
+                      compiler-backend-peephole-desc-flag-label
+                      0)
+                    (if (and
+                      call?
+                      (compiler-backend-peephole-line-noreturn-abort?
+                        data
+                        start
+                        end))
+                      compiler-backend-peephole-desc-flag-noreturn-abort
+                      0))
+                  (bit-or
+                    (bit-or
+                      (if clears
+                        compiler-backend-peephole-desc-flag-clears-owners
+                        0)
+                      (if call?
+                        compiler-backend-peephole-desc-flag-call
+                        0))
+                    (bit-or
+                      (if single-dest?
+                        compiler-backend-peephole-desc-flag-single-dest
+                        0)
+                      (bit-or
+                        (if zext?
+                          compiler-backend-peephole-desc-flag-zext
+                          0)
+                        (if has-operands
+                          compiler-backend-peephole-desc-flag-has-operands
+                          0))))))
               op-src-start
               op-src-end
               op-dst-start
-              op-dst-end
-              src-reg
-              dst-reg
-              src-flags
-              dst-flags
               src-key
               dst-key
-              is-movq
-              is-label
-              (if call?
-                (compiler-backend-peephole-line-noreturn-abort? data start end)
-                false)
-              clears
-              call?
-              single-dest?
-              last-reg
-              (if zext?
-                last-reg
-                -1))))))))
+              (bit-or
+                src-flags
+                (shl
+                  dst-flags
+                  compiler-backend-peephole-desc-op-flags-dst-shift))
+              (bit-or
+                (+ src-reg 1)
+                (bit-or
+                  (shl
+                    (+ dst-reg 1)
+                    compiler-backend-peephole-desc-reg-dst-shift)
+                  (shl
+                    (+ last-reg 1)
+                    compiler-backend-peephole-desc-reg-last-shift))))))))))
 
 (define (compiler-backend-peephole-owned-line [line : String] [newline : bool]) : CompilerBackendPeepholeLine
   (compiler-backend-peephole-parse-line
@@ -56580,31 +56844,16 @@
   (CompilerBackendPeepholeLine
     (struct-get line src)
     (struct-get line data)
-    (struct-get line start)
-    (struct-get line end)
-    (struct-get line newline)
-    (struct-get line owned)
-    (struct-get line mnemonic-start)
-    (struct-get line mnemonic-len)
-    (struct-get line has-operands)
+    (struct-get line span)
+    (struct-get line mnemonic)
+    (struct-get line flags)
     (struct-get line op-src-start)
     (struct-get line op-src-end)
     (struct-get line op-dst-start)
-    (struct-get line op-dst-end)
-    (struct-get line op-src-reg)
-    (struct-get line op-dst-reg)
-    (struct-get line op-src-flags)
-    (struct-get line op-dst-flags)
     (struct-get line op-src-key)
     (struct-get line op-dst-key)
-    (struct-get line movq)
-    (struct-get line label)
-    (struct-get line noreturn-abort)
-    (struct-get line clears-owners)
-    (struct-get line call)
-    (struct-get line single-dest)
-    (struct-get line last-reg)
-    (struct-get line zext-dst)))
+    (struct-get line op-flags)
+    (struct-get line regs)))
 
 ;; ---- compact line-record packing -------------------------------------------
 ;; `span` holds start in the low 32 bits and end in the high 32. Assembly group
@@ -56728,19 +56977,19 @@
   [line : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLineRecord
   (let
     [data : (Ptr u8) (struct-get line data)]
-    [end : i64 (struct-get line end)]
-    [ms : i64 (struct-get line mnemonic-start)]
+    [end : i64 (compiler-backend-peephole-desc-end line)]
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
     [sweep : CompilerBackendPeepholeLineSweepSummary
       (compiler-backend-peephole-line-sweep-summary
         data
         end
         ms
-        (struct-get line mnemonic-len)
-        (struct-get line label))]
+        (compiler-backend-peephole-desc-mnemonic-len line)
+        (compiler-backend-peephole-desc-label? line))]
     (CompilerBackendPeepholeLineRecord
       (struct-get line src)
       (bit-or
-        (struct-get line start)
+        (compiler-backend-peephole-desc-start line)
         (shl end compiler-backend-peephole-record-span-shift))
       (bit-or
         (bit-or
@@ -56750,10 +56999,10 @@
               (struct-get sweep flags)
               compiler-backend-peephole-record-flags-shift))
           (bit-or
-            (if (struct-get line newline)
+            (if (compiler-backend-peephole-desc-newline? line)
               compiler-backend-peephole-record-newline-bit
               0)
-            (if (struct-get line owned)
+            (if (compiler-backend-peephole-desc-owned? line)
               compiler-backend-peephole-record-owned-bit
               0)))
         (bit-or
@@ -56885,28 +57134,28 @@
   [line : CompilerBackendPeepholeLine]
   [prev-abort? : bool]) : CompilerBackendPeepholeOwners
   (cond
-    [(struct-get line noreturn-abort) owners]
-    [(struct-get line label)
+    [(compiler-backend-peephole-desc-noreturn-abort? line) owners]
+    [(compiler-backend-peephole-desc-label? line)
       (if (or
         (compiler-backend-peephole-label-carry-safe?
           (struct-get line src)
           (struct-get line data)
-          (struct-get line start)
-          (struct-get line end))
+          (compiler-backend-peephole-desc-start line)
+          (compiler-backend-peephole-desc-end line))
         (and
           prev-abort?
           (compiler-backend-peephole-label-guard-ok?
             (struct-get line data)
-            (struct-get line start)
-            (struct-get line end))))
+            (compiler-backend-peephole-desc-start line)
+            (compiler-backend-peephole-desc-end line))))
         owners
         (compiler-backend-peephole-owners-empty))]
-    [(not (struct-get line clears-owners)) owners]
-    [(struct-get line call)
+    [(not (compiler-backend-peephole-desc-clears-owners? line)) owners]
+    [(compiler-backend-peephole-desc-call? line)
       (compiler-backend-peephole-owners-clear-call-clobbers owners)]
-    [(struct-get line single-dest)
+    [(compiler-backend-peephole-desc-single-dest? line)
       (let
-        [dreg : i64 (struct-get line last-reg)]
+        [dreg : i64 (compiler-backend-peephole-desc-last-reg line)]
         (if (< dreg 0)
           (compiler-backend-peephole-owners-empty)
           (compiler-backend-peephole-owners-set-reg-index
@@ -56918,27 +57167,27 @@
 (define (compiler-backend-peephole-line-self-move-desc?
   [line : CompilerBackendPeepholeLine]) : bool
   (and
-    (struct-get line movq)
-    (not (= (bit-and (struct-get line op-src-flags) 3) 0))
+    (compiler-backend-peephole-desc-movq? line)
+    (not (= (bit-and (compiler-backend-peephole-desc-op-src-flags line) 3) 0))
     (compiler-backend-peephole-ranges-eq?
       (struct-get line data)
-      (struct-get line op-src-start)
-      (struct-get line op-src-end)
+      (compiler-backend-peephole-desc-op-src-start line)
+      (compiler-backend-peephole-desc-op-src-end line)
       (struct-get line data)
-      (struct-get line op-dst-start)
-      (struct-get line op-dst-end))))
+      (compiler-backend-peephole-desc-op-dst-start line)
+      (compiler-backend-peephole-desc-op-dst-end line))))
 
 (define (compiler-backend-peephole-redundant-zext-next-desc?
   [next : CompilerBackendPeepholeLine]
   [reg : i64]) : bool
   (if (or
-    (not (struct-get next has-operands))
+    (not (compiler-backend-peephole-desc-has-operands? next))
     (not (compiler-backend-peephole-line-mnemonic-eq? next "movzbq")))
     false
     (let
       [data : (Ptr u8) (struct-get next data)]
-      [src-start : i64 (struct-get next op-src-start)]
-      [src-end : i64 (struct-get next op-src-end)]
+      [src-start : i64 (compiler-backend-peephole-desc-op-src-start next)]
+      [src-end : i64 (compiler-backend-peephole-desc-op-src-end next)]
       [src-len : i64 (- src-end src-start)]
       (if (or
         (= src-len 0)
@@ -56955,67 +57204,108 @@
                   src-start
                   src-end)
                 reg)
-              (= (struct-get next last-reg) reg))))))))
+              (= (compiler-backend-peephole-desc-last-reg next) reg))))))))
 
 (define (compiler-backend-peephole-redundant-zext-pair-desc?
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : bool
   (let
-    [dst : i64 (struct-get pending zext-dst)]
+    [dst : i64 (compiler-backend-peephole-desc-zext-dst pending)]
     (if (< dst 0)
       false
       (compiler-backend-peephole-redundant-zext-next-desc? next dst))))
 
-(define (compiler-backend-peephole-r10-dead-after-desc?
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : bool
+;; True iff any assembly text is left at or after chunk `chunk` offset `start`.
+;; The scan below stops on its line cap, and the cap census counts only the
+;; stops that left text unexamined.
+(define (compiler-backend-peephole-chunks-text-remaining?
+  [chunks : CompilerBackendPeepholeChunkArray]
+  [chunk : i64]
+  [start : i64]) : bool
   (let
+    [items : (Array String) (struct-get chunks items)]
+    [count : i64 (struct-get chunks count)]
+    [c : i64 chunk]
+    [i : i64 start]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< c count))
+        (if (< i (string.string-length (array-ref items c)))
+          (set! found true)
+          (begin
+            (set! c (+ c 1))
+            (set! i 0))))
+      found)))
+
+;; Scan forward from chunk `chunk` offset `start`, across chunk boundaries
+;; exactly as the former contiguous group render did.
+(define (compiler-backend-peephole-r10-dead-after-desc?
+  [chunks : CompilerBackendPeepholeChunkArray]
+  [chunk : i64]
+  [start : i64]) : bool
+  (let
+    [items : (Array String) (struct-get chunks items)]
+    [count : i64 (struct-get chunks count)]
+    [c : i64 chunk]
     [i : i64 start]
     [k : i64 0]
     [result : i64 -1]
     (begin
       (while (and
-        (< i n)
+        (< c count)
         (< result 0)
         (< k compiler-backend-peephole-r10-dead-scan-line-cap))
         (let
-          [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
-          [next-start : i64
-            (if (< end n)
-              (+ end 1)
-              end)]
-          [line : CompilerBackendPeepholeLine
-            (compiler-backend-peephole-parse-line
-              asm
-              asm-data
-              i
-              end
-              (< end n)
-              false)]
-          [mentions-r10 : bool
-            (compiler-backend-peephole-range-mentions-r10-data? asm-data i end)]
-          [clean-writes-r10 : bool
-            (and
-              (struct-get line movq)
-              (= (struct-get line op-dst-reg) 8)
-              (not
+          [asm : String (array-ref items c)]
+          [n : i64 (string.string-length asm)]
+          (if (>= i n)
+            (begin
+              (set! c (+ c 1))
+              (set! i 0))
+            (let
+              [asm-data : (Ptr u8)
+                (unsafe
+                  (string-data asm))]
+              [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
+              [next-start : i64
+                (if (< end n)
+                  (+ end 1)
+                  end)]
+              [line : CompilerBackendPeepholeLine
+                (compiler-backend-peephole-parse-line
+                  asm
+                  asm-data
+                  i
+                  end
+                  (< end n)
+                  false)]
+              [mentions-r10 : bool
                 (compiler-backend-peephole-range-mentions-r10-data?
-                  (struct-get line data)
-                  (struct-get line op-src-start)
-                  (struct-get line op-src-end))))]
-          (begin
-            (if mentions-r10
-              (if clean-writes-r10
-                (set! result 1)
-                (set! result 0))
-              (if (struct-get line movq)
-                unit
-                (set! result 0)))
-            (set! i next-start)
-            (set! k (+ k 1)))))
-      (if (and (< result 0) (< i n))
+                  asm-data
+                  i
+                  end)]
+              [clean-writes-r10 : bool
+                (and
+                  (compiler-backend-peephole-desc-movq? line)
+                  (= (compiler-backend-peephole-desc-op-dst-reg line) 8)
+                  (not
+                    (compiler-backend-peephole-range-mentions-r10-data?
+                      (struct-get line data)
+                      (compiler-backend-peephole-desc-op-src-start line)
+                      (compiler-backend-peephole-desc-op-src-end line))))]
+              (begin
+                (if mentions-r10
+                  (if clean-writes-r10
+                    (set! result 1)
+                    (set! result 0))
+                  (if (compiler-backend-peephole-desc-movq? line)
+                    unit
+                    (set! result 0)))
+                (set! i next-start)
+                (set! k (+ k 1)))))))
+      (if (and
+        (< result 0)
+        (compiler-backend-peephole-chunks-text-remaining? chunks c i))
         (set!
           compiler-backend-peephole-r10-dead-scan-cap-hits
           (+ compiler-backend-peephole-r10-dead-scan-cap-hits 1))
@@ -57023,31 +57313,31 @@
       (= result 1))))
 
 (define (compiler-backend-peephole-pair-action-desc
-  [asm : String]
-  [asm-data : (Ptr u8)]
+  [chunks : CompilerBackendPeepholeChunkArray]
+  [chunk : i64]
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : i64
   (if (compiler-backend-peephole-redundant-zext-pair-desc? pending next)
     2
-    (if (struct-get pending movq)
+    (if (compiler-backend-peephole-desc-movq? pending)
       (if (compiler-backend-peephole-line-self-move-desc? pending)
         1
-        (if (struct-get next movq)
+        (if (compiler-backend-peephole-desc-movq? next)
           (let
             [pd : (Ptr u8) (struct-get pending data)]
             [nd : (Ptr u8) (struct-get next data)]
-            [pss : i64 (struct-get pending op-src-start)]
-            [pse : i64 (struct-get pending op-src-end)]
-            [pds : i64 (struct-get pending op-dst-start)]
-            [pde : i64 (struct-get pending op-dst-end)]
-            [nss : i64 (struct-get next op-src-start)]
-            [nse : i64 (struct-get next op-src-end)]
-            [nds : i64 (struct-get next op-dst-start)]
-            [nde : i64 (struct-get next op-dst-end)]
-            [psf : i64 (struct-get pending op-src-flags)]
-            [pdf : i64 (struct-get pending op-dst-flags)]
-            [nsf : i64 (struct-get next op-src-flags)]
-            [ndf : i64 (struct-get next op-dst-flags)]
+            [pss : i64 (compiler-backend-peephole-desc-op-src-start pending)]
+            [pse : i64 (compiler-backend-peephole-desc-op-src-end pending)]
+            [pds : i64 (compiler-backend-peephole-desc-op-dst-start pending)]
+            [pde : i64 (compiler-backend-peephole-desc-op-dst-end pending)]
+            [nss : i64 (compiler-backend-peephole-desc-op-src-start next)]
+            [nse : i64 (compiler-backend-peephole-desc-op-src-end next)]
+            [nds : i64 (compiler-backend-peephole-desc-op-dst-start next)]
+            [nde : i64 (compiler-backend-peephole-desc-op-dst-end next)]
+            [psf : i64 (compiler-backend-peephole-desc-op-src-flags pending)]
+            [pdf : i64 (compiler-backend-peephole-desc-op-dst-flags pending)]
+            [nsf : i64 (compiler-backend-peephole-desc-op-src-flags next)]
+            [ndf : i64 (compiler-backend-peephole-desc-op-dst-flags next)]
             (cond
               [(and
                   (compiler-backend-peephole-op-flag?
@@ -57122,7 +57412,7 @@
                     compiler-backend-peephole-op-register-flag)
                   (not (compiler-backend-peephole-range-eq? pd pss pse "%r10"))
                   (not (compiler-backend-peephole-range-eq? pd pss pse "%rbp"))
-                  (= (struct-get pending op-dst-reg) 8)
+                  (= (compiler-backend-peephole-desc-op-dst-reg pending) 8)
                   (compiler-backend-peephole-op-flag?
                     nsf
                     compiler-backend-peephole-op-r10-base-flag)
@@ -57130,14 +57420,18 @@
                     ndf
                     compiler-backend-peephole-op-register-flag)
                   (or
-                    (= (struct-get next op-dst-reg) 8)
-                    (compiler-backend-peephole-r10-dead-after-desc?
-                      asm
-                      asm-data
-                      (if (< (struct-get next end) (string.string-length asm))
-                        (+ (struct-get next end) 1)
-                        (struct-get next end))
-                      (string.string-length asm))))
+                    (= (compiler-backend-peephole-desc-op-dst-reg next) 8)
+                    (let
+                      [nend : i64 (compiler-backend-peephole-desc-end next)]
+                      [nlen : i64
+                        (string.string-length
+                          (array-ref (struct-get chunks items) chunk))]
+                      (compiler-backend-peephole-r10-dead-after-desc?
+                        chunks
+                        chunk
+                        (if (< nend nlen)
+                          (+ nend 1)
+                          nend)))))
                 4]
               [else 0]))
           0))
@@ -57146,7 +57440,9 @@
 (define (compiler-backend-peephole-forward-frame-load-line-desc
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : String
-  (if (and (struct-get pending movq) (struct-get next movq))
+  (if (and
+    (compiler-backend-peephole-desc-movq? pending)
+    (compiler-backend-peephole-desc-movq? next))
     (str_cat.str-cat
       "    movq "
       (compiler-backend-peephole-line-op-src-text pending)
@@ -57157,7 +57453,9 @@
 (define (compiler-backend-peephole-r10-base-fold-line-desc
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : String
-  (if (and (struct-get pending movq) (struct-get next movq))
+  (if (and
+    (compiler-backend-peephole-desc-movq? pending)
+    (compiler-backend-peephole-desc-movq? next))
     (str_cat.str-cat
       "    movq "
       (compiler-backend-peephole-r10-base-rewrite
@@ -57177,10 +57475,10 @@
   [line : CompilerBackendPeepholeLine]
   [owners : CompilerBackendPeepholeOwners]
   [prev-abort? : bool]) : CompilerBackendPeepholeEmitRecordResult
-  (if (struct-get line movq)
+  (if (compiler-backend-peephole-desc-movq? line)
     (let
-      [src-reg : i64 (struct-get line op-src-reg)]
-      [dst-reg : i64 (struct-get line op-dst-reg)]
+      [src-reg : i64 (compiler-backend-peephole-desc-op-src-reg line)]
+      [dst-reg : i64 (compiler-backend-peephole-desc-op-dst-reg line)]
       [src-key : i64 (struct-get line op-src-key)]
       [dst-key : i64 (struct-get line op-dst-key)]
       [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
@@ -57209,7 +57507,7 @@
                   ry
                   ", "
                   (compiler-backend-peephole-line-op-dst-text line))
-                (struct-get line newline)))]
+                (compiler-backend-peephole-desc-newline? line)))]
           [else (compiler-backend-peephole-line-vec-push out line)])]
       [next-owners : CompilerBackendPeepholeOwners
         (compiler-backend-peephole-movq-owners-transfer-keyed-index
@@ -57253,9 +57551,228 @@
         (<= (+ i 6) n)
         (compiler-backend-peephole-range-eq? data i (+ i 6) ".globl")))))
 
-;; Render and optimize only the accumulated function group.  The raw rendered
-;; String is scoped to its own arena; the complete peephole result is allocated
-;; in the caller arena before that raw arena is released.
+(define (compiler-backend-peephole-chunk-newline-terminated? [chunk : String]) : bool
+  (let
+    [n : i64 (string.string-length chunk)]
+    (and (> n 0) (= (string.string-ref chunk (- n 1)) '\n'))))
+
+;; How many chunks continue an assembly line into their successor. Zero for
+;; every group the backend emits (each chunk is one whole function text), so
+;; this pass is the invariant check that keeps the walk render-free.
+(define (compiler-backend-peephole-chunks-split-line-count
+  [items : (Array String)]
+  [count : i64]) : i64
+  (let
+    [k : i64 0]
+    [split : i64 0]
+    (begin
+      (while (< k (- count 1))
+        (begin
+          (unless
+            (compiler-backend-peephole-chunk-newline-terminated?
+              (array-ref items k))
+            (set! split (+ split 1)))
+          (set! k (+ k 1))))
+      split)))
+
+;; Join any run of chunks that a line spans into one chunk, so the walk holds a
+;; single invariant: a line is always contained in the chunk it starts in. The
+;; join allocates only when a caller appended a partial line.
+(define (compiler-backend-peephole-chunks-normalize
+  [items : (Array String)]
+  [count : i64]
+  [total : i64]) : CompilerBackendPeepholeChunkArray
+  (let
+    [split : i64
+      (compiler-backend-peephole-chunks-split-line-count items count)]
+    (if (= split 0)
+      (CompilerBackendPeepholeChunkArray items count total)
+      (let
+        [joined : (Array String) (array.make-array String (- count split))]
+        [w : i64 0]
+        [k : i64 0]
+        (begin
+          (while (< k count)
+            (let
+              [buf : text_buf.TextBuf
+                (text_buf.append (text_buf.empty) (array-ref items k))]
+              (begin
+                (while (and
+                  (< k (- count 1))
+                  (not
+                    (compiler-backend-peephole-chunk-newline-terminated?
+                      (array-ref items k))))
+                  (begin
+                    (set! k (+ k 1))
+                    (set! buf (text_buf.append buf (array-ref items k)))))
+                (array-set! joined w (text_buf.render buf))
+                (set! w (+ w 1))
+                (set! k (+ k 1)))))
+          (CompilerBackendPeepholeChunkArray joined w total))))))
+
+;; Materialize a group's physical chunks in emission order. The chunk Strings
+;; themselves are borrowed, not copied: the peephole parses them in place.
+(define (compiler-backend-peephole-chunk-array [group : text_buf.TextBuf]) : CompilerBackendPeepholeChunkArray
+  (let
+    [chunks : text_buf.TextBufChunkList (struct-get group chunks)]
+    [count : i64 (text_buf.chunk-count chunks 0)]
+    [items : (Array String) (array.make-array String count)]
+    (begin
+      (text_buf.chunks-fill-array-rev chunks items (- count 1))
+      (compiler-backend-peephole-chunks-normalize
+        items
+        count
+        (struct-get group len)))))
+
+;; One String holding one chunk's worth of assembly, wrapped as a chunk array
+;; so the whole-string peephole entry points share the chunk walk.
+(define (compiler-backend-peephole-single-chunk-array [asm : String]) : CompilerBackendPeepholeChunkArray
+  (let
+    [items : (Array String) (array.make-array String 1)]
+    (begin
+      (array-set! items 0 asm)
+      (CompilerBackendPeepholeChunkArray items 1 (string.string-length asm)))))
+
+;; Rendered byte count of the surviving records: each keeps its own source
+;; range plus its newline.
+(define (compiler-backend-peephole-records-length
+  [v : CompilerBackendPeepholeLineVec]) : i64
+  (let
+    [recs : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
+    [live : (Array i64) (struct-get v live)]
+    [count : i64 (struct-get v len)]
+    [total : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (when
+            (= (array-ref live i) 1)
+            (let
+              [rec : CompilerBackendPeepholeLineRecord (array-ref recs i)]
+              (set!
+                total
+                (+
+                  total
+                  (+
+                    (-
+                      (compiler-backend-peephole-record-end rec)
+                      (compiler-backend-peephole-record-start rec))
+                    (if (compiler-backend-peephole-record-newline? rec)
+                      1
+                      0))))))
+          (set! i (+ i 1))))
+      total)))
+
+;; Copy the surviving records into `dst`. Adjacent survivors that are contiguous
+;; in the same source string are copied as one run, so a group the sweep did not
+;; touch still renders as a single copy of its range -- the coalescing the
+;; borrowed-chunk builder used to do, without building the chunk list.
+(define (compiler-backend-peephole-records-blit!
+  [v : CompilerBackendPeepholeLineVec]
+  [dst : (MutPtr u8)]) : unit
+  (let
+    [recs : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
+    [live : (Array i64) (struct-get v live)]
+    [count : i64 (struct-get v len)]
+    [out-pos : i64 0]
+    [run-active : bool false]
+    [run-data : (Ptr u8)
+      (unsafe
+        (string-data ""))]
+    [run-addr : u64
+      (unsafe
+        (ptr->int (string-data "")))]
+    [run-start : i64 0]
+    [run-end : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (when
+            (= (array-ref live i) 1)
+            (let
+              [rec : CompilerBackendPeepholeLineRecord (array-ref recs i)]
+              [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+              [addr : u64
+                (unsafe
+                  (ptr->int data))]
+              [start : i64 (compiler-backend-peephole-record-start rec)]
+              [end : i64 (compiler-backend-peephole-record-end rec)]
+              [newline? : bool (compiler-backend-peephole-record-newline? rec)]
+              [owned? : bool (compiler-backend-peephole-record-owned? rec)]
+              [hi : i64
+                (if (and newline? (not owned?))
+                  (+ end 1)
+                  end)]
+              (begin
+                (if (and run-active (= addr run-addr) (= start run-end))
+                  (set! run-end hi)
+                  (begin
+                    (when
+                      run-active
+                      (begin
+                        (text_buf_borrowed.copy-byte-range-into
+                          run-data
+                          run-start
+                          (- run-end run-start)
+                          dst
+                          out-pos)
+                        (set! out-pos (+ out-pos (- run-end run-start)))))
+                    (set! run-active true)
+                    (set! run-data data)
+                    (set! run-addr addr)
+                    (set! run-start start)
+                    (set! run-end hi)))
+                (when
+                  (and newline? owned?)
+                  (begin
+                    (text_buf_borrowed.copy-byte-range-into
+                      run-data
+                      run-start
+                      (- run-end run-start)
+                      dst
+                      out-pos)
+                    (set! out-pos (+ out-pos (- run-end run-start)))
+                    (unsafe
+                      (ptr-write! (ptr-offset dst out-pos) (cast 10 : u8)))
+                    (set! out-pos (+ out-pos 1))
+                    (set! run-active false))))))
+          (set! i (+ i 1))))
+      (when
+        run-active
+        (begin
+          (text_buf_borrowed.copy-byte-range-into
+            run-data
+            run-start
+            (- run-end run-start)
+            dst
+            out-pos)
+          (set! out-pos (+ out-pos (- run-end run-start)))))
+      unit)))
+
+;; The single render of the group: one allocation in the active arena, then the
+;; surviving records' bytes blitted straight in. Records carry their own source
+;; string, so the group never has to be flattened first.
+(define (compiler-backend-peephole-records-render
+  [v : CompilerBackendPeepholeLineVec]) : String
+  (let
+    [total : i64 (compiler-backend-peephole-records-length v)]
+    (if (= total 0)
+      ""
+      (let
+        [out : (Array u8) (array.make-array u8 total)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (compiler-backend-peephole-records-blit! v dst)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
+
+;; Optimize only the accumulated function group.  The group's chunks are parsed
+;; in place; the complete peephole result is allocated in the caller arena
+;; before the scoped record arena is released.
 (define (compiler-backend-peephole-chunk-state-flush
   [state : CompilerBackendPeepholeChunkState]) : CompilerBackendPeepholeChunkState
   (if (text_buf.empty? (struct-get state group))
@@ -57267,19 +57784,16 @@
         (unsafe
           (arena.set! render-arena))
         (let
-          [raw-asm : String (text_buf.render (struct-get state group))]
+          [chunks : CompilerBackendPeepholeChunkArray
+            (compiler-backend-peephole-chunk-array (struct-get state group))]
           [records : CompilerBackendPeepholeLineVec
-            (compiler-backend-peephole-asm-once-records raw-asm)]
-          [buf : (text_buf_borrowed.TextBufBorrowed raw-asm)
-            (compiler-backend-peephole-records-buffer
-              (text_buf_borrowed.empty-like (& raw-asm))
-              records
-              raw-asm)]
+            (compiler-backend-peephole-asm-once-records-chunks chunks)]
           (begin
             (unsafe
               (arena.set! output-arena))
             (let
-              [peepholed-asm : String (text_buf_borrowed.render buf)]
+              [peepholed-asm : String
+                (compiler-backend-peephole-records-render records)]
               (begin
                 (unsafe
                   (arena.destroy render-arena))
@@ -57330,11 +57844,6 @@
 (define (compiler-backend-peephole-text-buf-once [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (compiler-backend-peephole-text-buf-once-in-arena buf (arena.current)))
 
-;; Flush one raw function group through the record pipeline. `scratch` is active
-;; on entry and rewound before return: the raw group String, the line records
-;; and every synthesized line live there, and only the single rendered group
-;; string escapes into `home`. One render per group -- the post-peephole render,
-;; the sweep's buffer render and the substring copy are all gone.
 (define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
   (let
     [handle : i64 (arena.raw-handle owner)]
@@ -57365,6 +57874,12 @@
     compiler-backend-assembly-stream-home-arena
     (compiler-backend-arena-owner-current-head home-arena)))
 
+;; Flush one raw function group through the record pipeline. `scratch` is active
+;; on entry and rewound before return: the chunk index, the line records and
+;; every synthesized line live there, and only the single rendered group string
+;; escapes into `home`. The group's raw chunks are parsed where the emitter left
+;; them, so the flush neither flattens nor copies them -- one write per surviving
+;; byte, into the final group string.
 (define (compiler-backend-peephole-sweep-chunk-state-flush
   [state : CompilerBackendPeepholeSweepChunkState]
   [scratch-mark : arena.ArenaMark]
@@ -57372,23 +57887,19 @@
   (if (text_buf.empty? (struct-get state group))
     state
     (let
-      [raw-asm : String (text_buf.render (struct-get state group))]
+      [chunks : CompilerBackendPeepholeChunkArray
+        (compiler-backend-peephole-chunk-array (struct-get state group))]
       [records : CompilerBackendPeepholeLineVec
-        (compiler-backend-peephole-asm-once-records raw-asm)]
+        (compiler-backend-peephole-asm-once-records-chunks chunks)]
       [cursor : i64
         (compiler-backend-deadstore-sweep-records!
           records
           (struct-get state sweep-cursor))]
-      [buf : (text_buf_borrowed.TextBufBorrowed raw-asm)
-        (compiler-backend-peephole-records-buffer
-          (text_buf_borrowed.empty-like (& raw-asm))
-          records
-          raw-asm)]
       [finished : CompilerBackendPeepholeSweepChunkState
         (in-arena
           home-arena
           (let
-            [kept : String (text_buf_borrowed.render buf)]
+            [kept : String (compiler-backend-peephole-records-render records)]
             (CompilerBackendPeepholeSweepChunkState
               (text_buf.append (struct-get state out) kept)
               (text_buf.empty)
@@ -57533,16 +58044,21 @@
 ;; emit step pushes its record into a dense arena-backed array instead of
 ;; appending bytes. The array is the pipeline: the dead-store sweep consumes it
 ;; and the group is rendered exactly once, afterwards.
-(define (compiler-backend-peephole-asm-once-records [asm : String]) : CompilerBackendPeepholeLineVec
+;;
+;; The walk runs over the group's physical chunks, parsing each in place; a
+;; record's `src` is the chunk its line came from. Chunk boundaries are NOT
+;; pass boundaries: `pending`, the owner map and `prev-abort?` all carry across
+;; them, so a pair whose two lines sit in different chunks still forms exactly
+;; as it did when the group was flattened first.
+(define (compiler-backend-peephole-asm-once-records-chunks
+  [chunks : CompilerBackendPeepholeChunkArray]) : CompilerBackendPeepholeLineVec
   (let
-    [n : i64 (string.string-length asm)]
-    [asm-data : (Ptr u8)
-      (unsafe
-        (string-data asm))]
-    [i : i64 0]
+    [items : (Array String) (struct-get chunks items)]
+    [chunk-count : i64 (struct-get chunks count)]
     [out : CompilerBackendPeepholeLineVec
       (compiler-backend-peephole-line-vec-with-capacity
-        (compiler-backend-peephole-line-vec-capacity-for n))]
+        (compiler-backend-peephole-line-vec-capacity-for
+          (struct-get chunks total)))]
     [has-pending : bool false]
     [pending : CompilerBackendPeepholeLine
       (compiler-backend-peephole-empty-line)]
@@ -57550,98 +58066,119 @@
     [prev-abort? : bool false]
     [owners : CompilerBackendPeepholeOwners
       (compiler-backend-peephole-owners-empty)]
+    [c : i64 0]
     (begin
       (compiler-backend-peephole-owner-global-reset!)
-      (while (< i n)
+      (while (< c chunk-count)
         (let
-          [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
-          [next-start : i64
-            (if (< end n)
-              (+ end 1)
-              end)]
-          [line-newline : bool (< end n)]
+          [asm : String (array-ref items c)]
+          [n : i64 (string.string-length asm)]
+          [asm-data : (Ptr u8)
+            (unsafe
+              (string-data asm))]
+          [i : i64 0]
           (begin
-            (if has-pending
+            (while (< i n)
               (let
-                [line : CompilerBackendPeepholeLine
-                  (compiler-backend-peephole-parse-line
-                    asm
-                    asm-data
-                    i
-                    end
-                    line-newline
-                    false)]
-                [action : i64
-                  (compiler-backend-peephole-pair-action-desc
-                    asm
-                    asm-data
-                    pending
-                    line)]
-                (cond
-                  [(= action 1)
-                    (set! pending (compiler-backend-peephole-line-copy line))]
-                  [(= action 2) unit]
-                  [(= action 3)
+                [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
+                [next-start : i64
+                  (if (< end n)
+                    (+ end 1)
+                    end)]
+                [line-newline : bool (< end n)]
+                (begin
+                  (if has-pending
                     (let
-                      [forwarded-line : String
-                        (compiler-backend-peephole-forward-frame-load-line-desc
+                      [line : CompilerBackendPeepholeLine
+                        (compiler-backend-peephole-parse-line
+                          asm
+                          asm-data
+                          i
+                          end
+                          line-newline
+                          false)]
+                      [action : i64
+                        (compiler-backend-peephole-pair-action-desc
+                          chunks
+                          c
                           pending
                           line)]
-                      (begin
-                        (let
-                          [emit : CompilerBackendPeepholeEmitRecordResult
-                            (compiler-backend-peephole-emit-line-desc-record
-                              out
+                      (cond
+                        [(= action 1)
+                          (set!
+                            pending
+                            (compiler-backend-peephole-line-copy line))]
+                        [(= action 2) unit]
+                        [(= action 3)
+                          (let
+                            [forwarded-line : String
+                              (compiler-backend-peephole-forward-frame-load-line-desc
+                                pending
+                                line)]
+                            (begin
+                              (let
+                                [emit : CompilerBackendPeepholeEmitRecordResult
+                                  (compiler-backend-peephole-emit-line-desc-record
+                                    out
+                                    pending
+                                    owners
+                                    prev-abort?)]
+                                (begin
+                                  (set! out (struct-get emit lines))
+                                  (set! owners (struct-get emit owners))))
+                              (set!
+                                prev-abort?
+                                (compiler-backend-peephole-desc-noreturn-abort?
+                                  pending))
+                              (set!
+                                pending
+                                (compiler-backend-peephole-owned-line
+                                  forwarded-line
+                                  line-newline))))]
+                        [(= action 4)
+                          (let
+                            [folded-line : String
+                              (compiler-backend-peephole-r10-base-fold-line-desc
+                                pending
+                                line)]
+                            (set!
                               pending
-                              owners
-                              prev-abort?)]
+                              (compiler-backend-peephole-owned-line
+                                folded-line
+                                line-newline)))]
+                        [else
                           (begin
-                            (set! out (struct-get emit lines))
-                            (set! owners (struct-get emit owners))))
-                        (set! prev-abort? (struct-get pending noreturn-abort))
-                        (set!
-                          pending
-                          (compiler-backend-peephole-owned-line
-                            forwarded-line
-                            line-newline))))]
-                  [(= action 4)
-                    (let
-                      [folded-line : String
-                        (compiler-backend-peephole-r10-base-fold-line-desc
-                          pending
-                          line)]
+                            (let
+                              [emit : CompilerBackendPeepholeEmitRecordResult
+                                (compiler-backend-peephole-emit-line-desc-record
+                                  out
+                                  pending
+                                  owners
+                                  prev-abort?)]
+                              (begin
+                                (set! out (struct-get emit lines))
+                                (set! owners (struct-get emit owners))))
+                            (set!
+                              prev-abort?
+                              (compiler-backend-peephole-desc-noreturn-abort?
+                                pending))
+                            (set!
+                              pending
+                              (compiler-backend-peephole-line-copy line)))]))
+                    (begin
+                      (set! has-pending true)
                       (set!
                         pending
-                        (compiler-backend-peephole-owned-line
-                          folded-line
-                          line-newline)))]
-                  [else
-                    (begin
-                      (let
-                        [emit : CompilerBackendPeepholeEmitRecordResult
-                          (compiler-backend-peephole-emit-line-desc-record
-                            out
-                            pending
-                            owners
-                            prev-abort?)]
-                        (begin
-                          (set! out (struct-get emit lines))
-                          (set! owners (struct-get emit owners))))
-                      (set! prev-abort? (struct-get pending noreturn-abort))
-                      (set! pending (compiler-backend-peephole-line-copy line)))]))
-              (begin
-                (set! has-pending true)
-                (set!
-                  pending
-                  (compiler-backend-peephole-line-copy
-                    (compiler-backend-peephole-parse-line
-                      asm
-                      asm-data
-                      i
-                      end
-                      line-newline
-                      false)))))
-            (set! i next-start))))
+                        (compiler-backend-peephole-line-copy
+                          (compiler-backend-peephole-parse-line
+                            asm
+                            asm-data
+                            i
+                            end
+                            line-newline
+                            false)))))
+                  (set! i next-start))))
+            (set! c (+ c 1)))))
       (if (and
         has-pending
         (not (compiler-backend-peephole-line-self-move-desc? pending)))
@@ -57657,6 +58194,10 @@
             (set! owners (struct-get emit owners))))
         unit)
       out)))
+
+(define (compiler-backend-peephole-asm-once-records [asm : String]) : CompilerBackendPeepholeLineVec
+  (compiler-backend-peephole-asm-once-records-chunks
+    (compiler-backend-peephole-single-chunk-array asm)))
 
 ;; The single render of the group: append each surviving record's exact bytes
 ;; plus its newline flag. Runs of adjacent surviving asm lines coalesce into

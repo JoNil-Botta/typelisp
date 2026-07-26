@@ -1185,6 +1185,9 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_cat
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_load_failures|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_interpreted_fallbacks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_source_interpreted|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_expr_results|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_module_results|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_decls_results|"
 # The repo's own stdlib is content-identical to the embedded payload, so
 # the catalog dispatches here too; shell entries keep the counted
 # interpreted fallback (and their per-identity profile rows above). On
@@ -1391,6 +1394,16 @@ assert_profile_counter_at_least_in \
     1 \
     "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
     "$TEMPLATE_NODES_EMBEDDED_STDERR"
+# text_buf_family.owned commits a Decls result through the real mapped image;
+# the byte comparison below proves its handle rejoins the source CTFE
+# validation/splice path instead of merely returning a native value. Refs
+# #4870.
+assert_profile_counter_at_least_in \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_decls_results" \
+    1 \
+    "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR"
 assert_profile_counter_eq_in \
     "$TEMPLATE_NODES_INTERPRETED_STDERR" \
     "typecheck.macro.stdlib_tlci_catalog_hits" \
@@ -1586,6 +1599,15 @@ if ! (
     fail "comment-modified-root tlci wildcard-arm fixture compile failed"
 fi
 assert_profile_counter_at_least_in     "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"     "typecheck.macro.stdlib_tlci_native_dispatches"     1     "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT"     "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"
+# stdlib.hash/hash is a real source-lowered Module result. Compiling this
+# fixture and matching its source-route assembly proves the committed handle
+# reaches module identity, validation, and splice materialization. Refs #4870.
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_module_results" \
+    1 \
+    "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"
 assert_profile_counter_eq_in     "$STDLIB_TLCI_WILD_MODIFIED_STDERR"     "typecheck.macro.stdlib_tlci_catalog_hits"     0     "$STDLIB_TLCI_WILD_MODIFIED_STDOUT"     "$STDLIB_TLCI_WILD_MODIFIED_STDERR"
 # Both wildcard-arm identities must fire, so a fixture edit cannot silently
 # stop covering them.

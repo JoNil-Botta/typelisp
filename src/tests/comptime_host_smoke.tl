@@ -4,8 +4,9 @@
 ;; sequence a natively compiled `(f ,x)` quasiquote body will emit, and
 ;; asserts the committed result is the same AST shape the interpreted
 ;; builders produce. It also checks macro-call provenance, fold hygiene-marker
-;; parity, and the status contract for stale cookies, empty-stack commits,
-;; unknown operations, and fuel exhaustion. Refs #5212, #5475, #5503.
+;; parity, and the status contract for stale cookies, empty-stack and duplicate
+;; commits, unknown operations, and fuel exhaustion. Refs #5212, #5475, #5503,
+;; #4870.
 (import "../compiler_embedded_stdlib_tlci.tl")
 (import "../tlci_core.tl")
 (import "../tlci_loader.tl")
@@ -227,6 +228,14 @@
     (comptime-host-smoke-invoke tlci-host-callback-op-commit-result 0 0)
     tlci-host-callback-status-ok))
 
+;; The reflection builder test below batches several independent logical
+;; invocations under one expensive metadata setup. Consume its synthetic result
+;; between probes; real macro entries never receive this reset capability.
+(define (comptime-host-smoke-consume-test-result!) : bool
+  (begin
+    (set! compiler-comptime-host-result-ready false)
+    true))
+
 (define (comptime-host-smoke-result-name? [expected : String]) : bool
   (match (compiler-comptime-host-result-value)
     [(CompilerCtfeValue.Name text _) (string.eq text expected)]
@@ -409,6 +418,7 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-name? "beta")
+            (comptime-host-smoke-consume-test-result!)
             ;; Interpreted String arguments accept reflected Name values too:
             ;; this exact `"." + field-name` shape is used by struct hashing.
             (=
@@ -437,6 +447,7 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-name? ".alpha")
+            (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
                 tlci-host-callback-op-push-operand
@@ -451,6 +462,7 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-type? false)
+            (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
                 tlci-host-callback-op-push-operand
@@ -465,6 +477,7 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-type? true)
+            (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
                 tlci-host-callback-op-push-operand
@@ -479,6 +492,7 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-name? "Some")
+            (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
                 tlci-host-callback-op-push-operand
@@ -493,6 +507,7 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-type? true)
+            (comptime-host-smoke-consume-test-result!)
             ;; Dynamic projections consume reflected names/indexes.
             (=
               (comptime-host-smoke-invoke
@@ -520,6 +535,7 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-struct-get? pools value-node)
+            (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
                 tlci-host-callback-op-push-operand
@@ -534,6 +550,7 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-tuple-ref? pools value-node)
+            (comptime-host-smoke-consume-test-result!)
             ;; Assemble a variant match from a reflected name and dense
             ;; generated payload bindings.
             (=
@@ -797,6 +814,56 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; One invocation owns one public result slot. A buggy native entry must not
+;; overwrite its first committed handle; the second commit is a bad request,
+;; leaves the first value intact, and poisons the remainder of the session.
+(define (comptime-host-smoke-single-commit-ok?) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (array-set! operands 0 (CompilerCtfeValue.Bool true))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        8
+        comptime-host-smoke-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [first-push : i64
+          (comptime-host-smoke-invoke tlci-host-callback-op-push-operand 0 0)]
+        [first-commit : i64
+          (comptime-host-smoke-invoke tlci-host-callback-op-commit-result 0 0)]
+        [second-push : i64
+          (comptime-host-smoke-invoke
+            tlci-host-callback-op-expr-bool-literal
+            0
+            0)]
+        [second-commit : i64
+          (comptime-host-smoke-invoke tlci-host-callback-op-commit-result 0 0)]
+        [first-result-kept : bool
+          (match (compiler-comptime-host-result-value)
+            [(CompilerCtfeValue.Bool flag) flag]
+            [_ false])]
+        [latched : i64
+          (comptime-host-smoke-invoke
+            tlci-host-callback-op-expr-unit-literal
+            0
+            0)]
+        [ok : bool
+          (and
+            (= first-push tlci-host-callback-status-ok)
+            (= first-commit tlci-host-callback-status-ok)
+            (= second-push tlci-host-callback-status-ok)
+            (= second-commit tlci-host-callback-status-bad-request)
+            first-result-kept
+            (= latched tlci-host-callback-status-bad-request))]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; Statuses: stale cookie, empty-stack commit, unknown operation, and fuel
 ;; exhaustion all answer without committing state.
 (define (comptime-host-smoke-status-ok?) : bool
@@ -877,6 +944,8 @@
       (io.panic "comptime host smoke: clause fold hygiene")]
     [(not (comptime-host-smoke-call-provenance-ok?))
       (io.panic "comptime host smoke: call provenance")]
+    [(not (comptime-host-smoke-single-commit-ok?))
+      (io.panic "comptime host smoke: single result commit")]
     [(not (comptime-host-smoke-status-ok?))
       (io.panic "comptime host smoke: status contract")]
     [(not (comptime-host-smoke-closed-session-ok?))

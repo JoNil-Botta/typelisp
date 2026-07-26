@@ -68,6 +68,25 @@
             (producer-test-collect-decl! decl module names captures)
             (producer-test-collect-decls! rest module names captures))])]))
 
+;; Keep the focused Decls producer separate from the large expression-shape
+;; corpus below so its result policy remains explicit in this cross-platform
+;; image test.
+(define (producer-test-add-decls-capture!
+  [names : (&mut names producer_test_svec.Vec)]
+  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
+  (match (parse-ast-source
+    "(module package.macros)
+(defmacro (decls) : Decls
+  `(begin
+    (define generated-value : i64 42)
+    (define (generated-id [x : i64]) : i64 x)))
+")
+    [(ResultAstProgram.Err _) unit]
+    [(ResultAstProgram.Ok program)
+      (match program
+        [(AstProgram.Program decls)
+          (producer-test-collect-decls! (box-get decls) "" names captures)])]))
+
 (define (producer-test-template-result-ok?
   [pools : AstNodePoolContext]
   [operand : i64]
@@ -286,6 +305,35 @@
                         (string.eq (intern-str name-id) "test.gen.i64")]
                       [_ false]))]
                 [_ false])))]
+        [_ false])]
+    [_ false]))
+
+;; A Decls body crosses the same opaque result slot as Module and expression
+;; bodies. The host owns the resulting begin/define graph; no image pointer is
+;; exposed to the declaration parser.
+(define (producer-test-decls-result-ok? [pools : AstNodePoolContext]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Begin items)
+          (and
+            (= (ast-expr-list-len (& items)) 2)
+            (match (ast-node-pool-context-expr-get
+              pools
+              (ast-expr-list-get (& items) 0 -1))
+              [(AstExpr.Call callee _)
+                (match (ast-node-pool-context-expr-get pools callee)
+                  [(AstExpr.Var name) (= name (producer-test-name-id "define"))]
+                  [_ false])]
+              [_ false])
+            (match (ast-node-pool-context-expr-get
+              pools
+              (ast-expr-list-get (& items) 1 -1))
+              [(AstExpr.Call callee _)
+                (match (ast-node-pool-context-expr-get pools callee)
+                  [(AstExpr.Var name) (= name (producer-test-name-id "define"))]
+                  [_ false])]
+              [_ false]))]
         [_ false])]
     [_ false]))
 
@@ -1141,6 +1189,41 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; Dispatch the zero-operand declaration-generator fixture and retain its
+;; result only through the compiler-owned handle table.
+(define (producer-test-dispatch-decls?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        0
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= (struct-get dispatch status) tlci-host-callback-status-ok)
+                (compiler-comptime-host-result-ready?)
+                (producer-test-decls-result-ok? pools))])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; `(ctor ,T 0 ,value)` with a type operand rebuilds the type as type syntax
 ;; in argument position, matching the interpreted unquote substitution.
 (define (producer-test-tytpl-result-ok?
@@ -1476,6 +1559,7 @@
                 ""
                 (&mut names)
                 (&mut captures))
+              (producer-test-add-decls-capture! (&mut names) (&mut captures))
               (let
                 [name-array : (Array String)
                   (producer_test_svec.to-array (& names))]
@@ -1497,13 +1581,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 28)
-                              (= (struct-get captures len) 28)
+                              (= (array-length name-array) 29)
+                              (= (struct-get captures len) 29)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                27)
+                                28)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-partial-count
@@ -1549,6 +1633,9 @@
                               (producer-test-dispatch-gen?
                                 (& loaded)
                                 "package.macros/gen")
+                              (producer-test-dispatch-decls?
+                                (& loaded)
+                                "package.macros/decls")
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/classify"

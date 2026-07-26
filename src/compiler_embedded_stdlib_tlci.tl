@@ -2798,7 +2798,9 @@
                       (CompilerCtfeValue.Expr out-node (AstType.Expr)))))]
               [_ tlci-host-callback-status-bad-request]))))]
     [(= operation tlci-host-callback-op-commit-result)
-      (if (< compiler-comptime-host-stack-len 1)
+      (if (or
+        compiler-comptime-host-result-ready
+        (< compiler-comptime-host-stack-len 1))
         tlci-host-callback-status-bad-request
         (begin
           (array-set!

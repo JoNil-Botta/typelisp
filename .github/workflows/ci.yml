@@ -10,8 +10,28 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  tlci-op-claims:
+    name: TLCI op claim collisions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check open PR TLCI op claims
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TLCI_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          TLCI_CURRENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          TLCI_CURRENT_PR: ${{ github.event.pull_request.number }}
+          TLCI_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: scripts/check-tlci-op-numbers.sh --open-prs
+
   # TypeLisp is self-hosted. The single verification flow fetches the published
   # stage0 (cli.tl), runs the one compiler build of the flow (the
   # stage1->stage2->stage3 bootstrap fixpoint over src/main.tl, with a stage4

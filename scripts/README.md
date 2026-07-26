@@ -8,8 +8,9 @@ prefix alone does not determine whether a script is required by CI.
 
 The workflow files are authoritative:
 
-- `.github/workflows/ci.yml` runs `check-implementation-languages.sh`, then
-  `ci-verify.sh`, then the timing-budget check.
+- `.github/workflows/ci.yml` runs the fast open-PR TLCI op-claim check in its
+  own job; its Linux and Windows matrix runs `check-implementation-languages.sh`,
+  then `ci-verify.sh`, then the timing-budget check.
 - `.github/workflows/bootstrap-stage0.yml` runs the stage0 fetch/build/smoke
   and bootstrap-fixpoint scripts.
 - `.github/workflows/docs-pages.yml` runs `fetch-stage0.sh` and

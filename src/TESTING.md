@@ -974,23 +974,28 @@ the artifact.
 
 ### CI expectations
 
-Pull requests get Linux and Windows coverage from the single self-hosted
-verification gate `scripts/ci-verify.sh` (wired in
-[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Both jobs first
-build a fresh `src/main.tl` binary from the published stage0 compiler and
-smoke-test public `compile`, `build`, `run`, package build, staticlib build, and
-the work-queue chooser through `typelisp run`. The Linux job then bootstraps a
-compile-only stage1 compiler and runs deterministic assembly, the selfhost
+Pull requests first get a fast TLCI host-callback claim check that compares any
+new or changed operation IDs with current main and every other open PR head.
+The check is networked only in PR CI; the ordinary catalog gate and its
+self-tests remain local and deterministic.
+
+Linux and Windows coverage comes from the single self-hosted verification gate
+`scripts/ci-verify.sh` (wired in
+[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Both platform
+jobs first build a fresh `src/main.tl` binary from the published stage0 compiler
+and smoke-test public `compile`, `build`, `run`, package build, staticlib build,
+and the work-queue chooser through `typelisp run`. The Linux job then bootstraps
+a compile-only stage1 compiler and runs deterministic assembly, the selfhost
 compile manifest, borrowed-str source checks, the safety corpus, native
-integration manifests, standalone examples, and stdlib modules/fixtures through
-that bootstrapped artifact. Command-tier gates such as public-tool host-action
-coverage, stdlib documentation, doctests, inline tests, docs Pages build,
-native link generated programs, and the external selfhost corpus use their
-explicit seed/fresh-cli fallback or skip paths until #1662 and related resource
-blockers are closed. The Windows job runs host-supported gates against the
-published stage0 compiler, verifies the fresh CLI build/run smoke, runs the
-Windows bootstrap stage2/stage3 fixpoint when staged runtime symbols are present,
-and explicitly skips the Linux-only src/docs checks.
+integration manifests, standalone examples, and stdlib modules/fixtures
+through that bootstrapped artifact. Command-tier gates such as public-tool
+host-action coverage, stdlib documentation, doctests, inline tests, docs Pages
+build, native link generated programs, and the external selfhost corpus use
+their explicit seed/fresh-cli fallback or skip paths until #1662 and related
+resource blockers are closed. The Windows job runs host-supported gates against
+the published stage0 compiler, verifies the fresh CLI build/run smoke, runs the
+Windows bootstrap stage2/stage3 fixpoint when staged runtime symbols are
+present, and explicitly skips the Linux-only src/docs checks.
 
 CI sets `TYPELISP_CI_TIMING=1` for that serial verification flow. Each host
 uploads one compact `ci-timing-<host>` TSV artifact with columns `gate`,

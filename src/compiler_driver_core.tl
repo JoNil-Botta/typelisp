@@ -10,6 +10,7 @@
 (import compiler_allocation_profile as allocation_profile)
 (import "compiler_backend.tl")
 (import compiler_builtin_ids as cbi)
+(import compiler_target_cfg_core as target_cfg)
 (import "compiler_diagnostic.tl")
 (import compiler_intern as ci)
 (import "compiler_load.tl")
@@ -1336,40 +1337,23 @@
         [(CompilerBackendTarget.Windows) (CompilerLowerMode.WindowsScalar)])]))
 
 (define (compiler-driver-enable-linux-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable
-    (compiler-cfg-enable
-      (compiler-cfg-enable (compiler-cfg-enable cfgs "linux") "unix")
-      "target-linux")
-    "os-linux"))
+  (target_cfg.compiler-target-enable-linux-cfgs cfgs))
 
 (define (compiler-driver-enable-windows-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable
-    (compiler-cfg-enable (compiler-cfg-enable cfgs "windows") "target-windows")
-    "os-windows"))
+  (target_cfg.compiler-target-enable-windows-cfgs cfgs))
 
 (define (compiler-driver-enable-linux-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
   [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-with-intern-state
-    (compiler-cfg-enable-with-intern-state
-      (compiler-cfg-enable-with-intern-state
-        (compiler-cfg-enable-with-intern-state cfgs "linux" intern-state)
-        "unix"
-        intern-state)
-      "target-linux"
-      intern-state)
-    "os-linux"
+  (target_cfg.compiler-target-enable-linux-cfgs-with-intern-state
+    cfgs
     intern-state))
 
 (define (compiler-driver-enable-windows-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
   [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-with-intern-state
-    (compiler-cfg-enable-with-intern-state
-      (compiler-cfg-enable-with-intern-state cfgs "windows" intern-state)
-      "target-windows"
-      intern-state)
-    "os-windows"
+  (target_cfg.compiler-target-enable-windows-cfgs-with-intern-state
+    cfgs
     intern-state))
 
 (define (compiler-driver-target-cfgs

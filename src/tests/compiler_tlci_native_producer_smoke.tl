@@ -7,8 +7,11 @@
 ;; A body outside the supported subset keeps the counted interpreted-fallback
 ;; shell.
 (import "../compiler_tlci_native_producer.tl")
+
+;; compiler_embedded_stdlib_tlci owns the loader import. Importing the same
+;; graph again here gives Windows absolute-path runs two qualified page
+;; surfaces and makes the second loader lose pages.ResultTlciPageUnit.
 (import "../compiler_embedded_stdlib_tlci.tl")
-(import "../tlci_loader.tl")
 (import "../compiler_ctfe.tl")
 (import compiler_intern as ci)
 (import stdlib.array)

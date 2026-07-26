@@ -23281,13 +23281,47 @@
                                 [(LowerExpr.Expr value-state value-ir value-ty)
                                   (ResultLowerExpr.Ok
                                     (LowerExpr.Expr
-                                      (lower-state-emit-at-expr
-                                        value-state
-                                        (CompilerIrInstr.StorePtr
-                                          (CompilerIrValue.Var ptr-var)
-                                          value-ir
+                                      ;; Raw-pointer writes use the same storage
+                                      ;; contract as array element writes.
+                                      ;; Memory aggregates are represented by
+                                      ;; an address and must copy their complete
+                                      ;; inline representation; StorePtr would
+                                      ;; otherwise write that address into only
+                                      ;; the first word. Two-word register
+                                      ;; groups likewise need both words.
+                                      (if (and
+                                        (lower-mode-inline-aggregates?
+                                          (lower-state-mode value-state))
+                                        (lower-type-inline-storage?
+                                          ctx
                                           value-ty)
-                                        origin)
+                                        (not
+                                          (lower-type-register-resident?
+                                            ctx
+                                            value-ty)))
+                                        (lower-copy-bytes
+                                          value-state
+                                          (CompilerIrValue.Var ptr-var)
+                                          0
+                                          value-ir
+                                          0
+                                          (lower-type-size ctx value-ty))
+                                        (if (lower-type-register-group?
+                                          ctx
+                                          value-ty)
+                                          (lower-store-group-at-ptr
+                                            ctx
+                                            value-state
+                                            (CompilerIrValue.Var ptr-var)
+                                            value-ir
+                                            value-ty)
+                                          (lower-state-emit-at-expr
+                                            value-state
+                                            (CompilerIrInstr.StorePtr
+                                              (CompilerIrValue.Var ptr-var)
+                                              value-ir
+                                              value-ty)
+                                            origin)))
                                       CompilerIrValue.Unit
                                       expr-ty))])]
                             [(ResultLowerExpr.Err diag)

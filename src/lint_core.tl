@@ -248,10 +248,10 @@
   "global-name-case")
 
 (define (lint-rule-global-name-case-message) : String
-  "global name case: top-level value bindings use SCREAMING-KEBAB-CASE")
+  "global name case: top-level value bindings use kebab-case")
 
 (define (lint-rule-global-name-case-suggestion) : String
-  "rename the binding to SCREAMING-KEBAB-CASE")
+  "rename the binding to kebab-case")
 
 (define (lint-rule-function-name-case-id) : String
   "function-name-case")
@@ -266,10 +266,10 @@
   "local-name-case")
 
 (define (lint-rule-local-name-case-message) : String
-  "local name case: parameters and local binders use kebab-case")
+  "local name case: parameters and local binders use kebab-case; one-letter type operands may use uppercase")
 
 (define (lint-rule-local-name-case-suggestion) : String
-  "rename the parameter or local binding to kebab-case")
+  "rename the parameter or local binding to its conventional case")
 
 (define (lint-rule-type-name-case-id) : String
   "type-name-case")
@@ -1071,9 +1071,11 @@
                 (set! segment-start false)
                 (set! index (+ index 1)))]
             [(lint-name-case-ascii-digit? c)
-              (if segment-start
+              (if (= index start)
                 (set! ok false)
-                (set! index (+ index 1)))]
+                (begin
+                  (set! segment-start false)
+                  (set! index (+ index 1))))]
             [(= c '-')
               (if segment-start
                 (set! ok false)
@@ -1116,37 +1118,6 @@
           start
           (lint-name-case-terminal-suffix-start name))))))
 
-;: Top-level values use uppercase ASCII segments separated by one hyphen.
-(define (lint-name-case-screaming-kebab? [name : String]) : bool
-  (if (not (lint-name-case-has-ascii-letter? name))
-    true
-    (let
-      [n : i64 (string.string-length name)]
-      [index : i64 0]
-      [segment-start : bool true]
-      [ok : bool (> n 0)]
-      (begin
-        (while (and ok (< index n))
-          (let
-            [c : char (string.string-ref name index)]
-            (cond
-              [(lint-name-case-ascii-upper? c)
-                (begin
-                  (set! segment-start false)
-                  (set! index (+ index 1)))]
-              [(lint-name-case-ascii-digit? c)
-                (if segment-start
-                  (set! ok false)
-                  (set! index (+ index 1)))]
-              [(= c '-')
-                (if segment-start
-                  (set! ok false)
-                  (begin
-                    (set! segment-start true)
-                    (set! index (+ index 1))))]
-              [else (set! ok false)])))
-        (and ok (not segment-start))))))
-
 ;: Struct and enum names use uppercase-initial CamelCase. Acronym runs remain
 ;: valid; separators and non-ASCII alphanumerics are rejected.
 (define (lint-name-case-upper-camel? [name : String]) : bool
@@ -1167,6 +1138,36 @@
               (set! index (+ index 1))
               (set! ok false))))
         ok))))
+
+;: One-letter type operands conventionally use an uppercase type variable.
+;: Descriptive operands continue to use normal local kebab-case.
+(define (lint-name-case-type-operand? [name : String]) : bool
+  (let
+    [n : i64 (string.string-length name)]
+    [start : i64
+      (if (and (> n 1) (= (string.string-ref name 0) '_'))
+        1
+        0)]
+    [body-len : i64 (- n start)]
+    (or
+      (lint-name-case-local-kebab? name)
+      (and
+        (= body-len 1)
+        (lint-name-case-ascii-upper? (string.string-ref name start))))))
+
+;: Dotted symbols in match patterns are qualified nullary variants, not local
+;: binders. The parser intentionally leaves that distinction to typechecking.
+(define (lint-name-case-qualified-symbol? [name : String]) : bool
+  (let
+    [n : i64 (string.string-length name)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index n) (not found))
+        (if (= (string.string-ref name index) '.')
+          (set! found true)
+          (set! index (+ index 1))))
+      found)))
 
 (define (lint-name-case-lower-char-string [c : char]) : String
   (if (lint-name-case-ascii-upper? c)
@@ -1278,34 +1279,6 @@
             body)]
         (string.append with-unused suffix)))))
 
-(define (lint-name-case-uppercase-suggestion-from
-  [name : String]
-  [index : i64]
-  [out : String]) : String
-  (if (>= index (string.string-length name))
-    out
-    (let
-      [c : char (string.string-ref name index)]
-      (cond
-        [(lint-name-case-ascii-letter? c)
-          (lint-name-case-uppercase-suggestion-from
-            name
-            (+ index 1)
-            (string.append out (lint-name-case-upper-char-string c)))]
-        [(or (lint-name-case-ascii-digit? c) (= c '-'))
-          (lint-name-case-uppercase-suggestion-from
-            name
-            (+ index 1)
-            (string.append out (string.substring name index 1)))]
-        [else ""]))))
-
-(define (lint-name-case-screaming-suggestion [name : String]) : String
-  (let
-    [lower : String (lint-name-case-kebab-suggestion name false)]
-    (if (string.eq lower "")
-      ""
-      (lint-name-case-uppercase-suggestion-from lower 0 ""))))
-
 (define (lint-name-case-upper-camel-suggestion-from
   [name : String]
   [index : i64]
@@ -1372,7 +1345,7 @@
   (lint-name-case-finding
     name
     (lint-rule-global-name-case-id)
-    (lint-name-case-screaming-suggestion name)
+    (lint-name-case-kebab-suggestion name false)
     span))
 
 (define (lint-function-name-case-finding [name : String] [span : AstSourceSpan]) : LintFinding
@@ -1383,6 +1356,15 @@
     span))
 
 (define (lint-local-name-case-finding [name : String] [span : AstSourceSpan]) : LintFinding
+  (lint-name-case-finding
+    name
+    (lint-rule-local-name-case-id)
+    (lint-name-case-kebab-suggestion name true)
+    span))
+
+(define (lint-type-operand-name-case-finding
+  [name : String]
+  [span : AstSourceSpan]) : LintFinding
   (lint-name-case-finding
     name
     (lint-rule-local-name-case-id)
@@ -7491,7 +7473,8 @@
   (name String)
   (span AstSourceSpan)
   (used bool)
-  (reportable bool))
+  (reportable bool)
+  (type-operand bool))
 
 ;; Scope bindings and the scope stack, both in reverse cons order: the newest
 ;; entry is the last slot, so every walk that consumed the old list head-first
@@ -7920,6 +7903,7 @@
       (if (and
         report
         (lint-name-case-source-span? span)
+        (not (lint-name-case-qualified-symbol? name))
         (not (lint-name-case-local-kebab? name)))
         (lint-findings-add (lint-local-name-case-finding name span) findings)
         findings)]
@@ -8172,7 +8156,7 @@
     [span : AstSourceSpan (struct-get found span)]
     [valid : bool
       (cond
-        [(= kind 0) (lint-name-case-screaming-kebab? name)]
+        [(= kind 0) (lint-name-case-kebab? name)]
         [(= kind 1) (lint-name-case-kebab? name)]
         [else (lint-name-case-upper-camel? name)])]
     [next : LintFindings
@@ -8613,8 +8597,9 @@
 (define (lint-unused-variable-binding
   [name : String]
   [span : AstSourceSpan]
-  [reportable : bool]) : LintUnusedVariableBinding
-  (LintUnusedVariableBinding name span false reportable))
+  [reportable : bool]
+  [type-operand : bool]) : LintUnusedVariableBinding
+  (LintUnusedVariableBinding name span false reportable type-operand))
 
 (define (lint-unused-variable-binding-push
   [bindings : LintUnusedVariableBindingList]
@@ -8696,6 +8681,30 @@
         (struct-get state findings)))
     state))
 
+(define (lint-unused-variable-add-binding-name-case
+  [state : LintUnusedVariableState]
+  [binding : LintUnusedVariableBinding]) : LintUnusedVariableState
+  (let
+    [name : String (struct-get binding name)]
+    [type-operand : bool (struct-get binding type-operand)]
+    [valid : bool
+      (if type-operand
+        (lint-name-case-type-operand? name)
+        (lint-name-case-local-kebab? name))]
+    (if (and
+      (struct-get state name-case)
+      (lint-name-case-source-span? (struct-get binding span))
+      (not valid))
+      (lint-unused-variable-state-with
+        state
+        (struct-get state frames)
+        (lint-findings-add
+          (if type-operand
+            (lint-type-operand-name-case-finding name (struct-get binding span))
+            (lint-local-name-case-finding name (struct-get binding span)))
+          (struct-get state findings)))
+      state)))
+
 (define (lint-unused-variable-add-binding-name-cases-at
   [state : LintUnusedVariableState]
   [bindings : LintUnusedVariableBindingList]
@@ -8706,10 +8715,7 @@
       [binding : LintUnusedVariableBinding
         (array-ref (struct-get bindings slots) index)]
       (lint-unused-variable-add-binding-name-cases-at
-        (lint-unused-variable-add-local-name-case
-          state
-          (struct-get binding name)
-          (struct-get binding span))
+        (lint-unused-variable-add-binding-name-case state binding)
         bindings
         (- index 1)))))
 
@@ -8727,7 +8733,8 @@
     (struct-get binding name)
     (struct-get binding span)
     true
-    (struct-get binding reportable)))
+    (struct-get binding reportable)
+    (struct-get binding type-operand)))
 
 (define (lint-unused-variable-mark-bindings
   [bindings : LintUnusedVariableBindingList]
@@ -8927,7 +8934,7 @@
       (LintUnusedVariableBindingList slots (array-length slots))
       cursor)
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name _ _ _)
+      [(AstParam.Param name ty is-comptime _)
         (let
           [text : String (intern-str name)]
           [found : LintSourceNameSpan
@@ -8939,7 +8946,13 @@
               (lint-unused-variable-binding
                 text
                 (struct-get found span)
-                reportable))
+                reportable
+                (and
+                  is-comptime
+                  (match ty
+                    [(AstType.Var type-name)
+                      (string.eq (intern-str type-name) "type")]
+                    [_ false]))))
             (lint-unused-variable-param-bindings-at
               params
               source
@@ -8977,7 +8990,7 @@
       (LintUnusedVariableBindingList slots (array-length slots))
       cursor)
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name _ _ _)
+      [(AstMacroParam.Param name ty _ _)
         (let
           [text : String (intern-str name)]
           [found : LintSourceNameSpan
@@ -8989,7 +9002,11 @@
               (lint-unused-variable-binding
                 text
                 (struct-get found span)
-                reportable))
+                reportable
+                (match ty
+                  [(AstType.Var type-name)
+                    (string.eq (intern-str type-name) "type")]
+                  [_ false])))
             (lint-unused-variable-macro-param-bindings-at
               params
               source
@@ -9152,14 +9169,22 @@
     [(AstPattern.Var name maybe-ty)
       (lint-unused-variable-add-to-current-frame
         (lint-unused-variable-maybe-type maybe-ty state)
-        (lint-unused-variable-binding (intern-str name) (lint-no-span) false))]
+        (lint-unused-variable-binding
+          (intern-str name)
+          (lint-no-span)
+          false
+          false))]
     [(AstPattern.Tuple items)
       (lint-unused-variable-pattern-list-bindings (box-get items) state)]
     [(AstPattern.Wildcard) state]
     [(AstPattern.Binding name)
       (lint-unused-variable-add-to-current-frame
         state
-        (lint-unused-variable-binding (intern-str name) (lint-no-span) false))]
+        (lint-unused-variable-binding
+          (intern-str name)
+          (lint-no-span)
+          false
+          false))]
     [(AstPattern.Variant _ items)
       (lint-unused-variable-pattern-list-bindings (box-get items) state)]
     [(AstPattern.Literal _) state]))
@@ -9535,7 +9560,11 @@
           [with-binding : LintUnusedVariableState
             (lint-unused-variable-add-to-current-frame
               with-case
-              (lint-unused-variable-binding text (struct-get found span) true))]
+              (lint-unused-variable-binding
+                text
+                (struct-get found span)
+                true
+                false))]
           (lint-unused-variable-let-bindings-at
             bindings
             with-binding
@@ -9620,7 +9649,11 @@
           [with-binding : LintUnusedVariableState
             (lint-unused-variable-add-to-current-frame
               after-exprs
-              (lint-unused-variable-binding text (struct-get found span) false))]
+              (lint-unused-variable-binding
+                text
+                (struct-get found span)
+                false
+                false))]
           [cleanup-end : i64
             (lint-source-span-end-index (struct-get state source) cleanup-span)]
           (lint-unused-variable-resource-bindings-at
@@ -9737,7 +9770,7 @@
         state
         (lint-unused-variable-binding-push
           (lint-unused-variable-bindings-empty)
-          (lint-unused-variable-binding (intern-str name) span false)))]
+          (lint-unused-variable-binding (intern-str name) span false false)))]
     [with-body : LintUnusedVariableState
       (lint-unused-variable-expr body with-frame span)]
     (lint-unused-variable-pop-frame with-body)))
@@ -9755,8 +9788,8 @@
         (lint-unused-variable-binding-push
           (lint-unused-variable-binding-push
             (lint-unused-variable-bindings-empty)
-            (lint-unused-variable-binding (intern-str prefix) span false))
-          (lint-unused-variable-binding (intern-str index) span false)))]
+            (lint-unused-variable-binding (intern-str prefix) span false false))
+          (lint-unused-variable-binding (intern-str index) span false false)))]
     [with-body : LintUnusedVariableState
       (lint-unused-variable-expr body with-frame span)]
     (lint-unused-variable-pop-frame with-body)))

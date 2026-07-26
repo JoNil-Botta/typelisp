@@ -21,8 +21,8 @@
   (if (= (comptime.expr-list-length args) 0)
     (comptime.expr-int 0)
     (let
-      [T : comptime.Expr (comptime.expr-list-type-nth args 0)]
-      (if (string.eq (type-key T) "i64")
+      [type-expr : comptime.Expr (comptime.expr-list-type-nth args 0)]
+      (if (string.eq (type-key type-expr) "i64")
         (comptime.expr-int 42)
         (comptime.expr-int 0)))))
 

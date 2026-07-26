@@ -2192,7 +2192,7 @@ EOF
     assert_contains "$out" "lint: 0 finding(s)"
 
     cat > "$WORKDIR/lint_name_case.tl" <<'EOF'
-(define bad-global : i64 1)
+(define BadGlobal : i64 1)
 (defstruct bad-type
   (field i64))
 (define (BadFunction [BadParam : i64]) : i64
@@ -2212,7 +2212,7 @@ EOF
     assert_contains "$out" "function name case"
     assert_contains "$out" "local name case"
     assert_contains "$out" "type name case"
-    assert_contains "$out" 'consider `BAD-GLOBAL`'
+    assert_contains "$out" 'consider `bad-global`'
     assert_contains "$out" 'consider `bad-function`'
     assert_contains "$out" 'consider `bad-param`'
     assert_contains "$out" 'consider `BadType`'
@@ -2301,7 +2301,7 @@ EOF
 (define (dead-lib) : i64
   7)
 
-(define bad-global : i64
+(define BadGlobal : i64
   1)
 EOF
     # cli-gate-case lint-package-lib wrapper run_cmd
@@ -2316,7 +2316,7 @@ EOF
     assert_failure
     assert_stderr_empty
     assert_contains "$out" "global name case"
-    assert_contains "$out" 'consider `BAD-GLOBAL`'
+    assert_contains "$out" 'consider `bad-global`'
     assert_contains "$out" "lint: 1 finding(s)"
 
     LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")

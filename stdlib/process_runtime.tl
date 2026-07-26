@@ -1982,6 +1982,7 @@
 ;; Cross-target runtime entry points consumed by tl.
 ;; ---------------------------------------------------------------------------
 ;: Run a command and capture stdout, stderr, and exit status.
+;; lint-allow: function-name-case -- stable runtime ABI symbol
 (define (tl_process_output [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
   (cfg
     windows
@@ -1990,6 +1991,7 @@
 
 ;: Run a command with child stdout/stderr inherited from the caller and return
 ;: its status with no captured output payload.
+;; lint-allow: function-name-case -- stable runtime ABI symbol
 (define (tl_process_inherit [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
   (cfg
     windows
@@ -1997,6 +1999,7 @@
     (stdlib.process_runtime.linux-inherit command)))
 
 ;: Start a command without waiting; Windows reports async as unsupported.
+;; lint-allow: function-name-case -- stable runtime ABI symbol
 (define (tl_process_start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
   (cfg
     windows
@@ -2004,6 +2007,7 @@
     (stdlib.process_runtime.linux-start command)))
 
 ;: Wait for a started child; Windows reports async as unsupported.
+;; lint-allow: function-name-case -- stable runtime ABI symbol
 (define (tl_process_wait [child : ProcessRuntimeChild]) : ResultProcessRuntimeOutput
   (cfg
     windows

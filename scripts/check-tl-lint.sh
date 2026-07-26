@@ -56,6 +56,9 @@ FILTERED_FILES="$WORKDIR/files.filtered"
 ACTUAL="$WORKDIR/findings.actual"
 STDOUT="$WORKDIR/lint.stdout"
 STDERR="$WORKDIR/lint.stderr"
+NAME_CASE_PROBE="$WORKDIR/name-case-probe.tl"
+NAME_CASE_PROBE_STDOUT="$WORKDIR/name-case-probe.stdout"
+NAME_CASE_PROBE_STDERR="$WORKDIR/name-case-probe.stderr"
 
 # Lint every git-tracked TypeLisp source that is expected to parse as a source
 # unit. The excluded paths are fixture harness inputs rather than direct source
@@ -107,6 +110,34 @@ if [ ! -s "$FILES" ]; then
     exit 1
 fi
 
+# The published seed temporarily carries the former global SCREAMING-KEBAB
+# interpretation. Detect that exact bootstrap skew so local seed checks can
+# proceed; CI's fresh selfhost compiler must recognize a kebab-case global and
+# enables the enforced rule below.
+cat > "$NAME_CASE_PROBE" <<'EOF'
+(define name-case-probe : i64 0)
+EOF
+
+if ! "$COMPILER" lint --name-case "$NAME_CASE_PROBE" \
+    > "$NAME_CASE_PROBE_STDOUT" 2> "$NAME_CASE_PROBE_STDERR"; then
+    echo "TypeLisp name-case capability probe failed:" >&2
+    cat "$NAME_CASE_PROBE_STDERR" >&2
+    cat "$NAME_CASE_PROBE_STDOUT" >&2
+    exit 1
+fi
+
+NAME_CASE_CURRENT=1
+if grep -q 'top-level value bindings use SCREAMING-KEBAB-CASE' \
+    "$NAME_CASE_PROBE_STDOUT"; then
+    NAME_CASE_CURRENT=0
+    echo "Deferring name-case enforcement until the fresh selfhost lint pass."
+elif ! grep -q '^lint: 0 finding(s)$' "$NAME_CASE_PROBE_STDOUT"; then
+    echo "TypeLisp name-case capability probe returned an unexpected result:" >&2
+    cat "$NAME_CASE_PROBE_STDERR" >&2
+    cat "$NAME_CASE_PROBE_STDOUT" >&2
+    exit 1
+fi
+
 count=$(wc -l < "$FILES" | tr -d ' ')
 LINT_BATCH_SIZE=${TYPELISP_LINT_BATCH_SIZE:-32}
 echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE."
@@ -139,6 +170,9 @@ for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
         [ -n "$lint_source" ] || continue
         set -- "$@" "$lint_source"
     done < "$lint_chunk"
+    if [ "$NAME_CASE_CURRENT" -eq 1 ]; then
+        set -- --name-case "$@"
+    fi
     if ci_timing_run "chunk-$lint_chunk_index" lint \
         "$COMPILER" lint --check "$@" >> "$STDOUT" 2>> "$STDERR"; then
         :

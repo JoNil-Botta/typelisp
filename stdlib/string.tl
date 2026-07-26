@@ -557,10 +557,12 @@
                     true))))))))))
 
 ;: Alias for `eq`.
+;; lint-allow: function-name-case -- compatibility API spelling
 (define (string=? [left : (& left str)] [right : (& right str)]) : bool
   (eq left right))
 
 ;: Parse a decimal integer from borrowed text using the legacy compatibility rules.
+;; lint-allow: function-name-case -- compatibility API spelling
 (define (>int [text : (& text str)]) : i64
   (__tl_string_to_int text))
 

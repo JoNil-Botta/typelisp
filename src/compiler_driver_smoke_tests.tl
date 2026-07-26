@@ -6,6 +6,39 @@
 (import "compiler_driver_core.tl")
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import stdlib.arena)
+
+(extern (compiler-driver-smoke-runtime-alloc [bytes : i64]) : i64 (:symbol "tl_alloc"))
+
+(define (compiler-driver-restore-arena-owner-current-ok?) : bool
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set owner))
+      ;; Fill the 64 MiB root without touching its payload pages, then force
+      ;; one overflow segment. The saved frontend-return handle still names
+      ;; `owner`, while the correct allocation target is the new head.
+      (compiler-driver-smoke-runtime-alloc 67108800)
+      (compiler-driver-smoke-runtime-alloc 8)
+      (let
+        [head : i64 (arena.tl_arena_current)]
+        (begin
+          (compiler-driver-restore-arena-owner-current! owner)
+          (let
+            [preserved? : bool (= (arena.tl_arena_current) head)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set home))
+              (compiler-driver-restore-arena-owner-current! owner)
+              (let
+                [resumed? : bool (= (arena.tl_arena_current) head)]
+                (begin
+                  (unsafe
+                    (arena.tl_arena_set home)
+                    (arena.tl_arena_destroy owner))
+                  (and preserved? resumed?))))))))))
 
 (define (lower-symbol-smoke-extern-metadata
   [link-id : i64]
@@ -577,6 +610,7 @@
 
 (define (compiler-driver-pic-smoke-main) : i64
   (begin
+    (unless (compiler-driver-restore-arena-owner-current-ok?) (return 5))
     (unless
       (compiler-driver-pic-smoke-core-macros-ok? (CompilerBackendTarget.Linux))
       (return 1))

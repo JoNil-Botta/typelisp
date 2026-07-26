@@ -1127,6 +1127,9 @@
 (define lex-spanned-token-buffer-arena : i64
   0)
 
+(define (lex-spanned-token-buffer-arena-handle-value) : i64
+  lex-spanned-token-buffer-arena)
+
 (define (lex-spanned-token-buffer-next-capacity [required : i64]) : i64
   (let
     [current : i64 (array-length lex-spanned-token-buffer)]

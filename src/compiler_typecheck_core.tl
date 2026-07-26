@@ -918,6 +918,9 @@
 (define tc-agg-layout-cache-storage-arena : i64
   0)
 
+(define (tc-agg-layout-cache-storage-arena-handle-value) : i64
+  tc-agg-layout-cache-storage-arena)
+
 (define (tc-agg-layout-cache-storage-handle) : i64
   (begin
     (if (= tc-agg-layout-cache-storage-arena 0)

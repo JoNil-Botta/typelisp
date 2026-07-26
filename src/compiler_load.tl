@@ -21,6 +21,12 @@
 (import token)
 (import "tlci_core.tl")
 
+(define (compiler-load-lex-token-buffer-arena-handle) : i64
+  (lexer.lex-spanned-token-buffer-arena-handle-value))
+
+(define (compiler-load-reader-node-pool-arena-handle) : i64
+  (reader.sp-node-pool-base-arena-handle-value))
+
 (defenum ResultCompilerLoad
   (Ok AstDeclList sym_i64_env.SymI64Env)
   (Err (Box CompilerDiagnostic)))
@@ -1151,6 +1157,9 @@
 ;; own source even when the embedded catalog knows its identities.
 (define compiler-load-provenance-arena-handle : i64
   0)
+
+(define (compiler-load-provenance-arena-handle-value) : i64
+  compiler-load-provenance-arena-handle)
 
 ;: Arena for the embedded-provenance set and the content-equivalence cache.
 ;: These outlive every session floor reset (their contents are re-derived

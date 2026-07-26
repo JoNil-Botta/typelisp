@@ -1404,7 +1404,12 @@
       0)
     (let
       [input-path : String (cli_svec.get entries index "")]
-      [has-inline-tests : bool (tltest-source-has-inline-tests? input-path)]
+      [has-inline-tests
+        : bool
+        ;; The predicate reads the whole source. Keep that transient buffer in
+        ;; the same per-source lifetime as the optional inline typecheck instead
+        ;; of retaining every manifest source in the batch caller arena.
+        (with-scratch (tltest-source-has-inline-tests? input-path))]
       [status
         : i64
         ;; Match package inline preflight isolation: each source owns a
@@ -1761,26 +1766,36 @@
       ;; The compile grew `scratch` past its first 64 MiB segment; the arena's
       ;; live chain is reachable only from its newest segment (the active arena
       ;; right after the balanced compile), not the make() root handle.
-      [scratch-end : arena.Arena (arena.current)]
+      [scratch-end : i64 (arena.tl_arena_current)]
       (begin
-        (unsafe
-          (arena.set! home))
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "batch-pre-release"
+          "entry-scratch-saved"
+          scratch-end)
+        (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
         ;; Clear compile state while the entry scratch arena is still mapped:
         ;; loader/typecheck caches may hold scratch-backed nodes until reset.
         (cfg
           compile-profile
           (compiler-driver-state-release-file-state-profiled! state ordinal)
           (compiler-driver-state-release-file-state! state))
-        (unsafe
-          (begin
-            (arena.set! home)
-            (arena.destroy scratch-end)))
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "batch-post-release"
+          "entry-scratch-saved"
+          scratch-end)
+        (begin
+          (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
+          (unsafe
+            (arena.tl_arena_destroy scratch-end)))
         ;; The next standalone preflight and the opt-in allocation profiler
         ;; still observe compatibility globals between batch entries. Install
         ;; the already-reset job context at that explicit boundary, after the
         ;; entry scratch owner has been destroyed.
         (compiler-driver-state-install-pools! state)
         (compiler-driver-state-install-interns! state)
+        (compiler-driver-allocation-profile-snapshot! "batch-steady")
         (cfg
           compile-profile
           (compiler-driver-batch-profile-mark! ordinal "scratch-destroy-steady")
@@ -1869,15 +1884,14 @@
           compile-profile
           (compiler-driver-batch-profile-mark! ordinal "emit-complete")
           unit)]
-      [scratch-end : arena.Arena (arena.current)]
+      [scratch-end : i64 (arena.tl_arena_current)]
       ;; Read the arena-backed result while `scratch` is still mapped. The
       ;; selected paths come from the outer parsed plan and the kind/category
       ;; strings are stable literals, so pushing them after restoring `home`
       ;; leaves no scratch-owned payload in the result vector.
       [status : i64
         (begin
-          (unsafe
-            (arena.set! home))
+          (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
           (match entry-result
             [(ResultCompileCliWindowsBatchEntry.Ok kind path category)
               (begin
@@ -1888,18 +1902,28 @@
                 0)]
             [(ResultCompileCliWindowsBatchEntry.Err entry-status) entry-status]))]
       (begin
-        (unsafe
-          (arena.set! home))
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "batch-pre-release"
+          "entry-scratch-saved"
+          scratch-end)
+        (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
         (cfg
           compile-profile
           (compiler-driver-state-release-file-state-profiled! state ordinal)
           (compiler-driver-state-release-file-state! state))
-        (unsafe
-          (begin
-            (arena.set! home)
-            (arena.destroy scratch-end)))
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "batch-post-release"
+          "entry-scratch-saved"
+          scratch-end)
+        (begin
+          (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
+          (unsafe
+            (arena.tl_arena_destroy scratch-end)))
         (compiler-driver-state-install-pools! state)
         (compiler-driver-state-install-interns! state)
+        (compiler-driver-allocation-profile-snapshot! "batch-steady")
         (cfg
           compile-profile
           (compiler-driver-batch-profile-mark! ordinal "scratch-destroy-steady")
@@ -2006,6 +2030,16 @@
     (string.string-length text))
     [(ResultCompileCliBatchEntryList.Ok entries)
       (let
+        [_install-preflight-state : unit
+          (begin
+            ;; The all-source inline preflight must fail before any batch
+            ;; output is written. Route its compatibility load/typecheck work
+            ;; through this batch's already-owned pools and intern table so the
+            ;; first entry reset can destroy that residency. Leaving the
+            ;; process-default owners installed retains the largest later
+            ;; preflight source beside every subsequent compile.
+            (compiler-driver-state-install-pools! state)
+            (compiler-driver-state-install-interns! state))]
         [inline-test-status : i64
           (compile-cli-run-batch-inline-tests entries target stdlib-roots cfgs)]
         (if (= inline-test-status 0)
@@ -2039,6 +2073,10 @@
     (string.string-length text))
     [(ResultCompileCliWindowsBatchEntryList.Ok entries)
       (let
+        [_install-preflight-state : unit
+          (begin
+            (compiler-driver-state-install-pools! state)
+            (compiler-driver-state-install-interns! state))]
         [inline-test-status : i64
           (compile-cli-run-windows-batch-inline-tests
             entries

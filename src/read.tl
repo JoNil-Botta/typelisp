@@ -101,6 +101,9 @@
 (define sp-node-pool-count : i64
   0)
 
+(define (sp-node-pool-base-arena-handle-value) : i64
+  sp-node-pool-base-arena)
+
 (define (sp-node-pool-restore-arena-after-base-alloc!
   [previous-arena : i64]
   [base-arena : i64]

@@ -80,6 +80,64 @@ assert_not_matches() {
     fi
 }
 
+# Count `jmp L` lines whose target `L:` is reached by scanning forward across
+# nothing but label-definition lines -- exactly the shape the assembled-body
+# peephole deletes, because execution falls through zero emitted bytes to the
+# same label. Mirrors compiler-backend-drop-fallthrough-jumps: any other
+# intervening line (instruction, directive, comment, blank) breaks the run, and
+# a target never seen forward is a backward jump that must survive.
+count_fallthrough_jmp() {
+    awk '
+        {
+            if (pending) {
+                if ($0 ~ /^[^[:blank:]:]+:$/) {
+                    if (substr($0, 1, length($0) - 1) == target) {
+                        n++
+                        pending = 0
+                    }
+                    next
+                }
+                pending = 0
+            }
+            if ($0 ~ /^    jmp [^[:blank:]*%(,]+$/) {
+                pending = 1
+                target = substr($0, 9)
+            }
+        }
+        END { print n + 0 }
+    ' "$1"
+}
+
+# Count `jmp L` lines whose target label was already defined earlier: backward
+# jumps (loop back edges, the `jmp self` trap loops) the peephole must never
+# touch, since it can only prove fallthrough equivalence scanning forward.
+count_backward_jmp() {
+    awk '
+        /^[^[:blank:]:]+:$/ { seen[substr($0, 1, length($0) - 1)] = 1; next }
+        /^    jmp [^[:blank:]*%(,]+$/ { if (substr($0, 9) in seen) n++ }
+        END { print n + 0 }
+    ' "$1"
+}
+
+assert_no_fallthrough_jmp() {
+    _file=$1
+    _label=$2
+    _got=$(count_fallthrough_jmp "$_file")
+    if [ "$_got" -ne 0 ]; then
+        fail "$_label kept $_got jmp(s) whose target is reached by falling through label definitions only"
+    fi
+}
+
+assert_backward_jmp_at_least() {
+    _file=$1
+    _want=$2
+    _label=$3
+    _got=$(count_backward_jmp "$_file")
+    if [ "$_got" -lt "$_want" ]; then
+        fail "$_label expected at least $_want surviving backward jmp(s), got $_got"
+    fi
+}
+
 assert_fixed_count_eq() {
     _file=$1
     _snippet=$2
@@ -167,6 +225,45 @@ check_divmagic_hoist() {
     assert_fixed_count_eq "$_digitsum" 'movabsq $7378697629483820647' 1 divmagic-digitsum
     assert_not_contains "$_digitsum" 'movabsq $10' divmagic-digitsum
     assert_regex_count_at_least "$_digitsum" '^[[:space:]]+imulq \$10, %r[a-z0-9]+, %r[a-z0-9]+$' 1 divmagic-digitsum
+}
+
+check_fallthrough_jmp_chain() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "fallthrough_jmp_chain_$_suffix" \
+            tests/integration/fallthrough_jmp_chain.tl "$_target")
+
+        _drop=$(function_body "$_asm" _tl_fallthrough_jmp_chain_chain_drop_probe)
+        _keep=$(function_body "$_asm" _tl_fallthrough_jmp_chain_chain_keep_probe)
+        _main=$(function_body "$_asm" main)
+        # The core property, over every compiled body this fixture emits: no
+        # `jmp` may target a label execution would reach anyway by falling
+        # through nothing but label definitions. Scoped to compiled bodies
+        # because the hand-written runtime prelude assembly is emitted as literal
+        # text and never passes through the per-function peephole.
+        for _body in "$_drop" "$_keep" "$_main"; do
+            assert_no_fallthrough_jmp "$_body" "fallthrough-jmp-chain-$_target"
+        done
+
+        # The then-only conditional is still three real blocks -- the loop was
+        # not optimized away -- but the then arm's jump to the merge label is
+        # gone, because only the empty else block's label separated them.
+        assert_matches "$_drop" '^\.L[^ ]*_if_then\.[0-9.]+:$' "fallthrough-jmp-chain-drop-$_target"
+        assert_matches "$_drop" '^\.L[^ ]*_if_else\.[0-9.]+:$' "fallthrough-jmp-chain-drop-$_target"
+        assert_matches "$_drop" '^\.L[^ ]*_if_merge\.[0-9.]+:$' "fallthrough-jmp-chain-drop-$_target"
+        assert_regex_count_eq "$_drop" \
+            '^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$' 0 \
+            "fallthrough-jmp-chain-drop-$_target"
+        # The self-recursive tail call in the same body is a backward jump.
+        assert_backward_jmp_at_least "$_drop" 1 "fallthrough-jmp-chain-drop-$_target"
+
+        # Both arms carry work here, so the then arm's jump to the merge label
+        # crosses the else arm's real instructions and must survive.
+        assert_regex_count_eq "$_keep" \
+            '^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$' 1 \
+            "fallthrough-jmp-chain-keep-$_target"
+        assert_backward_jmp_at_least "$_keep" 1 "fallthrough-jmp-chain-keep-$_target"
+    done
 }
 
 check_wide_const_hoist() {
@@ -431,6 +528,7 @@ check_stdlib_math_sqrt() {
 }
 
 check_divmagic_hoist
+check_fallthrough_jmp_chain
 check_wide_const_hoist
 check_group_pair_home
 check_group_pair_phi_home

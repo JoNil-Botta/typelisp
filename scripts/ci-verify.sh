@@ -177,12 +177,11 @@ run_gate \
     "CLI help surface" \
     scripts/check-cli-help-surface.sh \
     --self-test
-# The tlci host callback ops are additive ABI constants dispatched by number
-# through a `cond`; nothing in the type system rejects two constants sharing a
-# value, and branches adding ops in different regions of the file merge without
-# a textual conflict, leaving a silently dead second arm.
+# The tlci host callback ops are additive ABI constants dispatched by number.
+# Keep those declarations unique and exactly reconciled with SPEC section
+# 5.17.1 so implementation and public ABI documentation cannot drift.
 run_gate \
-    "tlci host callback op numbers" \
+    "tlci host callback catalog" \
     scripts/check-tlci-op-numbers.sh \
     --self-test
 run_gate \

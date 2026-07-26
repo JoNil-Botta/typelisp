@@ -2,23 +2,24 @@
 set -eu
 
 # check-tlci-op-numbers.sh - fail closed on duplicate tlci host callback op
-# numbers.
+# numbers and drift between the implementation and SPEC catalog.
 #
 # The host callback ops are additive ABI constants in a single source-bound
 # binary: the producer emits an op number and `compiler-comptime-host-invoke-step`
 # dispatches on it through a `cond`. Nothing in the type system or the existing
-# `tlci-test-host-callback-op-layout-ok?` (which pins values only through 198)
-# rejects two constants sharing a number. Two branches adding ops in different
-# regions of the file therefore merge without a textual conflict and produce
-# duplicate `cond` arms, where the first wins and the second is silently dead.
+# manually maintained `tlci-test-host-callback-op-layout-ok?` rejects two
+# constants sharing a number. Two branches adding ops in different regions of
+# the file therefore merge without a textual conflict and produce duplicate
+# `cond` arms, where the first wins and the second is silently dead.
 #
-# This gate reads the declarations out of the source, so it cannot drift from
-# the constants it checks.
+# This gate reads declarations directly from the source, then requires section
+# 5.17.1's append-only operation table to contain exactly the same numeric IDs.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SOURCE=src/tlci_core.tl
+SPEC=SPEC.md
 SELF_TEST=0
 if [ "${1:-}" = "--self-test" ]; then
     SELF_TEST=1
@@ -43,6 +44,92 @@ extract_ops() {
             pending = 0
         }
     ' "$1"
+}
+
+check_spec_catalog() {
+    awk '
+        FNR == NR {
+            if ($0 ~ /^\(define tlci-host-callback-op-[^ ]+ : i64$/) {
+                source_name = $2
+                sub(/^tlci-host-callback-op-/, "", source_name)
+                pending_source_value = 1
+                next
+            }
+            if (pending_source_value) {
+                value = $0
+                gsub(/[^0-9-]/, "", value)
+                if (value != "") {
+                    if ((value + 0) < 1) {
+                        print "tlci callback op ids must be positive in " FILENAME > "/dev/stderr"
+                        bad = 1
+                    }
+                    source[value] = source_name
+                    if ((value + 0) > max_value) max_value = value + 0
+                }
+                pending_source_value = 0
+            }
+            next
+        }
+        /^\| ID \| Operation \|$/ {
+            in_catalog = 1
+            next
+        }
+        in_catalog && /^\| ---:/ {
+            next
+        }
+        in_catalog && /^\|/ {
+            split($0, fields, "|")
+            value = fields[2]
+            gsub(/[[:space:]]/, "", value)
+            if (value !~ /^[0-9]+$/) {
+                print "malformed tlci callback op id `" value "` in " FILENAME > "/dev/stderr"
+                bad = 1
+                next
+            }
+            if ((value + 0) < 1) {
+                print "tlci callback op ids must be positive in " FILENAME > "/dev/stderr"
+                bad = 1
+            }
+            if (spec_count > 0 && (value + 0) <= last_spec_value) {
+                print "tlci callback ops are not strictly increasing at " value " in " FILENAME > "/dev/stderr"
+                bad = 1
+            }
+            if (value in spec) {
+                print "duplicate tlci callback op " value " in " FILENAME > "/dev/stderr"
+                bad = 1
+            }
+            spec[value] = 1
+            operation = fields[3]
+            sub(/^[^`]*`/, "", operation)
+            sub(/`.*/, "", operation)
+            spec_name[value] = operation
+            last_spec_value = value + 0
+            spec_count++
+            if ((value + 0) > max_value) max_value = value + 0
+            next
+        }
+        in_catalog && $0 !~ /^\|/ {
+            in_catalog = 0
+        }
+        END {
+            for (value = 1; value <= max_value; value++) {
+                key = value ""
+                if ((key in source) && !(key in spec)) {
+                    print "tlci callback op " value " (" source[key] ") is missing from " FILENAME > "/dev/stderr"
+                    bad = 1
+                }
+                if ((key in spec) && !(key in source)) {
+                    print "tlci callback op " value " is documented in " FILENAME " but absent from the implementation" > "/dev/stderr"
+                    bad = 1
+                }
+                if ((key in source) && (key in spec) && source[key] != spec_name[key]) {
+                    print "tlci callback op " value " is " source[key] " in the implementation but " spec_name[key] " in " FILENAME > "/dev/stderr"
+                    bad = 1
+                }
+            }
+            exit bad
+        }
+    ' "$1" "$2"
 }
 
 check_source() {
@@ -93,6 +180,74 @@ FIXTURE
         echo "self-test: unique op numbers were rejected" >&2
         exit 1
     fi
+    GOOD_SPEC="$WORKDIR/catalog-good.md"
+    cat > "$GOOD_SPEC" <<'FIXTURE'
+| ID | Operation |
+| ---: | --- |
+| 222 | `alpha` |
+| 223 | `beta` |
+FIXTURE
+    if ! check_spec_catalog "$GOOD" "$GOOD_SPEC"; then
+        echo "self-test: matching SPEC catalog was rejected" >&2
+        exit 1
+    fi
+    BAD_SPEC="$WORKDIR/catalog-missing.md"
+    cat > "$BAD_SPEC" <<'FIXTURE'
+| ID | Operation |
+| ---: | --- |
+| 222 | `alpha` |
+FIXTURE
+    if check_spec_catalog "$GOOD" "$BAD_SPEC" 2>/dev/null; then
+        echo "self-test: missing SPEC catalog op was not rejected" >&2
+        exit 1
+    fi
+    EXTRA_SPEC="$WORKDIR/catalog-extra.md"
+    cat > "$EXTRA_SPEC" <<'FIXTURE'
+| ID | Operation |
+| ---: | --- |
+| 222 | `alpha` |
+| 223 | `beta` |
+| 224 | `gamma` |
+FIXTURE
+    if check_spec_catalog "$GOOD" "$EXTRA_SPEC" 2>/dev/null; then
+        echo "self-test: extra SPEC catalog op was not rejected" >&2
+        exit 1
+    fi
+    ZERO_SPEC="$WORKDIR/catalog-zero.md"
+    cat > "$ZERO_SPEC" <<'FIXTURE'
+| ID | Operation |
+| ---: | --- |
+| 0 | `zero` |
+| 222 | `alpha` |
+| 223 | `beta` |
+FIXTURE
+    if check_spec_catalog "$GOOD" "$ZERO_SPEC" 2>/dev/null; then
+        echo "self-test: non-positive SPEC catalog op was not rejected" >&2
+        exit 1
+    fi
+    NEGATIVE_SPEC="$WORKDIR/catalog-negative.md"
+    cat > "$NEGATIVE_SPEC" <<'FIXTURE'
+| ID | Operation |
+| ---: | --- |
+| -1 | `negative` |
+| 222 | `alpha` |
+| 223 | `beta` |
+FIXTURE
+    if check_spec_catalog "$GOOD" "$NEGATIVE_SPEC" 2>/dev/null; then
+        echo "self-test: malformed SPEC catalog op was not rejected" >&2
+        exit 1
+    fi
+    BAD_NAME_SPEC="$WORKDIR/catalog-wrong-name.md"
+    cat > "$BAD_NAME_SPEC" <<'FIXTURE'
+| ID | Operation |
+| ---: | --- |
+| 222 | `alpha` |
+| 223 | `gamma` |
+FIXTURE
+    if check_spec_catalog "$GOOD" "$BAD_NAME_SPEC" 2>/dev/null; then
+        echo "self-test: mismatched SPEC catalog name was not rejected" >&2
+        exit 1
+    fi
     COUNT=$(extract_ops "$SOURCE" | wc -l | tr -d ' ')
     if [ "$COUNT" -lt 100 ]; then
         echo "self-test: only $COUNT op declarations found in $SOURCE" >&2
@@ -103,4 +258,5 @@ FIXTURE
 fi
 
 check_source "$SOURCE"
-echo "tlci host callback op numbers are unique ($(extract_ops "$SOURCE" | wc -l | tr -d ' ') declarations)"
+check_spec_catalog "$SOURCE" "$SPEC"
+echo "tlci host callback catalog matches SPEC ($(extract_ops "$SOURCE" | wc -l | tr -d ' ') unique declarations)"

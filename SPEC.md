@@ -5128,6 +5128,46 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 219 | `let-binding-typed` (native template construction) |
 | 220 | `type-scalar` (native type construction) |
 | 221 | `expr-int-from-data` (computed-body construction) |
+| 222 | `operand-expr-call?` |
+| 223 | `operand-expr-call-callee` |
+| 224 | `operand-expr-call-args` |
+| 225 | `operand-expr-int?` |
+| 226 | `operand-expr-int-value` |
+| 227 | `local-expr-list-length` |
+| 228 | `local-expr-list-nth` |
+| 229 | `expr-return` (native template construction) |
+| 230 | `expr-box` (native template construction) |
+| 231 | `expr-box-get` (native template construction) |
+| 232 | `expr-float-literal` (native template construction) |
+| 233 | `operand-expr-type-kind-eq` |
+| 234 | `operand-type-key-eq` |
+| 235 | `expr-cast` (native template construction) |
+| 236 | `expr-unsafe` (native template construction) |
+| 237 | `expr-ptr-read` (native template construction) |
+| 238 | `expr-ptr-to-int` (native template construction) |
+| 239 | `expr-string-data` (native template construction) |
+| 240 | `expr-ptr-write` (native template construction) |
+| 241 | `expr-ptr-offset` (native template construction) |
+| 242 | `expr-ptr-cast` (native template construction) |
+| 243 | `expr-string-from-bytes` (native template construction) |
+| 244 | `expr-array-data` (native template construction) |
+| 245 | `operand-expr-var?` |
+| 246 | `operand-expr-string-value` |
+| 247 | `value-i64` |
+| 248 | `operand-expr-var-name` |
+| 249 | `type-ptr` (native type construction) |
+| 250 | `type-box` (native type construction) |
+| 251 | `type-dyn-array` (native type construction) |
+| 252 | `local-string-length` |
+| 253 | `local-string-ref` |
+| 254 | `local-string-slice` |
+| 255 | `expr-string-from-value` (computed-body construction) |
+| 256 | `operand-expr-string?` |
+| 257 | `type-array` (native type construction) |
+| 258 | `type-ref` (native type construction) |
+| 259 | `expr-struct-get-from-value` (computed-body construction) |
+| 260 | `pattern-variant-from-value` (computed-body construction) |
+| 261 | `match-arm-list-cons-from-values` (computed-body construction) |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned

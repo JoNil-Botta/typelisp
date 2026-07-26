@@ -10306,6 +10306,8 @@
     (CompilerIrValue.I64 0)
     4
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (string.eq
@@ -10649,6 +10651,8 @@
     (CompilerIrValue.Var 4)
     8
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (string.eq
@@ -10843,7 +10847,9 @@
     (compiler-backend-simd-address-assignments)
     base
     index
-    elem-ty)
+    elem-ty
+    ""
+    "")
     [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
       (and
         (string.eq (struct-get addr-plan asm) want-asm)
@@ -10896,6 +10902,55 @@
       "    movq -64(%rbp), %r9\n"
       "(%rdi,%r9,8)")))
 
+(define (compiler-backend-simd-indexed-address-planned-spills-ok?) : bool
+  (let
+    [before-pending : i64 compiler-backend-emergency-pending-count]
+    [before-used : i64 compiler-backend-emergency-used-count]
+    (match (compiler-backend-emit-simd-indexed-address
+      (compiler-backend-simd-address-assignments)
+      (CompilerIrValue.Var 7)
+      (CompilerIrValue.Var 8)
+      (AstType.I64)
+      "%r14"
+      "%r13")
+      [(ResultCompilerBackendSimdIndexedAddress.Ok dynamic)
+        (match (compiler-backend-emit-simd-indexed-address
+          (compiler-backend-simd-address-assignments)
+          (CompilerIrValue.Var 7)
+          (CompilerIrValue.I64 4)
+          (AstType.I64)
+          "%r14"
+          "%r13")
+          [(ResultCompilerBackendSimdIndexedAddress.Ok constant)
+            (match (compiler-backend-emit-simd-indexed-address
+              (compiler-backend-simd-address-assignments)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 4)
+              (AstType.I64)
+              "%r14"
+              "%r13")
+              [(ResultCompilerBackendSimdIndexedAddress.Ok homed)
+                (and
+                  (string.eq
+                    (struct-get dynamic asm)
+                    "    movq -64(%rbp), %r14\n    movq -72(%rbp), %r13\n")
+                  (string.eq (struct-get dynamic addr) "(%r14,%r13,8)")
+                  (string.eq
+                    (struct-get constant asm)
+                    "    movq -64(%rbp), %r14\n")
+                  (string.eq (struct-get constant addr) "32(%r14)")
+                  (not
+                    (compiler-backend-string-contains?
+                      (struct-get constant asm)
+                      "%r13"))
+                  (string.eq (struct-get homed asm) "")
+                  (string.eq (struct-get homed addr) "32(%rdi)")
+                  (= compiler-backend-emergency-pending-count before-pending)
+                  (= compiler-backend-emergency-used-count before-used))]
+              [(ResultCompilerBackendSimdIndexedAddress.Err _) false])]
+          [(ResultCompilerBackendSimdIndexedAddress.Err _) false])]
+      [(ResultCompilerBackendSimdIndexedAddress.Err _) false])))
+
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-load
     (compiler-backend-simd-address-assignments)
@@ -10904,6 +10959,8 @@
     (CompilerIrValue.I64 4)
     4
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (string.eq asm "    vmovdqu 32(%rdi), %ymm6\n")]
@@ -10917,6 +10974,8 @@
     (CompilerIrValue.Var 4)
     4
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (string.eq asm "    vmovdqu %ymm7, (%rdi,%r12,8)\n")]
@@ -10931,6 +10990,8 @@
     (CompilerIrValue.Var 5)
     8
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (string.eq asm "    vmovdqu64 32(%rdi), %zmm6{%k1}{z}\n")]
@@ -10938,6 +10999,7 @@
 
 (define (compiler-backend-simd-indexed-address-users-ok?) : bool
   (and
+    (compiler-backend-simd-indexed-address-planned-spills-ok?)
     (compiler-backend-avx2-vector-load-address-ok?)
     (compiler-backend-avx2-vector-store-address-ok?)
     (compiler-backend-avx512-predicated-load-address-ok?)))
@@ -11066,6 +11128,8 @@
     (CompilerIrValue.I64 0)
     (CompilerIrValue.Var 1)
     8
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -11101,6 +11165,8 @@
     (CompilerIrValue.Var 0)
     (CompilerIrValue.Var 1)
     8
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -12190,6 +12256,8 @@
     (CompilerIrValue.I64 0)
     (CompilerIrValue.Var 1)
     8
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok load-asm)
       (match (compiler-backend-emit-avx512-mask-store
@@ -12199,6 +12267,8 @@
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 1)
         8
+        ""
+        ""
         (compiler-diagnostic-at-start "" ""))
         [(ResultCompilerBackend.Ok store-asm)
           (and
@@ -23723,6 +23793,181 @@
         (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))))
 
+(define (compiler-backend-scratch-vreg-indexed-simd-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.VectorLoad
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          4
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (ir-instr-vector-store
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            8
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (ir-instr-predicated-load
+              3
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 4)
+              4
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (ir-instr-predicated-store
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.Var 4)
+                16
+                (AstType.I32))
+              (compiler-ir-instr-cons
+                (ir-instr-predicated-load
+                  5
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.Var 4)
+                  32
+                  (AstType.Bool))
+                (compiler-ir-instr-cons
+                  (ir-instr-predicated-store
+                    (CompilerIrValue.Var 0)
+                    (CompilerIrValue.Var 1)
+                    (CompilerIrValue.Var 5)
+                    (CompilerIrValue.Var 4)
+                    64
+                    (AstType.Bool))
+                  (compiler-ir-instr-cons
+                    (ir-instr-gather-load
+                      6
+                      (CompilerIrValue.Var 8)
+                      (CompilerIrValue.Var 7)
+                      (CompilerIrValue.Var 1)
+                      false
+                      4
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (ir-instr-gather-load
+                        9
+                        (CompilerIrValue.Var 8)
+                        (CompilerIrValue.Var 7)
+                        (CompilerIrValue.Var 1)
+                        false
+                        16
+                        (AstType.I32))
+                      (compiler-ir-instr-cons
+                        (ir-instr-gather-load
+                          10
+                          (CompilerIrValue.Var 8)
+                          (CompilerIrValue.Var 7)
+                          (CompilerIrValue.Var 1)
+                          true
+                          8
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.VectorLoad
+                            11
+                            (CompilerIrValue.Var 0)
+                            (CompilerIrValue.I64 4)
+                            8
+                            (AstType.I64))
+                          CompilerIrInstrList.Nil)))))))))))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-indexed-simd-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%vec6"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%vec7"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%k1"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                5
+                (CompilerRegLocation.Register "%k2"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment.Assignment
+                  6
+                  (CompilerRegLocation.Register "%vec8"))
+                (compiler-reg-assignment-cons
+                  (CompilerRegAssignment.Assignment
+                    7
+                    (CompilerRegLocation.Spill -64))
+                  (compiler-reg-assignment-cons
+                    (CompilerRegAssignment.Assignment
+                      8
+                      (CompilerRegLocation.Register "%r12"))
+                    (compiler-reg-assignment-cons
+                      (CompilerRegAssignment.Assignment
+                        9
+                        (CompilerRegLocation.Register "%vec9"))
+                      (compiler-reg-assignment-cons
+                        (CompilerRegAssignment.Assignment
+                          10
+                          (CompilerRegLocation.Register "%vec10"))
+                        (compiler-reg-assignment-cons
+                          (CompilerRegAssignment.Assignment
+                            11
+                            (CompilerRegLocation.Register "%vec11"))
+                          CompilerRegAssignmentList.Nil)))))))))))))
+
+(define (compiler-backend-scratch-vreg-indexed-simd-fused-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.VectorLoad
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          4
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (ir-instr-vector-bin-op
+            3
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.Var 4)
+            4
+            (AstType.I64))
+          CompilerIrInstrList.Nil)))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-indexed-simd-fused-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%vec6"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%vec8"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%vec7"))
+            CompilerRegAssignmentList.Nil))))))
+
 (define (compiler-backend-scratch-vreg-cast-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -25524,8 +25769,8 @@
               (CompilerIrValue.Var 1)
               (CompilerIrValue.Global (ci.intern "scratch_float_global"))
               (AstType.F64))
-            CompilerRegStringList.Nil
-            CompilerRegStringList.Nil
+            CompilerRegLabelList.Nil
+            CompilerRegLabelList.Nil
             false)
           0)
         (=
@@ -25539,8 +25784,8 @@
               (CompilerIrValue.Var 1)
               (CompilerIrValue.Global (ci.intern "scratch_float_global"))
               (AstType.Bool))
-            CompilerRegStringList.Nil
-            CompilerRegStringList.Nil
+            CompilerRegLabelList.Nil
+            CompilerRegLabelList.Nil
             false)
           0)
         (compiler-reg-scratch-compare-op? (CompilerIrBinOp.Eq))
@@ -25853,6 +26098,162 @@
                 [_ false]))])))
     true))
 
+(define (compiler-backend-scratch-vreg-indexed-simd-points-ok?
+  [plan : CompilerRegScratchPlan]
+  [dense-plan : CompilerRegScratchPlan]
+  [point : i64]) : bool
+  (if (>= point 16)
+    true
+    (let
+      [base : String (compiler-reg-scratch-plan-register plan point 0)]
+      [index : String (compiler-reg-scratch-plan-register plan point 1)]
+      (and
+        (not (string.eq base ""))
+        (not (string.eq index ""))
+        (not (compiler-reg-registers-overlap? base index))
+        (string.eq base (compiler-reg-scratch-plan-register dense-plan point 0))
+        (string.eq
+          index
+          (compiler-reg-scratch-plan-register dense-plan point 1))
+        (if (>= point 12)
+          (and (not (string.eq base "%r12")) (not (string.eq index "%r12")))
+          true)
+        (compiler-backend-scratch-vreg-indexed-simd-points-ok?
+          plan
+          dense-plan
+          (+ point 2))))))
+
+(define (compiler-backend-scratch-vreg-indexed-simd-role?
+  [plan : CompilerRegScratchPlan]
+  [index : i64]
+  [base? : bool]) : bool
+  (let
+    [requirement : CompilerRegScratchRequirement
+      (struct-get (array-ref (struct-get plan items) index) requirement)]
+    (match (struct-get requirement role)
+      [(CompilerRegScratchRole.SimdAddressBase) base?]
+      [(CompilerRegScratchRole.SimdAddressIndex) (not base?)]
+      [_ false])))
+
+(define (compiler-backend-scratch-vreg-indexed-simd-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-indexed-simd-test-blocks)]
+      [assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-indexed-simd-test-assignments)]
+      [listed : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_indexed_simd"
+          blocks
+          12
+          assignments)]
+      [dense : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_indexed_simd_dense"
+          (compiler-ir-block-list-compact blocks)
+          12
+          assignments)]
+      [fused-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-indexed-simd-fused-blocks)]
+      [fused : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_indexed_simd_fused"
+          fused-blocks
+          5
+          (compiler-backend-scratch-vreg-indexed-simd-fused-assignments))]
+      [fused-dense : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_indexed_simd_fused_dense"
+          (compiler-ir-block-list-compact fused-blocks)
+          5
+          (compiler-backend-scratch-vreg-indexed-simd-fused-assignments))]
+      (match listed
+        [(CompilerRegScratchPlanResult.Result _ plan)
+          (match dense
+            [(CompilerRegScratchPlanResult.Result _ dense-plan)
+              (match fused
+                [(CompilerRegScratchPlanResult.Result _ fused-plan)
+                  (match fused-dense
+                    [(CompilerRegScratchPlanResult.Result _ fused-dense-plan)
+                      (let
+                        [constant-base : String
+                          (compiler-reg-scratch-plan-register plan 16 0)]
+                        [vector-constant-base : String
+                          (compiler-reg-scratch-plan-register plan 18 0)]
+                        [fused-base : CompilerRegScratchRequirement
+                          (struct-get
+                            (array-ref (struct-get fused-plan items) 0)
+                            requirement)]
+                        [fused-index : CompilerRegScratchRequirement
+                          (struct-get
+                            (array-ref (struct-get fused-plan items) 1)
+                            requirement)]
+                        (and
+                          (= (compiler-reg-scratch-plan-count plan) 18)
+                          (=
+                            (compiler-backend-scratch-plan-success-count plan)
+                            18)
+                          (= (compiler-reg-scratch-plan-count dense-plan) 18)
+                          (compiler-backend-scratch-vreg-indexed-simd-points-ok?
+                            plan
+                            dense-plan
+                            0)
+                          (not (string.eq constant-base ""))
+                          (string.eq
+                            constant-base
+                            (compiler-reg-scratch-plan-register dense-plan 16 0))
+                          (string.eq
+                            (compiler-reg-scratch-plan-register plan 16 1)
+                            "")
+                          (not (string.eq vector-constant-base ""))
+                          (string.eq
+                            vector-constant-base
+                            (compiler-reg-scratch-plan-register dense-plan 18 0))
+                          (string.eq
+                            (compiler-reg-scratch-plan-register plan 18 1)
+                            "")
+                          (not (string.eq constant-base "%r12"))
+                          (compiler-backend-scratch-vreg-indexed-simd-role?
+                            plan
+                            0
+                            true)
+                          (compiler-backend-scratch-vreg-indexed-simd-role?
+                            plan
+                            1
+                            false)
+                          (compiler-backend-scratch-vreg-indexed-simd-role?
+                            plan
+                            16
+                            true)
+                          (compiler-backend-scratch-vreg-indexed-simd-role?
+                            plan
+                            17
+                            true)
+                          (= (compiler-reg-scratch-plan-count fused-plan) 2)
+                          (=
+                            (compiler-backend-scratch-plan-success-count
+                              fused-plan)
+                            2)
+                          (= (struct-get fused-base lo) 0)
+                          (= (struct-get fused-base hi) 3)
+                          (= (struct-get fused-index lo) 0)
+                          (= (struct-get fused-index hi) 3)
+                          (string.eq
+                            (compiler-reg-scratch-plan-register fused-plan 0 0)
+                            (compiler-reg-scratch-plan-register
+                              fused-dense-plan
+                              0
+                              0))
+                          (string.eq
+                            (compiler-reg-scratch-plan-register fused-plan 0 1)
+                            (compiler-reg-scratch-plan-register
+                              fused-dense-plan
+                              0
+                              1))))])])])]))
+    true))
+
 (define (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?) : bool
   (cfg
     scratch-vreg
@@ -26049,8 +26450,8 @@
             same-home
             CompilerRegVarTypeList.Nil
             (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
-            CompilerRegStringList.Nil
-            CompilerRegStringList.Nil
+            CompilerRegLabelList.Nil
+            CompilerRegLabelList.Nil
             false)
           0)
         (match cast
@@ -27550,6 +27951,7 @@
         (compiler-backend-scratch-vreg-float-compute-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
         (compiler-backend-scratch-vreg-simd-plan-ok?)
+        (compiler-backend-scratch-vreg-indexed-simd-plan-ok?)
         (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-conversion-plan-ok?)
         (compiler-backend-scratch-vreg-conversion-emission-uses-plan-ok?)

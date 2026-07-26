@@ -23025,6 +23025,8 @@
   (CopyValueXmm)
   (SplatValueGp)
   (SplatValueXmm)
+  (SimdAddressBase)
+  (SimdAddressIndex)
   (VectorPrefixCarry)
   (VectorPrefixBits)
   (VectorPrefixValue)
@@ -23697,6 +23699,46 @@
       ;; through XMM. Keep the two fixed ordinals so emission lookup remains
       ;; stable regardless of the source home and selected element type.
       [(CompilerIrInstr.Splat _ _ _ _) 2]
+      ;; Every SIMD indexed address needs a stable base slot. Dynamic indices
+      ;; additionally need an independent GP slot; integer immediates fold into
+      ;; the addressing displacement and must not reserve that second ordinal.
+      [(CompilerIrInstr.VectorLoad _ _ index _ _)
+        (if (compiler-reg-scratch-value-integer-immediate? index)
+          1
+          2)]
+      [(CompilerIrInstr.VectorStore payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorStorePayload.Payload _ index _ _ _)
+            (if (compiler-reg-scratch-value-integer-immediate? index)
+              1
+              2)])]
+      [(CompilerIrInstr.PredicatedStore payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrPredicatedStorePayload.Payload _ index _ _ _ _)
+            (if (compiler-reg-scratch-value-integer-immediate? index)
+              1
+              2)])]
+      [(CompilerIrInstr.PredicatedLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ index _ _ _)
+            (if (compiler-reg-scratch-value-integer-immediate? index)
+              1
+              2)])]
+      [(CompilerIrInstr.GatherLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrGatherLoadPayload.Payload
+              _
+              _
+              _
+              index
+              lane-offset
+              _
+              _)
+            (if (or
+              lane-offset
+              (compiler-reg-scratch-value-integer-immediate? index))
+              1
+              2)])]
       ;; Horizontal AVX2/AVX-512 reductions need an accumulator plus a sibling
       ;; XMM temporary at the same instruction point.
       [(CompilerIrInstr.VectorPrefix _) 2]
@@ -24116,6 +24158,71 @@
       (compiler-reg-string-list-append
         (compiler-reg-scratch-location-registers assignments dst)
         (compiler-reg-scratch-value-registers assignments value))]
+    [(CompilerIrInstr.VectorLoad dst base index _ _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-string-list-append
+          (compiler-reg-scratch-value-registers assignments base)
+          (compiler-reg-scratch-value-registers assignments index)))]
+    [(CompilerIrInstr.VectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-value-registers assignments base)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments index)
+              (compiler-reg-scratch-value-registers assignments value)))])]
+    [(CompilerIrInstr.PredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            base
+            index
+            value
+            mask
+            _
+            _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-value-registers assignments base)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments index)
+              (compiler-reg-string-list-append
+                (compiler-reg-scratch-value-registers assignments value)
+                (compiler-reg-scratch-value-registers assignments mask))))])]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload dst base index mask _ _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-location-registers assignments dst)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments base)
+              (compiler-reg-string-list-append
+                (compiler-reg-scratch-value-registers assignments index)
+                (compiler-reg-scratch-value-registers assignments mask))))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            dst
+            base
+            index-base
+            index
+            _
+            _
+            _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-location-registers assignments dst)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments base)
+              (compiler-reg-string-list-append
+                (compiler-reg-scratch-value-registers assignments index-base)
+                (compiler-reg-scratch-value-registers assignments index))))])]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload.Payload dst _ lhs rhs _ _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-location-registers assignments dst)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments lhs)
+              (compiler-reg-scratch-value-registers assignments rhs)))])]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorPrefixPayload.Payload dst _ src carry _ _)
@@ -24891,6 +24998,61 @@
         point
         (+ point 1)
         var)]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.SimdAddressBase)
+          (CompilerRegScratchRole.SimdAddressIndex))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.VectorStore _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.SimdAddressBase)
+          (CompilerRegScratchRole.SimdAddressIndex))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.PredicatedStore _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.SimdAddressBase)
+          (CompilerRegScratchRole.SimdAddressIndex))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.PredicatedLoad _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.SimdAddressBase)
+          (CompilerRegScratchRole.SimdAddressIndex))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.GatherLoad _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.SimdAddressBase)
+          (CompilerRegScratchRole.SimdAddressIndex))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorPrefixPayload.Payload _ _ _ _ lanes elem-ty)
@@ -25174,6 +25336,18 @@
         [(CompilerRegScratchFusionKind.Jump)
           (compiler-reg-scratch-instr-jump? instr)]))))
 
+(define (compiler-reg-scratch-seq-vector-load-binop?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= (+ index 1) (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.VectorLoad _ _ _ _ _)
+        (match (compiler-ir-instr-seq-ref instrs (+ index 1))
+          [(CompilerIrInstr.VectorBinOp _) true]
+          [_ false])]
+      [_ false])))
+
 ;; Mirror every backend path that obtains another instruction's planned slot
 ;; with scratch-plan-register-ahead.  These syntactic candidates are slightly
 ;; conservative: the backend also checks uses/types before fusing, while the
@@ -25190,6 +25364,11 @@
       (while (< i len)
         (begin
           (cond
+            ;; A SIMD VectorLoad can fold into the following VectorBinOp. The
+            ;; address temporaries remain live through the folded instruction,
+            ;; whose result and register operand must also be excluded.
+            [(compiler-reg-scratch-seq-vector-load-binop? instrs i)
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 1))]
             ;; Gep+Load can grow into the paired aggregate load or into a
             ;; load/compare/branch bundle.
             [(and

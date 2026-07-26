@@ -8,6 +8,7 @@
 (import compiler_intern as ci)
 (import "compiler_ast_types.tl")
 (import compiler_builtin_ids as cbi)
+(import compiler_cfg_core as cfg_core)
 (import "compiler_diagnostic.tl")
 (import lex as lexer)
 (import read as reader)
@@ -1007,64 +1008,53 @@
     [else (ci.intern-str name-id)]))
 
 (define (compiler-cfg-key-id [name-id : i64]) : i64
-  (+ (ci.intern-capacity) name-id))
+  (cfg_core.compiler-cfg-key-id name-id))
 
 (define (compiler-cfg-name-id [key-id : i64]) : i64
-  (- key-id (ci.intern-capacity)))
+  (cfg_core.compiler-cfg-name-id key-id))
 
 (define (compiler-cfg-key-name [key-id : i64]) : String
-  (string.append "cfg:" (ci.intern-str (compiler-cfg-name-id key-id))))
+  (cfg_core.compiler-cfg-key-name key-id))
 
 (define (compiler-cfg-name [key-id : i64]) : String
-  (ci.intern-str (compiler-cfg-name-id key-id)))
+  (cfg_core.compiler-cfg-name key-id))
 
 (define (compiler-cfg-empty) : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-empty))
+  (cfg_core.compiler-cfg-empty))
 
 (define (compiler-cfg-enable-id [cfgs : sym_i64_env.SymI64Env] [name-id : i64]) : sym_i64_env.SymI64Env
-  (compiler-cfg-bind-id cfgs name-id 1))
+  (cfg_core.compiler-cfg-enable-id cfgs name-id))
 
 (define (compiler-cfg-bind-id
   [cfgs : sym_i64_env.SymI64Env]
   [name-id : i64]
   [value : i64]) : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-bind-id cfgs (compiler-cfg-key-id name-id) value))
+  (cfg_core.compiler-cfg-bind-id cfgs name-id value))
 
 (define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
-  (compiler-cfg-bind cfgs name 1))
+  (cfg_core.compiler-cfg-enable cfgs name))
 
 (define (compiler-cfg-bind
   [cfgs : sym_i64_env.SymI64Env]
   [name : String]
   [value : i64]) : sym_i64_env.SymI64Env
-  (compiler-cfg-bind-id
-    cfgs
-    (ci.intern-source-slice name 0 (ci.intern-private-string-length name))
-    value))
+  (cfg_core.compiler-cfg-bind cfgs name value))
 
 (define (compiler-cfg-enable-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
   [name : String]
   [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-id
-    cfgs
-    (ci.intern-compat-state-intern intern-state name)))
+  (cfg_core.compiler-cfg-enable-with-intern-state cfgs name intern-state))
 
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match cfgs
-    [(sym_i64_env.SymI64Nil) base]
-    [(sym_i64_env.SymI64Bind name-id value rest)
-      (sym_i64_env.sym-i64-bind-id
-        (compiler-cfg-merge base (box-get rest))
-        name-id
-        value)]))
+  (cfg_core.compiler-cfg-merge base cfgs))
 
 (define (compiler-cfg-enabled?
   [dispatch : sym_i64_env.SymI64Env]
   [name-id : i64]) : bool
-  (sym_i64_env.sym-i64-contains-id dispatch (compiler-cfg-key-id name-id)))
+  (cfg_core.compiler-cfg-enabled? dispatch name-id))
 
 (define (compiler-cfg-eval-list-all
   [dispatch : sym_i64_env.SymI64Env]
@@ -10508,7 +10498,7 @@
         (and
           (= (compiler-parse-expr-list-count args) want-args)
           (match (ast-expr-unspan head-expr)
-            [(AstExpr.Var found) (string.eq (intern-str found) name)]
+            [(AstExpr.Var found) (string.eq (ci.intern-str found) name)]
             [_ false])))]
     [_ false]))
 
@@ -10529,25 +10519,33 @@
 (define (ast-first-include-str-ok? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons (AstDecl.IncludeStr name path) _)
-      (and (string.eq (intern-str name) "payload") (string.eq path "data.txt"))]
+      (and
+        (string.eq (ci.intern-str name) "payload")
+        (string.eq path "data.txt"))]
     [_ false]))
 
 (define (ast-first-include-str-comptime-ok? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons (AstDecl.IncludeStrComptime name path) _)
-      (and (string.eq (intern-str name) "payload") (string.eq path "data.txt"))]
+      (and
+        (string.eq (ci.intern-str name) "payload")
+        (string.eq path "data.txt"))]
     [_ false]))
 
 (define (ast-first-include-str-lzss-ok? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons (AstDecl.IncludeStrLzss name path) _)
-      (and (string.eq (intern-str name) "payload") (string.eq path "data.txt"))]
+      (and
+        (string.eq (ci.intern-str name) "payload")
+        (string.eq path "data.txt"))]
     [_ false]))
 
 (define (ast-first-include-bin-ok? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons (AstDecl.IncludeBin name path) _)
-      (and (string.eq (intern-str name) "payload") (string.eq path "data.bin"))]
+      (and
+        (string.eq (ci.intern-str name) "payload")
+        (string.eq path "data.bin"))]
     [_ false]))
 
 (define (compiler-parse-module-decl-ok?) : bool
@@ -11937,7 +11935,7 @@
 
 (define (compiler-parse-call-head-name? [expr : AstExpr] [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExpr.Var found) (string.eq (intern-str found) name)]
+    [(AstExpr.Var found) (string.eq (ci.intern-str found) name)]
     [_ false]))
 
 (define (compiler-parse-return-expr? [expr : AstExpr]) : bool
@@ -13003,7 +13001,9 @@
                                 [(AstExpr.Var name)
                                   (and
                                     (= (struct-get (& call-args) len) 0)
-                                    (string.eq (intern-str name) "arena-make")
+                                    (string.eq
+                                      (ci.intern-str name)
+                                      "arena-make")
                                     (= (struct-get (& body-exprs) len) 1))]
                                 [_ false]))]
                           [_ false]))]
@@ -13077,7 +13077,7 @@
                         (match (ast-expr-unspan arena)
                           [(AstExpr.Var name)
                             (and
-                              (string.eq (intern-str name) "arena")
+                              (string.eq (ci.intern-str name) "arena")
                               (= (struct-get (& body-exprs) len) 2))]
                           [_ false]))]
                     [_ false])]
@@ -13204,7 +13204,8 @@
                 [(AstDeclListStep.Nil)
                   (and
                     (match ret-ty
-                      [(AstType.Var name) (string.eq (intern-str name) "Expr")]
+                      [(AstType.Var name)
+                        (string.eq (ci.intern-str name) "Expr")]
                       [_ false])
                     (match (ast-expr-unspan body)
                       [(AstExpr.Quasiquote template-box)
@@ -13221,7 +13222,7 @@
                                         (ast-node-get unquoted-box)]
                                       (match (ast-expr-unspan unquoted)
                                         [(AstExpr.Var name)
-                                          (string.eq (intern-str name) "e")]
+                                          (string.eq (ci.intern-str name) "e")]
                                         [_ false]))]
                                   [_ false]))]
                             [_ false]))]

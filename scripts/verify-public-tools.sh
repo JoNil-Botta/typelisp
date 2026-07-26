@@ -421,6 +421,29 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
+CHECK_CFG_SRC="$WORKDIR/check-cfg-target.tl"
+cat > "$CHECK_CFG_SRC" <<'EOF'
+(cfg linux
+  (define platform-value : i64 40))
+(cfg windows
+  (define platform-value : i64 40))
+(cfg tooling-feature
+  (define cfg-value : i64 2))
+(define (main) : i64
+  (+ platform-value cfg-value))
+EOF
+# cli-gate-case check-cfg-default-target wrapper run_cmd
+run_cmd check-cfg-default-target "$COMPILER" check "$CHECK_CFG_SRC" --cfg tooling-feature
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Type checking passed!"
+
+# cli-gate-case check-cfg-windows-target wrapper run_cmd
+run_cmd check-cfg-windows-target "$COMPILER" check "$CHECK_CFG_SRC" --target windows-x86_64 --cfg tooling-feature
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Type checking passed!"
+
 # cli-gate-case compile-hello wrapper run_cmd
 run_cmd compile-hello "$COMPILER" compile examples/hello.tl -o "$WORKDIR/hello.s"
 assert_success
@@ -2162,6 +2185,12 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
 
+    # cli-gate-case lint-cfg-windows-target wrapper run_cmd
+    run_cmd lint-cfg-windows-target "$COMPILER" lint "$CHECK_CFG_SRC" --target windows-x86_64 --cfg tooling-feature --check
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint: 0 finding(s)"
+
     cat > "$WORKDIR/lint_name_case.tl" <<'EOF'
 (define bad-global : i64 1)
 (defstruct bad-type
@@ -2369,6 +2398,16 @@ while IFS= read -r fmt_name; do
     assert_stderr_empty
     check_file_exact "$WORKDIR/$fmt_name.tl" "$WORKDIR/$fmt_name.expected"
 done < "$WORKDIR/format-expected.txt"
+
+# The formatter is target-independent, but accepts the shared selection flags
+# so editor and CI command lines can use one configuration.
+# cli-gate-case fmt-cfg-target wrapper run_cmd
+run_cmd fmt-cfg-target "$COMPILER" fmt "$CHECK_CFG_SRC" --target windows-x86_64 --cfg tooling-feature
+assert_success
+assert_stdout_empty
+assert_stderr_empty
+assert_contains "$CHECK_CFG_SRC" "platform-value"
+assert_contains "$CHECK_CFG_SRC" "cfg-value"
 
 echo "[public-tools] doc and doctest commands"
 cat > "$WORKDIR/docs.tl" <<'EOF'

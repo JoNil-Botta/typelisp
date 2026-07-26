@@ -46684,11 +46684,13 @@
   (active bool)
   (macro-name String)
   (param-name String)
-  (kind-mask i64))
+  (kind-mask i64)
+  (cleanup-owning-mask i64))
 
 (defenum TcMacroAbstractGuard
   (No)
-  (Kind String))
+  (Kind String)
+  (CleanupOwning))
 
 (define tc-macro-abstract-active : bool
   false)
@@ -46699,19 +46701,28 @@
 (define tc-macro-abstract-kind-mask : i64
   0)
 
+;; Bit 0 means the abstract operand may not own cleanup; bit 1 means it may.
+;; An empty mask represents an unreachable branch, matching the kind mask.
+(define tc-macro-abstract-cleanup-owning-mask : i64
+  0)
+
 (define (tc-macro-abstract-state-save) : TcMacroAbstractState
   (TcMacroAbstractState
     tc-macro-abstract-active
     tc-macro-abstract-macro-name
     tc-macro-abstract-param-name
-    tc-macro-abstract-kind-mask))
+    tc-macro-abstract-kind-mask
+    tc-macro-abstract-cleanup-owning-mask))
 
 (define (tc-macro-abstract-state-restore! [state : TcMacroAbstractState]) : unit
   (begin
     (set! tc-macro-abstract-active (struct-get state active))
     (set! tc-macro-abstract-macro-name (struct-get state macro-name))
     (set! tc-macro-abstract-param-name (struct-get state param-name))
-    (set! tc-macro-abstract-kind-mask (struct-get state kind-mask))))
+    (set! tc-macro-abstract-kind-mask (struct-get state kind-mask))
+    (set!
+      tc-macro-abstract-cleanup-owning-mask
+      (struct-get state cleanup-owning-mask))))
 
 ;; --- persisted abstract-validation proofs (#5296) -----------------------------
 ;;
@@ -46870,6 +46881,19 @@
           (tc-macro-abstract-bound-alias? bound name)))]
     [_ false]))
 
+(define (tc-macro-abstract-cleanup-owning-call?
+  [expr : AstExpr]
+  [bound : TcStringList]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Call func args)
+      (and
+        (=
+          (tc-macro-abstract-call-id (ast-node-get func) bound)
+          (cbi.compiler-builtin-ctfe-ref 210))
+        (= (struct-get args len) 1)
+        (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound))]
+    [_ false]))
+
 (define (tc-macro-abstract-binding-bound
   [bound : TcStringList]
   [name-id : i64]
@@ -46974,12 +46998,12 @@
         (= call-id (cbi.compiler-builtin-ctfe-ref 88))
         (= call-id (cbi.compiler-builtin-ctfe-ref 89)))
       (tc-macro-abstract-mask-allows? (shl 1 17))]
-    ;; Kind `array` does not imply a fixed length, and no kind proves cleanup
-    ;; ownership.  Those facts remain concrete-only.
-    [(or
-        (= call-id (cbi.compiler-builtin-ctfe-ref 83))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 211)))
-      false]
+    ;; Kind `array` does not imply a fixed length.
+    [(= call-id (cbi.compiler-builtin-ctfe-ref 83)) false]
+    ;; No kind proves cleanup ownership, but the true branch of the exact
+    ;; `type-cleanup-owning?` predicate does.
+    [(= call-id (cbi.compiler-builtin-ctfe-ref 211))
+      (= (bit-and tc-macro-abstract-cleanup-owning-mask 1) 0)]
     [else false]))
 
 (define (tc-macro-abstract-required [call-id : i64]) : String
@@ -47094,17 +47118,19 @@
     [(AstExpr.Call func args)
       (let
         [raw-id : i64 (tc-expr-var-name-id (ast-node-get func))]
-        (if (and
-          (= (struct-get args len) 2)
-          (>= raw-id 0)
-          (ctfe-string-eq-helper-name-id?
-            (tc-hygiene-name-text-id raw-id)
-            (macro-hygiene-global-source-name-id-or raw-id raw-id)))
-          (tc-macro-abstract-kind-equality
-            (tc-macro-abstract-arg (& args) 0)
-            (tc-macro-abstract-arg (& args) 1)
-            bound)
-          TcMacroAbstractGuard.No))]
+        (if (tc-macro-abstract-cleanup-owning-call? cond-expr bound)
+          TcMacroAbstractGuard.CleanupOwning
+          (if (and
+            (= (struct-get args len) 2)
+            (>= raw-id 0)
+            (ctfe-string-eq-helper-name-id?
+              (tc-hygiene-name-text-id raw-id)
+              (macro-hygiene-global-source-name-id-or raw-id raw-id)))
+            (tc-macro-abstract-kind-equality
+              (tc-macro-abstract-arg (& args) 0)
+              (tc-macro-abstract-arg (& args) 1)
+              bound)
+            TcMacroAbstractGuard.No)))]
     [_ TcMacroAbstractGuard.No]))
 
 (define (tc-macro-abstract-purity-node-with-mask
@@ -47124,6 +47150,25 @@
           (tc-comptime-purity-node-mode ctx env bound chain seen false expr-id)]
         (begin
           (set! tc-macro-abstract-kind-mask saved)
+          result)))))
+
+(define (tc-macro-abstract-purity-node-with-cleanup-mask
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [cleanup-owning-mask : i64]
+  [expr-id : i64]) : ResultTcUnit
+  (let
+    [saved : i64 tc-macro-abstract-cleanup-owning-mask]
+    (begin
+      (set! tc-macro-abstract-cleanup-owning-mask cleanup-owning-mask)
+      (let
+        [result : ResultTcUnit
+          (tc-comptime-purity-node-mode ctx env bound chain seen false expr-id)]
+        (begin
+          (set! tc-macro-abstract-cleanup-owning-mask saved)
           result)))))
 
 (define (tc-comptime-purity-if-mode
@@ -47180,7 +47225,26 @@
                     seen
                     (bit-and tc-macro-abstract-kind-mask (bit-xor kind-bit -1))
                     else-id)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+          [(TcMacroAbstractGuard.CleanupOwning)
+            (match (tc-macro-abstract-purity-node-with-cleanup-mask
+              ctx
+              env
+              bound
+              chain
+              seen
+              (bit-and tc-macro-abstract-cleanup-owning-mask 2)
+              then-id)
+              [(ResultTcUnit.Ok)
+                (tc-macro-abstract-purity-node-with-cleanup-mask
+                  ctx
+                  env
+                  bound
+                  chain
+                  seen
+                  (bit-and tc-macro-abstract-cleanup-owning-mask 1)
+                  else-id)]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-check-defmacro-abstract-param
@@ -47199,6 +47263,7 @@
       (set! tc-macro-abstract-macro-name (string.copy (& macro-name)))
       (set! tc-macro-abstract-param-name (string.copy (& param-name)))
       (set! tc-macro-abstract-kind-mask checked-mask)
+      (set! tc-macro-abstract-cleanup-owning-mask 3)
       (let
         [result : ResultTcUnit
           (tc-comptime-purity-expr

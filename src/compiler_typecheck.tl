@@ -7163,6 +7163,31 @@
   `(define (generated-length) : i64 ,(expr-int (array-length T))))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-macro-abstract-cleanup-guard-source) : String
+  "(defmacro (cleanup-name-direct [T : type (:kind struct enum)]) : Expr
+  (if (type-cleanup-owning? T)
+    (expr-string (type-cleanup-function T))
+    (expr-string \"\")))
+(defmacro (cleanup-name-nested [T : type (:kind struct enum)]) : Expr
+  (if (type-cleanup-owning? T)
+    (if (type-cleanup-owning? T)
+      (expr-string (type-cleanup-function T))
+      (expr-string (type-cleanup-function T)))
+    (expr-string \"\")))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-macro-abstract-cleanup-unguarded-source) : String
+  "(defmacro (cleanup-name-bad [T : type (:kind struct enum)]) : Expr
+  (expr-string (type-cleanup-function T)))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-macro-abstract-cleanup-else-reject-source) : String
+  "(defmacro (cleanup-name-wrong-else [T : type (:kind struct enum)]) : Expr
+  (if (type-cleanup-owning? T)
+    (expr-string \"\")
+    (expr-string (type-cleanup-function T))))
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-macro-abstract-alias-reject-source) : String
   "(defmacro (emit-alias-bad [T : type (:kind struct enum)]) : Decls
   (let
@@ -7325,6 +7350,14 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-abstract-shape-reject-source)
       "typecheck: macro emit-array-length constrained type operand T cannot use array-length; requires fixed array shape")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-abstract-cleanup-guard-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-abstract-cleanup-unguarded-source)
+      "typecheck: macro cleanup-name-bad constrained type operand T cannot use type-cleanup-function; requires cleanup-owning type")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-abstract-cleanup-else-reject-source)
+      "typecheck: macro cleanup-name-wrong-else constrained type operand T cannot use type-cleanup-function; requires cleanup-owning type")
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-abstract-callee-shadow-source))
     (compiler-typecheck-error-ok?

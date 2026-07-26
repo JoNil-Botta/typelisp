@@ -1841,6 +1841,47 @@ assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 
+# The constrained vector type operand is validated once at definition time.
+# Three of the eleven compact declarations contain no reference, fixed-array,
+# cleanup, or other substitution-dependent construct; each additional identity
+# contributes the same 3/8 invariant/concrete split.
+assert_profile_counter_eq_in \
+    "$VECTOR_ONE_STDERR" \
+    "typecheck.macro.generated_module_abstract_proofs" \
+    1 \
+    "$VECTOR_ONE_STDOUT" \
+    "$VECTOR_ONE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.generated_module_abstract_proofs" \
+    1 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_ONE_STDERR" \
+    "typecheck.macro.generated_decl_checks_invariant_eligible" \
+    3 \
+    "$VECTOR_ONE_STDOUT" \
+    "$VECTOR_ONE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.generated_decl_checks_invariant_eligible" \
+    15 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_ONE_STDERR" \
+    "typecheck.macro.generated_decl_checks_concrete_required" \
+    8 \
+    "$VECTOR_ONE_STDOUT" \
+    "$VECTOR_ONE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.generated_decl_checks_concrete_required" \
+    40 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+
 # The initial table build is the only whole-program symbol/registry build.
 # Every generated vector module extends the live tables at their logical end.
 assert_profile_counter_eq_in \

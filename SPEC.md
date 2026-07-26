@@ -7239,7 +7239,7 @@ macro-type-kind ::= "i64" | "i32" | "i16" | "i8"
                   | "u64" | "u32" | "u16" | "u8"
                   | "f64" | "f32" | "bool" | "char"
                   | "string" | "unit" | "never"
-                  | "array" | "dyn-array" | "function" | "tuple"
+                  | "array" | "dyn-array" | "box" | "function" | "tuple"
                   | "struct" | "enum" | "str" | "ptr" | "mut-ptr"
                   | "ref" | "mut-ref" | "region" | "type-var"
 macro-result-type ::= type

@@ -13122,7 +13122,7 @@
       (ctfe-expr-binding-clause-list->expr-list-into env lst (+ index 1) out))))
 
 ;; INSPECTORS (predicates) -----------------------------------------------------
-(define (ctfe-expr-if?-in-env [env : CtfeEnv] [e : i64]) : bool
+(define (ctfe-expr-if-in-env? [env : CtfeEnv] [e : i64]) : bool
   (match (ctfe-ast-get env e)
     [(AstExpr.If _ _ _) true]
     [_ false]))
@@ -13144,7 +13144,7 @@
     [_ (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))]))
 
 (define (ctfe-expr-if? [e : i64]) : bool
-  (ctfe-expr-if?-in-env (ctfe-env-empty) e))
+  (ctfe-expr-if-in-env? (ctfe-env-empty) e))
 
 (define (ctfe-expr-if-cond [e : i64]) : i64
   (ctfe-expr-if-cond-in-env (ctfe-env-empty) e))

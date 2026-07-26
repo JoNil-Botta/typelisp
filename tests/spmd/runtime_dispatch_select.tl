@@ -7,12 +7,15 @@
 ;; sharing ordinary scalar setup/checksum helpers across all variants.
 (import stdlib.array)
 
+;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_seed_a [i : i64]) : i64
   (+ i 1))
 
+;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_seed_b [i : i64]) : i64
   (* i 2))
 
+;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_fill_inputs [a : (Array i64)] [b : (Array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
@@ -22,6 +25,7 @@
         (array-set! b i (dispatch_seed_b i))
         (set! i (+ i 1))))))
 
+;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_checksum [out : (Array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
@@ -33,6 +37,7 @@
           (set! i (+ i 1))))
       acc)))
 
+;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_scalar [n : i64]) : i64
   (let
     [a : (Array i64) (array.make-array i64 n)]
@@ -49,6 +54,7 @@
         42
         5))))
 
+;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_avx2 [n : i64]) : i64
   (let
     [a : (Array i64) (array.make-array i64 n)]
@@ -65,6 +71,7 @@
         106
         6))))
 
+;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_avx512 [n : i64]) : i64
   (let
     [a : (Array i64) (array.make-array i64 n)]
@@ -82,6 +89,7 @@
         7))))
 
 (defdispatch
+  ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
   dispatch_run
   (scalar dispatch_scalar)
   (avx2 dispatch_avx2)

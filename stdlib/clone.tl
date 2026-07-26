@@ -15,7 +15,8 @@
         (begin
           (set! type-index (- type-index 1))
           (let
-            [T : comptime.Expr (comptime.expr-list-type-nth types type-index)]
+            [type-expr : comptime.Expr
+              (comptime.expr-list-type-nth types type-index)]
             (begin
               (set! type-index (- type-index 1))
               (let
@@ -27,24 +28,24 @@
                   out
                   (comptime.expr-list-cons
                     `(module ,module-name)
-                    (match (type-kind T)
+                    (match (type-kind type-expr)
                       ["struct"
                         (let
-                          [type-name : String (type-nominal-name T)]
+                          [type-name : String (type-nominal-name type-expr)]
                           [helper-name : comptime.Expr
                             (comptime.expr-var
                               (comptime.string-append "clone$" type-name))]
                           [type-ctor : comptime.Expr
                             (comptime.expr-var type-name)]
                           [args : comptime.ExprList (comptime.expr-list-empty)]
-                          [index : i64 (- (struct-field-count T) 1)]
+                          [index : i64 (- (struct-field-count type-expr) 1)]
                           (begin
                             (while (>= index 0)
                               (let
                                 [field : comptime.Expr
                                   (comptime.expr-struct-get
                                     (comptime.expr-var "value")
-                                    (struct-field-name T index))]
+                                    (struct-field-name type-expr index))]
                                 (begin
                                   (set!
                                     args
@@ -56,20 +57,20 @@
                               [body : comptime.Expr
                                 (comptime.expr-call type-ctor args)]
                               (comptime.expr-list-cons
-                                `(define (,helper-name [value : ,T]) : ,T
+                                `(define (,helper-name [value : ,type-expr]) : ,type-expr
                                   ,body)
                                 out))))]
                       ["enum"
                         (let
-                          [type-name : String (type-nominal-name T)]
+                          [type-name : String (type-nominal-name type-expr)]
                           [helper-text : String
                             (comptime.string-append "clone$" type-name)]
                           [helper-name : comptime.Expr
                             (comptime.expr-var helper-text)]
-                          [variant-count : i64 (enum-variant-count T)]
+                          [variant-count : i64 (enum-variant-count type-expr)]
                           [first-count : i64
                             (if (= variant-count 2)
-                              (enum-variant-payload-count T 0)
+                              (enum-variant-payload-count type-expr 0)
                               -1)]
                           [nil-index : i64
                             (if (= first-count 0)
@@ -81,8 +82,14 @@
                               0)]
                           [list-candidate : bool
                             (if (= variant-count 2)
-                              (if (= (enum-variant-payload-count T nil-index) 0)
-                                (= (enum-variant-payload-count T cons-index) 2)
+                              (if (=
+                                (enum-variant-payload-count type-expr nil-index)
+                                0)
+                                (=
+                                  (enum-variant-payload-count
+                                    type-expr
+                                    cons-index)
+                                  2)
                                 false)
                               false)]
                           [direct-self : bool false]
@@ -91,20 +98,23 @@
                             (if list-candidate
                               (let
                                 [tail-type : comptime.Expr
-                                  (enum-variant-payload-type T cons-index 1)]
+                                  (enum-variant-payload-type
+                                    type-expr
+                                    cons-index
+                                    1)]
                                 (begin
                                   (set!
                                     direct-self
                                     (string-eq
                                       (type-key tail-type)
-                                      (type-key T)))
+                                      (type-key type-expr)))
                                   (if (string-eq (type-kind tail-type) "box")
                                     (set!
                                       boxed-self
                                       (string-eq
                                         (type-key
                                           (comptime.box-element-type tail-type))
-                                        (type-key T)))
+                                        (type-key type-expr)))
                                     unit)))
                               unit)
                             (if (if direct-self
@@ -123,14 +133,14 @@
                                       type-name
                                       (comptime.string-append
                                         "."
-                                        (enum-variant-name T nil-index))))]
+                                        (enum-variant-name type-expr nil-index))))]
                                 [cons-name : comptime.Expr
                                   (comptime.expr-var
                                     (comptime.string-append
                                       type-name
                                       (comptime.string-append
                                         "."
-                                        (enum-variant-name T cons-index))))]
+                                        (enum-variant-name type-expr cons-index))))]
                                 [nil-pattern : comptime.Pattern
                                   (comptime.pattern-variant
                                     (match nil-name
@@ -212,17 +222,19 @@
                                           rev-step)
                                         (comptime.match-arm-list-empty))))]
                                 (comptime.expr-list-cons
-                                  `(define (,helper-name [value : ,T]) : ,T
+                                  `(define (,helper-name [value : ,type-expr]) : ,type-expr
                                     (,rev-name
                                       (,acc-name value (,nil-name))
                                       (,nil-name)))
                                   (comptime.expr-list-cons
-                                    `(define (,acc-name [value : ,T] [acc : ,T]) : ,T
+                                    `(define (,acc-name
+                                      [value : ,type-expr]
+                                      [acc : ,type-expr]) : ,type-expr
                                       ,acc-body)
                                     (comptime.expr-list-cons
                                       `(define (,rev-name
-                                        [value : ,T]
-                                        [acc : ,T]) : ,T
+                                        [value : ,type-expr]
+                                        [acc : ,type-expr]) : ,type-expr
                                         ,rev-body)
                                       out))))
                               (let
@@ -233,7 +245,9 @@
                                   (while (>= variant-index 0)
                                     (let
                                       [variant-name : String
-                                        (enum-variant-name T variant-index)]
+                                        (enum-variant-name
+                                          type-expr
+                                          variant-index)]
                                       [qualified-variant : String
                                         (comptime.string-append
                                           type-name
@@ -242,7 +256,7 @@
                                             variant-name))]
                                       [payload-count : i64
                                         (enum-variant-payload-count
-                                          T
+                                          type-expr
                                           variant-index)]
                                       [binding-prefix : String
                                         (comptime.string-append
@@ -300,12 +314,13 @@
                                         (comptime.expr-var "value")
                                         arms)]
                                     (comptime.expr-list-cons
-                                      `(define (,helper-name [value : ,T]) : ,T
+                                      `(define (,helper-name
+                                        [value : ,type-expr]) : ,type-expr
                                         ,body)
                                       out)))))))]
                       [_
                         (comptime.comptime-error
                           (comptime.string-append
                             "clone: stdlib handoff expected a named aggregate, got "
-                            (type-key T)))]))))))))
+                            (type-key type-expr)))]))))))))
       (comptime.expr-call (comptime.expr-var "begin") out))))

@@ -1,4 +1,7 @@
 ;; compiler_builtin_ids.tl - reset-aware intern ids for fixed compiler builtins.
+;; `compiler-builtin-id-fix-*` suffixes mechanically encode the exact source
+;; spelling, including case and punctuation. Non-kebab encodings carry targeted
+;; name-case allows so new ordinary bindings remain covered by the lint gate.
 (import stdlib.io)
 (import stdlib.string)
 (import compiler_intern as ci)
@@ -218,46 +221,74 @@
   -1)
 (define compiler-builtin-id-fix-empty : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce : i64
   -1)
 (define compiler-builtin-id-fix-colon : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-tl_unquote_set_target : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt : i64
   -1)
 (define compiler-builtin-id-fix-acc : i64
   -1)
 (define compiler-builtin-id-fix-alias : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-arena_dot_Arena : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ArenaMark : i64
   -1)
 (define compiler-builtin-id-fix-arm : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Box : i64
   -1)
 (define compiler-builtin-id-fix-c : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-callback_target : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Choice : i64
   -1)
 (define compiler-builtin-id-fix-clone : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-CloneShortList : i64
   -1)
 (define compiler-builtin-id-fix-comptime : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-comptime_dot_comptime_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-comptime_dot_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-comptime_slash_comptime_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-comptime_slash_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-comptime_error : i64
   -1)
 (define compiler-builtin-id-fix-cond : i64
@@ -266,6 +297,8 @@
   -1)
 (define compiler-builtin-id-fix-unless : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Cons : i64
   -1)
 (define compiler-builtin-id-fix-count : i64
@@ -274,18 +307,32 @@
   -1)
 (define compiler-builtin-id-fix-else : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Expr : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ExprBindingClause : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ExprBindingClauseList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ExprClause : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ExprClauseList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ExprList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Failed : i64
   -1)
 (define compiler-builtin-id-fix-field : i64
@@ -300,6 +347,8 @@
   -1)
 (define compiler-builtin-id-fix-import : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ImportedMark : i64
   -1)
 (define compiler-builtin-id-fix-info : i64
@@ -314,96 +363,168 @@
   -1)
 (define compiler-builtin-id-fix-left : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-left_slash_same : i64
   -1)
 (define compiler-builtin-id-fix-m : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-macro_only_helper : i64
   -1)
 (define compiler-builtin-id-fix-main : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-MatchArm : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-MatchArmList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-LetBinding : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-LetBindingList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Maybe : i64
   -1)
 (define compiler-builtin-id-fix-missing : i64
   -1)
 (define compiler-builtin-id-fix-n : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-name_cache_split_alias_3940 : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-name_cache_split_value_3940 : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Nil : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Packet : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Pattern : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-PatternList : i64
   -1)
 (define compiler-builtin-id-fix-point : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Point : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Ready : i64
   -1)
 (define compiler-builtin-id-fix-record : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Record : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Result : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ResultIoString : i64
   -1)
 (define compiler-builtin-id-fix-right : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-right_slash_Some : i64
   -1)
 (define compiler-builtin-id-fix-same : i64
   -1)
 (define compiler-builtin-id-fix-second : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Some : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Status : i64
   -1)
 (define compiler-builtin-id-fix-stdlib : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime_dot_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime_slash_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_slash_comptime : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_slash_comptime_dot_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_slash_comptime_slash_error : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_slash_string : i64
   -1)
 (define compiler-builtin-id-fix-string : i64
@@ -412,22 +533,34 @@
   -1)
 (define compiler-builtin-id-fix-t : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-T : i64
   -1)
 (define compiler-builtin-id-fix-tag : i64
   -1)
 (define compiler-builtin-id-fix-target : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-ThreadBox : i64
   -1)
 (define compiler-builtin-id-fix-type : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeField : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeFieldList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeInfo : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeInfoList : i64
   -1)
 (define compiler-builtin-id-comptime-type-info-array-variant : i64
@@ -444,24 +577,42 @@
   -1)
 (define compiler-builtin-id-comptime-type-info-tuple-variant : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeParam : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeParamList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeVariant : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeVariantList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeVariantPayload : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-TypeVariantPayloadList : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-U : i64
   -1)
 (define compiler-builtin-id-fix-unquote : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-UsedBox : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-UsedEnum : i64
   -1)
 (define compiler-builtin-id-fix-value : i64
@@ -474,20 +625,28 @@
   -1)
 (define compiler-builtin-id-fix-module : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Module : i64
   -1)
 (define compiler-builtin-id-fix-decls : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Decls : i64
   -1)
 (define compiler-builtin-id-fix-expr : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt : i64
   -1)
 (define compiler-builtin-id-fix-append : i64
   -1)
 (define compiler-builtin-id-fix-concat : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_string : i64
   -1)
 (define compiler-builtin-id-runtime-module : i64
@@ -584,6 +743,8 @@
   -1)
 (define compiler-builtin-id-fix-first : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-has_type : i64
   -1)
 (define compiler-builtin-id-fix-init : i64
@@ -608,10 +769,16 @@
   -1)
 (define compiler-builtin-id-fix-handle : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_clone : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-synthesize_helpers : i64
   -1)
+
+;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (Array i64)

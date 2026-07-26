@@ -19,7 +19,7 @@
     1
     (+ 1 (clobber (- x 1)))))
 
-(define (wb_hot [n : i64]) : i64
+(define (wb-hot [n : i64]) : i64
   (let
     [a : i64 (+ n 1)]
     [b : i64 (+ n 2)]
@@ -69,7 +69,7 @@
 (define (main) : i64
   (let
     [n : i64 (io.arg-count)]
-    [r : i64 (wb_hot n)]
+    [r : i64 (wb-hot n)]
     ;; n=1: a..h = 2..9, sum44 = 44. w starts at 101.
     ;; Each iteration (i=0..3):
     ;;   acc += w + 3*44 = w + 132   (w is the value BEFORE this iter's redef)

@@ -6998,14 +6998,17 @@ Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-function-name` (redundant module-prefix names), and
 `--prefer-dotted-field` (simple `struct-get` dotted-field syntax).
 `--name-case` enables four independently suppressible rules:
-`global-name-case` for SCREAMING-KEBAB-CASE top-level values,
+`global-name-case` for kebab-case top-level values,
 `function-name-case` for kebab-case functions, dispatch functions, and macros,
 `local-name-case` for kebab-case parameters and local binders, and
 `type-name-case` for UpperCamelCase struct/enum declarations. Terminal `?`/`!`
-and `->` conversion spellings are valid kebab syntax; one leading `_` is
-accepted for intentionally unused locals. Symbolic names without ASCII letters
-are exempt. Externs, imports/aliases, fields, variants, lifetimes, tests, and
-labels are outside this staged rule.
+and `->` conversion spellings are valid kebab syntax, and numeric segments are
+accepted after the initial letter. Macro operands declared as `type` use
+descriptive kebab-case; one-letter type variables may instead use conventional
+uppercase spellings such as `T`. One leading `_` is accepted for intentionally
+unused parameters and locals, including type operands. Symbolic names without
+ASCII letters are exempt. Externs, imports/aliases, fields, variants, lifetimes,
+tests, and labels are outside this staged rule.
 
 `test` runs inline `(test ...)` declarations. `test --check` type-checks the
 generated inline test harnesses without assembling or running them, and

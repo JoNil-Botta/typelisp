@@ -116,8 +116,11 @@
     [empty-visits : i64 0]
     [cleanup-visits : i64 0]
     ;; These names deliberately resemble the macro's private temporaries.
+    ;; lint-allow: local-name-case -- macro hygiene collision fixture
     [__for_source_0 : i64 1]
+    ;; lint-allow: local-name-case -- macro hygiene collision fixture
     [__for_iterator_0 : i64 2]
+    ;; lint-allow: local-name-case -- macro hygiene collision fixture
     [__for_done_0 : i64 4]
     (begin
       (for [item : i64 (counted-range 1 4)] (set! total (+ total item)))

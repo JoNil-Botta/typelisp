@@ -14,6 +14,18 @@ implement issue #N: Title
 research/triage issue #N: Title
 ```
 
+When more than three non-draft PRs hold back implementation work and every
+remaining lane is empty, the chooser exits successfully with one stable
+back-pressure line instead:
+
+```text
+wait: queue saturated; review: N PRs in flight; implement: M ready issues held back; research/triage: B blocked, C claimed
+```
+
+Malformed input and a genuinely empty `{"prs":[],"issues":[]}` snapshot remain
+errors. Missing or wrongly typed top-level `prs` and `issues` arrays are
+reported as invalid input.
+
 Use the TypeLisp command directly:
 
 ```sh

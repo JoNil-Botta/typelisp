@@ -12,6 +12,7 @@
 ;#   review pr #N: Title
 ;#   implement issue #N: Title
 ;#   research/triage issue #N: Title
+;#   wait: queue saturated; review: N PRs in flight; implement: M ready issues held back; research/triage: B blocked, C claimed
 ;#
 ;# When the snapshot already holds more than 3 open non-draft PRs the review
 ;# queue is saturated, so ready-for-implementation issues are dropped from the
@@ -122,7 +123,15 @@
 
 (defenum ChooserResult
   (Ok Candidate)
+  (Wait String)
   (Err String))
+
+;: Counts explaining why issue lanes contributed no candidates to a saturated
+;: queue. Blocked takes precedence over claimed, matching candidate filtering.
+(defstruct SaturationCounts
+  (ready-held-back i64)
+  (research-blocked i64)
+  (research-claimed i64))
 
 ;: Read all of stdin into a single String by repeated bounded reads until EOF.
 ;: The queue snapshot can exceed 64 KiB once PR check rollups and issue labels
@@ -514,6 +523,22 @@
           [_ (json.list-empty)])]
       [(json.JsonMissing) (json.list-empty)])))
 
+;: True when `field` exists and is an array. Unlike `json-field-array`, this is
+;: used at the input boundary so absent or wrongly typed queue lanes are errors
+;: rather than silently becoming empty arrays.
+(define (json-field-array? [value : json.Json] [field : String]) : bool
+  (let
+    [key : String field]
+    (match (json.object-get value (& key))
+      [(json.JsonFound found)
+        (match found
+          [(json.JsonArray _) true]
+          [_ false])]
+      [(json.JsonMissing) false])))
+
+(define (queue-shape-valid? [root : json.Json]) : bool
+  (and (json-field-array? root "prs") (json-field-array? root "issues")))
+
 ;: Count open non-draft PRs in the raw `prs` array. Draft PRs and a missing
 ;: `isDraft` field are handled by `json-field-bool` (missing => non-draft).
 (define (count-open-nondraft-prs [items : json.JsonSeq]) : i64
@@ -532,6 +557,64 @@
             [(json.JsonMissing) unit])
           (set! i (+ i 1))))
       open)))
+
+;: Count issue-lane exclusions that explain an empty saturated queue. A ready
+;: issue is "held back" only when it would otherwise be eligible; research
+;: issues report blocked and claimed exclusions separately.
+(define (saturation-counts [items : json.JsonSeq] [prs : json.JsonSeq]) : SaturationCounts
+  (let
+    [n : i64 (json.list-count items)]
+    [i : i64 0]
+    [ready-held-back : i64 0]
+    [research-blocked : i64 0]
+    [research-claimed : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (json.list-get-index items i)
+            [(json.JsonFound head)
+              (let
+                [blocked : bool (issue-blocked? head)]
+                [claimed : bool
+                  (issue-claimed-by-pr? prs (json-field-number head "number"))]
+                [ready : bool (issue-ready? head)]
+                (cond
+                  [(and ready (not (or blocked claimed)))
+                    (set! ready-held-back (+ ready-held-back 1))]
+                  [(and (not ready) blocked)
+                    (set! research-blocked (+ research-blocked 1))]
+                  [(and (not ready) claimed)
+                    (set! research-claimed (+ research-claimed 1))]
+                  [else unit]))]
+            [(json.JsonMissing) unit])
+          (set! i (+ i 1))))
+      (SaturationCounts ready-held-back research-blocked research-claimed))))
+
+;: Render the stable, single-line successful signal for intentional
+;: back-pressure. Lane names make each zero/nonzero count self-describing.
+(define (saturation-line [open-prs : i64] [counts : SaturationCounts]) : String
+  (let
+    [ready-label : String
+      (if (= (struct-get counts ready-held-back) 1)
+        " ready issue held back; research/triage: "
+        " ready issues held back; research/triage: ")]
+    (string.append
+      "wait: queue saturated; review: "
+      (string.append
+        (string.int->string open-prs)
+        (string.append
+          " PRs in flight; implement: "
+          (string.append
+            (string.int->string (struct-get counts ready-held-back))
+            (string.append
+              ready-label
+              (string.append
+                (string.int->string (struct-get counts research-blocked))
+                (string.append
+                  " blocked, "
+                  (string.append
+                    (string.int->string (struct-get counts research-claimed))
+                    " claimed"))))))))))
 
 ;: Build the full candidate sequence: PR candidates first, then issue
 ;: candidates. Ready-for-implementation issues are dropped once more than
@@ -811,11 +894,58 @@
       [(json.OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (if (= (cand-count cands) 0)
-            unit
-            (io.panic
-              "saturated PRs with only ready issues should leave no work")))]
+          (begin
+            (if (= (cand-count cands) 0)
+              unit
+              (io.panic
+                "saturated PRs with only ready issues should leave no work"))
+            (match (choose-candidate text)
+              [(ChooserResult.Wait message)
+                (test.assert-true
+                  (string.eq
+                    message
+                    "wait: queue saturated; review: 4 PRs in flight; implement: 2 ready issues held back; research/triage: 0 blocked, 0 claimed")
+                  "ready-only saturation should report its empty lanes")]
+              [_ (io.panic "saturated queue should return the wait signal")])))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
+
+(test
+  chooser-saturated-signal-counts-research-exclusions
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"headRefName\":\"implement-5053-claimed\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":5050,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":5052,\"title\":\"Blocked research\",\"labels\":[{\"name\":\"blocked\"}]},{\"number\":5053,\"title\":\"Claimed research\",\"labels\":[]}]}"]
+    (match (choose-candidate text)
+      [(ChooserResult.Wait message)
+        (test.assert-true
+          (string.eq
+            message
+            "wait: queue saturated; review: 4 PRs in flight; implement: 1 ready issue held back; research/triage: 1 blocked, 1 claimed")
+          "saturated queue should report every closed lane")]
+      [_ (io.panic "excluded research issues should produce the wait signal")])))
+
+(test
+  chooser-empty-valid-input-remains-an-error
+  (let
+    [text : String "{\"prs\":[],\"issues\":[]}"]
+    (match (choose-candidate text)
+      [(ChooserResult.Err message)
+        (test.assert-true
+          (string.eq message "Error: no eligible candidates were provided")
+          "empty valid queue should keep its error")]
+      [_ (io.panic "empty valid queue must not look saturated")])))
+
+(test
+  chooser-missing-lane-is-invalid-input
+  (let
+    [text : String "{\"prs\":[]}"]
+    (match (choose-candidate text)
+      [(ChooserResult.Err message)
+        (test.assert-true
+          (string.eq
+            message
+            "Error: invalid input: expected top-level prs and issues arrays")
+          "missing queue lane should be an input error")]
+      [_ (io.panic "missing queue lane must not look saturated")])))
 
 ;: The action verb for a candidate kind.
 (define (action-name [kind : i64]) : String
@@ -841,8 +971,9 @@
         (string.int->string (struct-get cand number))
         (string.append ": " (struct-get cand title))))))
 
-;: Choose one candidate from the input JSON, returning an error message on
-;: invalid input or an empty candidate set.
+;: Choose one candidate from the input JSON. Invalid and genuinely empty input
+;: are errors; a valid queue emptied by the PR cap returns a successful wait
+;: signal with lane counts.
 (define (choose-candidate [text : String]) : ChooserResult
   (let
     [normalized : String (chooser-normalize-json-input text)]
@@ -851,24 +982,34 @@
       [(json.ErrJson message)
         (ChooserResult.Err (string.append "Error: invalid JSON: " message))]
       [(json.OkJson root)
-        (let
-          [cands : CandSeq (build-candidates root)]
-          (if (= (cand-count cands) 0)
-            (ChooserResult.Err "Error: no eligible candidates were provided")
-            (match (random.system-seed)
-              [(random.ErrSystemSeed err)
+        (if (queue-shape-valid? root)
+          (let
+            [prs : json.JsonSeq (json-field-array root "prs")]
+            [issues : json.JsonSeq (json-field-array root "issues")]
+            [open-prs : i64 (count-open-nondraft-prs prs)]
+            [cands : CandSeq (build-candidates root)]
+            (if (= (cand-count cands) 0)
+              (if (> open-prs implement-pr-cap)
+                (ChooserResult.Wait
+                  (saturation-line open-prs (saturation-counts issues prs)))
                 (ChooserResult.Err
-                  (match err
-                    [(random.RandomSystemSeedUnavailable message)
-                      (string.append "Error: " message)]))]
-              [(random.OkSystemSeed seed)
-                (match (random.weighted-index
-                  (random.seed seed)
-                  (cand-weights cands))
-                  [(random.ErrRandomWeightedIndex message)
-                    (ChooserResult.Err (string.append "Error: " message))]
-                  [(random.OkRandomWeightedIndex _ index)
-                    (ChooserResult.Ok (cand-nth cands index))])])))])))
+                  "Error: no eligible candidates were provided"))
+              (match (random.system-seed)
+                [(random.ErrSystemSeed err)
+                  (ChooserResult.Err
+                    (match err
+                      [(random.RandomSystemSeedUnavailable message)
+                        (string.append "Error: " message)]))]
+                [(random.OkSystemSeed seed)
+                  (match (random.weighted-index
+                    (random.seed seed)
+                    (cand-weights cands))
+                    [(random.ErrRandomWeightedIndex message)
+                      (ChooserResult.Err (string.append "Error: " message))]
+                    [(random.OkRandomWeightedIndex _ index)
+                      (ChooserResult.Ok (cand-nth cands index))])])))
+          (ChooserResult.Err
+            "Error: invalid input: expected top-level prs and issues arrays"))])))
 
 (define (main) : i64
   (match (choose-candidate (read-all-stdin))
@@ -876,6 +1017,11 @@
       (begin
         (io.print-error message)
         1)]
+    [(ChooserResult.Wait message)
+      (begin
+        (io.print-string message)
+        (io.print-newline)
+        0)]
     [(ChooserResult.Ok cand)
       (begin
         (io.print-string (candidate-line cand))

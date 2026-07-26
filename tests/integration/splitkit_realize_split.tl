@@ -26,7 +26,7 @@
     1
     (+ 1 (clobber (- x 1)))))
 
-(define (split_hot [n : i64]) : i64
+(define (split-hot [n : i64]) : i64
   (let
     [a : i64 (+ n 1)]
     [b : i64 (+ n 2)]
@@ -72,7 +72,7 @@
 (define (main) : i64
   (let
     [n : i64 (io.arg-count)]
-    [r : i64 (split_hot n)]
+    [r : i64 (split-hot n)]
     ;; n=1: a..h = 2..9, sum = 44. Per iteration: 3*44 + clobber(i) + 5*44
     ;; = 132 + (i+1) + 220 = 353 + i. Sum over i=0..3 = 353+354+355+356 = 1418.
     (if (= r 1418)

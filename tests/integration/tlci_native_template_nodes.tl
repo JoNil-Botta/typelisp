@@ -32,6 +32,7 @@
 ;; callers still observe their own values on either route.
 (define (abs-score-shadowed [value : f64]) : f64
   (let
+    ;; lint-allow: local-name-case -- macro hygiene collision fixture
     [__math_abs_value : f64 100.0]
     (+ (math.abs value) (- __math_abs_value 100.0))))
 

@@ -35,7 +35,7 @@
           (ptr-read (ptr-cast pair-data : (Ptr Pair)))))
       (match (array-ref slots 1)
         [(Occupied key value hash)
-          (if (and (= key 11) (and (= value 22) (= hash 33)))
+          (if (and (= key 11) (= value 22) (= hash 33))
             (let
               [pair : Pair (array-ref pairs 1)]
               (if (and

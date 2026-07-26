@@ -466,6 +466,13 @@ run_gate "integration manifest validator self-tests" scripts/verify-integration-
 run_with_compiler "$STAGE2_BIN" "integration compile-failure diagnostics" scripts/verify-integration.sh --self-test-empty-compile-diagnostic
 if [ "$HOST_OS" = linux ]; then
     run_gate "integration signal notice capture" scripts/verify-integration.sh --self-test-signal-notice-capture
+else
+    run_gate \
+        "Windows integration linker queue self-test" \
+        powershell.exe \
+        -NoProfile \
+        -ExecutionPolicy Bypass \
+        -File scripts/windows-integration-linker-self-test.ps1
 fi
 run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
 if [ "$HOST_OS" = linux ]; then

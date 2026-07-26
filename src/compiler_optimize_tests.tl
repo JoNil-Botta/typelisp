@@ -551,7 +551,7 @@
 (define (opt-spans-base) : CompilerSourceSpans
   (compiler-source-spans-insert
     (compiler-source-spans-empty)
-    "main"
+    (compiler-ir-symbol-typed-id (opt-test-symbol "main"))
     (opt-test-span 3 1)))
 
 (define (compiler-optimize-spans-dce-ok?) : bool

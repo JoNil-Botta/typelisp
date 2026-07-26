@@ -137,6 +137,18 @@
         "alpha beta"
         "append order")
       (let
+        [items : (Array String) (array.make-array String 5)]
+        (begin
+          (array-set! items 0 "skip")
+          (array-set! items 1 "alpha")
+          (array-set! items 2 "")
+          (array-set! items 3 "-beta")
+          (array-set! items 4 "skip")
+          (stdlib.text_buf.text-buf-test-assert-owned-string-eq
+            (stdlib.text_buf.chunks-render-array-range items 1 4)
+            "alpha-beta"
+            "array range render keeps order with empty chunks")))
+      (let
         [buf : TextBuf (stdlib.text_buf.empty)]
         (begin
           (stdlib.text_buf.append! buf "")

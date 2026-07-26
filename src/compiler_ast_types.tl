@@ -2590,6 +2590,31 @@
         (arena.tl_arena_set previous-arena))
       dest)))
 
+;; Explicit reader used by compile-job phases. The pools value is intentionally
+;; part of the call so interleaved jobs cannot observe whichever context a
+;; compatibility caller most recently installed.
+(define (ast-node-pool-reader-type-get-with-pools
+  [pools : AstNodePoolContext]
+  [id : i64]) : AstType
+  (ast-node-pool-context-type-get pools id))
+
+;; Legacy/test bridge for public adapters whose historical API has no pools
+;; parameter. Explicit compile-job entry points never call this helper.
+(define (ast-node-pool-reader-type-segment-bases) : i64
+  (if ast-node-pool-reader-explicit?
+    (ast-node-pool-context-type-segment-bases ast-node-pool-reader-context)
+    ty-node-pool-segment-bases))
+
+;; Legacy/test bridge for APIs that now require a pools value. Capturing the
+;; compatibility globals is intentionally outside every compile-job path.
+(define (ast-node-pool-reader-context-current) : AstNodePoolContext
+  (if ast-node-pool-reader-explicit?
+    ast-node-pool-reader-context
+    (ast-node-pool-context-capture-active)))
+
+;; Legacy/test adapter for callers that still run against the installed reader
+;; context. Production lower/optimize/regalloc/backend paths use the explicit
+;; twin above (or hoist its segment-bases pointer for hot recursive walks).
 (define (ast-node-pool-reader-type-get [id : i64]) : AstType
   (if ast-node-pool-reader-explicit?
     (ast-node-pool-context-type-get ast-node-pool-reader-context id)
@@ -2874,6 +2899,7 @@
     [(AstType.Consume _) true]
     [_ false]))
 
+;; Legacy/test adapter. Compile-job callers use the explicit-pools twin below.
 (define (ast-type-strip-consuming-param [ty : AstType]) : AstType
   (match ty
     [(AstType.Consume inner) (ast-node-pool-reader-type-get inner)]
@@ -7644,6 +7670,8 @@
       (= len (ast-lifetime-list-len (& b)))
       (ast-lifetime-list-eq-at? (& a) (& b) len 0))))
 
+;; Legacy/test equality family for callers using the installed reader. Compiler
+;; phases use `ast-type-eq-with-pools?` or its hoisted segment-bases worker.
 (define (ast-type-list-eq-at?
   [a : (& a AstTypeList)]
   [b : (& b AstTypeList)]

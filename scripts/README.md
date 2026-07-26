@@ -63,6 +63,11 @@ instead, which the sweep does not require to be reachable.
 The complete and current invocation order remains in `ci-verify.sh`; this table
 is a map, not a second manifest.
 
+On Windows, `verify-integration.sh` sends independent manifest links through
+`windows-integration-linker.ps1`. The measured default is four concurrent
+`lld-link` children; set `TYPELISP_WINDOWS_LINK_JOBS=1` for serial debugging or
+to another value from 1 through 64 for a host-specific measurement.
+
 Some gate-owned helpers deliberately retain measurement-oriented names:
 
 | Helper | Owning gate |

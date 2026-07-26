@@ -148,7 +148,10 @@
       instrs
       needle
       (+ index 1)
-      (if (opt-instr-eq (compiler-ir-instr-seq-ref instrs index) needle)
+      (if (opt-instr-eq
+        (ast-node-pool-reader-type-segment-bases)
+        (compiler-ir-instr-seq-ref instrs index)
+        needle)
         (+ acc 1)
         acc))))
 
@@ -495,11 +498,15 @@
           [(OptMaybeAggregateAlloc.No) false]
           [(OptMaybeAggregateAlloc.Some _ _ _) true])
         6]
-      [(match (opt-scratch-direct-alloc runtime-alloc)
+      [(match (opt-scratch-direct-alloc
+          (ast-node-pool-reader-type-segment-bases)
+          runtime-alloc)
           [(OptScratchAlloc.Alloc _ _) false]
           [(OptScratchAlloc.NoAlloc) true])
         7]
-      [(match (opt-scratch-direct-alloc hygienic-alloc)
+      [(match (opt-scratch-direct-alloc
+          (ast-node-pool-reader-type-segment-bases)
+          hygienic-alloc)
           [(OptScratchAlloc.NoAlloc) false]
           [(OptScratchAlloc.Alloc _ _) true])
         8]
@@ -890,6 +897,7 @@
     [phi : CompilerIrInstr
       (CompilerIrInstr.Phi 0 (opt-inline-span-branch-phi-inputs) (AstType.I64))]
     (match (opt-inline-program-functions-with-spans
+      (ast-node-pool-reader-type-segment-bases)
       (opt-inline-branch-functions symbols)
       2
       spans)
@@ -1234,13 +1242,16 @@
 (define (opt-aggregate-no-candidates? [instrs : CompilerIrInstrList]) : bool
   (=
     (opt-aggregate-candidate-list-count
-      (opt-aggregate-allocation-candidates (opt-spans-program instrs)))
+      (opt-aggregate-allocation-candidates
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-spans-program instrs)))
     0))
 
 (define (opt-aggregate-phi-flowed-rejected?) : bool
   (=
     (opt-aggregate-candidate-list-count
       (opt-aggregate-allocation-candidates
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrProgram.Program
           CompilerIrGlobalList.Nil
           (compiler-ir-function-cons
@@ -1259,14 +1270,19 @@
     [instrs : CompilerIrInstrList (opt-aggregate-positive-instrs)]
     [instr-count : i64 (compiler-ir-instr-list-count instrs)]
     [candidates : opt_aggregate_candidate_vec.Vec
-      (opt-aggregate-allocation-candidates (opt-spans-program instrs))]
+      (opt-aggregate-allocation-candidates
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-spans-program instrs))]
     (if (= (opt-aggregate-candidate-list-count candidates) 1)
       (match (array-ref (opt_aggregate_candidate_vec.slots (& candidates)) 0)
         [(OptAggregateAllocCandidate.Candidate base ty size ptrs accesses)
           (and
             (= base 1)
             (= size 16)
-            (opt-type-eq ty (AstType.Struct (intern "Pair")))
+            (opt-type-eq
+              (ast-node-pool-reader-type-segment-bases)
+              ty
+              (AstType.Struct (intern "Pair")))
             (= (opt-aggregate-pointer-list-count ptrs) 3)
             (= (opt_aggregate_access_vec.len (& accesses)) 3)
             (= (opt-aggregate-access-list-store-count accesses) 2)
@@ -1309,35 +1325,62 @@
           0
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Store offset ty)
-            (and (= offset 0) (opt-type-eq ty (AstType.I64)))]
+            (and
+              (= offset 0)
+              (opt-type-eq
+                (ast-node-pool-reader-type-segment-bases)
+                ty
+                (AstType.I64)))]
           [_ false])
         (match (opt_aggregate_access_vec.get
           (& accesses)
           1
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Load dst offset ty)
-            (and (= dst 11) (= offset 0) (opt-type-eq ty (AstType.I64)))]
+            (and
+              (= dst 11)
+              (= offset 0)
+              (opt-type-eq
+                (ast-node-pool-reader-type-segment-bases)
+                ty
+                (AstType.I64)))]
           [_ false])
         (match (opt_aggregate_access_vec.get
           (& accesses)
           2
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Store offset ty)
-            (and (= offset 8) (opt-type-eq ty (AstType.Bool)))]
+            (and
+              (= offset 8)
+              (opt-type-eq
+                (ast-node-pool-reader-type-segment-bases)
+                ty
+                (AstType.Bool)))]
           [_ false])
         (match (opt_aggregate_access_vec.get
           (& accesses)
           3
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Load dst offset ty)
-            (and (= dst 12) (= offset 8) (opt-type-eq ty (AstType.Bool)))]
+            (and
+              (= dst 12)
+              (= offset 8)
+              (opt-type-eq
+                (ast-node-pool-reader-type-segment-bases)
+                ty
+                (AstType.Bool)))]
           [_ false])
         (match (opt_aggregate_access_vec.get
           (& accesses)
           4
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Store offset ty)
-            (and (= offset 16) (opt-type-eq ty (AstType.U64)))]
+            (and
+              (= offset 16)
+              (opt-type-eq
+                (ast-node-pool-reader-type-segment-bases)
+                ty
+                (AstType.U64)))]
           [_ false])))))
 
 ;; Exercise the three former hand-written scratch wrappers past their initial
@@ -1490,7 +1533,9 @@
         (opt-count-addr-of-instrs (box-get rest)))]))
 
 (define (opt-aggregate-promote-test-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
-  (opt-aggregate-stack-promote-function (opt-spans-function instrs)))
+  (opt-aggregate-stack-promote-function
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-spans-function instrs)))
 
 ;; Self-test helper: materializes the optimized first block for list-shaped
 ;; assertions only, outside the production optimizer pipeline.
@@ -1803,7 +1848,9 @@
 
 (define (opt-aggregate-sroa-test-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   ;; Self-test helper: materializes one optimized block for list assertions.
-  (match (opt-aggregate-sroa-function (opt-spans-function instrs))
+  (match (opt-aggregate-sroa-function
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-spans-function instrs))
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (compiler-ir-block-list-force-cons blocks)
         [(CompilerIrBlockList.Cons block _)
@@ -1815,6 +1862,7 @@
 
 (define (opt-aggregate-sroa-test-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match (opt-aggregate-sroa-function
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerIrFunction.Function
       (opt-test-symbol "main")
       CompilerIrParamList.Nil
@@ -1827,12 +1875,14 @@
   (let
     [positive-result : OptFunctionPassResult
       (opt-aggregate-sroa-function-pass
+        (ast-node-pool-reader-type-segment-bases)
         (opt-spans-function (opt-aggregate-positive-instrs)))]
     [positive-changed : bool
       (match positive-result
         [(OptFunctionPassResult.Result _ changed) changed])]
     [noop-result : OptFunctionPassResult
       (opt-aggregate-sroa-function-pass
+        (ast-node-pool-reader-type-segment-bases)
         (opt-spans-function
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
@@ -2192,19 +2242,36 @@
 (define (compiler-optimize-vector-mask-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-vector-mask-test-instrs)]
-    [folded : CompilerIrInstrList (opt-fold-instrs (OptConstEnv.Nil) instrs)]
+    [folded : CompilerIrInstrList
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        instrs)]
     [dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)
         instrs)]
     [bounds : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil) instrs)]
+      (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptBoundsFacts.Nil)
+        (OptBoundsCastEnv.Nil)
+        instrs)]
     [vector-cse : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-vector-cse-instrs))]
+      (opt-cse-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptExprTable.Nil)
+        (opt-vector-cse-instrs))]
     [vector-reduce-cse : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-vector-reduce-cse-instrs))]
+      (opt-cse-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptExprTable.Nil)
+        (opt-vector-reduce-cse-instrs))]
     [vector-stale : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-vector-reduce-stale-instrs))]
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        (opt-vector-reduce-stale-instrs))]
     [vector-copy : CompilerIrInstrList
       (opt-copy-instrs (OptCopyEnv.Nil) (opt-vector-copy-instrs))]
     [mask-copy : CompilerIrInstrList
@@ -2216,7 +2283,10 @@
     [mask-idempotent-copy : CompilerIrInstrList
       (opt-copy-instrs
         (OptCopyEnv.Nil)
-        (opt-fold-instrs (OptConstEnv.Nil) (opt-mask-idempotent-copy-instrs)))]
+        (opt-fold-instrs
+          (ast-node-pool-reader-type-segment-bases)
+          (OptConstEnv.Nil)
+          (opt-mask-idempotent-copy-instrs)))]
     [mask-idempotent-dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses
@@ -2224,7 +2294,12 @@
           mask-idempotent-copy)
         mask-idempotent-copy)]
     (cond
-      [(not (opt-instr-list-eq folded instrs)) 1]
+      [(not
+          (opt-instr-list-eq
+            (ast-node-pool-reader-type-segment-bases)
+            folded
+            instrs))
+        1]
       [(not (= (compiler-ir-instr-list-count dce) 8)) 2]
       [(not (= (compiler-ir-instr-list-count bounds) 8)) 3]
       [(not (= (opt-count-vector-binop-instrs vector-cse) 2)) 4]
@@ -2278,9 +2353,15 @@
 (define (compiler-optimize-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-self-test-instrs)]
-    [optimized : CompilerIrInstrList (opt-fold-instrs (OptConstEnv.Nil) instrs)]
+    [optimized : CompilerIrInstrList
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        instrs)]
     [fold-fire-result : OptBlockListPassResult
       (optimize-block-list-for-function-pass
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
         8
         CompilerIrParamList.Nil
         (compiler-ir-block-cons
@@ -2288,6 +2369,8 @@
           CompilerIrBlockList.Nil))]
     [fold-noop-result : OptBlockListPassResult
       (optimize-block-list-for-function-pass
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
         1
         CompilerIrParamList.Nil
         (compiler-ir-block-cons
@@ -2322,7 +2405,10 @@
       (let
         [stale-instrs : CompilerIrInstrList (opt-stale-load-test-instrs)]
         [stale-optimized : CompilerIrInstrList
-          (opt-fold-instrs (OptConstEnv.Nil) stale-instrs)]
+          (opt-fold-instrs
+            (ast-node-pool-reader-type-segment-bases)
+            (OptConstEnv.Nil)
+            stale-instrs)]
         (begin
           (compiler-optimize-self-test-require-i64!
             "stale load invalidates constant fact"
@@ -2652,13 +2738,25 @@
 (define (compiler-optimize-float-fold-ok?) : bool
   (let
     [pos : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-float-fold-instrs))]
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        (opt-float-fold-instrs))]
     [neg : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-float-fold-invalid-instrs))]
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        (opt-float-fold-invalid-instrs))]
     [finite-casts : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-finite-cast-fold-instrs))]
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        (opt-finite-cast-fold-instrs))]
     [deferred-casts : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-finite-cast-no-fold-instrs))]
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        (opt-finite-cast-no-fold-instrs))]
     (and
       (= (opt-count-arith-instrs pos) 0)
       (= (opt-count-cast-instrs pos) 0)
@@ -2691,9 +2789,15 @@
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let
     [pos : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-typed-fold-instrs))]
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        (opt-typed-fold-instrs))]
     [neg : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-typed-fold-invalid-instrs))]
+      (opt-fold-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptConstEnv.Nil)
+        (opt-typed-fold-invalid-instrs))]
     (begin
       (unless (= (opt-count-arith-instrs pos) 0) (return 1))
       (unless (= (opt-count-cast-instrs pos) 0) (return 3))
@@ -3355,7 +3459,11 @@
   [blocks : CompilerIrBlockList]
   [frame : i64]) : CompilerIrBlockList
   (let
-    [safe : CompilerIrBlockList (opt-divrem-safety-blocks params blocks)]
+    [safe : CompilerIrBlockList
+      (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        params
+        blocks)]
     [used : (Array i64) (opt-collect-blocks-uses-array frame safe)]
     (opt-dce-block-list-array used safe)))
 
@@ -3365,6 +3473,7 @@
     [u64-params : CompilerIrParamList (opt-divrem-test-params (AstType.U64))]
     [signed-positive : CompilerIrBlockList
       (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
         i64-params
         (opt-divrem-branch-blocks
           (CompilerIrBinOp.Gt)
@@ -3377,6 +3486,7 @@
           true))]
     [signed-mod-positive : CompilerIrBlockList
       (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
         i64-params
         (opt-divrem-branch-blocks
           (CompilerIrBinOp.Ge)
@@ -3389,6 +3499,7 @@
           true))]
     [unsigned-nonzero : CompilerIrBlockList
       (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
         u64-params
         (opt-divrem-branch-blocks
           (CompilerIrBinOp.Ne)
@@ -3400,9 +3511,13 @@
           (AstType.U64)
           true))]
     [lhs-not-min : CompilerIrBlockList
-      (opt-divrem-safety-blocks i64-params (opt-divrem-lhs-not-min-blocks))]
+      (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        i64-params
+        (opt-divrem-lhs-not-min-blocks))]
     [zero-reachable : CompilerIrBlockList
       (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
         i64-params
         (opt-divrem-branch-blocks
           (CompilerIrBinOp.Ne)
@@ -3415,6 +3530,7 @@
           true))]
     [neg-one-reachable : CompilerIrBlockList
       (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
         i64-params
         (opt-divrem-branch-blocks
           (CompilerIrBinOp.Ne)
@@ -3427,6 +3543,7 @@
           true))]
     [weak-negative-range : CompilerIrBlockList
       (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
         i64-params
         (opt-divrem-branch-blocks
           (CompilerIrBinOp.Lt)
@@ -3438,13 +3555,18 @@
           (AstType.I64)
           true))]
     [cast-unsupported : CompilerIrBlockList
-      (opt-divrem-safety-blocks i64-params (opt-divrem-cast-blocks))]
+      (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        i64-params
+        (opt-divrem-cast-blocks))]
     [rhs-redefined-before-branch : CompilerIrBlockList
       (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
         i64-params
         (opt-divrem-rhs-redefined-before-branch-blocks))]
     [rhs-redefined-in-safe : CompilerIrBlockList
       (opt-divrem-safety-blocks
+        (ast-node-pool-reader-type-segment-bases)
         i64-params
         (opt-divrem-rhs-redefined-in-safe-blocks))]
     [safe-unused : CompilerIrBlockList
@@ -3911,17 +4033,35 @@
 (define (compiler-optimize-cse-self-test) : i64
   (let
     [cse : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-self-test-instrs))]
+      (opt-cse-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptExprTable.Nil)
+        (opt-cse-self-test-instrs))]
     [sqrt : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-sqrt-instrs))]
+      (opt-cse-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptExprTable.Nil)
+        (opt-cse-sqrt-instrs))]
     [store : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-store-clears-instrs))]
+      (opt-cse-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptExprTable.Nil)
+        (opt-cse-store-clears-instrs))]
     [redef : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-operand-redef-instrs))]
+      (opt-cse-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptExprTable.Nil)
+        (opt-cse-operand-redef-instrs))]
     [probe : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-probe-instrs))]
+      (opt-cse-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptExprTable.Nil)
+        (opt-cse-probe-instrs))]
     [probe-different : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-probe-different-instrs))]
+      (opt-cse-instrs
+        (ast-node-pool-reader-type-segment-bases)
+        (OptExprTable.Nil)
+        (opt-cse-probe-different-instrs))]
     (begin
       (unless (= (opt-count-arith-instrs cse) 1) (return 1))
       (unless (= (opt-mov-src-var sqrt 3 (- 0 1)) 2) (return 10))
@@ -4218,32 +4358,50 @@
 (define (compiler-optimize-gvn-self-test) : i64
   (let
     [probe : CompilerIrBlockList
-      (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-probe-dominated-blocks))]
+      (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-gvn-test-params)
+        (opt-gvn-probe-dominated-blocks))]
     [probe-different : CompilerIrBlockList
-      (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-probe-different-blocks))]
+      (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-gvn-test-params)
+        (opt-gvn-probe-different-blocks))]
     (begin
       (unless
         (=
           (opt-gvn-count-binops-blocks
-            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-diamond-blocks)))
+            (opt-gvn-blocks
+              (ast-node-pool-reader-type-segment-bases)
+              (opt-gvn-test-params)
+              (opt-gvn-diamond-blocks)))
           1)
         (return 1))
       (unless
         (=
           (opt-gvn-count-binops-blocks
-            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-siblings-blocks)))
+            (opt-gvn-blocks
+              (ast-node-pool-reader-type-segment-bases)
+              (opt-gvn-test-params)
+              (opt-gvn-siblings-blocks)))
           3)
         (return 2))
       (unless
         (=
           (opt-gvn-count-binops-blocks
-            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-redef-blocks)))
+            (opt-gvn-blocks
+              (ast-node-pool-reader-type-segment-bases)
+              (opt-gvn-test-params)
+              (opt-gvn-redef-blocks)))
           2)
         (return 3))
       (unless
         (=
           (opt-gvn-count-binops-blocks
-            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-loop-blocks)))
+            (opt-gvn-blocks
+              (ast-node-pool-reader-type-segment-bases)
+              (opt-gvn-test-params)
+              (opt-gvn-loop-blocks)))
           1)
         (return 4))
       (unless (= (opt-count-cpuid-blocks probe) 1) (return 5))
@@ -4365,6 +4523,8 @@
 ;; and retires the now-unused Pack (0 Words and 0 Packs remain).
 (define (compiler-optimize-dce-pack-self-test) : i64
   (match (optimize-function-once
+    (ast-node-pool-reader-context-current)
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerIrFunction.Function
       (opt-test-symbol "dce_pack")
       (opt-gvn-test-params)
@@ -5127,7 +5287,9 @@
 (define (opt-successor-sink-run-function
   [name : String]
   [blocks : CompilerIrBlockList]) : CompilerIrFunction
-  (opt-successor-sink-function (opt-successor-sink-test-function name blocks)))
+  (opt-successor-sink-function
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-successor-sink-test-function name blocks)))
 
 (define (opt-successor-sink-run [name : String] [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-function-blocks (opt-successor-sink-run-function name blocks)))
@@ -5167,7 +5329,11 @@
     [induction-cell : (Array i64) (opt-used-array-new 1)]
     [_induction-cell-init : unit (array-set! induction-cell 0 16)]
     [induction-direct : CompilerIrBlockList
-      (opt-successor-sink-blocks 16 induction-cell induction-input)]
+      (opt-successor-sink-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        16
+        induction-cell
+        induction-input)]
     [induction-function : CompilerIrFunction
       (opt-successor-sink-run-function
         "successor_sink_induction_remat"
@@ -5634,7 +5800,10 @@
     [cse : CompilerIrInstrList
       (opt-copy-instrs
         (OptCopyEnv.Nil)
-        (opt-cse-instrs (OptExprTable.Nil) (opt-copy-cse-instrs)))]
+        (opt-cse-instrs
+          (ast-node-pool-reader-type-segment-bases)
+          (OptExprTable.Nil)
+          (opt-copy-cse-instrs)))]
     [cse-dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) cse)
@@ -6804,13 +6973,21 @@
   [blocks : CompilerIrBlockList]
   [summaries : OptLoopBceSummaries]) : i64
   (opt-count-bounds-blocks
-    (opt-loop-bce-blocks summaries (CompilerIrParamList.Nil) blocks)))
+    (opt-loop-bce-blocks
+      (ast-node-pool-reader-type-segment-bases)
+      summaries
+      (CompilerIrParamList.Nil)
+      blocks)))
 
 (define (opt-loop-bce-string-test-count
   [blocks : CompilerIrBlockList]
   [summaries : OptLoopBceSummaries]) : i64
   (opt-count-bounds-blocks
-    (opt-loop-bce-blocks summaries (opt-loop-bce-string-test-params) blocks)))
+    (opt-loop-bce-blocks
+      (ast-node-pool-reader-type-segment-bases)
+      summaries
+      (opt-loop-bce-string-test-params)
+      blocks)))
 
 ;; Dominated bounds-dedup fixture: entry checks (idx,len); the dominated mid /
 ;; left / exit blocks re-check the same pair (removable), while a different
@@ -6909,6 +7086,7 @@
     [before : i64 (opt-count-bounds-blocks blocks)]
     [after-blocks : CompilerIrBlockList
       (opt-bounds-dom-blocks-with-context
+        (ast-node-pool-reader-type-segment-bases)
         (opt-cfg-context-build blocks)
         (opt-bounds-dom-test-params)
         8
@@ -6931,31 +7109,37 @@
     [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
     [duplicate : CompilerIrInstrList
       (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
         (OptBoundsFacts.Nil)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-duplicate-instrs))]
     [different : CompilerIrInstrList
       (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
         (OptBoundsFacts.Nil)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-different-instrs))]
     [redef : CompilerIrInstrList
       (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
         (OptBoundsFacts.Nil)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-redef-instrs))]
     [call : CompilerIrInstrList
       (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
         (OptBoundsFacts.Nil)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-call-instrs))]
     [branch : CompilerIrInstrList
       (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
         (OptBoundsFacts.Nil)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-branch-instrs))]
     [copy : CompilerIrInstrList
       (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
         (OptBoundsFacts.Nil)
         (OptBoundsCastEnv.Nil)
         (opt-copy-instrs (OptCopyEnv.Nil) (opt-bounds-copy-instrs)))]
@@ -6966,7 +7150,10 @@
           (opt-bounds-dce-instrs))
         (opt-bounds-dce-instrs))]
     [cross : CompilerIrBlockList
-      (optimize-block-list (opt-bounds-cross-blocks))]
+      (optimize-block-list
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-bounds-cross-blocks))]
     [loop-positive : i64
       (opt-loop-bce-test-count
         (opt-loop-bce-test-blocks symbols 0 false)
@@ -7099,11 +7286,13 @@
         (opt-loop-bce-test-summaries symbols false false))]
     [index-cast : CompilerIrInstrList
       (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
         (OptBoundsFacts.Nil)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-index-cast-instrs))]
     [index-cast-redef : CompilerIrInstrList
       (opt-bounds-instrs
+        (ast-node-pool-reader-type-segment-bases)
         (OptBoundsFacts.Nil)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-index-cast-redef-instrs))]
@@ -7302,11 +7491,21 @@
     [level2-fixed-instrs : CompilerIrInstrList
       (opt-program-first-instrs level2-fixed)]
     (cond
-      [(not (opt-program-eq program level0)) false]
+      [(not
+          (opt-program-eq
+            (ast-node-pool-reader-type-segment-bases)
+            program
+            level0))
+        false]
       [(not (= (opt-count-arith-instrs level0-instrs) 1)) false]
       [(not (= (compiler-ir-instr-list-count level1-instrs) 0)) false]
       [(not (= (compiler-ir-instr-list-count level2-instrs) 0)) false]
-      [(not (opt-program-eq level1 defaulted)) false]
+      [(not
+          (opt-program-eq
+            (ast-node-pool-reader-type-segment-bases)
+            level1
+            defaulted))
+        false]
       [(not (= (compiler-ir-instr-list-count level1-fixed-instrs) 4)) false]
       [(not (= (opt-count-arith-instrs level1-fixed-instrs) 3)) false]
       [(not (= (compiler-ir-instr-list-count level2-fixed-instrs) 3)) false]
@@ -7319,11 +7518,25 @@
     [summaries : OptLoopBceSummaries (opt-loop-bce-empty-summaries)]
     [expected : CompilerIrFunction
       (compiler-ir-function-compact-blocks
-        (optimize-function-with-level-and-summaries func 1 summaries))]
+        (optimize-function-with-level-and-summaries
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
+          func
+          1
+          summaries))]
     [scratch : i64 (arena.tl_arena_make)]
     [escaped : CompilerIrFunction
-      (optimize-function-level1-escaping-with-summaries func scratch summaries)]
-    [ok : bool (opt-function-eq expected escaped)]
+      (optimize-function-level1-escaping-with-summaries
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        func
+        scratch
+        summaries)]
+    [ok : bool
+      (opt-function-eq
+        (ast-node-pool-reader-type-segment-bases)
+        expected
+        escaped)]
     (begin
       (unsafe
         (arena.tl_arena_destroy scratch))
@@ -8165,7 +8378,10 @@
 (define (opt-inline-level-functions [level : i64]) : CompilerIrFunctionList
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
-    (opt-inline-program-functions (opt-inline-frame-functions symbols) level)))
+    (opt-inline-program-functions
+      (ast-node-pool-reader-type-segment-bases)
+      (opt-inline-frame-functions symbols)
+      level)))
 
 (define (opt-inline-self-recursive) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -8819,7 +9035,10 @@
         (opt-inline-self-recursive)
         CompilerIrFunctionList.Nil)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions functions 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        functions
+        2)]
     [instrs : CompilerIrInstrList
       (opt-inline-function-instrs optimized "self_inline")]
     (= (opt-count-direct-call-name instrs "self_inline") 1)))
@@ -8828,7 +9047,10 @@
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-large-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-large-functions symbols)
+        2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     (= (opt-count-direct-call-name instrs "too_large_inline") 1)))
 
@@ -8836,7 +9058,10 @@
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-bounds-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-bounds-functions symbols)
+        2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     (and
       (= (opt-count-direct-call-name instrs "bounds_inline") 0)
@@ -8860,6 +9085,7 @@
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-twice-functions symbols)
         2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
@@ -8902,6 +9128,7 @@
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-twice-functions symbols)
         2)]
     [duplicate : CompilerIrFunction
@@ -8914,6 +9141,7 @@
           (opt-inline-structure-ok? (opt-function-blocks main))
           (not (opt-inline-structure-ok? (opt-function-blocks duplicate)))
           (opt-function-eq
+            (ast-node-pool-reader-type-segment-bases)
             (opt-inline-revert-or-keep fallback duplicate)
             fallback))]
       [(OptMaybeFunction.No) false])))
@@ -8926,12 +9154,14 @@
       (opt-inline-bounds-test-symbols)]
     [accepted : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-functions
           accepted-symbols
           (opt-inline-bounds-leaf-max-body))
         2)]
     [rejected : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-functions
           rejected-symbols
           (+ (opt-inline-bounds-leaf-max-body) 1))
@@ -8949,7 +9179,10 @@
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-multi-call-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-multi-call-functions symbols)
+        2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     [frame : i64 (opt-inline-function-frame optimized "main")]
     (cond
@@ -8966,7 +9199,10 @@
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-cascade-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-cascade-functions symbols)
+        2)]
     [main-instrs : CompilerIrInstrList
       (opt-inline-function-instrs optimized "main")]
     [mid-instrs : CompilerIrInstrList
@@ -8981,7 +9217,10 @@
 (define (compiler-optimize-inline-mutual-scc-refusal-ok?) : bool
   (let
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-mutual-functions) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-mutual-functions)
+        2)]
     [a-instrs : CompilerIrInstrList
       (opt-inline-function-instrs optimized "inline_mut_a")]
     [b-instrs : CompilerIrInstrList
@@ -9046,7 +9285,10 @@
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-pack-word-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-pack-word-functions symbols)
+        2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (and
@@ -9263,14 +9505,17 @@
     [level2-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [level0 : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level0-symbols)
         0)]
     [level1 : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level1-symbols)
         1)]
     [level2 : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level2-symbols)
         2)]
     (match (opt-function-list-find level2 "main")
@@ -9300,7 +9545,10 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-branch-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-branch-functions symbols)
+        2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -9375,7 +9623,10 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-loop-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-loop-functions symbols)
+        2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -9463,6 +9714,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-ir-function-cons
           (opt-inline-mb-bounds-caller symbols)
           (compiler-ir-function-cons
@@ -9736,6 +9988,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-ir-function-cons
           (opt-inline-switch-caller symbols)
           (compiler-ir-function-cons
@@ -9759,6 +10012,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-ir-function-cons
           (opt-inline-switch-caller symbols)
           (compiler-ir-function-cons
@@ -9810,14 +10064,17 @@
     [other-name : i64 (opt-test-symbol other-text)]
     [vm-opt2 : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols vm-name)
         2)]
     [other-opt2 : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols other-name)
         2)]
     [vm-opt1 : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols vm-name)
         1)]
     (and
@@ -9903,6 +10160,7 @@
         caller-call
         (opt-test-span 181 35))]
     (match (opt-inline-program-functions-with-spans
+      (ast-node-pool-reader-type-segment-bases)
       (opt-inline-switch-functions-named symbols callee-name)
       2
       spans)
@@ -10059,6 +10317,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-ir-function-cons
           (opt-inline-costly-switch-caller symbols)
           (compiler-ir-function-cons
@@ -10150,7 +10409,10 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-mut-param-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-mut-param-functions symbols)
+        2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -10230,6 +10492,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-caller-phi-loop-functions symbols)
         2)]
     (match (opt-function-list-find optimized "main")
@@ -10312,7 +10575,10 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-nonleaf-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-nonleaf-functions symbols)
+        2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -10419,6 +10685,7 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-nonleaf-predicate-functions symbols)
         2)]
     (match (opt-function-list-find optimized "main")
@@ -10522,7 +10789,10 @@
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-frame-functions symbols) 2)]
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-frame-functions symbols)
+        2)]
     [devirt-direct : CompilerIrFunction
       (opt-devirt-known-function-function
         (opt-inline-known-indirect-caller symbols))]
@@ -10530,6 +10800,7 @@
       (opt-devirt-known-function-function (opt-devirt-dynamic-caller))]
     [devirt-inlined : CompilerIrFunctionList
       (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
         (opt-inline-known-indirect-functions symbols)
         2)]
     [devirt-reach : CompilerIrFunctionList
@@ -10633,21 +10904,25 @@
                     (unless duplicate-def-structure (return 21))
                     (unless
                       (opt-function-eq
+                        (ast-node-pool-reader-type-segment-bases)
                         duplicate-label-revert
                         (opt-inline-frame-caller symbols))
                       (return 22))
                     (unless
                       (opt-function-eq
+                        (ast-node-pool-reader-type-segment-bases)
                         unknown-successor-revert
                         (opt-inline-frame-caller symbols))
                       (return 23))
                     (unless
                       (opt-function-eq
+                        (ast-node-pool-reader-type-segment-bases)
                         bad-phi-revert
                         (opt-inline-frame-caller symbols))
                       (return 24))
                     (unless
                       (opt-function-eq
+                        (ast-node-pool-reader-type-segment-bases)
                         valid-keep
                         (opt-inline-frame-callee symbols))
                       (return 25))
@@ -10921,14 +11196,21 @@
     [rewritten : CompilerIrFunction
       (opt-tailrec-function (opt-tailrec-test-function))]
     [once : CompilerIrFunction
-      (optimize-function-once (opt-tailrec-test-function))]
+      (optimize-function-once
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-tailrec-test-function))]
     [rewritten-blocks : CompilerIrBlockList (opt-function-blocks rewritten)]
     [once-blocks : CompilerIrBlockList (opt-function-blocks once)]
     [rewritten-instrs : CompilerIrInstrList
       (opt-function-first-instrs rewritten)]
     (cond
       [(not (= (opt-function-frame rewritten) 4)) 1]
-      [(not (opt-instr-list-eq rewritten-instrs (opt-tailrec-expected-instrs)))
+      [(not
+          (opt-instr-list-eq
+            (ast-node-pool-reader-type-segment-bases)
+            rewritten-instrs
+            (opt-tailrec-expected-instrs)))
         2]
       [(not (= (opt-count-tail-call-blocks rewritten-blocks) 0)) 3]
       [(not
@@ -11910,13 +12192,27 @@
           (OptGlobalExprFact.Fact key 7 0 1)
           (box (OptGlobalExprFacts.Nil))))
       (and
-        (match (opt-global-expr-lookup table key 8 doms 0 2)
+        (match (opt-global-expr-lookup
+          (ast-node-pool-reader-type-segment-bases)
+          table
+          key
+          8
+          doms
+          0
+          2)
           [(CompilerIrMaybeValue.Some value)
             (match value
               [(CompilerIrValue.Var id) (= id 7)]
               [_ false])]
           [(CompilerIrMaybeValue.No) false])
-        (match (opt-global-expr-lookup table other-key 8 doms 0 2)
+        (match (opt-global-expr-lookup
+          (ast-node-pool-reader-type-segment-bases)
+          table
+          other-key
+          8
+          doms
+          0
+          2)
           [(CompilerIrMaybeValue.No) true]
           [(CompilerIrMaybeValue.Some _) false])))))
 
@@ -11938,10 +12234,20 @@
     [table : OptGvnMap (OptGvnMap buckets)]
     (begin
       (array-set! buckets 0 (OptGvnBucket.Nil))
-      (opt-gvn-table-insert! table (OptGvnEntry.Entry key 7 0))
+      (opt-gvn-table-insert!
+        (ast-node-pool-reader-type-segment-bases)
+        table
+        (OptGvnEntry.Entry key 7 0))
       (and
-        (= (opt-gvn-lookup table key) 7)
-        (= (opt-gvn-lookup table other-key) (- 0 1))))))
+        (=
+          (opt-gvn-lookup (ast-node-pool-reader-type-segment-bases) table key)
+          7)
+        (=
+          (opt-gvn-lookup
+            (ast-node-pool-reader-type-segment-bases)
+            table
+            other-key)
+          (- 0 1))))))
 
 (define (opt-gvn-nearest-scope-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -11989,7 +12295,10 @@
 (define (opt-gvn-scoped-nearest-dominator-ok?) : bool
   (let
     [out : CompilerIrBlockList
-      (opt-gvn-blocks (opt-gvn-scalar-params) (opt-gvn-nearest-scope-blocks))]
+      (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-gvn-scalar-params)
+        (opt-gvn-nearest-scope-blocks))]
     (and
       (= (opt-blocks-mov-src-var out 4 (- 0 1)) 3)
       (= (opt-blocks-mov-src-var out 5 (- 0 1)) 4))))
@@ -12036,6 +12345,7 @@
   (let
     [forwarded : CompilerIrFunction
       (opt-global-value-number-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-gvn-function
           "global_pack_word"
           (opt-gvn-test-params)
@@ -12050,6 +12360,8 @@
     [dominated : CompilerIrBlockList
       (opt-function-blocks
         (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
             "gvn_dominated"
             (opt-gvn-scalar-params)
@@ -12058,6 +12370,8 @@
     [sibling : CompilerIrBlockList
       (opt-function-blocks
         (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
             "gvn_sibling"
             (opt-gvn-scalar-params)
@@ -12066,48 +12380,63 @@
     [loop : CompilerIrBlockList
       (opt-function-blocks
         (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
             "gvn_loop"
             (opt-gvn-scalar-params)
             (AstType.I64)
             (opt-gvn-phi-loop-blocks))))]
     [load-safe : CompilerIrBlockList
-      (opt-gvn-blocks (opt-gvn-pointer-params) (opt-gvn-load-barrier-blocks))]
+      (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-gvn-pointer-params)
+        (opt-gvn-load-barrier-blocks))]
     [load-join-safe : CompilerIrBlockList
       (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-cond-params)
         (opt-gvn-load-join-safe-blocks))]
     [load-store-path : CompilerIrBlockList
       (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-cond-params)
         (opt-gvn-load-store-path-blocks))]
     [single-load-store-forward : CompilerIrBlockList
       (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrParamList.Nil)
         (opt-gvn-single-load-store-forward-blocks))]
     [load-call-path : CompilerIrBlockList
       (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-cond-params)
         (opt-gvn-load-call-path-blocks))]
     [checked-ref-store-path : CompilerIrBlockList
       (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-gvn-checked-ref-cond-params)
         (opt-gvn-checked-ref-store-path-blocks false))]
     [checked-ref-root-loss : CompilerIrBlockList
       (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-gvn-checked-ref-cond-params)
         (opt-gvn-checked-ref-store-path-blocks true))]
     [load-address-redef : CompilerIrBlockList
       (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-params)
         (opt-gvn-load-address-redef-blocks))]
     [load-type-mismatch : CompilerIrBlockList
       (opt-gvn-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-gvn-pointer-params)
         (opt-gvn-load-type-mismatch-blocks))]
     [copy : CompilerIrBlockList
       (opt-function-blocks
         (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
             "gvn_copy"
             (opt-gvn-pointer-params)
@@ -12116,6 +12445,8 @@
     [cast : CompilerIrBlockList
       (opt-function-blocks
         (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
             "gvn_cast"
             (opt-gvn-pointer-params)
@@ -12124,6 +12455,8 @@
     [gep : CompilerIrBlockList
       (opt-function-blocks
         (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
             "gvn_gep"
             (opt-gvn-pointer-params)
@@ -12132,6 +12465,7 @@
     [global-gep : CompilerIrBlockList
       (opt-function-blocks
         (opt-global-value-number-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-gvn-function
             "gvn_global_gep"
             (opt-gvn-scalar-params)
@@ -12525,14 +12859,24 @@
 (define (compiler-optimize-sccp-self-test) : i64
   (let
     [cross : CompilerIrBlockList
-      (opt-sccp-blocks (CompilerIrParamList.Nil) (opt-sccp-cross-block-blocks))]
+      (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (CompilerIrParamList.Nil)
+        (opt-sccp-cross-block-blocks))]
     [diamond : CompilerIrBlockList
-      (opt-sccp-blocks (opt-sccp-cond-params) (opt-sccp-diamond-blocks))]
+      (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-sccp-cond-params)
+        (opt-sccp-diamond-blocks))]
     [branch-source : CompilerIrBlockList (opt-sccp-constant-branch-blocks)]
     [branch : CompilerIrBlockList
-      (opt-sccp-blocks (CompilerIrParamList.Nil) branch-source)]
+      (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (CompilerIrParamList.Nil)
+        branch-source)]
     [branch-context-result : OptBlockCtxResult
       (opt-sccp-blocks-with-context-result
+        (ast-node-pool-reader-type-segment-bases)
         (opt-cfg-context-build branch-source)
         (CompilerIrParamList.Nil)
         branch-source)]
@@ -12543,23 +12887,33 @@
       (match branch-context-result
         [(OptBlockCtxResult.Result _ _ valid) valid])]
     [loop : CompilerIrBlockList
-      (opt-sccp-blocks (opt-sccp-loop-params) (opt-sccp-loop-blocks))]
+      (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-sccp-loop-params)
+        (opt-sccp-loop-blocks))]
     [trap : CompilerIrBlockList
-      (opt-sccp-blocks (CompilerIrParamList.Nil) (opt-sccp-trap-blocks))]
+      (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
+        (CompilerIrParamList.Nil)
+        (opt-sccp-trap-blocks))]
     [group : CompilerIrBlockList
       (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrParamList.Nil)
         (opt-sccp-group-word-branch-blocks))]
     [in-range-bounds : CompilerIrBlockList
       (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrParamList.Nil)
         (opt-sccp-constant-bounds-blocks 0 64))]
     [out-of-range-bounds : CompilerIrBlockList
       (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrParamList.Nil)
         (opt-sccp-constant-bounds-blocks 64 64))]
     [dynamic-bounds : CompilerIrBlockList
       (opt-sccp-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-sccp-dynamic-bounds-params)
         (opt-sccp-dynamic-bounds-blocks))]
     (cond
@@ -13246,6 +13600,7 @@
     [blocks : CompilerIrBlockList (opt-bool-branch-chain-test-blocks mode)]
     [func : CompilerIrFunction (opt-bool-branch-chain-test-function blocks)]
     (opt-bool-branch-chain-function-with-context-result
+      (ast-node-pool-reader-type-segment-bases)
       (opt-cfg-context-build blocks)
       false
       func)))
@@ -14048,7 +14403,9 @@
     blocks))
 
 (define (opt-licm-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
-  (opt-licm-function (opt-licm-test-function blocks)))
+  (opt-licm-function
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-licm-test-function blocks)))
 
 (define (opt-licm-array-params) : CompilerIrParamList
   (compiler-ir-param-cons
@@ -14068,17 +14425,21 @@
     blocks))
 
 (define (opt-licm-array-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
-  (opt-licm-function (opt-licm-array-test-function blocks)))
+  (opt-licm-function
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-licm-array-test-function blocks)))
 
 (define (opt-licm-array-optimized-function-with-direct-call-clean
   [blocks : CompilerIrBlockList]
   [direct-call-clean : opt_i64_i64_map.Map]) : CompilerIrFunction
   (opt-licm-function-with-direct-call-clean
+    (ast-node-pool-reader-type-segment-bases)
     (opt-licm-array-test-function blocks)
     direct-call-clean))
 
 (define (opt-licm-summary-for-instr [instr : CompilerIrInstr]) : OptLicmStoreSummary
   (opt-licm-store-summary-blocks
+    (ast-node-pool-reader-type-segment-bases)
     (compiler-ir-block-cons
       (compiler-ir-block
         (compiler-ir-label "summary")
@@ -15360,6 +15721,7 @@
       [mut-ref-ty : AstType (ast-ty-mut-ref 0 (AstType.I64))]
       [ref-distinct-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15369,6 +15731,7 @@
         (opt-function-blocks ref-distinct-func)]
       [mut-distinct-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             mut-ref-ty
             mut-ref-ty
@@ -15378,6 +15741,7 @@
         (opt-function-blocks mut-distinct-func)]
       [same-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             mut-ref-ty
             mut-ref-ty
@@ -15386,6 +15750,7 @@
       [same : CompilerIrBlockList (opt-function-blocks same-func)]
       [shared-store-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15395,6 +15760,7 @@
         (opt-function-blocks shared-store-func)]
       [raw-store-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15403,6 +15769,7 @@
       [raw-store : CompilerIrBlockList (opt-function-blocks raw-store-func)]
       [copybytes-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15411,6 +15778,7 @@
       [copybytes : CompilerIrBlockList (opt-function-blocks copybytes-func)]
       [call-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15419,6 +15787,7 @@
       [call-blocks : CompilerIrBlockList (opt-function-blocks call-func)]
       [fresh-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15427,6 +15796,7 @@
       [fresh : CompilerIrBlockList (opt-function-blocks fresh-func)]
       [fresh-header-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15436,6 +15806,7 @@
         (opt-function-blocks fresh-header-func)]
       [join-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15444,6 +15815,7 @@
       [join-blocks : CompilerIrBlockList (opt-function-blocks join-func)]
       [mixed-join-func : CompilerIrFunction
         (opt-licm-function
+          (ast-node-pool-reader-type-segment-bases)
           (opt-licm-checked-root-function
             ref-ty
             mut-ref-ty
@@ -15981,7 +16353,9 @@
     blocks))
 
 (define (opt-induction-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
-  (opt-induction-function (opt-induction-test-function blocks)))
+  (opt-induction-function
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-induction-test-function blocks)))
 
 (define (opt-induction-offset-blocks [step : i64] [scale : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -17413,21 +17787,29 @@
   (let
     [func : CompilerIrFunction
       (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-unroll-test-function (opt-unroll-test-blocks 1)))]
     [out : CompilerIrBlockList (opt-function-blocks func)]
     [nonunit-func : CompilerIrFunction
       (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-unroll-test-function (opt-unroll-test-blocks 2)))]
     [nonunit : CompilerIrBlockList (opt-function-blocks nonunit-func)]
     [vector-func : CompilerIrFunction
-      (opt-unroll-function (opt-unroll-vector-test-function))]
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-vector-test-function))]
     [vector-out : CompilerIrBlockList (opt-function-blocks vector-func)]
     [mutable-vector-func : CompilerIrFunction
-      (opt-unroll-function (opt-unroll-mutable-vector-test-function false))]
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-vector-test-function false))]
     [mutable-vector-out : CompilerIrBlockList
       (opt-function-blocks mutable-vector-func)]
     [local-base-func : CompilerIrFunction
-      (opt-unroll-function (opt-unroll-mutable-vector-test-function true))]
+      (opt-unroll-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-mutable-vector-test-function true))]
     [local-base-out : CompilerIrBlockList (opt-function-blocks local-base-func)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function func))) 1]
@@ -17781,6 +18163,8 @@
   (let
     [optimized : CompilerIrFunction
       (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrFunction.Function
           (opt-test-symbol "bce_version_while_fixture")
           (opt-bce-version-test-params)
@@ -18446,22 +18830,27 @@
   (let
     [positive : CompilerIrFunction
       (opt-late-bounds-pair-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 6)))]
     [positive-out : CompilerIrBlockList (opt-function-blocks positive)]
     [stored : CompilerIrFunction
       (opt-late-bounds-pair-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 7)))]
     [stored-out : CompilerIrBlockList (opt-function-blocks stored)]
     [different : CompilerIrFunction
       (opt-late-bounds-pair-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 8)))]
     [different-out : CompilerIrBlockList (opt-function-blocks different)]
     [no-fact : CompilerIrFunction
       (opt-late-bounds-pair-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 9)))]
     [no-fact-out : CompilerIrBlockList (opt-function-blocks no-fact)]
     [rollback : CompilerIrFunction
       (opt-late-bounds-pair-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 10)))]
     [rollback-out : CompilerIrBlockList (opt-function-blocks rollback)]
     (cond
@@ -18717,6 +19106,7 @@
   [elem-ty : AstType]
   [other-use : bool]) : CompilerIrFunction
   (opt-gep-split-function
+    (ast-node-pool-reader-type-segment-bases)
     (CompilerIrFunction.Function
       (opt-test-symbol "gep_split_chain")
       (opt-bce-version-test-params)
@@ -18740,7 +19130,10 @@
                   (= dst 4)
                   (opt-value-eq base expected-base)
                   (opt-value-eq offset expected-offset)
-                  (opt-type-eq elem-ty expected-ty))]
+                  (opt-type-eq
+                    (ast-node-pool-reader-type-segment-bases)
+                    elem-ty
+                    expected-ty))]
               [_ false])
             false)])]
     [_ false]))
@@ -18749,6 +19142,7 @@
   (let
     [split : CompilerIrFunction
       (opt-gep-split-function
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrFunction.Function
           (opt-test-symbol "gep_split_shared")
           (opt-bce-version-test-params)
@@ -18758,6 +19152,7 @@
     [split-blocks : CompilerIrBlockList (opt-function-blocks split)]
     [untouched : CompilerIrFunction
       (opt-gep-split-function
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrFunction.Function
           (opt-test-symbol "gep_split_other_use")
           (opt-bce-version-test-params)
@@ -19020,6 +19415,8 @@
   (let
     [optimized : CompilerIrFunction
       (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrFunction.Function
           (opt-test-symbol "bce_version_mb_while_fixture")
           (opt-bce-version-test-params)
@@ -19091,6 +19488,7 @@
 (define (opt-merged-loop-test-callee-blocks) : CompilerIrBlockList
   (opt-function-blocks
     (opt-ssa-construct-function
+      (ast-node-pool-reader-type-segment-bases)
       (CompilerIrFunction.Function
         (opt-test-symbol "merged_loop_callee")
         (opt-bce-version-test-params)
@@ -19177,6 +19575,8 @@
   (let
     [optimized : CompilerIrFunction
       (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
         (CompilerIrFunction.Function
           (opt-test-symbol "unroll_mb_while_fixture")
           (opt-bce-version-test-params)
@@ -19185,7 +19585,10 @@
           (opt-bce-mb-pipeline-blocks)))]
     [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
     [merged : CompilerIrFunction
-      (optimize-function (opt-merged-loop-test-function))]
+      (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-merged-loop-test-function))]
     [merged-blocks : CompilerIrBlockList (opt-function-blocks merged)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
@@ -19368,10 +19771,12 @@
   (let
     [constructed : CompilerIrFunction
       (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-ssa-preexisting-test-function
           (opt-ssa-preexisting-test-blocks false)))]
     [rejected : CompilerIrFunction
       (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-ssa-preexisting-test-function
           (opt-ssa-preexisting-test-blocks true)))]
     (cond
@@ -19634,21 +20039,25 @@
   (let
     [single : CompilerIrFunction
       (opt-licm-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-licm-multi-exit-test-function
           (opt-licm-multi-exit-test-blocks 0 false)))]
     [single-blocks : CompilerIrBlockList (opt-function-blocks single)]
     [ret-exit : CompilerIrFunction
       (opt-licm-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-licm-multi-exit-test-function
           (opt-licm-multi-exit-test-blocks 1 false)))]
     [ret-blocks : CompilerIrBlockList (opt-function-blocks ret-exit)]
     [brk-exit : CompilerIrFunction
       (opt-licm-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-licm-multi-exit-test-function
           (opt-licm-multi-exit-test-blocks 2 false)))]
     [brk-blocks : CompilerIrBlockList (opt-function-blocks brk-exit)]
     [stored : CompilerIrFunction
       (opt-licm-function
+        (ast-node-pool-reader-type-segment-bases)
         (opt-licm-multi-exit-test-function
           (opt-licm-multi-exit-test-blocks 0 true)))]
     [stored-blocks : CompilerIrBlockList (opt-function-blocks stored)]
@@ -20094,6 +20503,8 @@
     [ssa-result : i64
       (opt-affine-pipeline-check
         (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (CompilerIrFunction.Function
             (opt-test-symbol "affine_loop_fixture")
             (opt-unroll-test-params)
@@ -20106,6 +20517,8 @@
     [while-result : i64
       (opt-affine-pipeline-check
         (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (CompilerIrFunction.Function
             (opt-test-symbol "affine_while_fixture")
             (opt-unroll-test-params)
@@ -20418,7 +20831,9 @@
     [preheadered-induction-blocks : CompilerIrBlockList
       (opt-function-blocks preheadered-induction)]
     [induction-after-preheader : CompilerIrFunction
-      (opt-induction-function preheadered-induction)]
+      (opt-induction-function
+        (ast-node-pool-reader-type-segment-bases)
+        preheadered-induction)]
     [induction-after-preheader-blocks : CompilerIrBlockList
       (opt-function-blocks induction-after-preheader)]
     (cond
@@ -20603,15 +21018,21 @@
             multi-right
             (compiler-ir-label "right")))
         48]
-      [(not (opt-block-list-eq preheadered-single-blocks (opt-ssa-loop-blocks)))
+      [(not
+          (opt-block-list-eq
+            (ast-node-pool-reader-type-segment-bases)
+            preheadered-single-blocks
+            (opt-ssa-loop-blocks)))
         49]
       [(not
           (opt-block-list-eq
+            (ast-node-pool-reader-type-segment-bases)
             preheadered-nested-blocks
             (opt-natural-loop-nested-blocks)))
         50]
       [(not
           (opt-block-list-eq
+            (ast-node-pool-reader-type-segment-bases)
             preheadered-multi-blocks
             (opt-natural-loop-multi-backedge-blocks)))
         51]
@@ -20664,14 +21085,22 @@
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let
     [raw : CompilerIrBlockList (opt-loop-rotation-top-test-blocks)]
-    [rotated : CompilerIrBlockList (opt-loop-rotation-blocks raw)]
+    [rotated : CompilerIrBlockList
+      (opt-loop-rotation-blocks (ast-node-pool-reader-context-current) raw)]
     [false-body-rotated : CompilerIrBlockList
-      (opt-loop-rotation-blocks (opt-loop-rotation-false-body-blocks))]
+      (opt-loop-rotation-blocks
+        (ast-node-pool-reader-context-current)
+        (opt-loop-rotation-false-body-blocks))]
     [ssa : CompilerIrFunction
-      (opt-ssa-construct-function (opt-cfg-test-function rotated))]
+      (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-cfg-test-function rotated))]
     [ssa-blocks : CompilerIrBlockList (opt-function-blocks ssa)]
     [optimized : CompilerIrFunction
-      (optimize-function (opt-cfg-test-function raw))]
+      (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-cfg-test-function raw))]
     [optimized-blocks : CompilerIrBlockList (opt-function-blocks optimized)]
     [no-preheader : CompilerIrBlockList (opt-natural-loop-no-preheader-blocks)]
     [multi-backedge : CompilerIrBlockList
@@ -20713,15 +21142,27 @@
       [(not (opt-cfg-successor-targets-known? optimized-blocks)) 12]
       [(not
           (opt-block-list-eq
-            (opt-loop-rotation-blocks no-preheader)
+            (ast-node-pool-reader-type-segment-bases)
+            (opt-loop-rotation-blocks
+              (ast-node-pool-reader-context-current)
+              no-preheader)
             no-preheader))
         13]
       [(not
           (opt-block-list-eq
-            (opt-loop-rotation-blocks multi-backedge)
+            (ast-node-pool-reader-type-segment-bases)
+            (opt-loop-rotation-blocks
+              (ast-node-pool-reader-context-current)
+              multi-backedge)
             multi-backedge))
         14]
-      [(not (opt-block-list-eq (opt-loop-rotation-blocks with-phi) with-phi))
+      [(not
+          (opt-block-list-eq
+            (ast-node-pool-reader-type-segment-bases)
+            (opt-loop-rotation-blocks
+              (ast-node-pool-reader-context-current)
+              with-phi)
+            with-phi))
         15]
       [else 42])))
 
@@ -21041,7 +21482,10 @@
         6]
       [(not (> (opt-function-frame rotated) 4)) 7]
       [(not
-          (opt-block-list-eq side-exit-blocks (opt-rotate-ssa-test-blocks true)))
+          (opt-block-list-eq
+            (ast-node-pool-reader-type-segment-bases)
+            side-exit-blocks
+            (opt-rotate-ssa-test-blocks true)))
         8]
       [(not (= (compiler-ir-block-list-count side-exit-blocks) 5)) 9]
       [(not
@@ -21070,38 +21514,58 @@
     [unreachable-order : CompilerIrBlockList
       (opt-cfg-reachable-block-order (opt-ssa-unreachable-blocks))]
     [constructed-diamond : CompilerIrFunction
-      (opt-ssa-construct-function (opt-ssa-construct-diamond-function))]
+      (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-construct-diamond-function))]
     [constructed-diamond-blocks : CompilerIrBlockList
       (opt-function-blocks constructed-diamond)]
     [constructed-loop : CompilerIrFunction
-      (opt-ssa-construct-function (opt-ssa-construct-loop-function))]
+      (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-construct-loop-function))]
     [constructed-loop-blocks : CompilerIrBlockList
       (opt-function-blocks constructed-loop)]
     [constructed-param : CompilerIrFunction
-      (opt-ssa-construct-function (opt-ssa-construct-mutated-param-function))]
+      (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-construct-mutated-param-function))]
     [constructed-param-blocks : CompilerIrBlockList
       (opt-function-blocks constructed-param)]
     [address-taken : CompilerIrFunction
       (opt-ssa-construct-address-taken-function)]
     [address-taken-out : CompilerIrFunction
-      (opt-ssa-construct-function address-taken)]
+      (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
+        address-taken)]
     [existing-phi : CompilerIrFunction
       (opt-cfg-test-function (opt-cfg-phi-blocks))]
     [existing-phi-out : CompilerIrFunction
-      (opt-ssa-construct-function existing-phi)]
+      (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
+        existing-phi)]
     [pipeline-loop : CompilerIrFunction
-      (optimize-function-once (opt-ssa-construct-loop-function))]
+      (optimize-function-once
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-construct-loop-function))]
     [pipeline-loop-blocks : CompilerIrBlockList
       (opt-function-blocks pipeline-loop)]
     [entry-backedge : CompilerIrFunction (opt-ssa-entry-backedge-function)]
     [entry-backedge-out : CompilerIrFunction
-      (opt-ssa-construct-function entry-backedge)]
+      (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
+        entry-backedge)]
     [constructed-nested : CompilerIrFunction
-      (opt-ssa-construct-function (opt-ssa-nested-loop-function))]
+      (opt-ssa-construct-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-nested-loop-function))]
     [constructed-nested-blocks : CompilerIrBlockList
       (opt-function-blocks constructed-nested)]
     [pipeline-nested : CompilerIrFunction
-      (optimize-function-once (opt-ssa-nested-loop-function))]
+      (optimize-function-once
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-ssa-nested-loop-function))]
     [pipeline-nested-blocks : CompilerIrBlockList
       (opt-function-blocks pipeline-nested)]
     (cond
@@ -21236,11 +21700,26 @@
       [(not (opt-verify-ok? (opt-verify-function constructed-param))) 46]
       [(not (= (opt-count-phi-blocks constructed-param-blocks) 1)) 47]
       [(not (= (opt-count-mov-dst-blocks constructed-param-blocks 0) 0)) 48]
-      [(not (opt-function-eq address-taken address-taken-out)) 49]
-      [(not (opt-function-eq existing-phi existing-phi-out)) 50]
+      [(not
+          (opt-function-eq
+            (ast-node-pool-reader-type-segment-bases)
+            address-taken
+            address-taken-out))
+        49]
+      [(not
+          (opt-function-eq
+            (ast-node-pool-reader-type-segment-bases)
+            existing-phi
+            existing-phi-out))
+        50]
       [(not (opt-verify-ok? (opt-verify-function pipeline-loop))) 51]
       [(not (= (opt-count-mov-dst-blocks pipeline-loop-blocks 1) 0)) 52]
-      [(not (opt-function-eq entry-backedge entry-backedge-out)) 53]
+      [(not
+          (opt-function-eq
+            (ast-node-pool-reader-type-segment-bases)
+            entry-backedge
+            entry-backedge-out))
+        53]
       [(not (opt-verify-ok? (opt-verify-function constructed-nested))) 54]
       [(not (> (opt-count-phi-blocks constructed-nested-blocks) 0)) 55]
       [(not (opt-verify-ok? (opt-verify-function pipeline-nested))) 56]
@@ -21275,14 +21754,21 @@
       (opt-cfg-simplify-blocks (opt-cfg-folded-edge-phi-blocks))]
     [phi-blocks : CompilerIrBlockList
       (opt-function-blocks
-        (optimize-function (opt-cfg-test-function (opt-cfg-phi-blocks))))]
+        (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-cfg-test-function (opt-cfg-phi-blocks))))]
     [trap-blocks : CompilerIrBlockList
       (opt-function-blocks
-        (optimize-function (opt-cfg-test-function (opt-cfg-trap-path-blocks))))]
+        (optimize-function
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-cfg-test-function (opt-cfg-trap-path-blocks))))]
     [fallthrough-blocks : CompilerIrBlockList
       (opt-cfg-simplify-blocks (opt-cfg-fallthrough-prune-blocks))]
     [bool-branch-result : OptBlockListPassResult
       (opt-bool-branch-fuse-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-bool-branch-test-blocks
           (CompilerIrInstr.BinOp
             1
@@ -21301,6 +21787,7 @@
         [(OptBlockListPassResult.Result _ changed) changed])]
     [call-branch-result : OptBlockListPassResult
       (opt-bool-branch-fuse-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-bool-branch-test-blocks
           (CompilerIrInstr.Call
             1
@@ -21318,6 +21805,7 @@
         [(OptBlockListPassResult.Result _ changed) changed])]
     [reused-branch-result : OptBlockListPassResult
       (opt-bool-branch-fuse-blocks
+        (ast-node-pool-reader-type-segment-bases)
         (opt-bool-branch-test-blocks
           (CompilerIrInstr.BinOp
             1
@@ -21340,6 +21828,7 @@
       (opt-bool-branch-constant-test-function constant-phi-source)]
     [constant-phi-result : OptFunctionPassResult
       (opt-bool-branch-function-with-context-result
+        (ast-node-pool-reader-type-segment-bases)
         (opt-cfg-context-build constant-phi-source)
         false
         constant-phi-function)]
@@ -21357,6 +21846,7 @@
       (opt-bool-branch-constant-test-function nonconstant-phi-source)]
     [nonconstant-phi-result : OptFunctionPassResult
       (opt-bool-branch-function-with-context-result
+        (ast-node-pool-reader-type-segment-bases)
         (opt-cfg-context-build nonconstant-phi-source)
         false
         nonconstant-phi-function)]
@@ -21371,6 +21861,7 @@
       (opt-bool-branch-constant-test-function multi-phi-source)]
     [multi-phi-result : OptFunctionPassResult
       (opt-bool-branch-function-with-context-result
+        (ast-node-pool-reader-type-segment-bases)
         (opt-cfg-context-build multi-phi-source)
         false
         multi-phi-function)]
@@ -21522,7 +22013,10 @@
           (compiler-ir-label "merge"))
         (return 40))
       (unless
-        (opt-function-eq nonconstant-phi-function nonconstant-phi-optimized)
+        (opt-function-eq
+          (ast-node-pool-reader-type-segment-bases)
+          nonconstant-phi-function
+          nonconstant-phi-optimized)
         (return 41))
       (unless (not multi-phi-changed) (return 42))
       (unless
@@ -21531,7 +22025,10 @@
             (opt-function-blocks multi-phi-optimized)
             (compiler-ir-label "merge"))
           (= (opt-count-phi-blocks (opt-function-blocks multi-phi-optimized)) 2)
-          (opt-function-eq multi-phi-function multi-phi-optimized))
+          (opt-function-eq
+            (ast-node-pool-reader-type-segment-bases)
+            multi-phi-function
+            multi-phi-optimized))
         (return 43))
       (unless
         (and
@@ -21587,6 +22084,7 @@
         (and
           (not and-chain-reused-changed)
           (opt-function-eq
+            (ast-node-pool-reader-type-segment-bases)
             and-chain-reused-function
             (opt-bool-branch-chain-test-function
               (opt-bool-branch-chain-test-blocks 1))))
@@ -21595,6 +22093,7 @@
         (and
           (not and-chain-or-changed)
           (opt-function-eq
+            (ast-node-pool-reader-type-segment-bases)
             and-chain-or-function
             (opt-bool-branch-chain-test-function
               (opt-bool-branch-chain-test-blocks 2))))
@@ -21604,8 +22103,16 @@
 (define (compiler-optimize-fixed-point-self-test) : i64
   (let
     [func : CompilerIrFunction (opt-test-function (opt-fixed-point-instrs))]
-    [once : CompilerIrFunction (optimize-function-once func)]
-    [fixed : CompilerIrFunction (optimize-function func)]
+    [once : CompilerIrFunction
+      (optimize-function-once
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        func)]
+    [fixed : CompilerIrFunction
+      (optimize-function
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
+        func)]
     [once-instrs : CompilerIrInstrList (opt-function-first-instrs once)]
     [fixed-instrs : CompilerIrInstrList (opt-function-first-instrs fixed)]
     [optimized-program : CompilerIrProgram
@@ -21619,7 +22126,12 @@
       [(not (= (opt-count-arith-instrs once-instrs) 3)) 2]
       [(not (= (compiler-ir-instr-list-count fixed-instrs) 3)) 3]
       [(not (= (opt-count-arith-instrs fixed-instrs) 2)) 4]
-      [(not (opt-program-eq optimized-program again-program)) 5]
+      [(not
+          (opt-program-eq
+            (ast-node-pool-reader-type-segment-bases)
+            optimized-program
+            again-program))
+        5]
       [else 42])))
 
 ;; --- implicit scratch-region self-tests -------------------------------------
@@ -21703,7 +22215,9 @@
     [(OptNaturalLoopList.Cons loop rest)
       (or
         (opt-scratch-report-candidate?
-          (opt-scratch-scope-report-blocks (opt-natural-loop-body-blocks loop))
+          (opt-scratch-scope-report-blocks
+            (ast-node-pool-reader-type-segment-bases)
+            (opt-natural-loop-body-blocks loop))
           1
           32)
         (opt-scratch-loop-list-has-candidate? (box-get rest)))]))
@@ -21892,7 +22406,9 @@
                 CompilerIrBlockList.Nil))))))))
 
 (define (opt-scratch-reset-rewrite [blocks : CompilerIrBlockList]) : CompilerIrFunction
-  (opt-scratch-reset-function (opt-scratch-reset-test-function blocks)))
+  (opt-scratch-reset-function
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-scratch-reset-test-function blocks)))
 
 (define (opt-scratch-reset-call-count
   [func : CompilerIrFunction]
@@ -21934,12 +22450,15 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
       [positive : OptScratchScopeReport
-        (opt-scratch-scope-report-instrs (opt-scratch-positive-instrs))]
+        (opt-scratch-scope-report-instrs
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-scratch-positive-instrs))]
       [loop-positive : bool
         (opt-scratch-loop-list-has-candidate?
           (opt-cfg-natural-loops (opt-scratch-loop-candidate-blocks)))]
       [call-blocked : OptScratchScopeReport
         (opt-scratch-scope-report-instrs
+          (ast-node-pool-reader-type-segment-bases)
           (opt-scratch-test-one-block
             (CompilerIrInstr.Call
               9
@@ -21948,6 +22467,7 @@
               (AstType.Unit))))]
       [extern-blocked : OptScratchScopeReport
         (opt-scratch-scope-report-instrs
+          (ast-node-pool-reader-type-segment-bases)
           (opt-scratch-test-one-block
             (CompilerIrInstr.CallIndirectC
               9
@@ -21956,6 +22476,7 @@
               (AstType.I64))))]
       [raw-blocked : OptScratchScopeReport
         (opt-scratch-scope-report-instrs
+          (ast-node-pool-reader-type-segment-bases)
           (opt-scratch-test-one-block (CompilerIrInstr.AddrOf 2 1)))]
       ;; The scratch analysis records its roots with `opt-alias-mark-unique`, so
       ;; the fixture builds the fact the same way instead of hand-encoding it.
@@ -21967,6 +22488,7 @@
             1
             32
             (opt-scratch-blocker-reason
+              (ast-node-pool-reader-type-segment-bases)
               roots
               (opt-alias-mark-unique (opt-alias-empty) 1 0)
               (CompilerIrInstr.StorePtr
@@ -21975,6 +22497,7 @@
                 (AstType.U64)))))]
       [arena-blocked : OptScratchScopeReport
         (opt-scratch-scope-report-instrs
+          (ast-node-pool-reader-type-segment-bases)
           (opt-scratch-test-one-block
             (CompilerIrInstr.Call
               9
@@ -21989,6 +22512,7 @@
             1
             32
             (opt-scratch-blocker-reason
+              (ast-node-pool-reader-type-segment-bases)
               roots
               (opt-alias-mark-unique (opt-alias-empty) 1 0)
               (CompilerIrInstr.Return
@@ -22003,6 +22527,8 @@
         (opt-scratch-reset-rewrite (opt-scratch-reset-early-exit-blocks))]
       [reset-pre-ssa : CompilerIrFunction
         (match (opt-scratch-reset-pre-ssa-function-with-context-result
+          (ast-node-pool-reader-context-current)
+          (ast-node-pool-reader-type-segment-bases)
           (opt-scratch-reset-level-function))
           [(OptFunctionCtxResult.Result f _) f])]
       [level0-mark-count : i64
@@ -22020,14 +22546,53 @@
       (cond
         [(not (opt-scratch-report-candidate? positive 1 32)) 1]
         [(not loop-positive) 2]
-        [(not (opt-scratch-report-blocked? call-blocked 1 32 "call")) 3]
-        [(not (opt-scratch-report-blocked? extern-blocked 1 32 "extern_call"))
+        [(not
+            (opt-scratch-report-blocked?
+              (ast-node-pool-reader-type-segment-bases)
+              call-blocked
+              1
+              32
+              "call"))
+          3]
+        [(not
+            (opt-scratch-report-blocked?
+              (ast-node-pool-reader-type-segment-bases)
+              extern-blocked
+              1
+              32
+              "extern_call"))
           4]
-        [(not (opt-scratch-report-blocked? raw-blocked 1 32 "raw_pointer")) 5]
-        [(not (opt-scratch-report-blocked? store-blocked 1 32 "store_outer")) 6]
-        [(not (opt-scratch-report-blocked? arena-blocked 1 32 "arena_helper"))
+        [(not
+            (opt-scratch-report-blocked?
+              (ast-node-pool-reader-type-segment-bases)
+              raw-blocked
+              1
+              32
+              "raw_pointer"))
+          5]
+        [(not
+            (opt-scratch-report-blocked?
+              (ast-node-pool-reader-type-segment-bases)
+              store-blocked
+              1
+              32
+              "store_outer"))
+          6]
+        [(not
+            (opt-scratch-report-blocked?
+              (ast-node-pool-reader-type-segment-bases)
+              arena-blocked
+              1
+              32
+              "arena_helper"))
           7]
-        [(not (opt-scratch-report-blocked? return-blocked 1 32 "return_escape"))
+        [(not
+            (opt-scratch-report-blocked?
+              (ast-node-pool-reader-type-segment-bases)
+              return-blocked
+              1
+              32
+              "return_escape"))
           8]
         [(not (opt-scratch-reset-emitted? reset-positive)) 9]
         [(not (= (opt-function-frame reset-positive) 12)) 10]
@@ -22176,7 +22741,9 @@
         (opt-alias-mark-unique (opt-alias-empty) 0 0)
         0)]
     [seeded : OptAliasFacts
-      (opt-alias-seed-params (opt-load-cse-mixed-ref-params))]
+      (opt-alias-seed-params
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-load-cse-mixed-ref-params))]
     (cond
       [(not (opt-alias-contains? unique 0 (OptAliasKind.Unique 0))) 1]
       [(not (opt-alias-contains? unique 1 (OptAliasKind.Derived 0))) 2]
@@ -22216,6 +22783,7 @@
 
 (define (opt-load-cse-run [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs
+    (ast-node-pool-reader-type-segment-bases)
     (opt-load-header-set-empty)
     (opt-load-cse-empty-state-for-size (compiler-ir-instr-list-count instrs))
     instrs))
@@ -22224,7 +22792,9 @@
 ;; descriptors) so the descriptor/element granularity rules can be exercised.
 (define (opt-load-cse-run-with-array-param [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs
+    (ast-node-pool-reader-type-segment-bases)
     (opt-load-header-set-from-function
+      (ast-node-pool-reader-type-segment-bases)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "xs" (AstType.DynArray 0) 0)
         (compiler-ir-param-cons
@@ -22240,7 +22810,9 @@
   [params : CompilerIrParamList]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs
+    (ast-node-pool-reader-type-segment-bases)
     (opt-load-header-set-from-function
+      (ast-node-pool-reader-type-segment-bases)
       params
       (compiler-ir-block-cons
         (compiler-ir-block (compiler-ir-label "entry") instrs)
@@ -22248,7 +22820,7 @@
     (opt-load-cse-state-with-caps-and-facts
       (opt-load-cse-table-cap-for-size (compiler-ir-instr-list-count instrs))
       (opt-load-cse-kinds-cap-for-size (compiler-ir-instr-list-count instrs))
-      (opt-alias-seed-params params))
+      (opt-alias-seed-params (ast-node-pool-reader-type-segment-bases) params))
     instrs))
 
 (define (opt-load-cse-run-with-params-and-call-memory
@@ -22256,7 +22828,9 @@
   [call-memory : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs-from
+    (ast-node-pool-reader-type-segment-bases)
     (opt-load-header-set-from-function
+      (ast-node-pool-reader-type-segment-bases)
       params
       (compiler-ir-block-cons
         (compiler-ir-block (compiler-ir-label "entry") instrs)
@@ -22266,7 +22840,7 @@
     (opt-load-cse-state-with-caps-and-facts
       (opt-load-cse-table-cap-for-size (compiler-ir-instr-list-count instrs))
       (opt-load-cse-kinds-cap-for-size (compiler-ir-instr-list-count instrs))
-      (opt-alias-seed-params params))
+      (opt-alias-seed-params (ast-node-pool-reader-type-segment-bases) params))
     instrs))
 
 (define (opt-load-cse-mixed-ref-params) : CompilerIrParamList
@@ -22303,7 +22877,9 @@
 (define (opt-dead-store-run-with-array-param [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (compiler-ir-instr-seq-to-list
     (opt-dead-store-instr-seq
+      (ast-node-pool-reader-type-segment-bases)
       (opt-load-header-set-from-function
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-ir-param-cons
           (CompilerIrParam.Param "xs" (AstType.DynArray 0) 0)
           (compiler-ir-param-cons
@@ -22346,7 +22922,9 @@
       (+
         (match instr
           [(CompilerIrInstr.Mov mov-dst mov-src mov-ty)
-            (if (and (= mov-dst dst) (opt-type-eq mov-ty ty))
+            (if (and
+              (= mov-dst dst)
+              (opt-type-eq (ast-node-pool-reader-type-segment-bases) mov-ty ty))
               (match mov-src
                 [(CompilerIrValue.Var value)
                   (if (= value src)
@@ -22367,7 +22945,12 @@
       (+
         (match instr
           [(CompilerIrInstr.Mov mov-dst mov-src mov-ty)
-            (if (and (= mov-dst dst) (opt-type-eq mov-ty (AstType.Bool)))
+            (if (and
+              (= mov-dst dst)
+              (opt-type-eq
+                (ast-node-pool-reader-type-segment-bases)
+                mov-ty
+                (AstType.Bool)))
               (match mov-src
                 [(CompilerIrValue.Bool value)
                   (if (= value src)
@@ -22397,7 +22980,10 @@
       (+
         (match instr
           [(CompilerIrInstr.StorePtr _ value ty)
-            (if (opt-type-eq ty (AstType.I64))
+            (if (opt-type-eq
+              (ast-node-pool-reader-type-segment-bases)
+              ty
+              (AstType.I64))
               (match value
                 [(CompilerIrValue.I64 actual)
                   (if (= actual want)
@@ -22516,6 +23102,8 @@
       (opt-dead-store-run-with-array-param (opt-dead-store-call-blocked-instrs))]
     [pipeline : CompilerIrBlock
       (optimize-block
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-ir-block
           (compiler-ir-label "entry")
           (opt-dead-store-overwritten-instrs)))]
@@ -23266,11 +23854,29 @@
     [key1 : OptLoadKey
       (OptLoadKey.Raw (CompilerIrValue.Var 1) (AstType.I64) false)]
     [table1 : OptLoadTable
-      (opt-load-table-bind (OptLoadTable.Nil) 1 key0 (CompilerIrValue.Var 10) 0)]
+      (opt-load-table-bind
+        (ast-node-pool-reader-type-segment-bases)
+        (OptLoadTable.Nil)
+        1
+        key0
+        (CompilerIrValue.Var 10)
+        0)]
     [table2 : OptLoadTable
-      (opt-load-table-bind table1 1 key1 (CompilerIrValue.Var 11) 0)]
+      (opt-load-table-bind
+        (ast-node-pool-reader-type-segment-bases)
+        table1
+        1
+        key1
+        (CompilerIrValue.Var 11)
+        0)]
     [table-updated : OptLoadTable
-      (opt-load-table-bind table2 1 key0 (CompilerIrValue.Var 12) 0)]
+      (opt-load-table-bind
+        (ast-node-pool-reader-type-segment-bases)
+        table2
+        1
+        key0
+        (CompilerIrValue.Var 12)
+        0)]
     [kinds1 : OptLoadPtrKinds
       (opt-load-kinds-bind
         (opt-load-kinds-empty-with-cap 1)
@@ -23294,10 +23900,16 @@
           (* opt-load-cse-cap-hard-max (* opt-load-cse-cap-scale-divisor 2)))
         opt-load-cse-cap-hard-max)
       (= (opt-load-table-len table2) 1)
-      (match (opt-load-table-lookup table2 key1)
+      (match (opt-load-table-lookup
+        (ast-node-pool-reader-type-segment-bases)
+        table2
+        key1)
         [(CompilerIrMaybeValue.No) true]
         [_ false])
-      (match (opt-load-table-lookup table-updated key0)
+      (match (opt-load-table-lookup
+        (ast-node-pool-reader-type-segment-bases)
+        table-updated
+        key0)
         [(CompilerIrMaybeValue.Some value)
           (match value
             [(CompilerIrValue.Var id) (= id 12)]
@@ -23491,6 +24103,7 @@
     [summary-clean : i64 (opt-test-symbol "call_memory_clean")]
     [call-summaries : opt_i64_i64_map.Map
       (opt-call-memory-build
+        (ast-node-pool-reader-type-segment-bases)
         (opt-call-memory-test-functions
           summary-wrapper
           summary-leaf
@@ -23645,6 +24258,8 @@
       (opt-load-cse-run (opt-load-cse-vector-data-pointer-instrs))]
     [pipeline : CompilerIrBlock
       (optimize-block
+        (ast-node-pool-reader-context-current)
+        (ast-node-pool-reader-type-segment-bases)
         (compiler-ir-block
           (compiler-ir-label "entry")
           (opt-load-cse-positive-instrs)))]

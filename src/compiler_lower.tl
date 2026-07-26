@@ -16421,15 +16421,20 @@
     [else (lower-var-id state env name-id ty)]))
 
 (define (lower-lambda-captures-env?
+  [expr-bases : i64]
   [outer-env : sym_i64_env.SymI64Env]
   [body : AstExpr]
   [bound : TcStringList]) : bool
   (match outer-env
     [(sym_i64_env.SymI64Nil) false]
     [(sym_i64_env.SymI64Bind name-id _ rest)
-      (if (tc-expr-uses-free-name? body (tc-env-key-name-text name-id) bound)
+      (if (tc-expr-uses-free-name?
+        expr-bases
+        body
+        (tc-env-key-name-text name-id)
+        bound)
         true
-        (lower-lambda-captures-env? (box-get rest) body bound))]))
+        (lower-lambda-captures-env? expr-bases (box-get rest) body bound))]))
 
 (define (lower-lambda-ret-type
   [ctx : TcContext]
@@ -17116,6 +17121,7 @@
 
 (define (lower-capture-plan-scan
   [ctx : TcContext]
+  [expr-bases : i64]
   [outer-env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [body : AstExpr]
@@ -17132,9 +17138,10 @@
         [name : String (tc-env-key-name-text name-id)]
         (if (or
           (lower-capture-list-contains-name? captures name-id)
-          (not (tc-expr-uses-free-name? body name bound)))
+          (not (tc-expr-uses-free-name? expr-bases body name bound)))
           (lower-capture-plan-scan
             ctx
+            expr-bases
             (box-get rest)
             type-env
             body
@@ -17163,6 +17170,7 @@
                         (lower-type-size ctx slot-ty))]
                     (lower-capture-plan-scan
                       ctx
+                      expr-bases
                       (box-get rest)
                       type-env
                       body
@@ -17187,6 +17195,7 @@
   [origin : AstExpr]) : ResultLowerCapturePlan
   (lower-capture-plan-scan
     ctx
+    (tc-context-expr-bases ctx)
     outer-env
     type-env
     body
@@ -17570,7 +17579,11 @@
   [body : AstExpr]
   [origin : AstExpr]
   [expr-ty : AstType]) : ResultLowerExpr
-  (if (lower-lambda-captures-env? env body (tc-param-bound-names params))
+  (if (lower-lambda-captures-env?
+    (tc-context-expr-bases ctx)
+    env
+    body
+    (tc-param-bound-names params))
     (lower-lambda-capturing
       ctx
       state
@@ -21643,7 +21656,10 @@
     [(AstMaybeType.Some ty)
       (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstMaybeType.No)
-      (if (tc-ref-capturing-lambda-init? type-env init)
+      (if (tc-ref-capturing-lambda-init?
+        (tc-context-expr-bases ctx)
+        type-env
+        init)
         (match (ast-expr-unspan init)
           [(AstExpr.Lambda lambda-box)
             (match (box-get lambda-box)
@@ -32892,7 +32908,10 @@
   [init : AstExpr]) : ResultLowerExpr
   (match maybe-ty
     [(AstMaybeType.Some ty)
-      (if (tc-ref-capturing-lambda-init? type-env init)
+      (if (tc-ref-capturing-lambda-init?
+        (tc-context-expr-bases ctx)
+        type-env
+        init)
         (match (ast-expr-unspan init)
           [(AstExpr.Lambda lambda-box)
             (match (box-get lambda-box)
@@ -32940,7 +32959,10 @@
           (tc-type-without-regions (tc-resolve-type ctx ty))
           init))]
     [(AstMaybeType.No)
-      (if (tc-ref-capturing-lambda-init? type-env init)
+      (if (tc-ref-capturing-lambda-init?
+        (tc-context-expr-bases ctx)
+        type-env
+        init)
         (match (ast-expr-unspan init)
           [(AstExpr.Lambda lambda-box)
             (match (box-get lambda-box)
@@ -46481,7 +46503,8 @@
                                                 CompilerIrValue.Unit
                                                 (AstType.Unit)))]
                                           [_
-                                            (if (ast-type-eq?
+                                            (if (ast-type-eq-with-pools?
+                                              (tc-context-pools ctx)
                                               (tc-type-without-regions body-ty)
                                               (tc-type-without-regions rest-ty))
                                               (lower-avx512-masked-match-select
@@ -46717,7 +46740,8 @@
         [(ResultLowerExpr.Ok rest-lowered)
           (match rest-lowered
             [(LowerExpr.Expr rest-state rest-value rest-ty)
-              (if (ast-type-eq?
+              (if (ast-type-eq-with-pools?
+                (tc-context-pools ctx)
                 (tc-type-without-regions body-ty)
                 (tc-type-without-regions rest-ty))
                 (lower-avx512-masked-match-select
@@ -51781,7 +51805,11 @@
         [(AstLambda.Lambda params _ body-box)
           (let
             [body : AstExpr (lower-context-expr-get ctx body-box)]
-            (tc-lambda-captures-reference? type-env params body))])]
+            (tc-lambda-captures-reference?
+              (tc-context-expr-bases ctx)
+              type-env
+              params
+              body))])]
     [_ false]))
 
 (define (lower-tail-call-self-target? [state : LowerState] [name : i64]) : bool
@@ -54552,7 +54580,9 @@
         (arena.tl_arena_set (lower-ir-arena-get)))
       (let
         [escaped : CompilerIrFunctionList
-          (compiler-ir-clone-function-list functions)]
+          (compiler-ir-clone-function-list
+            (ast-node-pool-reader-context-current)
+            functions)]
         (begin
           (set! lower-ir-arena (arena.tl_arena_current))
           (unsafe
@@ -55141,7 +55171,8 @@
     (ast-type-list-new)
     (ast-type-cons
       (tc-type-without-regions
-        (ast-type-strip-consuming-param
+        (ast-type-strip-consuming-param-with-pools
+          (tc-context-pools ctx)
           (tc-context-type-get
             ctx
             (ast-type-list-get types index (ast-type-id-fallback)))))

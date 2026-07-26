@@ -5,8 +5,9 @@
 ;; table's arena floor and pool counters stay untouched. The same session
 ;; wired to the installed state reads the live compatibility count, matching
 ;; the legacy global path exactly (refs #4705).
-(import "../compiler_load.tl")
-(import compiler_intern as ci)
+(import "../compiler_driver_smoke_tests.tl")
+(import "../compiler_typecheck.tl")
+(import "../compiler_intern.tl" as ci)
 (import stdlib.io)
 
 (define (driver-state-smoke-global-floor-mark) : i64
@@ -53,16 +54,52 @@
         (compiler-load-session-state-intern-floor-value session-a)
         (intern-pool-len)))))
 
-(define (main) : i64
+(define (driver-state-smoke-expr-token-ok?) : bool
   (let
-    [a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [active-before : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities 4 1)]
+    [installed-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities 4 1)]
+    [wanted-id : i64 (ci.intern "driver-state/wanted")]
+    [other-id : i64 (ci.intern "driver-state/other")]
+    [source-leaf : i64
+      (ast-node-pool-context-expr-push source-pools (AstExpr.Var wanted-id))]
+    [source-root : AstExpr (AstExpr.Unary (AstUnOp.Not) source-leaf)]
+    [_installed-leaf : i64
+      (ast-node-pool-context-expr-push installed-pools (AstExpr.Var other-id))]
     (begin
-      (ci.intern-compat-state-install! a)
-      (if (and
-        (driver-state-smoke-non-installed-ok? a b)
-        (driver-state-smoke-installed-ok? a))
-        0
+      (ast-node-pool-context-install! installed-pools)
+      (let
+        [installed-bases : i64
+          (ast-node-pool-context-expr-segment-bases installed-pools)]
+        [found : bool
+          (tc-expr-uses-free-name?
+            (ast-node-pool-context-expr-segment-bases source-pools)
+            source-root
+            "driver-state/wanted"
+            TcStringList.Nil)]
+        [installed-unchanged : bool
+          (= (ast-node-pool-active-expr-segment-bases) installed-bases)]
         (begin
-          (io.print-string "driver state isolation smoke failed\n")
-          1)))))
+          (ast-node-pool-context-install! active-before)
+          (and found installed-unchanged))))))
+
+(define (main) : i64
+  (if (not (= (compiler-driver-reader-context-smoke-main) 42))
+    (begin
+      (io.print-string "driver state reader-context isolation smoke failed\n")
+      1)
+    (let
+      [a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [b : ci.InternCompatState (ci.intern-compat-state-new)]
+      (begin
+        (ci.intern-compat-state-install! a)
+        (if (and
+          (driver-state-smoke-non-installed-ok? a b)
+          (driver-state-smoke-installed-ok? a)
+          (driver-state-smoke-expr-token-ok?))
+          0
+          (begin
+            (io.print-string "driver state isolation smoke failed\n")
+            1))))))

@@ -1005,7 +1005,8 @@ fi
 # archaeology that took (#5764).
 #
 # Current headroom, used against capacity, measured on a clean 739968657:
-# expr macro_expand 2697530/2752512, expr typecheck 1611601/1638400,
+# expr macro_expand 2697530/2752512. The compiler-state isolation work in
+# #5751 moved expr typecheck across its next boundary at 1639597/1703936;
 # type macro_expand 20018/20480, type typecheck 5887/6144. All four sit within a
 # few percent of their next step, so expect these to move. #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
@@ -1044,7 +1045,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 40 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 25 65536 40 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 26 65536 40 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 20 1024 24 \

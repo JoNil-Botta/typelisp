@@ -913,6 +913,7 @@
   (match target
     [(CompilerBackendTarget.Linux)
       (match (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+        (ast-node-pool-reader-context-current)
         source
         program
         spans
@@ -1014,6 +1015,7 @@
         "direct COFF object emission is only available for windows-x86_64")]
     [(CompilerBackendTarget.Windows)
       (match (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+        (ast-node-pool-reader-context-current)
         source
         program
         spans

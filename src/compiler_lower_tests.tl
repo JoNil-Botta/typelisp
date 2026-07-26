@@ -1075,6 +1075,22 @@
   (unsafe
     (ptr-write! (raw-make) (raw-value))))")
 
+(define (compiler-lower-raw-pointer-aggregate-copy-source) : String
+  "(defenum Slot
+  (Empty)
+  (Tombstone)
+  (Occupied i64 i64 i64))
+(defstruct Pair
+  (left i64)
+  (right i64))
+(define (copy-slot [dst : (MutPtr Slot)] [src : (Ptr Slot)]) : unit
+  (unsafe
+    (ptr-write! dst (ptr-read src))))
+(define (copy-pair [dst : (MutPtr Pair)] [src : (Ptr Pair)]) : unit
+  (unsafe
+    (ptr-write! dst (ptr-read src))))
+(define (main) : i64 0)")
+
 (define (compiler-lower-aggregate-source) : String
   "(defstruct Point (x i64) (y i64))
 (defenum Shape (Nothing) (Circle i64) (Pair Point))
@@ -9895,6 +9911,7 @@
   (and
     (compiler-lower-raw-pointer-addr-of-shape-ok?)
     (compiler-lower-register-addr-of-shape-ok?)
+    (compiler-lower-raw-pointer-aggregate-copy-shape-ok?)
     (compiler-lower-ok? (compiler-lower-raw-pointer-direct-call-source))
     (compiler-lower-ok? (compiler-lower-raw-pointer-call-value-source))))
 
@@ -9932,6 +9949,19 @@
             (= (lower-test-functions-call-count functions "raw-value") 1)
             (= (lower-test-function-store-ptr-count functions "main") 1)
             (> (lower-test-function-u64-mov-count functions "main") 0))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-raw-pointer-aggregate-copy-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-raw-pointer-aggregate-copy-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-copy-bytes-count functions "copy-slot") 1)
+            (= (lower-test-function-store-ptr-count functions "copy-slot") 0)
+            (= (lower-test-function-copy-bytes-count functions "copy-pair") 0)
+            (= (lower-test-function-store-ptr-count functions "copy-pair") 2))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-string-length-ok?) : bool

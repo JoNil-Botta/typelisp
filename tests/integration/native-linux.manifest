@@ -13,6 +13,7 @@ array_qualified_macros|tests/integration/array_qualified_macros.tl|42|-|-|-
 array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
 ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate_stride.tl|42|-|-|-
 ptr_addr_of_places|tests/integration/ptr_addr_of_places.tl|0|-|-|-
+ptr_aggregate_copy|tests/integration/ptr_aggregate_copy.tl|0|-|-|stdlib/array.tl
 raw_pointer_register_addr_of|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl
 mut_to_immut_reborrow_call|tests/integration/mut_to_immut_reborrow_call.tl|42|-|-|-

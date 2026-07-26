@@ -8,6 +8,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as fmt_svec)
 (import cli_option_core as cli_option)
+(import compiler_target_cfg_core as target_cfg)
 (import "format_rules.tl")
 (import "package_source_core.tl")
 
@@ -22,6 +23,9 @@
 (defenum ResultFmtWrite
   (Ok)
   (Err String))
+
+(define fmt-cli-has-target : bool
+  false)
 
 (define (fmt-write-error-message [path : String] [error : io.IoError]) : String
   (string.append
@@ -151,12 +155,43 @@
         current
         idx
         count
-        cli_option.cli-common-option-stdlib-root)
+        (bit-or
+          cli_option.cli-common-option-stdlib-root
+          (bit-or
+            cli_option.cli-common-option-cfg
+            cli_option.cli-common-option-target)))
         [(cli_option.CliCommonOption.Missing kind)
           (ResultFmtConfig.Err
             (cli_option.cli-common-option-missing-message "fmt" kind))]
-        [(cli_option.CliCommonOption.Value _ _ next-idx)
-          (fmt-parse-args next-idx count check paths manifest-path has-manifest)]
+        [(cli_option.CliCommonOption.Value kind value next-idx)
+          (match kind
+            [(cli_option.CliCommonOptionKind.Target)
+              (if fmt-cli-has-target
+                (ResultFmtConfig.Err
+                  "fmt: --target was provided more than once")
+                (match (target_cfg.compiler-target-cfg-parse value)
+                  [(target_cfg.ResultCompilerTargetCfg.Ok _)
+                    (begin
+                      (set! fmt-cli-has-target true)
+                      (fmt-parse-args
+                        next-idx
+                        count
+                        check
+                        paths
+                        manifest-path
+                        has-manifest))]
+                  [(target_cfg.ResultCompilerTargetCfg.Err message)
+                    (ResultFmtConfig.Err (string.append "fmt: " message))]))]
+            [_
+              ;; Formatting is CST-based and intentionally retains every cfg
+              ;; branch; these options are accepted for source-tool CLI parity.
+              (fmt-parse-args
+                next-idx
+                count
+                check
+                paths
+                manifest-path
+                has-manifest)])]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
             [(string.eq current "--check")
@@ -193,7 +228,9 @@
                   has-manifest))])]))))
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
-  (fmt-parse-args start count false (fmt_svec.new) "" false))
+  (begin
+    (set! fmt-cli-has-target false)
+    (fmt-parse-args start count false (fmt_svec.new) "" false)))
 
 ;; --- unified diff for --check -----------------------------------------------
 ;;

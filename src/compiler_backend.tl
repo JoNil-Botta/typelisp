@@ -358,9 +358,53 @@
   (last-reg i64)
   (zext-dst i64))
 
-(defstruct CompilerBackendPeepholeEmitResult
-  (:lifetimes asm)
-  (buf (text_buf_borrowed.TextBufBorrowed asm))
+;; Per-line GAP5 extraction result. Every offset is the RAW in-text frame
+;; displacement (delta 0); the sweep subtracts its running rsp delta.
+(defstruct CompilerBackendPeepholeLineSweepSummary
+  (kind i64)
+  (flags i64)
+  (cand i64)
+  (epilogue i64)
+  (rsp-imm i64)
+  (mem-count i64)
+  (mem-off i64)
+  (width i64))
+
+;; One emitted line, compacted to 56 bytes for the dense array below. The fat
+;; CompilerBackendPeepholeLine stays the TRANSIENT streaming descriptor; this is
+;; what survives the emit step, carrying exactly what the three post-push
+;; consumers read (sweep driver, sweep region, final render) and nothing else.
+;;  * `src`    the owned synthesized text, or the group asm for borrowed lines.
+;;             Uniform so `data` is always (string-data src) and never stored.
+;;  * `span`   start | end << 32 (a group string is far below 2^31 bytes).
+;;  * `meta`   kind / sweep flags / newline / owned / `.globl` / access width /
+;;             memory-reference count -- see the accessors beside the builder.
+;;  * `cand`     raw `movq SRC, N(%rsp)` offset, or the no-candidate sentinel.
+;;  * `epilogue` raw `leaq N(%rsp), %rsp` offset, or the no-candidate sentinel.
+;;  * `value`  the tracked rsp `$imm` when the line is a tracked rsp write, else
+;;             the first `(%rsp)` displacement. The two are mutually exclusive:
+;;             a tracked write has `$` immediately after its mnemonic, so it has
+;;             no memory operand at all.
+(defstruct CompilerBackendPeepholeLineRecord
+  (src String)
+  (span i64)
+  (meta i64)
+  (cand i64)
+  (epilogue i64)
+  (value i64))
+
+;; Dense arena-backed line-record array produced by the streaming peephole and
+;; consumed by the dead-store sweep and the single final render. `live` is the
+;; parallel deletion mask (1 = emit, 0 = swept); marking is O(1), the arrays are
+;; never rebuilt, and deadness stays OUT of the packed word because array-set!
+;; rewrites a whole element.
+(defstruct CompilerBackendPeepholeLineVec
+  (lines (Array CompilerBackendPeepholeLineRecord))
+  (live (Array i64))
+  (len i64))
+
+(defstruct CompilerBackendPeepholeEmitRecordResult
+  (lines CompilerBackendPeepholeLineVec)
   (owners CompilerBackendPeepholeOwners))
 
 ;; One raw-assembly group plus already-optimized output chunks. A group ends at
@@ -373,10 +417,6 @@
 ;; State carried while sweeping chunked peephole output. Metadata is recorded
 ;; in function emission order, so the next entry is the only candidate to
 ;; match in each following assembly group.
-(defstruct CompilerBackendDeadstoreSweepChunkResult
-  (buf text_buf.TextBuf)
-  (cursor i64))
-
 (defstruct CompilerBackendPeepholeSweepChunkState
   (out text_buf.TextBuf)
   (group text_buf.TextBuf)
@@ -45698,6 +45738,59 @@
 (define compiler-backend-sweep-no-candidate : i64
   -4611686018427387904)
 
+;; Per-line sweep classes stored on the record (`sweep-kind`).
+;;  * Skip: blank lines, `.`-directives and `#` comments -- invisible to the
+;;    scan, exactly like the byte walk's `unit` arms.
+;;  * Label: resets the running rsp delta to 0 (or ends a Win64 tail).
+;;  * Instruction: everything else; `sweep-flags` and the offset fields below
+;;    describe it.
+(define compiler-backend-sweep-line-kind-skip : i64
+  0)
+(define compiler-backend-sweep-line-kind-label : i64
+  1)
+(define compiler-backend-sweep-line-kind-instruction : i64
+  2)
+
+;; Packed delta-independent predicates for one instruction line (`sweep-flags`).
+;; `win64-rbp-set` is the SHAPE only (`movq %rsp, %rbp`); the Win64 gate is
+;; applied by the sweep, which alone knows the function's record.
+(define compiler-backend-sweep-line-flag-push : i64
+  1)
+(define compiler-backend-sweep-line-flag-pop : i64
+  2)
+(define compiler-backend-sweep-line-flag-leaq : i64
+  4)
+(define compiler-backend-sweep-line-flag-leave : i64
+  8)
+(define compiler-backend-sweep-line-flag-ret : i64
+  16)
+(define compiler-backend-sweep-line-flag-jmp : i64
+  32)
+(define compiler-backend-sweep-line-flag-subq : i64
+  64)
+(define compiler-backend-sweep-line-flag-rsp-dst : i64
+  128)
+(define compiler-backend-sweep-line-flag-tracked-rsp-write : i64
+  256)
+(define compiler-backend-sweep-line-flag-win64-rbp-set : i64
+  512)
+
+;; An indexed / truncated `(%rsp` reference, or a `popq` whose operand
+;; addresses the frame: both disable the whole function unconditionally.
+(define compiler-backend-sweep-line-flag-fatal-mem : i64
+  1024)
+
+;; Bare `%rsp` occurrences, split by whether they sit at the line's final
+;; operand position (`, %rsp`), which is the only position the tracked
+;; subq/addq and Win64 epilogue shapes may write.
+(define compiler-backend-sweep-line-flag-bare-rsp : i64
+  2048)
+(define compiler-backend-sweep-line-flag-bare-rsp-tail : i64
+  4096)
+
+(define (compiler-backend-sweep-line-flag? [flags : i64] [flag : i64]) : bool
+  (not (= (bit-and flags flag) 0)))
+
 (define (compiler-backend-sweep-reset!) : unit
   (begin
     (set! compiler-backend-sweep-count 0)
@@ -45909,35 +46002,23 @@
                 (set! j (+ j 1))))
             ok))))))
 
-;; First line at/after `start` whose trimmed content begins ".globl" (the next
-;; function/helper boundary); returns that line's START, or `n`.
-(define (compiler-backend-sweep-region-end
-  [data : (Ptr u8)]
+;; First record at/after `start` whose trimmed content begins ".globl" (the next
+;; function/helper boundary); returns that record's index, or `count`. The probe
+;; is a packed bit decided once, when the record was built.
+(define (compiler-backend-sweep-region-end-records
+  [recs : (Array CompilerBackendPeepholeLineRecord)]
   [start : i64]
-  [n : i64]) : i64
+  [count : i64]) : i64
   (let
     [i : i64 start]
     (begin
-      (while (< i n)
-        (let
-          [end : i64 (compiler-backend-peephole-line-end data i n)]
-          [m : i64 i]
-          (begin
-            (while (and
-              (< m end)
-              (= (compiler-backend-peephole-byte-at data m) 32))
-              (set! m (+ m 1)))
-            (when
-              (and
-                (<= (+ m 6) end)
-                (compiler-backend-peephole-range-eq? data m (+ m 6) ".globl"))
-              (return i))
-            (set!
-              i
-              (if (< end n)
-                (+ end 1)
-                end)))))
-      n)))
+      (while (< i count)
+        (begin
+          (when
+            (compiler-backend-peephole-record-globl? (array-ref recs i))
+            (return i))
+          (set! i (+ i 1))))
+      count)))
 
 ;; Conservative byte width of the memory access on line [m,end): 16/32/64 when
 ;; a %xmm/%ymm/%zmm operand appears, 64 for unmatched vector/mask mnemonics
@@ -46135,12 +46216,305 @@
                         (compiler-backend-rsp-rebase-parse-int data ks de)
                         delta))))))))))))
 
-;; Sweep one function region [rstart,rend): collect reads/candidates/poison
-;; state in pass 1, then append the region with dead candidate stores dropped.
-(define (compiler-backend-sweep-region
-  [out : (text_buf_borrowed.TextBufBorrowed asm)]
-  [asm : String]
+;; True iff the "%rsp" at `q` on line [m,end) opens a MEMORY base reference,
+;; i.e. it is preceded by '('. Whether that reference is CLOSED by ')' is asked
+;; separately (below), because an unclosed one is the indexed/truncated form
+;; that disables the function rather than a readable frame reference.
+(define (compiler-backend-sweep-rsp-ref-memory-base?
   [data : (Ptr u8)]
+  [m : i64]
+  [q : i64]) : bool
+  (and (> q m) (= (compiler-backend-peephole-byte-at data (- q 1)) 40)))
+
+(define (compiler-backend-sweep-rsp-ref-closed?
+  [data : (Ptr u8)]
+  [q : i64]
+  [end : i64]) : bool
+  (and (< (+ q 4) end) (= (compiler-backend-peephole-byte-at data (+ q 4)) 41)))
+
+;; Raw frame displacement of the `N(%rsp)` reference that starts at `q`.
+;; A missing/indexed decimal reads as 0, exactly like the byte walk.
+(define (compiler-backend-sweep-rsp-ref-offset
+  [data : (Ptr u8)]
+  [m : i64]
+  [q : i64]) : i64
+  (let
+    [ks : i64 (compiler-backend-rsp-rebase-int-start data m (- q 1))]
+    (if (< ks 0)
+      0
+      (compiler-backend-rsp-rebase-parse-int data ks (- q 1)))))
+
+;; Raw displacement of the k-th closed `N(%rsp)` memory reference on line
+;; [m,end). The record caches k = 0; x86 encodes at most one memory operand
+;; per instruction, so this walk only ever serves a hand-written or future
+;; multi-reference line (k >= 1) and keeps that case exact instead of
+;; approximating it.
+(define (compiler-backend-sweep-line-mem-off-nth
+  [data : (Ptr u8)]
+  [m : i64]
+  [end : i64]
+  [k : i64]) : i64
+  (let
+    [seen : i64 0]
+    [q : i64 m]
+    (begin
+      (while (<= (+ q 4) end)
+        (let
+          [pct : i64 (compiler-backend-sweep-next-percent data q end)]
+          (begin
+            (if (< pct 0)
+              (set! q end)
+              (set! q pct))
+            (if (and
+              (>= pct 0)
+              (= (compiler-backend-peephole-byte-at data (+ q 1)) 114)
+              (= (compiler-backend-peephole-byte-at data (+ q 2)) 115)
+              (= (compiler-backend-peephole-byte-at data (+ q 3)) 112))
+              (begin
+                (when
+                  (and
+                    (compiler-backend-sweep-rsp-ref-memory-base? data m q)
+                    (compiler-backend-sweep-rsp-ref-closed? data q end))
+                  (begin
+                    (when
+                      (= seen k)
+                      (return (compiler-backend-sweep-rsp-ref-offset data m q)))
+                    (set! seen (+ seen 1))))
+                (set! q (+ q 4)))
+              (set! q (+ q 1))))))
+      0)))
+
+;; Classify one line for the GAP5 sweep. This is the ONE per-line byte
+;; inspection of the group stage: it runs when the record is built (in
+;; parse-line, so peephole-synthesized lines are summarized from their own
+;; rewritten text) and the sweep then reads only the packed result.
+;;
+;; Everything stored here is delta-INDEPENDENT: candidate/epilogue/memory
+;; offsets are the raw in-text displacements, and the two Win64-gated
+;; predicates keep their shape bit so the sweep can apply the per-function
+;; record. The `%rsp` occurrence walk is skipped for verified candidate stores,
+;; exactly like the byte walk it replaces.
+(define (compiler-backend-peephole-line-sweep-summary
+  [data : (Ptr u8)]
+  [end : i64]
+  [ms : i64]
+  [mlen : i64]
+  [is-label : bool]) : CompilerBackendPeepholeLineSweepSummary
+  (let
+    [none : i64 compiler-backend-sweep-no-candidate]
+    [skip : CompilerBackendPeepholeLineSweepSummary
+      (CompilerBackendPeepholeLineSweepSummary
+        compiler-backend-sweep-line-kind-skip
+        0
+        none
+        none
+        0
+        0
+        0
+        8)]
+    ;; lint-allow: nested-if-ladder
+    (if (>= ms end)
+      skip
+      (if is-label
+        (CompilerBackendPeepholeLineSweepSummary
+          compiler-backend-sweep-line-kind-label
+          0
+          none
+          none
+          0
+          0
+          0
+          8)
+        (let
+          [b0 : i64 (compiler-backend-peephole-byte-at data ms)]
+          (if (or (= b0 46) (= b0 35))
+            skip
+            (let
+              [te : i64 (+ ms mlen)]
+              [mnemonic-kind : i64
+                (compiler-backend-control-mnemonic-kind data ms mlen)]
+              [pop? : bool
+                (= mnemonic-kind compiler-backend-control-mnemonic-pop)]
+              [leaq? : bool
+                (= mnemonic-kind compiler-backend-control-mnemonic-leaq)]
+              [subq? : bool
+                (= mnemonic-kind compiler-backend-control-mnemonic-subq)]
+              [addq? : bool
+                (= mnemonic-kind compiler-backend-control-mnemonic-addq)]
+              [rsp-dst? : bool
+                (and
+                  (>= (- end ms) 6)
+                  (compiler-backend-peephole-range-eq?
+                    data
+                    (- end 6)
+                    end
+                    ", %rsp"))]
+              [imm? : bool
+                (and
+                  (< (+ te 1) end)
+                  (= (compiler-backend-peephole-byte-at data (+ te 1)) 36))]
+              [tracked-rsp-write? : bool (and rsp-dst? (or subq? addq?) imm?)]
+              [cand : i64
+                (compiler-backend-sweep-candidate-c
+                  data
+                  ms
+                  te
+                  end
+                  mnemonic-kind
+                  0)]
+              [flags : i64
+                (+
+                  (+
+                    (+
+                      (if (=
+                        mnemonic-kind
+                        compiler-backend-control-mnemonic-push)
+                        compiler-backend-sweep-line-flag-push
+                        0)
+                      (+
+                        (if pop?
+                          compiler-backend-sweep-line-flag-pop
+                          0)
+                        (if leaq?
+                          compiler-backend-sweep-line-flag-leaq
+                          0)))
+                    (+
+                      (+
+                        (if (=
+                          mnemonic-kind
+                          compiler-backend-control-mnemonic-leave)
+                          compiler-backend-sweep-line-flag-leave
+                          0)
+                        (if (=
+                          mnemonic-kind
+                          compiler-backend-control-mnemonic-ret)
+                          compiler-backend-sweep-line-flag-ret
+                          0))
+                      (+
+                        (if (=
+                          mnemonic-kind
+                          compiler-backend-control-mnemonic-jmp)
+                          compiler-backend-sweep-line-flag-jmp
+                          0)
+                        (if subq?
+                          compiler-backend-sweep-line-flag-subq
+                          0))))
+                  (+
+                    (+
+                      (if rsp-dst?
+                        compiler-backend-sweep-line-flag-rsp-dst
+                        0)
+                      (if tracked-rsp-write?
+                        compiler-backend-sweep-line-flag-tracked-rsp-write
+                        0))
+                    (if (compiler-backend-peephole-range-eq?
+                      data
+                      ms
+                      end
+                      "movq %rsp, %rbp")
+                      compiler-backend-sweep-line-flag-win64-rbp-set
+                      0)))]
+              [walk-flags : i64 0]
+              [mem-count : i64 0]
+              [mem-off : i64 0]
+              [q : i64 ms]
+              (begin
+                ;; A verified pure store has no other rsp effect, so the byte
+                ;; walk is skipped for it -- as in the pass it replaces.
+                (when
+                  (= cand none)
+                  (while (<= (+ q 4) end)
+                    (let
+                      [pct : i64
+                        (compiler-backend-sweep-next-percent data q end)]
+                      (begin
+                        (if (< pct 0)
+                          (set! q end)
+                          (set! q pct))
+                        (if (and
+                          (>= pct 0)
+                          (=
+                            (compiler-backend-peephole-byte-at data (+ q 1))
+                            114)
+                          (=
+                            (compiler-backend-peephole-byte-at data (+ q 2))
+                            115)
+                          (=
+                            (compiler-backend-peephole-byte-at data (+ q 3))
+                            112))
+                          (begin
+                            (if (compiler-backend-sweep-rsp-ref-memory-base?
+                              data
+                              ms
+                              q)
+                              ;; lint-allow: nested-if-ladder
+                              (if (not
+                                (compiler-backend-sweep-rsp-ref-closed?
+                                  data
+                                  q
+                                  end))
+                                (set!
+                                  walk-flags
+                                  (bit-or
+                                    walk-flags
+                                    compiler-backend-sweep-line-flag-fatal-mem))
+                                (if pop?
+                                  ;; popq MEM addresses AFTER the bump
+                                  (set!
+                                    walk-flags
+                                    (bit-or
+                                      walk-flags
+                                      compiler-backend-sweep-line-flag-fatal-mem))
+                                  (begin
+                                    (when
+                                      (= mem-count 0)
+                                      (set!
+                                        mem-off
+                                        (compiler-backend-sweep-rsp-ref-offset
+                                          data
+                                          ms
+                                          q)))
+                                    (set! mem-count (+ mem-count 1)))))
+                              (set!
+                                walk-flags
+                                (bit-or
+                                  walk-flags
+                                  (if (= q (- end 4))
+                                    compiler-backend-sweep-line-flag-bare-rsp-tail
+                                    compiler-backend-sweep-line-flag-bare-rsp))))
+                            (set! q (+ q 4)))
+                          (set! q (+ q 1)))))))
+                (CompilerBackendPeepholeLineSweepSummary
+                  compiler-backend-sweep-line-kind-instruction
+                  (bit-or flags walk-flags)
+                  cand
+                  (compiler-backend-sweep-rsp-leaq-to-rsp-c
+                    data
+                    ms
+                    te
+                    end
+                    mnemonic-kind
+                    0)
+                  (if tracked-rsp-write?
+                    (compiler-backend-rsp-rebase-parse-int
+                      data
+                      (+ te 2)
+                      (- end 6))
+                    0)
+                  mem-count
+                  mem-off
+                  (if (and (> mem-count 0) (not leaq?))
+                    (compiler-backend-sweep-line-width data ms end)
+                    8))))))))))
+
+;; Sweep one function region [rstart,rend) of the record array: collect
+;; reads/candidates/poison state in pass 1, then mark every dead candidate
+;; store's record deleted. The line bytes are never re-read -- the per-record
+;; summary already carries everything the byte walk derived, with the
+;; delta-dependent offsets kept raw and rebased here.
+(define (compiler-backend-sweep-region-records!
+  [recs : (Array CompilerBackendPeepholeLineRecord)]
+  [live : (Array i64)]
   [rstart : i64]
   [rend : i64]
   [lo : i64]
@@ -46148,9 +46522,8 @@
   [disp : i64]
   [em-lo : i64]
   [em-hi : i64]
-  [win64 : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
+  [win64 : bool]) : unit
   (let
-    [buf : (text_buf_borrowed.TextBufBorrowed asm) out]
     [delta : i64 (- 0 disp)]
     [sweepable : bool true]
     [win64-tail : bool false]
@@ -46167,292 +46540,200 @@
       ;; ---- pass 1 ----
       (while (and sweepable (< i rend))
         (let
-          [end : i64 (compiler-backend-peephole-line-end data i rend)]
-          [m : i64 i]
+          [line : CompilerBackendPeepholeLineRecord (array-ref recs i)]
+          [kind : i64 (compiler-backend-peephole-record-kind line)]
           (begin
-            (while (and
-              (< m end)
-              (= (compiler-backend-peephole-byte-at data m) 32))
-              (set! m (+ m 1)))
-            (if (>= m end)
-              unit
-              (if (= (compiler-backend-peephole-byte-at data (- end 1)) 58)
+            (cond
+              [(= kind compiler-backend-sweep-line-kind-skip) unit]
+              [(= kind compiler-backend-sweep-line-kind-label)
                 ;; label: only reachable at delta 0 (the audit proved it).
                 (if win64-tail
                   (set! sweepable false)
-                  (set! delta 0))
+                  (set! delta 0))]
+              [else
                 (let
-                  [b0 : i64 (compiler-backend-peephole-byte-at data m)]
-                  (if (or (= b0 46) (= b0 35))
-                    unit
-                    (let
-                      [tok : i64
-                        (compiler-backend-peephole-token-len data m end)]
-                      [te : i64 (+ m tok)]
-                      [mnemonic-kind : i64
-                        (compiler-backend-control-mnemonic-kind data m tok)]
-                      [push? : bool
-                        (= mnemonic-kind compiler-backend-control-mnemonic-push)]
-                      [pop? : bool
-                        (= mnemonic-kind compiler-backend-control-mnemonic-pop)]
-                      [leaq? : bool
-                        (= mnemonic-kind compiler-backend-control-mnemonic-leaq)]
-                      [leave? : bool
-                        (=
-                          mnemonic-kind
-                          compiler-backend-control-mnemonic-leave)]
-                      [ret? : bool
-                        (= mnemonic-kind compiler-backend-control-mnemonic-ret)]
-                      [jmp? : bool
-                        (= mnemonic-kind compiler-backend-control-mnemonic-jmp)]
-                      [subq? : bool
-                        (= mnemonic-kind compiler-backend-control-mnemonic-subq)]
-                      [addq? : bool
-                        (= mnemonic-kind compiler-backend-control-mnemonic-addq)]
-                      [rsp-dst? : bool
-                        (and
-                          (>= (- end m) 6)
-                          (compiler-backend-peephole-range-eq?
-                            data
-                            (- end 6)
-                            end
-                            ", %rsp"))]
-                      [imm? : bool
-                        (and
-                          (< (+ te 1) end)
-                          (=
-                            (compiler-backend-peephole-byte-at data (+ te 1))
-                            36))]
-                      [tracked-rsp-write? : bool
-                        (and rsp-dst? (or subq? addq?) imm?)]
-                      [win64-rbp-set? : bool
-                        (and
-                          win64
-                          (compiler-backend-peephole-range-eq?
-                            data
-                            m
-                            end
-                            "movq %rsp, %rbp"))]
-                      [win64-epilogue-c : i64
-                        (if win64
-                          (compiler-backend-sweep-rsp-leaq-to-rsp-c
-                            data
-                            m
-                            te
-                            end
-                            mnemonic-kind
-                            delta)
-                          none)]
-                      [win64-epilogue-leaq? : bool
-                        (and
-                          win64
-                          (not (= win64-epilogue-c none))
-                          (< win64-epilogue-c lo))]
-                      [win64-tail-ok? : bool (or pop? leave? ret? jmp?)]
-                      [cand : i64
-                        (compiler-backend-sweep-candidate-c
-                          data
-                          m
-                          te
-                          end
-                          mnemonic-kind
-                          delta)]
+                  [flags : i64 (compiler-backend-peephole-record-flags line)]
+                  [push? : bool
+                    (compiler-backend-sweep-line-flag?
+                      flags
+                      compiler-backend-sweep-line-flag-push)]
+                  [pop? : bool
+                    (compiler-backend-sweep-line-flag?
+                      flags
+                      compiler-backend-sweep-line-flag-pop)]
+                  [leaq? : bool
+                    (compiler-backend-sweep-line-flag?
+                      flags
+                      compiler-backend-sweep-line-flag-leaq)]
+                  [leave? : bool
+                    (compiler-backend-sweep-line-flag?
+                      flags
+                      compiler-backend-sweep-line-flag-leave)]
+                  [subq? : bool
+                    (compiler-backend-sweep-line-flag?
+                      flags
+                      compiler-backend-sweep-line-flag-subq)]
+                  [rsp-dst? : bool
+                    (compiler-backend-sweep-line-flag?
+                      flags
+                      compiler-backend-sweep-line-flag-rsp-dst)]
+                  [tracked-rsp-write? : bool
+                    (compiler-backend-sweep-line-flag?
+                      flags
+                      compiler-backend-sweep-line-flag-tracked-rsp-write)]
+                  [win64-rbp-set? : bool
+                    (and
+                      win64
+                      (compiler-backend-sweep-line-flag?
+                        flags
+                        compiler-backend-sweep-line-flag-win64-rbp-set))]
+                  [epilogue-raw : i64 (struct-get line epilogue)]
+                  [win64-epilogue-c : i64
+                    (if (or (not win64) (= epilogue-raw none))
+                      none
+                      (- epilogue-raw delta))]
+                  [win64-epilogue-leaq? : bool
+                    (and
+                      (not (= win64-epilogue-c none))
+                      (< win64-epilogue-c lo))]
+                  [win64-tail-ok? : bool
+                    (or
+                      pop?
+                      leave?
+                      (compiler-backend-sweep-line-flag?
+                        flags
+                        compiler-backend-sweep-line-flag-ret)
+                      (compiler-backend-sweep-line-flag?
+                        flags
+                        compiler-backend-sweep-line-flag-jmp))]
+                  [cand-raw : i64 (struct-get line cand)]
+                  [cand : i64
+                    (if (= cand-raw none)
+                      none
+                      (- cand-raw delta))]
+                  (begin
+                    (if (and win64-tail (not win64-tail-ok?))
+                      (set! sweepable false)
+                      unit)
+                    (if (and leave? (not win64))
+                      (set! sweepable false)
+                      unit)
+                    (if (not (= cand none))
+                      ;; verified pure store: record; no other rsp effect.
                       (begin
-                        (if (and win64-tail (not win64-tail-ok?))
-                          (set! sweepable false)
-                          unit)
-                        (if (and leave? (not win64))
-                          (set! sweepable false)
-                          unit)
-                        (if (not (= cand none))
-                          ;; verified pure store: record; no other rsp effect.
-                          (begin
-                            (set!
-                              cand-pos
-                              (compiler-backend-sweep-i64-push
-                                cand-pos
-                                cand-count
-                                i))
-                            (set!
-                              cand-off
-                              (compiler-backend-sweep-i64-push
-                                cand-off
-                                cand-count
-                                cand))
-                            (set! cand-count (+ cand-count 1)))
-                          ;; general line: classify every %rsp occurrence.
-                          (let
-                            ;; Width is only consumed when a non-leaq %rsp
-                            ;; memory read is recorded below; most lines have
-                            ;; no such read, so the '%'-jumping width walk is
-                            ;; deferred to the first recording use.
-                            [w : i64 -1]
-                            [q : i64 m]
-                            (begin
-                              ;; Jump between '%' bytes; positions without one
-                              ;; cannot start a "%rsp" reference, so the
-                              ;; classified occurrences and their order match
-                              ;; the byte-stepping walk this replaces.
-                              (while (<= (+ q 4) end)
-                                (let
-                                  [pct : i64
-                                    (compiler-backend-sweep-next-percent
-                                      data
-                                      q
-                                      end)]
+                        (set!
+                          cand-pos
+                          (compiler-backend-sweep-i64-push
+                            cand-pos
+                            cand-count
+                            i))
+                        (set!
+                          cand-off
+                          (compiler-backend-sweep-i64-push
+                            cand-off
+                            cand-count
+                            cand))
+                        (set! cand-count (+ cand-count 1)))
+                      ;; general line: replay the recorded %rsp classification.
+                      (let
+                        [mem-count : i64
+                          (compiler-backend-peephole-record-mem-count line)]
+                        [w : i64 (compiler-backend-peephole-record-width line)]
+                        [k : i64 0]
+                        (begin
+                          ;; "(%rsp," indexed / truncated, or popq MEM
+                          ;; (which addresses AFTER the bump).
+                          (when
+                            (compiler-backend-sweep-line-flag?
+                              flags
+                              compiler-backend-sweep-line-flag-fatal-mem)
+                            (set! sweepable false))
+                          ;; bare %rsp: only the tracked subq/addq $imm dst and
+                          ;; proven Win64 prologue/epilogue shapes are allowed.
+                          (when
+                            (and
+                              (compiler-backend-sweep-line-flag?
+                                flags
+                                compiler-backend-sweep-line-flag-bare-rsp)
+                              (not win64-rbp-set?))
+                            (set! sweepable false))
+                          (when
+                            (and
+                              (compiler-backend-sweep-line-flag?
+                                flags
+                                compiler-backend-sweep-line-flag-bare-rsp-tail)
+                              (not win64-rbp-set?)
+                              (not win64-epilogue-leaq?)
+                              (not tracked-rsp-write?))
+                            (set! sweepable false))
+                          (while (< k mem-count)
+                            (let
+                              [c : i64
+                                (-
+                                  (if (= k 0)
+                                    (struct-get line value)
+                                    (compiler-backend-sweep-line-mem-off-nth
+                                      (compiler-backend-peephole-record-data
+                                        line)
+                                      (compiler-backend-peephole-record-mnemonic-start
+                                        line)
+                                      (compiler-backend-peephole-record-end
+                                        line)
+                                      k))
+                                  delta)]
+                              (begin
+                                (if leaq?
+                                  ;; address taken: poison upward
+                                  (if win64-epilogue-leaq?
+                                    unit
+                                    (if (< c watermark)
+                                      (set! watermark c)
+                                      unit))
                                   (begin
-                                    (if (< pct 0)
-                                      (set! q end)
-                                      (set! q pct))
-                                    (if (and
-                                      (>= pct 0)
-                                      (=
-                                        (compiler-backend-peephole-byte-at
-                                          data
-                                          (+ q 1))
-                                        114)
-                                      (=
-                                        (compiler-backend-peephole-byte-at
-                                          data
-                                          (+ q 2))
-                                        115)
-                                      (=
-                                        (compiler-backend-peephole-byte-at
-                                          data
-                                          (+ q 3))
-                                        112))
-                                      (begin
-                                        (if (and
-                                          (> q m)
-                                          (=
-                                            (compiler-backend-peephole-byte-at
-                                              data
-                                              (- q 1))
-                                            40))
-                                          ;; memory base "(%rsp"
-                                          (if (or
-                                            (>= (+ q 4) end)
-                                            (not
-                                              (=
-                                                (compiler-backend-peephole-byte-at
-                                                  data
-                                                  (+ q 4))
-                                                41)))
-                                            ;; "(%rsp," indexed / truncated
-                                            (set! sweepable false)
-                                            (if pop?
-                                              ;; popq MEM addresses AFTER the bump
-                                              (set! sweepable false)
-                                              (let
-                                                [ks : i64
-                                                  (compiler-backend-rsp-rebase-int-start
-                                                    data
-                                                    m
-                                                    (- q 1))]
-                                                [noff : i64
-                                                  (if (< ks 0)
-                                                    0
-                                                    (compiler-backend-rsp-rebase-parse-int
-                                                      data
-                                                      ks
-                                                      (- q 1)))]
-                                                [c : i64 (- noff delta)]
-                                                (if leaq?
-                                                  ;; address taken: poison upward
-                                                  (if win64-epilogue-leaq?
-                                                    unit
-                                                    (if (< c watermark)
-                                                      (set! watermark c)
-                                                      unit))
-                                                  (begin
-                                                    (if (< w 0)
-                                                      (set!
-                                                        w
-                                                        (compiler-backend-sweep-line-width
-                                                          data
-                                                          m
-                                                          end))
-                                                      unit)
-                                                    (set!
-                                                      reads-lo
-                                                      (compiler-backend-sweep-i64-push
-                                                        reads-lo
-                                                        read-count
-                                                        c))
-                                                    (set!
-                                                      reads-hi
-                                                      (compiler-backend-sweep-i64-push
-                                                        reads-hi
-                                                        read-count
-                                                        (+ c w)))
-                                                    (set!
-                                                      read-count
-                                                      (+ read-count 1)))))))
-                                          ;; bare %rsp: only the tracked
-                                          ;; subq/addq $imm dst and proven Win64
-                                          ;; prologue/epilogue shapes are allowed.
-                                          (if (or
-                                            win64-rbp-set?
-                                            (and
-                                              win64-epilogue-leaq?
-                                              (= q (- end 4)))
-                                            (and
-                                              tracked-rsp-write?
-                                              (= q (- end 4))))
-                                            unit
-                                            (set! sweepable false)))
-                                        (set! q (+ q 4)))
-                                      (set! q (+ q 1))))))
-                              unit)))
-                        ;; rsp motion
-                        (if (and rsp-dst? (not pop?))
-                          (if win64-epilogue-leaq?
-                            (begin
-                              (set! delta (- 0 win64-epilogue-c))
-                              (set! win64-tail true))
-                            (if tracked-rsp-write?
-                              (if subq?
-                                (set!
-                                  delta
-                                  (+
-                                    delta
-                                    (compiler-backend-rsp-rebase-parse-int
-                                      data
-                                      (+ te 2)
-                                      (- end 6))))
-                                (set!
-                                  delta
-                                  (-
-                                    delta
-                                    (compiler-backend-rsp-rebase-parse-int
-                                      data
-                                      (+ te 2)
-                                      (- end 6)))))
-                              (set! sweepable false)))
-                          unit)
-                        (if push?
-                          (set! delta (+ delta 8))
-                          unit)
-                        (if pop?
-                          (set! delta (- delta 8))
-                          unit)))))))
-            (set!
-              i
-              (if (< end rend)
-                (+ end 1)
-                end)))))
+                                    (set!
+                                      reads-lo
+                                      (compiler-backend-sweep-i64-push
+                                        reads-lo
+                                        read-count
+                                        c))
+                                    (set!
+                                      reads-hi
+                                      (compiler-backend-sweep-i64-push
+                                        reads-hi
+                                        read-count
+                                        (+ c w)))
+                                    (set! read-count (+ read-count 1))))
+                                (set! k (+ k 1))))))))
+                    ;; rsp motion
+                    (if (and rsp-dst? (not pop?))
+                      (if win64-epilogue-leaq?
+                        (begin
+                          (set! delta (- 0 win64-epilogue-c))
+                          (set! win64-tail true))
+                        (if tracked-rsp-write?
+                          (if subq?
+                            (set! delta (+ delta (struct-get line value)))
+                            (set! delta (- delta (struct-get line value))))
+                          (set! sweepable false)))
+                      unit)
+                    (if push?
+                      (set! delta (+ delta 8))
+                      unit)
+                    (if pop?
+                      (set! delta (- delta 8))
+                      unit)))])
+            (set! i (+ i 1)))))
       ;; ---- pass 2 ----
       (if (or (not sweepable) (= cand-count 0))
-        (compiler-backend-peephole-append-line-range buf asm rstart rend false)
+        unit
         (let
-          [flush : i64 rstart]
           [k : i64 0]
           [swept : i64 0]
           (begin
             (while (< k cand-count)
               (let
                 [c : i64 (array-ref cand-off k)]
-                [ls : i64 (array-ref cand-pos k)]
+                [pos : i64 (array-ref cand-pos k)]
                 (begin
                   (if (and
                     (or
@@ -46464,36 +46745,21 @@
                     (< c watermark))
                     (let
                       [r : i64 0]
-                      [live : bool false]
+                      [read : bool false]
                       (begin
-                        (while (and (not live) (< r read-count))
+                        (while (and (not read) (< r read-count))
                           (begin
                             (if (and
                               (< (array-ref reads-lo r) (+ c 8))
                               (< c (array-ref reads-hi r)))
-                              (set! live true)
+                              (set! read true)
                               unit)
                             (set! r (+ r 1))))
-                        (if live
+                        (if read
                           unit
-                          (let
-                            [le : i64
-                              (compiler-backend-peephole-line-end data ls rend)]
-                            (begin
-                              (set!
-                                buf
-                                (compiler-backend-peephole-append-line-range
-                                  buf
-                                  asm
-                                  flush
-                                  ls
-                                  false))
-                              (set!
-                                flush
-                                (if (< le rend)
-                                  (+ le 1)
-                                  le))
-                              (set! swept (+ swept 1)))))))
+                          (begin
+                            (array-set! live pos 0)
+                            (set! swept (+ swept 1))))))
                     unit)
                   (set! k (+ k 1)))))
             (if (> swept 0)
@@ -46504,13 +46770,7 @@
                 (set!
                   compiler-backend-sweep-swept-funcs
                   (+ compiler-backend-sweep-swept-funcs 1)))
-              unit)
-            (compiler-backend-peephole-append-line-range
-              buf
-              asm
-              flush
-              rend
-              false)))))))
+              unit)))))))
 
 (define (compiler-backend-borrowed-copy-to-owned
   [buf : (text_buf_borrowed.TextBufBorrowed asm)]) : text_buf.TextBuf
@@ -46518,92 +46778,50 @@
     [(text_buf_borrowed.TextBufBorrowed chunks len)
       (text_buf.TextBuf (text_buf_borrowed.chunks-to-owned chunks) len)]))
 
-(define (compiler-backend-string-copy-to-buffer [asm : String]) : text_buf.TextBuf
-  (compiler-backend-borrowed-copy-to-owned (text_buf_borrowed.single (& asm))))
-
-;; Sweep one independently rendered assembly group, resuming at the next
-;; metadata entry from an earlier group. The caller owns the cursor and resets
-;; global sweep metadata only after the final group.
-(define (compiler-backend-deadstore-sweep-buffer-from-cursor
-  [asm : String]
-  [start-cursor : i64]) : CompilerBackendDeadstoreSweepChunkResult
+;; Sweep one group's line records, resuming at the next metadata entry from an
+;; earlier group. The caller owns the cursor and resets global sweep metadata
+;; only after the final group. Dead stores are marked in the record array's
+;; `live` mask; nothing is copied or rebuilt.
+(define (compiler-backend-deadstore-sweep-records!
+  [v : CompilerBackendPeepholeLineVec]
+  [start-cursor : i64]) : i64
   (if (>= start-cursor compiler-backend-sweep-count)
-    (CompilerBackendDeadstoreSweepChunkResult
-      (compiler-backend-string-copy-to-buffer asm)
-      start-cursor)
+    start-cursor
     (let
-      [n : i64 (string.string-length asm)]
-      [data : (Ptr u8)
-        (unsafe
-          (string-data asm))]
-      [out : (text_buf_borrowed.TextBufBorrowed asm)
-        (text_buf_borrowed.empty-like (& asm))]
-      [flush : i64 0]
+      [recs : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
+      [live : (Array i64) (struct-get v live)]
+      [count : i64 (struct-get v len)]
       [cursor : i64 start-cursor]
-      [matched : bool false]
       [i : i64 0]
       (begin
-        (while (and (< i n) (< cursor compiler-backend-sweep-count))
+        (while (and (< i count) (< cursor compiler-backend-sweep-count))
           (let
-            [end : i64 (compiler-backend-peephole-line-end data i n)]
-            ;; lint-allow: single-begin
-            (begin
-              (if (compiler-backend-sweep-label-matches? data i end cursor)
-                (let
-                  [rstart : i64
-                    (if (< end n)
-                      (+ end 1)
-                      end)]
-                  [rend : i64 (compiler-backend-sweep-region-end data rstart n)]
-                  (begin
-                    (set! matched true)
-                    (set!
-                      out
-                      (compiler-backend-peephole-append-line-range
-                        out
-                        asm
-                        flush
-                        rstart
-                        false))
-                    (set!
-                      out
-                      (compiler-backend-sweep-region
-                        out
-                        asm
-                        data
-                        rstart
-                        rend
-                        (array-ref compiler-backend-sweep-lo-arr cursor)
-                        (array-ref compiler-backend-sweep-hi-arr cursor)
-                        (array-ref compiler-backend-sweep-disp-arr cursor)
-                        (array-ref compiler-backend-sweep-em-lo-arr cursor)
-                        (array-ref compiler-backend-sweep-em-hi-arr cursor)
-                        (=
-                          (array-ref compiler-backend-sweep-win64-arr cursor)
-                          1)))
-                    (set! flush rend)
-                    (set! cursor (+ cursor 1))
-                    (set! i rend)))
-                (set!
-                  i
-                  (if (< end n)
-                    (+ end 1)
-                    end))))))
-        (let
-          [result : text_buf.TextBuf
-            (if (not matched)
-              (compiler-backend-string-copy-to-buffer asm)
-              (begin
-                (set!
-                  out
-                  (compiler-backend-peephole-append-line-range
-                    out
-                    asm
-                    flush
-                    n
-                    false))
-                (compiler-backend-borrowed-copy-to-owned out)))]
-          (CompilerBackendDeadstoreSweepChunkResult result cursor))))))
+            [line : CompilerBackendPeepholeLineRecord (array-ref recs i)]
+            (if (compiler-backend-sweep-label-matches?
+              (compiler-backend-peephole-record-data line)
+              (compiler-backend-peephole-record-start line)
+              (compiler-backend-peephole-record-end line)
+              cursor)
+              (let
+                [rstart : i64 (+ i 1)]
+                [rend : i64
+                  (compiler-backend-sweep-region-end-records recs rstart count)]
+                (begin
+                  (compiler-backend-sweep-region-records!
+                    recs
+                    live
+                    rstart
+                    rend
+                    (array-ref compiler-backend-sweep-lo-arr cursor)
+                    (array-ref compiler-backend-sweep-hi-arr cursor)
+                    (array-ref compiler-backend-sweep-disp-arr cursor)
+                    (array-ref compiler-backend-sweep-em-lo-arr cursor)
+                    (array-ref compiler-backend-sweep-em-hi-arr cursor)
+                    (= (array-ref compiler-backend-sweep-win64-arr cursor) 1))
+                  (set! cursor (+ cursor 1))
+                  (set! i rend)))
+              (set! i (+ i 1)))))
+        cursor))))
 
 (define (compiler-backend-deadstore-sweep-report-and-reset!) : unit
   (begin
@@ -46624,15 +46842,6 @@
           "\n"
           "")))
     (compiler-backend-sweep-reset!)))
-
-;; Whole-string compatibility wrapper for callers that do not stream groups.
-(define (compiler-backend-deadstore-sweep-buffer [asm : String]) : text_buf.TextBuf
-  (let
-    [result : CompilerBackendDeadstoreSweepChunkResult
-      (compiler-backend-deadstore-sweep-buffer-from-cursor asm 0)]
-    (begin
-      (compiler-backend-deadstore-sweep-report-and-reset!)
-      (struct-get result buf))))
 
 ;; ============================================================================
 ;; GAP9: gep displacement folding (codegen phase 9 / P7a).
@@ -54548,27 +54757,6 @@
       (text_buf_borrowed.append-slice buf (& asm) start (- slice-end start))
       buf)))
 
-(define (compiler-backend-peephole-line-append-owned?
-  [line : CompilerBackendPeepholeLine]) : bool
-  (struct-get line owned))
-
-(define (compiler-backend-peephole-append-parsed-line
-  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
-  [asm : String]
-  [line : CompilerBackendPeepholeLine]) : (text_buf_borrowed.TextBufBorrowed
-    asm)
-  (if (compiler-backend-peephole-line-append-owned? line)
-    (compiler-backend-peephole-append-line
-      buf
-      (struct-get line src)
-      (struct-get line newline))
-    (compiler-backend-peephole-append-line-range
-      buf
-      asm
-      (struct-get line start)
-      (struct-get line end)
-      (struct-get line newline))))
-
 (define (compiler-backend-peephole-find-comma-space
   [line : String]
   [start : i64]) : i64
@@ -56185,13 +56373,6 @@
     (struct-get line op-dst-start)
     (- (struct-get line op-dst-end) (struct-get line op-dst-start))))
 
-(define (compiler-backend-peephole-line-append
-  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
-  [asm : String]
-  [line : CompilerBackendPeepholeLine]) : (text_buf_borrowed.TextBufBorrowed
-    asm)
-  (compiler-backend-peephole-append-parsed-line buf asm line))
-
 (define (compiler-backend-peephole-mnemonic-zext?
   [data : (Ptr u8)]
   [i : i64]
@@ -56439,6 +56620,236 @@
     (struct-get line single-dest)
     (struct-get line last-reg)
     (struct-get line zext-dst)))
+
+;; ---- compact line-record packing -------------------------------------------
+;; `span` holds start in the low 32 bits and end in the high 32. Assembly group
+;; strings (and the whole-program text of the non-streaming path) are orders of
+;; magnitude below 2^31 bytes, and both halves stay non-negative, so the shifts
+;; never touch the sign bit.
+(define compiler-backend-peephole-record-span-shift : i64
+  32)
+(define compiler-backend-peephole-record-span-mask : i64
+  4294967295)
+
+;; `meta` low half: sweep line kind, the 13 sweep line flags in their own bit
+;; values, the two render bits, the `.globl` region-boundary bit and the access
+;; width. High half: the count of `(%rsp)` memory references, which is bounded
+;; by the line length and so always fits.
+(define compiler-backend-peephole-record-kind-mask : i64
+  3)
+(define compiler-backend-peephole-record-flags-shift : i64
+  2)
+(define compiler-backend-peephole-record-flags-mask : i64
+  8191)
+(define compiler-backend-peephole-record-newline-bit : i64
+  32768)
+(define compiler-backend-peephole-record-owned-bit : i64
+  65536)
+(define compiler-backend-peephole-record-globl-bit : i64
+  131072)
+(define compiler-backend-peephole-record-width-shift : i64
+  18)
+(define compiler-backend-peephole-record-width-mask : i64
+  255)
+(define compiler-backend-peephole-record-mem-count-shift : i64
+  32)
+
+(define (compiler-backend-peephole-record-start
+  [rec : CompilerBackendPeepholeLineRecord]) : i64
+  (bit-and (struct-get rec span) compiler-backend-peephole-record-span-mask))
+
+(define (compiler-backend-peephole-record-end
+  [rec : CompilerBackendPeepholeLineRecord]) : i64
+  (bit-and
+    (shr (struct-get rec span) compiler-backend-peephole-record-span-shift)
+    compiler-backend-peephole-record-span-mask))
+
+(define (compiler-backend-peephole-record-data
+  [rec : CompilerBackendPeepholeLineRecord]) : (Ptr u8)
+  (unsafe
+    (string-data (struct-get rec src))))
+
+(define (compiler-backend-peephole-record-kind
+  [rec : CompilerBackendPeepholeLineRecord]) : i64
+  (bit-and (struct-get rec meta) compiler-backend-peephole-record-kind-mask))
+
+(define (compiler-backend-peephole-record-flags
+  [rec : CompilerBackendPeepholeLineRecord]) : i64
+  (bit-and
+    (shr (struct-get rec meta) compiler-backend-peephole-record-flags-shift)
+    compiler-backend-peephole-record-flags-mask))
+
+(define (compiler-backend-peephole-record-newline?
+  [rec : CompilerBackendPeepholeLineRecord]) : bool
+  (not
+    (=
+      (bit-and
+        (struct-get rec meta)
+        compiler-backend-peephole-record-newline-bit)
+      0)))
+
+(define (compiler-backend-peephole-record-owned?
+  [rec : CompilerBackendPeepholeLineRecord]) : bool
+  (not
+    (=
+      (bit-and (struct-get rec meta) compiler-backend-peephole-record-owned-bit)
+      0)))
+
+(define (compiler-backend-peephole-record-globl?
+  [rec : CompilerBackendPeepholeLineRecord]) : bool
+  (not
+    (=
+      (bit-and (struct-get rec meta) compiler-backend-peephole-record-globl-bit)
+      0)))
+
+(define (compiler-backend-peephole-record-width
+  [rec : CompilerBackendPeepholeLineRecord]) : i64
+  (bit-and
+    (shr (struct-get rec meta) compiler-backend-peephole-record-width-shift)
+    compiler-backend-peephole-record-width-mask))
+
+(define (compiler-backend-peephole-record-mem-count
+  [rec : CompilerBackendPeepholeLineRecord]) : i64
+  (shr (struct-get rec meta) compiler-backend-peephole-record-mem-count-shift))
+
+;; First non-space index of the record's line. Only the never-in-practice
+;; multi-reference fallback needs it, so it is recomputed instead of stored.
+(define (compiler-backend-peephole-record-mnemonic-start
+  [rec : CompilerBackendPeepholeLineRecord]) : i64
+  (let
+    [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+    [end : i64 (compiler-backend-peephole-record-end rec)]
+    [m : i64 (compiler-backend-peephole-record-start rec)]
+    (begin
+      (while (and (< m end) (= (compiler-backend-peephole-byte-at data m) 32))
+        (set! m (+ m 1)))
+      m)))
+
+;; True iff the line's trimmed content begins ".globl" -- the next
+;; function/helper boundary for the sweep's region scan.
+(define (compiler-backend-peephole-line-globl?
+  [data : (Ptr u8)]
+  [ms : i64]
+  [end : i64]) : bool
+  (and
+    (<= (+ ms 6) end)
+    (compiler-backend-peephole-range-eq? data ms (+ ms 6) ".globl")))
+
+;; Compact one emitted streaming descriptor into its array record. This is where
+;; the GAP5 extraction runs -- once per SURVIVING line, from that line's final
+;; bytes, so peephole-synthesized lines are summarized from their own rewritten
+;; text and lines the pair rules drop or the lookahead parses cost nothing.
+(define (compiler-backend-peephole-line-record
+  [line : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLineRecord
+  (let
+    [data : (Ptr u8) (struct-get line data)]
+    [end : i64 (struct-get line end)]
+    [ms : i64 (struct-get line mnemonic-start)]
+    [sweep : CompilerBackendPeepholeLineSweepSummary
+      (compiler-backend-peephole-line-sweep-summary
+        data
+        end
+        ms
+        (struct-get line mnemonic-len)
+        (struct-get line label))]
+    (CompilerBackendPeepholeLineRecord
+      (struct-get line src)
+      (bit-or
+        (struct-get line start)
+        (shl end compiler-backend-peephole-record-span-shift))
+      (bit-or
+        (bit-or
+          (bit-or
+            (struct-get sweep kind)
+            (shl
+              (struct-get sweep flags)
+              compiler-backend-peephole-record-flags-shift))
+          (bit-or
+            (if (struct-get line newline)
+              compiler-backend-peephole-record-newline-bit
+              0)
+            (if (struct-get line owned)
+              compiler-backend-peephole-record-owned-bit
+              0)))
+        (bit-or
+          (if (compiler-backend-peephole-line-globl? data ms end)
+            compiler-backend-peephole-record-globl-bit
+            0)
+          (bit-or
+            (shl
+              (struct-get sweep width)
+              compiler-backend-peephole-record-width-shift)
+            (shl
+              (struct-get sweep mem-count)
+              compiler-backend-peephole-record-mem-count-shift))))
+      (struct-get sweep cand)
+      (struct-get sweep epilogue)
+      (if (compiler-backend-sweep-line-flag?
+        (struct-get sweep flags)
+        compiler-backend-sweep-line-flag-tracked-rsp-write)
+        (struct-get sweep rsp-imm)
+        (struct-get sweep mem-off)))))
+
+;; Records-per-line capacity estimate for a raw group of `n` bytes. Emitted
+;; assembly averages ~27 bytes per line, so a 20-byte divisor sizes the dense
+;; record array once and the geometric grow below stays unused in practice.
+(define (compiler-backend-peephole-line-vec-capacity-for [n : i64]) : i64
+  (+ (/ n 20) 16))
+
+(define (compiler-backend-peephole-line-vec-with-capacity [capacity : i64]) : CompilerBackendPeepholeLineVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (CompilerBackendPeepholeLineVec
+      (array.make-array CompilerBackendPeepholeLineRecord cap)
+      (array.make-array i64 cap)
+      0)))
+
+(define (compiler-backend-peephole-line-vec-grow
+  [v : CompilerBackendPeepholeLineVec]) : CompilerBackendPeepholeLineVec
+  (let
+    [len : i64 (struct-get v len)]
+    [old-lines : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
+    [old-live : (Array i64) (struct-get v live)]
+    [new-cap : i64
+      (if (< (array-length old-lines) 1)
+        1
+        (* (array-length old-lines) 2))]
+    [lines : (Array CompilerBackendPeepholeLineRecord)
+      (array.make-array CompilerBackendPeepholeLineRecord new-cap)]
+    [live : (Array i64) (array.make-array i64 new-cap)]
+    [k : i64 0]
+    (begin
+      (while (< k len)
+        (begin
+          (array-set! lines k (array-ref old-lines k))
+          (array-set! live k (array-ref old-live k))
+          (set! k (+ k 1))))
+      (CompilerBackendPeepholeLineVec lines live len))))
+
+;; Append one surviving line, compacted. Records are live until the sweep marks
+;; them dead, and the arrays are never rebuilt.
+(define (compiler-backend-peephole-line-vec-push
+  [v : CompilerBackendPeepholeLineVec]
+  [line : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLineVec
+  (let
+    [grown : CompilerBackendPeepholeLineVec
+      (if (< (struct-get v len) (array-length (struct-get v lines)))
+        v
+        (compiler-backend-peephole-line-vec-grow v))]
+    [index : i64 (struct-get grown len)]
+    (begin
+      (array-set!
+        (struct-get grown lines)
+        index
+        (compiler-backend-peephole-line-record line))
+      (array-set! (struct-get grown live) index 1)
+      (CompilerBackendPeepholeLineVec
+        (struct-get grown lines)
+        (struct-get grown live)
+        (+ index 1)))))
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
 ;; ends in ':'). Mirrors the label arm of line-clears-owners?.
@@ -56771,12 +57182,16 @@
       (compiler-backend-peephole-line-op-dst-text next))
     (compiler-backend-peephole-line-text next)))
 
-(define (compiler-backend-peephole-emit-line-desc
-  [out : (text_buf_borrowed.TextBufBorrowed asm)]
-  [asm : String]
+;; Emit one line as a RECORD. Identical rule semantics to the text emitter this
+;; replaces: an elided reload pushes nothing, a reload rewritten onto a register
+;; that already owns the slot pushes the synthesized `movq %rY, DST` line (whose
+;; own sweep summary is extracted by the owned-line builder), everything else
+;; pushes the parsed record unchanged.
+(define (compiler-backend-peephole-emit-line-desc-record
+  [out : CompilerBackendPeepholeLineVec]
   [line : CompilerBackendPeepholeLine]
   [owners : CompilerBackendPeepholeOwners]
-  [prev-abort? : bool]) : (CompilerBackendPeepholeEmitResult asm)
+  [prev-abort? : bool]) : CompilerBackendPeepholeEmitRecordResult
   (if (struct-get line movq)
     (let
       [src-reg : i64 (struct-get line op-src-reg)]
@@ -56797,33 +57212,20 @@
             src-key
             dst-reg)
           "")]
-      [next-out : (text_buf_borrowed.TextBufBorrowed asm)
+      [next-out : CompilerBackendPeepholeLineVec
         (cond
           [dst-owns out]
           [(not (string.eq ry ""))
-            (let
-              [b1 : (text_buf_borrowed.TextBufBorrowed asm)
-                (text_buf_borrowed.append-owned out "    movq ")]
-              [b2 : (text_buf_borrowed.TextBufBorrowed asm)
-                (text_buf_borrowed.append-owned b1 ry)]
-              [b3 : (text_buf_borrowed.TextBufBorrowed asm)
-                (text_buf_borrowed.append-owned b2 ", ")]
-              [b4 : (text_buf_borrowed.TextBufBorrowed asm)
-                (if (struct-get line owned)
-                  (text_buf_borrowed.append-owned
-                    b3
-                    (compiler-backend-peephole-line-op-dst-text line))
-                  (text_buf_borrowed.append-slice
-                    b3
-                    (& asm)
-                    (struct-get line op-dst-start)
-                    (-
-                      (struct-get line op-dst-end)
-                      (struct-get line op-dst-start))))]
-              (if (struct-get line newline)
-                (text_buf_borrowed.append-char b4 '\n')
-                b4))]
-          [else (compiler-backend-peephole-line-append out asm line)])]
+            (compiler-backend-peephole-line-vec-push
+              out
+              (compiler-backend-peephole-owned-line
+                (str_cat.str-cat
+                  "    movq "
+                  ry
+                  ", "
+                  (compiler-backend-peephole-line-op-dst-text line))
+                (struct-get line newline)))]
+          [else (compiler-backend-peephole-line-vec-push out line)])]
       [next-owners : CompilerBackendPeepholeOwners
         (compiler-backend-peephole-movq-owners-transfer-keyed-index
           owners
@@ -56831,9 +57233,9 @@
           dst-reg
           src-key
           dst-key)]
-      (CompilerBackendPeepholeEmitResult next-out next-owners))
-    (CompilerBackendPeepholeEmitResult
-      (compiler-backend-peephole-line-append out asm line)
+      (CompilerBackendPeepholeEmitRecordResult next-out next-owners))
+    (CompilerBackendPeepholeEmitRecordResult
+      (compiler-backend-peephole-line-vec-push out line)
       (compiler-backend-peephole-line-clobber-owners-desc
         owners
         line
@@ -56881,12 +57283,18 @@
           (arena.set! render-arena))
         (let
           [raw-asm : String (text_buf.render (struct-get state group))]
+          [records : CompilerBackendPeepholeLineVec
+            (compiler-backend-peephole-asm-once-records raw-asm)]
+          [buf : (text_buf_borrowed.TextBufBorrowed raw-asm)
+            (compiler-backend-peephole-records-buffer
+              (text_buf_borrowed.empty-like (& raw-asm))
+              records
+              raw-asm)]
           (begin
             (unsafe
               (arena.set! output-arena))
             (let
-              [peepholed-asm : String
-                (compiler-backend-peephole-asm-once raw-asm)]
+              [peepholed-asm : String (text_buf_borrowed.render buf)]
               (begin
                 (unsafe
                   (arena.destroy render-arena))
@@ -56937,36 +57345,40 @@
 (define (compiler-backend-peephole-text-buf-once [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (compiler-backend-peephole-text-buf-once-in-arena buf (arena.current)))
 
-;; Flush one raw function group through both text passes. `scratch` is active
-;; on entry and rewound before return; only the final copied group string
-;; escapes into `home`. This keeps neither a whole raw assembly String nor a
-;; whole peepholed String alive beside the retained output.
-(define (compiler-backend-peephole-sweep-chunk-state-copy-home
-  [state : CompilerBackendPeepholeSweepChunkState]
-  [swept-asm : String]
-  [sweep-cursor : i64]
-  [scratch-arena : arena.Arena]
-  [home-arena : arena.Arena]) : CompilerBackendPeepholeSweepChunkState
+;; Flush one raw function group through the record pipeline. `scratch` is active
+;; on entry and rewound before return: the raw group String, the line records
+;; and every synthesized line live there, and only the single rendered group
+;; string escapes into `home`. One render per group -- the post-peephole render,
+;; the sweep's buffer render and the substring copy are all gone.
+(define (compiler-backend-arena-owner-current-head [owner : arena.Arena]) : arena.Arena
   (let
-    [_set-home : unit
-      (unsafe
-        (arena.set! home-arena))]
-    [kept : String
-      (string.substring swept-asm 0 (string.string-length swept-asm))]
-    [finished : CompilerBackendPeepholeSweepChunkState
-      (CompilerBackendPeepholeSweepChunkState
-        (text_buf.append (struct-get state out) kept)
-        (text_buf.empty)
-        sweep-cursor)]
-    [new-home-arena : arena.Arena (arena.current)]
-    (begin
-      ;; `home-arena` can grow while the retained output is appended. Carry
-      ;; the new head into the next flush instead of re-entering the old
-      ;; segment and creating detached sibling overflow chains.
-      (set! compiler-backend-assembly-stream-home-arena new-home-arena)
-      (unsafe
-        (arena.set! scratch-arena))
-      finished)))
+    [handle : i64 (arena.raw-handle owner)]
+    (if (= handle 0)
+      owner
+      (let
+        [root-candidate : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+        [root : i64
+          (if (= root-candidate 0)
+            handle
+            root-candidate)]
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (arena.Arena
+          (if (= head 0)
+            root
+            head))))))
+
+(define (compiler-backend-assembly-stream-carry-home-current!
+  [home-arena : arena.Arena]) : unit
+  ;; Rendering/appending the retained group can grow `home-arena`. Carry its
+  ;; root-tracked current head into the next flush instead of re-entering the
+  ;; old segment and creating a detached sibling overflow chain.
+  (set!
+    compiler-backend-assembly-stream-home-arena
+    (compiler-backend-arena-owner-current-head home-arena)))
 
 (define (compiler-backend-peephole-sweep-chunk-state-flush
   [state : CompilerBackendPeepholeSweepChunkState]
@@ -56976,20 +57388,28 @@
     state
     (let
       [raw-asm : String (text_buf.render (struct-get state group))]
-      [peepholed-asm : String (compiler-backend-peephole-asm-once raw-asm)]
-      [swept : CompilerBackendDeadstoreSweepChunkResult
-        (compiler-backend-deadstore-sweep-buffer-from-cursor
-          peepholed-asm
+      [records : CompilerBackendPeepholeLineVec
+        (compiler-backend-peephole-asm-once-records raw-asm)]
+      [cursor : i64
+        (compiler-backend-deadstore-sweep-records!
+          records
           (struct-get state sweep-cursor))]
-      [swept-asm : String (text_buf.render (struct-get swept buf))]
-      [scratch-arena : arena.Arena (arena.current)]
+      [buf : (text_buf_borrowed.TextBufBorrowed raw-asm)
+        (compiler-backend-peephole-records-buffer
+          (text_buf_borrowed.empty-like (& raw-asm))
+          records
+          raw-asm)]
       [finished : CompilerBackendPeepholeSweepChunkState
-        (compiler-backend-peephole-sweep-chunk-state-copy-home
-          state
-          swept-asm
-          (struct-get swept cursor)
-          scratch-arena
-          home-arena)]
+        (in-arena
+          home-arena
+          (let
+            [kept : String (text_buf_borrowed.render buf)]
+            (CompilerBackendPeepholeSweepChunkState
+              (text_buf.append (struct-get state out) kept)
+              (text_buf.empty)
+              cursor)))]
+      [_carry-home : unit
+        (compiler-backend-assembly-stream-carry-home-current! home-arena)]
       (begin
         (unsafe
           (arena.rewind scratch-mark))
@@ -57123,15 +57543,21 @@
 (define (compiler-backend-assembly-stream-abort!) : unit
   (set! compiler-backend-assembly-stream-active false))
 
-(define (compiler-backend-peephole-asm-once [asm : String]) : String
+;; Streaming peephole over line RECORDS: identical rule set, pair state and
+;; owner-map handling to the text pass it replaces, except that each surviving
+;; emit step pushes its record into a dense arena-backed array instead of
+;; appending bytes. The array is the pipeline: the dead-store sweep consumes it
+;; and the group is rendered exactly once, afterwards.
+(define (compiler-backend-peephole-asm-once-records [asm : String]) : CompilerBackendPeepholeLineVec
   (let
     [n : i64 (string.string-length asm)]
     [asm-data : (Ptr u8)
       (unsafe
         (string-data asm))]
     [i : i64 0]
-    [out : (text_buf_borrowed.TextBufBorrowed asm)
-      (text_buf_borrowed.empty-like (& asm))]
+    [out : CompilerBackendPeepholeLineVec
+      (compiler-backend-peephole-line-vec-with-capacity
+        (compiler-backend-peephole-line-vec-capacity-for n))]
     [has-pending : bool false]
     [pending : CompilerBackendPeepholeLine
       (compiler-backend-peephole-empty-line)]
@@ -57178,15 +57604,14 @@
                           line)]
                       (begin
                         (let
-                          [emit : (CompilerBackendPeepholeEmitResult asm)
-                            (compiler-backend-peephole-emit-line-desc
+                          [emit : CompilerBackendPeepholeEmitRecordResult
+                            (compiler-backend-peephole-emit-line-desc-record
                               out
-                              asm
                               pending
                               owners
                               prev-abort?)]
                           (begin
-                            (set! out (struct-get emit buf))
+                            (set! out (struct-get emit lines))
                             (set! owners (struct-get emit owners))))
                         (set! prev-abort? (struct-get pending noreturn-abort))
                         (set!
@@ -57208,15 +57633,14 @@
                   [else
                     (begin
                       (let
-                        [emit : (CompilerBackendPeepholeEmitResult asm)
-                          (compiler-backend-peephole-emit-line-desc
+                        [emit : CompilerBackendPeepholeEmitRecordResult
+                          (compiler-backend-peephole-emit-line-desc-record
                             out
-                            asm
                             pending
                             owners
                             prev-abort?)]
                         (begin
-                          (set! out (struct-get emit buf))
+                          (set! out (struct-get emit lines))
                           (set! owners (struct-get emit owners))))
                       (set! prev-abort? (struct-get pending noreturn-abort))
                       (set! pending (compiler-backend-peephole-line-copy line)))]))
@@ -57237,18 +57661,61 @@
         has-pending
         (not (compiler-backend-peephole-line-self-move-desc? pending)))
         (let
-          [emit : (CompilerBackendPeepholeEmitResult asm)
-            (compiler-backend-peephole-emit-line-desc
+          [emit : CompilerBackendPeepholeEmitRecordResult
+            (compiler-backend-peephole-emit-line-desc-record
               out
-              asm
               pending
               owners
               prev-abort?)]
           (begin
-            (set! out (struct-get emit buf))
+            (set! out (struct-get emit lines))
             (set! owners (struct-get emit owners))))
         unit)
-      (text_buf_borrowed.render out))))
+      out)))
+
+;; The single render of the group: append each surviving record's exact bytes
+;; plus its newline flag. Runs of adjacent surviving asm lines coalesce into
+;; one borrowed slice, so a group that the sweep did not touch renders as a
+;; single copy of its range.
+(define (compiler-backend-peephole-records-buffer
+  [out : (text_buf_borrowed.TextBufBorrowed asm)]
+  [v : CompilerBackendPeepholeLineVec]
+  [asm : String]) : (text_buf_borrowed.TextBufBorrowed asm)
+  (let
+    [recs : (Array CompilerBackendPeepholeLineRecord) (struct-get v lines)]
+    [live : (Array i64) (struct-get v live)]
+    [count : i64 (struct-get v len)]
+    [buf : (text_buf_borrowed.TextBufBorrowed asm) out]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (when
+            (= (array-ref live i) 1)
+            (let
+              [rec : CompilerBackendPeepholeLineRecord (array-ref recs i)]
+              (set!
+                buf
+                (if (compiler-backend-peephole-record-owned? rec)
+                  (compiler-backend-peephole-append-line
+                    buf
+                    (struct-get rec src)
+                    (compiler-backend-peephole-record-newline? rec))
+                  (compiler-backend-peephole-append-line-range
+                    buf
+                    asm
+                    (compiler-backend-peephole-record-start rec)
+                    (compiler-backend-peephole-record-end rec)
+                    (compiler-backend-peephole-record-newline? rec))))))
+          (set! i (+ i 1))))
+      buf)))
+
+(define (compiler-backend-peephole-asm-once [asm : String]) : String
+  (text_buf_borrowed.render
+    (compiler-backend-peephole-records-buffer
+      (text_buf_borrowed.empty-like (& asm))
+      (compiler-backend-peephole-asm-once-records asm)
+      asm)))
 
 (define (compiler-backend-peephole-asm-buffer [asm : String]) : text_buf.TextBuf
   ;; The streaming pass runs the complete rule set while each line pair and its
@@ -57256,9 +57723,21 @@
   ;; self-compile assembly again to remove only ~1% as many bytes as the first
   ;; pass (~10KB after ~910KB). Keep that marginal reapplication out of the
   ;; compile path; the missed cascades are optional code-size rewrites.
-  ;; GAP5 then sweeps never-read local frame stores recorded during emission.
-  (compiler-backend-deadstore-sweep-buffer
-    (compiler-backend-peephole-asm-once asm)))
+  ;; GAP5 then sweeps never-read local frame stores recorded during emission --
+  ;; over the same records, so the text is rendered exactly once.
+  (let
+    [records : CompilerBackendPeepholeLineVec
+      (compiler-backend-peephole-asm-once-records asm)]
+    [_swept : i64 (compiler-backend-deadstore-sweep-records! records 0)]
+    [buf : text_buf.TextBuf
+      (compiler-backend-borrowed-copy-to-owned
+        (compiler-backend-peephole-records-buffer
+          (text_buf_borrowed.empty-like (& asm))
+          records
+          asm))]
+    (begin
+      (compiler-backend-deadstore-sweep-report-and-reset!)
+      buf)))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (text_buf.render (compiler-backend-peephole-asm-buffer asm)))

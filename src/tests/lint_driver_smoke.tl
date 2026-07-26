@@ -1292,13 +1292,15 @@
         (selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_type_error.tl"
           (lint-driver-smoke-unsafe-surface-type-error-source)
-          (lint_svec.new))]
+          (lint_svec.new)
+          (selfhost-lint-language-cfgs))]
       [direct-error : String selfhost-lint-typed-unused-unsafe-error]
       [_direct-parse-error-findings : LintFindings
         (selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_parse_error.tl"
           (lint-driver-smoke-unsafe-surface-parse-error-source)
-          (lint_svec.new))]
+          (lint_svec.new)
+          (selfhost-lint-language-cfgs))]
       [direct-parse-error : String selfhost-lint-typed-unused-unsafe-error]
       [file-error-status : i64
         (selfhost-lint-run-file-in-scratch

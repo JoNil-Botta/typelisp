@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	477
-# count	total	all	annotations	477
+# count	total	all	rows	481
+# count	total	all	annotations	481
 # count	total	all	sources	3
-# count	total	all	source-sites	351
+# count	total	all	source-sites	355
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	298
-# count	gate	public-tools	source-sites	189
+# count	gate	public-tools	rows	302
+# count	gate	public-tools	source-sites	193
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	77
 # count	gate	selfhost-cli	source-sites	76
@@ -14,15 +14,15 @@
 # count	gate	stage1-wrapper	rows	102
 # count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	354
+# count	host	all	rows	358
 # count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	474
-# count	platform	windows	rows	357
+# count	platform	linux	rows	478
+# count	platform	windows	rows	361
 # count	kind	delegated	rows	8
 # count	kind	direct	rows	51
-# count	kind	wrapper	rows	418
-# count	process	compiler	rows	309
+# count	kind	wrapper	rows	422
+# count	process	compiler	rows	313
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -46,7 +46,7 @@
 # count	process	program	rows	5
 # count	duplicates	all	groups	9
 # count	duplicates	all	rows	18
-# child-corpus	public-lsp-corpus	all	tests/public-tools/lsp	*.in.json	-	64
+# child-corpus	public-lsp-corpus	all	tests/public-tools/lsp	*.in.json	-	65
 # child-corpus	public-repl-corpus	windows	tests/public-tools/repl	*.in	*.linux.in	14
 # child-corpus	public-repl-corpus	linux	tests/public-tools/repl	*.in	-	21
 # child-corpus	public-repl-corpus	linux	tests/public-tools/selfhost-repl	*.linux.in	-	17
@@ -193,6 +193,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	lsp-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lsp -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	lsp-short-help	-
 1	missing-command	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp	-	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains_any stderr Usage: usage:	none	missing-command	-
 1	check-hello	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check examples/hello.tl	examples/hello.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Type checking passed!	empty	none	check-hello	-
+1	check-cfg-default-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check <check-cfg-src> --cfg tooling-feature	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Type checking passed!	empty	none	check-cfg-default-target	-
+1	check-cfg-windows-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check <check-cfg-src> --target windows-x86_64 --cfg tooling-feature	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Type checking passed!	empty	none	check-cfg-windows-target	-
 1	compile-hello	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile examples/hello.tl -o <workdir>/hello.s	examples/hello.tl,<workdir>/hello.s	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Wrote	empty	assert_contains <workdir>/hello.s main:	compile-hello	-
 1	compile-emit-ir-core-macro	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile <emit-ir-macro-src> --emit-ir --target <host-target> --opt-level 2 -o <emit-ir-macro-out> --stdlib-root <repo>/stdlib --stdlib-root <repo>/src	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Wrote	empty	[ -s <emit-ir-macro-out> ] || fail compile --emit-ir did not write IR summary;assert_contains <emit-ir-macro-out> score	compile-emit-ir-core-macro	-
 1	clean-source-dry-run	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --dry-run <clean-src>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Would remove:;assert_contains stdout main.s	empty	[ -f <clean-src> ] || fail clean dry-run removed source file;[ -f <clean-base>.s ] || fail clean dry-run removed assembly;[ -f <clean-base> ] || fail clean dry-run removed executable	clean-source-dry-run	-
@@ -331,6 +333,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	lint-nested-let-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_bad.tl --check	<workdir>/lint_bad.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	assert_contains stdout lint_bad.tl:;assert_contains stdout nested let;assert_contains stdout lint: 1 finding(s)	empty	none	lint-nested-let-check	-
 1	lint-clean	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_clean.tl	<workdir>/lint_clean.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-clean	-
 1	lint-clean-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_clean.tl --check	<workdir>/lint_clean.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-clean-check	-
+1	lint-cfg-windows-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <check-cfg-src> --target windows-x86_64 --cfg tooling-feature --check	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-cfg-windows-target	-
 1	lint-name-case-default	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_name_case.tl --check	<workdir>/lint_name_case.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout lint: 0 finding(s)	empty	none	lint-name-case-default	-
 1	lint-name-case	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_name_case.tl --name-case	<workdir>/lint_name_case.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout global name case;assert_contains stdout function name case;assert_contains stdout local name case;assert_contains stdout type name case;assert_contains stdout 'consider `BAD-GLOBAL`';assert_contains stdout 'consider `bad-function`';assert_contains stdout 'consider `bad-param`';assert_contains stdout 'consider `BadType`';assert_contains stdout lint: 4 finding(s);assert_not_contains stdout :0:0:	empty	none	lint-name-case	-
 1	lint-name-case-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_name_case.tl --name-case --check	<workdir>/lint_name_case.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	assert_contains stdout lint: 4 finding(s)	empty	none	lint-name-case-check	-
@@ -341,6 +344,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	lint-package-lib-name-case	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint --name-case --check --manifest-path <lint-pkg-lib>/typelisp.pkg	<lint-pkg-lib>/typelisp.pkg	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	assert_contains stdout global name case;assert_contains stdout 'consider `BAD-GLOBAL`';assert_contains stdout lint: 1 finding(s)	empty	none	lint-package-lib-name-case	-
 1	lint-missing	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp lint	prepared-by-gate	inherited	<lint-nopkg>	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr could not find typelisp.pkg;assert_contains stderr Error: missing file argument;assert_contains stderr typelisp lint	none	lint-missing	-
 1	lint-parse-error-check	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lint <workdir>/lint_parse_error.tl --check	<workdir>/lint_parse_error.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	nonempty	none	lint-parse-error-check	-
+1	fmt-cfg-target	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <check-cfg-src> --target windows-x86_64 --cfg tooling-feature	<check-cfg-src>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	assert_contains <check-cfg-src> platform-value;assert_contains <check-cfg-src> cfg-value	fmt-cfg-target	-
 1	fmt-char-literal	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/char_literal.tl	<workdir>/char_literal.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/char_literal.tl <workdir>/char_literal.expected	fmt-char-literal	intentional-idempotence-replay
 1	fmt-comments	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/comments.tl	<workdir>/comments.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/comments.tl <workdir>/comments.expected	fmt-comments	intentional-idempotence-replay
 1	fmt-decls	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp fmt <workdir>/decls.tl	<workdir>/decls.tl	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	check_file_exact <workdir>/decls.tl <workdir>/decls.expected	fmt-decls	intentional-idempotence-replay

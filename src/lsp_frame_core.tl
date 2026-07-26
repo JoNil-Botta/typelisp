@@ -13,6 +13,7 @@
 (import lex as lexer)
 (import read as reader)
 (import compiler_builtin_ids as cbi)
+(import compiler_target_cfg_core as target_cfg)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "format_rules.tl")
@@ -96,6 +97,10 @@
 (defenum LspJsonText
   (Ok String)
   (Missing))
+
+(defenum LspInitializeLanguageConfig
+  (Ok target_cfg.CompilerTargetCfg lsp_svec.Vec)
+  (Err String))
 
 (defenum LspDocumentLookup
   (Found String String String)
@@ -578,6 +583,100 @@
   (match (lsp-json-string-field value key)
     [(LspJsonText.Ok text) text]
     [(LspJsonText.Missing) fallback]))
+
+(define lsp-language-target : target_cfg.CompilerTargetCfg
+  (target_cfg.compiler-target-cfg-host))
+(define lsp-language-cfg-names : lsp_svec.Vec
+  (lsp_svec.new))
+
+(define (lsp-language-config-reset!) : unit
+  (begin
+    (set! lsp-language-target (target_cfg.compiler-target-cfg-host))
+    (set! lsp-language-cfg-names (lsp_svec.new))))
+
+(define (lsp-language-config-install!
+  [target : target_cfg.CompilerTargetCfg]
+  [cfg-names : lsp_svec.Vec]) : unit
+  (begin
+    (set! lsp-language-target target)
+    (set! lsp-language-cfg-names cfg-names)))
+
+(define (lsp-language-cfgs) : sym_i64_env.SymI64Env
+  (target_cfg.compiler-target-cfgs-with-names
+    lsp-language-target
+    lsp-language-cfg-names))
+
+(define (lsp-initialize-cfg-names [options : json.Json]) : LspInitializeLanguageConfig
+  (let
+    [target : target_cfg.CompilerTargetCfg
+      (target_cfg.compiler-target-cfg-host)]
+    [cfg-names : lsp_svec.Vec (lsp_svec.new)]
+    [error : String ""]
+    [target-key : String "target"]
+    [cfg-key : String "cfg"]
+    (begin
+      (match (json.object-get options (& target-key))
+        [(json.JsonMissing) unit]
+        [(json.JsonFound target-value)
+          (match target-value
+            [(json.JsonString target-name)
+              (match (target_cfg.compiler-target-cfg-parse target-name)
+                [(target_cfg.ResultCompilerTargetCfg.Ok parsed-target)
+                  (set! target parsed-target)]
+                [(target_cfg.ResultCompilerTargetCfg.Err message)
+                  (set! error (string.append "lsp: " message))])]
+            [_
+              (set! error "lsp: initializationOptions.target must be a string")])])
+      (if (= (string.string-length error) 0)
+        (match (json.object-get options (& cfg-key))
+          [(json.JsonMissing) unit]
+          [(json.JsonFound cfg-value)
+            (match cfg-value
+              [(json.JsonArray items-box)
+                (let
+                  [items : json.JsonSeq (box-get items-box)]
+                  [index : i64 0]
+                  (while (and
+                    (= (string.string-length error) 0)
+                    (< index (struct-get items len)))
+                    (begin
+                      (match (array-ref (struct-get items slots) index)
+                        [(json.JsonString name)
+                          (lsp_svec.push
+                            (&mut cfg-names)
+                            (string.copy (& name)))]
+                        [_
+                          (set!
+                            error
+                            "lsp: initializationOptions.cfg must contain strings")])
+                      (set! index (+ index 1)))))]
+              [_ (set! error "lsp: initializationOptions.cfg must be an array")])])
+        unit)
+      (if (= (string.string-length error) 0)
+        (LspInitializeLanguageConfig.Ok target cfg-names)
+        (LspInitializeLanguageConfig.Err error)))))
+
+(define (lsp-initialize-language-config [message : json.Json]) : LspInitializeLanguageConfig
+  (let
+    [params-key : String "params"]
+    [options-key : String "initializationOptions"]
+    [typelisp-key : String "typelisp"]
+    (match (json.object-get message (& params-key))
+      [(json.JsonMissing)
+        (LspInitializeLanguageConfig.Ok
+          (target_cfg.compiler-target-cfg-host)
+          (lsp_svec.new))]
+      [(json.JsonFound params)
+        (match (json.object-get params (& options-key))
+          [(json.JsonMissing)
+            (LspInitializeLanguageConfig.Ok
+              (target_cfg.compiler-target-cfg-host)
+              (lsp_svec.new))]
+          [(json.JsonFound options)
+            (match (json.object-get options (& typelisp-key))
+              [(json.JsonFound typelisp-options)
+                (lsp-initialize-cfg-names typelisp-options)]
+              [(json.JsonMissing) (lsp-initialize-cfg-names options)])])])))
 
 (define (lsp-write-json [value : json.Json]) : unit
   (lsp-frame-write-body (json.stringify value)))
@@ -1506,7 +1605,11 @@
   [stdlib-roots : lsp_svec.Vec]) : json.JsonSeq
   (lsp-lint-findings-to-json
     text
-    (selfhost-lint-source-with-roots path text stdlib-roots)
+    (selfhost-lint-source-with-roots-and-cfg
+      path
+      text
+      stdlib-roots
+      (lsp-language-cfgs))
     0
     (json.list-empty)))
 
@@ -1530,7 +1633,11 @@
       (let
         [lint-diags : json.JsonSeq
           (lsp-lint-diagnostics path text stdlib-roots)]
-        (match (compiler-check-source-with-roots path text stdlib-roots)
+        (match (compiler-check-source-with-roots-and-cfg
+          path
+          text
+          stdlib-roots
+          (lsp-language-cfgs))
           [(ResultCompilerCheck.Ok _)
             (begin
               (lsp-publish-diagnostics uri lint-diags)
@@ -2944,7 +3051,11 @@
         [end-line : i64 (lsp-inlay-range-line range "end" 1000000000)]
         (begin
           (tc-inlay-hints-enable!)
-          (match (compiler-check-source-with-roots path text stdlib-roots)
+          (match (compiler-check-source-with-roots-and-cfg
+            path
+            text
+            stdlib-roots
+            (lsp-language-cfgs))
             [(ResultCompilerCheck.Ok _) unit]
             [(ResultCompilerCheck.Err _) unit])
           (let
@@ -5512,7 +5623,11 @@
   [stdlib-roots : lsp_svec.Vec]) : LspCheckCache
   (match (lsp-validate-forms-result text)
     [(LspValidationResult.Valid)
-      (match (compiler-check-source-with-roots path text stdlib-roots)
+      (match (compiler-check-source-with-roots-and-cfg
+        path
+        text
+        stdlib-roots
+        (lsp-language-cfgs))
         [(ResultCompilerCheck.Ok _) LspCheckCacheOk]
         [(ResultCompilerCheck.Err diag)
           (LspCheckCacheErr (compiler-diagnostic-message (box-get diag)))])]
@@ -5602,7 +5717,10 @@
                     (json.JsonString message)))
                 (LspHandleResult.Continue docs))]))))))
 
-(define (lsp-nearest-inlay-hint-index [line1 : i64] [col1 : i64]) : i64
+(define (lsp-nearest-inlay-hint-index
+  [text : String]
+  [line1 : i64]
+  [col1 : i64]) : i64
   (let
     [size : i64 (tc-inlay-hints-size)]
     [i : i64 0]
@@ -5622,8 +5740,18 @@
               (- col1 hint-col)
               (- hint-col col1))]
           [dist : i64 (+ (* d-line 1000) d-col)]
+          [off : i64
+            (lsp-offset-at-position text (- hint-line 1) (- hint-col 1))]
+          [belongs-to-document : bool
+            (or
+              (lsp-inlay-valid-binding? text off)
+              (lsp-inlay-valid-expr? text off))]
           (begin
-            (if (< dist best-dist)
+            ;; Typecheck traverses imports before the entry source and the
+            ;; shared hint buffer is not file-attributed. Never select an
+            ;; imported hint merely because its line/column is numerically
+            ;; close to the requested document position.
+            (if (and belongs-to-document (< dist best-dist))
               (begin
                 (set! best-dist dist)
                 (set! best-idx i))
@@ -5650,11 +5778,16 @@
               [col1 : i64 (+ char0 1)]
               (begin
                 (tc-inlay-hints-enable!)
-                (match (compiler-check-source-with-roots path text stdlib-roots)
+                (match (compiler-check-source-with-roots-and-cfg
+                  path
+                  text
+                  stdlib-roots
+                  (lsp-language-cfgs))
                   [(ResultCompilerCheck.Ok _) unit]
                   [(ResultCompilerCheck.Err _) unit])
                 (let
-                  [found-idx : i64 (lsp-nearest-inlay-hint-index line1 col1)]
+                  [found-idx : i64
+                    (lsp-nearest-inlay-hint-index text line1 col1)]
                   (begin
                     (tc-inlay-hints-disable!)
                     (if (= found-idx -1)
@@ -6448,7 +6581,13 @@
                 [key : String "id"]
                 (match (json.object-get message (& key))
                   [(json.JsonFound id)
-                    (lsp-write-response id (lsp-initialize-result))]
+                    (match (lsp-initialize-language-config message)
+                      [(LspInitializeLanguageConfig.Ok target cfg-names)
+                        (begin
+                          (lsp-language-config-install! target cfg-names)
+                          (lsp-write-response id (lsp-initialize-result)))]
+                      [(LspInitializeLanguageConfig.Err config-error)
+                        (lsp-write-error id -32602 config-error)])]
                   [(json.JsonMissing) unit]))
               (set! result (LspHandleResult.Continue docs)))
             unit)
@@ -6888,6 +7027,7 @@
     [status : i64 0]
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     (begin
+      (lsp-language-config-reset!)
       (lsp-frame-session-cache-enable!)
       (while (not done)
         (match (lsp-frame-read-message)
@@ -6922,6 +7062,7 @@
 (define (lsp-frame-fresh-session-reset!) : unit
   (begin
     (lsp-frame-memory-reset!)
+    (lsp-language-config-reset!)
     (set! lsp-document-cache-arena 0)
     (tc-prefix-snapshot-cache-clear!)
     (compiler-load-session-fresh-reset!)

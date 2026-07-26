@@ -28028,30 +28028,23 @@
     [_set-home : unit
       (unsafe
         (arena.set! home))]
-    ;; Leave eight bytes in the Linux root segment. Copying even this one-byte
-    ;; retained chunk must advance the home chain without touching 64 MiB of
-    ;; pages, making the stale-handle regression cheap to exercise.
+    ;; Leave eight bytes in the Linux root segment. Appending even this
+    ;; one-byte retained chunk must advance the home chain without touching
+    ;; 64 MiB of pages, making the stale-handle regression cheap to exercise.
     [_fill-home : i64 (compiler-backend-test-runtime-alloc 67108792)]
     [home-before-copy : arena.Arena (arena.current)]
     [_set-scratch : unit
       (unsafe
         (arena.set! scratch))]
-    [copied : CompilerBackendPeepholeSweepChunkState
-      (compiler-backend-peephole-sweep-chunk-state-copy-home
-        (CompilerBackendPeepholeSweepChunkState
-          (text_buf.empty)
-          (text_buf.empty)
-          0)
-        "x"
-        7
-        scratch
-        home-before-copy)]
+    [copied : text_buf.TextBuf
+      (in-arena home-before-copy (text_buf.append (text_buf.empty) "x"))]
+    [_carry-home : unit
+      (compiler-backend-assembly-stream-carry-home-current! home-before-copy)]
     [carried-home : arena.Arena compiler-backend-assembly-stream-home-arena]
     [ok : bool
       (and
         (arena.eq? (arena.current) scratch)
-        (= (struct-get copied sweep-cursor) 7)
-        (not (text_buf.empty? (struct-get copied out)))
+        (not (text_buf.empty? copied))
         (not (arena.eq? carried-home home-before-copy)))]
     (begin
       (set! compiler-backend-assembly-stream-home-arena previous-stream-home)

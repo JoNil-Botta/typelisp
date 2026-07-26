@@ -7,8 +7,11 @@
 ;; A body outside the supported subset keeps the counted interpreted-fallback
 ;; shell.
 (import "../compiler_tlci_native_producer.tl")
+
+;; compiler_embedded_stdlib_tlci owns the loader import. Importing the same
+;; graph again here gives Windows absolute-path runs two qualified page
+;; surfaces and makes the second loader lose pages.ResultTlciPageUnit.
 (import "../compiler_embedded_stdlib_tlci.tl")
-(import "../tlci_loader.tl")
 (import "../compiler_ctfe.tl")
 (import compiler_intern as ci)
 (import stdlib.array)
@@ -1293,6 +1296,100 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;; The fixed-array and shared-reference annotations in `typetpl` exercise the
+;; two composite-type operations that were renumbered after their producer
+;; support was written. Loading the image is insufficient: the stale ids only
+;; fail when the emitted entry dispatches and the host interprets them.
+(define (producer-test-typetpl-array-binding-ok?
+  [pools : AstNodePoolContext]
+  [binding : AstLetBinding]
+  [expected-count : i64]) : bool
+  (match binding
+    [(AstLetBinding.Binding _ (AstMaybeType.Some ty) _)
+      (match ty
+        [(AstType.Array elem count)
+          (and
+            (= count expected-count)
+            (match (ast-node-pool-context-type-get pools elem)
+              [(AstType.I64) true]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-typetpl-ref-binding-ok?
+  [pools : AstNodePoolContext]
+  [binding : AstLetBinding]) : bool
+  (match binding
+    [(AstLetBinding.Binding _ (AstMaybeType.Some ty) _)
+      (match ty
+        [(AstType.Ref region inner)
+          (and
+            (string.eq (intern-str region) "region")
+            (match (ast-node-pool-context-type-get pools inner)
+              [(AstType.Str) true]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-typetpl-result-ok? [pools : AstNodePoolContext]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Let let-box)
+          (match (box-get let-box)
+            [(AstLet.Let bindings _)
+              (and
+                (= (ast-let-binding-list-len (& bindings)) 5)
+                (producer-test-typetpl-ref-binding-ok?
+                  pools
+                  (ast-let-binding-list-get
+                    (& bindings)
+                    2
+                    (ast-let-binding-fallback)))
+                (producer-test-typetpl-array-binding-ok?
+                  pools
+                  (ast-let-binding-list-get
+                    (& bindings)
+                    4
+                    (ast-let-binding-fallback))
+                  4))])]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-dispatch-typetpl?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (array-set! operands 0 (producer-test-expr-operand "value"))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= (struct-get dispatch status) tlci-host-callback-status-ok)
+                (compiler-comptime-host-result-ready?)
+                (producer-test-typetpl-result-ok? pools))])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; The `kindof` fixture dispatches on the produced type of an Expr operand, so
 ;; the f64-typed operand must select the first arm and rebuild `(f64-op v)`.
 ;; The `keyof` fixture dispatches on a type operand's canonical key and builds
@@ -1672,6 +1769,9 @@
                               (producer-test-dispatch-typeof?
                                 (& loaded)
                                 "package.macros/typeof")
+                              (producer-test-dispatch-typetpl?
+                                (& loaded)
+                                "package.macros/typetpl")
                               (producer-test-dispatch-scan?
                                 (& loaded)
                                 "package.macros/scan"

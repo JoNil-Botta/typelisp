@@ -266,6 +266,7 @@ string_concat_deep|tests/integration/string_concat_deep.tl|42|-|-|stdlib/string.
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl
 core_string_length|tests/integration/core_string_length.tl|42|-|-|stdlib/string.tl
 stdlib_math_ieee|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl
+private_intrinsic_provenance|tests/integration/private_intrinsic_provenance.tl|42|-|-|private_intrinsic_provenance_provider.tl private_intrinsic_provenance_shadow_provider.tl
 stdlib_math_exp|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl
 stdlib_math_log|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl
 stdlib_math_trig|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl

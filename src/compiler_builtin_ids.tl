@@ -3524,6 +3524,26 @@
     (compiler-builtin-lower-float-to-bits-id? name-id)
     (compiler-builtin-lower-float-from-bits-id? name-id)))
 
+;: Compiler-private intrinsic spellings whose fallback semantics belong to the
+;: module that contains the call, not to a later importing module.  Keeping this
+;: set in the fixed-id registry lets typechecking and lowering share the exact
+;: same provenance rule.
+(define (compiler-builtin-private-intrinsic-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (or
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-tl-private-string-length
+        compiler-builtin-id-tl-private-string-ref
+        compiler-builtin-id-tl-private-string-eq
+        compiler-builtin-id-tl-private-string-to-int)
+      (compiler-builtin-id-any3?
+        name-id
+        compiler-builtin-id-tl-private-float-sqrt
+        compiler-builtin-id-tl-private-float-to-bits
+        compiler-builtin-id-tl-private-float-from-bits))))
+
 (define (compiler-builtin-typecheck-string-length-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)

@@ -40620,6 +40620,468 @@
         [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
     [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
 
+;; The `Gep` fusion cluster of `compiler-backend-emit-instrs-step`, extracted
+;; unchanged (refs #5177). It is the peephole family that folds a single-use
+;; address computation into the instruction that consumes it -- load, store,
+;; copy, binop and the branch forms behind them -- so it is one cluster and
+;; moves as one, matching the `mov`/`call`/`store-ptr` steps already split out.
+(define (compiler-backend-emit-gep-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [gep-dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some n)
+        (match rest
+          [(CompilerIrInstrList.Cons next after-load)
+            (match next
+              [(CompilerIrInstr.Load load-dst src load-ty)
+                (if (compiler-backend-branch-uses-var? src gep-dst)
+                  (if (and
+                    (compiler-backend-load-compare-type? load-ty)
+                    (compiler-backend-var-single-use? ctx.use-counts load-dst))
+                    (match (box-get after-load)
+                      [(CompilerIrInstrList.Cons maybe-cmp after-cmp)
+                        (match maybe-cmp
+                          [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
+                            (if (and
+                              (compiler-backend-compare-op? op)
+                              (compiler-backend-branch-uses-var? lhs load-dst)
+                              (compiler-backend-var-single-use?
+                                ctx.use-counts
+                                cmp-dst)
+                              (not
+                                (compiler-backend-binop-f64?
+                                  ctx.types
+                                  ctx.global-types
+                                  lhs
+                                  rhs
+                                  cmp-ty)))
+                              (match (box-get after-cmp)
+                                [(CompilerIrInstrList.Cons branch after-branch)
+                                  (match branch
+                                    [(CompilerIrInstr.Branch
+                                        cond
+                                        true-label
+                                        false-label)
+                                      (if (compiler-backend-branch-uses-var?
+                                        cond
+                                        cmp-dst)
+                                        (compiler-backend-emit-fused-gep-load-compare-branch-rest
+                                          ctx
+                                          fallthrough
+                                          gep-dst
+                                          (compiler-backend-gep-fold-next!
+                                            offset
+                                            elem-ty)
+                                          base
+                                          offset
+                                          elem-ty
+                                          load-dst
+                                          load-ty
+                                          cmp-dst
+                                          op
+                                          rhs
+                                          cmp-ty
+                                          true-label
+                                          false-label
+                                          (box-get after-branch)
+                                          buf)
+                                        (compiler-backend-emit-fused-gep-load-rest
+                                          ctx
+                                          fallthrough
+                                          gep-dst
+                                          (compiler-backend-gep-fold-next!
+                                            offset
+                                            elem-ty)
+                                          base
+                                          offset
+                                          elem-ty
+                                          load-dst
+                                          load-ty
+                                          (box-get after-load)
+                                          buf))]
+                                    [_
+                                      (compiler-backend-emit-fused-gep-load-rest
+                                        ctx
+                                        fallthrough
+                                        gep-dst
+                                        (compiler-backend-gep-fold-next!
+                                          offset
+                                          elem-ty)
+                                        base
+                                        offset
+                                        elem-ty
+                                        load-dst
+                                        load-ty
+                                        (box-get after-load)
+                                        buf)])]
+                                [_
+                                  (compiler-backend-emit-fused-gep-load-rest
+                                    ctx
+                                    fallthrough
+                                    gep-dst
+                                    (compiler-backend-gep-fold-next!
+                                      offset
+                                      elem-ty)
+                                    base
+                                    offset
+                                    elem-ty
+                                    load-dst
+                                    load-ty
+                                    (box-get after-load)
+                                    buf)])
+                              (compiler-backend-emit-fused-gep-load-rest
+                                ctx
+                                fallthrough
+                                gep-dst
+                                (compiler-backend-gep-fold-next! offset elem-ty)
+                                base
+                                offset
+                                elem-ty
+                                load-dst
+                                load-ty
+                                (box-get after-load)
+                                buf))]
+                          [_
+                            (compiler-backend-emit-fused-gep-load-rest
+                              ctx
+                              fallthrough
+                              gep-dst
+                              (compiler-backend-gep-fold-next! offset elem-ty)
+                              base
+                              offset
+                              elem-ty
+                              load-dst
+                              load-ty
+                              (box-get after-load)
+                              buf)])]
+                      [_
+                        (compiler-backend-emit-fused-gep-load-rest
+                          ctx
+                          fallthrough
+                          gep-dst
+                          (compiler-backend-gep-fold-next! offset elem-ty)
+                          base
+                          offset
+                          elem-ty
+                          load-dst
+                          load-ty
+                          (box-get after-load)
+                          buf)])
+                    (compiler-backend-emit-fused-gep-load-rest
+                      ctx
+                      fallthrough
+                      gep-dst
+                      (compiler-backend-gep-fold-next! offset elem-ty)
+                      base
+                      offset
+                      elem-ty
+                      load-dst
+                      load-ty
+                      (box-get after-load)
+                      buf))
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf))]
+              [(CompilerIrInstr.StorePtr dst value store-ty)
+                (if (compiler-backend-branch-uses-var? dst gep-dst)
+                  (compiler-backend-emit-fused-gep-store-rest
+                    ctx
+                    fallthrough
+                    gep-dst
+                    (compiler-backend-gep-fold-next! offset elem-ty)
+                    base
+                    offset
+                    elem-ty
+                    value
+                    store-ty
+                    (box-get after-load)
+                    buf)
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf))]
+              [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
+                (if (and
+                  (compiler-backend-branch-uses-var? copy-dst gep-dst)
+                  (compiler-backend-imm32?
+                    (* n (compiler-backend-type-size elem-ty))))
+                  (let
+                    [protect-n : i64
+                      (compiler-backend-copy-run-protect-count
+                        ctx.assignments
+                        (box-get after-load))]
+                    [protect : (Array String)
+                      (compiler-backend-copy-run-protect-exclude
+                        ctx.assignments
+                        (box-get after-load))]
+                    (compiler-backend-emit-fused-result-rest
+                      ctx
+                      fallthrough
+                      (compiler-backend-emit-copy-bytes-from-gep-avoid
+                        ctx.assignments
+                        base
+                        offset
+                        elem-ty
+                        copy-src
+                        copy-size
+                        protect
+                        protect-n
+                        (compiler-backend-gep-fold-next! offset elem-ty)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          0
+                          0)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          0
+                          1)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          1
+                          1)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          1
+                          (if (>= copy-size 16)
+                            3
+                            2))
+                        (if (>= copy-size 16)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            1
+                            2)
+                          ""))
+                      (box-get after-load)
+                      buf))
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf))]
+              [_
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  rest
+                  buf)])]
+          [_
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+      [(option_i64.None)
+        (match rest
+          [(CompilerIrInstrList.Cons next after-gep)
+            (match next
+              [(CompilerIrInstr.Gep _ load-base load-offset _)
+                (compiler-backend-emit-fused-result-rest
+                  ctx
+                  fallthrough
+                  (if (compiler-backend-branch-uses-var? load-base gep-dst)
+                    (compiler-backend-emit-gep
+                      ctx.assignments
+                      gep-dst
+                      base
+                      offset
+                      elem-ty
+                      (compiler-backend-gep-fold-next! offset elem-ty)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        0
+                        0)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        0
+                        1))
+                    (compiler-backend-emit-gep-staged-avoid
+                      ctx.assignments
+                      gep-dst
+                      base
+                      offset
+                      elem-ty
+                      (compiler-backend-gep-fold-next! offset elem-ty)
+                      (compiler-backend-value-scalar-register
+                        ctx.assignments
+                        load-base)
+                      (compiler-backend-value-scalar-register
+                        ctx.assignments
+                        load-offset)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        0
+                        0)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        0
+                        1)))
+                  rest
+                  buf)]
+              [(CompilerIrInstr.Mov ptr-var src _)
+                (if (and
+                  (compiler-backend-branch-uses-var? src gep-dst)
+                  (compiler-backend-var-single-use? ctx.use-counts ptr-var))
+                  (match (box-get after-gep)
+                    [(CompilerIrInstrList.Cons maybe-store after-store)
+                      (match maybe-store
+                        [(CompilerIrInstr.StorePtr dst value store-ty)
+                          (if (compiler-backend-branch-uses-var? dst ptr-var)
+                            (compiler-backend-emit-fused-gep-store-rest
+                              ctx
+                              fallthrough
+                              gep-dst
+                              (compiler-backend-gep-fold-next! offset elem-ty)
+                              base
+                              offset
+                              elem-ty
+                              value
+                              store-ty
+                              (box-get after-store)
+                              buf)
+                            (compiler-backend-emit-instrs-normal
+                              ctx
+                              fallthrough
+                              instr
+                              rest
+                              buf))]
+                        [_
+                          (compiler-backend-emit-instrs-normal
+                            ctx
+                            fallthrough
+                            instr
+                            rest
+                            buf)])]
+                    [_
+                      (compiler-backend-emit-instrs-normal
+                        ctx
+                        fallthrough
+                        instr
+                        rest
+                        buf)])
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf))]
+              [(CompilerIrInstr.Load load-dst src load-ty)
+                (if (compiler-backend-branch-uses-var? src gep-dst)
+                  (compiler-backend-emit-fused-gep-load-rest
+                    ctx
+                    fallthrough
+                    gep-dst
+                    (compiler-backend-gep-fold-next! offset elem-ty)
+                    base
+                    offset
+                    elem-ty
+                    load-dst
+                    load-ty
+                    (box-get after-gep)
+                    buf)
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf))]
+              [(CompilerIrInstr.StorePtr dst value store-ty)
+                (if (compiler-backend-branch-uses-var? dst gep-dst)
+                  (compiler-backend-emit-fused-gep-store-rest
+                    ctx
+                    fallthrough
+                    gep-dst
+                    (compiler-backend-gep-fold-next! offset elem-ty)
+                    base
+                    offset
+                    elem-ty
+                    value
+                    store-ty
+                    (box-get after-gep)
+                    buf)
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf))]
+              [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
+                (if (compiler-backend-branch-uses-var? copy-dst gep-dst)
+                  (let
+                    [protect-n : i64
+                      (compiler-backend-copy-run-protect-count
+                        ctx.assignments
+                        (box-get after-gep))]
+                    [protect : (Array String)
+                      (compiler-backend-copy-run-protect-exclude
+                        ctx.assignments
+                        (box-get after-gep))]
+                    (compiler-backend-emit-fused-result-rest
+                      ctx
+                      fallthrough
+                      (compiler-backend-emit-copy-bytes-from-gep-avoid
+                        ctx.assignments
+                        base
+                        offset
+                        elem-ty
+                        copy-src
+                        copy-size
+                        protect
+                        protect-n
+                        (compiler-backend-gep-fold-next! offset elem-ty)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          0
+                          0)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          0
+                          1)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          1
+                          1)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          1
+                          (if (>= copy-size 16)
+                            3
+                            2))
+                        (if (>= copy-size 16)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            1
+                            2)
+                          ""))
+                      (box-get after-gep)
+                      buf))
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf))]
+              [_
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  rest
+                  buf)])]
+          [_
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])])
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)))
+
 (define (compiler-backend-emit-instrs-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -40661,502 +41123,16 @@
             (box-get rest)
             buf)]
         [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
-          (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
-            (match (compiler-backend-value-as-i64 offset)
-              [(option_i64.Some n)
-                (match (box-get rest)
-                  [(CompilerIrInstrList.Cons next after-load)
-                    (match next
-                      [(CompilerIrInstr.Load load-dst src load-ty)
-                        (if (compiler-backend-branch-uses-var? src gep-dst)
-                          (if (and
-                            (compiler-backend-load-compare-type? load-ty)
-                            (compiler-backend-var-single-use?
-                              ctx.use-counts
-                              load-dst))
-                            (match (box-get after-load)
-                              [(CompilerIrInstrList.Cons maybe-cmp after-cmp)
-                                (match maybe-cmp
-                                  [(CompilerIrInstr.BinOp
-                                      cmp-dst
-                                      op
-                                      lhs
-                                      rhs
-                                      cmp-ty)
-                                    (if (and
-                                      (compiler-backend-compare-op? op)
-                                      (compiler-backend-branch-uses-var?
-                                        lhs
-                                        load-dst)
-                                      (compiler-backend-var-single-use?
-                                        ctx.use-counts
-                                        cmp-dst)
-                                      (not
-                                        (compiler-backend-binop-f64?
-                                          ctx.types
-                                          ctx.global-types
-                                          lhs
-                                          rhs
-                                          cmp-ty)))
-                                      (match (box-get after-cmp)
-                                        [(CompilerIrInstrList.Cons
-                                            branch
-                                            after-branch)
-                                          (match branch
-                                            [(CompilerIrInstr.Branch
-                                                cond
-                                                true-label
-                                                false-label)
-                                              (if (compiler-backend-branch-uses-var?
-                                                cond
-                                                cmp-dst)
-                                                (compiler-backend-emit-fused-gep-load-compare-branch-rest
-                                                  ctx
-                                                  fallthrough
-                                                  gep-dst
-                                                  (compiler-backend-gep-fold-next!
-                                                    offset
-                                                    elem-ty)
-                                                  base
-                                                  offset
-                                                  elem-ty
-                                                  load-dst
-                                                  load-ty
-                                                  cmp-dst
-                                                  op
-                                                  rhs
-                                                  cmp-ty
-                                                  true-label
-                                                  false-label
-                                                  (box-get after-branch)
-                                                  buf)
-                                                (compiler-backend-emit-fused-gep-load-rest
-                                                  ctx
-                                                  fallthrough
-                                                  gep-dst
-                                                  (compiler-backend-gep-fold-next!
-                                                    offset
-                                                    elem-ty)
-                                                  base
-                                                  offset
-                                                  elem-ty
-                                                  load-dst
-                                                  load-ty
-                                                  (box-get after-load)
-                                                  buf))]
-                                            [_
-                                              (compiler-backend-emit-fused-gep-load-rest
-                                                ctx
-                                                fallthrough
-                                                gep-dst
-                                                (compiler-backend-gep-fold-next!
-                                                  offset
-                                                  elem-ty)
-                                                base
-                                                offset
-                                                elem-ty
-                                                load-dst
-                                                load-ty
-                                                (box-get after-load)
-                                                buf)])]
-                                        [_
-                                          (compiler-backend-emit-fused-gep-load-rest
-                                            ctx
-                                            fallthrough
-                                            gep-dst
-                                            (compiler-backend-gep-fold-next!
-                                              offset
-                                              elem-ty)
-                                            base
-                                            offset
-                                            elem-ty
-                                            load-dst
-                                            load-ty
-                                            (box-get after-load)
-                                            buf)])
-                                      (compiler-backend-emit-fused-gep-load-rest
-                                        ctx
-                                        fallthrough
-                                        gep-dst
-                                        (compiler-backend-gep-fold-next!
-                                          offset
-                                          elem-ty)
-                                        base
-                                        offset
-                                        elem-ty
-                                        load-dst
-                                        load-ty
-                                        (box-get after-load)
-                                        buf))]
-                                  [_
-                                    (compiler-backend-emit-fused-gep-load-rest
-                                      ctx
-                                      fallthrough
-                                      gep-dst
-                                      (compiler-backend-gep-fold-next!
-                                        offset
-                                        elem-ty)
-                                      base
-                                      offset
-                                      elem-ty
-                                      load-dst
-                                      load-ty
-                                      (box-get after-load)
-                                      buf)])]
-                              [_
-                                (compiler-backend-emit-fused-gep-load-rest
-                                  ctx
-                                  fallthrough
-                                  gep-dst
-                                  (compiler-backend-gep-fold-next!
-                                    offset
-                                    elem-ty)
-                                  base
-                                  offset
-                                  elem-ty
-                                  load-dst
-                                  load-ty
-                                  (box-get after-load)
-                                  buf)])
-                            (compiler-backend-emit-fused-gep-load-rest
-                              ctx
-                              fallthrough
-                              gep-dst
-                              (compiler-backend-gep-fold-next! offset elem-ty)
-                              base
-                              offset
-                              elem-ty
-                              load-dst
-                              load-ty
-                              (box-get after-load)
-                              buf))
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf))]
-                      [(CompilerIrInstr.StorePtr dst value store-ty)
-                        (if (compiler-backend-branch-uses-var? dst gep-dst)
-                          (compiler-backend-emit-fused-gep-store-rest
-                            ctx
-                            fallthrough
-                            gep-dst
-                            (compiler-backend-gep-fold-next! offset elem-ty)
-                            base
-                            offset
-                            elem-ty
-                            value
-                            store-ty
-                            (box-get after-load)
-                            buf)
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf))]
-                      [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
-                        (if (and
-                          (compiler-backend-branch-uses-var? copy-dst gep-dst)
-                          (compiler-backend-imm32?
-                            (* n (compiler-backend-type-size elem-ty))))
-                          (let
-                            [protect-n : i64
-                              (compiler-backend-copy-run-protect-count
-                                ctx.assignments
-                                (box-get after-load))]
-                            [protect : (Array String)
-                              (compiler-backend-copy-run-protect-exclude
-                                ctx.assignments
-                                (box-get after-load))]
-                            (compiler-backend-emit-fused-result-rest
-                              ctx
-                              fallthrough
-                              (compiler-backend-emit-copy-bytes-from-gep-avoid
-                                ctx.assignments
-                                base
-                                offset
-                                elem-ty
-                                copy-src
-                                copy-size
-                                protect
-                                protect-n
-                                (compiler-backend-gep-fold-next! offset elem-ty)
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  0
-                                  0)
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  0
-                                  1)
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  1
-                                  1)
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  1
-                                  (if (>= copy-size 16)
-                                    3
-                                    2))
-                                (if (>= copy-size 16)
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      ctx.plan)
-                                    1
-                                    2)
-                                  ""))
-                              (box-get after-load)
-                              buf))
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf))]
-                      [_
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          (box-get rest)
-                          buf)])]
-                  [_
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      (box-get rest)
-                      buf)])]
-              [(option_i64.None)
-                (match (box-get rest)
-                  [(CompilerIrInstrList.Cons next after-gep)
-                    (match next
-                      [(CompilerIrInstr.Gep _ load-base load-offset _)
-                        (compiler-backend-emit-fused-result-rest
-                          ctx
-                          fallthrough
-                          (if (compiler-backend-branch-uses-var?
-                            load-base
-                            gep-dst)
-                            (compiler-backend-emit-gep
-                              ctx.assignments
-                              gep-dst
-                              base
-                              offset
-                              elem-ty
-                              (compiler-backend-gep-fold-next! offset elem-ty)
-                              (compiler-backend-scratch-plan-register-ahead
-                                (compiler-backend-runtime-plan-scratch ctx.plan)
-                                0
-                                0)
-                              (compiler-backend-scratch-plan-register-ahead
-                                (compiler-backend-runtime-plan-scratch ctx.plan)
-                                0
-                                1))
-                            (compiler-backend-emit-gep-staged-avoid
-                              ctx.assignments
-                              gep-dst
-                              base
-                              offset
-                              elem-ty
-                              (compiler-backend-gep-fold-next! offset elem-ty)
-                              (compiler-backend-value-scalar-register
-                                ctx.assignments
-                                load-base)
-                              (compiler-backend-value-scalar-register
-                                ctx.assignments
-                                load-offset)
-                              (compiler-backend-scratch-plan-register-ahead
-                                (compiler-backend-runtime-plan-scratch ctx.plan)
-                                0
-                                0)
-                              (compiler-backend-scratch-plan-register-ahead
-                                (compiler-backend-runtime-plan-scratch ctx.plan)
-                                0
-                                1)))
-                          (box-get rest)
-                          buf)]
-                      [(CompilerIrInstr.Mov ptr-var src _)
-                        (if (and
-                          (compiler-backend-branch-uses-var? src gep-dst)
-                          (compiler-backend-var-single-use?
-                            ctx.use-counts
-                            ptr-var))
-                          (match (box-get after-gep)
-                            [(CompilerIrInstrList.Cons maybe-store after-store)
-                              (match maybe-store
-                                [(CompilerIrInstr.StorePtr dst value store-ty)
-                                  (if (compiler-backend-branch-uses-var?
-                                    dst
-                                    ptr-var)
-                                    (compiler-backend-emit-fused-gep-store-rest
-                                      ctx
-                                      fallthrough
-                                      gep-dst
-                                      (compiler-backend-gep-fold-next!
-                                        offset
-                                        elem-ty)
-                                      base
-                                      offset
-                                      elem-ty
-                                      value
-                                      store-ty
-                                      (box-get after-store)
-                                      buf)
-                                    (compiler-backend-emit-instrs-normal
-                                      ctx
-                                      fallthrough
-                                      instr
-                                      (box-get rest)
-                                      buf))]
-                                [_
-                                  (compiler-backend-emit-instrs-normal
-                                    ctx
-                                    fallthrough
-                                    instr
-                                    (box-get rest)
-                                    buf)])]
-                            [_
-                              (compiler-backend-emit-instrs-normal
-                                ctx
-                                fallthrough
-                                instr
-                                (box-get rest)
-                                buf)])
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf))]
-                      [(CompilerIrInstr.Load load-dst src load-ty)
-                        (if (compiler-backend-branch-uses-var? src gep-dst)
-                          (compiler-backend-emit-fused-gep-load-rest
-                            ctx
-                            fallthrough
-                            gep-dst
-                            (compiler-backend-gep-fold-next! offset elem-ty)
-                            base
-                            offset
-                            elem-ty
-                            load-dst
-                            load-ty
-                            (box-get after-gep)
-                            buf)
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf))]
-                      [(CompilerIrInstr.StorePtr dst value store-ty)
-                        (if (compiler-backend-branch-uses-var? dst gep-dst)
-                          (compiler-backend-emit-fused-gep-store-rest
-                            ctx
-                            fallthrough
-                            gep-dst
-                            (compiler-backend-gep-fold-next! offset elem-ty)
-                            base
-                            offset
-                            elem-ty
-                            value
-                            store-ty
-                            (box-get after-gep)
-                            buf)
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf))]
-                      [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
-                        (if (compiler-backend-branch-uses-var? copy-dst gep-dst)
-                          (let
-                            [protect-n : i64
-                              (compiler-backend-copy-run-protect-count
-                                ctx.assignments
-                                (box-get after-gep))]
-                            [protect : (Array String)
-                              (compiler-backend-copy-run-protect-exclude
-                                ctx.assignments
-                                (box-get after-gep))]
-                            (compiler-backend-emit-fused-result-rest
-                              ctx
-                              fallthrough
-                              (compiler-backend-emit-copy-bytes-from-gep-avoid
-                                ctx.assignments
-                                base
-                                offset
-                                elem-ty
-                                copy-src
-                                copy-size
-                                protect
-                                protect-n
-                                (compiler-backend-gep-fold-next! offset elem-ty)
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  0
-                                  0)
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  0
-                                  1)
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  1
-                                  1)
-                                (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  1
-                                  (if (>= copy-size 16)
-                                    3
-                                    2))
-                                (if (>= copy-size 16)
-                                  (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch
-                                      ctx.plan)
-                                    1
-                                    2)
-                                  ""))
-                              (box-get after-gep)
-                              buf))
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf))]
-                      [_
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          (box-get rest)
-                          buf)])]
-                  [_
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      (box-get rest)
-                      buf)])])
-            (compiler-backend-emit-instrs-normal
-              ctx
-              fallthrough
-              instr
-              (box-get rest)
-              buf))]
+          (compiler-backend-emit-gep-step
+            ctx
+            fallthrough
+            instr
+            gep-dst
+            base
+            offset
+            elem-ty
+            (box-get rest)
+            buf)]
         [(CompilerIrInstr.CopyBytes dst src size)
           (compiler-backend-emit-copy-bytes-step
             ctx

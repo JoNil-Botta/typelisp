@@ -24924,7 +24924,7 @@
   (CompilerRegPlan.Plan
     assignments
     (compiler-live-set-empty)
-    CompilerRegIntervalList.Nil
+    (compiler-reg-interval-seq-empty)
     (compiler-backend-scratch-test-types-from 0 vars)
     (compiler-reg-call-split-empty)
     (compiler-reg-split-plan-empty)))
@@ -24935,7 +24935,7 @@
   (CompilerRegPlan.Plan
     assignments
     (compiler-live-set-empty)
-    CompilerRegIntervalList.Nil
+    (compiler-reg-interval-seq-empty)
     types
     (compiler-reg-call-split-empty)
     (compiler-reg-split-plan-empty)))
@@ -27191,8 +27191,8 @@
         (array.make-array CompilerRegScratchAssignment 2)]
       [starts : (Array i64) (array.make-array i64 2)]
       [ends : (Array i64) (array.make-array i64 2)]
-      [segments : (Array CompilerRegIntervalList)
-        (array.make-array CompilerRegIntervalList 2)]
+      [segments : (Array CompilerRegIntervalSeq)
+        (array.make-array CompilerRegIntervalSeq 2)]
       [present : (Array i64) (array.make-array i64 2)]
       [types : (Array AstType) (array.make-array AstType 2)]
       [assignments : CompilerRegAssignmentTable
@@ -27216,7 +27216,7 @@
         (compiler-reg-fill-i64-array ends -1)
         (compiler-reg-fill-i64-array present 0)
         (compiler-reg-fill-i64-array ref-counts 0)
-        (compiler-reg-fill-interval-list-array! segments 0)
+        (compiler-reg-fill-interval-seq-array! segments 0)
         (array-set!
           items
           0
@@ -27289,8 +27289,8 @@
         (array.make-array CompilerRegScratchAssignment 5)]
       [starts : (Array i64) (array.make-array i64 5)]
       [ends : (Array i64) (array.make-array i64 5)]
-      [segments : (Array CompilerRegIntervalList)
-        (array.make-array CompilerRegIntervalList 5)]
+      [segments : (Array CompilerRegIntervalSeq)
+        (array.make-array CompilerRegIntervalSeq 5)]
       [present : (Array i64) (array.make-array i64 5)]
       [types : (Array AstType) (array.make-array AstType 5)]
       [assignments : CompilerRegAssignmentTable
@@ -27334,7 +27334,7 @@
         (compiler-reg-fill-i64-array ends -1)
         (compiler-reg-fill-i64-array present 0)
         (compiler-reg-fill-i64-array ref-counts 0)
-        (compiler-reg-fill-interval-list-array! segments 0)
+        (compiler-reg-fill-interval-seq-array! segments 0)
         ;; Fixed RCX lives across the complete region.
         (array-set!
           items
@@ -27698,17 +27698,17 @@
           0
           (CompilerRegLocation.Register "%r8"))
         CompilerRegAssignmentList.Nil)]
-    [base-intervals : CompilerRegIntervalList
-      (compiler-reg-interval-cons
+    [base-intervals : CompilerRegIntervalSeq
+      (compiler-reg-interval-seq-prepend
         (CompilerRegInterval.Interval 0 0 10)
-        CompilerRegIntervalList.Nil)]
+        (compiler-reg-interval-seq-empty))]
     [vars : i64 (compiler-backend-scratch-plan-extend-vars scratch 1)]
     [assignments : CompilerRegAssignmentList
       (compiler-backend-scratch-plan-extend-assignments
         scratch
         1
         base-assignments)]
-    [intervals : CompilerRegIntervalList
+    [intervals : CompilerRegIntervalSeq
       (compiler-backend-scratch-plan-extend-intervals scratch 1 base-intervals)]
     (match (compiler-reg-loop-split-first-register
       (compiler-backend-const-hoist-candidate-regs

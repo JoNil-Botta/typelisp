@@ -16537,16 +16537,16 @@
   [outer-env : sym_i64_env.SymI64Env]
   [body : AstExpr]
   [bound : TcStringList]) : bool
-  (match outer-env
-    [(sym_i64_env.SymI64Nil) false]
-    [(sym_i64_env.SymI64Bind name-id _ rest)
+  (match (sym_i64_env.sym-i64-view outer-env)
+    [(sym_i64_env.SymI64ViewNil) false]
+    [(sym_i64_env.SymI64ViewBind name-id _ rest)
       (if (tc-expr-uses-free-name?
         expr-bases
         body
         (tc-env-key-name-text name-id)
         bound)
         true
-        (lower-lambda-captures-env? expr-bases (box-get rest) body bound))]))
+        (lower-lambda-captures-env? expr-bases rest body bound))]))
 
 (define (lower-lambda-ret-type
   [ctx : TcContext]
@@ -17241,11 +17241,11 @@
   [cursor : i64]
   [captures : LowerCaptureList]
   [origin : AstExpr]) : ResultLowerCapturePlan
-  (match outer-env
-    [(sym_i64_env.SymI64Nil)
+  (match (sym_i64_env.sym-i64-view outer-env)
+    [(sym_i64_env.SymI64ViewNil)
       (ResultLowerCapturePlan.Ok
         (LowerCapturePlan.Plan captures (lower-capture-env-size cursor)))]
-    [(sym_i64_env.SymI64Bind name-id var-id rest)
+    [(sym_i64_env.SymI64ViewBind name-id var-id rest)
       (let
         [name : String (tc-env-key-name-text name-id)]
         (if (or
@@ -17254,7 +17254,7 @@
           (lower-capture-plan-scan
             ctx
             expr-bases
-            (box-get rest)
+            rest
             type-env
             body
             bound
@@ -17283,7 +17283,7 @@
                     (lower-capture-plan-scan
                       ctx
                       expr-bases
-                      (box-get rest)
+                      rest
                       type-env
                       body
                       bound

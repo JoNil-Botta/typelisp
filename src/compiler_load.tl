@@ -627,21 +627,19 @@
 (define (compiler-load-cfg-key-equal?
   [left : sym_i64_env.SymI64Env]
   [right : sym_i64_env.SymI64Env]) : bool
-  (match left
-    [(sym_i64_env.SymI64Nil)
-      (match right
-        [(sym_i64_env.SymI64Nil) true]
-        [(sym_i64_env.SymI64Bind _ _ _) false])]
-    [(sym_i64_env.SymI64Bind left-key left-value left-rest)
-      (match right
-        [(sym_i64_env.SymI64Nil) false]
-        [(sym_i64_env.SymI64Bind right-key right-value right-rest)
+  (match (sym_i64_env.sym-i64-view left)
+    [(sym_i64_env.SymI64ViewNil)
+      (match (sym_i64_env.sym-i64-view right)
+        [(sym_i64_env.SymI64ViewNil) true]
+        [(sym_i64_env.SymI64ViewBind _ _ _) false])]
+    [(sym_i64_env.SymI64ViewBind left-key left-value left-rest)
+      (match (sym_i64_env.sym-i64-view right)
+        [(sym_i64_env.SymI64ViewNil) false]
+        [(sym_i64_env.SymI64ViewBind right-key right-value right-rest)
           (and
             (= left-key right-key)
             (= left-value right-value)
-            (compiler-load-cfg-key-equal?
-              (box-get left-rest)
-              (box-get right-rest)))])]))
+            (compiler-load-cfg-key-equal? left-rest right-rest))])]))
 
 (define (compiler-load-program-source-kind-equal?
   [left : CompilerLoadProgramSourceKind]
@@ -669,13 +667,10 @@
       (struct-get right cfgs))))
 
 (define (compiler-load-cfg-key-copy [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match cfgs
-    [(sym_i64_env.SymI64Nil) (sym_i64_env.SymI64Nil)]
-    [(sym_i64_env.SymI64Bind key value rest)
-      (sym_i64_env.SymI64Bind
-        key
-        value
-        (box (compiler-load-cfg-key-copy (box-get rest))))]))
+  (match (sym_i64_env.sym-i64-view cfgs)
+    [(sym_i64_env.SymI64ViewNil) (sym_i64_env.sym-i64-empty)]
+    [(sym_i64_env.SymI64ViewBind key value rest)
+      (sym_i64_env.sym-i64-bind-id (compiler-load-cfg-key-copy rest) key value)]))
 
 (define (compiler-load-program-cache-key-copy
   [key : CompilerLoadProgramCacheKey]) : CompilerLoadProgramCacheKey
@@ -1696,13 +1691,13 @@
 (define (compiler-load-cfg-cache-key-from
   [cfgs : sym_i64_env.SymI64Env]
   [out : String]) : String
-  (match cfgs
-    [(sym_i64_env.SymI64Nil) out]
-    [(sym_i64_env.SymI64Bind key value rest)
+  (match (sym_i64_env.sym-i64-view cfgs)
+    [(sym_i64_env.SymI64ViewNil) out]
+    [(sym_i64_env.SymI64ViewBind key value rest)
       (if (< key 0)
-        (compiler-load-cfg-cache-key-from (box-get rest) out)
+        (compiler-load-cfg-cache-key-from rest out)
         (compiler-load-cfg-cache-key-from
-          (box-get rest)
+          rest
           (str_cat.str-cat
             out
             (compiler-cfg-key-name key)
@@ -4216,11 +4211,11 @@
 (define (compiler-load-structural-member-set-union-from
   [members : sym_i64_env.SymI64Env]
   [additions : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match additions
-    [(sym_i64_env.SymI64Nil) members]
-    [(sym_i64_env.SymI64Bind member-id _ rest)
+  (match (sym_i64_env.sym-i64-view additions)
+    [(sym_i64_env.SymI64ViewNil) members]
+    [(sym_i64_env.SymI64ViewBind member-id _ rest)
       (compiler-load-structural-member-set-add-id
-        (compiler-load-structural-member-set-union-from members (box-get rest))
+        (compiler-load-structural-member-set-union-from members rest)
         member-id)]))
 
 (define (compiler-load-structural-member-set-union
@@ -6651,10 +6646,10 @@
 
 (define (compiler-load-structural-member-set-count
   [members : sym_i64_env.SymI64Env]) : i64
-  (match members
-    [(sym_i64_env.SymI64Nil) 0]
-    [(sym_i64_env.SymI64Bind _ _ rest)
-      (+ 1 (compiler-load-structural-member-set-count (box-get rest)))]))
+  (match (sym_i64_env.sym-i64-view members)
+    [(sym_i64_env.SymI64ViewNil) 0]
+    [(sym_i64_env.SymI64ViewBind _ _ rest)
+      (+ 1 (compiler-load-structural-member-set-count rest))]))
 
 (define (compiler-load-structural-member-demand-count
   [demand : CompilerLoadStructuralMemberDemand]) : i64

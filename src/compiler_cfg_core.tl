@@ -58,13 +58,10 @@
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match cfgs
-    [(sym_i64_env.SymI64Nil) base]
-    [(sym_i64_env.SymI64Bind name-id value rest)
-      (sym_i64_env.sym-i64-bind-id
-        (compiler-cfg-merge base (box-get rest))
-        name-id
-        value)]))
+  (match (sym_i64_env.sym-i64-view cfgs)
+    [(sym_i64_env.SymI64ViewNil) base]
+    [(sym_i64_env.SymI64ViewBind name-id value rest)
+      (sym_i64_env.sym-i64-bind-id (compiler-cfg-merge base rest) name-id value)]))
 
 (define (compiler-cfg-enabled?
   [dispatch : sym_i64_env.SymI64Env]

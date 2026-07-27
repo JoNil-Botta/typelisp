@@ -24,6 +24,74 @@
 (import stdlib.string)
 (import stdlib.test)
 
+(define (smoke-cfg-index-test-block [label : i64] [value : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Return
+        (CompilerIrMaybeValue.Some (CompilerIrValue.I64 value)))
+      CompilerIrInstrList.Nil)))
+
+(define (smoke-cfg-index-block-return [block : OptMaybeBlock]) : i64
+  (match block
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some found)
+      (match found
+        [(CompilerIrBlock.Block _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.I64 value)))
+                value]
+              [_ (- 0 1)])
+            (- 0 1))])]))
+
+;; Indexed lookup must keep the old list scan's first-match and missing-label
+;; semantics even for a malformed duplicate-label CFG. Building another index
+;; deliberately makes the first index's generation stale, exercising its
+;; label-array fallback as well as the active generation-table path.
+(define (smoke-cfg-index-block-lookup-self-test) : i64
+  (let
+    [label : i64 (compiler-ir-label "cfg_index_duplicate")]
+    [other-label : i64 (compiler-ir-label "cfg_index_other")]
+    [missing-label : i64 (compiler-ir-label "cfg_index_missing")]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-list-compact
+        (compiler-ir-block-cons
+          (smoke-cfg-index-test-block label 11)
+          (compiler-ir-block-cons
+            (smoke-cfg-index-test-block label 22)
+            CompilerIrBlockList.Nil)))]
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    [active-first : i64
+      (smoke-cfg-index-block-return (opt-cfg-index-find-block index label))]
+    [replacement-blocks : CompilerIrBlockList
+      (compiler-ir-block-list-compact
+        (compiler-ir-block-cons
+          (smoke-cfg-index-test-block label 44)
+          (compiler-ir-block-cons
+            (smoke-cfg-index-test-block label 55)
+            CompilerIrBlockList.Nil)))]
+    [_refresh : unit (opt-cfg-index-refresh-blocks! index replacement-blocks)]
+    [dense-second : i64
+      (smoke-cfg-index-block-return (opt-cfg-index-block index 1))]
+    [_newer-index : OptCfgIndex
+      (opt-cfg-index-build
+        (compiler-ir-block-cons
+          (smoke-cfg-index-test-block other-label 33)
+          CompilerIrBlockList.Nil))]
+    [stale-first : i64
+      (smoke-cfg-index-block-return (opt-cfg-index-find-block index label))]
+    [missing : i64
+      (smoke-cfg-index-block-return
+        (opt-cfg-index-find-block index missing-label))]
+    (cond
+      [(not (= active-first 11)) 1]
+      [(not (= dense-second 55)) 2]
+      [(not (= stale-first 44)) 3]
+      [(not (= missing (- 0 1))) 4]
+      [else 42])))
+
 (define (opt-count-switch-instr-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -2933,3 +3001,10 @@
     (smoke-inline-phi-predecessor-self-test)
     42
     "multiblock inline repairs loop phi predecessors and source spans"))
+
+(test
+  cfg-index-block-lookup
+  (test.assert-i64-eq
+    (smoke-cfg-index-block-lookup-self-test)
+    42
+    "CFG block lookup is dense, first-match, missing-safe, and stale-index-safe"))

@@ -3542,6 +3542,10 @@
     [(CompilerIrVectorReduceOp.Min)
       (match elem-ty
         [(AstType.I64) "vpminsq"]
+        [(AstType.I16) "vpminsw"]
+        [(AstType.U16) "vpminuw"]
+        [(AstType.I8) "vpminsb"]
+        [(AstType.U8) "vpminub"]
         [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)])]
     [(CompilerIrVectorReduceOp.Max)
       (match elem-ty
@@ -13020,6 +13024,92 @@
       elem-ty
       lanes)))
 
+(define (compiler-backend-vector-reduce-byte-shift-asm
+  [mnemonic : String]
+  [bytes : i64]
+  [acc-xmm : String]
+  [scratch-xmm : String]) : String
+  (str-cat
+    "    vpsrldq $"
+    (string.int->string bytes)
+    ", "
+    acc-xmm
+    ", "
+    scratch-xmm
+    "\n    "
+    mnemonic
+    " "
+    scratch-xmm
+    ", "
+    acc-xmm
+    ", "
+    acc-xmm
+    "\n"))
+
+(define (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+  [mnemonic : String]
+  [zmm : String]
+  [ymm : String]
+  [elem-ty : AstType]
+  [acc-xmm : String]
+  [acc-ymm : String]
+  [scratch-xmm : String]) : String
+  (str-cat
+    "    vextracti64x4 $1, "
+    zmm
+    ", "
+    acc-ymm
+    "\n    "
+    mnemonic
+    " "
+    acc-ymm
+    ", "
+    ymm
+    ", "
+    acc-ymm
+    "\n    vextracti128 $1, "
+    acc-ymm
+    ", "
+    scratch-xmm
+    "\n    "
+    mnemonic
+    " "
+    scratch-xmm
+    ", "
+    acc-xmm
+    ", "
+    acc-xmm
+    "\n"
+    (compiler-backend-vector-reduce-byte-shift-asm
+      mnemonic
+      8
+      acc-xmm
+      scratch-xmm)
+    (compiler-backend-vector-reduce-byte-shift-asm
+      mnemonic
+      4
+      acc-xmm
+      scratch-xmm)
+    (compiler-backend-vector-reduce-byte-shift-asm
+      mnemonic
+      2
+      acc-xmm
+      scratch-xmm)
+    (match elem-ty
+      [(AstType.I8)
+        (compiler-backend-vector-reduce-byte-shift-asm
+          mnemonic
+          1
+          acc-xmm
+          scratch-xmm)]
+      [(AstType.U8)
+        (compiler-backend-vector-reduce-byte-shift-asm
+          mnemonic
+          1
+          acc-xmm
+          scratch-xmm)]
+      [_ ""])))
+
 (define (compiler-backend-avx512-vector-reduce-horizontal-asm
   [mnemonic : String]
   [zmm : String]
@@ -13249,6 +13339,42 @@
           acc-xmm
           "\n"
           ""))]
+    [(AstType.I16)
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
+    [(AstType.U16)
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
+    [(AstType.I8)
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
+    [(AstType.U8)
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
     [_ ""]))
 
 (define (compiler-backend-emit-avx512-vector-reduce
@@ -20054,9 +20180,8 @@
                     ;; so the rhs scratch must avoid both or it collides (e.g. subq
                     ;; %r8,%r8). Uses the emission's own homes (authoritative).
                     [scav-rhs : String
-                      (compiler-backend-planned-or-scavenge-reg
+                      (compiler-backend-planned-or-scavenge-reg-here
                         planned0
-                        dst
                         (compiler-backend-scavenge-exclude-regs2
                           dst-home
                           lhs-reg)
@@ -20271,11 +20396,10 @@
                             [(CompilerBackendMaybeAsm.No)
                               (let
                                 [scav-rhs : String
-                                  (compiler-backend-planned-or-scavenge-reg
+                                  (compiler-backend-planned-or-scavenge-reg-here
                                     (if (compiler-backend-divmod-op? op)
                                       planned2
                                       planned1)
-                                    dst
                                     (compiler-backend-scavenge-exclude-regs2
                                       staging
                                       "")
@@ -20334,11 +20458,10 @@
                                 [(CompilerBackendMaybeAsm.No)
                                   (let
                                     [scav-rhs : String
-                                      (compiler-backend-planned-or-scavenge-reg
+                                      (compiler-backend-planned-or-scavenge-reg-here
                                         (if (compiler-backend-divmod-op? op)
                                           planned2
                                           planned1)
-                                        dst
                                         (compiler-backend-scavenge-exclude-regs2
                                           staging
                                           "")
@@ -20402,11 +20525,10 @@
                                     (compiler-backend-divmod-op? op)
                                     (string.eq rhs-reg staging))]
                                 [scav-rhs : String
-                                  (compiler-backend-planned-or-scavenge-reg
+                                  (compiler-backend-planned-or-scavenge-reg-here
                                     (if (compiler-backend-divmod-op? op)
                                       planned2
                                       planned1)
-                                    dst
                                     (if preserve-rhs-before-lhs?
                                       (compiler-backend-scavenge-exclude-regs2
                                         staging
@@ -49505,13 +49627,74 @@
                 type-segment-bases
                 fn-abi
                 walk-func)))]
+        ;; A call-free natural loop can leave one volatile register dead before
+        ;; the loop and another dead inside it while the whole-range greedy pays
+        ;; for a callee-saved home. Detect that shape against the initial plan,
+        ;; split the read-only range in IR, then REPLAN the rewritten function.
+        ;; Replanning is essential: both physical pieces receive ordinary exact
+        ;; intervals, so scratch occupancy and frame coloring never see the
+        ;; conservative interval-less homes used by post-allocation rescues.
+        [leaf-csr-rewrite : CompilerRegCallSaveRewrite
+          (if scalar-plan?
+            (compiler-reg-leaf-csr-split-rewrite-one
+              type-segment-bases
+              fn-abi
+              walk-func
+              blocks
+              walk-vars
+              walk-types
+              reg-plan)
+            (CompilerRegCallSaveRewrite.Rewrite
+              blocks
+              walk-vars
+              walk-vars
+              CompilerRegAssignmentList.Nil
+              CompilerRegVarTypeList.Nil))]
+        [alloc-blocks : CompilerIrBlockList
+          (match leaf-csr-rewrite
+            [(CompilerRegCallSaveRewrite.Rewrite out-blocks _ _ _ _) out-blocks])]
+        [alloc-vars : i64
+          (match leaf-csr-rewrite
+            [(CompilerRegCallSaveRewrite.Rewrite _ _ out-vars _ _) out-vars])]
+        [alloc-func : CompilerIrFunction
+          (CompilerIrFunction.Function
+            name
+            params
+            ret-ty
+            alloc-vars
+            alloc-blocks)]
+        [alloc-types : CompilerRegVarTypes
+          (if (= alloc-vars walk-vars)
+            walk-types
+            (compiler-reg-function-var-types alloc-func))]
+        [alloc-preassignments : CompilerRegAssignmentList
+          (match leaf-csr-rewrite
+            [(CompilerRegCallSaveRewrite.Rewrite _ _ _ assignments _)
+              assignments])]
+        [raw-alloc-reg-plan : CompilerRegPlan
+          (if (= alloc-vars walk-vars)
+            reg-plan
+            (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-preassignments
+              type-segment-bases
+              fn-abi
+              alloc-func
+              cold-call-temp-start
+              alloc-types
+              alloc-preassignments))]
+        [alloc-reg-plan : CompilerRegPlan
+          (if (= alloc-vars walk-vars)
+            raw-alloc-reg-plan
+            (compiler-reg-plan-hide-leaf-csr-phantoms
+              raw-alloc-reg-plan
+              alloc-preassignments
+              walk-vars))]
         [_cold-call-self-check : unit
           (cfg
             scavenge-self-check
             (if (compiler-reg-cold-call-carriers-stack?
-              reg-plan
+              alloc-reg-plan
               cold-call-temp-start
-              walk-vars)
+              alloc-vars)
               unit
               (io.panic "regalloc: cold-call carrier escaped its stack home"))
             unit)]
@@ -49525,22 +49708,22 @@
         [call-save-rewrite : CompilerRegCallSaveRewrite
           (if non-split-passes-enabled
             (compiler-reg-caller-save-rewrite-blocks
-              blocks
-              walk-vars
-              walk-types
-              reg-plan)
+              alloc-blocks
+              alloc-vars
+              alloc-types
+              alloc-reg-plan)
             (CompilerRegCallSaveRewrite.Rewrite
-              blocks
-              walk-vars
-              walk-vars
+              alloc-blocks
+              alloc-vars
+              alloc-vars
               CompilerRegAssignmentList.Nil
               CompilerRegVarTypeList.Nil))]
         [call-save-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
-              reg-plan
+              alloc-reg-plan
               call-save-rewrite)
-            reg-plan)]
+            alloc-reg-plan)]
         [call-save-blocks : CompilerIrBlockList
           (match call-save-rewrite
             [(CompilerRegCallSaveRewrite.Rewrite out-blocks _ _ _ _) out-blocks])]
@@ -49574,7 +49757,7 @@
             (compiler-reg-plan-with-call-save-rewrite
               call-save-reg-plan
               loop-split-rewrite)
-            reg-plan)]
+            alloc-reg-plan)]
         [rewritten-blocks : CompilerIrBlockList
           (match loop-split-rewrite
             [(CompilerRegCallSaveRewrite.Rewrite out-blocks _ _ _ _) out-blocks])]
@@ -49647,7 +49830,9 @@
           (cfg
             regalloc-census
             (if call-save-enabled
-              (compiler-reg-call-span-census-record-plan! walk-func reg-plan)
+              (compiler-reg-call-span-census-record-plan!
+                alloc-func
+                alloc-reg-plan)
               unit)
             unit)]
         [scratch-plan-result : CompilerRegScratchPlanResult

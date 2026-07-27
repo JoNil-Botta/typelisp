@@ -3837,6 +3837,172 @@
 
 (cfg
   test
+  (define (compiler-reg-leaf-csr-split-plan [func : CompilerIrFunction]) : CompilerRegPlan
+    (let
+      [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+      [liveness : CompilerFunctionLiveness
+        (compiler-live-analyze-function func)]
+      (match (compiler-reg-live-interval-selection func liveness)
+        [(CompilerRegIntervalSelection.Selection intervals _)
+          (CompilerRegPlan.Plan
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                0
+                (CompilerRegLocation.Register "%r12"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment.Assignment
+                  1
+                  (CompilerRegLocation.Register "%r8"))
+                CompilerRegAssignmentList.Nil))
+            (compiler-live-set-empty)
+            intervals
+            (compiler-reg-var-types-list type-info)
+            (compiler-reg-call-split-empty)
+            (compiler-reg-split-plan-empty))]))))
+
+(cfg
+  test
+  (define (compiler-reg-leaf-csr-split-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (compiler-ir-test-symbol "leaf_csr_split")
+      CompilerIrParamList.Nil
+      (AstType.I64)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump (compiler-ir-label "loop"))
+              CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "loop")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                1
+                (CompilerIrBinOp.Eq)
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.I64 7)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 1)
+                  (compiler-ir-label "body")
+                  (compiler-ir-label "exit"))
+                CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (compiler-ir-label "body")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Store
+                  (compiler-ir-test-symbol "hot0")
+                  (CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Store
+                    (compiler-ir-test-symbol "hot1")
+                    (CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump (compiler-ir-label "loop"))
+                    CompilerIrInstrList.Nil))))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                (compiler-ir-label "exit")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+                  CompilerIrInstrList.Nil))
+              CompilerIrBlockList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-leaf-csr-split-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-leaf-csr-split-function)]
+      [plan : CompilerRegPlan (compiler-reg-leaf-csr-split-plan func)]
+      (match func
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
+          (let
+            [rewrite : CompilerRegCallSaveRewrite
+              (compiler-reg-leaf-csr-split-rewrite-one
+                (ast-node-pool-reader-type-segment-bases)
+                CompilerRegTargetAbi.Linux
+                func
+                blocks
+                vars
+                (compiler-reg-function-var-types func)
+                plan)]
+            (match rewrite
+              [(CompilerRegCallSaveRewrite.Rewrite
+                  rewritten
+                  _
+                  out-vars
+                  extra-assignments
+                  _)
+                (let
+                  [rewritten-func : CompilerIrFunction
+                    (CompilerIrFunction.Function
+                      (compiler-ir-test-symbol "leaf_csr_split")
+                      CompilerIrParamList.Nil
+                      (AstType.I64)
+                      out-vars
+                      rewritten)]
+                  [rewritten-types : CompilerRegVarTypes
+                    (compiler-reg-function-var-types rewritten-func)]
+                  [raw-plan : CompilerRegPlan
+                    (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-preassignments
+                      (ast-node-pool-reader-type-segment-bases)
+                      CompilerRegTargetAbi.Linux
+                      rewritten-func
+                      (- 0 1)
+                      rewritten-types
+                      extra-assignments)]
+                  [rewritten-plan : CompilerRegPlan
+                    (compiler-reg-plan-hide-leaf-csr-phantoms
+                      raw-plan
+                      extra-assignments
+                      vars)]
+                  [assignments : CompilerRegAssignmentList
+                    (compiler-reg-plan-assignments rewritten-plan)]
+                  [body : CompilerIrInstrList
+                    (compiler-reg-block-instr-list
+                      rewritten
+                      (compiler-ir-label "body"))]
+                  (and
+                    (= out-vars (+ vars 2))
+                    (= (compiler-reg-assignment-count extra-assignments) 2)
+                    (compiler-reg-leaf-csr-fuse-safe? func 1)
+                    (not
+                      (compiler-reg-assignments-use-register?
+                        assignments
+                        "%r12"))
+                    (not
+                      (compiler-reg-location-any-register?
+                        (compiler-reg-assignment-lookup assignments 0)))
+                    (compiler-reg-location-any-register?
+                      (compiler-reg-assignment-lookup assignments vars))
+                    (compiler-reg-location-any-register?
+                      (compiler-reg-assignment-lookup assignments (+ vars 1)))
+                    (not
+                      (compiler-reg-same-location? assignments vars (+ vars 1)))
+                    (compiler-reg-instr-list-has-store-var?
+                      body
+                      "hot0"
+                      (+ vars 1))
+                    (compiler-reg-instr-list-has-store-var?
+                      body
+                      "hot1"
+                      (+ vars 1))
+                    (not (compiler-reg-instr-list-has-store-var? body "hot0" 0))))]))]))))
+
+(cfg
+  test
   (define (compiler-reg-loop-split-rewrite-function) : CompilerIrFunction
     (CompilerIrFunction.Function
       (compiler-ir-test-symbol "loop_split_rewrite")

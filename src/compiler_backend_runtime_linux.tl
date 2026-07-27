@@ -3,7 +3,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
-(define (compiler-backend-runtime-arena-data [arena-debug : bool]) : String
+(define (compiler-backend-runtime-arena-data [_arena-debug : bool]) : String
   (str_cat.str-cat
     "    .section .tbss,\"awT\",@nobits
     .balign 8
@@ -19,7 +19,7 @@ tl_current_arena:
 "
     (cfg
       (any compiler-arena-debug test)
-      (if arena-debug
+      (if _arena-debug
         "    .balign 8
 .L_tl_arena_debug_roots:
     .zero 32768
@@ -266,13 +266,13 @@ tl_alloc:
 
 (define (compiler-backend-runtime-linux-alloc-functions
   [profile : bool]
-  [arena-debug : bool]) : String
+  [_arena-debug : bool]) : String
   (let
     [base : String
       (compiler-backend-runtime-linux-alloc-functions-base profile)]
     (cfg
       (any compiler-arena-debug test)
-      (if arena-debug
+      (if _arena-debug
         (string.replace
           base
           ".L_tl_alloc_root_self:
@@ -559,13 +559,13 @@ tl_arena_debug_assert_pool_install:
 
 (define (compiler-backend-runtime-linux-arena-functions
   [profile : bool]
-  [arena-debug : bool]) : String
+  [_arena-debug : bool]) : String
   (let
     [base : String
       (compiler-backend-runtime-linux-arena-functions-base profile)]
     (cfg
       (any compiler-arena-debug test)
-      (if arena-debug
+      (if _arena-debug
         (string.append
           (compiler-backend-runtime-linux-arena-debug-functions)
           (string.replace
@@ -788,13 +788,13 @@ tl_region_reset:
 
 (define (compiler-backend-runtime-region-reset-functions
   [profile : bool]
-  [arena-debug : bool]) : String
+  [_arena-debug : bool]) : String
   (let
     [base : String
       (compiler-backend-runtime-region-reset-functions-base profile)]
     (cfg
       (any compiler-arena-debug test)
-      (if arena-debug
+      (if _arena-debug
         (string.replace
           (string.replace
             base

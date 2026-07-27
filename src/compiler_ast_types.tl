@@ -22,16 +22,16 @@
   compiler-arena-debug
   (extern (tl_arena_debug_assert_pool_install [handle : i64]) : unit (:symbol "tl_arena_debug_assert_pool_install")))
 
-(define (compiler-arena-debug-protect-never-reset! [handle : i64]) : unit
+(define (compiler-arena-debug-protect-never-reset! [_handle : i64]) : unit
   (cfg
     (all compiler-arena-debug (not stage0-seed-bootstrap))
-    (tl_arena_debug_protect_never_reset handle)
+    (tl_arena_debug_protect_never_reset _handle)
     unit))
 
-(define (compiler-arena-debug-assert-pool-install! [handle : i64]) : unit
+(define (compiler-arena-debug-assert-pool-install! [_handle : i64]) : unit
   (cfg
     (all compiler-arena-debug (not stage0-seed-bootstrap))
-    (tl_arena_debug_assert_pool_install handle)
+    (tl_arena_debug_assert_pool_install _handle)
     unit))
 
 ;; Compiler AST pool storage starts with 16 MiB instead of a general arena's

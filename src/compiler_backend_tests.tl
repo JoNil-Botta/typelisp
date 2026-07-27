@@ -9309,8 +9309,15 @@
 (define (compiler-backend-test-span [line : i64] [col : i64]) : AstSourceSpan
   (ast-source-span line col line col))
 
+;; Span keys are a one-word handle, and identical spellings from different
+;; provenance stay distinct. The `size-of` check lives here rather than beside
+;; `CompilerIrSymbolId` because `size-of` needs a `(type T)` literal, and a
+;; `(type T)` literal anywhere in a compiled program makes the driver defer the
+;; macro-handoff source/frontend release (#5872). This module is outside
+;; `main.tl`'s closure, so the assertion costs the self-compile nothing.
 (define (compiler-backend-source-span-symbol-provenance-ok?) : bool
   (let
+    [symbol-id-bytes : i64 (comptime (size-of (type CompilerIrSymbolId)))]
     [source-name : CompilerIrSymbolId
       (compiler-ir-symbol-typed-id (ci.intern "same-span-name"))]
     [generated-name : CompilerIrSymbolId
@@ -9326,6 +9333,7 @@
     [index : CompilerBackendSourceSpanIndex
       (compiler-backend-source-span-index-build spans)]
     (and
+      (= symbol-id-bytes 8)
       (not (compiler-ir-symbol-id-eq? source-name generated-name))
       (string.eq
         (compiler-ir-symbol-id-text source-name)

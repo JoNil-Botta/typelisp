@@ -965,6 +965,21 @@
           (begin
             (embedded-native-template-push! ops ops-count 199 "0" "0" "0")
             (+ arg-opened 1))))]
+    [(AstExpr.Tuple items)
+      (let
+        [item-opened : i64
+          (embedded-native-template-args-ops params (& items) ops ops-count)]
+        (if (< item-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              tlci-host-callback-op-expr-tuple
+              "0"
+              "0"
+              "0")
+            (+ item-opened 1))))]
     [(AstExpr.BracketClause items)
       (let
         [arg-opened : i64

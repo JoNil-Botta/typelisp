@@ -879,6 +879,12 @@
 ;; op. Refs #5626.
 (define tlci-host-callback-op-match-arm-list-cons-from-values : i64
   261)
+
+;; Tuple templates consume the ExprList assembled by the shared template
+;; argument/splice path and push the `(tuple ...)` expression reconstructed by
+;; interpreted quasiquote. Additive ABI v1 op. Refs #5724.
+(define tlci-host-callback-op-expr-tuple : i64
+  262)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64
@@ -3335,6 +3341,7 @@
     (= tlci-host-callback-op-expr-struct-get-from-value 259)
     (= tlci-host-callback-op-pattern-variant-from-value 260)
     (= tlci-host-callback-op-match-arm-list-cons-from-values 261)
+    (= tlci-host-callback-op-expr-tuple 262)
     (= tlci-host-callback-stdlib-op-count 99)))
 
 (define (tlci-test-host-abi-ok?) : bool

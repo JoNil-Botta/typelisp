@@ -1116,6 +1116,27 @@
                     (compiler-comptime-host-push!
                       (CompilerCtfeValue.Expr node (AstType.Expr)))))]
               [_ tlci-host-callback-status-bad-request]))))]
+    ;; Tuple templates share the expression-list builder with calls and other
+    ;; variadic nodes. Consume that list and preserve its child node identities
+    ;; and template-source marks exactly as interpreted quasiquote does.
+    [(= operation tlci-host-callback-op-expr-tuple)
+      (if (< compiler-comptime-host-stack-len 1)
+        tlci-host-callback-status-bad-request
+        (match (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))
+          [(CompilerCtfeValue.ExprList items)
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-push!
+                (CompilerCtfeValue.Expr
+                  (ast-node-pool-context-expr-push
+                    (array-ref compiler-comptime-host-pools 0)
+                    (AstExpr.Tuple items))
+                  (AstType.Expr))))]
+          [_ tlci-host-callback-status-bad-request]))]
     ;; Intrinsic two-operand array nodes: pop the second operand then the
     ;; target and push the array-ref / array-push node the parser recognizes
     ;; for these forms, matching the interpreted quasiquote builders.

@@ -163,6 +163,15 @@
 (define (lint-rule-redundant-import-alias-suggestion) : String
   "remove the explicit as clause")
 
+(define (lint-rule-legacy-path-import-id) : String
+  "legacy-path-import")
+
+(define (lint-rule-legacy-path-import-message) : String
+  "legacy path import: string paths are compatibility-only")
+
+(define (lint-rule-legacy-path-import-suggestion) : String
+  "replace the string path with its dotted module identity")
+
 (define (lint-rule-redundant-function-name-id) : String
   "redundant-function-name")
 
@@ -381,6 +390,12 @@
     (lint-rule-redundant-import-alias-message)
     (lint-rule-redundant-import-alias-suggestion)))
 
+(define (lint-rule-legacy-path-import) : LintRule
+  (LintRule
+    (lint-rule-legacy-path-import-id)
+    (lint-rule-legacy-path-import-message)
+    (lint-rule-legacy-path-import-suggestion)))
+
 (define (lint-rule-redundant-function-name) : LintRule
   (LintRule
     (lint-rule-redundant-function-name-id)
@@ -477,6 +492,7 @@
       (lint-rule-cascading-and-or)
       (lint-rule-unused-import)
       (lint-rule-redundant-import-alias)
+      (lint-rule-legacy-path-import)
       (lint-rule-redundant-function-name)
       (lint-rule-dead-code)
       (lint-rule-unused-assignment)
@@ -491,7 +507,7 @@
       (lint-rule-function-name-case)
       (lint-rule-local-name-case)
       (lint-rule-type-name-case))
-    27))
+    28))
 
 (define (lint-rule-find-at
   [rules : LintRuleList]
@@ -3138,6 +3154,129 @@
     (lint-rule-redundant-import-alias-id)
     0
     span))
+
+(define (lint-legacy-path-import-path-start [path : String] [limit : i64]) : i64
+  (let
+    [start : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (and
+          (< (+ start 1) limit)
+          (= (string.string-ref path start) '.')
+          (= (string.string-ref path (+ start 1)) '/'))
+          (set! start (+ start 2))
+          (if (and
+            (< (+ start 2) limit)
+            (= (string.string-ref path start) '.')
+            (= (string.string-ref path (+ start 1)) '.')
+            (= (string.string-ref path (+ start 2)) '/'))
+            (set! start (+ start 3))
+            (set! done true))))
+      start)))
+
+(define (lint-legacy-path-import-dotted-from
+  [path : String]
+  [index : i64]
+  [limit : i64]
+  [out : String]) : String
+  (if (>= index limit)
+    out
+    (let
+      [piece : String
+        (if (or
+          (= (string.string-ref path index) '/')
+          (= (string.string-ref path index) ':'))
+          "."
+          (string.substring path index 1))]
+      (lint-legacy-path-import-dotted-from
+        path
+        (+ index 1)
+        limit
+        (string.append out (& piece))))))
+
+(define (lint-legacy-path-import-dotted-path [path : String]) : String
+  (let
+    [n : i64 (string.string-length path)]
+    [limit : i64
+      (if (and (>= n 3) (string.eq (string.substring path (- n 3) 3) ".tl"))
+        (- n 3)
+        n)]
+    (lint-legacy-path-import-dotted-from
+      path
+      (lint-legacy-path-import-path-start path limit)
+      limit
+      "")))
+
+(define (lint-legacy-path-import-module-name
+  [path : String]
+  [expected : AstMaybeModuleName]) : String
+  (match expected
+    [(AstMaybeModuleName.Some module-name) (intern-str module-name)]
+    [(AstMaybeModuleName.No) (lint-legacy-path-import-dotted-path path)]))
+
+(define (lint-legacy-path-import-spelling
+  [path : String]
+  [expected : AstMaybeModuleName]
+  [maybe-alias : AstMaybeImportAlias]) : String
+  (let
+    [module-name : String (lint-legacy-path-import-module-name path expected)]
+    [with-alias : String
+      (match maybe-alias
+        [(AstMaybeImportAlias.No) module-name]
+        [(AstMaybeImportAlias.Some alias)
+          (string.append module-name (string.append " as " (intern-str alias)))])]
+    (string.append "(import " (string.append with-alias ")"))))
+
+(define (lint-legacy-path-import-finding
+  [path : String]
+  [expected : AstMaybeModuleName]
+  [maybe-alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string.append
+      (lint-rule-legacy-path-import-message)
+      (string.append
+        "; replace with "
+        (lint-legacy-path-import-spelling path expected maybe-alias)))
+    (lint-rule-legacy-path-import-id)
+    0
+    span))
+
+(define (lint-legacy-path-imports-in-decl [decl : AstDecl] [acc : LintFindings]) : LintFindings
+  (match decl
+    [(AstDecl.Import
+        _
+        (AstImportSpec.Spec (AstImportKind.Path) path expected maybe-alias span))
+      (lint-findings-add
+        (lint-legacy-path-import-finding
+          path
+          expected
+          maybe-alias
+          (box-get span))
+        acc)]
+    [(AstDecl.ModuleBody _ body)
+      (lint-legacy-path-imports-in-decl-list (box-get body) acc)]
+    [(AstDecl.Unsafe inner)
+      (lint-legacy-path-imports-in-decl (box-get inner) acc)]
+    [_ acc]))
+
+(define (lint-legacy-path-imports-in-decl-list
+  [decls : AstDeclList]
+  [acc : LintFindings]) : LintFindings
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) acc]
+    [(AstDeclListStep.Cons decl rest)
+      (lint-legacy-path-imports-in-decl-list
+        rest
+        (lint-legacy-path-imports-in-decl decl acc))]))
+
+(define (lint-legacy-path-imports-in-program
+  [program : AstProgram]
+  [acc : LintFindings]) : LintFindings
+  (match program
+    [(AstProgram.Program decls)
+      (lint-legacy-path-imports-in-decl-list (box-get decls) acc)]))
 
 (define (lint-module-default-alias [module-name : String]) : String
   (let

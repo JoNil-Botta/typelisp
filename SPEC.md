@@ -6793,7 +6793,7 @@ Selected Command Forms:
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
-  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case]
+  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--legacy-path-import]
   typelisp test [<file.tl>] [--check]
   typelisp inspect <file.tlci>
 ```
@@ -6855,6 +6855,8 @@ unreachable binary-package declarations from entry/test/generated roots.
 Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-function-name` (redundant module-prefix names), and
 `--prefer-dotted-field` (simple `struct-get` dotted-field syntax).
+`--legacy-path-import` reports compatibility-only string-path imports and
+includes the corresponding dotted import spelling in each finding.
 `--name-case` enables four independently suppressible rules:
 `global-name-case` for kebab-case top-level values,
 `function-name-case` for kebab-case functions, dispatch functions, and macros,

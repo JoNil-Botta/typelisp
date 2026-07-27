@@ -48803,17 +48803,70 @@
   (No)
   (Some String i64))
 
+;; --- shared empty moved-set id map -----------------------------------------
+;;
+;; Branch checking clones the moved-set at every arm/branch entry, and the
+;; census says the id-map copies are overwhelmingly empty: 2,036,034 copies per
+;; self-compile carry 1,722,057 entries in total, and only 237,294 of them are
+;; non-empty. Allocating a private empty table for the other 1,798,740 is pure
+;; waste, so an empty table is ALIASED instead of copied, with copy-on-write at
+;; the writers.
+;;
+;; The sharing invariant has two halves, both checked locally:
+;;
+;;   1. Nothing ever writes through the shared map. Its full write surface is
+;;      `tc-moved-add`, `tc-moved-add-value`, `tc-moved-add-partial-value`,
+;;      `tc-moved-add-hidden-atomic-user`, `tc-moved-union-id-loop`,
+;;      `tc-moved-clone-id-map` (which writes only into its own fresh map) and
+;;      the two removers. Every inserting site takes private storage first via
+;;      `tc-moved-id-map-own`. The removers need no guard: `remove-ref!` writes
+;;      only after its probe finds an Occupied slot, and the shared map has
+;;      none -- exactly how the freshly allocated empty copy this replaces
+;;      behaved.
+;;   2. The "is this the shared map?" test is exact. Every private moved-set map
+;;      is born at `with-capacity 8` (from `tc-moved-id-map-own`) or copied at
+;;      its source's capacity, and `grow!` only doubles, so private capacities
+;;      are 8, 16, 32, ...; capacity 1 is the shared map and nothing else.
+;;
+;; The exact-path index deliberately does NOT get the same treatment. Its
+;; storage is written in place by `tc-moved-exact-path-index-insert-new`, so a
+;; set whose successor adds a path fact can still observe that fact through its
+;; own stale index -- and the borrow checker depends on it:
+;; `tc-borrow-check-mark-new-return-borrows` decides "is this borrow new?" with
+;; `tc-moved-path-exact-conflict-kind` against the PRE-initializer set, and the
+;; in-place write is what makes that answer false. Handing out one shared empty
+;; index (with copy-on-write at the insert) removes the observation and turns
+;; tests/safety/borrow_call_arg_begin_before_last_use_reject from a rejection
+;; into an acceptance. The per-set empty index is therefore load-bearing, not
+;; redundant; retiring it needs the checker's intent restated first.
+;;
+;; This global is initialized in the program arena at startup, so it outlives
+;; every per-function typecheck scratch arena that may hold sets pointing at it.
+(define tc-moved-shared-empty-id-map : tc_i64_i64_map.Map
+  (tc_i64_i64_map.with-capacity 1))
+
+(define (tc-moved-id-map-shared-empty? [map : (& map tc_i64_i64_map.Map)]) : bool
+  (= (tc_i64_i64_map.capacity map) 1))
+
+;; Give an inserting writer private storage when it holds the shared empty map.
+;; The replacement is the capacity the old code handed a fresh branch copy, so
+;; only the shared alias pays an allocation here.
+(define (tc-moved-id-map-own [map : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
+  (if (tc-moved-id-map-shared-empty? (& map))
+    (tc_i64_i64_map.with-capacity 8)
+    map))
+
 (define (tc-moved-empty) : TcMovedSet
   (TcMovedSet
-    (tc_i64_i64_map.with-capacity 8)
-    (tc_i64_i64_map.with-capacity 4)
+    tc-moved-shared-empty-id-map
+    tc-moved-shared-empty-id-map
     TcMovedPathFacts.Nil
     (TcMovedExactPathIndex
       (tc_i64_i64_map.with-capacity 8)
       (make-array TcMovedPathFact 8)
       (make-array i64 8)
       0)
-    (tc_i64_i64_map.with-capacity 2)))
+    tc-moved-shared-empty-id-map))
 
 (define (tc-moved-roots [set : TcMovedSet]) : tc_i64_i64_map.Map
   (struct-get set roots))
@@ -48864,20 +48917,37 @@
   ;; walk was almost all empty slots.
   (let
     [remaining : i64 (tc_i64_i64_map.len src)]
-    [out : tc_i64_i64_map.Map
-      (tc_i64_i64_map.with-capacity (tc_i64_i64_map.capacity src))]
-    [index : i64 0]
-    (begin
-      (while (> remaining 0)
+    (if (= remaining 0)
+      ;; The empty copy this used to allocate had no content and no identity of
+      ;; its own -- it existed only so a later insert could not reach the
+      ;; source's slots. `tc-moved-id-map-own` provides that separation at the
+      ;; insert instead, so the empty case aliases the shared map and allocates
+      ;; nothing. Lookups and removals see an empty table either way.
+      tc-moved-shared-empty-id-map
+      (let
+        [out : tc_i64_i64_map.Map
+          (tc_i64_i64_map.with-capacity (tc_i64_i64_map.capacity src))]
+        [index : i64 0]
         (begin
-          (set! index (tc_i64_i64_map.next-occupied src index))
-          (match (tc_i64_i64_map.entry-at src index)
-            [(tc_i64_i64_map.EntrySome key value)
-              (tc_i64_i64_map.insert-ref! (&mut out) key value)]
-            [(tc_i64_i64_map.EntryNone) unit])
-          (set! index (+ index 1))
-          (set! remaining (- remaining 1))))
-      out)))
+          (while (> remaining 0)
+            (begin
+              (set! index (tc_i64_i64_map.next-occupied src index))
+              (match (tc_i64_i64_map.entry-at src index)
+                [(tc_i64_i64_map.EntrySome key value)
+                  (tc_i64_i64_map.insert-ref! (&mut out) key value)]
+                [(tc_i64_i64_map.EntryNone) unit])
+              (set! index (+ index 1))
+              (set! remaining (- remaining 1))))
+          out)))))
+
+;; Hand the shared map straight back when the source already IS it. That is the
+;; same value `tc-moved-clone-id-map` returns, and recognizing it here -- rather
+;; than inside the call -- keeps the by-value map argument and return off the
+;; 1.8M-per-self-compile empty path.
+(define (tc-moved-clone-id-map-or-shared [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
+  (if (tc-moved-id-map-shared-empty? src)
+    tc-moved-shared-empty-id-map
+    (tc-moved-clone-id-map src)))
 
 (define (tc-moved-clone [set : TcMovedSet]) : TcMovedSet
   (let
@@ -48886,11 +48956,11 @@
     [paths : TcMovedPathFacts (tc-moved-paths set)]
     [hidden : tc_i64_i64_map.Map (tc-moved-hidden-atomic-users set)]
     (TcMovedSet
-      (tc-moved-clone-id-map (& roots))
-      (tc-moved-clone-id-map (& partials))
+      (tc-moved-clone-id-map-or-shared (& roots))
+      (tc-moved-clone-id-map-or-shared (& partials))
       paths
       (tc-moved-exact-path-index-from-facts paths)
-      (tc-moved-clone-id-map (& hidden)))))
+      (tc-moved-clone-id-map-or-shared (& hidden)))))
 
 (define (tc-moved-contains? [set : TcMovedSet] [name-id : i64]) : bool
   (let
@@ -48902,7 +48972,7 @@
 
 (define (tc-moved-add [set : TcMovedSet] [name-id : i64]) : TcMovedSet
   (let
-    [out : tc_i64_i64_map.Map (tc-moved-roots set)]
+    [out : tc_i64_i64_map.Map (tc-moved-id-map-own (tc-moved-roots set))]
     (begin
       (tc_i64_i64_map.insert-ref! (&mut out) name-id (tc-moved-no-origin-id))
       (TcMovedSet
@@ -48914,7 +48984,7 @@
 
 (define (tc-moved-add-value [set : TcMovedSet] [name-id : i64] [value : i64]) : TcMovedSet
   (let
-    [out : tc_i64_i64_map.Map (tc-moved-roots set)]
+    [out : tc_i64_i64_map.Map (tc-moved-id-map-own (tc-moved-roots set))]
     (begin
       (tc_i64_i64_map.insert-ref! (&mut out) name-id value)
       (TcMovedSet
@@ -48933,14 +49003,18 @@
 (define (tc-moved-remove [set : TcMovedSet] [name-id : i64]) : TcMovedSet
   (let
     [out : tc_i64_i64_map.Map (tc-moved-roots set)]
-    (begin
-      (tc_i64_i64_map.remove-ref! (&mut out) name-id)
-      (TcMovedSet
-        out
-        (tc-moved-partials set)
-        (tc-moved-paths set)
-        (tc-moved-exact-path-index set)
-        (tc-moved-hidden-atomic-users set)))))
+    (if (tc-moved-id-map-shared-empty? (& out))
+      ;; The shared map holds no Occupied slot, so `remove-ref!` would probe,
+      ;; miss and leave everything -- including `len` -- untouched.
+      set
+      (begin
+        (tc_i64_i64_map.remove-ref! (&mut out) name-id)
+        (TcMovedSet
+          out
+          (tc-moved-partials set)
+          (tc-moved-paths set)
+          (tc-moved-exact-path-index set)
+          (tc-moved-hidden-atomic-users set))))))
 
 (define (tc-moved-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
   (let
@@ -49241,6 +49315,10 @@
         (tc-moved-exact-path-index-from-facts-at (box-get rest) index)
         fact)]))
 
+;; 97.1% of the calls here rebuild an index with no facts at all, and the seed
+;; below is what they pay for. It cannot be shared or deferred: the seed's
+;; storage is the channel through which a set observes path facts its successors
+;; add in place (see the note on the shared empty id map above).
 (define (tc-moved-exact-path-index-from-facts [facts : TcMovedPathFacts]) : TcMovedExactPathIndex
   (tc-moved-exact-path-index-from-facts-at
     facts
@@ -49266,7 +49344,8 @@
   [name-id : i64]
   [origin-id : i64]) : TcMovedSet
   (let
-    [partials : tc_i64_i64_map.Map (tc-moved-partials set)]
+    [partials : tc_i64_i64_map.Map
+      (tc-moved-id-map-own (tc-moved-partials set))]
     (begin
       (tc_i64_i64_map.insert-ref! (&mut partials) name-id origin-id)
       (TcMovedSet
@@ -49279,14 +49358,18 @@
 (define (tc-moved-remove-partial [set : TcMovedSet] [name-id : i64]) : TcMovedSet
   (let
     [partials : tc_i64_i64_map.Map (tc-moved-partials set)]
-    (begin
-      (tc_i64_i64_map.remove-ref! (&mut partials) name-id)
-      (TcMovedSet
-        (tc-moved-roots set)
-        partials
-        (tc-moved-paths set)
-        (tc-moved-exact-path-index set)
-        (tc-moved-hidden-atomic-users set)))))
+    (if (tc-moved-id-map-shared-empty? (& partials))
+      ;; No Occupied slot to find, so the removal below is a no-op (see
+      ;; `tc-moved-remove`).
+      set
+      (begin
+        (tc_i64_i64_map.remove-ref! (&mut partials) name-id)
+        (TcMovedSet
+          (tc-moved-roots set)
+          partials
+          (tc-moved-paths set)
+          (tc-moved-exact-path-index set)
+          (tc-moved-hidden-atomic-users set))))))
 
 (define (tc-moved-partial-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
   (let
@@ -49763,7 +49846,12 @@
   (let
     [remaining : i64 (tc_i64_i64_map.len a)]
     [cursor : i64 index]
-    [result : tc_i64_i64_map.Map out]
+    ;; Only take private storage when there is something to insert; a union with
+    ;; an empty left side leaves the (possibly shared) right side untouched.
+    [result : tc_i64_i64_map.Map
+      (if (> remaining 0)
+        (tc-moved-id-map-own out)
+        out)]
     (begin
       (while (> remaining 0)
         (begin
@@ -50829,7 +50917,8 @@
 
 (define (tc-moved-add-hidden-atomic-user [set : TcMovedSet] [owner-id : i64]) : TcMovedSet
   (let
-    [hidden : tc_i64_i64_map.Map (tc-moved-hidden-atomic-users set)]
+    [hidden : tc_i64_i64_map.Map
+      (tc-moved-id-map-own (tc-moved-hidden-atomic-users set))]
     (begin
       (tc_i64_i64_map.insert-ref!
         (&mut hidden)

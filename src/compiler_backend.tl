@@ -52717,11 +52717,7 @@
     (struct-get index defines)
     (struct-get index externs)
     (struct-get index calls)
-    (if (or
-      (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
-      (string.eq
-        (compiler-ir-symbol-text link-id)
-        "tl_comptime_host_invoke_set"))
+    (if (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
       call-id
       (struct-get index tlci-macro-entry-call-id))))
 
@@ -56703,15 +56699,6 @@
       [(string.eq name "tl_memchr") true]
       [(string.eq name "tl_tlci_call_image_entry") true]
       [(string.eq name "tl_tlci_call_macro_entry")
-        (compiler-backend-runtime-tail-tlci-macro-entry?
-          (compiler-backend-runtime-plan-tail plan))]
-      [(string.eq name "tl_comptime_host_invoke_set")
-        (compiler-backend-runtime-tail-tlci-macro-entry?
-          (compiler-backend-runtime-plan-tail plan))]
-      [(string.eq name "tl_comptime_host_invoke_entry_ptr")
-        (compiler-backend-runtime-tail-tlci-macro-entry?
-          (compiler-backend-runtime-plan-tail plan))]
-      [(string.eq name "tl_comptime_host_invoke_fn")
         (compiler-backend-runtime-tail-tlci-macro-entry?
           (compiler-backend-runtime-plan-tail plan))]
       [(string.eq name "tl_shift_abort")

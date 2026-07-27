@@ -4,11 +4,11 @@
 (import stdlib.io)
 (import "../../src/tlci_core.tl")
 
-(define (tlci-v1-corpus-empty-image) : TlciImage
+(define (tlci-v2-corpus-empty-image) : TlciImage
   (tlci-make-image
     tlci-host-arch-x86-64
     tlci-callback-abi-version
-    "tlci-v1-corpus"
+    "tlci-v2-corpus"
     (tlci-make-metadata "v1" "corpus.empty" "1.0.0")
     (tlci-empty-bytes)
     (tlci-empty-bytes)
@@ -17,7 +17,7 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
-(define (tlci-v1-corpus-sections-image) : TlciImage
+(define (tlci-v2-corpus-sections-image) : TlciImage
   (let
     [fixups : (Array u8) (make-array u8 tlci-section-fixup-record-size)]
     [entries : (Array u8) (make-array u8 tlci-section-entry-record-size)]
@@ -37,7 +37,7 @@
       (tlci-make-image
         tlci-host-arch-x86-64
         tlci-callback-abi-version
-        "tlci-v1-corpus"
+        "tlci-v2-corpus"
         (tlci-make-metadata "v1" "corpus.sections" "1.0.0")
         (make-array
           (tlci-byte 222)
@@ -50,7 +50,7 @@
         symbols
         (tlci-empty-bytes)))))
 
-(define (tlci-v1-corpus-write [path : String] [result : ResultTlciBytes]) : i64
+(define (tlci-v2-corpus-write [path : String] [result : ResultTlciBytes]) : i64
   (match result
     [(ResultTlciBytes.Err message)
       (begin
@@ -67,15 +67,15 @@
     (if (not (= (io.arg-count) 3))
       (begin
         (io.print-error
-          "tlci v1 corpus emitter: expected metadata and sections output paths\n")
+          "tlci v2 corpus emitter: expected metadata and sections output paths\n")
         2)
       (let
         [empty-status : i64
-          (tlci-v1-corpus-write
+          (tlci-v2-corpus-write
             (io.arg 1)
-            (tlci-emit-image (tlci-v1-corpus-empty-image)))]
+            (tlci-emit-image (tlci-v2-corpus-empty-image)))]
         (if (not (= empty-status 0))
           empty-status
-          (tlci-v1-corpus-write
+          (tlci-v2-corpus-write
             (io.arg 2)
-            (tlci-emit-image (tlci-v1-corpus-sections-image))))))))
+            (tlci-emit-image (tlci-v2-corpus-sections-image))))))))

@@ -890,8 +890,9 @@
     [_ false]))
 
 ;; `(comptime.expr-var (comptime.expr-string-value value))`: the literal text of
-;; a string-literal Expr operand becomes a variable name, exercising op 246
-;; followed by the value-consuming `expr-var-from-value` (206). Refs #5626.
+;; a string-literal Expr operand becomes a variable name, exercising
+;; `operand-expr-string-value` followed by the value-consuming
+;; `expr-var-from-value`. Refs #5626.
 (define (producer-test-dispatch-strval?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]) : bool
@@ -928,9 +929,9 @@
                 (match (compiler-comptime-host-result-value)
                   [(CompilerCtfeValue.Expr node _)
                     (match (ast-node-pool-context-expr-get pools node)
-                      ;; op 206 resolves the name through the source-name
-                      ;; session rather than the template-source mark, so
-                      ;; compare rendered text like the `gen` fixture does.
+                      ;; expr-var-from-value resolves the name through the
+                      ;; source-name session rather than the template-source
+                      ;; mark, so compare rendered text like the `gen` fixture.
                       [(AstExpr.Var name-id)
                         (string.eq (intern-str name-id) "picked.name")]
                       [_ false])]
@@ -1076,9 +1077,9 @@
           (ctfe-module-macro-export-reset!)
           ok)))))
 
-;; `(marker ,(comptime.expr-type value))`: op 125 needs a *typechecked* Expr, so
-;; the operand carries a real type rather than the untyped Expr type the other
-;; fixtures use. Refs #5626.
+;; `(marker ,(comptime.expr-type value))`: expr-type needs a *typechecked* Expr,
+;; so the operand carries a real type rather than the untyped Expr type the
+;; other fixtures use. Refs #5626.
 (define (producer-test-dispatch-typeof?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]) : bool
@@ -1434,9 +1435,8 @@
           ok)))))
 
 ;; The fixed-array and shared-reference annotations in `typetpl` exercise the
-;; two composite-type operations that were renumbered after their producer
-;; support was written. Loading the image is insufficient: the stale ids only
-;; fail when the emitted entry dispatches and the host interprets them.
+;; composite-type callbacks by name. Loading the image is insufficient: a
+;; mismatched producer spelling only fails when the emitted entry dispatches.
 (define (producer-test-typetpl-array-binding-ok?
   [pools : AstNodePoolContext]
   [binding : AstLetBinding]
@@ -1983,12 +1983,22 @@
                   (tlci-empty-bytes)
                   name-array
                   (& captures))
-                  [(ResultProducerBytes.Err _) false]
+                  [(ResultProducerBytes.Err message)
+                    (begin
+                      (io.print-error
+                        (string.append "producer error: " message))
+                      (io.print-error "\n")
+                      false)]
                   [(ResultProducerBytes.Ok bytes)
                     (match (tlci-loader-load-from-bytes-with-host
                       bytes
                       (compiler-comptime-host-table))
-                      [(ResultTlciLoadedImage.Err _) false]
+                      [(ResultTlciLoadedImage.Err message)
+                        (begin
+                          (io.print-error
+                            (string.append "loader error: " message))
+                          (io.print-error "\n")
+                          false)]
                       [(ResultTlciLoadedImage.Ok loaded)
                         (let
                           [ok : bool

@@ -2939,6 +2939,26 @@
   compile-profile
   (define compiler-tc-walk-hygiene-nodes-copied : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-env-bindings : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-env-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-env-lookup-steps : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-pattern-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-pattern-lookup-steps : i64
+    0))
 
 (cfg
   compile-profile
@@ -5019,6 +5039,21 @@
       (compiler-tc-macro-counter-profile-line
         "walk_hygiene_nodes_copied"
         compiler-tc-walk-hygiene-nodes-copied)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_env_bindings"
+        compiler-tc-macro-hygiene-env-bindings)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_env_lookups"
+        compiler-tc-macro-hygiene-env-lookups)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_env_lookup_steps"
+        compiler-tc-macro-hygiene-env-lookup-steps)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_pattern_lookups"
+        compiler-tc-macro-hygiene-pattern-lookups)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_pattern_lookup_steps"
+        compiler-tc-macro-hygiene-pattern-lookup-steps)
       (compiler-tc-macro-counter-profile-line
         "walk_rewalk_us"
         (/ compiler-tc-walk-rewalk-ns 1000))
@@ -59376,10 +59411,28 @@
   (No)
   (Some AstDeclList))
 
+;; Keep the scalar head opaque without using a one-field struct: Linux opt2
+;; currently miscompiles that aggregate argument/return shape (#5953).
 (defenum MacroHygieneEnv
-  (Nil)
-  (Bind i64 i64 (Box MacroHygieneEnv))
-  (PatternName i64 i64 (Box MacroHygieneEnv)))
+  (Snapshot i64))
+
+;; Hygiene environments are immutable snapshots into this dense append-only
+;; store. A branch extends a retained head without copying or mutating its
+;; parent, so sibling expression/type/pattern walks remain isolated.
+(define macro-hygiene-env-kinds : (Array i64)
+  (array.make-array i64 0))
+(define macro-hygiene-env-keys : (Array i64)
+  (array.make-array i64 0))
+(define macro-hygiene-env-values : (Array i64)
+  (array.make-array i64 0))
+(define macro-hygiene-env-parents : (Array i64)
+  (array.make-array i64 0))
+(define macro-hygiene-env-slot-count : i64
+  0)
+(define macro-hygiene-env-root-depth : i64
+  0)
+(define macro-hygiene-env-storage-arena : i64
+  0)
 
 (defenum MacroMaybeHygieneName
   (No)
@@ -64280,18 +64333,29 @@
   [depth : i64]) : CompilerCtfeValue
   (match value
     [(CompilerCtfeValue.Expr node produced)
-      (let
-        [expr : AstExpr (ast-expr-segment-bases-get expr-bases node)]
-        [param-env : MacroHygieneEnv
-          (macro-hygiene-output-macro-param-env
-            (& params)
-            0
-            MacroHygieneEnv.Nil)]
-        [output-env : MacroHygieneEnv
-          (macro-hygiene-output-decl-env expr param-env)]
-        (CompilerCtfeValue.Expr
-          (macro-hygiene-produced-expr expr-bases node output-env hygiene depth)
-          produced))]
+      (begin
+        (macro-hygiene-env-root-begin!)
+        (let
+          [expr : AstExpr (ast-expr-segment-bases-get expr-bases node)]
+          [param-env : MacroHygieneEnv
+            (macro-hygiene-output-macro-param-env
+              (& params)
+              0
+              (macro-hygiene-env-empty))]
+          [output-env : MacroHygieneEnv
+            (macro-hygiene-output-decl-env expr param-env)]
+          [out : CompilerCtfeValue
+            (CompilerCtfeValue.Expr
+              (macro-hygiene-produced-expr
+                expr-bases
+                node
+                output-env
+                hygiene
+                depth)
+              produced)]
+          (begin
+            (macro-hygiene-env-root-finish!)
+            out)))]
     [_ value]))
 
 (define (macro-collect-decl-name
@@ -65086,46 +65150,262 @@
         (macro-hygiene-structural-source-name-id name-id)]
       [else fallback])))
 
-(define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-binding!) : unit
+    (set!
+      compiler-tc-macro-hygiene-env-bindings
+      (+ compiler-tc-macro-hygiene-env-bindings 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-lookup!) : unit
+    (set!
+      compiler-tc-macro-hygiene-env-lookups
+      (+ compiler-tc-macro-hygiene-env-lookups 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-lookup-step!) : unit
+    (set!
+      compiler-tc-macro-hygiene-env-lookup-steps
+      (+ compiler-tc-macro-hygiene-env-lookup-steps 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-pattern-lookup!) : unit
+    (set!
+      compiler-tc-macro-hygiene-pattern-lookups
+      (+ compiler-tc-macro-hygiene-pattern-lookups 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-pattern-lookup-step!) : unit
+    (set!
+      compiler-tc-macro-hygiene-pattern-lookup-steps
+      (+ compiler-tc-macro-hygiene-pattern-lookup-steps 1))))
+
+(define (macro-hygiene-env-bind-kind) : i64
+  0)
+
+(define (macro-hygiene-env-pattern-name-kind) : i64
+  1)
+
+(define (macro-hygiene-env-empty) : MacroHygieneEnv
+  (MacroHygieneEnv.Snapshot -1))
+
+(define (macro-hygiene-env-head [env : MacroHygieneEnv]) : i64
   (match env
-    [(MacroHygieneEnv.Nil) (MacroMaybeHygieneName.No)]
-    [(MacroHygieneEnv.Bind key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup (box-get rest) name-id))]
-    [(MacroHygieneEnv.PatternName key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup (box-get rest) name-id))]))
+    [(MacroHygieneEnv.Snapshot head) head]))
+
+(define (macro-hygiene-env-reset!) : unit
+  (set! macro-hygiene-env-slot-count 0))
+
+(define (macro-hygiene-env-root-begin!) : unit
+  (begin
+    ;; Transformer evaluation can recursively expand another macro while the
+    ;; caller still retains snapshot heads. Reuse slots only at the outermost
+    ;; root; nested roots append until their caller has finished.
+    (if (= macro-hygiene-env-root-depth 0)
+      (macro-hygiene-env-reset!)
+      unit)
+    (set! macro-hygiene-env-root-depth (+ macro-hygiene-env-root-depth 1))))
+
+(define (macro-hygiene-env-root-finish!) : unit
+  (if (> macro-hygiene-env-root-depth 0)
+    (set! macro-hygiene-env-root-depth (- macro-hygiene-env-root-depth 1))
+    (io.panic "typecheck: macro hygiene root depth underflow")))
+
+(define (macro-hygiene-env-storage-handle) : i64
+  (begin
+    (if (= macro-hygiene-env-storage-arena 0)
+      (begin
+        ;; The retained slot table is small (thousands of 32-byte entries in a
+        ;; self-compile), so avoid the default arena's larger virtual reservation.
+        (set! macro-hygiene-env-storage-arena (arena.tl_arena_make_small))
+        (compiler-arena-debug-protect-never-reset!
+          macro-hygiene-env-storage-arena))
+      unit)
+    macro-hygiene-env-storage-arena))
+
+(define (macro-hygiene-env-storage-restore! [previous : i64] [storage : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      ;; Large array growth can advance the arena to a new segment. Retain that
+      ;; newest head, and keep it active when the caller was already allocating
+      ;; in this owner, rather than restoring a stale pre-growth handle.
+      (set! macro-hygiene-env-storage-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous storage)
+            head
+            previous))))))
+
+(define (macro-hygiene-env-grow-copy!
+  [dst-kinds : (Array i64)]
+  [dst-keys : (Array i64)]
+  [dst-values : (Array i64)]
+  [dst-parents : (Array i64)]
+  [src-kinds : (Array i64)]
+  [src-keys : (Array i64)]
+  [src-values : (Array i64)]
+  [src-parents : (Array i64)]
+  [index : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i macro-hygiene-env-slot-count)
+      (begin
+        (array-set! dst-kinds i (array-ref src-kinds i))
+        (array-set! dst-keys i (array-ref src-keys i))
+        (array-set! dst-values i (array-ref src-values i))
+        (array-set! dst-parents i (array-ref src-parents i))
+        (set! i (+ i 1))))))
+
+(define (macro-hygiene-env-ensure-capacity!) : unit
+  (if (< macro-hygiene-env-slot-count (array.length macro-hygiene-env-keys))
+    unit
+    (let
+      [old-kinds : (Array i64) macro-hygiene-env-kinds]
+      [old-keys : (Array i64) macro-hygiene-env-keys]
+      [old-values : (Array i64) macro-hygiene-env-values]
+      [old-parents : (Array i64) macro-hygiene-env-parents]
+      [old-capacity : i64 (array.length old-keys)]
+      [next-capacity : i64
+        (if (< old-capacity 1)
+          64
+          (* old-capacity 2))]
+      [previous-arena : i64 (arena.tl_arena_current)]
+      [storage : i64 (macro-hygiene-env-storage-handle)]
+      (begin
+        ;; Snapshots can cross every scratch rewind involved in an expansion.
+        ;; Allocate initial storage and every growth in one retained arena, then
+        ;; restore the caller's active owner.
+        (unsafe
+          (arena.tl_arena_set storage))
+        (let
+          [next-kinds : (Array i64) (array.make-array i64 next-capacity)]
+          [next-keys : (Array i64) (array.make-array i64 next-capacity)]
+          [next-values : (Array i64) (array.make-array i64 next-capacity)]
+          [next-parents : (Array i64) (array.make-array i64 next-capacity)]
+          (begin
+            (macro-hygiene-env-grow-copy!
+              next-kinds
+              next-keys
+              next-values
+              next-parents
+              old-kinds
+              old-keys
+              old-values
+              old-parents
+              0)
+            (set! macro-hygiene-env-kinds next-kinds)
+            (set! macro-hygiene-env-keys next-keys)
+            (set! macro-hygiene-env-values next-values)
+            (set! macro-hygiene-env-parents next-parents)
+            (macro-hygiene-env-storage-restore! previous-arena storage)))))))
+
+(define (macro-hygiene-env-push
+  [kind : i64]
+  [env : MacroHygieneEnv]
+  [key-id : i64]
+  [value-id : i64]) : MacroHygieneEnv
+  (begin
+    (macro-hygiene-env-ensure-capacity!)
+    (let
+      [index : i64 macro-hygiene-env-slot-count]
+      (begin
+        (array-set! macro-hygiene-env-kinds index kind)
+        (array-set! macro-hygiene-env-keys index key-id)
+        (array-set! macro-hygiene-env-values index value-id)
+        (array-set!
+          macro-hygiene-env-parents
+          index
+          (macro-hygiene-env-head env))
+        (set! macro-hygiene-env-slot-count (+ macro-hygiene-env-slot-count 1))
+        (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
+        (MacroHygieneEnv.Snapshot index)))))
+
+(define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
+  (let
+    [cursor : i64 (macro-hygiene-env-head env)]
+    [out : MacroMaybeHygieneName (MacroMaybeHygieneName.No)]
+    [done : bool false]
+    (begin
+      (cfg compile-profile (compiler-tc-macro-hygiene-note-lookup!))
+      (while (and (not done) (>= cursor 0))
+        (begin
+          (cfg compile-profile (compiler-tc-macro-hygiene-note-lookup-step!))
+          (if (= (array-ref macro-hygiene-env-keys cursor) name-id)
+            (begin
+              (set!
+                out
+                (MacroMaybeHygieneName.Some
+                  (array-ref macro-hygiene-env-values cursor)))
+              (set! done true))
+            (set! cursor (array-ref macro-hygiene-env-parents cursor)))))
+      out)))
 
 (define (macro-hygiene-env-lookup-pattern-name
   [env : MacroHygieneEnv]
   [name-id : i64]) : MacroMaybeHygieneName
-  (match env
-    [(MacroHygieneEnv.Nil) (MacroMaybeHygieneName.No)]
-    [(MacroHygieneEnv.Bind _ _ rest)
-      (macro-hygiene-env-lookup-pattern-name (box-get rest) name-id)]
-    [(MacroHygieneEnv.PatternName key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup-pattern-name (box-get rest) name-id))]))
+  (let
+    [cursor : i64 (macro-hygiene-env-head env)]
+    [out : MacroMaybeHygieneName (MacroMaybeHygieneName.No)]
+    [done : bool false]
+    (begin
+      (cfg compile-profile (compiler-tc-macro-hygiene-note-pattern-lookup!))
+      (while (and (not done) (>= cursor 0))
+        (begin
+          (cfg
+            compile-profile
+            (compiler-tc-macro-hygiene-note-pattern-lookup-step!))
+          (if (and
+            (=
+              (array-ref macro-hygiene-env-kinds cursor)
+              (macro-hygiene-env-pattern-name-kind))
+            (= (array-ref macro-hygiene-env-keys cursor) name-id))
+            (begin
+              (set!
+                out
+                (MacroMaybeHygieneName.Some
+                  (array-ref macro-hygiene-env-values cursor)))
+              (set! done true))
+            (set! cursor (array-ref macro-hygiene-env-parents cursor)))))
+      out)))
+
+(define (macro-hygiene-env-bind-raw
+  [env : MacroHygieneEnv]
+  [key-id : i64]
+  [value-id : i64]) : MacroHygieneEnv
+  (macro-hygiene-env-push (macro-hygiene-env-bind-kind) env key-id value-id))
+
+(define (macro-hygiene-env-bind-pattern-name-raw
+  [env : MacroHygieneEnv]
+  [key-id : i64]
+  [value-id : i64]) : MacroHygieneEnv
+  (macro-hygiene-env-push
+    (macro-hygiene-env-pattern-name-kind)
+    env
+    key-id
+    value-id))
 
 (define (macro-hygiene-output-bind-id [env : MacroHygieneEnv] [name-id : i64]) : MacroHygieneEnv
   (if (ci.intern-template-source-id? name-id)
-    (MacroHygieneEnv.Bind
+    (macro-hygiene-env-bind-raw
+      env
       name-id
-      (ci.intern-template-source-name-id name-id)
-      (box env))
+      (ci.intern-template-source-name-id name-id))
     env))
 
 (define (macro-hygiene-output-pattern-name-id
   [env : MacroHygieneEnv]
   [name-id : i64]) : MacroHygieneEnv
   (if (ci.intern-template-source-id? name-id)
-    (MacroHygieneEnv.PatternName
+    (macro-hygiene-env-bind-pattern-name-raw
+      env
       name-id
-      (ci.intern-template-source-name-id name-id)
-      (box env))
+      (ci.intern-template-source-name-id name-id))
     env))
 
 (define (macro-hygiene-output-macro-param-env
@@ -65139,10 +65419,10 @@
         (macro-hygiene-output-macro-param-env
           params
           (+ index 1)
-          (MacroHygieneEnv.Bind
+          (macro-hygiene-env-bind-raw
+            env
             (ci.intern-template-source-id name-id)
-            name-id
-            (box env)))])))
+            name-id))])))
 
 (define (macro-hygiene-output-param-env
   [expr : AstExpr]
@@ -65558,7 +65838,7 @@
             (io.panic "typecheck: missing macro template binding source id"))
           (MacroHygieneName.Name
             renamed-id
-            (MacroHygieneEnv.Bind name-id renamed-id (box env)))))
+            (macro-hygiene-env-bind-raw env name-id renamed-id))))
       (MacroHygieneName.Name name-id env))))
 
 ;; A transformer appends newly constructed syntax after its bound operands and
@@ -70943,16 +71223,23 @@
                         (+ depth 1)
                         (if (= expanded (ctfe-result-hygiene-free-node-id))
                           expanded
-                          (macro-hygiene-produced-expr
-                            expr-bases
-                            expanded
-                            MacroHygieneEnv.Nil
-                            (MacroHygieneContext
-                              macro-name-id
-                              definition-module-id
-                              declaration-id
-                              (tc-context-symbols ctx))
-                            (+ depth 1))))]
+                          (begin
+                            (macro-hygiene-env-root-begin!)
+                            (let
+                              [out : i64
+                                (macro-hygiene-produced-expr
+                                  expr-bases
+                                  expanded
+                                  (macro-hygiene-env-empty)
+                                  (MacroHygieneContext
+                                    macro-name-id
+                                    definition-module-id
+                                    declaration-id
+                                    (tc-context-symbols ctx))
+                                  (+ depth 1))]
+                              (begin
+                                (macro-hygiene-env-root-finish!)
+                                out)))))]
                     (begin
                       (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                       rewalk-result)))
@@ -70980,16 +71267,23 @@
                         (+ depth 1)
                         (if (= expanded (ctfe-result-hygiene-free-node-id))
                           expanded
-                          (macro-hygiene-produced-expr
-                            expr-bases
-                            expanded
-                            MacroHygieneEnv.Nil
-                            (MacroHygieneContext
-                              macro-name-id
-                              definition-module-id
-                              declaration-id
-                              (tc-context-symbols ctx))
-                            (+ depth 1))))]
+                          (begin
+                            (macro-hygiene-env-root-begin!)
+                            (let
+                              [out : i64
+                                (macro-hygiene-produced-expr
+                                  expr-bases
+                                  expanded
+                                  (macro-hygiene-env-empty)
+                                  (MacroHygieneContext
+                                    macro-name-id
+                                    definition-module-id
+                                    declaration-id
+                                    (tc-context-symbols ctx))
+                                  (+ depth 1))]
+                              (begin
+                                (macro-hygiene-env-root-finish!)
+                                out)))))]
                     (begin
                       (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                       rewalk-result)))

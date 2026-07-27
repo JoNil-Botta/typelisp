@@ -667,4 +667,7 @@
     (unless
       (lazy-preload-observer-state-isolation-ok?)
       (return (io.panic "lazy preload observer isolation smoke mismatch")))
+    (unless
+      (compiler-load-lazy-qualified-observer-dense-stack-ok?)
+      (return (io.panic "lazy observer dense stack smoke mismatch")))
     42))

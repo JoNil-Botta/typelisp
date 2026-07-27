@@ -302,17 +302,23 @@
 (define compiler-load-dotted-path-cache-capacity : i64
   256)
 
-(defenum CompilerLoadLazyQualifiedObserverStack
-  (Empty)
-  (Frame
-    bool
-    i64
-    sym_i64_env.SymI64Env
-    i64
-    sym_i64_env.SymI64Env
-    bool
-    bool
-    (Box CompilerLoadLazyQualifiedObserverStack)))
+(defstruct CompilerLoadLazyQualifiedObserverFrame
+  (active bool)
+  (exhaustive bool)
+  (root-id i64)
+  (members sym_i64_env.SymI64Env)
+  (secondary-root-id i64)
+  (secondary-members sym_i64_env.SymI64Env)
+  (secondary-qualified bool)
+  (secondary-direct bool))
+
+;; Strict-LIFO observer snapshots. The contiguous `slots[0 .. len)` prefix is
+;; live and ordered oldest-to-newest; the newest frame is always `len - 1`.
+;; Reset replaces this value instead of retaining capacity because traversal
+;; slots may belong to the just-reclaimed entry arena.
+(defstruct CompilerLoadLazyQualifiedObserverStack
+  (slots (Array CompilerLoadLazyQualifiedObserverFrame))
+  (len i64))
 
 (defstruct CompilerLoadLazyQualifiedObserverState
   ;; flags: active, exhaustive, secondary-qualified, secondary-direct.
@@ -375,7 +381,40 @@
   (make-array value))
 
 (define (compiler-load-lazy-qualified-observer-stack-empty) : CompilerLoadLazyQualifiedObserverStack
-  CompilerLoadLazyQualifiedObserverStack.Empty)
+  (CompilerLoadLazyQualifiedObserverStack
+    (array.make-array CompilerLoadLazyQualifiedObserverFrame 0)
+    0))
+
+(define (compiler-load-lazy-qualified-observer-stack-count
+  [stack : CompilerLoadLazyQualifiedObserverStack]) : i64
+  (struct-get stack len))
+
+(define (compiler-load-lazy-qualified-observer-stack-push
+  [stack : CompilerLoadLazyQualifiedObserverStack]
+  [frame : CompilerLoadLazyQualifiedObserverFrame]) : CompilerLoadLazyQualifiedObserverStack
+  (let
+    [len : i64 (struct-get stack len)]
+    [slots : (Array CompilerLoadLazyQualifiedObserverFrame)
+      (struct-get stack slots)]
+    (begin
+      (if (< len (array-length slots))
+        unit
+        (let
+          [capacity : i64
+            (if (= (array-length slots) 0)
+              1
+              (* (array-length slots) 2))]
+          [bigger : (Array CompilerLoadLazyQualifiedObserverFrame)
+            (array.make-array CompilerLoadLazyQualifiedObserverFrame capacity)]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (array-set! bigger index (array-ref slots index))
+                (set! index (+ index 1))))
+            (set! slots bigger))))
+      (array-set! slots len frame)
+      (CompilerLoadLazyQualifiedObserverStack slots (+ len 1)))))
 
 (define (compiler-load-lazy-qualified-observer-state-new) : CompilerLoadLazyQualifiedObserverState
   (let
@@ -4376,15 +4415,17 @@
       (array-set!
         (struct-get observer stack)
         0
-        (CompilerLoadLazyQualifiedObserverStack.Frame
-          (compiler-load-lazy-qualified-observer-flag observer 0)
-          (compiler-load-lazy-qualified-observer-root-id observer 0)
-          (compiler-load-lazy-qualified-observer-members observer 0)
-          (compiler-load-lazy-qualified-observer-root-id observer 1)
-          (compiler-load-lazy-qualified-observer-members observer 1)
-          (compiler-load-lazy-qualified-observer-flag observer 2)
-          (compiler-load-lazy-qualified-observer-flag observer 3)
-          (box (array-ref (struct-get observer stack) 0))))
+        (compiler-load-lazy-qualified-observer-stack-push
+          (array-ref (struct-get observer stack) 0)
+          (CompilerLoadLazyQualifiedObserverFrame
+            (compiler-load-lazy-qualified-observer-flag observer 0)
+            (compiler-load-lazy-qualified-observer-flag observer 1)
+            (compiler-load-lazy-qualified-observer-root-id observer 0)
+            (compiler-load-lazy-qualified-observer-members observer 0)
+            (compiler-load-lazy-qualified-observer-root-id observer 1)
+            (compiler-load-lazy-qualified-observer-members observer 1)
+            (compiler-load-lazy-qualified-observer-flag observer 2)
+            (compiler-load-lazy-qualified-observer-flag observer 3))))
       (compiler-load-lazy-qualified-observer-flag-set! observer 1 true)
       (compiler-load-lazy-qualified-observer-flag-set! observer 0 true)
       (compiler-load-lazy-qualified-observer-root-id-set! observer 0 root-id)
@@ -4486,60 +4527,56 @@
         (compiler-load-lazy-qualified-observer-members observer 1)
         (compiler-load-lazy-qualified-observer-flag observer 2)
         (compiler-load-lazy-qualified-observer-flag observer 3))]
+    [stack : CompilerLoadLazyQualifiedObserverStack
+      (array-ref (struct-get observer stack) 0)]
+    [len : i64 (compiler-load-lazy-qualified-observer-stack-count stack)]
     (begin
-      (match (array-ref (struct-get observer stack) 0)
-        [(CompilerLoadLazyQualifiedObserverStack.Empty)
+      (if (= len 0)
+        ;; Preserve the historical empty-pop behavior: return the current
+        ;; observation above, then leave the observer fully inactive.
+        (compiler-load-session-state-lazy-qualified-observer-reset! state)
+        (let
+          [frame : CompilerLoadLazyQualifiedObserverFrame
+            (array-ref (struct-get stack slots) (- len 1))]
           (begin
-            (compiler-load-lazy-qualified-observer-flag-set! observer 0 false)
-            (compiler-load-lazy-qualified-observer-flag-set! observer 1 false)
-            (compiler-load-lazy-qualified-observer-root-id-set! observer 0 0)
-            (compiler-load-lazy-qualified-observer-members-set!
+            (array-set!
+              (struct-get observer stack)
+              0
+              (CompilerLoadLazyQualifiedObserverStack
+                (struct-get stack slots)
+                (- len 1)))
+            (compiler-load-lazy-qualified-observer-flag-set!
               observer
               0
-              (sym_i64_env.sym-i64-empty))
-            (compiler-load-lazy-qualified-observer-root-id-set! observer 1 0)
-            (compiler-load-lazy-qualified-observer-members-set!
+              (struct-get frame active))
+            (compiler-load-lazy-qualified-observer-flag-set!
               observer
               1
-              (sym_i64_env.sym-i64-empty))
-            (compiler-load-lazy-qualified-observer-flag-set! observer 2 false)
-            (compiler-load-lazy-qualified-observer-flag-set! observer 3 false))]
-        [(CompilerLoadLazyQualifiedObserverStack.Frame
-            active
-            root-id
-            members
-            secondary-root-id
-            secondary-members
-            secondary-qualified
-            secondary-direct
-            rest)
-          (begin
-            (compiler-load-lazy-qualified-observer-flag-set! observer 0 active)
+              (struct-get frame exhaustive))
             (compiler-load-lazy-qualified-observer-root-id-set!
               observer
               0
-              root-id)
+              (struct-get frame root-id))
             (compiler-load-lazy-qualified-observer-members-set!
               observer
               0
-              members)
+              (struct-get frame members))
             (compiler-load-lazy-qualified-observer-root-id-set!
               observer
               1
-              secondary-root-id)
+              (struct-get frame secondary-root-id))
             (compiler-load-lazy-qualified-observer-members-set!
               observer
               1
-              secondary-members)
+              (struct-get frame secondary-members))
             (compiler-load-lazy-qualified-observer-flag-set!
               observer
               2
-              secondary-qualified)
+              (struct-get frame secondary-qualified))
             (compiler-load-lazy-qualified-observer-flag-set!
               observer
               3
-              secondary-direct)
-            (array-set! (struct-get observer stack) 0 (box-get rest)))])
+              (struct-get frame secondary-direct)))))
       out)))
 
 (define (compiler-load-lazy-qualified-observer-end-pair!) : CompilerLoadLazyQualifiedObserverResult
@@ -16062,6 +16099,359 @@
         (io.panic "compiler-load: traversal peer summary mismatch")]
       [else true])))
 
+(define (compiler-load-lazy-qualified-observer-test-root
+  [offset : i64]
+  [level : i64]) : i64
+  (+ offset (+ 1000 level)))
+
+(define (compiler-load-lazy-qualified-observer-test-secondary-root
+  [offset : i64]
+  [level : i64]) : i64
+  (+ offset (+ 2000 level)))
+
+(define (compiler-load-lazy-qualified-observer-test-member
+  [offset : i64]
+  [level : i64]) : i64
+  (+ offset (+ 3000 level)))
+
+(define (compiler-load-lazy-qualified-observer-test-secondary-member
+  [offset : i64]
+  [level : i64]) : i64
+  (+ offset (+ 4000 level)))
+
+(define (compiler-load-lazy-qualified-observer-test-exhaustive? [level : i64]) : bool
+  (= (% level 2) 0))
+
+(define (compiler-load-lazy-qualified-observer-test-secondary-qualified?
+  [level : i64]) : bool
+  (= (% level 3) 1))
+
+(define (compiler-load-lazy-qualified-observer-test-secondary-direct?
+  [level : i64]) : bool
+  (= (% level 4) 2))
+
+(define (compiler-load-lazy-qualified-observer-test-configure!
+  [state : CompilerLoadSessionState]
+  [offset : i64]
+  [level : i64]) : unit
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    (begin
+      ;; Production begin-pair makes every active query exhaustive. Vary this
+      ;; internal bit here so the frame test proves it is snapshotted rather
+      ;; than accidentally derived from active state during a pop.
+      (compiler-load-lazy-qualified-observer-flag-set!
+        observer
+        1
+        (compiler-load-lazy-qualified-observer-test-exhaustive? level))
+      (compiler-load-lazy-qualified-observer-members-set!
+        observer
+        0
+        (sym_i64_env.sym-i64-bind-id
+          (sym_i64_env.sym-i64-empty)
+          (compiler-load-lazy-qualified-observer-test-member offset level)
+          1))
+      (compiler-load-lazy-qualified-observer-members-set!
+        observer
+        1
+        (sym_i64_env.sym-i64-bind-id
+          (sym_i64_env.sym-i64-empty)
+          (compiler-load-lazy-qualified-observer-test-secondary-member
+            offset
+            level)
+          1))
+      (compiler-load-lazy-qualified-observer-flag-set!
+        observer
+        2
+        (compiler-load-lazy-qualified-observer-test-secondary-qualified? level))
+      (compiler-load-lazy-qualified-observer-flag-set!
+        observer
+        3
+        (compiler-load-lazy-qualified-observer-test-secondary-direct? level)))))
+
+(define (compiler-load-lazy-qualified-observer-test-empty-state?
+  [state : CompilerLoadSessionState]
+  [offset : i64]) : bool
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    (and
+      (not (compiler-load-lazy-qualified-observer-flag observer 0))
+      (not (compiler-load-lazy-qualified-observer-flag observer 1))
+      (= (compiler-load-lazy-qualified-observer-root-id observer 0) 0)
+      (= (compiler-load-lazy-qualified-observer-root-id observer 1) 0)
+      (not
+        (sym_i64_env.sym-i64-contains-id
+          (compiler-load-lazy-qualified-observer-members observer 0)
+          (compiler-load-lazy-qualified-observer-test-member offset 0)))
+      (not
+        (sym_i64_env.sym-i64-contains-id
+          (compiler-load-lazy-qualified-observer-members observer 1)
+          (compiler-load-lazy-qualified-observer-test-secondary-member offset 0)))
+      (not (compiler-load-lazy-qualified-observer-flag observer 2))
+      (not (compiler-load-lazy-qualified-observer-flag observer 3))
+      (=
+        (compiler-load-lazy-qualified-observer-stack-count
+          (array-ref (struct-get observer stack) 0))
+        0))))
+
+(define (compiler-load-lazy-qualified-observer-test-stack-capacity-zero?
+  [state : CompilerLoadSessionState]) : bool
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    [stack : CompilerLoadLazyQualifiedObserverStack
+      (array-ref (struct-get observer stack) 0)]
+    (= (array-length (struct-get stack slots)) 0)))
+
+(define (compiler-load-lazy-qualified-observer-test-state-at?
+  [state : CompilerLoadSessionState]
+  [offset : i64]
+  [level : i64]) : bool
+  (if (< level 0)
+    (compiler-load-lazy-qualified-observer-test-empty-state? state offset)
+    (let
+      [observer : CompilerLoadLazyQualifiedObserverState
+        (compiler-load-session-state-lazy-qualified-observer state)]
+      (and
+        (compiler-load-lazy-qualified-observer-flag observer 0)
+        (=
+          (compiler-load-lazy-qualified-observer-flag observer 1)
+          (compiler-load-lazy-qualified-observer-test-exhaustive? level))
+        (=
+          (compiler-load-lazy-qualified-observer-root-id observer 0)
+          (compiler-load-lazy-qualified-observer-test-root offset level))
+        (=
+          (compiler-load-lazy-qualified-observer-root-id observer 1)
+          (compiler-load-lazy-qualified-observer-test-secondary-root
+            offset
+            level))
+        (sym_i64_env.sym-i64-contains-id
+          (compiler-load-lazy-qualified-observer-members observer 0)
+          (compiler-load-lazy-qualified-observer-test-member offset level))
+        (sym_i64_env.sym-i64-contains-id
+          (compiler-load-lazy-qualified-observer-members observer 1)
+          (compiler-load-lazy-qualified-observer-test-secondary-member
+            offset
+            level))
+        (=
+          (compiler-load-lazy-qualified-observer-flag observer 2)
+          (compiler-load-lazy-qualified-observer-test-secondary-qualified?
+            level))
+        (=
+          (compiler-load-lazy-qualified-observer-flag observer 3)
+          (compiler-load-lazy-qualified-observer-test-secondary-direct? level))
+        (=
+          (compiler-load-lazy-qualified-observer-stack-count
+            (array-ref (struct-get observer stack) 0))
+          (+ level 1))))))
+
+(define (compiler-load-lazy-qualified-observer-test-result-at?
+  [result : CompilerLoadLazyQualifiedObserverResult]
+  [offset : i64]
+  [level : i64]) : bool
+  (and
+    (sym_i64_env.sym-i64-contains-id
+      (struct-get result primary-members)
+      (compiler-load-lazy-qualified-observer-test-member offset level))
+    (sym_i64_env.sym-i64-contains-id
+      (struct-get result secondary-members)
+      (compiler-load-lazy-qualified-observer-test-secondary-member offset level))
+    (=
+      (struct-get result secondary-qualified)
+      (compiler-load-lazy-qualified-observer-test-secondary-qualified? level))
+    (=
+      (struct-get result secondary-direct)
+      (compiler-load-lazy-qualified-observer-test-secondary-direct? level))))
+
+(define (compiler-load-lazy-qualified-observer-test-empty-result?
+  [result : CompilerLoadLazyQualifiedObserverResult]
+  [offset : i64]) : bool
+  (and
+    (not
+      (sym_i64_env.sym-i64-contains-id
+        (struct-get result primary-members)
+        (compiler-load-lazy-qualified-observer-test-member offset 0)))
+    (not
+      (sym_i64_env.sym-i64-contains-id
+        (struct-get result secondary-members)
+        (compiler-load-lazy-qualified-observer-test-secondary-member offset 0)))
+    (not (struct-get result secondary-qualified))
+    (not (struct-get result secondary-direct))))
+
+(define (compiler-load-lazy-qualified-observer-test-push-depth!
+  [state : CompilerLoadSessionState]
+  [offset : i64]
+  [depth : i64]) : unit
+  (let
+    [level : i64 0]
+    (while (< level depth)
+      (begin
+        (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+          state
+          (compiler-load-lazy-qualified-observer-test-root offset level)
+          (compiler-load-lazy-qualified-observer-test-secondary-root
+            offset
+            level))
+        (compiler-load-lazy-qualified-observer-test-configure!
+          state
+          offset
+          level)
+        (set! level (+ level 1))))))
+
+;; Crosses six geometric capacity boundaries, then pops two independently
+;; owned states in an interleaved order. Every frame field is varied so a
+;; missing snapshot/restore cannot hide behind the ordinary production values.
+(define (compiler-load-lazy-qualified-observer-dense-stack-ok?) : bool
+  (let
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-reset : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [offset-a : i64 0]
+    [offset-b : i64 10000]
+    [offset-reset : i64 20000]
+    [depth : i64 40]
+    [level : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< level depth)
+        (begin
+          (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+            state-a
+            (compiler-load-lazy-qualified-observer-test-root offset-a level)
+            (compiler-load-lazy-qualified-observer-test-secondary-root
+              offset-a
+              level))
+          (compiler-load-lazy-qualified-observer-test-configure!
+            state-a
+            offset-a
+            level)
+          (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+            state-b
+            (compiler-load-lazy-qualified-observer-test-root offset-b level)
+            (compiler-load-lazy-qualified-observer-test-secondary-root
+              offset-b
+              level))
+          (compiler-load-lazy-qualified-observer-test-configure!
+            state-b
+            offset-b
+            level)
+          (set! level (+ level 1))))
+      (set! level (- depth 1))
+      (while (and ok (>= level 0))
+        (let
+          [result-b : CompilerLoadLazyQualifiedObserverResult
+            (compiler-load-session-state-lazy-qualified-observer-end-pair!
+              state-b)]
+          (begin
+            (set!
+              ok
+              (and
+                (compiler-load-lazy-qualified-observer-test-result-at?
+                  result-b
+                  offset-b
+                  level)
+                (compiler-load-lazy-qualified-observer-test-state-at?
+                  state-a
+                  offset-a
+                  level)
+                (compiler-load-lazy-qualified-observer-test-state-at?
+                  state-b
+                  offset-b
+                  (- level 1))))
+            (if ok
+              (let
+                [result-a : CompilerLoadLazyQualifiedObserverResult
+                  (compiler-load-session-state-lazy-qualified-observer-end-pair!
+                    state-a)]
+                (set!
+                  ok
+                  (and
+                    (compiler-load-lazy-qualified-observer-test-result-at?
+                      result-a
+                      offset-a
+                      level)
+                    (compiler-load-lazy-qualified-observer-test-state-at?
+                      state-a
+                      offset-a
+                      (- level 1))
+                    (compiler-load-lazy-qualified-observer-test-state-at?
+                      state-b
+                      offset-b
+                      (- level 1)))))
+              unit)
+            (set! level (- level 1)))))
+      ;; A reset from a deep live stack must discard its backing slots rather
+      ;; than leave an arena-owned array reachable through the session state.
+      (compiler-load-lazy-qualified-observer-test-push-depth!
+        state-reset
+        offset-reset
+        depth)
+      (compiler-load-session-state-lazy-qualified-observer-reset! state-reset)
+      (set!
+        ok
+        (and
+          ok
+          (compiler-load-lazy-qualified-observer-test-empty-state?
+            state-reset
+            offset-reset)
+          (compiler-load-lazy-qualified-observer-test-stack-capacity-zero?
+            state-reset)))
+      ;; The state remains reusable after that reset.
+      (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+        state-reset
+        (compiler-load-lazy-qualified-observer-test-root offset-reset 0)
+        (compiler-load-lazy-qualified-observer-test-secondary-root
+          offset-reset
+          0))
+      (compiler-load-lazy-qualified-observer-test-configure!
+        state-reset
+        offset-reset
+        0)
+      (let
+        [reset-result : CompilerLoadLazyQualifiedObserverResult
+          (compiler-load-session-state-lazy-qualified-observer-end-pair!
+            state-reset)]
+        (set!
+          ok
+          (and
+            ok
+            (compiler-load-lazy-qualified-observer-test-result-at?
+              reset-result
+              offset-reset
+              0)
+            (compiler-load-lazy-qualified-observer-test-empty-state?
+              state-reset
+              offset-reset))))
+      ;; Empty pops preserve the old contract: return an empty observation and
+      ;; leave both independent states inactive.
+      (let
+        [underflow-a : CompilerLoadLazyQualifiedObserverResult
+          (compiler-load-session-state-lazy-qualified-observer-end-pair!
+            state-a)]
+        [underflow-b : CompilerLoadLazyQualifiedObserverResult
+          (compiler-load-session-state-lazy-qualified-observer-end-pair!
+            state-b)]
+        (and
+          ok
+          (compiler-load-lazy-qualified-observer-test-empty-result?
+            underflow-a
+            offset-a)
+          (compiler-load-lazy-qualified-observer-test-empty-result?
+            underflow-b
+            offset-b)
+          (compiler-load-lazy-qualified-observer-test-empty-state?
+            state-a
+            offset-a)
+          (compiler-load-lazy-qualified-observer-test-empty-state?
+            state-b
+            offset-b)
+          (compiler-load-lazy-qualified-observer-test-stack-capacity-zero?
+            state-a)
+          (compiler-load-lazy-qualified-observer-test-stack-capacity-zero?
+            state-b))))))
+
 (define (compiler-load-self-test) : i64
   (begin
     (unless
@@ -16076,6 +16466,10 @@
       (compiler-load-session-owned-traversal-isolation-ok?)
       (return
         (io.panic "compiler-load: owned traversal isolation smoke mismatch")))
+    (unless
+      (compiler-load-lazy-qualified-observer-dense-stack-ok?)
+      (return
+        (io.panic "compiler-load: lazy qualified observer dense stack mismatch")))
     (unless
       (compiler-load-append-onto-reuse-ok?)
       (return (io.panic "compiler-load: append-onto reuse smoke mismatch")))

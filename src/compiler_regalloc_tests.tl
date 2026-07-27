@@ -5459,6 +5459,87 @@
       (compiler-reg-destructive-chain-ok?)
       "bounded destructive ties coalesce lhs/rhs chains and refuse clobber/noncomm-rhs/div")))
 
+;; M-B2 scalar phi-web slot sharing. Both cases hand the colorer the SAME plan
+;; intervals -- deliberately overlapping, which is what the conservative model
+;; produces for a phi and its input, because it counts the input as live AT the
+;; phi block -- so only the block shape decides. `entry` defines the input and
+;; `merge`'s phi consumes it: with the input dead after the phi the two
+;; edge-precise hulls are strictly ordered and one slot serves both; with the
+;; input still live past the phi they genuinely interfere and keep two slots.
+(cfg
+  test
+  (define (compiler-reg-color-phi-web-blocks [live-after-phi : bool]) : CompilerIrBlockList
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump (compiler-ir-label "merge"))
+            CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "merge")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              0
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 1)
+                (compiler-ir-label "entry")
+                CompilerIrPhiInputList.Nil)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some
+                  (CompilerIrValue.Var
+                    (if live-after-phi
+                      1
+                      0))))
+              CompilerIrInstrList.Nil)))
+        CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-color-phi-web-intervals) : CompilerRegIntervalSeq
+    (compiler-reg-interval-seq-prepend
+      (CompilerRegInterval.Interval 1 0 6)
+      (compiler-reg-interval-seq-prepend
+        (CompilerRegInterval.Interval 0 4 6)
+        (compiler-reg-interval-seq-empty)))))
+
+(cfg
+  test
+  (define (compiler-reg-color-phi-web-coloring [live-after-phi : bool]) : CompilerRegColoring
+    (compiler-reg-color-stack-slots
+      (ast-node-pool-reader-type-segment-bases)
+      (CompilerRegPlan.Plan
+        (compiler-reg-color-spill-sharing-assignments 2)
+        (compiler-live-set-empty)
+        (compiler-reg-color-phi-web-intervals)
+        (compiler-reg-color-spill-sharing-types 2)
+        (compiler-reg-call-split-empty)
+        (compiler-reg-split-plan-empty))
+      (compiler-live-set-empty)
+      CompilerIrParamList.Nil
+      (compiler-reg-color-phi-web-blocks live-after-phi)
+      2
+      2)))
+
+(cfg
+  test
+  (define (compiler-reg-color-phi-web-slot-sharing-ok?) : bool
+    (match (compiler-reg-color-phi-web-coloring false)
+      [(CompilerRegColoring.Remap share-remap share-slots)
+        (match (compiler-reg-color-phi-web-coloring true)
+          [(CompilerRegColoring.Remap live-remap live-slots)
+            (and
+              (= share-slots 1)
+              (= (array-ref share-remap 0) (array-ref share-remap 1))
+              (= live-slots 2)
+              (not (= (array-ref live-remap 0) (array-ref live-remap 1))))]
+          [(CompilerRegColoring.None) false])]
+      [(CompilerRegColoring.None) false])))
+
 (cfg
   test
   (test

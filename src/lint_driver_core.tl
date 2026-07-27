@@ -1645,30 +1645,6 @@
       ""
       (string.substring ref (+ sep 1) (- name-len (+ sep 1))))))
 
-(define (selfhost-lint-dead-qualified-ref-module-separator [key : String]) : i64
-  (string.index-of-byte (& key) 0 (cast '/' : u8)))
-
-(define (selfhost-lint-dead-remap-qualified-ref [ref : String]) : String
-  (let
-    [key : String (selfhost-lint-dead-qualified-ref-key ref)]
-    [sep : i64 (selfhost-lint-dead-qualified-ref-module-separator key)]
-    (if (< sep 1)
-      ref
-      (let
-        [module : String (string.substring key 0 sep)]
-        [target : i64
-          (sym_i64_env.sym-i64-lookup-id-or
-            selfhost-lint-dead-import-aliases
-            (ci.intern module)
-            -1)]
-        (if (< target 0)
-          ref
-          (selfhost-lint-dead-qualified-ref
-            (string.append
-              (intern-str target)
-              (string.substring key sep (- (string.string-length key) sep)))
-            (selfhost-lint-dead-qualified-ref-fallback ref)))))))
-
 (define (selfhost-lint-dead-source-root-prefix) : String
   "\nselfhost-lint-dead-source-root\n")
 
@@ -1706,7 +1682,7 @@
 
 (define (selfhost-lint-dead-local-ref [module : String] [ref : String]) : String
   (if (selfhost-lint-dead-qualified-ref? ref)
-    (selfhost-lint-dead-remap-qualified-ref ref)
+    ref
     (if (= (string.string-length module) 0)
       ref
       (selfhost-lint-dead-qualified-ref
@@ -1765,13 +1741,24 @@
     [last-dot : i64 (selfhost-lint-dead-last-dot name)]
     [name-len : i64 (string.string-length name)]
     (if (and (>= last-dot 0) (< (+ last-dot 1) name-len))
-      (selfhost-lint-dead-ref-add-raw
-        refs
-        (selfhost-lint-dead-qualified-ref
-          (selfhost-lint-dead-module-key
+      (let
+        [member-start : i64 (+ last-dot 1)]
+        [member : String
+          (string.substring name member-start (- name-len member-start))]
+        [target : i64
+          (sym_i64_env.sym-i64-lookup-id-or
+            selfhost-lint-dead-import-aliases
+            (ci.intern-source-slice name 0 last-dot)
+            -1)]
+        [module : String
+          (if (< target 0)
             (string.substring name 0 last-dot)
-            (string.substring name (+ last-dot 1) (- name-len (+ last-dot 1))))
-          (string.substring name (+ last-dot 1) (- name-len (+ last-dot 1)))))
+            (intern-str target))]
+        (selfhost-lint-dead-ref-add-raw
+          refs
+          (selfhost-lint-dead-qualified-ref
+            (selfhost-lint-dead-module-key module member)
+            member)))
       (selfhost-lint-dead-ref-add-raw refs name))))
 
 (define (selfhost-lint-dead-ref-add-id [refs : lint_svec.Vec] [name : i64]) : lint_svec.Vec

@@ -44426,6 +44426,798 @@
   (match (opt-if-convert-function-pass type-segment-bases func)
     [(OptFunctionPassResult.Result next _) next]))
 
+;; --- G1a: constructor destination forwarding (SRET<-tmp) --------------------
+;;
+;; Lowering builds a nested constructor into a fresh frame temp and then copies
+;; the finished aggregate into its real destination:
+;;
+;;     %t   = alloc T                 ; fresh frame storage (>= 1 slot)
+;;     %p   = addr_of %t
+;;     %g   = gep %p, K : u8          ; one per field
+;;     store_ptr %g, v : ty
+;;     ...
+;;     %d   = gep %B, J : u8          ; the real destination (sret slot, field)
+;;     call tl_memcpy(%d, %p, S)      ; or `copy_bytes %d, %p, S`
+;;
+;; The whole-aggregate copy disappears when the field stores are retargeted at
+;; `%B + J + K` directly. That is a REORDERING: every retargeted store now
+;; writes the destination BEFORE the instructions that used to sit between it
+;; and the copy.
+;;
+;; SOUNDNESS. Issue #5971: TypeLisp passes by-value aggregate parameters as bare
+;; pointers with no caller-side copy, and the hidden sret slot is ordinary
+;; caller storage, so THE SRET SLOT MAY ALIAS A BY-VALUE ARGUMENT of the same
+;; call (accumulator threading -- `acc = (f acc x)` -- produces exactly that at
+;; run time). "The destination cannot alias what the window reads" is therefore
+;; not derivable from types; a lowering-level version of this transform
+;; miscompiled the compiler (it broke `tc-name-id-list-add`) for precisely this
+;; reason. The guard below is the conservative alias proof that makes the
+;; reordering safe without any interprocedural fact:
+;;
+;;   (1) `%t` is a FRESH FRAME ALLOCATION whose address never escapes: the
+;;       ALLOC var `%t` is used exactly once in the whole function (by the
+;;       matched `addr_of`, so no second pointer to the same storage exists),
+;;       every use of `%p` is one of the retargeted geps or the copy's source
+;;       operand, and every retargeted gep var is used only by its own store --
+;;       all three via EXACT function-wide use counts. Nothing else can observe
+;;       `T`, so deleting `T` is invisible.
+;;   (2) The window -- from the FIRST retargeted store to the copy -- contains
+;;       ONLY instructions that cannot observe or disturb the destination
+;;       bytes: side-effect-free (`Pure`) instructions, frame `Alloc`s (which
+;;       emit no code), the retargeted geps/stores themselves, and stores
+;;       through a constant offset off the SAME base as the destination whose
+;;       byte range is provably disjoint from `[J, J + S)` (two constant offsets
+;;       off one pointer cannot overlap). Any load, call, or store through an
+;;       unrelated pointer aborts the match -- that is exactly the class the
+;;       sret-may-alias-an-argument hole makes unprovable.
+;;   (3) The destination base var `%B` is not redefined between the destination
+;;       address computation (or the temp's `addr_of`, whichever is earlier) and
+;;       the copy, so the address the retargeted geps compute is the address the
+;;       copy would have written.
+;;   (4) Every retargeted store lies inside `[0, S)`, so no store escapes the
+;;       byte range the copy used to define.
+;;
+;; Blocks are straight-line, so nothing inside the window can trap or branch out
+;; between the first retargeted store and the deleted copy (a trapping check is
+;; its own block, and calls are rejected by (2)); the destination is therefore
+;; written on exactly the paths that used to run the copy.
+;;
+;; Bytes of `[J, J + S)` that no store covers keep the destination's previous
+;; contents instead of receiving the temp's uninitialised stack bytes. Both are
+;; values no defined program can observe (they are padding of a freshly reserved
+;; frame slot), and the bootstrap fixpoint / deterministic-asm gates cover the
+;; claim end to end.
+;;
+;; The rewrite itself is minimal: rebase the field geps and delete the copy.
+;; `addr_of` and the `alloc` run then have no uses left and the pipeline DCE
+;; retires them, which also releases the frame slots.
+(defenum OptCtorFwdCopy
+  (NoCopy)
+  ;; destination address value, source var, byte size, call result var (-1 for
+  ;; `CopyBytes`, which defines nothing).
+  (Copy CompilerIrValue i64 i64 i64))
+
+;; Destination base var, its constant byte offset, and the index of the address
+;; computation inside the block (-1 when the address enters the block already
+;; computed).
+(defenum OptCtorFwdDest
+  (NoDest)
+  (Dest i64 i64 i64))
+
+;; Byte width a `StorePtr` of this value type writes. This number is
+;; load-bearing twice (the `offset + width <= size` coverage check and the
+;; same-base disjointness check), so it MUST NOT under-report.
+;;
+;; The invariant that makes it exact is a BACKEND one, not a lowering one:
+;; `compiler-backend-emit-store-ptr` routes every `StorePtr` through
+;; `compiler-backend-emit-store-value-to-address`, which emits exactly ONE
+;; register store -- `compiler-backend-emit-store-reg-to-memory` picks
+;; `movq`/`movl`/`movw`/`movb` purely from `compiler-backend-type-size ty`
+;; (8/4/2/1 and nothing else; `compiler_backend.tl`, the `type-size` /
+;; `emit-store-reg-to-memory` pair), and the float path emits one xmm store of
+;; the same width. A `StorePtr` therefore writes at most 8 bytes, whatever the
+;; type, and the arms below reproduce `compiler-backend-type-size` exactly for
+;; every type they accept -- including the ones that look wide at the source
+;; level (`String`, `Str`, `Bytes`, `DynArray`, `Array`, `Func`, `Tuple`, and
+;; register-resident `Struct`/`Enum`), all of which the backend stores as a
+;; single 8-byte word.
+;;
+;; Every remaining type FAILS CLOSED with -1 and aborts the match, which is
+;; strictly more conservative than the backend: that covers the zero-width
+;; types (`Unit`/`Never`/`Expr`/`ExprList`), the type variables
+;; (`Var`/`VarArgs`), and the two arms the backend resolves by recursing through
+;; the type-segment table (`Region`/`Consume`), which this pass does not thread.
+;; If `compiler-backend-type-size` ever grows an arm wider than 8, this function
+;; must reject that type here.
+(define (opt-ctor-fwd-store-byte-size [ty : AstType]) : i64
+  (match ty
+    [(AstType.I64) 8]
+    [(AstType.U64) 8]
+    [(AstType.F64) 8]
+    [(AstType.I32) 4]
+    [(AstType.U32) 4]
+    [(AstType.F32) 4]
+    [(AstType.I16) 2]
+    [(AstType.U16) 2]
+    [(AstType.I8) 1]
+    [(AstType.U8) 1]
+    [(AstType.Bool) 1]
+    [(AstType.Char) 1]
+    [(AstType.Ptr _) 8]
+    [(AstType.MutPtr _) 8]
+    [(AstType.Ref _ _) 8]
+    [(AstType.MutRef _ _) 8]
+    [(AstType.Box _) 8]
+    [(AstType.String) 8]
+    [(AstType.Str) 8]
+    [(AstType.Bytes) 8]
+    [(AstType.DynArray _) 8]
+    [(AstType.Array _ _) 8]
+    [(AstType.Func _ _) 8]
+    [(AstType.Tuple _) 8]
+    [(AstType.Enum _) 8]
+    [(AstType.EnumArgs _ _) 8]
+    [(AstType.Struct _) 8]
+    [(AstType.StructArgs _ _) 8]
+    [_ -1]))
+
+(define (opt-ctor-fwd-memcpy-symbol? [symbol : i64]) : bool
+  (string.eq (compiler-ir-symbol-text symbol) "tl_memcpy"))
+
+;; A whole-aggregate copy out of an IR var: `CopyBytes` (the 16..112 B inline
+;; band) or the `tl_memcpy` runtime call lowering emits above that band.
+(define (opt-ctor-fwd-match-copy [instr : CompilerIrInstr]) : OptCtorFwdCopy
+  (match instr
+    [(CompilerIrInstr.CopyBytes dst src size)
+      (match src
+        [(CompilerIrValue.Var src-var)
+          (if (> size 0)
+            (OptCtorFwdCopy.Copy dst src-var size -1)
+            (OptCtorFwdCopy.NoCopy))]
+        [_ (OptCtorFwdCopy.NoCopy)])]
+    [(CompilerIrInstr.Call call-dst name args _)
+      (match args
+        [(CompilerIrCallArgs.Array values)
+          (if (= (array-length values) 3)
+            (match (array-ref values 2)
+              [(CompilerIrValue.I64 size)
+                (match (array-ref values 1)
+                  [(CompilerIrValue.Var src-var)
+                    (if (and (> size 0) (opt-ctor-fwd-memcpy-symbol? name))
+                      (OptCtorFwdCopy.Copy
+                        (array-ref values 0)
+                        src-var
+                        size
+                        call-dst)
+                      (OptCtorFwdCopy.NoCopy))]
+                  [_ (OptCtorFwdCopy.NoCopy)])]
+              [_ (OptCtorFwdCopy.NoCopy)])
+            (OptCtorFwdCopy.NoCopy))]
+        [_ (OptCtorFwdCopy.NoCopy)])]
+    [_ (OptCtorFwdCopy.NoCopy)]))
+
+;; Cheap per-block admission: a block can only hold the pattern when it has both
+;; a frame `addr_of` and a whole-aggregate copy out of a var. Everything else
+;; (the exact use census, which allocates) is gated behind this.
+(define (opt-ctor-fwd-block-candidate? [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [saw-addr : bool false]
+    [saw-copy : bool false]
+    [i : i64 0]
+    (begin
+      (while (and (< i count) (not (and saw-addr saw-copy)))
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs i)]
+          (begin
+            (match instr
+              [(CompilerIrInstr.AddrOf _ _) (set! saw-addr true)]
+              [_
+                (match (opt-ctor-fwd-match-copy instr)
+                  [(OptCtorFwdCopy.Copy _ _ _ _) (set! saw-copy true)]
+                  [(OptCtorFwdCopy.NoCopy) unit])])
+            (set! i (+ i 1)))))
+      (and saw-addr saw-copy))))
+
+(define (opt-ctor-fwd-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-ctor-fwd-block-candidate? instrs)
+            true
+            (opt-ctor-fwd-blocks-have-candidate? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-ctor-fwd-blocks-have-candidate? (compiler-ir-block-seq-to-list seq))]))
+
+;; Index of the `addr_of` that defines `var`, searching back from `from`.
+;; Returns -1 when the search hits another definition of `var` first or leaves
+;; the block.
+(define (opt-ctor-fwd-find-addr-of
+  [instrs : CompilerIrInstrSeq]
+  [from : i64]
+  [var : i64]) : i64
+  (let
+    [i : i64 from]
+    [found : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (>= i 0))
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs i)]
+          (begin
+            (match instr
+              [(CompilerIrInstr.AddrOf dst _)
+                (if (= dst var)
+                  (begin
+                    (set! found i)
+                    (set! done true))
+                  unit)]
+              [_
+                (match (opt-instr-def-var instr)
+                  [(option_i64.Some d)
+                    (if (= d var)
+                      (set! done true)
+                      unit)]
+                  [(option_i64.None) unit])])
+            (set! i (- i 1)))))
+      found)))
+
+;; Index of the last definition of `var` in `[0, from]`, or -1 when `var` enters
+;; the block already defined.
+(define (opt-ctor-fwd-find-def
+  [instrs : CompilerIrInstrSeq]
+  [from : i64]
+  [var : i64]) : i64
+  (let
+    [i : i64 from]
+    [found : i64 -1]
+    (begin
+      (while (>= i 0)
+        (begin
+          (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs i))
+            [(option_i64.Some d)
+              (if (= d var)
+                (begin
+                  (set! found i)
+                  (set! i 0))
+                unit)]
+            [(option_i64.None) unit])
+          (set! i (- i 1))))
+      found)))
+
+(define (opt-ctor-fwd-defined-in-range?
+  [instrs : CompilerIrInstrSeq]
+  [lo : i64]
+  [hi : i64]
+  [var : i64]) : bool
+  (let
+    [i : i64 lo]
+    [found : bool false]
+    (begin
+      (while (and (not found) (<= i hi))
+        (begin
+          (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs i))
+            [(option_i64.Some d)
+              (if (= d var)
+                (set! found true)
+                unit)]
+            [(option_i64.None) unit])
+          (set! i (+ i 1))))
+      found)))
+
+;; Byte offset of a `gep <base>, K : u8` instruction, or -1 when the instruction
+;; is not one.
+(define (opt-ctor-fwd-gep-offset [instr : CompilerIrInstr] [base : i64]) : i64
+  (match instr
+    [(CompilerIrInstr.Gep _ source offset elem-ty)
+      (match elem-ty
+        [(AstType.U8)
+          (match source
+            [(CompilerIrValue.Var source-var)
+              (if (= source-var base)
+                (match offset
+                  [(CompilerIrValue.I64 k)
+                    (if (>= k 0)
+                      k
+                      -1)]
+                  [_ -1])
+                -1)]
+            [_ -1])]
+        [_ -1])]
+    [_ -1]))
+
+(define (opt-ctor-fwd-gep-dst [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.Gep dst _ _ _) dst]
+    [_ -1]))
+
+;; The frame slot var an `addr_of` reads, i.e. the storage the temp pointer
+;; names. `opt-collect-instr-uses-array` counts this operand
+;; (`AddrOf _ src -> opt-used-array-add items src`), so its exact function-wide
+;; use count answers "is there a SECOND pointer to this storage?".
+(define (opt-ctor-fwd-addr-of-slot [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.AddrOf _ src) src]
+    [_ -1]))
+
+;; Constant byte offset of `var` off `base` when `var` is a `gep base, K : u8`
+;; defined in `[lo, hi]`; -1 otherwise.
+(define (opt-ctor-fwd-same-base-offset
+  [instrs : CompilerIrInstrSeq]
+  [lo : i64]
+  [hi : i64]
+  [base : i64]
+  [var : i64]) : i64
+  (let
+    [index : i64 (opt-ctor-fwd-find-def instrs hi var)]
+    (if (or (< index lo) (< index 0))
+      -1
+      (opt-ctor-fwd-gep-offset (compiler-ir-instr-seq-ref instrs index) base))))
+
+(define (opt-ctor-fwd-ranges-disjoint?
+  [a-start : i64]
+  [a-size : i64]
+  [b-start : i64]
+  [b-size : i64]) : bool
+  (or (<= (+ a-start a-size) b-start) (<= (+ b-start b-size) a-start)))
+
+;; True for the instructions the window may contain besides the retargeted
+;; geps/stores: anything without a memory effect, plus frame `Alloc` (a slot
+;; reservation the backend emits no code for), plus a store through a constant
+;; offset off the destination base whose bytes provably miss the destination
+;; range.
+(define (opt-ctor-fwd-window-instr-ok?
+  [instrs : CompilerIrInstrSeq]
+  [lo : i64]
+  [index : i64]
+  [dest-base : i64]
+  [dest-off : i64]
+  [dest-size : i64]) : bool
+  (let
+    [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+    (match instr
+      [(CompilerIrInstr.Alloc _ _) true]
+      [(CompilerIrInstr.StorePtr ptr _ ty)
+        (match ptr
+          [(CompilerIrValue.Var ptr-var)
+            (let
+              [width : i64 (opt-ctor-fwd-store-byte-size ty)]
+              [offset : i64
+                (opt-ctor-fwd-same-base-offset
+                  instrs
+                  lo
+                  (- index 1)
+                  dest-base
+                  ptr-var)]
+              (and
+                (> width 0)
+                (and
+                  (>= offset 0)
+                  (opt-ctor-fwd-ranges-disjoint?
+                    offset
+                    width
+                    dest-off
+                    dest-size))))]
+          [_ false])]
+      [_
+        (match (compiler-ir-instr-effect instr)
+          [(CompilerIrEffect.Pure) true]
+          [_ false])])))
+
+;; Exact use count of `var` across the whole function; -1 when the var is out of
+;; range, which makes every test below fail closed.
+(define (opt-ctor-fwd-use-count [uses : (Array i64)] [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length uses)))
+    -1
+    (array-ref uses var)))
+
+;; Index of the `StorePtr` whose address is exactly `var`, searched in
+;; `(from, limit)`; -1 when there is none.
+(define (opt-ctor-fwd-find-store
+  [instrs : CompilerIrInstrSeq]
+  [from : i64]
+  [limit : i64]
+  [var : i64]) : i64
+  (let
+    [i : i64 (+ from 1)]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< i limit))
+        (begin
+          (match (compiler-ir-instr-seq-ref instrs i)
+            [(CompilerIrInstr.StorePtr ptr _ _)
+              (match ptr
+                [(CompilerIrValue.Var ptr-var)
+                  (if (= ptr-var var)
+                    (set! found i)
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! i (+ i 1))))
+      found)))
+
+;; Resolve the copy destination address into `(base var, byte offset, address
+;; instruction index)`.
+(define (opt-ctor-fwd-resolve-dest
+  [instrs : CompilerIrInstrSeq]
+  [copy-index : i64]
+  [dest-value : CompilerIrValue]) : OptCtorFwdDest
+  (match dest-value
+    [(CompilerIrValue.Var dest-var)
+      (let
+        [def-index : i64
+          (opt-ctor-fwd-find-def instrs (- copy-index 1) dest-var)]
+        [gep-offset : i64
+          (if (< def-index 0)
+            -1
+            (match (compiler-ir-instr-seq-ref instrs def-index)
+              [(CompilerIrInstr.Gep _ source offset elem-ty)
+                (match elem-ty
+                  [(AstType.U8)
+                    (match source
+                      [(CompilerIrValue.Var _)
+                        (match offset
+                          [(CompilerIrValue.I64 k) k]
+                          [_ -1])]
+                      [_ -1])]
+                  [_ -1])]
+              [_ -1]))]
+        (if (>= gep-offset 0)
+          (match (compiler-ir-instr-seq-ref instrs def-index)
+            [(CompilerIrInstr.Gep _ source _ _)
+              (match source
+                [(CompilerIrValue.Var source-var)
+                  (OptCtorFwdDest.Dest source-var gep-offset def-index)]
+                [_ (OptCtorFwdDest.NoDest)])]
+            [_ (OptCtorFwdDest.NoDest)])
+          (OptCtorFwdDest.Dest dest-var 0 def-index)))]
+    [_ (OptCtorFwdDest.NoDest)]))
+
+;; Validate one gep off the temp. Returns the index of its store, `copy-index`
+;; when the gep has no uses at all, or -1 when the gep disqualifies the site.
+(define (opt-ctor-fwd-gep-store-index
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [copy-index : i64]
+  [temp : i64]
+  [size : i64]
+  [gep-index : i64]) : i64
+  (let
+    [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs gep-index)]
+    [offset : i64 (opt-ctor-fwd-gep-offset instr temp)]
+    [gep-dst : i64 (opt-ctor-fwd-gep-dst instr)]
+    [gep-uses : i64 (opt-ctor-fwd-use-count uses gep-dst)]
+    (cond
+      [(< offset 0) -1]
+      [(>= offset size) -1]
+      [(< gep-uses 0) -1]
+      [(= gep-uses 0) copy-index]
+      [(> gep-uses 1) -1]
+      [else
+        (let
+          [store-index : i64
+            (opt-ctor-fwd-find-store instrs gep-index copy-index gep-dst)]
+          (if (< store-index 0)
+            -1
+            (let
+              [width : i64
+                (match (compiler-ir-instr-seq-ref instrs store-index)
+                  [(CompilerIrInstr.StorePtr _ _ ty)
+                    (opt-ctor-fwd-store-byte-size ty)]
+                  [_ -1])]
+              (if (or (<= width 0) (> (+ offset width) size))
+                -1
+                store-index))))])))
+
+;; Walk every gep off the temp inside the window. Returns the index of the
+;; earliest retargeted store, or -1 when the site is disqualified (clauses 1
+;; and 4).
+(define (opt-ctor-fwd-scan-geps
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [copy-index : i64]
+  [addr-index : i64]
+  [temp : i64]
+  [size : i64]) : i64
+  (let
+    [ok : bool true]
+    [gep-count : i64 0]
+    [first-store : i64 copy-index]
+    [i : i64 (+ addr-index 1)]
+    (begin
+      (while (and ok (< i copy-index))
+        (begin
+          (if (>=
+            (opt-ctor-fwd-gep-offset (compiler-ir-instr-seq-ref instrs i) temp)
+            0)
+            (let
+              [store-index : i64
+                (opt-ctor-fwd-gep-store-index
+                  instrs
+                  uses
+                  copy-index
+                  temp
+                  size
+                  i)]
+              (begin
+                (set! gep-count (+ gep-count 1))
+                (if (< store-index 0)
+                  (set! ok false)
+                  (if (< store-index first-store)
+                    (set! first-store store-index)
+                    unit))))
+            unit)
+          (set! i (+ i 1))))
+      (if (= gep-count 0)
+        (set! ok false)
+        unit)
+      (if (not (= (opt-ctor-fwd-use-count uses temp) (+ gep-count 1)))
+        (set! ok false)
+        unit)
+      (if ok
+        first-store
+        -1))))
+
+(define (opt-ctor-fwd-store-into-temp?
+  [instrs : CompilerIrInstrSeq]
+  [addr-index : i64]
+  [index : i64]
+  [temp : i64]) : bool
+  (match (compiler-ir-instr-seq-ref instrs index)
+    [(CompilerIrInstr.StorePtr ptr _ _)
+      (match ptr
+        [(CompilerIrValue.Var ptr-var)
+          (>=
+            (opt-ctor-fwd-same-base-offset
+              instrs
+              addr-index
+              (- index 1)
+              temp
+              ptr-var)
+            0)]
+        [_ false])]
+    [_ false]))
+
+;; Clause (2): every instruction from the first retargeted store to the copy is
+;; harmless with respect to the destination bytes.
+(define (opt-ctor-fwd-window-ok?
+  [instrs : CompilerIrInstrSeq]
+  [addr-index : i64]
+  [first-store : i64]
+  [copy-index : i64]
+  [temp : i64]
+  [dest-base : i64]
+  [dest-off : i64]
+  [size : i64]) : bool
+  (let
+    [ok : bool true]
+    [i : i64 first-store]
+    (begin
+      (while (and ok (< i copy-index))
+        (begin
+          (if (>=
+            (opt-ctor-fwd-gep-offset (compiler-ir-instr-seq-ref instrs i) temp)
+            0)
+            unit
+            (if (opt-ctor-fwd-store-into-temp? instrs addr-index i temp)
+              unit
+              (if (opt-ctor-fwd-window-instr-ok?
+                instrs
+                addr-index
+                i
+                dest-base
+                dest-off
+                size)
+                unit
+                (set! ok false))))
+          (set! i (+ i 1))))
+      ok)))
+
+;; Record the rewrite: rebase each field gep onto the destination base and drop
+;; the copy.
+(define (opt-ctor-fwd-commit
+  [instrs : CompilerIrInstrSeq]
+  [plan : (Array i64)]
+  [bases : (Array i64)]
+  [addr-index : i64]
+  [copy-index : i64]
+  [temp : i64]
+  [dest-base : i64]
+  [dest-off : i64]) : unit
+  (let
+    [i : i64 (+ addr-index 1)]
+    (begin
+      (while (< i copy-index)
+        (let
+          [offset : i64
+            (opt-ctor-fwd-gep-offset (compiler-ir-instr-seq-ref instrs i) temp)]
+          (begin
+            (if (>= offset 0)
+              (begin
+                (array-set! plan i (+ dest-off offset))
+                (array-set! bases i dest-base))
+              unit)
+            (set! i (+ i 1)))))
+      (array-set! plan copy-index -2))))
+
+(define (opt-ctor-fwd-try-site
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [copy-index : i64]
+  [dest-value : CompilerIrValue]
+  [temp : i64]
+  [size : i64]
+  [result-var : i64]
+  [plan : (Array i64)]
+  [bases : (Array i64)]) : bool
+  (if (and
+    (>= result-var 0)
+    (not (= (opt-ctor-fwd-use-count uses result-var) 0)))
+    false
+    (let
+      [addr-index : i64
+        (opt-ctor-fwd-find-addr-of instrs (- copy-index 1) temp)]
+      ;; Clause (1), second-pointer half: the frame slot the matched `addr_of`
+      ;; reads must have exactly ONE use in the whole function -- that
+      ;; `addr_of`. A second `addr_of` of the same slot would hand out an
+      ;; independent pointer to `T`, and writes through it would be silently
+      ;; dropped when the copy is deleted (the "uncovered bytes are only
+      ;; padding" argument assumes `T` holds nothing but our own stores).
+      [slot : i64
+        (if (< addr-index 0)
+          -1
+          (opt-ctor-fwd-addr-of-slot
+            (compiler-ir-instr-seq-ref instrs addr-index)))]
+      (if (or
+        (< addr-index 0)
+        (or (< slot 0) (not (= (opt-ctor-fwd-use-count uses slot) 1))))
+        false
+        (match (opt-ctor-fwd-resolve-dest instrs copy-index dest-value)
+          [(OptCtorFwdDest.NoDest) false]
+          [(OptCtorFwdDest.Dest dest-base dest-off dest-def)
+            (let
+              [guard-lo : i64
+                (if (and (>= dest-def 0) (< dest-def addr-index))
+                  dest-def
+                  addr-index)]
+              (if (or
+                (= dest-base temp)
+                (opt-ctor-fwd-defined-in-range?
+                  instrs
+                  guard-lo
+                  copy-index
+                  dest-base))
+                false
+                (let
+                  [first-store : i64
+                    (opt-ctor-fwd-scan-geps
+                      instrs
+                      uses
+                      copy-index
+                      addr-index
+                      temp
+                      size)]
+                  (if (or (< first-store 0) (>= first-store copy-index))
+                    false
+                    (if (opt-ctor-fwd-window-ok?
+                      instrs
+                      addr-index
+                      first-store
+                      copy-index
+                      temp
+                      dest-base
+                      dest-off
+                      size)
+                      (begin
+                        (opt-ctor-fwd-commit
+                          instrs
+                          plan
+                          bases
+                          addr-index
+                          copy-index
+                          temp
+                          dest-base
+                          dest-off)
+                        true)
+                      false)))))])))))
+
+(define (opt-ctor-fwd-rebuild-from
+  [instrs : CompilerIrInstrSeq]
+  [plan : (Array i64)]
+  [bases : (Array i64)]
+  [index : i64]
+  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    acc
+    (let
+      [action : i64 (array-ref plan index)]
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (opt-ctor-fwd-rebuild-from
+        instrs
+        plan
+        bases
+        (- index 1)
+        (cond
+          [(= action -2) acc]
+          [(>= action 0)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                (opt-ctor-fwd-gep-dst instr)
+                (CompilerIrValue.Var (array-ref bases index))
+                (CompilerIrValue.I64 action)
+                (AstType.U8))
+              acc)]
+          [else (compiler-ir-instr-cons instr acc)])))))
+
+(define (opt-ctor-fwd-block [uses : (Array i64)] [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (if (not (opt-ctor-fwd-block-candidate? instrs))
+        block
+        (let
+          [count : i64 (compiler-ir-instr-seq-count instrs)]
+          [plan : (Array i64) (array.make-array i64 count)]
+          [bases : (Array i64) (array.make-array i64 count)]
+          [changed : bool false]
+          [i : i64 0]
+          (begin
+            (while (< i count)
+              (begin
+                (array-set! plan i -1)
+                (array-set! bases i 0)
+                (set! i (+ i 1))))
+            (set! i 0)
+            (while (< i count)
+              (begin
+                (match (opt-ctor-fwd-match-copy
+                  (compiler-ir-instr-seq-ref instrs i))
+                  [(OptCtorFwdCopy.Copy dest-value temp size result-var)
+                    (if (opt-ctor-fwd-try-site
+                      instrs
+                      uses
+                      i
+                      dest-value
+                      temp
+                      size
+                      result-var
+                      plan
+                      bases)
+                      (set! changed true)
+                      unit)]
+                  [(OptCtorFwdCopy.NoCopy) unit])
+                (set! i (+ i 1))))
+            (if changed
+              (compiler-ir-block
+                label
+                (opt-ctor-fwd-rebuild-from
+                  instrs
+                  plan
+                  bases
+                  (- count 1)
+                  CompilerIrInstrList.Nil))
+              block))))]))
+
+(define (opt-ctor-fwd-blocks
+  [uses : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-ctor-fwd-block uses block)
+        (opt-ctor-fwd-blocks uses (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-ctor-fwd-blocks uses (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-ctor-fwd-function-blocks
+  [frame : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (if (not (opt-ctor-fwd-blocks-have-candidate? blocks))
+    blocks
+    (opt-ctor-fwd-blocks (opt-collect-blocks-uses-array frame blocks) blocks)))
+
 (define (optimize-function-once-with-summaries
   [pools : AstNodePoolContext]
   [type-segment-bases : i64]
@@ -44520,6 +45312,21 @@
             (if (struct-get summaries enabled)
               (opt-loop-bce-blocks type-segment-bases summaries params affine)
               affine)]
+          [_t-ctor-fwd : i64 (cfg compile-profile (profile.now-ms) 0)]
+          [ctor-fwd : CompilerIrBlockList
+            (compiler-opt-debug-observe-blocks
+              type-segment-bases
+              "ctor_fwd"
+              name
+              params
+              ret-ty
+              frame
+              (opt-ctor-fwd-function-blocks frame loop-bce))]
+          [_p-ctor-fwd : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-pass-finish "ctor_fwd" name _t-ctor-fwd)
+              unit)]
           [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
           [promoted : CompilerIrFunction
             (compiler-opt-debug-observe-function
@@ -44527,7 +45334,7 @@
               "stack_promote"
               (opt-aggregate-stack-promote-function
                 type-segment-bases
-                (CompilerIrFunction.Function name params ret-ty frame loop-bce)))]
+                (CompilerIrFunction.Function name params ret-ty frame ctor-fwd)))]
           [_p-promote : unit
             (cfg
               compile-profile
@@ -45496,6 +46303,21 @@
           (if (struct-get summaries enabled)
             (opt-loop-bce-blocks type-segment-bases summaries params folded)
             folded)]
+        [_t-ctor-fwd : i64 (cfg compile-profile (profile.now-ms) 0)]
+        [ctor-fwd : CompilerIrBlockList
+          (compiler-opt-debug-observe-blocks
+            type-segment-bases
+            "ctor_fwd"
+            name
+            params
+            ret-ty
+            frame
+            (opt-ctor-fwd-function-blocks frame loop-bce))]
+        [_p-ctor-fwd : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-pass-finish "ctor_fwd" name _t-ctor-fwd)
+            unit)]
         [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
         [promoted : CompilerIrFunction
           (compiler-opt-debug-observe-function
@@ -45503,7 +46325,7 @@
             "stack_promote"
             (opt-aggregate-stack-promote-function
               type-segment-bases
-              (CompilerIrFunction.Function name params ret-ty frame loop-bce)))]
+              (CompilerIrFunction.Function name params ret-ty frame ctor-fwd)))]
         [_p-promote : unit
           (cfg
             compile-profile

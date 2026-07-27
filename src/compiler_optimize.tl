@@ -7571,9 +7571,12 @@
 ;; inputs from predecessors that are no longer reachable.
 (defenum OptLabelSet
   (Nil)
-  ;; Labels are stored oldest-first in one dense buffer. The logical set head
-  ;; is `items[len - 1]`, so recursive consumers can take an allocation-free
-  ;; tail view by decrementing `len`.
+  ;; Slot zero is the shared high-water length; labels occupy slots 1..len in
+  ;; oldest-first order. The logical set head is `items[len]`, so recursive
+  ;; consumers can take an allocation-free tail view by decrementing `len`.
+  ;; Extending a prefix is in-place only while it is the unique high-water
+  ;; view. Extending a tail or an already-branched prefix copies first, keeping
+  ;; the persistent cons semantics callers had with the old linked list.
   (Dense (Array i64) i64))
 
 (define (opt-dense-next-capacity [len : i64]) : i64
@@ -7584,7 +7587,7 @@
 (define (opt-label-ref [set : OptLabelSet] [index : i64]) : i64
   (match set
     [(OptLabelSet.Nil) (compiler-ir-label-none)]
-    [(OptLabelSet.Dense items len) (array-ref items (- (- len 1) index))]))
+    [(OptLabelSet.Dense items len) (array-ref items (- len index))]))
 
 (define (opt-label-tail [set : OptLabelSet]) : OptLabelSet
   (match set
@@ -7598,25 +7601,32 @@
   (match set
     [(OptLabelSet.Nil)
       (let
-        [items : (Array i64) (array.make-array i64 4)]
+        [items : (Array i64) (array.make-array i64 5)]
         (begin
-          (array-set! items 0 label)
+          (array-set! items 0 1)
+          (array-set! items 1 label)
           (OptLabelSet.Dense items 1)))]
     [(OptLabelSet.Dense items len)
-      (if (< len (array-length items))
+      (if (and (= len (array-ref items 0)) (< len (- (array-length items) 1)))
         (begin
-          (array-set! items len label)
+          (array-set! items (+ len 1) label)
+          (array-set! items 0 (+ len 1))
           (OptLabelSet.Dense items (+ len 1)))
         (let
-          [bigger : (Array i64)
-            (array.make-array i64 (opt-dense-next-capacity len))]
+          [old-capacity : i64 (- (array-length items) 1)]
+          [capacity : i64
+            (if (< len old-capacity)
+              old-capacity
+              (opt-dense-next-capacity len))]
+          [bigger : (Array i64) (array.make-array i64 (+ capacity 1))]
           [index : i64 0]
           (begin
             (while (< index len)
               (begin
-                (array-set! bigger index (array-ref items index))
+                (array-set! bigger (+ index 1) (array-ref items (+ index 1)))
                 (set! index (+ index 1))))
-            (array-set! bigger len label)
+            (array-set! bigger 0 (+ len 1))
+            (array-set! bigger (+ len 1) label)
             (OptLabelSet.Dense bigger (+ len 1)))))]))
 
 (define (opt-label-contains [set : OptLabelSet] [label : i64]) : bool

@@ -4032,10 +4032,6 @@
         [starts : (Array i64) (array.make-array i64 vars)]
         [ends : (Array i64) (array.make-array i64 vars)]
         (begin
-          (compiler-reg-fill-i64-array use-rows 0)
-          (compiler-reg-fill-i64-array def-rows 0)
-          (compiler-reg-fill-i64-array live-in 0)
-          (compiler-reg-fill-i64-array live-out 0)
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
           (let

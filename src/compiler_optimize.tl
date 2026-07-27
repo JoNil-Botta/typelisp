@@ -2661,14 +2661,28 @@
     [(CompilerIrInstr.Word dst _ _ _) (not (opt-used-array-contains items dst))]
     [_ false]))
 
+;; Retain-only sweep into a fresh dense sequence. The BACKWARD walk is load
+;; bearing and is preserved exactly: deleting an instruction drops the uses it
+;; made (opt-uncount-instr-uses-array), which is what lets an earlier
+;; instruction become dead in the same sweep. Survivors are therefore written
+;; from the END of the output array and the live suffix is slid down to index 0
+;; afterwards -- the same two-phase shape opt-dce-instr-seq-array-escape already
+;; uses, minus the escape clone. Output is fresh; `instrs` is untouched (this is
+;; the opt2 path, where the fixpoint driver still needs its input intact --
+;; opt-dce-instr-seq-array-in-place! remains the opt1 form). refs #5726
 (define (opt-dce-instr-seq-array
   [items : (Array i64)]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
+    [out-slots : (Array CompilerIrInstr)
+      (array.make-array CompilerIrInstr count)]
     [index : i64 (- count 1)]
-    [out : CompilerIrInstrList CompilerIrInstrList.Nil]
+    [write : i64 (- count 1)]
+    [live-count : i64 0]
+    [src : i64 0]
+    [dst : i64 0]
     (begin
       (while (>= index 0)
         (begin
@@ -2676,9 +2690,21 @@
             [instr : CompilerIrInstr (array-ref slots index)]
             (if (opt-instr-dead-array? items slots count index instr)
               (opt-uncount-instr-uses-array items instr)
-              (set! out (compiler-ir-instr-cons (array-ref slots index) out))))
+              (begin
+                (array-set! out-slots write (array-ref slots index))
+                (set! write (- write 1)))))
           (set! index (- index 1))))
-      out)))
+      (set! live-count (- count (+ write 1)))
+      (set! src (+ write 1))
+      (set! dst 0)
+      (while (< dst live-count)
+        (begin
+          (if (not (= dst src))
+            (array-set! out-slots dst (array-ref out-slots src))
+            unit)
+          (set! dst (+ dst 1))
+          (set! src (+ src 1))))
+      (CompilerIrInstrSeq out-slots live-count))))
 
 (define (opt-dce-instr-seq-array-in-place!
   [items : (Array i64)]
@@ -2722,7 +2748,7 @@
 (define (opt-dce-block-array [items : (Array i64)] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-dce-instr-seq-array items instrs))]))
+      (CompilerIrBlock.Block label (opt-dce-instr-seq-array items instrs))]))
 
 (define (opt-dce-block-array-in-place
   [items : (Array i64)]
@@ -13662,34 +13688,41 @@
         cases
         default-label)]))
 
+;; 1:1 rewrite: the output has exactly the input's length, so it is built
+;; straight into a right-sized dense array instead of a cons spine that
+;; `compiler-ir-block` would then have to re-count and re-copy. The result is a
+;; FRESH sequence and `instrs` is not touched, so this needs no unique-ownership
+;; argument -- which matters, because the opt2 fixpoint driver
+;; (optimize-function-pass-with-summaries) falls back to its INPUT function when
+;; a round changes nothing, and the pipeline head can still alias it. refs #5726
 (define (opt-global-copy-instr-seq
   [facts : OptGlobalCopyFactTable]
   [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
   [uses : (Array i64)]
   [block-id : i64]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerIrInstrList (CompilerIrInstrList.Nil)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
     (begin
-      (while (>= index 0)
+      (while (< index count)
         (begin
-          (set!
+          (array-set!
             out
-            (compiler-ir-instr-cons
-              (opt-global-copy-subst-instr
-                facts
-                pack-facts
-                doms
-                uses
-                block-id
-                (+ index 1)
-                (array-ref slots index))
-              out))
-          (set! index (- index 1))))
-      out)))
+            index
+            (opt-global-copy-subst-instr
+              facts
+              pack-facts
+              doms
+              uses
+              block-id
+              (+ index 1)
+              (array-ref slots index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
 
 ;; Every rewrite in this pass keeps the block sequence -- only block contents
 ;; change -- so the walk position stays the id `doms`'s index assigned.
@@ -13706,7 +13739,7 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (compiler-ir-block
+            (CompilerIrBlock.Block
               label
               (opt-global-copy-instr-seq
                 facts
@@ -14017,39 +14050,40 @@
               [_ false]))]
         [_ false]))))
 
+;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
 (define (opt-global-cse-instr-seq
   [type-segment-bases : i64]
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [block-label : i64]
   [block-id : i64]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerIrInstrList (CompilerIrInstrList.Nil)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
     (begin
-      (while (>= index 0)
+      (while (< index count)
         (let
           [instr : CompilerIrInstr (array-ref slots index)]
           (begin
-            (set!
+            (array-set!
               out
-              (compiler-ir-instr-cons
-                (if (or
-                  (opt-global-cse-bool-chain-compare? block-label instrs instr)
-                  (opt-global-cse-unroll2-address-offset? block-label instr))
-                  instr
-                  (opt-global-cse-instr
-                    type-segment-bases
-                    facts
-                    doms
-                    block-id
-                    (+ index 1)
-                    instr))
-                out))
-            (set! index (- index 1)))))
-      out)))
+              index
+              (if (or
+                (opt-global-cse-bool-chain-compare? block-label instrs instr)
+                (opt-global-cse-unroll2-address-offset? block-label instr))
+                instr
+                (opt-global-cse-instr
+                  type-segment-bases
+                  facts
+                  doms
+                  block-id
+                  (+ index 1)
+                  instr)))
+            (set! index (+ index 1)))))
+      (CompilerIrInstrSeq out count))))
 
 (define (opt-global-cse-blocks
   [type-segment-bases : i64]
@@ -14070,7 +14104,7 @@
               label
               instrs)
               block
-              (compiler-ir-block
+              (CompilerIrBlock.Block
                 label
                 (opt-global-cse-instr-seq
                   type-segment-bases
@@ -14210,26 +14244,27 @@
         [_ instr])]
     [_ instr]))
 
-(define (opt-cfg-fold-branches-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). The
+;; in-place twin below (-instr-seq-rewrite!) stays reserved for the opt1 path,
+;; which owns its blocks; this form is the one the opt2 fixpoint can use,
+;; because it leaves its input alone. refs #5726
+(define (opt-cfg-fold-branches-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerIrInstrList CompilerIrInstrList.Nil]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
     (begin
-      (while (>= index 0)
+      (while (< index count)
         (begin
-          (set!
-            out
-            (compiler-ir-instr-cons
-              (opt-cfg-fold-branch (array-ref slots index))
-              out))
-          (set! index (- index 1))))
-      out)))
+          (array-set! out index (opt-cfg-fold-branch (array-ref slots index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
 
 (define (opt-cfg-fold-branches-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-cfg-fold-branches-instr-seq instrs))]))
+      (CompilerIrBlock.Block label (opt-cfg-fold-branches-instr-seq instrs))]))
 
 (define (opt-cfg-fold-branches-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -21525,33 +21560,34 @@
           (CompilerIrInstr.Phi dst kept ty)))]
     [_ instr]))
 
+;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
 (define (opt-cfg-clean-instr-seq
   [index : OptCfgIndex]
   [block-label : i64]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [block-id : i64
       (match (opt-cfg-index-id index block-label)
         [(option_i64.Some id) id]
         [(option_i64.None) (- 0 1)])]
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [pos : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerIrInstrList CompilerIrInstrList.Nil]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [pos : i64 0]
     (begin
-      (while (>= pos 0)
+      (while (< pos count)
         (begin
-          (set!
+          (array-set!
             out
-            (compiler-ir-instr-cons
-              (opt-cfg-clean-instr index block-id (array-ref slots pos))
-              out))
-          (set! pos (- pos 1))))
-      out)))
+            pos
+            (opt-cfg-clean-instr index block-id (array-ref slots pos)))
+          (set! pos (+ pos 1))))
+      (CompilerIrInstrSeq out count))))
 
 (define (opt-cfg-clean-block [index : OptCfgIndex] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-cfg-clean-instr-seq index label instrs))]))
+      (CompilerIrBlock.Block label (opt-cfg-clean-instr-seq index label instrs))]))
 
 (define (opt-cfg-filter-clean-blocks
   [index : OptCfgIndex]
@@ -23037,6 +23073,24 @@
               (set! pos (+ pos 1))))
           false))]))
 
+;; The bool-branch fuser mutates its working copy, so it clones the block
+;; contents first. The clone used to go seq -> cons list -> seq: it built a
+;; 112 B node per instruction and then `compiler-ir-block` re-counted the spine
+;; and copied it back into an array, purely to reproduce the array it started
+;; from. It is a straight row copy. refs #5726
+(define (opt-bool-branch-clone-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! out index (array-ref slots index))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
+
 (define (opt-bool-branch-clone-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -23044,7 +23098,9 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (compiler-ir-block label (compiler-ir-instr-seq-to-list instrs))
+            (CompilerIrBlock.Block
+              label
+              (opt-bool-branch-clone-instr-seq instrs))
             (opt-bool-branch-clone-blocks (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-bool-branch-clone-blocks (compiler-ir-block-seq-to-list seq))]))
@@ -24489,37 +24545,38 @@
         [_ false])]
     [_ false]))
 
-(define (opt-sccp-rewrite-instr-seq-from
-  [env : OptSccpEnv]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [out : CompilerIrInstrList]) : CompilerIrInstrList
-  (if (< index 0)
-    out
-    (let
-      [rewritten : CompilerIrInstr
-        (opt-sccp-rewrite-instr env (compiler-ir-instr-seq-ref instrs index))]
-      (opt-sccp-rewrite-instr-seq-from
-        env
-        instrs
-        (- index 1)
-        (if (opt-sccp-bounds-check-in-range? rewritten)
-          out
-          (compiler-ir-instr-cons rewritten out))))))
-
+;; Retain-only rewrite (1:1 substitution, minus the bounds checks SCCP proved
+;; in range), so the output length is not known up front: build it with the
+;; capacity-managed dense builder seeded at the input length, not a cons
+;; accumulator. `opt-sccp-rewrite-instr` is a pure function of `env` and the
+;; instruction, so walking forward instead of the old backward-cons produces
+;; the identical sequence. Output is fresh; `instrs` is untouched. refs #5726
 (define (opt-sccp-rewrite-instr-seq
   [env : OptSccpEnv]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (opt-sccp-rewrite-instr-seq-from
-    env
-    instrs
-    (- (compiler-ir-instr-seq-count instrs) 1)
-    CompilerIrInstrList.Nil))
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [rewritten : CompilerIrInstr
+            (opt-sccp-rewrite-instr
+              env
+              (compiler-ir-instr-seq-ref instrs index))]
+          (begin
+            (if (opt-sccp-bounds-check-in-range? rewritten)
+              unit
+              (compiler-ir-instr-builder-push! (&mut builder) rewritten))
+            (set! index (+ index 1)))))
+      (compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-sccp-rewrite-block [env : OptSccpEnv] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-sccp-rewrite-instr-seq env instrs))]))
+      (CompilerIrBlock.Block label (opt-sccp-rewrite-instr-seq env instrs))]))
 
 (define (opt-sccp-rewrite-blocks
   [env : OptSccpEnv]
@@ -26541,7 +26598,7 @@
 ;; have been unified into shared vars first. Facts flow down the dominator
 ;; tree as an immutable list, so sibling subtrees are isolated by construction.
 (defenum OptBoundsDomWalk
-  (Walk CompilerIrInstrList OptBoundsFacts OptDomCmpFacts))
+  (Walk CompilerIrInstrSeq OptBoundsFacts OptDomCmpFacts))
 
 ;; GVN rewrites a dominated duplicate expression (e.g. the per-access
 ;; `Cast(i -> U64)` index) into `Mov dst2 = dst1`, and block-local copy
@@ -27371,136 +27428,120 @@
   [copies : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : OptBoundsDomWalk
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OptBoundsDomWalk.Walk (CompilerIrInstrList.Nil) facts cmp-facts)
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (match instr
-        [(CompilerIrInstr.BoundsCheck idx len _)
-          (let
-            [cidx : CompilerIrValue (opt-bounds-dom-resolve copies idx)]
-            [clen : CompilerIrValue (opt-bounds-dom-resolve copies len)]
-            (if (or
-              (opt-bounds-contains facts cidx clen)
-              (opt-bounds-dom-mask-in-range?
-                type-segment-bases
-                defs
-                phi-defs
-                copies
-                cmp-facts
-                cidx
-                clen)
-              (opt-bounds-dom-counter-in-range?
-                type-segment-bases
-                cfg-index
-                terms
-                defs
-                phi-defs
-                copies
-                cmp-facts
-                block-label
-                (opt-bounds-dom-strip-int-cast
-                  type-segment-bases
-                  phi-defs
-                  copies
-                  cidx)
-                (opt-bounds-dom-strip-int-cast
-                  type-segment-bases
-                  phi-defs
-                  copies
-                  clen)))
-              (opt-bounds-dom-instrs-from
-                type-segment-bases
-                defs
-                phi-defs
-                terms
-                cfg-index
-                block-label
-                cmp-facts
-                facts
-                sources
-                copies
-                instrs
-                (+ index 1))
-              (let
-                [stable? : bool
-                  (and
-                    (opt-gvn-value-stable? sources cidx)
-                    (opt-gvn-value-stable? sources clen))]
-                [next-facts : OptBoundsFacts
-                  (if stable?
-                    (opt-bounds-add facts cidx clen)
-                    facts)]
-                ;; A passed bounds check is an unsigned `idx < len` whose
-                ;; length operand is a runtime container length, so len is
-                ;; always < 2^63: the continuation also proves
-                ;; 0 <= idx < len in the SIGNED domain. Record both lt
-                ;; spellings so the dominating-comparison fold kills a later
-                ;; redundant signed test (`le idx len`, `gt len idx`, ...) --
-                ;; e.g. a loop-versioning guard condition that repeats what a
-                ;; dominating access already checked.
-                [next-cmp-facts : OptDomCmpFacts
-                  (if stable?
-                    (OptDomCmpFacts.Cons
-                      (OptDomCmpFact.Fact
-                        (CompilerIrBinOp.Lt)
-                        cidx
-                        clen
-                        (AstType.I64)
-                        true)
-                      (box
-                        (OptDomCmpFacts.Cons
-                          (OptDomCmpFact.Fact
-                            (CompilerIrBinOp.Lt)
-                            clen
-                            cidx
-                            (AstType.I64)
-                            false)
-                          (box cmp-facts))))
-                    cmp-facts)]
-                (match (opt-bounds-dom-instrs-from
-                  type-segment-bases
-                  defs
-                  phi-defs
-                  terms
-                  cfg-index
-                  block-label
-                  next-cmp-facts
-                  next-facts
-                  sources
-                  copies
-                  instrs
-                  (+ index 1))
-                  [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
-                    (OptBoundsDomWalk.Walk
-                      (compiler-ir-instr-cons instr tail)
-                      out-facts
-                      out-cmp-facts)]))))]
-        [_
-          (match (opt-bounds-dom-instrs-from
-            type-segment-bases
-            defs
-            phi-defs
-            terms
-            cfg-index
-            block-label
-            cmp-facts
-            facts
-            sources
-            copies
-            instrs
-            (+ index 1))
-            [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
-              (OptBoundsDomWalk.Walk
-                (compiler-ir-instr-cons
+  ;; Retain-only walk (drops bounds checks a dominating check/comparison already
+  ;; proved, folds decided comparisons), so the output length is not known up
+  ;; front: it goes into the capacity-managed dense builder seeded at the input
+  ;; length. This used to be a tail-consing recursion -- recurse first, cons the
+  ;; head onto the returned tail -- which built the whole block as a 112 B-per-
+  ;; instruction spine that `compiler-ir-block` then re-counted and re-copied.
+  ;; The facts/cmp-facts threading was already strictly forward (each step hands
+  ;; the NEXT step its updated facts and the head is emitted with the facts that
+  ;; were current when it was read), so the loop below threads them the same way
+  ;; and pushes in the same order. Output is fresh; `instrs` is untouched.
+  ;; refs #5726
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity
+        (if (< index count)
+          (- count index)
+          1))]
+    [cur-facts : OptBoundsFacts facts]
+    [cur-cmp-facts : OptDomCmpFacts cmp-facts]
+    [pos : i64 index]
+    (begin
+      (while (< pos count)
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
+          (begin
+            (match instr
+              [(CompilerIrInstr.BoundsCheck idx len _)
+                (let
+                  [cidx : CompilerIrValue (opt-bounds-dom-resolve copies idx)]
+                  [clen : CompilerIrValue (opt-bounds-dom-resolve copies len)]
+                  (if (or
+                    (opt-bounds-contains cur-facts cidx clen)
+                    (opt-bounds-dom-mask-in-range?
+                      type-segment-bases
+                      defs
+                      phi-defs
+                      copies
+                      cur-cmp-facts
+                      cidx
+                      clen)
+                    (opt-bounds-dom-counter-in-range?
+                      type-segment-bases
+                      cfg-index
+                      terms
+                      defs
+                      phi-defs
+                      copies
+                      cur-cmp-facts
+                      block-label
+                      (opt-bounds-dom-strip-int-cast
+                        type-segment-bases
+                        phi-defs
+                        copies
+                        cidx)
+                      (opt-bounds-dom-strip-int-cast
+                        type-segment-bases
+                        phi-defs
+                        copies
+                        clen)))
+                    unit
+                    (let
+                      [stable? : bool
+                        (and
+                          (opt-gvn-value-stable? sources cidx)
+                          (opt-gvn-value-stable? sources clen))]
+                      (begin
+                        (compiler-ir-instr-builder-push! (&mut builder) instr)
+                        ;; A passed bounds check is an unsigned `idx < len`
+                        ;; whose length operand is a runtime container length,
+                        ;; so len is always < 2^63: the continuation also
+                        ;; proves 0 <= idx < len in the SIGNED domain. Record
+                        ;; both lt spellings so the dominating-comparison fold
+                        ;; kills a later redundant signed test (`le idx len`,
+                        ;; `gt len idx`, ...) -- e.g. a loop-versioning guard
+                        ;; condition that repeats what a dominating access
+                        ;; already checked.
+                        (if stable?
+                          (begin
+                            (set!
+                              cur-cmp-facts
+                              (OptDomCmpFacts.Cons
+                                (OptDomCmpFact.Fact
+                                  (CompilerIrBinOp.Lt)
+                                  cidx
+                                  clen
+                                  (AstType.I64)
+                                  true)
+                                (box
+                                  (OptDomCmpFacts.Cons
+                                    (OptDomCmpFact.Fact
+                                      (CompilerIrBinOp.Lt)
+                                      clen
+                                      cidx
+                                      (AstType.I64)
+                                      false)
+                                    (box cur-cmp-facts)))))
+                            (set!
+                              cur-facts
+                              (opt-bounds-add cur-facts cidx clen)))
+                          unit)))))]
+              [_
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
                   (opt-bounds-dom-fold-compare
                     type-segment-bases
-                    cmp-facts
+                    cur-cmp-facts
                     copies
-                    instr)
-                  tail)
-                out-facts
-                out-cmp-facts)])]))))
+                    instr))])
+            (set! pos (+ pos 1)))))
+      (OptBoundsDomWalk.Walk
+        (compiler-ir-instr-builder-to-seq builder)
+        cur-facts
+        cur-cmp-facts))))
 
 ;; Replace a comparison a dominating branch already decided with its constant.
 ;; The move keeps the destination and bool type, so every consumer -- branch,
@@ -27574,7 +27615,7 @@
                         out
                         id
                         (OptGvnBlockResult.SomeBlock
-                          (compiler-ir-block label rewritten)))
+                          (CompilerIrBlock.Block label rewritten)))
                       (opt-bounds-dom-rewrite-children
                         type-segment-bases
                         context
@@ -27791,7 +27832,7 @@
   (SomeBlock CompilerIrBlock))
 
 (defenum OptDivRemInstrRewrite
-  (Rewrite OptDivRemFacts CompilerIrInstrList))
+  (Rewrite OptDivRemFacts CompilerIrInstrSeq))
 
 (defenum OptDivRemBlockRewrite
   (Rewrite CompilerIrBlock OptDivRemFacts))
@@ -28300,28 +28341,32 @@
     [(option_i64.Some dst) (opt-divrem-facts-remove-var facts dst)]
     [(option_i64.None) facts]))
 
-(define (opt-divrem-rewrite-instr-seq-from
+;; 1:1 rewrite with forward-threaded facts. The old form accumulated a reversed
+;; cons list and reversed it back at the end; the fact threading is unchanged,
+;; the output just lands in a right-sized dense array. Output is fresh;
+;; `instrs` is untouched. refs #5726
+(define (opt-divrem-rewrite-instr-seq
   [type-segment-bases : i64]
   [facts : OptDivRemFacts]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [count : i64]
-  [out-rev : CompilerIrInstrList]) : OptDivRemInstrRewrite
-  (if (>= index count)
-    (OptDivRemInstrRewrite.Rewrite
-      facts
-      (compiler-ir-instr-list-reverse-onto out-rev CompilerIrInstrList.Nil))
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      [rewritten : CompilerIrInstr
-        (opt-divrem-rewrite-instr type-segment-bases facts instr)]
-      (opt-divrem-rewrite-instr-seq-from
-        type-segment-bases
-        (opt-divrem-facts-after-instr facts rewritten)
-        instrs
-        (+ index 1)
-        count
-        (compiler-ir-instr-cons rewritten out-rev)))))
+  [instrs : CompilerIrInstrSeq]) : OptDivRemInstrRewrite
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [current : OptDivRemFacts facts]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [rewritten : CompilerIrInstr
+            (opt-divrem-rewrite-instr
+              type-segment-bases
+              current
+              (compiler-ir-instr-seq-ref instrs index))]
+          (begin
+            (array-set! out index rewritten)
+            (set! current (opt-divrem-facts-after-instr current rewritten))
+            (set! index (+ index 1)))))
+      (OptDivRemInstrRewrite.Rewrite current (CompilerIrInstrSeq out count)))))
 
 (define (opt-divrem-rewrite-block
   [type-segment-bases : i64]
@@ -28329,16 +28374,10 @@
   [block : CompilerIrBlock]) : OptDivRemBlockRewrite
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (match (opt-divrem-rewrite-instr-seq-from
-        type-segment-bases
-        facts
-        instrs
-        0
-        (compiler-ir-instr-seq-count instrs)
-        CompilerIrInstrList.Nil)
+      (match (opt-divrem-rewrite-instr-seq type-segment-bases facts instrs)
         [(OptDivRemInstrRewrite.Rewrite final-facts rewritten)
           (OptDivRemBlockRewrite.Rewrite
-            (compiler-ir-block label rewritten)
+            (CompilerIrBlock.Block label rewritten)
             final-facts)])]))
 
 (define (opt-divrem-reachable-pred-count [index : OptCfgIndex] [id : i64]) : i64

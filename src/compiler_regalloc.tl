@@ -963,9 +963,6 @@
 (define (compiler-reg-xmm-registers) : CompilerRegStringList
   (compiler-reg-xmm-registers-for-abi CompilerRegTargetAbi.Linux))
 
-(define (compiler-reg-vector-registers) : CompilerRegStringList
-  (compiler-reg-vector-registers-for-abi CompilerRegTargetAbi.Linux))
-
 ;; Return the canonical physical XMM-family index, or -1 for a register in a
 ;; different bank.  This parser is on hot conflict/scavenging paths, so it reads
 ;; the four-byte prefix and decimal suffix in place without allocating a
@@ -2009,16 +2006,6 @@
 ;; list is built first and used as the seed accumulator the real moves are
 ;; prepended onto), so every existing move keeps its first-wins position for
 ;; copy-hints and the coalesce pass sees the cast pairs last.
-(define (compiler-reg-function-moves-with-casts
-  [func : CompilerIrFunction]
-  [strict-pairs : bool]) : CompilerRegMoveSeq
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-reg-block-list-moves
-        blocks
-        (compiler-reg-cast-moves-blocks blocks (compiler-reg-move-seq-empty))
-        strict-pairs)]))
-
 (define (compiler-reg-function-moves-with-destructive-and-casts-eligible
   [func : CompilerIrFunction]
   [strict-pairs : bool]
@@ -8469,51 +8456,6 @@
             end
             first-word
             last-word))))))
-
-(define (compiler-reg-clobber-word-in-range-inclusive-start?
-  [bits : i64]
-  [var-base : i64]
-  [start : i64]
-  [end : i64]) : bool
-  (if (= bits 0)
-    false
-    (let
-      [i : i64 (compiler-reg-low-bit-index32 bits)]
-      [c : i64 (+ var-base i)]
-      (if (if (<= start c)
-        (< c end)
-        false)
-        true
-        (compiler-reg-clobber-word-in-range-inclusive-start?
-          (bit-and bits (- bits 1))
-          var-base
-          start
-          end)))))
-
-(define (compiler-reg-clobber-set-in-range-inclusive-start-words?
-  [set : CompilerLiveI64Set]
-  [start : i64]
-  [end : i64]
-  [word-index : i64]) : bool
-  (if (>= word-index (compiler-live-set-word-count set))
-    false
-    (if (compiler-reg-clobber-word-in-range-inclusive-start?
-      (compiler-live-set-word-at-bounded set word-index)
-      (* word-index (compiler-live-set-word-bits))
-      start
-      end)
-      true
-      (compiler-reg-clobber-set-in-range-inclusive-start-words?
-        set
-        start
-        end
-        (+ word-index 1)))))
-
-(define (compiler-reg-clobber-set-in-range-inclusive-start?
-  [set : CompilerLiveI64Set]
-  [start : i64]
-  [end : i64]) : bool
-  (compiler-reg-clobber-set-in-range-inclusive-start-words? set start end 0))
 
 (define (compiler-reg-direct-call-points-seq
   [instrs : CompilerIrInstrSeq]
@@ -16622,11 +16564,6 @@
         (ast-type-segment-bases-get type-segment-bases inner))]
     [_ ""]))
 
-(define (compiler-reg-aggregate-type-name [ty : AstType]) : String
-  (compiler-reg-aggregate-type-name-with-seg-bases
-    (ast-node-pool-reader-type-segment-bases)
-    ty))
-
 ;; True when a var's type is a >=2-word register-group per the program map.
 (define (compiler-reg-type-register-group?
   [type-segment-bases : i64]
@@ -17332,7 +17269,7 @@
 
 ;; {rax,rdx}: the registers an idiv hard-clobbers (rax:rdx outputs). The INT_MIN/-1
 ;; overflow guard temps are no longer hardcoded to %r10/%r11 -- the guard scavenges
-;; free registers (compiler-backend-div-overflow-guard-asm), avoiding any
+;; free registers (compiler-backend-div-overflow-guard-asm-with-plan), avoiding any
 ;; div-spanning value via the live query, so a div-spanning var may now use
 ;; %r10/%r11. rax stays reserved.
 (define (compiler-reg-greedy-div-clobber-registers) : CompilerRegStringList
@@ -25567,13 +25504,6 @@
     (compiler-reg-scratch-call-target-excluded)
     ""))
 
-(define (compiler-reg-scratch-gp-constraint) : CompilerRegScratchConstraint
-  (CompilerRegScratchConstraint
-    (CompilerRegScratchClass.Gp)
-    CompilerRegStringList.Nil
-    CompilerRegStringList.Nil
-    ""))
-
 (define (compiler-reg-scratch-gp-constraint-excluding
   [excluded : CompilerRegStringList]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
@@ -28485,20 +28415,6 @@
                             (CompilerRegScratchPlan items firsts slot-counts))))))]))))])
     (CompilerRegScratchPlanResult.Result plan (compiler-reg-scratch-plan-empty))))
 
-(define (compiler-reg-plan-with-scratch-vregs
-  [type-segment-bases : i64]
-  [abi : CompilerRegTargetAbi]
-  [func : CompilerIrFunction]
-  [plan : CompilerRegPlan]
-  [vars : i64]) : CompilerRegPlan
-  (match (compiler-reg-plan-with-scratch-vreg-result
-    type-segment-bases
-    abi
-    func
-    plan
-    vars)
-    [(CompilerRegScratchPlanResult.Result out-plan _) out-plan]))
-
 (define (compiler-reg-caller-save-remap-fill!
   [remap : (Array i64)]
   [index : i64]) : unit
@@ -29777,14 +29693,6 @@
       CompilerRegVarTypeList.Nil)
     (compiler-reg-call-split-empty)
     (compiler-reg-split-plan-empty)))
-
-(define (compiler-reg-assignment-primary-register
-  [assignments : CompilerRegAssignmentList]
-  [var : i64]) : String
-  (match (compiler-reg-assignment-lookup assignments var)
-    [(CompilerRegMaybeLocation.Some location)
-      (compiler-reg-location-primary-register location)]
-    [(CompilerRegMaybeLocation.No) ""]))
 
 (define (compiler-reg-switch-scratch-vregs-ok?) : bool
   (cfg

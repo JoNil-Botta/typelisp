@@ -186,9 +186,6 @@
       (compiler-object-builder-capacity capacity))
     0))
 
-(define (compiler-object-section-builder-new) : CompilerObjectSectionBuilder
-  (compiler-object-section-builder-with-capacity 8))
-
 (define (compiler-object-data-record-builder-copy-range!
   [dst : (Array CompilerObjectDataRecord)]
   [src : (Array CompilerObjectDataRecord)]

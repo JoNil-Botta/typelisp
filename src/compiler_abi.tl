@@ -76,12 +76,6 @@
         [(= idx 3) "%xmm3"]
         [else ""])]))
 
-(define (compiler-abi-integer-return-register [idx : i64]) : String
-  (cond [(= idx 0) "%rax"] [(= idx 1) "%rdx"] [else ""]))
-
-(define (compiler-abi-float-return-register [idx : i64]) : String
-  (cond [(= idx 0) "%xmm0"] [(= idx 1) "%xmm1"] [else ""]))
-
 (define (compiler-abi-outgoing-shadow-space [abi : CompilerRegTargetAbi]) : i64
   (match abi
     [(CompilerRegTargetAbi.Linux) 0]
@@ -161,35 +155,6 @@
         [(= idx 6) "%r15"]
         [else ""])]))
 
-(define (compiler-abi-backend-callee-save-gp-register-count
-  [abi : CompilerRegTargetAbi]) : i64
-  (match abi
-    [(CompilerRegTargetAbi.Linux) 5]
-    [(CompilerRegTargetAbi.Windows) 7]))
-
-(define (compiler-abi-backend-callee-save-gp-register
-  [abi : CompilerRegTargetAbi]
-  [idx : i64]) : String
-  (match abi
-    [(CompilerRegTargetAbi.Linux)
-      (cond
-        [(= idx 0) "%r12"]
-        [(= idx 1) "%r13"]
-        [(= idx 2) "%r14"]
-        [(= idx 3) "%r15"]
-        [(= idx 4) "%rbx"]
-        [else ""])]
-    [(CompilerRegTargetAbi.Windows)
-      (cond
-        [(= idx 0) "%r12"]
-        [(= idx 1) "%r13"]
-        [(= idx 2) "%r14"]
-        [(= idx 3) "%r15"]
-        [(= idx 4) "%rbx"]
-        [(= idx 5) "%rsi"]
-        [(= idx 6) "%rdi"]
-        [else ""])]))
-
 (define (compiler-abi-caller-saved-xmm-register-count
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
@@ -226,9 +191,3 @@
       (if (and (>= idx 0) (< idx 10))
         (string.append "%xmm" (string.int->string (+ idx 6)))
         "")]))
-
-(define (compiler-abi-sysv-varargs-vector-count-register) : String
-  "%al")
-
-(define (compiler-abi-win64-varargs-duplicates-float-to-gp?) : bool
-  true)

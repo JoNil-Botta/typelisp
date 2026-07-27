@@ -2726,22 +2726,6 @@
 
 (cfg
   test
-  (define (compiler-reg-first-block-instr-list [blocks : CompilerIrBlockList]) : CompilerIrInstrList
-    (match blocks
-      [(CompilerIrBlockList.Cons block _)
-        (match block
-          [(CompilerIrBlock.Block _ instrs)
-            (compiler-ir-instr-seq-to-list instrs)])]
-      [(CompilerIrBlockList.Array seq)
-        (if (> (compiler-ir-block-seq-count seq) 0)
-          (match (compiler-ir-block-seq-ref seq 0)
-            [(CompilerIrBlock.Block _ instrs)
-              (compiler-ir-instr-seq-to-list instrs)])
-          CompilerIrInstrList.Nil)]
-      [_ CompilerIrInstrList.Nil])))
-
-(cfg
-  test
   (define (compiler-reg-block-instr-list
     [blocks : CompilerIrBlockList]
     [want-label : i64]) : CompilerIrInstrList
@@ -3337,50 +3321,6 @@
                       items
                       vars
                       "global_value"))))])]))))
-
-(cfg
-  test
-  (define (compiler-reg-call-spanning-rewrite-shape-label-ok?
-    [func : CompilerIrFunction]
-    [plan : CompilerRegPlan]
-    [label : i64]) : bool
-    (match func
-      [(CompilerIrFunction.Function _ _ _ vars blocks)
-        (let
-          [type-info : CompilerRegVarTypes
-            (compiler-reg-function-var-types func)]
-          [rewrite : CompilerRegCallSaveRewrite
-            (compiler-reg-caller-save-rewrite-blocks blocks vars type-info plan)]
-          (match rewrite
-            [(CompilerRegCallSaveRewrite.Rewrite
-                rewritten-blocks
-                _
-                out-vars
-                extra-assignments
-                _)
-              (let
-                [items : CompilerIrInstrList
-                  (compiler-reg-block-instr-list rewritten-blocks label)]
-                [rewritten-plan : CompilerRegPlan
-                  (compiler-reg-plan-with-call-save-rewrite plan rewrite)]
-                [rewritten-assignments : CompilerRegAssignmentList
-                  (compiler-reg-plan-assignments rewritten-plan)]
-                (and
-                  (= out-vars (+ vars 2))
-                  (= (compiler-reg-assignment-count extra-assignments) 2)
-                  (compiler-reg-location-register?
-                    (compiler-reg-assignment-lookup rewritten-assignments vars)
-                    "%r9")
-                  (compiler-reg-location-register?
-                    (compiler-reg-assignment-lookup
-                      rewritten-assignments
-                      (+ vars 1))
-                    "%r9")
-                  (compiler-reg-instr-list-has-mov-i64? items vars 5)
-                  (compiler-reg-instr-list-has-mov-var? items 5 vars)
-                  (compiler-reg-instr-list-has-mov-var? items (+ vars 1) 5)
-                  (compiler-reg-instr-list-has-store-var? items "g5" (+ vars 1))
-                  (not (compiler-reg-instr-list-has-store-var? items "g5" 5))))]))])))
 
 (cfg
   test

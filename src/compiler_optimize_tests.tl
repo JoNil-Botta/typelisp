@@ -10206,11 +10206,6 @@
                       0)))))]
           [(OptMaybeFunction.No) 0])])))
 
-(define (compiler-optimize-spans-inline-vm-run-bounds-loop-ok?) : bool
-  (and
-    (= (opt-inline-switch-span-case-code "bench.tl::vm-run" true) 15)
-    (= (opt-inline-switch-span-case-code "bench.tl::qs-partition" false) 15)))
-
 (define (opt-inline-costly-switch-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "tag" (AstType.I64) 0)

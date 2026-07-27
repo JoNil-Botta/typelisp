@@ -22,8 +22,6 @@
   128)
 (define compiler-profile-summary-module-capacity : i64
   2048)
-(define compiler-profile-summary-exact-capacity : i64
-  4224)
 (define compiler-profile-summary-pass-table-capacity : i64
   256)
 (define compiler-profile-summary-module-table-capacity : i64

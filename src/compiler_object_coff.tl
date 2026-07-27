@@ -24,8 +24,6 @@
   40)
 (define compiler-object-coff-relocation-size : i64
   10)
-(define compiler-object-coff-symbol-size : i64
-  18)
 (define compiler-object-coff-reloc-amd64-addr64 : i64
   0x0001)
 (define compiler-object-coff-reloc-amd64-rel32 : i64

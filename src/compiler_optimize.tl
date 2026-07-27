@@ -7957,11 +7957,6 @@
 (defstruct OptPredMap
   (index OptCfgIndex))
 
-(define (opt-pred-map-capacity [count : i64]) : i64
-  (if (< count 4)
-    8
-    (* count 2)))
-
 (define (opt-cfg-index-fill-label-seq!
   [blocks : CompilerIrBlockSeq]
   [generation : i64]
@@ -8583,32 +8578,6 @@
 ;; it, the O(blocks^2) comparisons dominate and the map pays for itself.
 (define (opt-cfg-index-reachable-hash-threshold) : i64
   32)
-
-(define (opt-cfg-index-reachable-labels-from
-  [index : OptCfgIndex]
-  [id : i64]
-  [labels : OptLabelSet]) : OptLabelSet
-  (if (<
-    (opt-cfg-index-block-count index)
-    (opt-cfg-index-reachable-hash-threshold))
-    (opt-cfg-index-reachable-labels-from-linear index id labels)
-    (opt-cfg-index-reachable-labels-from-seen
-      index
-      id
-      labels
-      (opt-cfg-index-reachable-seen-seed
-        labels
-        (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index))))))
-
-(define (opt-cfg-index-reachable-seen-seed
-  [labels : OptLabelSet]
-  [seen : opt_string_i64_map.Map]) : opt_string_i64_map.Map
-  (match labels
-    [(OptLabelSet.Nil) seen]
-    [(OptLabelSet.Cons head rest)
-      (begin
-        (opt_string_i64_map.insert-ref! (&mut seen) head 1)
-        (opt-cfg-index-reachable-seen-seed (box-get rest) seen))]))
 
 (define (opt-cfg-index-reachable-labels [index : OptCfgIndex]) : OptLabelSet
   (if (<
@@ -12521,15 +12490,6 @@
             phi-next
             blocks))])))
 
-(define (opt-ssa-construct-function-with-context-result
-  [type-segment-bases : i64]
-  [func : CompilerIrFunction]) : OptFunctionCtxResult
-  (opt-ssa-construct-function-from-context-result
-    type-segment-bases
-    func
-    (opt-cfg-context-empty)
-    false))
-
 ;; `entry-context` is consumed only when `entry-context-valid?` reports that it
 ;; was built for `func`'s current blocks; otherwise this builds its own, exactly
 ;; as before. The pre-SSA rotation pass hands its context down this way.
@@ -15847,13 +15807,6 @@
       [(OptBlockListPassResult.Result next changed)
         (OptLoopRotationCtxResult.Result next changed context)])))
 
-(define (opt-loop-rotation-blocks-once
-  [pools : AstNodePoolContext]
-  [blocks : CompilerIrBlockList]) : OptBlockListPassResult
-  (match (opt-loop-rotation-blocks-once-result pools blocks)
-    [(OptLoopRotationCtxResult.Result next changed _)
-      (OptBlockListPassResult.Result next changed)]))
-
 (define (opt-loop-rotation-blocks-fixed-result
   [pools : AstNodePoolContext]
   [blocks : CompilerIrBlockList]
@@ -15867,13 +15820,6 @@
           ;; Every arm of `opt-loop-rotation-loops` returns its input verbatim
           ;; when it reports no change, so `context` is valid for `next`.
           (OptBlockCtxResult.Result next context true))])))
-
-(define (opt-loop-rotation-blocks-fixed
-  [pools : AstNodePoolContext]
-  [blocks : CompilerIrBlockList]
-  [remaining : i64]) : CompilerIrBlockList
-  (match (opt-loop-rotation-blocks-fixed-result pools blocks remaining)
-    [(OptBlockCtxResult.Result out _ _) out]))
 
 (define (opt-loop-rotation-blocks-result
   [pools : AstNodePoolContext]
@@ -15900,18 +15846,6 @@
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (opt-loop-rotation-blocks-result pools blocks)]))
-
-(define (opt-loop-rotation-function
-  [pools : AstNodePoolContext]
-  [func : CompilerIrFunction]) : CompilerIrFunction
-  (match func
-    [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (CompilerIrFunction.Function
-        name
-        params
-        ret-ty
-        frame
-        (opt-loop-rotation-blocks pools blocks))]))
 
 ;; --- post-SSA loop rotation (rotate_ssa) -------------------------------------
 ;;
@@ -17292,15 +17226,6 @@
                   (OptLicmPtrKind.Unknown)))
               (OptLicmPtrKind.Unknown))]))]
     [_ (OptLicmPtrKind.Unknown)]))
-
-(define (opt-licm-store-state-empty) : OptLicmStoreState
-  (OptLicmStoreState
-    (opt-licm-store-summary-empty)
-    (opt-licm-store-summary-empty)
-    (OptLicmPtrEnv.Nil)
-    (opt-licm-root-env-with-capacity 17)
-    (OptLicmStoreRootList.Nil)
-    false))
 
 (define (opt-licm-store-state-with-provenance
   [ptrs : OptLicmPtrEnv]
@@ -26538,14 +26463,6 @@
       unit)))
 
 ;; The number of predecessors a block has, straight off the CFG index rows.
-(define (opt-bounds-dom-pred-count [index : OptCfgIndex] [id : i64]) : i64
-  (let
-    [preds : OptCfgCsr (struct-get index preds)]
-    [offsets : (Array i64) (struct-get preds offsets)]
-    (if (or (< id 0) (>= (+ id 1) (array-length offsets)))
-      -1
-      (- (array-ref offsets (+ id 1)) (array-ref offsets id)))))
-
 ;; Is `child-id` entered ONLY through the edge from `parent-id`? Every other
 ;; reachable predecessor must sit inside the child's own dominator subtree, which
 ;; makes it a backedge: control only got there by passing through the child, and
@@ -38215,22 +38132,6 @@
       [_ (opt-bce-mb-block-phi-var? instrs (+ index 1) var)])))
 
 ;; Is `var` the dst of a Cast in this block whose source is a phi defined here?
-(define (opt-bce-mb-block-cast-of-phi?
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [var : i64]) : bool
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    false
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.Cast dst src _ _)
-        (match src
-          [(CompilerIrValue.Var v)
-            (if (and (= dst var) (opt-bce-mb-block-phi-var? instrs 0 v))
-              true
-              (opt-bce-mb-block-cast-of-phi? instrs (+ index 1) var))]
-          [_ (opt-bce-mb-block-cast-of-phi? instrs (+ index 1) var)])]
-      [_ (opt-bce-mb-block-cast-of-phi? instrs (+ index 1) var)])))
-
 ;; The phi var feeding `var`, when `var` is a phi of this block or a cast of
 ;; one; -1 otherwise.
 (define (opt-bce-mb-phi-src-of [instrs : CompilerIrInstrSeq] [var : i64]) : i64
@@ -41414,20 +41315,6 @@
             [(OptSuccessorSinkMaybeInstr.No) false])]
         [_ false])]))
 
-(define (opt-successor-sink-phi-zero-start?
-  [blocks : CompilerIrBlockList]
-  [inputs : CompilerIrPhiInputList]) : bool
-  (match inputs
-    [(CompilerIrPhiInputList.Nil) false]
-    [(CompilerIrPhiInputList.Array seq)
-      (opt-successor-sink-phi-zero-start?
-        blocks
-        (compiler-ir-phi-input-seq-to-list seq))]
-    [(CompilerIrPhiInputList.Cons value _ rest)
-      (or
-        (opt-successor-sink-value-zero? blocks value)
-        (opt-successor-sink-phi-zero-start? blocks (box-get rest)))]))
-
 (define (opt-successor-sink-phi-zero-label
   [blocks : CompilerIrBlockList]
   [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeLabel
@@ -42807,23 +42694,6 @@
             leaves
             (+ index 1)))]
       [_ unit])))
-
-(define (opt-successor-sink-mark-loop-phis!
-  [frame : i64]
-  [blocks : CompilerIrBlockList]
-  [loops : OptNaturalLoopList]
-  [leaves : (Array i64)]) : unit
-  (match loops
-    [(OptNaturalLoopList.Nil) unit]
-    [(OptNaturalLoopList.Cons loop rest)
-      (begin
-        (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
-          [(OptMaybeBlock.Some block)
-            (match block
-              [(CompilerIrBlock.Block _ instrs)
-                (opt-successor-sink-mark-leading-phis! frame instrs leaves 0)])]
-          [(OptMaybeBlock.No) unit])
-        (opt-successor-sink-mark-loop-phis! frame blocks (box-get rest) leaves))]))
 
 (define (opt-successor-sink-mark-phis!
   [frame : i64]
@@ -46417,15 +46287,6 @@
       (> (opt-inline-return-count-blocks cblocks) 0)
       (opt-inline-structure-ok-reclaiming? cblocks)
       (opt-inline-multiblock-blocks-ok? cblocks np))))
-
-(define (opt-inline-multiblock-callee-ok?
-  [callee : CompilerIrFunction]
-  [caller-name : i64]) : bool
-  (match callee
-    [(CompilerIrFunction.Function cname cparams ret cvars cblocks)
-      (if (compiler-ir-symbol-eq? cname caller-name)
-        false
-        (opt-inline-multiblock-callee-body-ok? cparams ret cvars cblocks))]))
 
 ;; Per-callee memo for the multiblock admission verdict, keyed by dense index
 ;; slot. SCC processing is bottom-up (Tarjan pops a callee's component before
@@ -50720,12 +50581,11 @@
   (match global
     [(CompilerIrGlobal.Global name _ value)
       ;; A global with a non-constant initializer is set up before main by a
-      ;; generated `__global_init_<name>` function (mirrors
-      ;; compiler-backend-global-init-name) that the backend calls from the
-      ;; startup sequence; it is NOT referenced from the global's IR value, so it
-      ;; must be added as a reachability root or the prune drops its definition
-      ;; (unresolved-symbol link failure). opt-reach-add-function no-ops when the
-      ;; function does not exist (constant-initialized globals).
+      ;; generated `__global_init_<name>` function that the backend calls from
+      ;; the startup sequence; it is NOT referenced from the global's IR value,
+      ;; so it must be added as a reachability root or the prune drops its
+      ;; definition (unresolved-symbol link failure). opt-reach-add-function
+      ;; no-ops when the function does not exist (constant-initialized globals).
       (opt-reach-value index state value)]))
 
 (define (opt-reach-globals
@@ -52937,16 +52797,6 @@
       (ast-node-pool-context-type-segment-bases pools)
       program
       level)))
-
-(define (optimize-program-with-pools-and-level
-  [pools : AstNodePoolContext]
-  [program : CompilerIrProgram]
-  [level : i64]) : CompilerIrProgram
-  (optimize-program-with-reader-context-and-level
-    pools
-    (ast-node-pool-context-type-segment-bases pools)
-    program
-    level))
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]

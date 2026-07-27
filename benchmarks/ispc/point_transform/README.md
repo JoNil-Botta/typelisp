@@ -65,3 +65,11 @@ to 309 / 8,234 / 26 / 89
 (`b65cde583f0c1c2dc0e6aaa4082466fabe8487d54bb36a7689d19790a0d9779d`).
 TypeLisp FMA count remains zero before and after; ISPC retains four FMAs, an
 independent follow-up rather than part of loop/store fusion.
+
+With direct contiguous-map subtraction enabled by #5679, the TypeLisp source
+now spells the upstream `x * cos - y * sin` expression without multiplying the
+second term by `-1.0`. On the same opt-level-2 Linux assembly metric, that
+source change moves scalar/AVX2/AVX-512 kernel instruction counts from
+104/295/327 to 102/290/319. Scalar multiply sites move from 20 to 18 while
+subtraction sites move from 0 to 2; SIMD multiply sites move from 29 to 26
+while packed subtraction sites move from 0 to 3.

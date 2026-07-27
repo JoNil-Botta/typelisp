@@ -3749,9 +3749,11 @@
   [words : i64]) : unit
   (match succs
     [(CompilerLiveLabelSet.Nil) unit]
-    [(CompilerLiveLabelSet.Cons label rest)
+    [(CompilerLiveLabelSet.Dense _ _)
       (begin
-        (match (reg_label_i64_map.get (& idmap) label)
+        (match (reg_label_i64_map.get
+          (& idmap)
+          (compiler-live-label-set-ref succs 0))
           [(reg_label_i64_map.LookupFound idx)
             (compiler-reg-bits-or-row!
               live-out
@@ -3763,7 +3765,7 @@
         (compiler-reg-bits-or-succs!
           live-out
           live-in
-          (box-get rest)
+          (compiler-live-label-set-tail succs)
           idmap
           b
           words))]))
@@ -8859,14 +8861,18 @@
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
     [(CompilerLiveLabelSet.Nil) unit]
-    [(CompilerLiveLabelSet.Cons label rest)
+    [(CompilerLiveLabelSet.Dense _ _)
       (begin
-        (compiler-reg-loop-depth-record-succ! loop-ends ids source-id label)
+        (compiler-reg-loop-depth-record-succ!
+          loop-ends
+          ids
+          source-id
+          (compiler-live-label-set-ref succs 0))
         (compiler-reg-loop-depth-record-succs!
           loop-ends
           ids
           source-id
-          (box-get rest)))]))
+          (compiler-live-label-set-tail succs)))]))
 
 (define (compiler-reg-loop-depth-record-blocks!
   [blocks : CompilerIrBlockList]
@@ -9666,13 +9672,16 @@
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
     [(CompilerLiveLabelSet.Nil) unit]
-    [(CompilerLiveLabelSet.Cons label rest)
+    [(CompilerLiveLabelSet.Dense _ _)
       (begin
-        (compiler-reg-edge-copy-increment-pred! liveness pred-counts label)
+        (compiler-reg-edge-copy-increment-pred!
+          liveness
+          pred-counts
+          (compiler-live-label-set-ref succs 0))
         (compiler-reg-edge-copy-count-preds-succs!
           liveness
           pred-counts
-          (box-get rest)))]))
+          (compiler-live-label-set-tail succs)))]))
 
 (define (compiler-reg-edge-copy-count-preds-blocks!
   [liveness : CompilerFunctionLiveness]
@@ -9844,7 +9853,7 @@
   [acc : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyPlan
   (match succs
     [(CompilerLiveLabelSet.Nil) (CompilerRegEdgeCopyPlan.Plan acc)]
-    [(CompilerLiveLabelSet.Cons to-label rest)
+    [(CompilerLiveLabelSet.Dense _ _)
       (match (compiler-reg-edge-copy-boundary-one
         liveness
         blocks
@@ -9858,7 +9867,7 @@
         region-var
         ty
         members
-        to-label
+        (compiler-live-label-set-ref succs 0)
         acc)
         [(CompilerRegEdgeCopyPlan.Plan next)
           (compiler-reg-edge-copy-boundary-succs
@@ -9874,7 +9883,7 @@
             region-var
             ty
             members
-            (box-get rest)
+            (compiler-live-label-set-tail succs)
             next)]
         [(CompilerRegEdgeCopyPlan.Refused message)
           (CompilerRegEdgeCopyPlan.Refused message)])]))
@@ -10659,20 +10668,23 @@
   [succs : CompilerLiveLabelSet]) : bool
   (match succs
     [(CompilerLiveLabelSet.Nil) false]
-    [(CompilerLiveLabelSet.Cons label rest)
+    [(CompilerLiveLabelSet.Dense _ _)
       (let
-        [target-index : i64 (compiler-live-function-block-index liveness label)]
+        [target-index : i64
+          (compiler-live-function-block-index
+            liveness
+            (compiler-live-label-set-ref succs 0))]
         (if (>= target-index 0)
           (if (<= target-index source-index)
             true
             (compiler-reg-loop-split-succs-has-backedge?
               liveness
               source-index
-              (box-get rest)))
+              (compiler-live-label-set-tail succs)))
           (compiler-reg-loop-split-succs-has-backedge?
             liveness
             source-index
-            (box-get rest))))]))
+            (compiler-live-label-set-tail succs))))]))
 
 (define (compiler-reg-loop-split-region-remap-blocks
   [blocks : CompilerIrBlockList]
@@ -15087,17 +15099,19 @@
   [seen : (Array bool)]) : bool
   (match labels
     [(CompilerLiveLabelSet.Nil) false]
-    [(CompilerLiveLabelSet.Cons label rest)
+    [(CompilerLiveLabelSet.Dense _ _)
       (or
         (compiler-reg-cold-call-reaches-loop-from?
           seq
           depths
-          (compiler-reg-cold-call-find-label seq label)
+          (compiler-reg-cold-call-find-label
+            seq
+            (compiler-live-label-set-ref labels 0))
           seen)
         (compiler-reg-cold-call-reaches-loop-labels?
           seq
           depths
-          (box-get rest)
+          (compiler-live-label-set-tail labels)
           seen))]))
 
 (define (compiler-reg-cold-call-reaches-loop-from?

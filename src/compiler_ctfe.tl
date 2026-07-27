@@ -70,9 +70,9 @@
 (define (ctfe-macro-provenance-callee-base-name-id [name-id : i64]) : i64
   (cond
     [(intern-composite-triple-id? name-id)
-      (intern-composite-triple-right-id name-id)]
+      (intern-composite-right-id-unchecked name-id)]
     [(intern-composite-pair-id? name-id)
-      (intern-composite-pair-right-id name-id)]
+      (intern-composite-right-id-unchecked name-id)]
     [else
       (let
         [source-id : i64
@@ -81,15 +81,11 @@
             (ci.intern-macro-global-source-name-id-or name-id name-id))]
         [base-id : i64
           (if (and
-            (>= source-id 0)
-            (< source-id (intern-capacity))
+            (intern-renderable-id? source-id)
             (ci.intern-qualified? source-id))
             (ci.intern-qualified-base-id source-id)
             source-id)]
-        (if (and
-          (>= base-id 0)
-          (< base-id (intern-capacity))
-          (ci.intern-dotted? base-id))
+        (if (and (intern-renderable-id? base-id) (ci.intern-dotted? base-id))
           (ci.intern-dotted-final-id base-id)
           base-id))]))
 
@@ -145,10 +141,7 @@
   (intern-composite-pair-id module-id base-id))
 
 (define (ctfe-name-id-key [name-id : i64]) : i64
-  (if (and
-    (>= name-id 0)
-    (< name-id (intern-capacity))
-    (intern-qualified? name-id))
+  (if (and (intern-renderable-id? name-id) (intern-qualified? name-id))
     (ctfe-qualified-name-key-id
       (intern-qualified-module-id name-id)
       (intern-qualified-base-id name-id))
@@ -593,8 +586,7 @@
           (= (string.string-length left) 1)
           (= (cast (string.string-ref left 0) : i64) 46)
           (> right-len 0)
-          (>= right-id 0)
-          (< right-id (intern-capacity)))
+          (intern-renderable-id? right-id))
         (CompilerCtfeValue.String
           text
           (ctfe-generated-leading-dot-suffix-id right-id))]
@@ -602,11 +594,9 @@
           (> (string.string-length left) 0)
           (> right-len 1)
           (= (cast (string.string-ref right 0) : i64) 46)
-          (>= left-id 0)
-          (< left-id (intern-capacity))
+          (intern-renderable-id? left-id)
           (not (= (ci.intern-first-dot left-id) 0))
-          (>= right-id 0)
-          (< right-id (intern-capacity))
+          (intern-renderable-id? right-id)
           (= (ci.intern-first-dot right-id) 0))
         (let
           [suffix-id : i64 (ci.intern-dotted-tail-id right-id)]
@@ -1352,7 +1342,7 @@
   (if (ctfe-hygiene-enabled? env)
     (if (intern-template-source-id? name)
       name
-      (if (and (>= name 0) (< name (intern-capacity)))
+      (if (intern-renderable-id? name)
         (intern-template-source-id name)
         name))
     name))
@@ -2799,14 +2789,14 @@
   (let
     [canonical-id : i64 (ctfe-reflect-info-canonical-id info)]
     (if (intern-composite-pair-id? canonical-id)
-      (intern-composite-pair-right-id canonical-id)
+      (intern-composite-right-id-unchecked canonical-id)
       canonical-id)))
 
 (define (ctfe-reflect-info-nominal-module-id [info : CtfeReflectInfo]) : i64
   (let
     [canonical-id : i64 (ctfe-reflect-info-canonical-id info)]
     (if (intern-composite-pair-id? canonical-id)
-      (intern-composite-pair-left-id canonical-id)
+      (intern-composite-left-id-unchecked canonical-id)
       cbi.compiler-builtin-id-fix-empty)))
 
 (define (ctfe-reflect-resolve-type-list-with-pools
@@ -4970,7 +4960,7 @@
 ;; recognizes them as comptime syntax operations. The list-like `empty?`/`head`/
 ;; `tail` operations were removed in favor of `length`/`nth` indexed access.
 (define (ctfe-comptime-helper-leaf-id [name-id : i64]) : i64
-  (if (or (< name-id 0) (>= name-id (intern-capacity)))
+  (if (not (intern-renderable-id? name-id))
     name-id
     (let
       [base-id : i64

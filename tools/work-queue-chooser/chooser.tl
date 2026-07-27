@@ -2,17 +2,17 @@
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
 ;# each entry, skips draft PRs and PRs whose checks are still pending/running,
-;# issues labeled `blocked`, and issues an open PR already claims (the issue
-;# number appears as a 4+ digit run in a PR branch name or title -- an issue
-;# someone is already working is not work to hand to a second agent), weights
-;# the rest (PR review = 45; ready-for-implementation = 10 with +50 for p0
-;# and +3 for p1; research/triage = 1 with +6 for p0 and +3 for p1), uses
-;# system entropy to make a weighted pick, and prints one action line:
+;# and issues an open PR already claims (the issue number appears as a 4+ digit
+;# run in a PR branch name or title -- an issue someone is already working is
+;# not work to hand to a second agent), weights the rest (PR review = 45;
+;# ready-for-implementation = 10 with +50 for p0 and +3 for p1;
+;# research/triage = 1 with +6 for p0 and +3 for p1), uses system entropy to
+;# make a weighted pick, and prints one action line:
 ;#
 ;#   review pr #N: Title
 ;#   implement issue #N: Title
 ;#   research/triage issue #N: Title
-;#   wait: queue saturated; review: N PRs in flight; implement: M ready issues held back; research/triage: B blocked, C claimed
+;#   wait: queue saturated; review: N PRs in flight; implement: M ready issues held back; research/triage: C claimed
 ;#
 ;# When the snapshot already holds more than 3 open non-draft PRs the review
 ;# queue is saturated, so ready-for-implementation issues are dropped from the
@@ -127,10 +127,9 @@
   (Err String))
 
 ;: Counts explaining why issue lanes contributed no candidates to a saturated
-;: queue. Blocked takes precedence over claimed, matching candidate filtering.
+;: queue.
 (defstruct SaturationCounts
   (ready-held-back i64)
-  (research-blocked i64)
   (research-claimed i64))
 
 ;: Read all of stdin into a single String by repeated bounded reads until EOF.
@@ -357,10 +356,6 @@
         (json-field-string item "title")
         (+ research-weight bonus)))))
 
-;: Return true when an issue should not enter the active work queue.
-(define (issue-blocked? [item : json.Json]) : bool
-  (label-list-has? (issue-label-list item) "blocked"))
-
 ;: Return true when an issue carries the ready-for-implementation label, i.e. it
 ;: would classify as an implement candidate.
 (define (issue-ready? [item : json.Json]) : bool
@@ -488,9 +483,10 @@
       found)))
 
 ;: Append a JSON array of issue objects as candidates, preserving source order.
-;: Blocked issues are always skipped, as are issues an open PR already claims;
-;: ready-for-implementation issues are also skipped when `implement-allowed?` is
-;: false (the review queue is saturated).
+;: Issues an open PR already claims are skipped; ready-for-implementation issues
+;: are also skipped when `implement-allowed?` is false (the review queue is
+;: saturated). A blocked label remains queue metadata and does not suppress
+;: triage or implementation.
 (define (issue-candidates-into
   [items : json.JsonSeq]
   [prs : json.JsonSeq]
@@ -504,7 +500,6 @@
         (match (json.list-get-index items i)
           [(json.JsonFound head)
             (if (or
-              (issue-blocked? head)
               (issue-claimed-by-pr? prs (json-field-number head "number"))
               (and (not implement-allowed?) (issue-ready? head)))
               unit
@@ -560,13 +555,12 @@
 
 ;: Count issue-lane exclusions that explain an empty saturated queue. A ready
 ;: issue is "held back" only when it would otherwise be eligible; research
-;: issues report blocked and claimed exclusions separately.
+;: issues report claimed exclusions.
 (define (saturation-counts [items : json.JsonSeq] [prs : json.JsonSeq]) : SaturationCounts
   (let
     [n : i64 (json.list-count items)]
     [i : i64 0]
     [ready-held-back : i64 0]
-    [research-blocked : i64 0]
     [research-claimed : i64 0]
     (begin
       (while (< i n)
@@ -574,21 +568,18 @@
           (match (json.list-get-index items i)
             [(json.JsonFound head)
               (let
-                [blocked : bool (issue-blocked? head)]
                 [claimed : bool
                   (issue-claimed-by-pr? prs (json-field-number head "number"))]
                 [ready : bool (issue-ready? head)]
                 (cond
-                  [(and ready (not (or blocked claimed)))
+                  [(and ready (not claimed))
                     (set! ready-held-back (+ ready-held-back 1))]
-                  [(and (not ready) blocked)
-                    (set! research-blocked (+ research-blocked 1))]
                   [(and (not ready) claimed)
                     (set! research-claimed (+ research-claimed 1))]
                   [else unit]))]
             [(json.JsonMissing) unit])
           (set! i (+ i 1))))
-      (SaturationCounts ready-held-back research-blocked research-claimed))))
+      (SaturationCounts ready-held-back research-claimed))))
 
 ;: Render the stable, single-line successful signal for intentional
 ;: back-pressure. Lane names make each zero/nonzero count self-describing.
@@ -609,12 +600,8 @@
             (string.append
               ready-label
               (string.append
-                (string.int->string (struct-get counts research-blocked))
-                (string.append
-                  " blocked, "
-                  (string.append
-                    (string.int->string (struct-get counts research-claimed))
-                    " claimed"))))))))))
+                (string.int->string (struct-get counts research-claimed))
+                " claimed"))))))))
 
 ;: Build the full candidate sequence: PR candidates first, then issue
 ;: candidates. Ready-for-implementation issues are dropped once more than
@@ -750,7 +737,7 @@
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
-  chooser-skips-blocked-issues
+  chooser-keeps-blocked-issues-eligible
   (let
     [text : String
       "{\"prs\":[],\"issues\":[{\"number\":30,\"title\":\"Blocked triage\",\"labels\":[{\"name\":\"blocked\"}]},{\"number\":31,\"title\":\"Blocked ready\",\"labels\":[{\"name\":\"blocked\"},{\"name\":\"ready-for-implementation\"}]},{\"number\":32,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":33,\"title\":\"Triage issue\",\"labels\":[]}]}"]
@@ -759,15 +746,25 @@
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
-            (if (= (cand-count cands) 2)
+            (if (= (cand-count cands) 4)
               unit
-              (io.panic "expected blocked issues to be skipped"))
-            (if (= (struct-get (cand-nth cands 0) number) 32)
+              (io.panic "blocked issues should remain eligible"))
+            (if (and
+              (= (struct-get (cand-nth cands 0) number) 30)
+              (= (struct-get (cand-nth cands 0) kind) kind-triage))
               unit
-              (io.panic "first non-blocked issue should remain eligible"))
-            (if (= (struct-get (cand-nth cands 1) number) 33)
+              (io.panic "blocked issue should remain in the triage lane"))
+            (if (and
+              (= (struct-get (cand-nth cands 1) number) 31)
+              (= (struct-get (cand-nth cands 1) kind) kind-ready))
               unit
-              (io.panic "second non-blocked issue should remain eligible"))))]
+              (io.panic
+                "blocked ready issue should remain in the implement lane"))
+            (if (and
+              (= (struct-get (cand-nth cands 2) number) 32)
+              (= (struct-get (cand-nth cands 3) number) 33))
+              unit
+              (io.panic "existing issue eligibility should remain unchanged"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -904,23 +901,23 @@
                 (test.assert-true
                   (string.eq
                     message
-                    "wait: queue saturated; review: 4 PRs in flight; implement: 2 ready issues held back; research/triage: 0 blocked, 0 claimed")
+                    "wait: queue saturated; review: 4 PRs in flight; implement: 2 ready issues held back; research/triage: 0 claimed")
                   "ready-only saturation should report its empty lanes")]
               [_ (io.panic "saturated queue should return the wait signal")])))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
-  chooser-saturated-signal-counts-research-exclusions
+  chooser-saturated-signal-counts-claimed-research
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"headRefName\":\"implement-5053-claimed\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":5050,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":5052,\"title\":\"Blocked research\",\"labels\":[{\"name\":\"blocked\"}]},{\"number\":5053,\"title\":\"Claimed research\",\"labels\":[]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"headRefName\":\"implement-5053-claimed\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":5050,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":5053,\"title\":\"Claimed research\",\"labels\":[]}]}"]
     (match (choose-candidate text)
       [(ChooserResult.Wait message)
         (test.assert-true
           (string.eq
             message
-            "wait: queue saturated; review: 4 PRs in flight; implement: 1 ready issue held back; research/triage: 1 blocked, 1 claimed")
-          "saturated queue should report every closed lane")]
+            "wait: queue saturated; review: 4 PRs in flight; implement: 1 ready issue held back; research/triage: 1 claimed")
+          "saturated queue should report its closed lanes")]
       [_ (io.panic "excluded research issues should produce the wait signal")])))
 
 (test

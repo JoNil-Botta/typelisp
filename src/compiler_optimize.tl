@@ -24,6 +24,7 @@
 (import stdlib.array)
 (import stdlib.vector)
 (import compiler_allocation_profile as allocation_profile)
+(import compiler_profile_state as profile_state)
 (import compiler_builtin_ids as cbi)
 (import "compiler_ir_types.tl")
 (import "compiler_clone.tl")
@@ -223,22 +224,27 @@
 
 (cfg
   compile-profile-summary
-  (define (compiler-opt-profile-summary-reset!) : unit
-    (cps.compiler-profile-summary-reset!)))
+  (define (compiler-opt-profile-summary-reset!
+    [state : profile_state.CompilerProfileState]) : unit
+    (cps.compiler-profile-summary-reset! state)))
 
 (cfg
   compile-profile-summary
-  (define (compiler-opt-profile-summary-emit) : unit
+  (define (compiler-opt-profile-summary-emit
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
       (cps.compiler-profile-summary-emit
+        state
         cps.compiler-profile-summary-optimizer-pass
         "optimizer"
         "pass")
       (cps.compiler-profile-summary-emit
+        state
         cps.compiler-profile-summary-optimizer-function
         "optimizer"
         "function")
       (cps.compiler-profile-summary-emit
+        state
         cps.compiler-profile-summary-optimizer-module
         "optimizer"
         "module"))))
@@ -416,7 +422,10 @@
 
 (cfg
   compile-profile
-  (define (compiler-opt-profile-detail-finish [phase : String] [name : String]) : unit
+  (define (compiler-opt-profile-detail-finish
+    [state : profile_state.CompilerProfileState]
+    [phase : String]
+    [name : String]) : unit
     (let
       [elapsed : i64 (- (profile.now-ms) compiler-opt-profile-detail-start-ms)]
       (cfg
@@ -424,10 +433,12 @@
         (if (string.eq phase "function")
           (begin
             (cps.compiler-profile-summary-note!
+              state
               cps.compiler-profile-summary-optimizer-function
               name
               elapsed)
             (cps.compiler-profile-summary-note-module!
+              state
               cps.compiler-profile-summary-optimizer-module
               name
               elapsed))
@@ -448,6 +459,7 @@
 (cfg
   compile-profile
   (define (compiler-opt-profile-pass-finish
+    [state : profile_state.CompilerProfileState]
     [pass : String]
     [name : i64]
     [start-ms : i64]) : unit
@@ -456,6 +468,7 @@
       (cfg
         compile-profile-summary
         (cps.compiler-profile-summary-note!
+          state
           cps.compiler-profile-summary-optimizer-pass
           pass
           elapsed)
@@ -7558,37 +7571,93 @@
 ;; inputs from predecessors that are no longer reachable.
 (defenum OptLabelSet
   (Nil)
-  (Cons i64 (Box OptLabelSet)))
+  ;; Slot zero is the shared high-water length; labels occupy slots 1..len in
+  ;; oldest-first order. The logical set head is `items[len]`, so recursive
+  ;; consumers can take an allocation-free tail view by decrementing `len`.
+  ;; Extending a prefix is in-place only while it is the unique high-water
+  ;; view. Extending a tail or an already-branched prefix copies first, keeping
+  ;; the persistent cons semantics callers had with the old linked list.
+  (Dense (Array i64) i64))
+
+(define (opt-dense-next-capacity [len : i64]) : i64
+  (if (< len 4)
+    4
+    (* len 2)))
+
+(define (opt-label-ref [set : OptLabelSet] [index : i64]) : i64
+  (match set
+    [(OptLabelSet.Nil) (compiler-ir-label-none)]
+    [(OptLabelSet.Dense items len) (array-ref items (- len index))]))
+
+(define (opt-label-tail [set : OptLabelSet]) : OptLabelSet
+  (match set
+    [(OptLabelSet.Nil) (OptLabelSet.Nil)]
+    [(OptLabelSet.Dense items len)
+      (if (<= len 1)
+        (OptLabelSet.Nil)
+        (OptLabelSet.Dense items (- len 1)))]))
+
+(define (opt-label-cons [label : i64] [set : OptLabelSet]) : OptLabelSet
+  (match set
+    [(OptLabelSet.Nil)
+      (let
+        [items : (Array i64) (array.make-array i64 5)]
+        (begin
+          (array-set! items 0 1)
+          (array-set! items 1 label)
+          (OptLabelSet.Dense items 1)))]
+    [(OptLabelSet.Dense items len)
+      (if (and (= len (array-ref items 0)) (< len (- (array-length items) 1)))
+        (begin
+          (array-set! items (+ len 1) label)
+          (array-set! items 0 (+ len 1))
+          (OptLabelSet.Dense items (+ len 1)))
+        (let
+          [old-capacity : i64 (- (array-length items) 1)]
+          [capacity : i64
+            (if (< len old-capacity)
+              old-capacity
+              (opt-dense-next-capacity len))]
+          [bigger : (Array i64) (array.make-array i64 (+ capacity 1))]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (array-set! bigger (+ index 1) (array-ref items (+ index 1)))
+                (set! index (+ index 1))))
+            (array-set! bigger 0 (+ len 1))
+            (array-set! bigger (+ len 1) label)
+            (OptLabelSet.Dense bigger (+ len 1)))))]))
 
 (define (opt-label-contains [set : OptLabelSet] [label : i64]) : bool
   (let
-    [cursor : OptLabelSet set]
+    [index : i64 0]
+    [count : i64 (opt-label-count set)]
     [found : bool false]
     (begin
-      (while (not found)
-        (match cursor
-          [(OptLabelSet.Nil) (return false)]
-          [(OptLabelSet.Cons head rest)
-            (if (= head label)
-              (set! found true)
-              (set! cursor (box-get rest)))]))
-      true)))
+      (while (and (< index count) (not found))
+        (if (= (opt-label-ref set index) label)
+          (set! found true)
+          (set! index (+ index 1))))
+      found)))
 
 (define (opt-label-add [set : OptLabelSet] [label : i64]) : OptLabelSet
   (if (opt-label-contains set label)
     set
-    (OptLabelSet.Cons label (box set))))
+    (opt-label-cons label set)))
 
 (define (opt-label-count [set : OptLabelSet]) : i64
   (match set
     [(OptLabelSet.Nil) 0]
-    [(OptLabelSet.Cons _ rest) (+ 1 (opt-label-count (box-get rest)))]))
+    [(OptLabelSet.Dense _ len) len]))
 
 (define (opt-label-subset? [a : OptLabelSet] [b : OptLabelSet]) : bool
   (match a
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
-      (and (opt-label-contains b label) (opt-label-subset? (box-get rest) b))]))
+    [(OptLabelSet.Dense _ _)
+      (and
+        (opt-label-contains b (opt-label-ref a 0))
+        (opt-label-subset? (opt-label-tail a) b))]))
 
 (define (opt-label-set-eq? [a : OptLabelSet] [b : OptLabelSet]) : bool
   (and (opt-label-subset? a b) (opt-label-subset? b a)))
@@ -7596,9 +7665,10 @@
 (define (opt-label-intersection [a : OptLabelSet] [b : OptLabelSet]) : OptLabelSet
   (match a
     [(OptLabelSet.Nil) (OptLabelSet.Nil)]
-    [(OptLabelSet.Cons label rest)
+    [(OptLabelSet.Dense _ _)
       (let
-        [tail : OptLabelSet (opt-label-intersection (box-get rest) b)]
+        [label : i64 (opt-label-ref a 0)]
+        [tail : OptLabelSet (opt-label-intersection (opt-label-tail a) b)]
         (if (opt-label-contains b label)
           (opt-label-add tail label)
           tail))]))
@@ -7695,10 +7765,12 @@
   [known : opt_string_i64_map.Map]) : bool
   (match labels
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
-      (and
-        (opt_string_i64_map.contains? (& known) label)
-        (opt-cfg-label-set-known-in-map? (box-get rest) known))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref labels 0)]
+        (and
+          (opt_string_i64_map.contains? (& known) label)
+          (opt-cfg-label-set-known-in-map? (opt-label-tail labels) known)))]))
 
 (define (opt-cfg-successor-targets-known-map?
   [blocks : CompilerIrBlockList]
@@ -7812,22 +7884,24 @@
   [current : OptLabelSet]) : OptLabelSet
   (match preds
     [(OptLabelSet.Nil) current]
-    [(OptLabelSet.Cons pred rest)
+    [(OptLabelSet.Dense _ _)
       (opt-dom-intersect-preds-rest
         table
-        (box-get rest)
-        (opt-label-intersection current (opt-dom-table-lookup table pred)))]))
+        (opt-label-tail preds)
+        (opt-label-intersection
+          current
+          (opt-dom-table-lookup table (opt-label-ref preds 0))))]))
 
 (define (opt-dom-intersect-preds
   [table : OptLegacyDomTable]
   [preds : OptLabelSet]) : OptLabelSet
   (match preds
     [(OptLabelSet.Nil) (OptLabelSet.Nil)]
-    [(OptLabelSet.Cons pred rest)
+    [(OptLabelSet.Dense _ _)
       (opt-dom-intersect-preds-rest
         table
-        (box-get rest)
-        (opt-dom-table-lookup table pred))]))
+        (opt-label-tail preds)
+        (opt-dom-table-lookup table (opt-label-ref preds 0)))]))
 
 (define (opt-cfg-dominators-initial
   [blocks : CompilerIrBlockList]
@@ -8090,10 +8164,11 @@
   [generation : i64]) : OptI64List
   (match labels
     [(OptLabelSet.Nil) (OptI64List.Nil)]
-    [(OptLabelSet.Cons label rest)
+    [(OptLabelSet.Dense _ _)
       (let
+        [label : i64 (opt-label-ref labels 0)]
         [tail : OptI64List
-          (opt-cfg-index-label-set-to-ids (box-get rest) generation)]
+          (opt-cfg-index-label-set-to-ids (opt-label-tail labels) generation)]
         [idx : i64 (opt-cfg-label-table-get label generation)]
         (if (< idx 0)
           tail
@@ -8551,7 +8626,7 @@
             labels
             (begin
               (opt_string_i64_map.insert-ref! (&mut seen) label 1)
-              (OptLabelSet.Cons label (box labels)))))
+              (opt-label-cons label labels))))
         labels)
       seen)))
 
@@ -10873,7 +10948,7 @@
         labels
         (begin
           (array-set! members id true)
-          (OptLabelSet.Cons label (box labels))))]
+          (opt-label-cons label labels)))]
     [(option_i64.None) (opt-label-add labels label)]))
 
 (define (opt-ssa-label-mark-members!
@@ -10882,15 +10957,15 @@
   [labels : OptLabelSet]) : unit
   (match labels
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Cons label rest)
+    [(OptLabelSet.Dense _ _)
       (begin
-        (match (opt-cfg-index-id index label)
+        (match (opt-cfg-index-id index (opt-label-ref labels 0))
           [(option_i64.Some id)
             (if (and (>= id 0) (< id (array-length members)))
               (array-set! members id true)
               unit)]
           [(option_i64.None) unit])
-        (opt-ssa-label-mark-members! index members (box-get rest)))]))
+        (opt-ssa-label-mark-members! index members (opt-label-tail labels)))]))
 
 (define (opt-ssa-var-blocks-add
   [index : OptCfgIndex]
@@ -11067,7 +11142,7 @@
                   worklist
                   (begin
                     (array-set! work-members id true)
-                    (OptLabelSet.Cons label (box worklist))))
+                    (opt-label-cons label worklist)))
                 work-members
                 site-members)))]
         [(option_i64.None) state])]))
@@ -11080,13 +11155,13 @@
   [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
   (match frontier
     [(OptLabelSet.Nil) state]
-    [(OptLabelSet.Cons label rest)
+    [(OptLabelSet.Dense _ _)
       (opt-ssa-phi-add-frontier
         index
         var
         ty
-        (box-get rest)
-        (opt-ssa-phi-add-site index state var ty label))]))
+        (opt-label-tail frontier)
+        (opt-ssa-phi-add-site index state var ty (opt-label-ref frontier 0)))]))
 
 (define (opt-ssa-insert-phis-worklist
   [context : OptCfgContext]
@@ -11103,23 +11178,25 @@
         site-members)
       (match worklist
         [(OptLabelSet.Nil) state]
-        [(OptLabelSet.Cons label rest)
-          (opt-ssa-insert-phis-worklist
-            context
-            blocks
-            var
-            ty
-            (opt-ssa-phi-add-frontier
-              (struct-get context index)
+        [(OptLabelSet.Dense _ _)
+          (let
+            [label : i64 (opt-label-ref worklist 0)]
+            (opt-ssa-insert-phis-worklist
+              context
+              blocks
               var
               ty
-              (opt-cfg-dominance-frontier-with-context blocks context label)
-              (OptSsaPhiInsertState.State
-                sites
-                next-var
-                (box-get rest)
-                work-members
-                site-members)))])]))
+              (opt-ssa-phi-add-frontier
+                (struct-get context index)
+                var
+                ty
+                (opt-cfg-dominance-frontier-with-context blocks context label)
+                (OptSsaPhiInsertState.State
+                  sites
+                  next-var
+                  (opt-label-tail worklist)
+                  work-members
+                  site-members))))])]))
 
 (define (opt-ssa-insert-phis-for-var
   [context : OptCfgContext]
@@ -12110,8 +12187,9 @@
   [ty : AstType]) : CompilerIrPhiInputList
   (match preds
     [(OptLabelSet.Nil) (CompilerIrPhiInputList.Nil)]
-    [(OptLabelSet.Cons pred rest)
+    [(OptLabelSet.Dense _ _)
       (let
+        [pred : i64 (opt-label-ref preds 0)]
         [env : OptSsaRenameEnv (opt-ssa-block-out-lookup outs pred)]
         [value : CompilerIrValue
           (match (opt-ssa-env-lookup env var)
@@ -12120,7 +12198,7 @@
         (compiler-ir-phi-input-cons
           value
           pred
-          (opt-ssa-phi-inputs (box-get rest) outs var ty)))]))
+          (opt-ssa-phi-inputs (opt-label-tail preds) outs var ty)))]))
 
 (define (opt-ssa-phis-for-label
   [pred-map : OptPredMap]
@@ -14221,10 +14299,10 @@
   [seen : opt_string_i64_map.Map]) : opt_string_i64_map.Map
   (match set
     [(OptLabelSet.Nil) seen]
-    [(OptLabelSet.Cons head rest)
+    [(OptLabelSet.Dense _ _)
       (begin
-        (opt_string_i64_map.insert-ref! (&mut seen) head 1)
-        (opt-cfg-switch-seen-seed (box-get rest) seen))]))
+        (opt_string_i64_map.insert-ref! (&mut seen) (opt-label-ref set 0) 1)
+        (opt-cfg-switch-seen-seed (opt-label-tail set) seen))]))
 
 (define (opt-cfg-switch-case-successors-hashed
   [set : OptLabelSet]
@@ -14240,7 +14318,7 @@
             (begin
               (opt_string_i64_map.insert-ref! (&mut seen) label 1)
               (opt-cfg-switch-case-successors-hashed
-                (OptLabelSet.Cons label (box set))
+                (opt-label-cons label set)
                 (box-get rest)
                 seen)))])]
     [(CompilerIrSwitchCaseList.Array seq)
@@ -14378,15 +14456,15 @@
   [labels : OptLabelSet]) : unit
   (match labels
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Cons label rest)
+    [(OptLabelSet.Dense _ _)
       (begin
-        (match (opt-cfg-index-id index label)
+        (match (opt-cfg-index-id index (opt-label-ref labels 0))
           [(option_i64.Some id)
             (if (and (>= id 0) (< id (array-length members)))
               (array-set! members id true)
               unit)]
           [(option_i64.None) unit])
-        (opt-loop-body-fill-members! index members (box-get rest)))]))
+        (opt-loop-body-fill-members! index members (opt-label-tail labels)))]))
 
 (define (opt-loop-body-member-array-contains-id?
   [members : (Array bool)]
@@ -14547,8 +14625,8 @@
               ;; directly builds the identical lists and drops an O(body^2)
               ;; scan per natural loop.
               (OptNaturalLoopCollectState.State
-                (OptLabelSet.Cons pred (box body))
-                (OptLabelSet.Cons pred (box worklist))))
+                (opt-label-cons pred body)
+                (opt-label-cons pred worklist)))
             state)]
         [(option_i64.None) state])]))
 
@@ -14559,12 +14637,16 @@
   [state : OptNaturalLoopCollectState]) : OptNaturalLoopCollectState
   (match preds
     [(OptLabelSet.Nil) state]
-    [(OptLabelSet.Cons pred rest)
+    [(OptLabelSet.Dense _ _)
       (opt-natural-loop-collect-add-preds
         index
         marks
-        (box-get rest)
-        (opt-natural-loop-collect-add-pred index marks state pred))]))
+        (opt-label-tail preds)
+        (opt-natural-loop-collect-add-pred
+          index
+          marks
+          state
+          (opt-label-ref preds 0)))]))
 
 (define (opt-natural-loop-collect-body
   [pred-map : OptPredMap]
@@ -14574,14 +14656,15 @@
   [worklist : OptLabelSet]) : OptLabelSet
   (match worklist
     [(OptLabelSet.Nil) body]
-    [(OptLabelSet.Cons label rest)
+    [(OptLabelSet.Dense _ _)
       (let
+        [label : i64 (opt-label-ref worklist 0)]
         [state : OptNaturalLoopCollectState
           (opt-natural-loop-collect-add-preds
             index
             marks
             (opt-pred-map-lookup pred-map label)
-            (OptNaturalLoopCollectState.State body (box-get rest)))]
+            (OptNaturalLoopCollectState.State body (opt-label-tail worklist)))]
         (match state
           [(OptNaturalLoopCollectState.State next-body next-worklist)
             (opt-natural-loop-collect-body
@@ -14631,28 +14714,30 @@
   [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
   (match preds
     [(OptLabelSet.Nil) candidate]
-    [(OptLabelSet.Cons pred rest)
-      (if (and
-        (opt-label-contains reachable pred)
-        (not (opt-label-contains body pred)))
-        (opt-natural-loop-preheader-candidate-scan
-          pred-map
-          reachable
-          header
-          body
-          (box-get rest)
-          (opt-natural-loop-preheader-candidate-add
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred : i64 (opt-label-ref preds 0)]
+        (if (and
+          (opt-label-contains reachable pred)
+          (not (opt-label-contains body pred)))
+          (opt-natural-loop-preheader-candidate-scan
             pred-map
+            reachable
             header
-            candidate
-            pred))
-        (opt-natural-loop-preheader-candidate-scan
-          pred-map
-          reachable
-          header
-          body
-          (box-get rest)
-          candidate))]))
+            body
+            (opt-label-tail preds)
+            (opt-natural-loop-preheader-candidate-add
+              pred-map
+              header
+              candidate
+              pred))
+          (opt-natural-loop-preheader-candidate-scan
+            pred-map
+            reachable
+            header
+            body
+            (opt-label-tail preds)
+            candidate)))]))
 
 (define (opt-natural-loop-preheader-from-candidate
   [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheader
@@ -14727,8 +14812,9 @@
   [tail : OptNaturalLoopList]) : OptNaturalLoopList
   (match successors
     [(OptLabelSet.Nil) tail]
-    [(OptLabelSet.Cons header rest)
+    [(OptLabelSet.Dense _ _)
       (let
+        [header : i64 (opt-label-ref successors 0)]
         [next : OptNaturalLoopList
           (opt-cfg-natural-loop-successors
             blocks
@@ -14737,7 +14823,7 @@
             doms
             source-id
             source
-            (box-get rest)
+            (opt-label-tail successors)
             tail)]
         (match (opt-cfg-index-id (struct-get doms index) header)
           [(option_i64.Some header-id)
@@ -14949,15 +15035,16 @@
   [preds : OptLabelSet]) : OptLabelSet
   (match preds
     [(OptLabelSet.Nil) (OptLabelSet.Nil)]
-    [(OptLabelSet.Cons pred rest)
+    [(OptLabelSet.Dense _ _)
       (let
+        [pred : i64 (opt-label-ref preds 0)]
         [tail : OptLabelSet
           (opt-loop-preheaders-outside-preds-scan
             reachable
             doms
             header
             body
-            (box-get rest))]
+            (opt-label-tail preds))]
         (if (and
           (opt-label-contains reachable pred)
           (not (opt-label-contains body pred))
@@ -15071,16 +15158,16 @@
   [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
   (match outside
     [(OptLabelSet.Nil) candidate]
-    [(OptLabelSet.Cons pred rest)
+    [(OptLabelSet.Dense _ _)
       (opt-loop-preheaders-existing-candidate-scan
         pred-map
         header
-        (box-get rest)
+        (opt-label-tail outside)
         (opt-natural-loop-preheader-candidate-add
           pred-map
           header
           candidate
-          pred))]))
+          (opt-label-ref outside 0)))]))
 
 (define (opt-loop-preheaders-existing-safe-preheader?
   [pred-map : OptPredMap]
@@ -16095,19 +16182,21 @@
   [exit-label : i64]) : bool
   (match body
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
-      (and
-        (or
-          (= label header)
-          (not
-            (opt-label-contains
-              (opt-pred-map-successors pred-map label)
-              exit-label)))
-        (opt-rotate-ssa-body-avoids-exit?
-          pred-map
-          (box-get rest)
-          header
-          exit-label))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref body 0)]
+        (and
+          (or
+            (= label header)
+            (not
+              (opt-label-contains
+                (opt-pred-map-successors pred-map label)
+                exit-label)))
+          (opt-rotate-ssa-body-avoids-exit?
+            pred-map
+            (opt-label-tail body)
+            header
+            exit-label)))]))
 
 (define (opt-rotate-ssa-uses-except-header
   [set : opt_i64_i64_map.Map]
@@ -20647,10 +20736,6 @@
   (No)
   (Some CompilerIrInstrList))
 
-(defenum OptBoolBranchLabelList
-  (Nil)
-  (Cons i64 (Box OptBoolBranchLabelList)))
-
 (defenum OptBoolBranchChainRewrite
   (No)
   (Some CompilerIrBlockList i64))
@@ -20936,9 +21021,9 @@
   [source-label : i64]
   [remaining : i64]
   [suffix : i64]
-  [made : OptLabelSet]) : OptBoolBranchLabelList
+  [made : OptLabelSet]) : OptLabelSet
   (if (<= remaining 0)
-    (OptBoolBranchLabelList.Nil)
+    (OptLabelSet.Nil)
     (let
       [candidate : i64
         (opt-bool-branch-chain-label-candidate source-label suffix)]
@@ -20951,40 +21036,40 @@
           remaining
           (+ suffix 1)
           made)
-        (OptBoolBranchLabelList.Cons
+        (opt-label-cons
           candidate
-          (box
-            (opt-bool-branch-chain-labels
-              blocks
-              source-label
-              (- remaining 1)
-              (+ suffix 1)
-              (opt-label-add made candidate))))))))
+          (opt-bool-branch-chain-labels
+            blocks
+            source-label
+            (- remaining 1)
+            (+ suffix 1)
+            (opt-label-add made candidate)))))))
 
 (define (opt-bool-branch-chain-label-set
-  [labels : OptBoolBranchLabelList]
+  [labels : OptLabelSet]
   [set : OptLabelSet]) : OptLabelSet
   (match labels
-    [(OptBoolBranchLabelList.Nil) set]
-    [(OptBoolBranchLabelList.Cons label rest)
-      (opt-bool-branch-chain-label-set (box-get rest) (opt-label-add set label))]))
+    [(OptLabelSet.Nil) set]
+    [(OptLabelSet.Dense _ _)
+      (opt-bool-branch-chain-label-set
+        (opt-label-tail labels)
+        (opt-label-add set (opt-label-ref labels 0)))]))
 
 (define (opt-bool-branch-chain-last-label
-  [labels : OptBoolBranchLabelList]
+  [labels : OptLabelSet]
   [fallback : i64]) : i64
-  (match labels
-    [(OptBoolBranchLabelList.Nil) fallback]
-    [(OptBoolBranchLabelList.Cons label rest)
-      (match (box-get rest)
-        [(OptBoolBranchLabelList.Nil) label]
-        [_ (opt-bool-branch-chain-last-label (box-get rest) label)])]))
+  (let
+    [count : i64 (opt-label-count labels)]
+    (if (= count 0)
+      fallback
+      (opt-label-ref labels (- count 1)))))
 
 (define (opt-bool-branch-chain-first-label
-  [labels : OptBoolBranchLabelList]
+  [labels : OptLabelSet]
   [fallback : i64]) : i64
   (match labels
-    [(OptBoolBranchLabelList.Nil) fallback]
-    [(OptBoolBranchLabelList.Cons label _) label]))
+    [(OptLabelSet.Nil) fallback]
+    [(OptLabelSet.Dense _ _) (opt-label-ref labels 0)]))
 
 (define (opt-bool-branch-chain-prefix
   [instrs : CompilerIrInstrSeq]
@@ -21014,20 +21099,20 @@
 
 (define (opt-bool-branch-chain-fresh-blocks
   [conjs : CompilerIrInstrList]
-  [labels : OptBoolBranchLabelList]
+  [labels : OptLabelSet]
   [true-label : i64]
   [false-label : i64]) : CompilerIrBlockList
   (match conjs
     [(CompilerIrInstrList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrInstrList.Cons conj conj-rest)
       (match labels
-        [(OptBoolBranchLabelList.Nil) (CompilerIrBlockList.Nil)]
-        [(OptBoolBranchLabelList.Cons label label-rest)
+        [(OptLabelSet.Nil) (CompilerIrBlockList.Nil)]
+        [(OptLabelSet.Dense _ _)
           (let
+            [label : i64 (opt-label-ref labels 0)]
+            [label-rest : OptLabelSet (opt-label-tail labels)]
             [next-label : i64
-              (opt-bool-branch-chain-first-label
-                (box-get label-rest)
-                true-label)]
+              (opt-bool-branch-chain-first-label label-rest true-label)]
             (compiler-ir-block-cons
               (compiler-ir-block
                 label
@@ -21042,7 +21127,7 @@
                     (CompilerIrInstrList.Nil))))
               (opt-bool-branch-chain-fresh-blocks
                 (box-get conj-rest)
-                (box-get label-rest)
+                label-rest
                 true-label
                 false-label)))])]))
 
@@ -21094,15 +21179,17 @@
   [old-label : i64]) : bool
   (match labels
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
-      (and
-        (if (= label old-label)
-          true
-          (not (opt-bool-branch-phi-input-has-label? inputs label)))
-        (opt-bool-branch-chain-phi-inputs-have-none-except?
-          inputs
-          (box-get rest)
-          old-label))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref labels 0)]
+        (and
+          (if (= label old-label)
+            true
+            (not (opt-bool-branch-phi-input-has-label? inputs label)))
+          (opt-bool-branch-chain-phi-inputs-have-none-except?
+            inputs
+            (opt-label-tail labels)
+            old-label)))]))
 
 (define (opt-bool-branch-chain-target-phis-repairable-from?
   [instrs : CompilerIrInstrSeq]
@@ -21232,7 +21319,7 @@
                                           (OptBoolBranchChainRewrite.No)]
                                         [(CompilerIrInstrList.Cons first rest)
                                           (let
-                                            [labels : OptBoolBranchLabelList
+                                            [labels : OptLabelSet
                                               (opt-bool-branch-chain-labels
                                                 blocks
                                                 source-label
@@ -21457,8 +21544,10 @@
 (define (opt-bool-branch-label-union [from : OptLabelSet] [into : OptLabelSet]) : OptLabelSet
   (match from
     [(OptLabelSet.Nil) into]
-    [(OptLabelSet.Cons label rest)
-      (opt-bool-branch-label-union (box-get rest) (opt-label-add into label))]))
+    [(OptLabelSet.Dense _ _)
+      (opt-bool-branch-label-union
+        (opt-label-tail from)
+        (opt-label-add into (opt-label-ref from 0)))]))
 
 (define (opt-bool-branch-pred-constant-rewriteable?
   [blocks : CompilerIrBlockList]
@@ -21483,16 +21572,18 @@
   [preds : OptLabelSet]) : bool
   (match preds
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons pred-label rest)
-      (and
-        (opt-bool-branch-pred-constant-rewriteable?
-          blocks
-          merge-label
-          pred-label)
-        (opt-bool-branch-preds-constant-rewriteable?
-          blocks
-          merge-label
-          (box-get rest)))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred-label : i64 (opt-label-ref preds 0)]
+        (and
+          (opt-bool-branch-pred-constant-rewriteable?
+            blocks
+            merge-label
+            pred-label)
+          (opt-bool-branch-preds-constant-rewriteable?
+            blocks
+            merge-label
+            (opt-label-tail preds))))]))
 
 (define (opt-bool-branch-phi-input-has-label?
   [inputs : CompilerIrPhiInputList]
@@ -21513,10 +21604,12 @@
   [labels : OptLabelSet]) : bool
   (match labels
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
-      (and
-        (not (opt-bool-branch-phi-input-has-label? inputs label))
-        (opt-bool-branch-phi-inputs-have-none? inputs (box-get rest)))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref labels 0)]
+        (and
+          (not (opt-bool-branch-phi-input-has-label? inputs label))
+          (opt-bool-branch-phi-inputs-have-none? inputs (opt-label-tail labels))))]))
 
 (define (opt-bool-branch-target-phis-repairable-from?
   [instrs : CompilerIrInstrSeq]
@@ -21559,11 +21652,11 @@
   [tail : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (match preds
     [(OptLabelSet.Nil) tail]
-    [(OptLabelSet.Cons pred-label rest)
+    [(OptLabelSet.Dense _ _)
       (compiler-ir-phi-input-cons
         value
-        pred-label
-        (opt-bool-branch-prepend-phi-inputs value (box-get rest) tail))]))
+        (opt-label-ref preds 0)
+        (opt-bool-branch-prepend-phi-inputs value (opt-label-tail preds) tail))]))
 
 (define (opt-bool-branch-repair-phi-inputs
   [inputs : CompilerIrPhiInputList]
@@ -21633,23 +21726,25 @@
   [target-label : i64]) : unit
   (match preds
     [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Cons pred-label rest)
-      (begin
-        (match (opt-cfg-find-block blocks pred-label)
-          [(OptMaybeBlock.No) unit]
-          [(OptMaybeBlock.Some block)
-            (match block
-              [(CompilerIrBlock.Block _ instrs)
-                (let
-                  [last : i64 (- (compiler-ir-instr-seq-count instrs) 1)]
-                  (compiler-ir-instr-seq-set!
-                    instrs
-                    last
-                    (CompilerIrInstr.Jump target-label)))])])
-        (opt-bool-branch-apply-constant-pred-rewrites!
-          blocks
-          (box-get rest)
-          target-label))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred-label : i64 (opt-label-ref preds 0)]
+        (begin
+          (match (opt-cfg-find-block blocks pred-label)
+            [(OptMaybeBlock.No) unit]
+            [(OptMaybeBlock.Some block)
+              (match block
+                [(CompilerIrBlock.Block _ instrs)
+                  (let
+                    [last : i64 (- (compiler-ir-instr-seq-count instrs) 1)]
+                    (compiler-ir-instr-seq-set!
+                      instrs
+                      last
+                      (CompilerIrInstr.Jump target-label)))])])
+          (opt-bool-branch-apply-constant-pred-rewrites!
+            blocks
+            (opt-label-tail preds)
+            target-label)))]))
 
 (define (opt-bool-branch-fuse-constant-phi!
   [type-segment-bases : i64]
@@ -23582,9 +23677,65 @@
   (No)
   (Some i64 i64 i64 i64 i64))
 
+(defenum OptSwitchCandidate
+  (Candidate i64 i64 i64 i64 i64))
+
 (defenum OptSwitchCandidateList
   (Nil)
-  (Cons i64 i64 i64 i64 i64 (Box OptSwitchCandidateList)))
+  (Dense (Array OptSwitchCandidate) i64))
+
+(define (opt-switch-candidate-ref
+  [items : OptSwitchCandidateList]
+  [index : i64]) : OptSwitchCandidate
+  (match items
+    [(OptSwitchCandidateList.Nil) (OptSwitchCandidate.Candidate -1 -1 -1 -1 -1)]
+    [(OptSwitchCandidateList.Dense slots len)
+      (array-ref slots (- (- len 1) index))]))
+
+(define (opt-switch-candidate-tail [items : OptSwitchCandidateList]) : OptSwitchCandidateList
+  (match items
+    [(OptSwitchCandidateList.Nil) (OptSwitchCandidateList.Nil)]
+    [(OptSwitchCandidateList.Dense slots len)
+      (if (<= len 1)
+        (OptSwitchCandidateList.Nil)
+        (OptSwitchCandidateList.Dense slots (- len 1)))]))
+
+(define (opt-switch-candidate-cons
+  [label : i64]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : i64]
+  [next-label : i64]
+  [items : OptSwitchCandidateList]) : OptSwitchCandidateList
+  (let
+    [candidate : OptSwitchCandidate
+      (OptSwitchCandidate.Candidate label tag eq-var arm-label next-label)]
+    (match items
+      [(OptSwitchCandidateList.Nil)
+        (let
+          [slots : (Array OptSwitchCandidate)
+            (array.make-array OptSwitchCandidate 4)]
+          (begin
+            (array-set! slots 0 candidate)
+            (OptSwitchCandidateList.Dense slots 1)))]
+      [(OptSwitchCandidateList.Dense slots len)
+        (if (< len (array-length slots))
+          (begin
+            (array-set! slots len candidate)
+            (OptSwitchCandidateList.Dense slots (+ len 1)))
+          (let
+            [bigger : (Array OptSwitchCandidate)
+              (array.make-array
+                OptSwitchCandidate
+                (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (array-set! bigger index (array-ref slots index))
+                  (set! index (+ index 1))))
+              (array-set! bigger len candidate)
+              (OptSwitchCandidateList.Dense bigger (+ len 1)))))])))
 
 (defenum OptSwitchMaybeLabel
   (NoLabel)
@@ -23790,74 +23941,93 @@
 (define (opt-switch-candidate-count [items : OptSwitchCandidateList]) : i64
   (match items
     [(OptSwitchCandidateList.Nil) 0]
-    [(OptSwitchCandidateList.Cons _ _ _ _ _ rest)
-      (+ 1 (opt-switch-candidate-count (box-get rest)))]))
+    [(OptSwitchCandidateList.Dense _ len) len]))
 
 (define (opt-switch-candidate-has-tag?
   [items : OptSwitchCandidateList]
   [tag : i64]) : bool
   (match items
     [(OptSwitchCandidateList.Nil) false]
-    [(OptSwitchCandidateList.Cons _ item-tag _ _ _ rest)
-      (if (= item-tag tag)
-        true
-        (opt-switch-candidate-has-tag? (box-get rest) tag))]))
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate _ item-tag _ _ _)
+          (if (= item-tag tag)
+            true
+            (opt-switch-candidate-has-tag?
+              (opt-switch-candidate-tail items)
+              tag))])]))
 
 (define (opt-switch-candidate-has-label?
   [items : OptSwitchCandidateList]
   [label : i64]) : bool
   (match items
     [(OptSwitchCandidateList.Nil) false]
-    [(OptSwitchCandidateList.Cons item-label _ _ _ _ rest)
-      (if (= item-label label)
-        true
-        (opt-switch-candidate-has-label? (box-get rest) label))]))
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate item-label _ _ _ _)
+          (if (= item-label label)
+            true
+            (opt-switch-candidate-has-label?
+              (opt-switch-candidate-tail items)
+              label))])]))
 
 (define (opt-switch-candidate-min-from
   [items : OptSwitchCandidateList]
   [current : i64]) : i64
   (match items
     [(OptSwitchCandidateList.Nil) current]
-    [(OptSwitchCandidateList.Cons _ tag _ _ _ rest)
-      (opt-switch-candidate-min-from
-        (box-get rest)
-        (if (< tag current)
-          tag
-          current))]))
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate _ tag _ _ _)
+          (opt-switch-candidate-min-from
+            (opt-switch-candidate-tail items)
+            (if (< tag current)
+              tag
+              current))])]))
 
 (define (opt-switch-candidate-max-from
   [items : OptSwitchCandidateList]
   [current : i64]) : i64
   (match items
     [(OptSwitchCandidateList.Nil) current]
-    [(OptSwitchCandidateList.Cons _ tag _ _ _ rest)
-      (opt-switch-candidate-max-from
-        (box-get rest)
-        (if (> tag current)
-          tag
-          current))]))
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate _ tag _ _ _)
+          (opt-switch-candidate-max-from
+            (opt-switch-candidate-tail items)
+            (if (> tag current)
+              tag
+              current))])]))
 
 (define (opt-switch-candidate-min [items : OptSwitchCandidateList]) : i64
   (match items
-    [(OptSwitchCandidateList.Cons _ tag _ _ _ rest)
-      (opt-switch-candidate-min-from (box-get rest) tag)]
-    [(OptSwitchCandidateList.Nil) 0]))
+    [(OptSwitchCandidateList.Nil) 0]
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate _ tag _ _ _)
+          (opt-switch-candidate-min-from (opt-switch-candidate-tail items) tag)])]))
 
 (define (opt-switch-candidate-max [items : OptSwitchCandidateList]) : i64
   (match items
-    [(OptSwitchCandidateList.Cons _ tag _ _ _ rest)
-      (opt-switch-candidate-max-from (box-get rest) tag)]
-    [(OptSwitchCandidateList.Nil) 0]))
+    [(OptSwitchCandidateList.Nil) 0]
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate _ tag _ _ _)
+          (opt-switch-candidate-max-from (opt-switch-candidate-tail items) tag)])]))
 
 (define (opt-switch-candidate-label-for-tag
   [items : OptSwitchCandidateList]
   [tag : i64]) : OptSwitchMaybeLabel
   (match items
     [(OptSwitchCandidateList.Nil) (OptSwitchMaybeLabel.NoLabel)]
-    [(OptSwitchCandidateList.Cons _ item-tag _ arm-label _ rest)
-      (if (= item-tag tag)
-        (OptSwitchMaybeLabel.SomeLabel arm-label)
-        (opt-switch-candidate-label-for-tag (box-get rest) tag))]))
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate _ item-tag _ arm-label _)
+          (if (= item-tag tag)
+            (OptSwitchMaybeLabel.SomeLabel arm-label)
+            (opt-switch-candidate-label-for-tag
+              (opt-switch-candidate-tail items)
+              tag))])]))
 
 (define (opt-switch-build-cases-desc
   [items : OptSwitchCandidateList]
@@ -24155,15 +24325,17 @@
     false
     (match items
       [(OptSwitchCandidateList.Nil) true]
-      [(OptSwitchCandidateList.Cons _ _ _ arm-label _ rest)
-        (and
-          (not (opt-switch-candidate-has-label? all-items arm-label))
-          (not (opt-switch-block-starts-with-phi? index arm-label))
-          (opt-switch-targets-safe-from?
-            index
-            all-items
-            (box-get rest)
-            default-label))])))
+      [(OptSwitchCandidateList.Dense _ _)
+        (match (opt-switch-candidate-ref items 0)
+          [(OptSwitchCandidate.Candidate _ _ _ arm-label _)
+            (and
+              (not (opt-switch-candidate-has-label? all-items arm-label))
+              (not (opt-switch-block-starts-with-phi? index arm-label))
+              (opt-switch-targets-safe-from?
+                index
+                all-items
+                (opt-switch-candidate-tail items)
+                default-label))])])))
 
 (define (opt-switch-targets-safe?
   [index : OptCfgIndex]
@@ -24247,13 +24419,13 @@
             chain-index
             label
             (opt-label-add seen label)
-            (OptSwitchCandidateList.Cons
+            (opt-switch-candidate-cons
               label
               tag
               eq-var
               arm-label
               next-label
-              (box items))
+              items)
             head-prefix
             copies))))))
 
@@ -24347,13 +24519,15 @@
   [skip : OptLabelSet]) : OptLabelSet
   (match items
     [(OptSwitchCandidateList.Nil) skip]
-    [(OptSwitchCandidateList.Cons label _ _ _ _ rest)
-      (opt-switch-skip-candidate-labels
-        (box-get rest)
-        first-label
-        (if (= label first-label)
-          skip
-          (opt-label-add skip label)))]))
+    [(OptSwitchCandidateList.Dense _ _)
+      (match (opt-switch-candidate-ref items 0)
+        [(OptSwitchCandidate.Candidate label _ _ _ _)
+          (opt-switch-skip-candidate-labels
+            (opt-switch-candidate-tail items)
+            first-label
+            (if (= label first-label)
+              skip
+              (opt-label-add skip label)))])]))
 
 ;; Rebuilt head block body: the kept unconditional prefix instructions
 ;; (usually none) followed by the Switch terminator.
@@ -27534,9 +27708,60 @@
     AstType
     (Box OptLoopBceCmpEnv)))
 
+(defenum OptLoopBceGuard
+  (Guard i64 OptLoopBceExpr OptLoopBceExpr))
+
 (defenum OptLoopBceGuardEnv
   (Nil)
-  (Cons i64 OptLoopBceExpr OptLoopBceExpr (Box OptLoopBceGuardEnv)))
+  (Dense (Array OptLoopBceGuard) i64))
+
+(define (opt-loop-bce-guard-ref [env : OptLoopBceGuardEnv] [index : i64]) : OptLoopBceGuard
+  (match env
+    [(OptLoopBceGuardEnv.Nil)
+      (OptLoopBceGuard.Guard
+        -1
+        (OptLoopBceExpr.Unknown)
+        (OptLoopBceExpr.Unknown))]
+    [(OptLoopBceGuardEnv.Dense items len) (array-ref items (- (- len 1) index))]))
+
+(define (opt-loop-bce-guard-tail [env : OptLoopBceGuardEnv]) : OptLoopBceGuardEnv
+  (match env
+    [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
+    [(OptLoopBceGuardEnv.Dense items len)
+      (if (<= len 1)
+        (OptLoopBceGuardEnv.Nil)
+        (OptLoopBceGuardEnv.Dense items (- len 1)))]))
+
+(define (opt-loop-bce-guard-cons
+  [label : i64]
+  [index : OptLoopBceExpr]
+  [length : OptLoopBceExpr]
+  [env : OptLoopBceGuardEnv]) : OptLoopBceGuardEnv
+  (let
+    [guard : OptLoopBceGuard (OptLoopBceGuard.Guard label index length)]
+    (match env
+      [(OptLoopBceGuardEnv.Nil)
+        (let
+          [items : (Array OptLoopBceGuard) (array.make-array OptLoopBceGuard 4)]
+          (begin
+            (array-set! items 0 guard)
+            (OptLoopBceGuardEnv.Dense items 1)))]
+      [(OptLoopBceGuardEnv.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (array-set! items len guard)
+            (OptLoopBceGuardEnv.Dense items (+ len 1)))
+          (let
+            [bigger : (Array OptLoopBceGuard)
+              (array.make-array OptLoopBceGuard (opt-dense-next-capacity len))]
+            [slot : i64 0]
+            (begin
+              (while (< slot len)
+                (begin
+                  (array-set! bigger slot (array-ref items slot))
+                  (set! slot (+ slot 1))))
+              (array-set! bigger len guard)
+              (OptLoopBceGuardEnv.Dense bigger (+ len 1)))))])))
 
 (defenum OptRangeFact
   (Nonnegative i64 OptLoopBceExpr)
@@ -27549,6 +27774,9 @@
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
+  ;; Compile-profile ownership follows the already per-program summary bundle.
+  ;; The disabled state is a one-word sentinel and allocates no summary storage.
+  (profile-state profile_state.CompilerProfileState)
   (length-clean opt_i64_i64_map.Map)
   ;; Direct user calls proven not to perform memory writes. LICM consumes this
   ;; to keep descriptor header fields live across read-only helper calls without
@@ -27606,6 +27834,7 @@
 (define (opt-loop-bce-empty-summaries) : OptLoopBceSummaries
   (OptLoopBceSummaries
     false
+    (profile_state.compiler-profile-state-new)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -28408,32 +28637,36 @@
 (define (opt-loop-bce-guard-unbind [env : OptLoopBceGuardEnv] [label : i64]) : OptLoopBceGuardEnv
   (match env
     [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
-    [(OptLoopBceGuardEnv.Cons id index length rest)
-      (let
-        [tail : OptLoopBceGuardEnv
-          (opt-loop-bce-guard-unbind (box-get rest) label)]
-        (if (= id label)
-          tail
-          (OptLoopBceGuardEnv.Cons id index length (box tail))))]))
+    [(OptLoopBceGuardEnv.Dense _ _)
+      (match (opt-loop-bce-guard-ref env 0)
+        [(OptLoopBceGuard.Guard id index length)
+          (let
+            [tail : OptLoopBceGuardEnv
+              (opt-loop-bce-guard-unbind (opt-loop-bce-guard-tail env) label)]
+            (if (= id label)
+              tail
+              (opt-loop-bce-guard-cons id index length tail)))])]))
 
 (define (opt-loop-bce-guard-bind
   [env : OptLoopBceGuardEnv]
   [label : i64]
   [index : OptLoopBceExpr]
   [length : OptLoopBceExpr]) : OptLoopBceGuardEnv
-  (OptLoopBceGuardEnv.Cons
+  (opt-loop-bce-guard-cons
     label
     index
     length
-    (box (opt-loop-bce-guard-unbind env label))))
+    (opt-loop-bce-guard-unbind env label)))
 
 (define (opt-loop-bce-guard-lookup [env : OptLoopBceGuardEnv] [label : i64]) : OptLoopBceGuardEnv
   (match env
     [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
-    [(OptLoopBceGuardEnv.Cons id index length rest)
-      (if (= id label)
-        (OptLoopBceGuardEnv.Cons id index length (box OptLoopBceGuardEnv.Nil))
-        (opt-loop-bce-guard-lookup (box-get rest) label))]))
+    [(OptLoopBceGuardEnv.Dense _ _)
+      (match (opt-loop-bce-guard-ref env 0)
+        [(OptLoopBceGuard.Guard id index length)
+          (if (= id label)
+            (opt-loop-bce-guard-cons id index length (OptLoopBceGuardEnv.Nil))
+            (opt-loop-bce-guard-lookup (opt-loop-bce-guard-tail env) label))])]))
 
 (define (opt-loop-bce-value-expr
   [sources : opt_i64_i64_map.Map]
@@ -28483,15 +28716,19 @@
   [var : i64]) : OptLoopBceGuardEnv
   (match guards
     [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
-    [(OptLoopBceGuardEnv.Cons label index length rest)
-      (let
-        [tail : OptLoopBceGuardEnv
-          (opt-loop-bce-guard-invalidate-var (box-get rest) var)]
-        (if (or
-          (opt-loop-bce-expr-uses-var? index var)
-          (opt-loop-bce-expr-uses-var? length var))
-          tail
-          (OptLoopBceGuardEnv.Cons label index length (box tail))))]))
+    [(OptLoopBceGuardEnv.Dense _ _)
+      (match (opt-loop-bce-guard-ref guards 0)
+        [(OptLoopBceGuard.Guard label index length)
+          (let
+            [tail : OptLoopBceGuardEnv
+              (opt-loop-bce-guard-invalidate-var
+                (opt-loop-bce-guard-tail guards)
+                var)]
+            (if (or
+              (opt-loop-bce-expr-uses-var? index var)
+              (opt-loop-bce-expr-uses-var? length var))
+              tail
+              (opt-loop-bce-guard-cons label index length tail)))])]))
 
 (define (opt-range-fact-uses-var? [fact : OptRangeFact] [var : i64]) : bool
   (match fact
@@ -28653,13 +28890,17 @@
 (define (opt-loop-bce-label-set-other-than [labels : OptLabelSet] [skip : i64]) : OptLoopBceMaybeLabel
   (match labels
     [(OptLabelSet.Nil) (OptLoopBceMaybeLabel.NoLabel)]
-    [(OptLabelSet.Cons label rest)
-      (if (= label skip)
-        (opt-loop-bce-label-set-other-than (box-get rest) skip)
-        (match (opt-loop-bce-label-set-other-than (box-get rest) skip)
-          [(OptLoopBceMaybeLabel.NoLabel)
-            (OptLoopBceMaybeLabel.SomeLabel label)]
-          [(OptLoopBceMaybeLabel.SomeLabel _) (OptLoopBceMaybeLabel.NoLabel)]))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref labels 0)]
+        (if (= label skip)
+          (opt-loop-bce-label-set-other-than (opt-label-tail labels) skip)
+          (match (opt-loop-bce-label-set-other-than
+            (opt-label-tail labels)
+            skip)
+            [(OptLoopBceMaybeLabel.NoLabel)
+              (OptLoopBceMaybeLabel.SomeLabel label)]
+            [(OptLoopBceMaybeLabel.SomeLabel _) (OptLoopBceMaybeLabel.NoLabel)])))]))
 
 (define (opt-loop-bce-defines-var? [instr : CompilerIrInstr] [var : i64]) : bool
   (= (opt-gvn-instr-dst instr) var))
@@ -28856,30 +29097,32 @@
   [seen-latch : bool]) : OptLoopBceHeaderEdges
   (match preds
     [(OptLabelSet.Nil) (OptLoopBceHeaderEdges.Edges true seen-init seen-latch)]
-    [(OptLabelSet.Cons pred rest)
-      (match (opt-cfg-find-block blocks pred)
-        [(OptMaybeBlock.Some block)
-          (let
-            [init? : bool (opt-loop-bce-block-last-def-zero? block index-var)]
-            [latch? : bool
-              (and
-                (opt-loop-bce-block-last-def-increment?
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred : i64 (opt-label-ref preds 0)]
+        (match (opt-cfg-find-block blocks pred)
+          [(OptMaybeBlock.Some block)
+            (let
+              [init? : bool (opt-loop-bce-block-last-def-zero? block index-var)]
+              [latch? : bool
+                (and
+                  (opt-loop-bce-block-last-def-increment?
+                    type-segment-bases
+                    block
+                    index-var)
+                  (opt-loop-bce-block-jumps-to? block header-label))]
+              (if (or init? latch?)
+                (opt-loop-bce-header-edge-shape
                   type-segment-bases
-                  block
-                  index-var)
-                (opt-loop-bce-block-jumps-to? block header-label))]
-            (if (or init? latch?)
-              (opt-loop-bce-header-edge-shape
-                type-segment-bases
-                blocks
-                (box-get rest)
-                header-label
-                index-var
-                (or seen-init init?)
-                (or seen-latch latch?))
-              (OptLoopBceHeaderEdges.Edges false seen-init seen-latch)))]
-        [(OptMaybeBlock.No)
-          (OptLoopBceHeaderEdges.Edges false seen-init seen-latch)])]))
+                  blocks
+                  (opt-label-tail preds)
+                  header-label
+                  index-var
+                  (or seen-init init?)
+                  (or seen-latch latch?))
+                (OptLoopBceHeaderEdges.Edges false seen-init seen-latch)))]
+          [(OptMaybeBlock.No)
+            (OptLoopBceHeaderEdges.Edges false seen-init seen-latch)]))]))
 
 (define (opt-loop-bce-guard-nonnegative?
   [type-segment-bases : i64]
@@ -29260,17 +29503,22 @@
                   (struct-get range-state ranges)
                   block-label
                   lhs)
-                (match (opt-loop-bce-guard-lookup
-                  (struct-get state guards)
-                  block-label)
-                  [(OptLoopBceGuardEnv.Cons _ found found-marker _)
-                    (and
-                      (opt-loop-bce-expr-eq type-segment-bases found lhs)
-                      (opt-loop-bce-expr-eq
-                        type-segment-bases
-                        found-marker
-                        marker))]
-                  [(OptLoopBceGuardEnv.Nil) false]))]
+                (let
+                  [guard : OptLoopBceGuardEnv
+                    (opt-loop-bce-guard-lookup
+                      (struct-get state guards)
+                      block-label)]
+                  (match guard
+                    [(OptLoopBceGuardEnv.Nil) false]
+                    [(OptLoopBceGuardEnv.Dense _ _)
+                      (match (opt-loop-bce-guard-ref guard 0)
+                        [(OptLoopBceGuard.Guard _ found found-marker)
+                          (and
+                            (opt-loop-bce-expr-eq type-segment-bases found lhs)
+                            (opt-loop-bce-expr-eq
+                              type-segment-bases
+                              found-marker
+                              marker))])])))]
             [loop-nonnegative : bool
               (opt-loop-bce-guard-nonnegative?
                 type-segment-bases
@@ -29739,15 +29987,26 @@
           type-segment-bases
           (struct-get state lengths)
           length-expr)
-        (match (opt-loop-bce-guard-lookup (struct-get state guards) block-label)
-          [(OptLoopBceGuardEnv.Cons _ guard-index guard-length _)
-            (and
-              (opt-loop-bce-expr-eq
-                type-segment-bases
-                guard-index
-                (opt-loop-bce-value-expr sources (struct-get state exprs) index))
-              (opt-loop-bce-expr-eq type-segment-bases guard-length length-expr))]
-          [(OptLoopBceGuardEnv.Nil) false])))))
+        (let
+          [guard : OptLoopBceGuardEnv
+            (opt-loop-bce-guard-lookup (struct-get state guards) block-label)]
+          (match guard
+            [(OptLoopBceGuardEnv.Nil) false]
+            [(OptLoopBceGuardEnv.Dense _ _)
+              (match (opt-loop-bce-guard-ref guard 0)
+                [(OptLoopBceGuard.Guard _ guard-index guard-length)
+                  (and
+                    (opt-loop-bce-expr-eq
+                      type-segment-bases
+                      guard-index
+                      (opt-loop-bce-value-expr
+                        sources
+                        (struct-get state exprs)
+                        index))
+                    (opt-loop-bce-expr-eq
+                      type-segment-bases
+                      guard-length
+                      length-expr))])]))))))
 
 (define (opt-loop-bce-rewrite-instr-seq-from
   [type-segment-bases : i64]
@@ -30414,17 +30673,26 @@
           (struct-get state ranges)
           parent-label
           child-label))]
-    (match (opt-loop-bce-guard-lookup
-      (struct-get range-state guards)
-      child-label)
-      [(OptLoopBceGuardEnv.Cons _ _ _ _) range-state]
+    [child-guard : OptLoopBceGuardEnv
+      (opt-loop-bce-guard-lookup (struct-get range-state guards) child-label)]
+    (match child-guard
+      [(OptLoopBceGuardEnv.Dense _ _) range-state]
       [(OptLoopBceGuardEnv.Nil)
-        (match (opt-loop-bce-guard-lookup
-          (struct-get range-state guards)
-          parent-label)
-          [(OptLoopBceGuardEnv.Cons _ index length _)
-            (opt-loop-bce-state-bind-guard range-state child-label index length)]
-          [(OptLoopBceGuardEnv.Nil) range-state])])))
+        (let
+          [parent-guard : OptLoopBceGuardEnv
+            (opt-loop-bce-guard-lookup
+              (struct-get range-state guards)
+              parent-label)]
+          (match parent-guard
+            [(OptLoopBceGuardEnv.Nil) range-state]
+            [(OptLoopBceGuardEnv.Dense _ _)
+              (match (opt-loop-bce-guard-ref parent-guard 0)
+                [(OptLoopBceGuard.Guard _ index length)
+                  (opt-loop-bce-state-bind-guard
+                    range-state
+                    child-label
+                    index
+                    length)])]))])))
 
 ;; --- affine chain folding (codegen phase 6) ----------------------------------
 ;;
@@ -33695,21 +33963,17 @@
 
 ;; A self-loop candidate must have exactly one predecessor besides itself.
 (define (opt-unroll-simd-outside-pred [preds : OptLabelSet] [loop-label : i64]) : OptLoopPreheader
-  (match preds
-    [(OptLabelSet.Cons first first-rest)
-      (match (box-get first-rest)
-        [(OptLabelSet.Cons second second-rest)
-          (match (box-get second-rest)
-            [(OptLabelSet.Nil)
-              (cond
-                [(and (= first loop-label) (!= second loop-label))
-                  (OptLoopPreheader.Some second)]
-                [(and (= second loop-label) (!= first loop-label))
-                  (OptLoopPreheader.Some first)]
-                [else (OptLoopPreheader.No)])]
-            [_ (OptLoopPreheader.No)])]
-        [_ (OptLoopPreheader.No)])]
-    [_ (OptLoopPreheader.No)]))
+  (if (= (opt-label-count preds) 2)
+    (let
+      [first : i64 (opt-label-ref preds 0)]
+      [second : i64 (opt-label-ref preds 1)]
+      (cond
+        [(and (= first loop-label) (!= second loop-label))
+          (OptLoopPreheader.Some second)]
+        [(and (= second loop-label) (!= first loop-label))
+          (OptLoopPreheader.Some first)]
+        [else (OptLoopPreheader.No)]))
+    (OptLoopPreheader.No)))
 
 ;; Direct gang unrolling advances the scalar index once per group. Every
 ;; VectorLoad must therefore read the canonical counter from the same base and
@@ -36127,13 +36391,15 @@
   [body-labels : OptLabelSet]) : bool
   (match body-labels
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
-      (if (opt-cfg-block-exists?
-        blocks
-        (compiler-ir-label
-          (string.append (compiler-ir-label-text label) "__bce_fast")))
-        false
-        (opt-bce-mb-fast-labels-fresh? blocks (box-get rest)))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref body-labels 0)]
+        (if (opt-cfg-block-exists?
+          blocks
+          (compiler-ir-label
+            (string.append (compiler-ir-label-text label) "__bce_fast")))
+          false
+          (opt-bce-mb-fast-labels-fresh? blocks (opt-label-tail body-labels))))]))
 
 (define (opt-bce-mb-loop-shape-finish
   [blocks : CompilerIrBlockList]
@@ -36454,9 +36720,53 @@
 ;; Underivable checks kept in the fast clone, identified by (block label,
 ;; instruction index) -- both walks visit `shape body-blocks` in order, so the
 ;; pair is a stable identity between guard derivation and cloning.
+(defenum OptBceMbKeepEntry
+  (Entry i64 i64))
+
 (defenum OptBceMbKeep
   (Nil)
-  (Cons i64 i64 (Box OptBceMbKeep)))
+  (Dense (Array OptBceMbKeepEntry) i64))
+
+(define (opt-bce-mb-keep-ref [keep : OptBceMbKeep] [index : i64]) : OptBceMbKeepEntry
+  (match keep
+    [(OptBceMbKeep.Nil) (OptBceMbKeepEntry.Entry -1 -1)]
+    [(OptBceMbKeep.Dense items len) (array-ref items (- (- len 1) index))]))
+
+(define (opt-bce-mb-keep-tail [keep : OptBceMbKeep]) : OptBceMbKeep
+  (match keep
+    [(OptBceMbKeep.Nil) (OptBceMbKeep.Nil)]
+    [(OptBceMbKeep.Dense items len)
+      (if (<= len 1)
+        (OptBceMbKeep.Nil)
+        (OptBceMbKeep.Dense items (- len 1)))]))
+
+(define (opt-bce-mb-keep-cons [label : i64] [index : i64] [keep : OptBceMbKeep]) : OptBceMbKeep
+  (let
+    [entry : OptBceMbKeepEntry (OptBceMbKeepEntry.Entry label index)]
+    (match keep
+      [(OptBceMbKeep.Nil)
+        (let
+          [items : (Array OptBceMbKeepEntry)
+            (array.make-array OptBceMbKeepEntry 4)]
+          (begin
+            (array-set! items 0 entry)
+            (OptBceMbKeep.Dense items 1)))]
+      [(OptBceMbKeep.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (array-set! items len entry)
+            (OptBceMbKeep.Dense items (+ len 1)))
+          (let
+            [bigger : (Array OptBceMbKeepEntry)
+              (array.make-array OptBceMbKeepEntry (opt-dense-next-capacity len))]
+            [slot : i64 0]
+            (begin
+              (while (< slot len)
+                (begin
+                  (array-set! bigger slot (array-ref items slot))
+                  (set! slot (+ slot 1))))
+              (array-set! bigger len entry)
+              (OptBceMbKeep.Dense bigger (+ len 1)))))])))
 
 (define (opt-bce-mb-keep-contains?
   [keep : OptBceMbKeep]
@@ -36464,10 +36774,12 @@
   [index : i64]) : bool
   (match keep
     [(OptBceMbKeep.Nil) false]
-    [(OptBceMbKeep.Cons item-label item-index rest)
-      (if (and (= item-index index) (= item-label label))
-        true
-        (opt-bce-mb-keep-contains? (box-get rest) label index))]))
+    [(OptBceMbKeep.Dense _ _)
+      (match (opt-bce-mb-keep-ref keep 0)
+        [(OptBceMbKeepEntry.Entry item-label item-index)
+          (if (and (= item-index index) (= item-label label))
+            true
+            (opt-bce-mb-keep-contains? (opt-bce-mb-keep-tail keep) label index))])]))
 
 ;; An index expression represented as either a literal or `base + offset`.
 ;; Opaque SSA definitions are valid bases: this recognizes both an explicit
@@ -36621,9 +36933,71 @@
 ;; At that point the exhaustive dispatch loop has its final CFG shape. Pairing
 ;; edits those blocks in place: it never invokes BCE, versions a loop, or clones
 ;; a block.
+(defenum OptLateBoundsPairEntry
+  (Entry i64 i64 i64 bool CompilerIrValue))
+
 (defenum OptLateBoundsPairPlan
   (Nil)
-  (Cons i64 i64 i64 bool CompilerIrValue (Box OptLateBoundsPairPlan)))
+  (Dense (Array OptLateBoundsPairEntry) i64))
+
+(define (opt-late-bounds-pair-plan-ref
+  [plans : OptLateBoundsPairPlan]
+  [index : i64]) : OptLateBoundsPairEntry
+  (match plans
+    [(OptLateBoundsPairPlan.Nil)
+      (OptLateBoundsPairEntry.Entry -1 -1 -1 false (CompilerIrValue.I64 0))]
+    [(OptLateBoundsPairPlan.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-late-bounds-pair-plan-tail [plans : OptLateBoundsPairPlan]) : OptLateBoundsPairPlan
+  (match plans
+    [(OptLateBoundsPairPlan.Nil) (OptLateBoundsPairPlan.Nil)]
+    [(OptLateBoundsPairPlan.Dense items len)
+      (if (<= len 1)
+        (OptLateBoundsPairPlan.Nil)
+        (OptLateBoundsPairPlan.Dense items (- len 1)))]))
+
+(define (opt-late-bounds-pair-plan-cons
+  [label : i64]
+  [first : i64]
+  [second : i64]
+  [first-smaller : bool]
+  [second-value : CompilerIrValue]
+  [plans : OptLateBoundsPairPlan]) : OptLateBoundsPairPlan
+  (let
+    [entry : OptLateBoundsPairEntry
+      (OptLateBoundsPairEntry.Entry
+        label
+        first
+        second
+        first-smaller
+        second-value)]
+    (match plans
+      [(OptLateBoundsPairPlan.Nil)
+        (let
+          [items : (Array OptLateBoundsPairEntry)
+            (array.make-array OptLateBoundsPairEntry 4)]
+          (begin
+            (array-set! items 0 entry)
+            (OptLateBoundsPairPlan.Dense items 1)))]
+      [(OptLateBoundsPairPlan.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (array-set! items len entry)
+            (OptLateBoundsPairPlan.Dense items (+ len 1)))
+          (let
+            [bigger : (Array OptLateBoundsPairEntry)
+              (array.make-array
+                OptLateBoundsPairEntry
+                (opt-dense-next-capacity len))]
+            [slot : i64 0]
+            (begin
+              (while (< slot len)
+                (begin
+                  (array-set! bigger slot (array-ref items slot))
+                  (set! slot (+ slot 1))))
+              (array-set! bigger len entry)
+              (OptLateBoundsPairPlan.Dense bigger (+ len 1)))))])))
 
 (defenum OptLateBoundsPairAt
   (No)
@@ -36718,13 +37092,13 @@
                     defs
                     (OptLateBoundsPairCollect
                       (CompilerIrMaybeValue.Some invariant-length)
-                      (OptLateBoundsPairPlan.Cons
+                      (opt-late-bounds-pair-plan-cons
                         label
                         index
                         second
                         first-smaller
                         second-value
-                        (box (struct-get state plans)))
+                        (struct-get state plans))
                       (+ (struct-get state count) 1)))]))])]
       [_
         (opt-late-bounds-pair-collect-block
@@ -36769,18 +37143,22 @@
   [index : i64]) : OptLateBoundsPairAt
   (match plans
     [(OptLateBoundsPairPlan.Nil) (OptLateBoundsPairAt.No)]
-    [(OptLateBoundsPairPlan.Cons
-        item-label
-        first
-        second
-        first-smaller
-        second-value
-        rest)
-      (if (and (= item-label label) (= index first))
-        (OptLateBoundsPairAt.First first-smaller second-value)
-        (if (and (= item-label label) (= index second))
-          (OptLateBoundsPairAt.Second)
-          (opt-late-bounds-pair-at (box-get rest) label index)))]))
+    [(OptLateBoundsPairPlan.Dense _ _)
+      (match (opt-late-bounds-pair-plan-ref plans 0)
+        [(OptLateBoundsPairEntry.Entry
+            item-label
+            first
+            second
+            first-smaller
+            second-value)
+          (if (and (= item-label label) (= index first))
+            (OptLateBoundsPairAt.First first-smaller second-value)
+            (if (and (= item-label label) (= index second))
+              (OptLateBoundsPairAt.Second)
+              (opt-late-bounds-pair-at
+                (opt-late-bounds-pair-plan-tail plans)
+                label
+                index)))])]))
 
 (define (opt-late-bounds-pair-subst-env [substs : OptLateBoundsPairSubst]) : OptCopyEnv
   (match substs
@@ -37164,6 +37542,27 @@
 ;; whose whole-function use census is exactly that one check is provably dead
 ;; afterwards. Any other reader keeps the def -- the subtraction still reads
 ;; through the cast, it just does not get to delete it.
+(define (opt-late-bounds-pair-dead-cast-add
+  [body-blocks : CompilerIrBlockList]
+  [uses : (Array i64)]
+  [label : i64]
+  [first : i64]
+  [first-smaller : bool]
+  [acc : OptLateBoundsPairDrop]) : OptLateBoundsPairDrop
+  (if first-smaller
+    acc
+    (match (opt-late-bounds-pair-check-index body-blocks label first)
+      [(CompilerIrMaybeValue.No) acc]
+      [(CompilerIrMaybeValue.Some first-index)
+        (match first-index
+          [(CompilerIrValue.Var var)
+            (if (and
+              (opt-late-bounds-pair-reinterpret-def? body-blocks var)
+              (= (opt-late-bounds-pair-use-count uses var) 1))
+              (OptLateBoundsPairDrop.Cons var (box acc))
+              acc)]
+          [_ acc])])))
+
 (define (opt-late-bounds-pair-dead-casts
   [body-blocks : CompilerIrBlockList]
   [uses : (Array i64)]
@@ -37171,24 +37570,20 @@
   [acc : OptLateBoundsPairDrop]) : OptLateBoundsPairDrop
   (match plans
     [(OptLateBoundsPairPlan.Nil) acc]
-    [(OptLateBoundsPairPlan.Cons label first _ first-smaller _ rest)
-      (opt-late-bounds-pair-dead-casts
-        body-blocks
-        uses
-        (box-get rest)
-        (if first-smaller
-          acc
-          (match (opt-late-bounds-pair-check-index body-blocks label first)
-            [(CompilerIrMaybeValue.No) acc]
-            [(CompilerIrMaybeValue.Some first-index)
-              (match first-index
-                [(CompilerIrValue.Var var)
-                  (if (and
-                    (opt-late-bounds-pair-reinterpret-def? body-blocks var)
-                    (= (opt-late-bounds-pair-use-count uses var) 1))
-                    (OptLateBoundsPairDrop.Cons var (box acc))
-                    acc)]
-                [_ acc])])))]))
+    [(OptLateBoundsPairPlan.Dense _ _)
+      (match (opt-late-bounds-pair-plan-ref plans 0)
+        [(OptLateBoundsPairEntry.Entry label first _ first-smaller _)
+          (opt-late-bounds-pair-dead-casts
+            body-blocks
+            uses
+            (opt-late-bounds-pair-plan-tail plans)
+            (opt-late-bounds-pair-dead-cast-add
+              body-blocks
+              uses
+              label
+              first
+              first-smaller
+              acc))])]))
 
 (define (opt-late-bounds-pair-try-loop
   [blocks : CompilerIrBlockList]
@@ -37518,10 +37913,7 @@
                     ;; clone instead of rejecting the whole loop.
                     (OptBceMbDerive
                       (struct-get state guard)
-                      (OptBceMbKeep.Cons
-                        label
-                        index
-                        (box (struct-get state keep)))
+                      (opt-bce-mb-keep-cons label index (struct-get state keep))
                       (struct-get state derived))]
                   [(OptBceVersionGuardAcc.Some _ _ _)
                     (OptBceMbDerive
@@ -37531,7 +37923,7 @@
             [(CompilerIrMaybeValue.No)
               (OptBceMbDerive
                 (struct-get state guard)
-                (OptBceMbKeep.Cons label index (box (struct-get state keep)))
+                (opt-bce-mb-keep-cons label index (struct-get state keep))
                 (struct-get state derived))])]
         [_ state]))))
 
@@ -38109,13 +38501,15 @@
 (define (opt-bce-mb-fast-labels-from [labels : OptLabelSet] [acc : OptLabelSet]) : OptLabelSet
   (match labels
     [(OptLabelSet.Nil) acc]
-    [(OptLabelSet.Cons label rest)
+    [(OptLabelSet.Dense _ _)
       (opt-bce-mb-fast-labels-from
-        (box-get rest)
+        (opt-label-tail labels)
         (opt-label-add
           acc
           (compiler-ir-label
-            (string.append (compiler-ir-label-text label) "__bce_fast"))))]))
+            (string.append
+              (compiler-ir-label-text (opt-label-ref labels 0))
+              "__bce_fast"))))]))
 
 ;; Is `var` defined by a Phi instruction in this block's instruction seq?
 (define (opt-bce-mb-block-phi-var?
@@ -38472,15 +38866,12 @@
             [preds : OptLabelSet
               (opt-bce-mb-preds-from blocks label (OptLabelSet.Nil))]
             (if (= (opt-label-count preds) 1)
-              (match preds
-                [(OptLabelSet.Cons pred _)
-                  (opt-bce-mb-strict-check-chain?
-                    blocks
-                    pred
-                    bound
-                    len
-                    (- fuel 1))]
-                [_ false])
+              (opt-bce-mb-strict-check-chain?
+                blocks
+                (opt-label-ref preds 0)
+                bound
+                len
+                (- fuel 1))
               false)))))))
 
 ;; Retarget every fast-clone block's terminators from the shared exit to the
@@ -39349,36 +39740,39 @@
 (define (opt-unroll-mb-all-fast-labels? [labels : OptLabelSet]) : bool
   (match labels
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
+    [(OptLabelSet.Dense _ _)
       (let
+        [label : i64 (opt-label-ref labels 0)]
         [marker : String "__bce_fast"]
         [text : String (compiler-ir-label-text label)]
         (and
           (string.contains (& text) (& marker))
-          (opt-unroll-mb-all-fast-labels? (box-get rest))))]))
+          (opt-unroll-mb-all-fast-labels? (opt-label-tail labels))))]))
 
 (define (opt-unroll-mb-labels-fresh?
   [blocks : CompilerIrBlockList]
   [labels : OptLabelSet]) : bool
   (match labels
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
-      (and
-        (not
-          (opt-cfg-block-exists?
-            blocks
-            (compiler-ir-label
-              (string.append
-                (compiler-ir-label-text label)
-                (opt-unroll-mb-copy-suffix 0)))))
-        (not
-          (opt-cfg-block-exists?
-            blocks
-            (compiler-ir-label
-              (string.append
-                (compiler-ir-label-text label)
-                (opt-unroll-mb-copy-suffix 1)))))
-        (opt-unroll-mb-labels-fresh? blocks (box-get rest)))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref labels 0)]
+        (and
+          (not
+            (opt-cfg-block-exists?
+              blocks
+              (compiler-ir-label
+                (string.append
+                  (compiler-ir-label-text label)
+                  (opt-unroll-mb-copy-suffix 0)))))
+          (not
+            (opt-cfg-block-exists?
+              blocks
+              (compiler-ir-label
+                (string.append
+                  (compiler-ir-label-text label)
+                  (opt-unroll-mb-copy-suffix 1)))))
+          (opt-unroll-mb-labels-fresh? blocks (opt-label-tail labels))))]))
 
 (define (opt-unroll-mb-block-jumps-to?
   [blocks : CompilerIrBlockList]
@@ -41860,26 +42254,28 @@
   [dst : i64]) : OptSuccessorSinkMaybeLabel
   (match successors
     [(OptLabelSet.Nil) (OptSuccessorSinkMaybeLabel.No)]
-    [(OptLabelSet.Cons target rest)
-      (if (opt-successor-sink-target-all-uses?
-        frame
-        cfg
-        total-uses
-        allowed-uses
-        moves
-        source
-        target
-        dst)
-        (OptSuccessorSinkMaybeLabel.Some target)
-        (opt-successor-sink-find-target
+    [(OptLabelSet.Dense _ _)
+      (let
+        [target : i64 (opt-label-ref successors 0)]
+        (if (opt-successor-sink-target-all-uses?
           frame
           cfg
           total-uses
           allowed-uses
           moves
           source
-          (box-get rest)
-          dst))]))
+          target
+          dst)
+          (OptSuccessorSinkMaybeLabel.Some target)
+          (opt-successor-sink-find-target
+            frame
+            cfg
+            total-uses
+            allowed-uses
+            moves
+            source
+            (opt-label-tail successors)
+            dst)))]))
 
 (define (opt-successor-sink-collect-instr-list-uses!
   [instrs : CompilerIrInstrList]
@@ -43094,7 +43490,11 @@
           [_p-tailrec : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "tailrec" name _t-tailrec)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "tailrec"
+                name
+                _t-tailrec)
               unit)]
           ;; Substitute proven constant-global operands up front so the local
           ;; folds below see literals: a mask global otherwise keeps its `and`
@@ -43128,7 +43528,11 @@
           [_p-fold : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "fold" name _t-fold)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "fold"
+                name
+                _t-fold)
               unit)]
           [_t-affine : i64 (cfg compile-profile (profile.now-ms) 0)]
           [affine-candidate? : bool (opt-affine-blocks-have-candidate? folded)]
@@ -43150,7 +43554,11 @@
           [_p-affine : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "affine" name _t-affine)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "affine"
+                name
+                _t-affine)
               unit)]
           [loop-bce : CompilerIrBlockList
             (if (struct-get summaries enabled)
@@ -43167,7 +43575,11 @@
           [_p-promote : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "stack_promote" name _t-promote)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "stack_promote"
+                name
+                _t-promote)
               unit)]
           (match promoted
             [(CompilerIrFunction.Function _ _ _ promoted-frame promoted-blocks)
@@ -43191,7 +43603,11 @@
                 [_p-sroa : unit
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-pass-finish "sroa" name _t-sroa)
+                    (compiler-opt-profile-pass-finish
+                      (struct-get summaries profile-state)
+                      "sroa"
+                      name
+                      _t-sroa)
                     unit)]
                 (match sroa
                   [(CompilerIrFunction.Function _ _ _ _ sroa-blocks)
@@ -43242,6 +43658,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "rotation"
                             name
                             _t-rotation)
@@ -43272,7 +43689,11 @@
                       [_p-ssa : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "ssa" name _t-ssa)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "ssa"
+                            name
+                            _t-ssa)
                           unit)]
                       [ssa-frame : i64 (opt-function-frame ssa)]
                       [ssa-blocks : CompilerIrBlockList
@@ -43297,7 +43718,11 @@
                       [_p-gvn : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "gvn" name _t-gvn)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "gvn"
+                            name
+                            _t-gvn)
                           unit)]
                       ;; Dominated bounds-check dedup rides the same context:
                       ;; it only deletes mid-block BoundsCheck instructions, so
@@ -43335,6 +43760,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "bounds_dom"
                             name
                             _t-bounds-dom)
@@ -43375,7 +43801,11 @@
                       [_p-sccp : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "sccp" name _t-sccp)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "sccp"
+                            name
+                            _t-sccp)
                           unit)]
                       [_t-bool-branch : i64
                         (cfg compile-profile (profile.now-ms) 0)]
@@ -43418,6 +43848,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "bool_branch"
                             name
                             _t-bool-branch)
@@ -43450,7 +43881,11 @@
                       [_p-cfg2 : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "cfg" name _t-cfg2)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "cfg"
+                            name
+                            _t-cfg2)
                           unit)]
                       [_t-switch : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [switch-input : CompilerIrFunction
@@ -43485,6 +43920,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "switch"
                             name
                             _t-switch)
@@ -43554,6 +43990,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "preheaders"
                             name
                             _t-preheaders)
@@ -43580,6 +44017,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "rotate_ssa"
                             name
                             _t-rotate-ssa)
@@ -43607,6 +44045,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "scratch_reset"
                             name
                             _t-scratch-reset)
@@ -43633,7 +44072,11 @@
                       [_p-licm : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "licm" name _t-licm)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "licm"
+                            name
+                            _t-licm)
                           unit)]
                       ;; Run successor sinking while block-local address recipes
                       ;; are still explicit. Induction strength reduction below
@@ -43679,6 +44122,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "induction"
                             name
                             _t-induction)
@@ -43710,6 +44154,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "bce_version"
                             name
                             _t-bce-version)
@@ -43741,6 +44186,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "unroll"
                             name
                             _t-unroll)
@@ -43793,6 +44239,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "global_gvn"
                             name
                             _t-global)
@@ -43831,6 +44278,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "divrem_safety"
                             name
                             _t-divrem-safety)
@@ -43861,6 +44309,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "gep_split"
                             name
                             _t-gep-split)
@@ -43880,6 +44329,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "cmp_sink"
                             name
                             _t-cmp-sink)
@@ -43917,6 +44367,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "successor_sink"
                             name
                             _t-successor-sink)
@@ -43967,6 +44418,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "bool_branch_late"
                             name
                             _t-bool-branch-late)
@@ -43991,7 +44443,11 @@
                       [_p-dce : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "dce" name _t-dce)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "dce"
+                            name
+                            _t-dce)
                           unit)]
                       (CompilerIrFunction.Function
                         name
@@ -44042,7 +44498,11 @@
         [_p-fold : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-pass-finish "fold" name _t-fold)
+            (compiler-opt-profile-pass-finish
+              (struct-get summaries profile-state)
+              "fold"
+              name
+              _t-fold)
             unit)]
         [loop-bce : CompilerIrBlockList
           (if (struct-get summaries enabled)
@@ -44059,7 +44519,11 @@
         [_p-promote : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-pass-finish "stack_promote" name _t-promote)
+            (compiler-opt-profile-pass-finish
+              (struct-get summaries profile-state)
+              "stack_promote"
+              name
+              _t-promote)
             unit)]
         (match promoted
           [(CompilerIrFunction.Function _ _ _ promoted-frame promoted-blocks)
@@ -44078,7 +44542,11 @@
               [_p-cfg : unit
                 (cfg
                   compile-profile
-                  (compiler-opt-profile-pass-finish "cfg" name _t-cfg)
+                  (compiler-opt-profile-pass-finish
+                    (struct-get summaries profile-state)
+                    "cfg"
+                    name
+                    _t-cfg)
                   unit)]
               (OptLevel1PreDceResult.Result
                 (CompilerIrFunction.Function
@@ -44116,7 +44584,11 @@
             [_p-dce : unit
               (cfg
                 compile-profile
-                (compiler-opt-profile-pass-finish "dce" name _t-dce)
+                (compiler-opt-profile-pass-finish
+                  (struct-get summaries profile-state)
+                  "dce"
+                  name
+                  _t-dce)
                 unit)]
             (CompilerIrFunction.Function name params ret-ty frame dced))])]))
 
@@ -44449,6 +44921,7 @@
           (cfg
             compile-profile
             (compiler-opt-profile-detail-finish
+              (struct-get summaries profile-state)
               "function"
               (compiler-opt-profile-function-name func)))]
         (compiler-ir-function-cons
@@ -44500,6 +44973,7 @@
           (cfg
             compile-profile
             (compiler-opt-profile-detail-finish
+              (struct-get summaries profile-state)
               "function"
               (compiler-opt-profile-function-name func)))]
         (compiler-ir-function-cons
@@ -45700,9 +46174,62 @@
 (defenum OptInlineState
   (State CompilerIrInstrList i64 i64))
 
+(defenum OptInlinePredRename
+  (Rename i64 i64))
+
 (defenum OptInlinePredRenameList
   (Nil)
-  (Cons i64 i64 (Box OptInlinePredRenameList)))
+  (Dense (Array OptInlinePredRename) i64))
+
+(define (opt-inline-pred-rename-ref
+  [renames : OptInlinePredRenameList]
+  [index : i64]) : OptInlinePredRename
+  (match renames
+    [(OptInlinePredRenameList.Nil) (OptInlinePredRename.Rename -1 -1)]
+    [(OptInlinePredRenameList.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-inline-pred-renames-tail [renames : OptInlinePredRenameList]) : OptInlinePredRenameList
+  (match renames
+    [(OptInlinePredRenameList.Nil) (OptInlinePredRenameList.Nil)]
+    [(OptInlinePredRenameList.Dense items len)
+      (if (<= len 1)
+        (OptInlinePredRenameList.Nil)
+        (OptInlinePredRenameList.Dense items (- len 1)))]))
+
+(define (opt-inline-pred-renames-cons
+  [old-label : i64]
+  [new-label : i64]
+  [renames : OptInlinePredRenameList]) : OptInlinePredRenameList
+  (let
+    [rename : OptInlinePredRename
+      (OptInlinePredRename.Rename old-label new-label)]
+    (match renames
+      [(OptInlinePredRenameList.Nil)
+        (let
+          [items : (Array OptInlinePredRename)
+            (array.make-array OptInlinePredRename 4)]
+          (begin
+            (array-set! items 0 rename)
+            (OptInlinePredRenameList.Dense items 1)))]
+      [(OptInlinePredRenameList.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (array-set! items len rename)
+            (OptInlinePredRenameList.Dense items (+ len 1)))
+          (let
+            [bigger : (Array OptInlinePredRename)
+              (array.make-array
+                OptInlinePredRename
+                (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (array-set! bigger index (array-ref items index))
+                  (set! index (+ index 1))))
+              (array-set! bigger len rename)
+              (OptInlinePredRenameList.Dense bigger (+ len 1)))))])))
 
 (defenum OptInlineBlocks
   (Blocks CompilerIrBlockList i64 i64))
@@ -46084,10 +46611,12 @@
   [renames : OptInlinePredRenameList]) : CompilerIrBlockList
   (match renames
     [(OptInlinePredRenameList.Nil) blocks]
-    [(OptInlinePredRenameList.Cons old-label new-label rest)
-      (opt-inline-repair-phi-predecessors
-        (opt-inline-repair-successor-phis blocks old-label new-label)
-        (box-get rest))]))
+    [(OptInlinePredRenameList.Dense _ _)
+      (match (opt-inline-pred-rename-ref renames 0)
+        [(OptInlinePredRename.Rename old-label new-label)
+          (opt-inline-repair-phi-predecessors
+            (opt-inline-repair-successor-phis blocks old-label new-label)
+            (opt-inline-pred-renames-tail renames))])]))
 
 (define (opt-inline-multiblock-instr-ok? [instr : CompilerIrInstr] [_np : i64]) : bool
   (match instr
@@ -46528,15 +47057,15 @@
   [succs : OptLabelSet]) : bool
   (match succs
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons label rest)
-      (match (opt-cfg-index-id index label)
+    [(OptLabelSet.Dense _ _)
+      (match (opt-cfg-index-id index (opt-label-ref succs 0))
         [(option_i64.Some target-id)
           (and
             (> target-id source-id)
             (opt-inline-tiny-predicate-forward-successors?
               index
               source-id
-              (box-get rest)))]
+              (opt-label-tail succs)))]
         [(option_i64.None) false])]))
 
 (define (opt-inline-tiny-predicate-forward-edges-from?
@@ -48103,10 +48632,10 @@
                                     (if opt-inline-current-phi-predecessor?
                                       (set!
                                         opt-inline-pred-renames
-                                        (OptInlinePredRenameList.Cons
+                                        (opt-inline-pred-renames-cons
                                           block-label
                                           cont-label
-                                          (box opt-inline-pred-renames)))
+                                          opt-inline-pred-renames))
                                       unit)]
                                   (OptInlineMaybeBlockRewrite.SomeBlockRewrite
                                     (compiler-ir-block-cons
@@ -48739,10 +49268,10 @@
                                     (if opt-inline-current-phi-predecessor?
                                       (set!
                                         opt-inline-pred-renames
-                                        (OptInlinePredRenameList.Cons
+                                        (opt-inline-pred-renames-cons
                                           block-label
                                           cont-label
-                                          (box opt-inline-pred-renames)))
+                                          opt-inline-pred-renames))
                                       unit)]
                                   (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
                                     (compiler-ir-block-cons
@@ -52608,6 +53137,7 @@
         (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true
+      (profile_state.compiler-profile-state-new)
       length-clean
       direct-call-clean
       call-memory
@@ -52619,11 +53149,24 @@
   [const-divisors : opt_i64_i64_map.Map]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     (struct-get summaries enabled)
+    (struct-get summaries profile-state)
     (struct-get summaries length-clean)
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
     (struct-get summaries argc-return)
     const-divisors))
+
+(define (opt-loop-bce-summaries-set-profile-state
+  [summaries : OptLoopBceSummaries]
+  [state : profile_state.CompilerProfileState]) : OptLoopBceSummaries
+  (OptLoopBceSummaries
+    (struct-get summaries enabled)
+    state
+    (struct-get summaries length-clean)
+    (struct-get summaries direct-call-clean)
+    (struct-get summaries call-memory)
+    (struct-get summaries argc-return)
+    (struct-get summaries const-divisors)))
 
 ;; Build the per-program summaries: the function-count-gated BCE/LICM call maps
 ;; plus the const-divisor table. The const-divisor table is built only at opt
@@ -52744,11 +53287,12 @@
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))
 
-(define (optimize-program-with-reader-context-and-level
+(define (optimize-program-with-reader-context-and-level-and-profile-state
   [pools : AstNodePoolContext]
   [type-segment-bases : i64]
   [program : CompilerIrProgram]
-  [level : i64]) : CompilerIrProgram
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerIrProgram
   (match program
     [(CompilerIrProgram.Program globals functions externs)
       (if (= level 0)
@@ -52775,11 +53319,13 @@
                 [pruned-functions : CompilerIrFunctionList
                   (opt-pruned-program-functions pruned)]
                 [summaries : OptLoopBceSummaries
-                  (opt-build-program-summaries
-                    type-segment-bases
-                    pruned-globals
-                    pruned-functions
-                    level)]
+                  (opt-loop-bce-summaries-set-profile-state
+                    (opt-build-program-summaries
+                      type-segment-bases
+                      pruned-globals
+                      pruned-functions
+                      level)
+                    profile-state)]
                 [_load-cse-profile-reset : unit
                   (cfg
                     compile-profile
@@ -52798,7 +53344,8 @@
                     (compiler-opt-profile-finish "functions"))
                   (cfg
                     compile-profile-summary
-                    (compiler-opt-profile-summary-emit))
+                    (compiler-opt-profile-summary-emit
+                      (struct-get summaries profile-state)))
                   (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                   (cfg compile-profile (compiler-opt-profile-start))
                   (let
@@ -52842,6 +53389,18 @@
                         (compiler-ir-function-list-compact
                           total-switch-functions)
                         externs)))))))))]))
+
+(define (optimize-program-with-reader-context-and-level
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]
+  [level : i64]) : CompilerIrProgram
+  (optimize-program-with-reader-context-and-level-and-profile-state
+    pools
+    type-segment-bases
+    program
+    level
+    (profile_state.compiler-profile-state-new)))
 
 (define (optimize-program-with-level
   [program : CompilerIrProgram]
@@ -53092,12 +53651,13 @@
               (compiler-source-spans-clear-instrs source-spans)
               functions)])])))
 
-(define (optimize-program-with-spans-and-reader-context-and-level
+(define (optimize-program-with-spans-and-reader-context-and-level-and-profile-state
   [pools : AstNodePoolContext]
   [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
-  [level : i64]) : CompilerOptimizedProgram
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerOptimizedProgram
   (match program
     [(CompilerIrProgram.Program globals functions externs)
       (if (= level 0)
@@ -53126,11 +53686,13 @@
                   [pruned-functions : CompilerIrFunctionList
                     (opt-pruned-program-functions pruned)]
                   [summaries : OptLoopBceSummaries
-                    (opt-build-program-summaries
-                      type-segment-bases
-                      pruned-globals
-                      pruned-functions
-                      level)]
+                    (opt-loop-bce-summaries-set-profile-state
+                      (opt-build-program-summaries
+                        type-segment-bases
+                        pruned-globals
+                        pruned-functions
+                        level)
+                      profile-state)]
                   [_load-cse-profile-reset : unit
                     (cfg
                       compile-profile
@@ -53149,7 +53711,8 @@
                       (compiler-opt-profile-finish "functions"))
                     (cfg
                       compile-profile-summary
-                      (compiler-opt-profile-summary-emit))
+                      (compiler-opt-profile-summary-emit
+                        (struct-get summaries profile-state)))
                     (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                     (cfg compile-profile (compiler-opt-profile-start))
                     (let
@@ -53198,6 +53761,20 @@
                           (compiler-opt-debug-finish-program optimized)
                           (opt-remap-spans-program inline-spans optimized)))))))])))]))
 
+(define (optimize-program-with-spans-and-reader-context-and-level
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [level : i64]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-reader-context-and-level-and-profile-state
+    pools
+    type-segment-bases
+    program
+    spans
+    level
+    (profile_state.compiler-profile-state-new)))
+
 (define (optimize-program-with-spans-and-level
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -53222,6 +53799,20 @@
     program
     spans
     level))
+
+(define (optimize-program-with-spans-and-pools-and-level-and-profile-state
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-reader-context-and-level-and-profile-state
+    pools
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    spans
+    level
+    profile-state))
 
 (define (optimize-program-with-spans
   [program : CompilerIrProgram]
@@ -54546,16 +55137,18 @@
   [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
   (match preds
     [(OptLabelSet.Nil) candidate]
-    [(OptLabelSet.Cons pred rest)
-      (opt-scratch-reset-mark-candidate-scan
-        reachable
-        body
-        (box-get rest)
-        (if (and
-          (opt-label-contains reachable pred)
-          (not (opt-label-contains body pred)))
-          (opt-scratch-reset-mark-candidate-add candidate pred)
-          candidate))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred : i64 (opt-label-ref preds 0)]
+        (opt-scratch-reset-mark-candidate-scan
+          reachable
+          body
+          (opt-label-tail preds)
+          (if (and
+            (opt-label-contains reachable pred)
+            (not (opt-label-contains body pred)))
+            (opt-scratch-reset-mark-candidate-add candidate pred)
+            candidate)))]))
 
 (define (opt-scratch-reset-mark-candidate-scan-not-label
   [reachable : OptLabelSet]
@@ -54564,14 +55157,16 @@
   [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
   (match preds
     [(OptLabelSet.Nil) candidate]
-    [(OptLabelSet.Cons pred rest)
-      (opt-scratch-reset-mark-candidate-scan-not-label
-        reachable
-        skip
-        (box-get rest)
-        (if (and (opt-label-contains reachable pred) (not (= pred skip)))
-          (opt-scratch-reset-mark-candidate-add candidate pred)
-          candidate))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [pred : i64 (opt-label-ref preds 0)]
+        (opt-scratch-reset-mark-candidate-scan-not-label
+          reachable
+          skip
+          (opt-label-tail preds)
+          (if (and (opt-label-contains reachable pred) (not (= pred skip)))
+            (opt-scratch-reset-mark-candidate-add candidate pred)
+            candidate)))]))
 
 (define (opt-scratch-reset-mark-block-from-candidate
   [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkBlock
@@ -54704,20 +55299,22 @@
   [successors : OptLabelSet]) : bool
   (match successors
     [(OptLabelSet.Nil) true]
-    [(OptLabelSet.Cons succ rest)
-      (and
-        (or
-          (opt-label-contains body succ)
-          (= label header)
-          (= label latch)
-          (= label mark-block))
-        (opt-scratch-successors-loop-safe?
-          body
-          label
-          header
-          latch
-          mark-block
-          (box-get rest)))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [succ : i64 (opt-label-ref successors 0)]
+        (and
+          (or
+            (opt-label-contains body succ)
+            (= label header)
+            (= label latch)
+            (= label mark-block))
+          (opt-scratch-successors-loop-safe?
+            body
+            label
+            header
+            latch
+            mark-block
+            (opt-label-tail successors))))]))
 
 (define (opt-scratch-loop-block-exits-safe?
   [index : OptCfgIndex]
@@ -57860,38 +58457,24 @@
       (opt-load-gvn-loop-safe-instr-seq? hs all-blocks instrs (+ index 1))
       false)))
 
-;; Header label -> proven loop-carry-safe.
-(defenum OptLoadGvnLoopSafeList
-  (Nil)
-  (Cons i64 (Box OptLoadGvnLoopSafeList)))
-
-(define (opt-load-gvn-loop-safe-contains?
-  [safe : OptLoadGvnLoopSafeList]
-  [label : i64]) : bool
-  (match safe
-    [(OptLoadGvnLoopSafeList.Nil) false]
-    [(OptLoadGvnLoopSafeList.Cons name rest)
-      (if (= name label)
-        true
-        (opt-load-gvn-loop-safe-contains? (box-get rest) label))]))
+(define (opt-load-gvn-loop-safe-contains? [safe : OptLabelSet] [label : i64]) : bool
+  (opt-label-contains safe label))
 
 (define (opt-load-gvn-loop-safe-collect
   [hs : OptLoadHeaderSet]
   [blocks : CompilerIrBlockList]
-  [loops : OptNaturalLoopList]) : OptLoadGvnLoopSafeList
+  [loops : OptNaturalLoopList]) : OptLabelSet
   (match loops
-    [(OptNaturalLoopList.Nil) (OptLoadGvnLoopSafeList.Nil)]
+    [(OptNaturalLoopList.Nil) (OptLabelSet.Nil)]
     [(OptNaturalLoopList.Cons loop rest)
       (let
-        [tail : OptLoadGvnLoopSafeList
+        [tail : OptLabelSet
           (opt-load-gvn-loop-safe-collect hs blocks (box-get rest))]
         (if (opt-load-gvn-loop-safe-blocks?
           hs
           blocks
           (opt-natural-loop-body-blocks loop))
-          (OptLoadGvnLoopSafeList.Cons
-            (opt-natural-loop-header loop)
-            (box tail))
+          (opt-label-cons (opt-natural-loop-header loop) tail)
           tail))]))
 
 (define (opt-load-gvn-entry-from-preds
@@ -57900,7 +58483,7 @@
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [sources : opt_i64_i64_map.Map]
-  [loop-safe : OptLoadGvnLoopSafeList]
+  [loop-safe : OptLabelSet]
   [label : i64]
   [empty-state : OptLoadCseState]
   [edge : i64]
@@ -58008,7 +58591,7 @@
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [sources : opt_i64_i64_map.Map]
-  [loop-safe : OptLoadGvnLoopSafeList]
+  [loop-safe : OptLabelSet]
   [empty-state : OptLoadCseState]
   [id : i64]) : OptLoadCseState
   (let
@@ -58093,7 +58676,7 @@
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
-  [loop-safe : OptLoadGvnLoopSafeList]
+  [loop-safe : OptLabelSet]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [out : (Array OptGvnBlockResult)]
@@ -58142,7 +58725,7 @@
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
-  [loop-safe : OptLoadGvnLoopSafeList]
+  [loop-safe : OptLabelSet]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [out : (Array OptGvnBlockResult)]
@@ -58243,7 +58826,7 @@
       [processed : (Array bool) (array.make-array bool count)]
       [out : (Array OptGvnBlockResult)
         (array.make-array OptGvnBlockResult count)]
-      [loop-safe : OptLoadGvnLoopSafeList
+      [loop-safe : OptLabelSet
         (opt-load-gvn-loop-safe-collect
           hs
           blocks

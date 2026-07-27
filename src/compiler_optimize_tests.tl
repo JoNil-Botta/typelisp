@@ -1,5 +1,6 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import "compiler_optimize.tl")
+(import compiler_profile_state as profile_state)
 (import stdlib.io)
 (import stdlib.array)
 (import stdlib.arena)
@@ -6164,6 +6165,7 @@
         (opt_i64_i64_map.with-capacity 8))]
     (OptLoopBceSummaries
       true
+      (profile_state.compiler-profile-state-new)
       clean
       clean
       (opt_i64_i64_map.with-capacity 8)
@@ -21665,6 +21667,34 @@
         10]
       [else 42])))
 
+(define (opt-label-set-persistent-branch-self-test) : bool
+  (let
+    [base-label : i64 (compiler-ir-label "label-set-base")]
+    [left-label : i64 (compiler-ir-label "label-set-left")]
+    [right-label : i64 (compiler-ir-label "label-set-right")]
+    [tail-label : i64 (compiler-ir-label "label-set-tail")]
+    [base : OptLabelSet (opt-label-add (OptLabelSet.Nil) base-label)]
+    [left : OptLabelSet (opt-label-add base left-label)]
+    [right : OptLabelSet (opt-label-add base right-label)]
+    [left-tail : OptLabelSet (opt-label-tail left)]
+    [tail-extended : OptLabelSet (opt-label-add left-tail tail-label)]
+    (and
+      (= (opt-label-count base) 1)
+      (opt-label-contains base base-label)
+      (not (opt-label-contains base left-label))
+      (not (opt-label-contains base right-label))
+      (= (opt-label-count left) 2)
+      (opt-label-contains left left-label)
+      (not (opt-label-contains left right-label))
+      (not (opt-label-contains left tail-label))
+      (= (opt-label-count right) 2)
+      (opt-label-contains right right-label)
+      (not (opt-label-contains right left-label))
+      (= (opt-label-count tail-extended) 2)
+      (opt-label-contains tail-extended base-label)
+      (opt-label-contains tail-extended tail-label)
+      (not (opt-label-contains tail-extended left-label)))))
+
 (define (compiler-optimize-ssa-self-test) : i64
   (let
     [diamond-blocks : CompilerIrBlockList (opt-ssa-diamond-blocks)]
@@ -21847,6 +21877,7 @@
               (opt-cfg-index-rpo-id loop-index 0))
             0))
         27]
+      [(not (opt-label-set-persistent-branch-self-test)) 60]
       [(not (opt-cfg-dominators-match-legacy? diamond-blocks)) 28]
       [(not (opt-cfg-dominators-match-legacy? loop-blocks)) 29]
       [(not (opt-cfg-dominators-match-legacy? (opt-ssa-unreachable-blocks))) 30]

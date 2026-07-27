@@ -16845,6 +16845,108 @@
           (set! i (+ i 1))))
       found)))
 
+;; Is entry `i` the FIRST entry carrying its (value, wide?) key? Distinct keys
+;; are identified by their first occurrence, which is also the tie-break rank
+;; below, so this is the one place the dedup key is spelled out.
+(define (compiler-backend-const-hoist-key-first?
+  [values : (Array i64)]
+  [wide : (Array bool)]
+  [i : i64]) : bool
+  (let
+    [j : i64 0]
+    [seen : bool false]
+    (begin
+      (while (and (< j i) (not seen))
+        (begin
+          (if (= (array-ref values j) (array-ref values i))
+            (if (= (array-ref wide j) (array-ref wide i))
+              (set! seen true)
+              unit)
+            unit)
+          (set! j (+ j 1))))
+      (not seen))))
+
+;; How many entries in [0, count) share entry `i`'s (value, wide?) key -- the
+;; STATIC site count of that constant inside this region.
+(define (compiler-backend-const-hoist-key-sites
+  [values : (Array i64)]
+  [wide : (Array bool)]
+  [count : i64]
+  [i : i64]) : i64
+  (let
+    [j : i64 0]
+    [n : i64 0]
+    (begin
+      (while (< j count)
+        (begin
+          (if (= (array-ref values j) (array-ref values i))
+            (if (= (array-ref wide j) (array-ref wide i))
+              (set! n (+ n 1))
+              unit)
+            unit)
+          (set! j (+ j 1))))
+      n)))
+
+;; The order in which this region's distinct constants claim its free
+;; candidates. Writes one entry per distinct key into `order` (the key's first
+;; occurrence index) and `tally` (its static site count), sorted by DESCENDING
+;; site count; returns the distinct-key count.
+;;
+;; Program order is the wrong award order when candidates are scarce. In a
+;; register-saturated region the FIRST constant took the only free register
+;; regardless of how much work it saved, so a single-site wide literal could
+;; outbid a divmod magic with five sites -- the magic then re-materialised a
+;; `movabsq` at every site on every iteration while the wide literal, which
+;; costs one materialisation per entry, sat in the register. Site count is the
+;; sound static proxy for that saving: each hoisted site drops exactly one
+;; in-region constant load. Execution frequency would be a better weight but is
+;; not available here (the region is a block range, not a profile).
+;;
+;; Ties keep program order: the collection pass below emits distinct keys in
+;; first-occurrence order and the sort is a STABLE insertion sort, so equal
+;; site counts award in the order the constants appear. The result is a total
+;; order over the region's keys with no map iteration anywhere, which keeps the
+;; emitted plan reproducible.
+(define (compiler-backend-const-hoist-award-order!
+  [values : (Array i64)]
+  [wide : (Array bool)]
+  [count : i64]
+  [order : (Array i64)]
+  [tally : (Array i64)]) : i64
+  (let
+    [distinct : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (if (compiler-backend-const-hoist-key-first? values wide i)
+            (begin
+              (array-set! order distinct i)
+              (array-set!
+                tally
+                distinct
+                (compiler-backend-const-hoist-key-sites values wide count i))
+              (set! distinct (+ distinct 1)))
+            unit)
+          (set! i (+ i 1))))
+      (let
+        [a : i64 1]
+        (while (< a distinct)
+          (let
+            [key-index : i64 (array-ref order a)]
+            [key-tally : i64 (array-ref tally a)]
+            [b : i64 a]
+            (begin
+              (while (and (> b 0) (< (array-ref tally (- b 1)) key-tally))
+                (begin
+                  (array-set! order b (array-ref order (- b 1)))
+                  (array-set! tally b (array-ref tally (- b 1)))
+                  (set! b (- b 1))))
+              (array-set! order b key-index)
+              (array-set! tally b key-tally)
+              (set! a (+ a 1))))))
+      distinct)))
+
 ;; Filter the candidate list: drop registers already reserved by an earlier
 ;; hoist whose synthetic span overlaps [lo, hi].
 (define (compiler-backend-const-hoist-free-candidates
@@ -16982,6 +17084,11 @@
             [loop-points : (Array i64) (make-array i64 site-cap)]
             [loop-values : (Array i64) (make-array i64 site-cap)]
             [loop-wide : (Array bool) (make-array bool site-cap)]
+            ;; per-loop scratch: the award sequence over the region's DISTINCT
+            ;; keys (first-occurrence index + static site count), rebuilt for
+            ;; every region by const-hoist-award-order!.
+            [loop-order : (Array i64) (make-array i64 site-cap)]
+            [loop-tally : (Array i64) (make-array i64 site-cap)]
             [h : i64 0]
             (begin
               (while (< h count)
@@ -17122,35 +17229,24 @@
                                                   unit)
                                                 (set! k (+ k 1))))))])
                                     (set! b (+ b 1))))
-                                ;; assign registers per distinct magic value
+                                ;; assign registers per distinct magic value,
+                                ;; heaviest claim (most static sites) first
                                 (let
-                                  [g : i64 0]
-                                  (while (< g loop-count)
+                                  [awards : i64
+                                    (compiler-backend-const-hoist-award-order!
+                                      loop-values
+                                      loop-wide
+                                      loop-count
+                                      loop-order
+                                      loop-tally)]
+                                  [o : i64 0]
+                                  (while (< o awards)
                                     (let
+                                      [g : i64 (array-ref loop-order o)]
                                       [magic : i64 (array-ref loop-values g)]
                                       [wide? : bool (array-ref loop-wide g)]
-                                      ;; first occurrence of this magic?
-                                      [first : bool
-                                        (let
-                                          [j : i64 0]
-                                          [seen : bool false]
-                                          (begin
-                                            (while (< j g)
-                                              (begin
-                                                (if (=
-                                                  (array-ref loop-values j)
-                                                  magic)
-                                                  (if (=
-                                                    (array-ref loop-wide j)
-                                                    wide?)
-                                                    (set! seen true)
-                                                    unit)
-                                                  unit)
-                                                (set! j (+ j 1))))
-                                            (not seen)))]
                                       (begin
                                         (if (and
-                                          first
                                           (< synth-count synth-cap)
                                           (< inject-count synth-cap))
                                           (match (compiler-reg-loop-split-first-register
@@ -17292,7 +17388,7 @@
                                                         (+ frame-count 1)))
                                                     unit)))])
                                           unit)
-                                        (set! g (+ g 1))))))))
+                                        (set! o (+ o 1))))))))
                             unit)))
                       unit)
                     (set! h (+ h 1)))))

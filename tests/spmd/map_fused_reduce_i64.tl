@@ -27,6 +27,44 @@
     0
     (+ (+ (array-ref values i) uniform) (bit-and (program-index) 0))))
 
+(define (manual-surface-sum [values : (Array i64)] [n : i64] [uniform : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (-
+                (bit-or (array-ref values i) uniform)
+                (bit-xor (array-ref values i) 1))))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (reduce-map-surface [values : (Array i64)] [n : i64] [uniform : i64]) : i64
+  (spmd-reduce
+    sum
+    ([i : i64 0 n])
+    0
+    (- (bit-or (array-ref values i) uniform) (bit-xor (array-ref values i) 1))))
+
+(define (manual-shift-sum [values : (Array i64)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! acc (+ acc (shl (array-ref values i) 1)))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (reduce-map-shift [values : (Array i64)] [n : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0 (shl (array-ref values i) 1)))
+
 (define (main) : i64
   (let
     [values : (Array i64) (array.make-array i64 11)]
@@ -46,4 +84,7 @@
         [(!= (reduce-map-fused values 11 3) (manual-map-sum values 11 3)) 7]
         [(!= (reduce-map-lane-neutral values 11 3) (manual-map-sum values 11 3))
           8]
+        [(!= (reduce-map-surface values 11 3) (manual-surface-sum values 11 3))
+          9]
+        [(!= (reduce-map-shift values 11) (manual-shift-sum values 11)) 10]
         [else 42]))))

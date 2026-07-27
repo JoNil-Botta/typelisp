@@ -108,8 +108,11 @@
     [(SymI64Nil) SymI64ViewNil]
     [(SymI64Dense store head)
       (let
+        [slots : (Array SymI64Binding) (struct-get (box-get store) slots)]
+        ; Heads and parent indices are returned only by sym-i64-store-push!.
         [binding : SymI64Binding
-          (array-ref (struct-get (box-get store) slots) head)]
+          (unsafe
+            (ptr-read (ptr-offset (array-data slots) head)))]
         (SymI64ViewBind
           (struct-get binding key)
           (struct-get binding value)
@@ -119,6 +122,9 @@
               SymI64Nil
               (SymI64Dense store parent)))))]))
 
+; Store mutation checks every appended index against array capacity. Lookups
+; then follow only those stored head/parent indices, so their raw reads retain
+; the same bounds invariant without paying a dynamic check on every parent hop.
 (define (sym-i64-lookup-id [e : SymI64Env] [k : i64]) : option_i64.Option
   (match e
     [(SymI64Nil) option_i64.None]
@@ -126,10 +132,15 @@
       (let
         [cursor : i64 head]
         [slots : (Array SymI64Binding) (struct-get (box-get store) slots)]
+        [bindings : (Ptr SymI64Binding)
+          (unsafe
+            (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
         (begin
           (while (>= cursor 0)
             (let
-              [binding : SymI64Binding (array-ref slots cursor)]
+              [binding : SymI64Binding
+                (unsafe
+                  (ptr-read (ptr-offset bindings cursor)))]
               (if (= (struct-get binding key) k)
                 (return (option_i64.Some (struct-get binding value)))
                 (set! cursor (struct-get binding parent)))))
@@ -142,10 +153,15 @@
       (let
         [cursor : i64 head]
         [slots : (Array SymI64Binding) (struct-get (box-get store) slots)]
+        [bindings : (Ptr SymI64Binding)
+          (unsafe
+            (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
         (begin
           (while (>= cursor 0)
             (let
-              [binding : SymI64Binding (array-ref slots cursor)]
+              [binding : SymI64Binding
+                (unsafe
+                  (ptr-read (ptr-offset bindings cursor)))]
               (if (= (struct-get binding key) k)
                 (return (struct-get binding value))
                 (set! cursor (struct-get binding parent)))))
@@ -158,10 +174,15 @@
       (let
         [cursor : i64 head]
         [slots : (Array SymI64Binding) (struct-get (box-get store) slots)]
+        [bindings : (Ptr SymI64Binding)
+          (unsafe
+            (ptr-cast (array-data slots) : (Ptr SymI64Binding)))]
         (begin
           (while (>= cursor 0)
             (let
-              [binding : SymI64Binding (array-ref slots cursor)]
+              [binding : SymI64Binding
+                (unsafe
+                  (ptr-read (ptr-offset bindings cursor)))]
               (if (= (struct-get binding key) k)
                 (return true)
                 (set! cursor (struct-get binding parent)))))

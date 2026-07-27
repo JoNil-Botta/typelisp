@@ -24,6 +24,7 @@
 (import stdlib.array)
 (import stdlib.vector)
 (import compiler_allocation_profile as allocation_profile)
+(import compiler_profile_state as profile_state)
 (import compiler_builtin_ids as cbi)
 (import "compiler_ir_types.tl")
 (import "compiler_clone.tl")
@@ -223,22 +224,27 @@
 
 (cfg
   compile-profile-summary
-  (define (compiler-opt-profile-summary-reset!) : unit
-    (cps.compiler-profile-summary-reset!)))
+  (define (compiler-opt-profile-summary-reset!
+    [state : profile_state.CompilerProfileState]) : unit
+    (cps.compiler-profile-summary-reset! state)))
 
 (cfg
   compile-profile-summary
-  (define (compiler-opt-profile-summary-emit) : unit
+  (define (compiler-opt-profile-summary-emit
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
       (cps.compiler-profile-summary-emit
+        state
         cps.compiler-profile-summary-optimizer-pass
         "optimizer"
         "pass")
       (cps.compiler-profile-summary-emit
+        state
         cps.compiler-profile-summary-optimizer-function
         "optimizer"
         "function")
       (cps.compiler-profile-summary-emit
+        state
         cps.compiler-profile-summary-optimizer-module
         "optimizer"
         "module"))))
@@ -416,7 +422,10 @@
 
 (cfg
   compile-profile
-  (define (compiler-opt-profile-detail-finish [phase : String] [name : String]) : unit
+  (define (compiler-opt-profile-detail-finish
+    [state : profile_state.CompilerProfileState]
+    [phase : String]
+    [name : String]) : unit
     (let
       [elapsed : i64 (- (profile.now-ms) compiler-opt-profile-detail-start-ms)]
       (cfg
@@ -424,10 +433,12 @@
         (if (string.eq phase "function")
           (begin
             (cps.compiler-profile-summary-note!
+              state
               cps.compiler-profile-summary-optimizer-function
               name
               elapsed)
             (cps.compiler-profile-summary-note-module!
+              state
               cps.compiler-profile-summary-optimizer-module
               name
               elapsed))
@@ -448,6 +459,7 @@
 (cfg
   compile-profile
   (define (compiler-opt-profile-pass-finish
+    [state : profile_state.CompilerProfileState]
     [pass : String]
     [name : i64]
     [start-ms : i64]) : unit
@@ -456,6 +468,7 @@
       (cfg
         compile-profile-summary
         (cps.compiler-profile-summary-note!
+          state
           cps.compiler-profile-summary-optimizer-pass
           pass
           elapsed)
@@ -27549,6 +27562,9 @@
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
+  ;; Compile-profile ownership follows the already per-program summary bundle.
+  ;; The disabled state is a one-word sentinel and allocates no summary storage.
+  (profile-state profile_state.CompilerProfileState)
   (length-clean opt_i64_i64_map.Map)
   ;; Direct user calls proven not to perform memory writes. LICM consumes this
   ;; to keep descriptor header fields live across read-only helper calls without
@@ -27606,6 +27622,7 @@
 (define (opt-loop-bce-empty-summaries) : OptLoopBceSummaries
   (OptLoopBceSummaries
     false
+    (profile_state.compiler-profile-state-new)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -43094,7 +43111,11 @@
           [_p-tailrec : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "tailrec" name _t-tailrec)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "tailrec"
+                name
+                _t-tailrec)
               unit)]
           ;; Substitute proven constant-global operands up front so the local
           ;; folds below see literals: a mask global otherwise keeps its `and`
@@ -43128,7 +43149,11 @@
           [_p-fold : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "fold" name _t-fold)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "fold"
+                name
+                _t-fold)
               unit)]
           [_t-affine : i64 (cfg compile-profile (profile.now-ms) 0)]
           [affine-candidate? : bool (opt-affine-blocks-have-candidate? folded)]
@@ -43150,7 +43175,11 @@
           [_p-affine : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "affine" name _t-affine)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "affine"
+                name
+                _t-affine)
               unit)]
           [loop-bce : CompilerIrBlockList
             (if (struct-get summaries enabled)
@@ -43167,7 +43196,11 @@
           [_p-promote : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "stack_promote" name _t-promote)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "stack_promote"
+                name
+                _t-promote)
               unit)]
           (match promoted
             [(CompilerIrFunction.Function _ _ _ promoted-frame promoted-blocks)
@@ -43191,7 +43224,11 @@
                 [_p-sroa : unit
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-pass-finish "sroa" name _t-sroa)
+                    (compiler-opt-profile-pass-finish
+                      (struct-get summaries profile-state)
+                      "sroa"
+                      name
+                      _t-sroa)
                     unit)]
                 (match sroa
                   [(CompilerIrFunction.Function _ _ _ _ sroa-blocks)
@@ -43242,6 +43279,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "rotation"
                             name
                             _t-rotation)
@@ -43272,7 +43310,11 @@
                       [_p-ssa : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "ssa" name _t-ssa)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "ssa"
+                            name
+                            _t-ssa)
                           unit)]
                       [ssa-frame : i64 (opt-function-frame ssa)]
                       [ssa-blocks : CompilerIrBlockList
@@ -43297,7 +43339,11 @@
                       [_p-gvn : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "gvn" name _t-gvn)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "gvn"
+                            name
+                            _t-gvn)
                           unit)]
                       ;; Dominated bounds-check dedup rides the same context:
                       ;; it only deletes mid-block BoundsCheck instructions, so
@@ -43335,6 +43381,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "bounds_dom"
                             name
                             _t-bounds-dom)
@@ -43375,7 +43422,11 @@
                       [_p-sccp : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "sccp" name _t-sccp)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "sccp"
+                            name
+                            _t-sccp)
                           unit)]
                       [_t-bool-branch : i64
                         (cfg compile-profile (profile.now-ms) 0)]
@@ -43418,6 +43469,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "bool_branch"
                             name
                             _t-bool-branch)
@@ -43450,7 +43502,11 @@
                       [_p-cfg2 : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "cfg" name _t-cfg2)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "cfg"
+                            name
+                            _t-cfg2)
                           unit)]
                       [_t-switch : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [switch-input : CompilerIrFunction
@@ -43485,6 +43541,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "switch"
                             name
                             _t-switch)
@@ -43554,6 +43611,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "preheaders"
                             name
                             _t-preheaders)
@@ -43580,6 +43638,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "rotate_ssa"
                             name
                             _t-rotate-ssa)
@@ -43607,6 +43666,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "scratch_reset"
                             name
                             _t-scratch-reset)
@@ -43633,7 +43693,11 @@
                       [_p-licm : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "licm" name _t-licm)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "licm"
+                            name
+                            _t-licm)
                           unit)]
                       ;; Run successor sinking while block-local address recipes
                       ;; are still explicit. Induction strength reduction below
@@ -43679,6 +43743,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "induction"
                             name
                             _t-induction)
@@ -43710,6 +43775,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "bce_version"
                             name
                             _t-bce-version)
@@ -43741,6 +43807,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "unroll"
                             name
                             _t-unroll)
@@ -43793,6 +43860,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "global_gvn"
                             name
                             _t-global)
@@ -43831,6 +43899,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "divrem_safety"
                             name
                             _t-divrem-safety)
@@ -43861,6 +43930,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "gep_split"
                             name
                             _t-gep-split)
@@ -43880,6 +43950,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "cmp_sink"
                             name
                             _t-cmp-sink)
@@ -43917,6 +43988,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "successor_sink"
                             name
                             _t-successor-sink)
@@ -43967,6 +44039,7 @@
                         (cfg
                           compile-profile
                           (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
                             "bool_branch_late"
                             name
                             _t-bool-branch-late)
@@ -43991,7 +44064,11 @@
                       [_p-dce : unit
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-pass-finish "dce" name _t-dce)
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "dce"
+                            name
+                            _t-dce)
                           unit)]
                       (CompilerIrFunction.Function
                         name
@@ -44042,7 +44119,11 @@
         [_p-fold : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-pass-finish "fold" name _t-fold)
+            (compiler-opt-profile-pass-finish
+              (struct-get summaries profile-state)
+              "fold"
+              name
+              _t-fold)
             unit)]
         [loop-bce : CompilerIrBlockList
           (if (struct-get summaries enabled)
@@ -44059,7 +44140,11 @@
         [_p-promote : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-pass-finish "stack_promote" name _t-promote)
+            (compiler-opt-profile-pass-finish
+              (struct-get summaries profile-state)
+              "stack_promote"
+              name
+              _t-promote)
             unit)]
         (match promoted
           [(CompilerIrFunction.Function _ _ _ promoted-frame promoted-blocks)
@@ -44078,7 +44163,11 @@
               [_p-cfg : unit
                 (cfg
                   compile-profile
-                  (compiler-opt-profile-pass-finish "cfg" name _t-cfg)
+                  (compiler-opt-profile-pass-finish
+                    (struct-get summaries profile-state)
+                    "cfg"
+                    name
+                    _t-cfg)
                   unit)]
               (OptLevel1PreDceResult.Result
                 (CompilerIrFunction.Function
@@ -44116,7 +44205,11 @@
             [_p-dce : unit
               (cfg
                 compile-profile
-                (compiler-opt-profile-pass-finish "dce" name _t-dce)
+                (compiler-opt-profile-pass-finish
+                  (struct-get summaries profile-state)
+                  "dce"
+                  name
+                  _t-dce)
                 unit)]
             (CompilerIrFunction.Function name params ret-ty frame dced))])]))
 
@@ -44449,6 +44542,7 @@
           (cfg
             compile-profile
             (compiler-opt-profile-detail-finish
+              (struct-get summaries profile-state)
               "function"
               (compiler-opt-profile-function-name func)))]
         (compiler-ir-function-cons
@@ -44500,6 +44594,7 @@
           (cfg
             compile-profile
             (compiler-opt-profile-detail-finish
+              (struct-get summaries profile-state)
               "function"
               (compiler-opt-profile-function-name func)))]
         (compiler-ir-function-cons
@@ -52552,6 +52647,7 @@
         (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true
+      (profile_state.compiler-profile-state-new)
       length-clean
       direct-call-clean
       call-memory
@@ -52563,11 +52659,24 @@
   [const-divisors : opt_i64_i64_map.Map]) : OptLoopBceSummaries
   (OptLoopBceSummaries
     (struct-get summaries enabled)
+    (struct-get summaries profile-state)
     (struct-get summaries length-clean)
     (struct-get summaries direct-call-clean)
     (struct-get summaries call-memory)
     (struct-get summaries argc-return)
     const-divisors))
+
+(define (opt-loop-bce-summaries-set-profile-state
+  [summaries : OptLoopBceSummaries]
+  [state : profile_state.CompilerProfileState]) : OptLoopBceSummaries
+  (OptLoopBceSummaries
+    (struct-get summaries enabled)
+    state
+    (struct-get summaries length-clean)
+    (struct-get summaries direct-call-clean)
+    (struct-get summaries call-memory)
+    (struct-get summaries argc-return)
+    (struct-get summaries const-divisors)))
 
 ;; Build the per-program summaries: the function-count-gated BCE/LICM call maps
 ;; plus the const-divisor table. The const-divisor table is built only at opt
@@ -52688,11 +52797,12 @@
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
   (optimize-program-with-level program (compiler-optimize-default-level)))
 
-(define (optimize-program-with-reader-context-and-level
+(define (optimize-program-with-reader-context-and-level-and-profile-state
   [pools : AstNodePoolContext]
   [type-segment-bases : i64]
   [program : CompilerIrProgram]
-  [level : i64]) : CompilerIrProgram
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerIrProgram
   (match program
     [(CompilerIrProgram.Program globals functions externs)
       (if (= level 0)
@@ -52719,11 +52829,13 @@
                 [pruned-functions : CompilerIrFunctionList
                   (opt-pruned-program-functions pruned)]
                 [summaries : OptLoopBceSummaries
-                  (opt-build-program-summaries
-                    type-segment-bases
-                    pruned-globals
-                    pruned-functions
-                    level)]
+                  (opt-loop-bce-summaries-set-profile-state
+                    (opt-build-program-summaries
+                      type-segment-bases
+                      pruned-globals
+                      pruned-functions
+                      level)
+                    profile-state)]
                 [_load-cse-profile-reset : unit
                   (cfg
                     compile-profile
@@ -52742,7 +52854,8 @@
                     (compiler-opt-profile-finish "functions"))
                   (cfg
                     compile-profile-summary
-                    (compiler-opt-profile-summary-emit))
+                    (compiler-opt-profile-summary-emit
+                      (struct-get summaries profile-state)))
                   (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                   (cfg compile-profile (compiler-opt-profile-start))
                   (let
@@ -52786,6 +52899,18 @@
                         (compiler-ir-function-list-compact
                           total-switch-functions)
                         externs)))))))))]))
+
+(define (optimize-program-with-reader-context-and-level
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]
+  [level : i64]) : CompilerIrProgram
+  (optimize-program-with-reader-context-and-level-and-profile-state
+    pools
+    type-segment-bases
+    program
+    level
+    (profile_state.compiler-profile-state-new)))
 
 (define (optimize-program-with-level
   [program : CompilerIrProgram]
@@ -53025,12 +53150,13 @@
               (compiler-source-spans-clear-instrs source-spans)
               functions)])])))
 
-(define (optimize-program-with-spans-and-reader-context-and-level
+(define (optimize-program-with-spans-and-reader-context-and-level-and-profile-state
   [pools : AstNodePoolContext]
   [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
-  [level : i64]) : CompilerOptimizedProgram
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerOptimizedProgram
   (match program
     [(CompilerIrProgram.Program globals functions externs)
       (if (= level 0)
@@ -53059,11 +53185,13 @@
                   [pruned-functions : CompilerIrFunctionList
                     (opt-pruned-program-functions pruned)]
                   [summaries : OptLoopBceSummaries
-                    (opt-build-program-summaries
-                      type-segment-bases
-                      pruned-globals
-                      pruned-functions
-                      level)]
+                    (opt-loop-bce-summaries-set-profile-state
+                      (opt-build-program-summaries
+                        type-segment-bases
+                        pruned-globals
+                        pruned-functions
+                        level)
+                      profile-state)]
                   [_load-cse-profile-reset : unit
                     (cfg
                       compile-profile
@@ -53082,7 +53210,8 @@
                       (compiler-opt-profile-finish "functions"))
                     (cfg
                       compile-profile-summary
-                      (compiler-opt-profile-summary-emit))
+                      (compiler-opt-profile-summary-emit
+                        (struct-get summaries profile-state)))
                     (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                     (cfg compile-profile (compiler-opt-profile-start))
                     (let
@@ -53131,6 +53260,20 @@
                           (compiler-opt-debug-finish-program optimized)
                           (opt-remap-spans-program inline-spans optimized)))))))])))]))
 
+(define (optimize-program-with-spans-and-reader-context-and-level
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [level : i64]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-reader-context-and-level-and-profile-state
+    pools
+    type-segment-bases
+    program
+    spans
+    level
+    (profile_state.compiler-profile-state-new)))
+
 (define (optimize-program-with-spans-and-level
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
@@ -53155,6 +53298,20 @@
     program
     spans
     level))
+
+(define (optimize-program-with-spans-and-pools-and-level-and-profile-state
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-reader-context-and-level-and-profile-state
+    pools
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    spans
+    level
+    profile-state))
 
 (define (optimize-program-with-spans
   [program : CompilerIrProgram]

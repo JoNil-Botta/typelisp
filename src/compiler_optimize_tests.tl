@@ -1,5 +1,6 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import "compiler_optimize.tl")
+(import compiler_profile_state as profile_state)
 (import stdlib.io)
 (import stdlib.array)
 (import stdlib.arena)
@@ -6132,6 +6133,7 @@
         (opt_i64_i64_map.with-capacity 8))]
     (OptLoopBceSummaries
       true
+      (profile_state.compiler-profile-state-new)
       clean
       clean
       (opt_i64_i64_map.with-capacity 8)

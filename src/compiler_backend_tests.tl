@@ -27710,6 +27710,96 @@
                 CompilerIrInstrList.Nil))
             CompilerIrBlockList.Nil))))))
 
+;; A region's free candidate registers go to the constants with the most static
+;; sites, because each hoisted site drops one in-region constant load. The
+;; measured forcing case is a leaf loop holding a single-site wide literal and a
+;; multi-site divmod magic: program order handed the only free register to the
+;; literal, so the magic reloaded its `movabsq` at every site on every
+;; iteration. `values`/`wide` carry six entries -- literal L (one site, written
+;; FIRST), magic M (three sites), magic N (two sites) -- so the award sequence
+;; must be M, N, L even though L occurs first.
+(define (compiler-backend-const-hoist-award-weight-ok?) : bool
+  (let
+    [values : (Array i64) (make-array i64 6)]
+    [wide : (Array bool) (make-array bool 6)]
+    [order : (Array i64) (make-array i64 6)]
+    [tally : (Array i64) (make-array i64 6)]
+    [_fill : unit
+      (begin
+        ;; index 0: wide literal L, one site
+        (array-set! values 0 4242)
+        (array-set! wide 0 true)
+        ;; indices 1,3,5: magic M, three sites
+        (array-set! values 1 777)
+        (array-set! wide 1 false)
+        (array-set! values 3 777)
+        (array-set! wide 3 false)
+        (array-set! values 5 777)
+        (array-set! wide 5 false)
+        ;; indices 2,4: magic N, two sites
+        (array-set! values 2 999)
+        (array-set! wide 2 false)
+        (array-set! values 4 999)
+        (array-set! wide 4 false))]
+    [awards : i64
+      (compiler-backend-const-hoist-award-order! values wide 6 order tally)]
+    (and
+      ;; three distinct (value, wide?) keys, not six entries
+      (= awards 3)
+      ;; heaviest first: M (3 sites) then N (2) then L (1)
+      (= (array-ref order 0) 1)
+      (= (array-ref tally 0) 3)
+      (= (array-ref order 1) 2)
+      (= (array-ref tally 1) 2)
+      (= (array-ref order 2) 0)
+      (= (array-ref tally 2) 1))))
+
+;; The dedup key is (value, wide?), so the same literal counts separately as a
+;; wide-binop constant and as a divmod magic; and equal site counts award in
+;; program order, which keeps the emitted plan a total order with no dependence
+;; on any map's iteration order. Entries: value 5 as WIDE at 0 and 3, value 5 as
+;; NON-wide at 1 and 4, value 6 as non-wide at 2 and 5 -- three keys, two sites
+;; each, so the result must be exactly their first-occurrence order 0, 1, 2.
+(define (compiler-backend-const-hoist-award-tie-ok?) : bool
+  (let
+    [values : (Array i64) (make-array i64 6)]
+    [wide : (Array bool) (make-array bool 6)]
+    [order : (Array i64) (make-array i64 6)]
+    [tally : (Array i64) (make-array i64 6)]
+    [_fill : unit
+      (begin
+        (array-set! values 0 5)
+        (array-set! wide 0 true)
+        (array-set! values 3 5)
+        (array-set! wide 3 true)
+        (array-set! values 1 5)
+        (array-set! wide 1 false)
+        (array-set! values 4 5)
+        (array-set! wide 4 false)
+        (array-set! values 2 6)
+        (array-set! wide 2 false)
+        (array-set! values 5 6)
+        (array-set! wide 5 false))]
+    [awards : i64
+      (compiler-backend-const-hoist-award-order! values wide 6 order tally)]
+    (and
+      (= awards 3)
+      (= (array-ref order 0) 0)
+      (= (array-ref order 1) 1)
+      (= (array-ref order 2) 2)
+      (= (array-ref tally 0) 2)
+      (= (array-ref tally 1) 2)
+      (= (array-ref tally 2) 2)
+      ;; An empty region awards nothing and reads no scratch entry.
+      (=
+        (compiler-backend-const-hoist-award-order! values wide 0 order tally)
+        0)
+      ;; A single site is one key of weight one.
+      (=
+        (compiler-backend-const-hoist-award-order! values wide 1 order tally)
+        1)
+      (= (array-ref tally 0) 1))))
+
 ;; Const-hoist candidates must reflect ABI volatility. Win64 keeps %rsi/%rdi
 ;; out of the plan while retaining the caller-saved %r8/%r9 and the
 ;; ABI-neutral %rbx frame-home fallback.
@@ -28952,6 +29042,8 @@
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-emit-current-count-gate-ok?)
         (compiler-backend-const-hoist-candidates-abi-ok?)
+        (compiler-backend-const-hoist-award-weight-ok?)
+        (compiler-backend-const-hoist-award-tie-ok?)
         (compiler-backend-const-hoist-respects-scratch-plan-ok?)
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)

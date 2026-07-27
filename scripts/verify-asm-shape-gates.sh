@@ -227,6 +227,32 @@ check_divmagic_hoist() {
     assert_regex_count_at_least "$_digitsum" '^[[:space:]]+imulq \$10, %r[a-z0-9]+, %r[a-z0-9]+$' 1 divmagic-digitsum
 }
 
+check_hoist_priority() {
+    _asm=$(compile_gate hoist_priority tests/integration/hoist_priority.tl)
+    _spread=$(function_body "$_asm" _tl_hoist_priority_spread)
+    _tie=$(function_body "$_asm" _tl_hoist_priority_tie)
+    # `spread`: six one-site wide literals precede a three-site divmod magic in
+    # program order, and the region cannot hold every constant. Awarding by
+    # site count gives the magic a register, so its 64-bit load happens once in
+    # the preheader instead of at all three sites. Awarding by program order --
+    # the pre-A36 rule -- leaves three of these.
+    assert_fixed_count_eq "$_spread" 'movabsq $-8543223828751151131' 1 hoist-priority-spread
+    # The divisor still folds into the imm32 multiply at every site, so the
+    # win is the magic load and not a changed divmod expansion.
+    assert_regex_count_at_least "$_spread" \
+        '^[[:space:]]+imulq \$1000000007, %r[a-z0-9]+, %r[a-z0-9]+$' 3 hoist-priority-spread
+    # At least one wide literal must lose its register to the magic: the
+    # in-place `movq $imm` spelling is the non-hoisted form.
+    assert_regex_count_at_least "$_spread" '^[[:space:]]+movq \$26544357[0-9]+, %r' 1 hoist-priority-spread
+    # `tie`: every key has two sites, so the counts are equal and the award
+    # order falls back to program order. The first literal is hoisted (one
+    # preheader `movabsq`), and the magic -- written last -- keeps both of its
+    # in-place materialisations. A reversed or unstable tie-break would promote
+    # the magic here and drop that count to one.
+    assert_fixed_count_eq "$_tie" 'movabsq $3141592653589' 1 hoist-priority-tie
+    assert_fixed_count_eq "$_tie" 'movabsq $-8543223828751151131' 2 hoist-priority-tie
+}
+
 check_lftr_counter_retire() {
     _asm=$(compile_gate lftr_counter_retire tests/integration/lftr_counter_retire.tl)
     _body=$(function_body "$_asm" _tl_lftr_counter_retire_walk)
@@ -564,6 +590,7 @@ check_stdlib_math_sqrt() {
 }
 
 check_divmagic_hoist
+check_hoist_priority
 check_lftr_counter_retire
 check_fallthrough_jmp_chain
 check_wide_const_hoist

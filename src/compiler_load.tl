@@ -1169,7 +1169,10 @@
 (define (compiler-load-provenance-arena) : i64
   (begin
     (if (= compiler-load-provenance-arena-handle 0)
-      (set! compiler-load-provenance-arena-handle (arena.tl_arena_make))
+      (begin
+        (set! compiler-load-provenance-arena-handle (arena.tl_arena_make))
+        (compiler-arena-debug-protect-never-reset!
+          compiler-load-provenance-arena-handle))
       unit)
     compiler-load-provenance-arena-handle))
 

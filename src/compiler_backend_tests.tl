@@ -9309,8 +9309,15 @@
 (define (compiler-backend-test-span [line : i64] [col : i64]) : AstSourceSpan
   (ast-source-span line col line col))
 
+;; Span keys are a one-word handle, and identical spellings from different
+;; provenance stay distinct. The `size-of` check lives here rather than beside
+;; `CompilerIrSymbolId` because `size-of` needs a `(type T)` literal, and a
+;; `(type T)` literal anywhere in a compiled program makes the driver defer the
+;; macro-handoff source/frontend release (#5872). This module is outside
+;; `main.tl`'s closure, so the assertion costs the self-compile nothing.
 (define (compiler-backend-source-span-symbol-provenance-ok?) : bool
   (let
+    [symbol-id-bytes : i64 (comptime (size-of (type CompilerIrSymbolId)))]
     [source-name : CompilerIrSymbolId
       (compiler-ir-symbol-typed-id (ci.intern "same-span-name"))]
     [generated-name : CompilerIrSymbolId
@@ -9326,6 +9333,7 @@
     [index : CompilerBackendSourceSpanIndex
       (compiler-backend-source-span-index-build spans)]
     (and
+      (= symbol-id-bytes 8)
       (not (compiler-ir-symbol-id-eq? source-name generated-name))
       (string.eq
         (compiler-ir-symbol-id-text source-name)
@@ -12150,6 +12158,63 @@
       (CompilerRegAssignment.Assignment 1 dst-location)
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+  [elem-ty : AstType]
+  [lanes : i64]
+  [mnemonic : String]
+  [last-shift : String]) : bool
+  (match (compiler-backend-emit-avx512-vector-reduce
+    (ast-node-pool-reader-type-segment-bases)
+    (compiler-backend-vector-reduce-direct-assignments
+      (CompilerRegLocation.Register "%r10"))
+    1
+    (CompilerIrVectorReduceOp.Min)
+    (CompilerIrValue.Var 0)
+    lanes
+    elem-ty
+    ""
+    ""
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vextracti64x4 $1, %zmm6, %ymm2\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vextracti128 $1, %ymm2, %xmm3\n")
+        (compiler-backend-string-contains? asm mnemonic)
+        (compiler-backend-string-contains? asm last-shift)
+        (compiler-backend-string-contains? asm "    vmovq %xmm2, ")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "unsupported AVX-512 vector reduction")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-vector-reduce-narrow-ok?) : bool
+  (and
+    (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+      (AstType.I16)
+      32
+      "    vpminsw "
+      "    vpsrldq $2, ")
+    (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+      (AstType.U16)
+      32
+      "    vpminuw "
+      "    vpsrldq $2, ")
+    (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+      (AstType.I8)
+      64
+      "    vpminsb "
+      "    vpsrldq $1, ")
+    (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+      (AstType.U8)
+      64
+      "    vpminub "
+      "    vpsrldq $1, ")))
+
 (define (compiler-backend-avx2-vector-reduce-direct-stack-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-reduce
     (ast-node-pool-reader-type-segment-bases)
@@ -12259,7 +12324,8 @@
     (compiler-backend-avx2-vector-reduce-direct-stack-ok?)
     (compiler-backend-avx2-vector-reduce-direct-register-ok?)
     (compiler-backend-avx512-vector-reduce-direct-stack-ok?)
-    (compiler-backend-avx512-vector-reduce-direct-register-ok?)))
+    (compiler-backend-avx512-vector-reduce-direct-register-ok?)
+    (compiler-backend-avx512-vector-reduce-narrow-ok?)))
 
 (define (compiler-backend-vector-home-program [func : CompilerIrFunction]) : CompilerIrProgram
   (CompilerIrProgram.Program
@@ -13557,7 +13623,7 @@
           false
           false
           false
-          (CompilerBackendRuntimeTailPlan false false))
+          (CompilerBackendRuntimeTailPlan false false false))
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
@@ -13813,7 +13879,7 @@
     true
     true
     true
-    (CompilerBackendRuntimeTailPlan true true)))
+    (CompilerBackendRuntimeTailPlan true true false)))
 
 ;; Test fixtures start from readable spellings, then exercise only the backend's
 ;; ID-native runtime inventory. Production never performs this conversion.
@@ -14256,6 +14322,64 @@
           (compiler-backend-test-plan-provides? plan "tl_region_reset"))]
       [(ResultBackendRuntimePlan.Err _) false])))
 
+(define (compiler-backend-arena-debug-runtime-plan-ok?) : bool
+  (let
+    [protect-id : i64
+      cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset]
+    [local-protect-id : i64
+      (ci.intern "compiler-arena-debug-plan-local-protect")]
+    [functions : CompilerIrFunctionList
+      (compiler-ir-function-cons
+        (CompilerIrFunction.Function
+          (ci.intern "arena-debug-plan-test")
+          CompilerIrParamList.Nil
+          (AstType.Unit)
+          1
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (compiler-ir-label "entry")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  0
+                  local-protect-id
+                  (CompilerIrCallArgs.One (CompilerIrValue.I64 1))
+                  (AstType.Unit))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil)))
+            CompilerIrBlockList.Nil))
+        CompilerIrFunctionList.Nil)]
+    [externs : CompilerIrExternList
+      (compiler-ir-extern-cons
+        (CompilerIrExtern.Extern
+          local-protect-id
+          local-protect-id
+          "compiler-arena-debug-plan-local-protect"
+          (ast-ty-func
+            (ast-type-cons (AstType.I64) (ast-type-list-new))
+            (AstType.Unit))
+          (AstExternAbi.C)
+          protect-id
+          (ast-extern-link-input-list-new)
+          false)
+        CompilerIrExternList.Nil)]
+    (match (compiler-backend-runtime-plan-for functions externs)
+      [(ResultBackendRuntimePlan.Ok plan)
+        (let
+          [features : runtime_common.CompilerBackendRuntimeFeatures
+            (compiler-backend-runtime-features plan)]
+          (and
+            (compiler-backend-runtime-tail-arena-debug?
+              (compiler-backend-runtime-plan-tail plan))
+            (runtime_common.compiler-backend-runtime-features-arena-debug?
+              (& features))
+            (compiler-backend-plan-provides-id? plan protect-id)
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)
+            (compiler-backend-runtime-helper-core-id? protect-id)))]
+      [(ResultBackendRuntimePlan.Err _) false])))
+
 (define (compiler-backend-runtime-prelude-test-function [name : String]) : CompilerIrFunction
   (CompilerIrFunction.Function
     (ci.intern name)
@@ -14314,7 +14438,8 @@
       (compiler-backend-runtime-helper-owner-id-ok?)
       (compiler-backend-runtime-plan-id-lookup-only-ok?)
       (compiler-backend-runtime-prelude-validation-plan-ok?)
-      (compiler-backend-region-extern-runtime-plan-ok?))))
+      (compiler-backend-region-extern-runtime-plan-ok?)
+      (compiler-backend-arena-debug-runtime-plan-ok?))))
 
 (define (compiler-backend-runtime-memchr-functions-ok?) : bool
   (let

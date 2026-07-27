@@ -108,6 +108,8 @@ tests/spmd/masked_if_bitwise_value_types.tl
 tests/spmd/masked_if_shift_value_types.tl
 tests/spmd/masked_if_shift_inactive.tl
 tests/spmd/masked_if_shift_i16_reject.tl
+tests/spmd/map_shift_value_types.tl
+tests/spmd/map_shift_i16_reject.tl
 tests/spmd/masked_if_value_types.tl
 tests/spmd/masked_move_fault_suppression.tl
 tests/spmd/masked_if_nested_i64.tl
@@ -122,6 +124,7 @@ tests/spmd/varying_match_i64.tl
 tests/spmd/varying_match_enum_payload.tl
 tests/spmd/varying_match_enum_helper_reject.tl
 tests/spmd/bool_lanes.tl
+tests/spmd/map_compare_surface.tl
 tests/spmd/map_fused_reduce_i64.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_gather_read.tl
@@ -153,6 +156,12 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/masked_if_shift_i16_reject.tl:avx512)
             printf '%s\n' "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in AVX-512 backend mode; supported lane types are i32, u32, i64, and u64"
+            ;;
+        tests/spmd/map_shift_i16_reject.tl:avx2)
+            printf '%s\n' "lower: SPMD foreach SIMD lowering does not support shift 'shl' for lane type i16 in AVX2 backend mode; supported lane types are i32, u32, i64, and u64"
+            ;;
+        tests/spmd/map_shift_i16_reject.tl:avx512)
+            printf '%s\n' "lower: SPMD foreach SIMD lowering does not support shift 'shl' for lane type i16 in AVX-512 backend mode; supported lane types are i32, u32, i64, and u64"
             ;;
         tests/spmd/private_helper_i64.tl:avx2 | tests/spmd/private_helper_f64.tl:avx2 | tests/spmd/private_helper_bool.tl:avx2 | tests/spmd/private_helper_masked_load.tl:avx2 | tests/spmd/private_helper_store.tl:avx2 | tests/spmd/private_helper_effects.tl:avx2)
             printf '%s\n' "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512"
@@ -360,6 +369,120 @@ verify_map_fused_reduce_shape() {
         echo "[spmd-simd] map-fused reduce $_mode function lacks the post-loop horizontal reduction" >&2
         echo "tests/spmd/map_fused_reduce_i64.tl $_mode (missing post-loop horizontal reduce)" >> "$FAILURES"
     fi
+
+    for surface in surface shift; do
+        _surface_func="$WORKDIR/$_tag.$_mode.reduce-map-$surface.s"
+        sed -n \
+            "/^_tl_map_fused_reduce_i64_reduce_map_$surface:/,/^$/p" \
+            "$_asm" > "$_surface_func"
+        if [ ! -s "$_surface_func" ]; then
+            echo "[spmd-simd] map-fused reduce $_mode missing reduce-map-$surface" >&2
+            echo "tests/spmd/map_fused_reduce_i64.tl $_mode (missing reduce-map-$surface)" >> "$FAILURES"
+            continue
+        fi
+        if [ "$surface" = surface ]; then
+            _surface_opcodes="vpsubq vpor vpxor"
+        else
+            _surface_opcodes=vpsllvq
+        fi
+        for opcode in $_surface_opcodes; do
+            if ! grep -F -- "$opcode" "$_surface_func" > /dev/null; then
+                echo "[spmd-simd] map-fused reduce $_mode reduce-map-$surface missing $opcode" >&2
+                echo "tests/spmd/map_fused_reduce_i64.tl $_mode reduce-map-$surface (missing $opcode)" >> "$FAILURES"
+            fi
+        done
+        if ! grep -F -- "vpaddq" "$_surface_func" > /dev/null; then
+            echo "[spmd-simd] map-fused reduce $_mode reduce-map-$surface lacks a vector accumulator" >&2
+            echo "tests/spmd/map_fused_reduce_i64.tl $_mode reduce-map-$surface (missing vpaddq)" >> "$FAILURES"
+        fi
+        if [ "$surface" = shift ] &&
+            ! grep -F -- "call tl_shift_abort" "$_surface_func" > /dev/null; then
+            echo "[spmd-simd] map-fused reduce $_mode reduce-map-shift lacks a checked-count trap path" >&2
+            echo "tests/spmd/map_fused_reduce_i64.tl $_mode reduce-map-shift (missing trap guard)" >> "$FAILURES"
+        fi
+    done
+}
+
+verify_map_operator_surface_shape() {
+    _mode=$1
+    compile_spmd_mode tests/integration/spmd_foreach.tl "$_mode" 2
+    _tag=tests_integration_spmd_foreach_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] map-operator $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/integration/spmd_foreach.tl $_mode (operator shape compile)" >> "$FAILURES"
+        return
+    fi
+    for lane in i64 u64 i32 u32 i16 u16 i8 u8 f64 f32; do
+        _func="$WORKDIR/$_tag.$_mode.fill-$lane-foreach.s"
+        sed -n \
+            "/^_tl_spmd_foreach_fill_${lane}_foreach:/,/^_tl_spmd_foreach_fill_${lane}_scalar:/p" \
+            "$_asm" > "$_func"
+        case "$lane" in
+            i64 | u64) _sub=vpsubq ;;
+            i32 | u32) _sub=vpsubd ;;
+            i16 | u16) _sub=vpsubw ;;
+            i8 | u8) _sub=vpsubb ;;
+            f64) _sub=vsubpd ;;
+            f32) _sub=vsubps ;;
+        esac
+        if ! grep -F -- "$_sub" "$_func" > /dev/null; then
+            echo "[spmd-simd] map-operator $_mode fill-$lane missing $_sub" >&2
+            echo "tests/integration/spmd_foreach.tl $_mode fill-$lane (missing $_sub)" >> "$FAILURES"
+        fi
+        case "$lane" in
+            f64 | f32) ;;
+            *)
+                for opcode in vpor vpxor; do
+                    if ! grep -F -- "$opcode" "$_func" > /dev/null; then
+                        echo "[spmd-simd] map-operator $_mode fill-$lane missing $opcode" >&2
+                        echo "tests/integration/spmd_foreach.tl $_mode fill-$lane (missing $opcode)" >> "$FAILURES"
+                    fi
+                done
+                ;;
+        esac
+    done
+}
+
+verify_map_compare_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/map_compare_surface.tl "$_mode"
+    _tag=tests_spmd_map_compare_surface_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    _i64="$WORKDIR/$_tag.$_mode.i64.s"
+    _other="$WORKDIR/$_tag.$_mode.other.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] map-compare $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/map_compare_surface.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n \
+        '/^_tl_map_compare_surface_case_i64_predicates:/,/^_tl_map_compare_surface_case_other_lanes:/p' \
+        "$_asm" > "$_i64"
+    sed -n \
+        '/^_tl_map_compare_surface_case_other_lanes:/,/^_tl_map_compare_surface_main:/p' \
+        "$_asm" > "$_other"
+    if [ "$_mode" = avx2 ]; then
+        _i64_opcodes="vpcmpeqq vpcmpgtq"
+        _other_opcodes="vpcmpgtd vcmpps vcmppd"
+    else
+        _i64_opcodes="vpcmpq"
+        _other_opcodes="vpcmpud vcmpps vcmppd"
+    fi
+    for opcode in $_i64_opcodes; do
+        if ! grep -F -- "$opcode" "$_i64" > /dev/null; then
+            echo "[spmd-simd] map-compare $_mode i64 surface missing $opcode" >&2
+            echo "tests/spmd/map_compare_surface.tl $_mode i64 (missing $opcode)" >> "$FAILURES"
+        fi
+    done
+    for opcode in $_other_opcodes; do
+        if ! grep -F -- "$opcode" "$_other" > /dev/null; then
+            echo "[spmd-simd] map-compare $_mode other lanes missing $opcode" >&2
+            echo "tests/spmd/map_compare_surface.tl $_mode other (missing $opcode)" >> "$FAILURES"
+        fi
+    done
 }
 
 verify_avx2_scan_prefix_shape() {
@@ -639,6 +762,76 @@ verify_masked_shift_shape() {
     done
 }
 
+verify_map_shift_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/map_shift_value_types.tl "$_mode"
+    _tag=tests_spmd_map_shift_value_types_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] map-shift $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/map_shift_value_types.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+    for lane in i32 u32 i64 u64; do
+        _func="$WORKDIR/$_tag.$_mode.$lane.s"
+        sed -n \
+            "/^_tl_map_shift_value_types_case_$lane:/,/^$/p" \
+            "$_asm" > "$_func"
+        if [ ! -s "$_func" ]; then
+            echo "[spmd-simd] map-shift $_mode missing case-$lane body" >&2
+            echo "tests/spmd/map_shift_value_types.tl $_mode (missing case-$lane)" >> "$FAILURES"
+            continue
+        fi
+        if [ "$lane" = i32 ]; then
+            _right=vpsravd
+        elif [ "$lane" = u32 ]; then
+            _right=vpsrlvd
+        elif [ "$lane" = i64 ] && [ "$_mode" = avx512 ]; then
+            _right=vpsravq
+        else
+            _right=vpsrlvq
+        fi
+        for opcode in vpsllv "$_right"; do
+            if ! grep -F -- "$opcode" "$_func" > /dev/null; then
+                echo "[spmd-simd] map-shift $_mode case-$lane missing $opcode" >&2
+                echo "tests/spmd/map_shift_value_types.tl $_mode case-$lane (missing $opcode)" >> "$FAILURES"
+            fi
+        done
+        if ! grep -F -- "call tl_shift_abort" "$_func" > /dev/null; then
+            echo "[spmd-simd] map-shift $_mode case-$lane lacks an active-lane trap guard" >&2
+            echo "tests/spmd/map_shift_value_types.tl $_mode case-$lane (missing trap guard)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx2 ]; then
+            _reduce=vpmovmskb
+        else
+            _reduce=kortest
+        fi
+        if ! grep -F -- "$_reduce" "$_func" > /dev/null; then
+            echo "[spmd-simd] map-shift $_mode case-$lane lacks a reduced invalid-lane mask" >&2
+            echo "tests/spmd/map_shift_value_types.tl $_mode case-$lane (missing mask reduction)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx2 ] && [ "$lane" = i64 ]; then
+            for opcode in vpcmpgtq vpsllvq vpsrlvq vpor; do
+                if ! grep -F -- "$opcode" "$_func" > /dev/null; then
+                    echo "[spmd-simd] map-shift AVX2 signed-i64 expansion missing $opcode" >&2
+                    echo "tests/spmd/map_shift_value_types.tl avx2 case-i64 (missing $opcode)" >> "$FAILURES"
+                fi
+            done
+        fi
+        if [ "$_mode" = avx2 ] &&
+            ! grep -F -- "%ymm" "$_func" > /dev/null; then
+            echo "[spmd-simd] map-shift AVX2 case-$lane lacks vector code" >&2
+            echo "tests/spmd/map_shift_value_types.tl avx2 case-$lane (scalar fallback)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx512 ] &&
+            ! grep -E -- '%zmm[0-9]+|%k[0-7]' "$_func" > /dev/null; then
+            echo "[spmd-simd] map-shift AVX-512 case-$lane lacks vector code" >&2
+            echo "tests/spmd/map_shift_value_types.tl avx512 case-$lane (scalar fallback)" >> "$FAILURES"
+        fi
+    done
+}
+
 verify_avx2_native_mask_shapes() {
     compile_spmd_mode tests/spmd/masked_if_value_types.tl avx2
     _tag=tests_spmd_masked_if_value_types_tl
@@ -766,6 +959,9 @@ for mode in avx2 avx512; do
     verify_shuffle_opcodes "$mode"
     verify_reduce_accumulator_shape "$mode"
     verify_map_fused_reduce_shape "$mode"
+    verify_map_operator_surface_shape "$mode"
+    verify_map_compare_shape "$mode"
+    verify_map_shift_shape "$mode"
 done
 
 verify_avx2_varying_while_shape
@@ -802,11 +998,14 @@ for gather_oob in tests/integration/spmd_gather_oob.tl tests/integration/spmd_ga
     done
 done
 
-# Active invalid counts retain scalar trap semantics. The two fixtures cover a
-# signed negative qword count and an unsigned count equal to the dword width.
+# Active invalid counts retain scalar trap semantics in both masked control
+# flow and direct maps. The fixtures cover a signed negative qword count and an
+# unsigned count equal to the dword width.
 for shift_trap in \
     tests/spmd/masked_if_shift_negative_trap.tl \
-    tests/spmd/masked_if_shift_large_trap.tl
+    tests/spmd/masked_if_shift_large_trap.tl \
+    tests/spmd/map_shift_negative_trap.tl \
+    tests/spmd/map_shift_large_trap.tl
 do
     for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
         mode=${pair%% *}

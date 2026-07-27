@@ -6,6 +6,7 @@
   (alloc bool)
   (region-mark bool)
   (region-reset bool)
+  (arena-debug bool)
   (profile bool)
   (tlci-macro-entry bool)
   (write-exit bool)
@@ -22,6 +23,10 @@
 (define (compiler-backend-runtime-features-region-reset?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
   (struct-get features region-reset))
+
+(define (compiler-backend-runtime-features-arena-debug?
+  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
+  (struct-get features arena-debug))
 
 (define (compiler-backend-runtime-features-profile?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool

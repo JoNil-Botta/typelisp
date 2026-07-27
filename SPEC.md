@@ -3977,6 +3977,15 @@ runtime-sized buffers, reading through `array-ref` and writing through
   byte-compatible (`0` or `1` per element); lowering converts between byte
   arrays and internal masks privately. Varying integer arithmetic keeps the
   modulo wrapping semantics of scalar integer arithmetic.
+- Straight-line contiguous numeric maps vectorize `+` and `-` for every
+  numeric lane type; `bit-and`, `bit-or`, and `bit-xor` for every integer lane
+  type; and `*` for every numeric lane type except `i8`/`u8`. Direct `shl` and
+  `shr` maps vectorize `i32`, `u32`, `i64`, and `u64`, preserving the section
+  5.4 invalid-count trap on active lanes only, including partial tails.
+  Narrow direct shifts and byte multiplication are rejected with
+  operator/type-specific diagnostics rather than silently scalarizing.
+  Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
+  are stored through `bool` array lanes.
 
 Runtime-sized SPMD inputs and outputs need not be spelled as unsized
 `(Array T)` parameters: vector/slice-style sources and mutable destinations
@@ -6680,7 +6689,8 @@ in documentation passes.
   i32/u32/i64/u64/f32/f64 maps and reduction values, including active-count
   preserving tails and ordered bounds traps; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition, value-producing selects, and guarded native
-  `i32`/`u32`/`i64`/`u64` shifts with active-lane-only invalid-count traps;
+  `i32`/`u32`/`i64`/`u64` direct and masked shifts with active-lane-only
+  invalid-count traps;
   AVX2/AVX-512
   scalar-lane varying `match`; AVX2/AVX-512 enum tag/payload varying `match` with
   active-lane-only scalar field loads; AVX2/AVX-512
@@ -6706,7 +6716,7 @@ in documentation passes.
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
-| Narrow masked integer shifts | AVX2/AVX-512 masked `i32`/`u32`/`i64`/`u64` shifts are implemented. `i8`/`u8`/`i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
+| Narrow integer shifts | AVX2/AVX-512 direct-map and masked `i32`/`u32`/`i64`/`u64` shifts are implemented. `i8`/`u8`/`i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Frontend analysis plus private scalar/AVX-512 IR lowering and native emission are implemented; AVX2 native emission is deferred under #5151. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |

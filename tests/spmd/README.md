@@ -139,9 +139,18 @@ compile and run in `avx2` and `avx512`.
 - `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
   compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
   documented 8-bit lane multiplication diagnostic.
-- `../integration/spmd_foreach.tl` - `foreach` add/mul maps over i64, u64,
-  i32, u32, i16, u16, i8, u8, f64, and f32 arrays, self-checked against
+- `../integration/spmd_foreach.tl` - `foreach` add/sub maps over i64, u64,
+  i32, u32, i16, u16, i8, u8, f64, and f32 arrays, plus bit-or/bit-xor over
+  every integer width and multiplication where supported, self-checked against
   scalar loops across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
+- `map_shift_value_types.tl` - direct contiguous `shl`/`shr` maps over
+  i32/u32/i64/u64 values with varying counts, signed/logical right shifts,
+  full gangs, and partial tails whose inactive backing counts are invalid.
+  `map_shift_{negative,large}_trap.tl` pin active-count exit 129 behavior, and
+  `map_shift_i16_reject.tl` pins the narrow-lane operator/type diagnostic.
+- `map_compare_surface.tl` - direct maps for all six comparison predicates
+  plus unsigned and f32/f64 comparison lanes, producing bool-array masks.
+  Scalar, AVX2, and AVX-512 modes exit 42.
 - `../integration/spmd_gather_read.tl` - scalar/AVX2/AVX-512 `foreach`
   gather-read fixture that reads `xs[ix[i]]` into contiguous `out[i]` across
   empty, sub-lane, tail, and repeated-index lengths for i32, i64, f32, and f64.
@@ -154,10 +163,11 @@ compile and run in `avx2` and `avx512`.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
   i64/i32/f64, f32 `sum`, plus `all`/`any` bool reductions across empty,
   sub-lane, exact-lane, tail, signed-zero, and finite-overflow cases. Exit 42.
-- `map_fused_reduce_i64.tl` - i64 `sum` over `values[i] + uniform`, including
-  empty, sub-gang, exact-gang, and tail ranges plus a neutral lane-index term.
-  All modes exit 42; SIMD assembly gates require a vectorized map feeding one
-  vector-resident accumulator and a single post-loop horizontal reduction.
+- `map_fused_reduce_i64.tl` - i64 `sum` over mapped add, sub/bit-or/bit-xor,
+  and checked shift values, including empty, sub-gang, exact-gang, and tail
+  ranges plus a neutral lane-index term. All modes exit 42; SIMD assembly gates
+  require native mapped operators feeding a vector-resident accumulator and a
+  single post-loop horizontal reduction.
 - `../integration/spmd_scan_scalar.tl` - `spmd-scan` inclusive prefixes for
   i64 sum/min/max, i32 sum/min/max, and bool all/any across empty, sub-lane,
   exact-lane, multiple-gang, and tail lengths. Scalar and AVX2 execute the
@@ -189,8 +199,11 @@ Coverage map:
 - `foreach` scalar and SIMD map/zip coverage for `i64`, `u64`, `i32`, `u32`,
   `i16`, `u16`, `i8`, `u8`, `f64`, and `f32` lives in
   `../integration/spmd_foreach.tl`, the two tail fixtures, and
-  `uniform_zip_i64.tl`. The intentionally unsupported byte multiply policy is
-  covered by `i8_mul_reject.tl`.
+  `uniform_zip_i64.tl`. Direct sub/bit-or/bit-xor opcode coverage lives in
+  `../integration/spmd_foreach.tl`; direct checked shifts and comparisons live
+  in `map_shift_value_types.tl` and `map_compare_surface.tl`. The intentionally
+  unsupported byte multiply and narrow-shift policies are covered by
+  `i8_mul_reject.tl` and `map_shift_i16_reject.tl`.
 - Vector/slice public-surface coverage for borrowed backing storage lives in
   `vector_slice_surface_i64.tl`.
 - Scalar and AVX2/AVX-512 gather-read coverage for dynamic arrays lives in
@@ -230,10 +243,10 @@ Coverage map:
 - `spmd-reduce` and `spmd-scan` coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
   `../integration/spmd_scan_scalar.tl`. `map_fused_reduce_i64.tl` covers
-  contiguous array reads combined with uniform and lane terms. The former also
-  executes f32 sums; the latter requires native AVX2 prefixes for canonical
-  contiguous shapes and scalar reference lowering elsewhere through
-  `scripts/verify-spmd-simd.sh`.
+  contiguous array reads combined with uniform/lane terms and mapped
+  sub/bitwise/checked-shift operators. The former also executes f32 sums; the
+  latter requires native AVX2 prefixes for canonical contiguous shapes and
+  scalar reference lowering elsewhere through `scripts/verify-spmd-simd.sh`.
 - `spmd-broadcast` executable coverage lives in the `broadcast_lane*_{i64,u64,u32}.tl`
   fixtures, with mode-specific expectations in `scripts/verify-spmd-broadcast.sh`.
 - `spmd-shuffle` scalar and native AVX2/AVX-512 coverage lives in

@@ -16,7 +16,12 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array-set!
+      out
+      i
+      (-
+        (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
+        (bit-xor (array-ref b i) 3)))))
 
 (define (fill-i64-scalar
   [a : (Array i64)]
@@ -27,7 +32,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array-set!
+          out
+          i
+          (-
+            (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
+            (bit-xor (array-ref b i) 3)))
         (set! i (+ i 1))))))
 
 (define (eq-i64 [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
@@ -71,7 +81,12 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array-set!
+      out
+      i
+      (-
+        (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
+        (bit-xor (array-ref b i) 3)))))
 
 (define (fill-i32-scalar
   [a : (Array i32)]
@@ -82,7 +97,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array-set!
+          out
+          i
+          (-
+            (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
+            (bit-xor (array-ref b i) 3)))
         (set! i (+ i 1))))))
 
 (define (eq-i32 [a : (Array i32)] [b : (Array i32)] [n : i64]) : bool
@@ -130,7 +150,11 @@
     (array-set!
       out
       i
-      (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64)))))
+      (-
+        (bit-or
+          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64))
+          (array-ref a i))
+        (bit-xor (array-ref b i) (cast 3 : u64))))))
 
 (define (fill-u64-scalar
   [a : (Array u64)]
@@ -145,7 +169,11 @@
         (array-set!
           out
           i
-          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64)))
+          (-
+            (bit-or
+              (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64))
+              (array-ref a i))
+            (bit-xor (array-ref b i) (cast 3 : u64))))
         (set! i (+ i 1))))))
 
 (define (eq-u64 [a : (Array u64)] [b : (Array u64)] [n : i64]) : bool
@@ -194,7 +222,11 @@
     (array-set!
       out
       i
-      (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32)))))
+      (-
+        (bit-or
+          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32))
+          (array-ref a i))
+        (bit-xor (array-ref b i) (cast 3 : u32))))))
 
 (define (fill-u32-scalar
   [a : (Array u32)]
@@ -209,7 +241,11 @@
         (array-set!
           out
           i
-          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32)))
+          (-
+            (bit-or
+              (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32))
+              (array-ref a i))
+            (bit-xor (array-ref b i) (cast 3 : u32))))
         (set! i (+ i 1))))))
 
 (define (eq-u32 [a : (Array u32)] [b : (Array u32)] [n : i64]) : bool
@@ -254,7 +290,12 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array-set!
+      out
+      i
+      (-
+        (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
+        (bit-xor (array-ref b i) 3)))))
 
 (define (fill-i8-scalar
   [a : (Array i8)]
@@ -265,7 +306,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array-set!
+          out
+          i
+          (-
+            (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
+            (bit-xor (array-ref b i) 3)))
         (set! i (+ i 1))))))
 
 (define (eq-i8 [a : (Array i8)] [b : (Array i8)] [n : i64]) : bool
@@ -309,7 +355,12 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array-set!
+      out
+      i
+      (-
+        (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
+        (bit-xor (array-ref b i) 3)))))
 
 (define (fill-u8-scalar
   [a : (Array u8)]
@@ -320,7 +371,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array-set!
+          out
+          i
+          (-
+            (bit-or (+ (array-ref a i) (array-ref b i)) (array-ref a i))
+            (bit-xor (array-ref b i) 3)))
         (set! i (+ i 1))))))
 
 (define (eq-u8 [a : (Array u8)] [b : (Array u8)] [n : i64]) : bool
@@ -365,7 +421,12 @@
   [factor : i16]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))))
+    (array-set!
+      out
+      i
+      (-
+        (bit-or (+ (array-ref a i) (* (array-ref b i) factor)) (array-ref a i))
+        (bit-xor (array-ref b i) (cast 3 : i16))))))
 
 (define (fill-i16-scalar
   [a : (Array i16)]
@@ -377,7 +438,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))
+        (array-set!
+          out
+          i
+          (-
+            (bit-or
+              (+ (array-ref a i) (* (array-ref b i) factor))
+              (array-ref a i))
+            (bit-xor (array-ref b i) (cast 3 : i16))))
         (set! i (+ i 1))))))
 
 (define (eq-i16 [a : (Array i16)] [b : (Array i16)] [n : i64]) : bool
@@ -423,7 +491,12 @@
   [factor : u16]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))))
+    (array-set!
+      out
+      i
+      (-
+        (bit-or (+ (array-ref a i) (* (array-ref b i) factor)) (array-ref a i))
+        (bit-xor (array-ref b i) (cast 3 : u16))))))
 
 (define (fill-u16-scalar
   [a : (Array u16)]
@@ -435,7 +508,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))
+        (array-set!
+          out
+          i
+          (-
+            (bit-or
+              (+ (array-ref a i) (* (array-ref b i) factor))
+              (array-ref a i))
+            (bit-xor (array-ref b i) (cast 3 : u16))))
         (set! i (+ i 1))))))
 
 (define (eq-u16 [a : (Array u16)] [b : (Array u16)] [n : i64]) : bool
@@ -480,7 +560,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array-set! out i (- (+ (array-ref a i) (array-ref b i)) (array-ref b i)))))
 
 (define (fill-f64-scalar
   [a : (Array f64)]
@@ -491,7 +571,10 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array-set!
+          out
+          i
+          (- (+ (array-ref a i) (array-ref b i)) (array-ref b i)))
         (set! i (+ i 1))))))
 
 (define (eq-f64 [a : (Array f64)] [b : (Array f64)] [n : i64]) : bool
@@ -535,7 +618,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array-set! out i (- (+ (array-ref a i) (array-ref b i)) (array-ref b i)))))
 
 (define (fill-f32-scalar
   [a : (Array f32)]
@@ -546,7 +629,10 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array-set!
+          out
+          i
+          (- (+ (array-ref a i) (array-ref b i)) (array-ref b i)))
         (set! i (+ i 1))))))
 
 (define (eq-f32 [a : (Array f32)] [b : (Array f32)] [n : i64]) : bool

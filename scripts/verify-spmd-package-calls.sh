@@ -111,3 +111,9 @@ grep -E '(%zmm|%k[0-7])' "$CONSUMER_ASM" >/dev/null \
 if grep -E 'vpbroadcastd .*%ymm' "$PRODUCER_ASM" >/dev/null; then
     fail "avx512 uniform i64 package helper used a dword/ymm splat"
 fi
+for mnemonic in vpminsw vpminuw vpminsb vpminub; do
+    grep -E "[[:space:]]$mnemonic[[:space:]]" "$PRODUCER_ASM" >/dev/null \
+        || fail "avx512 producer assembly has no $mnemonic narrow uniform reduction"
+done
+grep -E 'vpsrldq \$1,' "$PRODUCER_ASM" >/dev/null \
+    || fail "avx512 byte uniform reduction did not collapse the final byte pair"

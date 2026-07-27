@@ -7942,6 +7942,10 @@
   (label-generation i64)
   (labels-unique bool)
   (labels (Array i64))
+  ;; Dense block values share CFG id order. Passes that reuse a topology
+  ;; context after replacing block values refresh this array once from their
+  ;; exact current list before indexed reads.
+  (blocks (Array CompilerIrBlock))
   (succs OptCfgCsr)
   (preds OptCfgCsr)
   (reachable (Array bool))
@@ -7962,6 +7966,7 @@
   [blocks : CompilerIrBlockSeq]
   [generation : i64]
   [labels : (Array i64)]
+  [dense-blocks : (Array CompilerIrBlock)]
   [base : i64]) : bool
   (let
     [index : i64 0]
@@ -7969,22 +7974,30 @@
     [unique : bool true]
     (begin
       (while (< index count)
-        (begin
-          (match (compiler-ir-block-seq-ref blocks index)
-            [(CompilerIrBlock.Block label _)
-              (begin
-                (array-set! labels (+ base index) label)
-                (if (>= (opt-cfg-label-table-get label generation) 0)
-                  (set! unique false)
-                  unit)
-                (opt-cfg-label-table-put! label (+ base index) generation))])
-          (set! index (+ index 1))))
+        (let
+          [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
+          (begin
+            (array-set! dense-blocks (+ base index) block)
+            (match block
+              [(CompilerIrBlock.Block label _)
+                (let
+                  [fresh : bool
+                    (< (opt-cfg-label-table-get label generation) 0)]
+                  (begin
+                    (array-set! labels (+ base index) label)
+                    ;; Preserve `find-block`'s first-match behavior for an
+                    ;; invalid duplicate-label CFG. Valid CFGs are unique.
+                    (if fresh
+                      (opt-cfg-label-table-put! label (+ base index) generation)
+                      (set! unique false))))])
+            (set! index (+ index 1)))))
       unique)))
 
 (define (opt-cfg-index-fill-labels!
   [blocks : CompilerIrBlockList]
   [generation : i64]
   [labels : (Array i64)]
+  [dense-blocks : (Array CompilerIrBlock)]
   [index : i64]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) true]
@@ -7994,8 +8007,11 @@
           (let
             [fresh : bool (< (opt-cfg-label-table-get label generation) 0)]
             (begin
+              (array-set! dense-blocks index block)
               (array-set! labels index label)
-              (opt-cfg-label-table-put! label index generation)
+              (if fresh
+                (opt-cfg-label-table-put! label index generation)
+                unit)
               ;; the recursion runs first: `and` short-circuits and the rest of
               ;; the labels still have to be stamped
               (and
@@ -8003,10 +8019,11 @@
                   (box-get rest)
                   generation
                   labels
+                  dense-blocks
                   (+ index 1))
                 fresh)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-index-fill-label-seq! seq generation labels index)]))
+      (opt-cfg-index-fill-label-seq! seq generation labels dense-blocks index)]))
 
 (define (opt-i64-list-contains? [items : OptI64List] [value : i64]) : bool
   (match items
@@ -8311,9 +8328,11 @@
   (let
     [count : i64 (compiler-ir-block-list-count blocks)]
     [labels : (Array i64) (array.make-array i64 count)]
+    [dense-blocks : (Array CompilerIrBlock)
+      (array.make-array CompilerIrBlock count)]
     [generation : i64 (opt-cfg-label-table-begin!)]
     [labels-unique : bool
-      (opt-cfg-index-fill-labels! blocks generation labels 0)]
+      (opt-cfg-index-fill-labels! blocks generation labels dense-blocks 0)]
     [succ-rows : (Array OptI64List) (array.make-array OptI64List count)]
     [pred-rows : (Array OptI64List) (array.make-array OptI64List count)]
     [reachable : (Array bool) (array.make-array bool count)]
@@ -8347,6 +8366,7 @@
             generation
             labels-unique
             labels
+            dense-blocks
             succ-csr
             pred-csr
             reachable
@@ -8358,8 +8378,10 @@
 (define (opt-cfg-index-block-count [index : OptCfgIndex]) : i64
   (array-length (struct-get index labels)))
 
-;; `opt-cfg-index-fill-labels!` inserts one entry per block and a repeated label
-;; overwrites rather than adds, so a short id map is exactly a duplicate label.
+;; `opt-cfg-index-fill-labels!` records whether every label inserted exactly
+;; once. The reverse table keeps the first entry for duplicate labels so indexed
+;; lookup agrees with the legacy list scan even before the verifier rejects the
+;; malformed CFG.
 (define (opt-cfg-index-labels-unique? [index : OptCfgIndex]) : bool
   (struct-get index labels-unique))
 
@@ -8386,6 +8408,54 @@
     (if (>= id 0)
       (option_i64.Some id)
       (opt-cfg-index-id-scan (struct-get index labels) label 0))))
+
+(define (opt-cfg-index-refresh-block-seq!
+  [out : (Array CompilerIrBlock)]
+  [blocks : CompilerIrBlockSeq]
+  [base : i64]) : i64
+  (let
+    [slot : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (begin
+      (while (< slot count)
+        (begin
+          (array-set! out (+ base slot) (compiler-ir-block-seq-ref blocks slot))
+          (set! slot (+ slot 1))))
+      (+ base count))))
+
+(define (opt-cfg-index-refresh-blocks-from!
+  [out : (Array CompilerIrBlock)]
+  [blocks : CompilerIrBlockList]
+  [index : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) index]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (array-set! out index block)
+        (opt-cfg-index-refresh-blocks-from! out (box-get rest) (+ index 1)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-cfg-index-refresh-block-seq! out seq index)]))
+
+(define (opt-cfg-index-refresh-blocks!
+  [index : OptCfgIndex]
+  [blocks : CompilerIrBlockList]) : unit
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    (if (= count (compiler-ir-block-list-count blocks))
+      (begin
+        (opt-cfg-index-refresh-blocks-from! (struct-get index blocks) blocks 0)
+        unit)
+      unit)))
+
+(define (opt-cfg-index-block [index : OptCfgIndex] [id : i64]) : OptMaybeBlock
+  (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
+    (OptMaybeBlock.Some (array-ref (struct-get index blocks) id))
+    (OptMaybeBlock.No)))
+
+(define (opt-cfg-index-find-block [index : OptCfgIndex] [label : i64]) : OptMaybeBlock
+  (match (opt-cfg-index-id index label)
+    [(option_i64.Some id) (opt-cfg-index-block index id)]
+    [(option_i64.None) (OptMaybeBlock.No)]))
 
 (define (opt-cfg-index-row-labels-from
   [index : OptCfgIndex]
@@ -11900,7 +11970,7 @@
   (let
     [index : OptCfgIndex (struct-get context index)]
     [label : i64 (array-ref (struct-get index labels) id)]
-    (match (opt-cfg-find-block blocks label)
+    (match (opt-cfg-index-block index id)
       [(OptMaybeBlock.No) state]
       [(OptMaybeBlock.Some block)
         (match block
@@ -12019,29 +12089,32 @@
     [initial-env : OptSsaRenameEnv
       (opt-ssa-env-from-params facts params (OptSsaRenameEnv.Nil))]
     [entry-label : i64 (opt-cfg-entry-label blocks)]
-    (match (opt-cfg-index-id (struct-get context index) entry-label)
-      [(option_i64.Some entry-id)
-        (opt-ssa-rename-missing-blocks
-          blocks
-          facts
-          sites
-          initial-env
-          (opt-ssa-rename-id
-            context
+    [index : OptCfgIndex (struct-get context index)]
+    (begin
+      (opt-cfg-index-refresh-blocks! index blocks)
+      (match (opt-cfg-index-id index entry-label)
+        [(option_i64.Some entry-id)
+          (opt-ssa-rename-missing-blocks
             blocks
             facts
             sites
-            entry-id
             initial-env
-            (OptSsaRenameState.State
-              (OptSsaRenameBlocks.Nil)
-              (OptSsaBlockOuts.Nil)
-              frame)))]
-      [(option_i64.None)
-        (OptSsaRenameState.State
-          (OptSsaRenameBlocks.Nil)
-          (OptSsaBlockOuts.Nil)
-          frame)])))
+            (opt-ssa-rename-id
+              context
+              blocks
+              facts
+              sites
+              entry-id
+              initial-env
+              (OptSsaRenameState.State
+                (OptSsaRenameBlocks.Nil)
+                (OptSsaBlockOuts.Nil)
+                frame)))]
+        [(option_i64.None)
+          (OptSsaRenameState.State
+            (OptSsaRenameBlocks.Nil)
+            (OptSsaBlockOuts.Nil)
+            frame)]))))
 
 ;; Dead-path phi input: a candidate var can reach a phi over an edge on which
 ;; it has no definition -- e.g. an inner-loop counter's phi at the OUTER loop
@@ -24134,10 +24207,8 @@
         type-segment-bases
         (compiler-ir-function-seq-to-list seq))]))
 
-(define (opt-switch-block-starts-with-phi?
-  [blocks : CompilerIrBlockList]
-  [label : i64]) : bool
-  (match (opt-cfg-find-block blocks label)
+(define (opt-switch-block-starts-with-phi? [index : OptCfgIndex] [label : i64]) : bool
+  (match (opt-cfg-index-find-block index label)
     [(OptMaybeBlock.No) true]
     [(OptMaybeBlock.Some block)
       (match block
@@ -24149,31 +24220,31 @@
               [_ false]))])]))
 
 (define (opt-switch-targets-safe-from?
-  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
   [all-items : OptSwitchCandidateList]
   [items : OptSwitchCandidateList]
   [default-label : i64]) : bool
   (if (or
     (opt-switch-candidate-has-label? all-items default-label)
-    (opt-switch-block-starts-with-phi? blocks default-label))
+    (opt-switch-block-starts-with-phi? index default-label))
     false
     (match items
       [(OptSwitchCandidateList.Nil) true]
       [(OptSwitchCandidateList.Cons _ _ _ arm-label _ rest)
         (and
           (not (opt-switch-candidate-has-label? all-items arm-label))
-          (not (opt-switch-block-starts-with-phi? blocks arm-label))
+          (not (opt-switch-block-starts-with-phi? index arm-label))
           (opt-switch-targets-safe-from?
-            blocks
+            index
             all-items
             (box-get rest)
             default-label))])))
 
 (define (opt-switch-targets-safe?
-  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
   [items : OptSwitchCandidateList]
   [default-label : i64]) : bool
-  (opt-switch-targets-safe-from? blocks items items default-label))
+  (opt-switch-targets-safe-from? index items items default-label))
 
 (define (opt-switch-single-pred-from?
   [index : OptCfgIndex]
@@ -24184,7 +24255,7 @@
     (and (= (opt-label-count preds) 1) (opt-label-contains preds pred))))
 
 (define (opt-switch-finalize-chain
-  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
   [index-var : i64]
   [items : OptSwitchCandidateList]
   [default-label : i64]
@@ -24198,7 +24269,7 @@
       (if (and
         (>= count 4)
         (= (+ (- max-tag min-tag) 1) count)
-        (opt-switch-targets-safe? blocks items default-label))
+        (opt-switch-targets-safe? index items default-label))
         (OptMaybeSwitchChain.Some
           index-var
           min-tag
@@ -24230,7 +24301,7 @@
   (let
     [resolved-index : i64 (opt-switch-copy-env-resolve copies candidate-index)]
     (if (and (!= index-var (- 0 1)) (!= resolved-index index-var))
-      (opt-switch-finalize-chain blocks index-var items label head-prefix)
+      (opt-switch-finalize-chain index index-var items label head-prefix)
       (let
         [first? : bool (= index-var (- 0 1))]
         [chain-index : i64
@@ -24274,9 +24345,9 @@
   [copies : OptSwitchCopyEnv]) : OptMaybeSwitchChain
   (if (opt-label-contains seen label)
     (OptMaybeSwitchChain.No)
-    (match (opt-cfg-find-block blocks label)
+    (match (opt-cfg-index-find-block index label)
       [(OptMaybeBlock.No)
-        (opt-switch-finalize-chain blocks index-var items label head-prefix)]
+        (opt-switch-finalize-chain index index-var items label head-prefix)]
       [(OptMaybeBlock.Some block)
         (match (opt-switch-parse-compare-block block uses)
           [(OptSwitchCompare.No)
@@ -24286,7 +24357,7 @@
             (if (= index-var (- 0 1))
               (match (opt-switch-parse-compare-block-tail block uses)
                 [(OptSwitchCompareTail.No)
-                  (opt-switch-finalize-chain blocks index-var items label 0)]
+                  (opt-switch-finalize-chain index index-var items label 0)]
                 [(OptSwitchCompareTail.Some
                     candidate-index
                     tag
@@ -24317,7 +24388,7 @@
                           prefix
                           (OptSwitchCopyEnv.Nil)))])])
               (opt-switch-finalize-chain
-                blocks
+                index
                 index-var
                 items
                 label
@@ -25228,51 +25299,49 @@
     [index : OptCfgIndex (struct-get context index)]
     [count : i64 (opt-cfg-index-block-count index)]
     (if (and (>= id 0) (< id count))
-      (let
-        [label : i64 (array-ref (struct-get index labels) id)]
-        (match (opt-cfg-find-block blocks label)
-          [(OptMaybeBlock.No) 0]
-          [(OptMaybeBlock.Some block)
-            (match block
-              [(CompilerIrBlock.Block label instrs)
-                (match (if (or
-                  (opt-induction-switch-arm? index blocks label instrs)
-                  (opt-bool-branch-chain-check-block? label instrs))
-                  (OptBlockPassResult.Result block false)
-                  (opt-gvn-rewrite-block type-segment-bases table sources block))
-                  [(OptBlockPassResult.Result rewritten block-changed)
-                    (begin
-                      (if block-changed
-                        (array-set!
-                          out
+      (match (opt-cfg-index-block index id)
+        [(OptMaybeBlock.No) 0]
+        [(OptMaybeBlock.Some block)
+          (match block
+            [(CompilerIrBlock.Block label instrs)
+              (match (if (or
+                (opt-induction-switch-arm? index blocks label instrs)
+                (opt-bool-branch-chain-check-block? label instrs))
+                (OptBlockPassResult.Result block false)
+                (opt-gvn-rewrite-block type-segment-bases table sources block))
+                [(OptBlockPassResult.Result rewritten block-changed)
+                  (begin
+                    (if block-changed
+                      (array-set!
+                        out
+                        id
+                        (OptGvnBlockResult.SomeBlock rewritten))
+                      unit)
+                    (let
+                      [changes : OptGvnScopeChanges
+                        (opt-gvn-record-scope-instr-seq-from
+                          type-segment-bases
+                          sources
                           id
-                          (OptGvnBlockResult.SomeBlock rewritten))
-                        unit)
-                      (let
-                        [changes : OptGvnScopeChanges
-                          (opt-gvn-record-scope-instr-seq-from
-                            type-segment-bases
-                            sources
-                            id
-                            instrs
-                            0
-                            table
-                            (OptGvnScopeChanges.Nil))]
-                        [children-changed : i64
-                          (opt-gvn-rewrite-children
-                            type-segment-bases
-                            context
-                            children
-                            table
-                            sources
-                            blocks
-                            out
-                            id)]
-                        (begin
-                          (opt-gvn-table-restore! table changes)
-                          (if (or block-changed (= children-changed 1))
-                            1
-                            0))))])])]))
+                          instrs
+                          0
+                          table
+                          (OptGvnScopeChanges.Nil))]
+                      [children-changed : i64
+                        (opt-gvn-rewrite-children
+                          type-segment-bases
+                          context
+                          children
+                          table
+                          sources
+                          blocks
+                          out
+                          id)]
+                      (begin
+                        (opt-gvn-table-restore! table changes)
+                        (if (or block-changed (= children-changed 1))
+                          1
+                          0))))])])])
       0)))
 
 (define (opt-gvn-rewrite-children
@@ -25322,6 +25391,7 @@
     [children : OptCfgCsr (opt-gvn-dom-children doms)]
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
+      (opt-cfg-index-refresh-blocks! index blocks)
       (opt-gvn-block-results-fill-empty! out 0)
       (let
         [changed : i64
@@ -26425,7 +26495,7 @@
     (if (and (>= id 0) (< id count))
       (let
         [label : i64 (array-ref (struct-get index labels) id)]
-        (match (opt-cfg-find-block blocks label)
+        (match (opt-cfg-index-block index id)
           [(OptMaybeBlock.No) unit]
           [(OptMaybeBlock.Some block)
             (match block
@@ -26622,6 +26692,7 @@
     [terms : (Array OptBoolBranchDef) (opt-bounds-dom-terms index blocks)]
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
+      (opt-cfg-index-refresh-blocks! index blocks)
       (opt-gvn-block-results-fill-empty! out 0)
       (match (opt-cfg-index-id index (struct-get context entry-label))
         [(option_i64.Some entry-id)
@@ -27347,10 +27418,9 @@
       unit
       (let
         [id : i64 (opt-cfg-index-rpo-id index slot)]
-        [label : i64 (opt-cfg-index-label index id)]
         [facts : OptDivRemFacts (array-ref facts-by-id id)]
         (begin
-          (match (opt-cfg-find-block blocks label)
+          (match (opt-cfg-index-block index id)
             [(OptMaybeBlock.Some block)
               (let
                 [rewrite : OptDivRemBlockRewrite
@@ -27475,6 +27545,7 @@
       [out : (Array OptDivRemBlockResult)
         (array.make-array OptDivRemBlockResult count)]
       (begin
+        (opt-cfg-index-refresh-blocks! index blocks)
         (opt-divrem-facts-fill-empty! facts 0)
         (opt-divrem-results-fill-empty! out 0)
         (opt-divrem-process-rpo!
@@ -30280,41 +30351,36 @@
   (let
     [count : i64 (opt-cfg-index-block-count cfg-index)]
     (if (and (>= id 0) (< id count))
-      (let
-        [label : i64 (array-ref (struct-get cfg-index labels) id)]
-        (match (opt-cfg-find-block blocks label)
-          [(OptMaybeBlock.No) unit]
-          [(OptMaybeBlock.Some block)
-            (match (opt-loop-bce-rewrite-block
-              type-segment-bases
-              state
-              summaries
-              sources
-              types
-              blocks
-              doms
-              cfg-index
-              loops
-              block)
-              [(OptLoopBceBlockRewrite.Rewrite next-state rewritten)
-                (begin
-                  (array-set!
-                    out
-                    id
-                    (OptLoopBceBlockResult.SomeBlock rewritten))
-                  (opt-loop-bce-rewrite-children
-                    type-segment-bases
-                    summaries
-                    sources
-                    types
-                    blocks
-                    doms
-                    cfg-index
-                    loops
-                    children
-                    out
-                    id
-                    next-state))])]))
+      (match (opt-cfg-index-block cfg-index id)
+        [(OptMaybeBlock.No) unit]
+        [(OptMaybeBlock.Some block)
+          (match (opt-loop-bce-rewrite-block
+            type-segment-bases
+            state
+            summaries
+            sources
+            types
+            blocks
+            doms
+            cfg-index
+            loops
+            block)
+            [(OptLoopBceBlockRewrite.Rewrite next-state rewritten)
+              (begin
+                (array-set! out id (OptLoopBceBlockResult.SomeBlock rewritten))
+                (opt-loop-bce-rewrite-children
+                  type-segment-bases
+                  summaries
+                  sources
+                  types
+                  blocks
+                  doms
+                  cfg-index
+                  loops
+                  children
+                  out
+                  id
+                  next-state))])])
       unit)))
 
 (define (opt-loop-bce-rewrite-children
@@ -36664,6 +36730,14 @@
   (Nil)
   (Cons i64 i64 i64 (Box OptLateBoundsPairSubst)))
 
+;; Defs the walk deletes outright rather than renaming. The substituted second
+;; chain keeps a replacement value, so its readers survive under a new name; a
+;; reinterpret cast that fed only the replaced first check has no reader left at
+;; all once the synthesized subtraction reads the cast's source instead.
+(defenum OptLateBoundsPairDrop
+  (Nil)
+  (Cons i64 (Box OptLateBoundsPairDrop)))
+
 (define (opt-late-bounds-pair-selected-length?
   [selected : CompilerIrMaybeValue]
   [length : CompilerIrValue]) : bool
@@ -36819,6 +36893,44 @@
         (= dst resolved)
         (opt-late-bounds-pair-subst-def? (box-get rest) dst))]))
 
+(define (opt-late-bounds-pair-drop? [drops : OptLateBoundsPairDrop] [dst : i64]) : bool
+  (match drops
+    [(OptLateBoundsPairDrop.Nil) false]
+    [(OptLateBoundsPairDrop.Cons var rest)
+      (or (= dst var) (opt-late-bounds-pair-drop? (box-get rest) dst))]))
+
+;; The first check's index operand is often a width-64 reinterpret cast of the
+;; real counter. i64 and u64 share their representation, so the pair-min
+;; subtraction may read the cast's source and let the backend fold `src - 1`
+;; into one lea instead of staging the copy the cast lowers to. Bounded like the
+;; other resolve helpers; any pending substitution applies at every step.
+(define (opt-late-bounds-pair-cast-src
+  [body-blocks : CompilerIrBlockList]
+  [env : OptCopyEnv]
+  [value : CompilerIrValue]
+  [fuel : i64]) : CompilerIrValue
+  (if (<= fuel 0)
+    value
+    (match value
+      [(CompilerIrValue.Var var)
+        (match (opt-bce-mb-find-def body-blocks var)
+          [(OptBceMbMaybeInstr.No) value]
+          [(OptBceMbMaybeInstr.Some instr)
+            (match instr
+              [(CompilerIrInstr.Cast _ src from-ty to-ty)
+                (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+                  (match src
+                    [(CompilerIrValue.Var _)
+                      (opt-late-bounds-pair-cast-src
+                        body-blocks
+                        env
+                        (opt-copy-resolve env src)
+                        (- fuel 1))]
+                    [_ value])
+                  value)]
+              [_ value])])]
+      [_ value])))
+
 ;; Emit a single check at the first trap point. When the later operand is the
 ;; smaller one, materialize `first - 1` there, substitute it for the later
 ;; affine def chain, and drop that dead chain in the same walk. The combined
@@ -36831,6 +36943,7 @@
   [plans : OptLateBoundsPairPlan]
   [short-length : CompilerIrValue]
   [substs : OptLateBoundsPairSubst]
+  [drops : OptLateBoundsPairDrop]
   [cell : (Array i64)]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
@@ -36847,6 +36960,7 @@
             plans
             short-length
             substs
+            drops
             cell)]
         [(OptLateBoundsPairAt.First first-smaller second-value)
           (match instr
@@ -36865,6 +36979,7 @@
                     plans
                     short-length
                     substs
+                    drops
                     cell))
                 (match second-value
                   [(CompilerIrValue.Var raw)
@@ -36881,7 +36996,11 @@
                         (CompilerIrInstr.BinOp
                           smaller
                           (CompilerIrBinOp.Sub)
-                          (opt-copy-resolve env first-index)
+                          (opt-late-bounds-pair-cast-src
+                            body-blocks
+                            env
+                            (opt-copy-resolve env first-index)
+                            4)
                           (CompilerIrValue.I64 1)
                           (AstType.I64))
                         (compiler-ir-instr-cons
@@ -36897,6 +37016,7 @@
                             plans
                             short-length
                             next-substs
+                            drops
                             cell))))]
                   [_
                     (compiler-ir-instr-cons
@@ -36912,6 +37032,7 @@
                         plans
                         short-length
                         substs
+                        drops
                         cell))]))]
             [_
               (compiler-ir-instr-cons
@@ -36924,11 +37045,16 @@
                   plans
                   short-length
                   substs
+                  drops
                   cell))])]
         [(OptLateBoundsPairAt.No)
           (let
             [dst : i64 (compiler-ir-instr-loop-dst-or instr (- 0 1))]
-            (if (and (>= dst 0) (opt-late-bounds-pair-subst-def? substs dst))
+            (if (and
+              (>= dst 0)
+              (or
+                (opt-late-bounds-pair-subst-def? substs dst)
+                (opt-late-bounds-pair-drop? drops dst)))
               (opt-late-bounds-pair-rewrite-instrs
                 label
                 instrs
@@ -36937,6 +37063,7 @@
                 plans
                 short-length
                 substs
+                drops
                 cell)
               (compiler-ir-instr-cons
                 (opt-copy-subst-instr env instr)
@@ -36948,6 +37075,7 @@
                   plans
                   short-length
                   substs
+                  drops
                   cell))))]))))
 
 ;; `len - zext(len >= 1)` is `len - 1` on the guarded path and zero when
@@ -37035,6 +37163,7 @@
   [rewritten-preheader : CompilerIrBlock]
   [plans : OptLateBoundsPairPlan]
   [short-length : CompilerIrValue]
+  [drops : OptLateBoundsPairDrop]
   [cell : (Array i64)]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -37054,6 +37183,7 @@
                   plans
                   short-length
                   (OptLateBoundsPairSubst.Nil)
+                  drops
                   cell)))
             (opt-late-bounds-pair-rewrite-blocks
               (box-get rest)
@@ -37062,6 +37192,7 @@
               rewritten-preheader
               plans
               short-length
+              drops
               cell))])]
     [(CompilerIrBlockList.Array seq)
       (opt-late-bounds-pair-rewrite-blocks
@@ -37071,7 +37202,76 @@
         rewritten-preheader
         plans
         short-length
+        drops
         cell)]))
+
+(define (opt-late-bounds-pair-use-count [uses : (Array i64)] [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length uses)))
+    (- 0 1)
+    (array-ref uses var)))
+
+(define (opt-late-bounds-pair-reinterpret-def?
+  [body-blocks : CompilerIrBlockList]
+  [var : i64]) : bool
+  (match (opt-bce-mb-find-def body-blocks var)
+    [(OptBceMbMaybeInstr.No) false]
+    [(OptBceMbMaybeInstr.Some instr)
+      (match instr
+        [(CompilerIrInstr.Cast _ src from-ty to-ty)
+          (and
+            (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+            (match src
+              [(CompilerIrValue.Var _) true]
+              [_ false]))]
+        [_ false])]))
+
+(define (opt-late-bounds-pair-check-index
+  [body-blocks : CompilerIrBlockList]
+  [label : i64]
+  [index : i64]) : CompilerIrMaybeValue
+  (match (opt-cfg-find-block body-blocks label)
+    [(OptMaybeBlock.No) (CompilerIrMaybeValue.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (or (< index 0) (>= index (compiler-ir-instr-seq-count instrs)))
+            (CompilerIrMaybeValue.No)
+            (match (compiler-ir-instr-seq-ref instrs index)
+              [(CompilerIrInstr.BoundsCheck first-index _ _)
+                (CompilerIrMaybeValue.Some first-index)]
+              [_ (CompilerIrMaybeValue.No)]))])]))
+
+;; Nothing re-runs DCE after this pass, so a cast left with no reader still
+;; lowers to a register copy. Collect the casts the rewrite strands: only the
+;; `first-smaller = false` plans replace their first check, and only a cast
+;; whose whole-function use census is exactly that one check is provably dead
+;; afterwards. Any other reader keeps the def -- the subtraction still reads
+;; through the cast, it just does not get to delete it.
+(define (opt-late-bounds-pair-dead-casts
+  [body-blocks : CompilerIrBlockList]
+  [uses : (Array i64)]
+  [plans : OptLateBoundsPairPlan]
+  [acc : OptLateBoundsPairDrop]) : OptLateBoundsPairDrop
+  (match plans
+    [(OptLateBoundsPairPlan.Nil) acc]
+    [(OptLateBoundsPairPlan.Cons label first _ first-smaller _ rest)
+      (opt-late-bounds-pair-dead-casts
+        body-blocks
+        uses
+        (box-get rest)
+        (if first-smaller
+          acc
+          (match (opt-late-bounds-pair-check-index body-blocks label first)
+            [(CompilerIrMaybeValue.No) acc]
+            [(CompilerIrMaybeValue.Some first-index)
+              (match first-index
+                [(CompilerIrValue.Var var)
+                  (if (and
+                    (opt-late-bounds-pair-reinterpret-def? body-blocks var)
+                    (= (opt-late-bounds-pair-use-count uses var) 1))
+                    (OptLateBoundsPairDrop.Cons var (box acc))
+                    acc)]
+                [_ acc])])))]))
 
 (define (opt-late-bounds-pair-try-loop
   [blocks : CompilerIrBlockList]
@@ -37109,51 +37309,60 @@
                   (match (opt-cfg-find-block blocks preheader-label)
                     [(OptMaybeBlock.No) (OptLateBoundsPairResult.No)]
                     [(OptMaybeBlock.Some preheader)
-                      (match (opt-late-bounds-pair-const-short-length length)
-                        [(CompilerIrMaybeValue.Some const-short-length)
-                          (let
-                            [cell : (Array i64) (array.make-array i64 1)]
-                            [_cell : unit (array-set! cell 0 frame)]
-                            (OptLateBoundsPairResult.Some
-                              (opt-late-bounds-pair-rewrite-blocks
-                                blocks
-                                body-blocks
-                                preheader-label
+                      (let
+                        [drops : OptLateBoundsPairDrop
+                          (opt-late-bounds-pair-dead-casts
+                            body-blocks
+                            (opt-collect-blocks-uses-array frame blocks)
+                            (struct-get collected plans)
+                            (OptLateBoundsPairDrop.Nil))]
+                        (match (opt-late-bounds-pair-const-short-length length)
+                          [(CompilerIrMaybeValue.Some const-short-length)
+                            (let
+                              [cell : (Array i64) (array.make-array i64 1)]
+                              [_cell : unit (array-set! cell 0 frame)]
+                              (OptLateBoundsPairResult.Some
+                                (opt-late-bounds-pair-rewrite-blocks
+                                  blocks
+                                  body-blocks
+                                  preheader-label
+                                  preheader
+                                  (struct-get collected plans)
+                                  const-short-length
+                                  drops
+                                  cell)
+                                (array-ref cell 0)))]
+                          [(CompilerIrMaybeValue.No)
+                            (let
+                              [cell : (Array i64) (array.make-array i64 1)]
+                              [_cell : unit (array-set! cell 0 frame)]
+                              [nonempty : i64 (opt-bce-version-alloc-var cell)]
+                              [nonempty-i64 : i64
+                                (opt-bce-version-alloc-var cell)]
+                              [short-length : i64
+                                (opt-bce-version-alloc-var cell)]
+                              (match (opt-late-bounds-pair-preheader
                                 preheader
-                                (struct-get collected plans)
-                                const-short-length
-                                cell)
-                              (array-ref cell 0)))]
-                        [(CompilerIrMaybeValue.No)
-                          (let
-                            [cell : (Array i64) (array.make-array i64 1)]
-                            [_cell : unit (array-set! cell 0 frame)]
-                            [nonempty : i64 (opt-bce-version-alloc-var cell)]
-                            [nonempty-i64 : i64
-                              (opt-bce-version-alloc-var cell)]
-                            [short-length : i64
-                              (opt-bce-version-alloc-var cell)]
-                            (match (opt-late-bounds-pair-preheader
-                              preheader
-                              (opt-natural-loop-header loop)
-                              length
-                              nonempty
-                              nonempty-i64
-                              short-length)
-                              [(OptLateBoundsPairPreheader.No)
-                                (OptLateBoundsPairResult.No)]
-                              [(OptLateBoundsPairPreheader.Some
-                                  rewritten-preheader)
-                                (OptLateBoundsPairResult.Some
-                                  (opt-late-bounds-pair-rewrite-blocks
-                                    blocks
-                                    body-blocks
-                                    preheader-label
-                                    rewritten-preheader
-                                    (struct-get collected plans)
-                                    (CompilerIrValue.Var short-length)
-                                    cell)
-                                  (array-ref cell 0))]))])])])))]))))
+                                (opt-natural-loop-header loop)
+                                length
+                                nonempty
+                                nonempty-i64
+                                short-length)
+                                [(OptLateBoundsPairPreheader.No)
+                                  (OptLateBoundsPairResult.No)]
+                                [(OptLateBoundsPairPreheader.Some
+                                    rewritten-preheader)
+                                  (OptLateBoundsPairResult.Some
+                                    (opt-late-bounds-pair-rewrite-blocks
+                                      blocks
+                                      body-blocks
+                                      preheader-label
+                                      rewritten-preheader
+                                      (struct-get collected plans)
+                                      (CompilerIrValue.Var short-length)
+                                      drops
+                                      cell)
+                                    (array-ref cell 0))]))]))])])))]))))
 
 ;; A literal length needs no preheader arithmetic: `length - (length >= 1)` is a
 ;; compile-time constant, so the paired check takes it as an immediate and the
@@ -41675,10 +41884,10 @@
 ;; Phi operands are edge uses, so they deliberately are not counted as uses in
 ;; the successor. The insertion point is immediately after this leading prefix.
 (define (opt-successor-sink-collect-successor-uses!
-  [blocks : CompilerIrBlockList]
+  [cfg : OptCfgIndex]
   [target : i64]
   [uses : (Array i64)]) : unit
-  (match (opt-cfg-find-block blocks target)
+  (match (opt-cfg-index-find-block cfg target)
     [(OptMaybeBlock.No) unit]
     [(OptMaybeBlock.Some block)
       (match block
@@ -41732,7 +41941,6 @@
 
 (define (opt-successor-sink-target-all-uses?
   [frame : i64]
-  [blocks : CompilerIrBlockList]
   [cfg : OptCfgIndex]
   [total-uses : (Array i64)]
   [allowed-uses : (Array i64)]
@@ -41750,16 +41958,12 @@
         false
         (begin
           (array-set! allowed-uses dst 0)
-          (opt-successor-sink-collect-successor-uses!
-            blocks
-            target
-            allowed-uses)
+          (opt-successor-sink-collect-successor-uses! cfg target allowed-uses)
           (opt-successor-sink-collect-moved-uses! moves target allowed-uses)
           (= (array-ref allowed-uses dst) total))))))
 
 (define (opt-successor-sink-find-target
   [frame : i64]
-  [blocks : CompilerIrBlockList]
   [cfg : OptCfgIndex]
   [total-uses : (Array i64)]
   [allowed-uses : (Array i64)]
@@ -41772,7 +41976,6 @@
     [(OptLabelSet.Cons target rest)
       (if (opt-successor-sink-target-all-uses?
         frame
-        blocks
         cfg
         total-uses
         allowed-uses
@@ -41783,7 +41986,6 @@
         (OptSuccessorSinkMaybeLabel.Some target)
         (opt-successor-sink-find-target
           frame
-          blocks
           cfg
           total-uses
           allowed-uses
@@ -42202,6 +42404,7 @@
   [type-segment-bases : i64]
   [frame : i64]
   [blocks : CompilerIrBlockList]
+  [cfg : OptCfgIndex]
   [all-defs : (Array i64)]
   [source-loop-target : bool]
   [total-uses : (Array i64)]
@@ -42231,7 +42434,7 @@
     [origins : (Array i64) (array.make-array i64 (+ count 4))]
     (begin
       (opt-successor-sink-fill-defs! frame instrs defs)
-      (opt-successor-sink-collect-successor-uses! blocks target base-allowed)
+      (opt-successor-sink-collect-successor-uses! cfg target base-allowed)
       (opt-successor-sink-collect-moved-uses! moves target base-allowed)
       (opt-collect-instr-uses-array
         leaf-uses
@@ -42340,7 +42543,6 @@
                         [(option_i64.Some dst)
                           (match (opt-successor-sink-find-target
                             frame
-                            blocks
                             cfg
                             total-uses
                             allowed-uses
@@ -42353,6 +42555,7 @@
                                 type-segment-bases
                                 frame
                                 blocks
+                                cfg
                                 all-defs
                                 (opt-successor-sink-loop-target?
                                   cfg
@@ -57974,7 +58177,6 @@
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
   [loop-safe : OptLoadGvnLoopSafeList]
-  [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [out : (Array OptGvnBlockResult)]
@@ -57982,7 +58184,6 @@
   [id : i64]) : unit
   (let
     [index : OptCfgIndex (struct-get context index)]
-    [label : i64 (opt-cfg-index-label index id)]
     [entry-state : OptLoadCseState
       (opt-load-gvn-entry-state
         type-segment-bases
@@ -57993,7 +58194,7 @@
         loop-safe
         empty-state
         id)]
-    (match (opt-cfg-find-block blocks label)
+    (match (opt-cfg-index-block index id)
       [(OptMaybeBlock.No) unit]
       [(OptMaybeBlock.Some block)
         (match block
@@ -58025,7 +58226,6 @@
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
   [loop-safe : OptLoadGvnLoopSafeList]
-  [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [out : (Array OptGvnBlockResult)]
@@ -58046,7 +58246,6 @@
             sources
             call-memory
             loop-safe
-            blocks
             exit-states
             processed
             out
@@ -58059,7 +58258,6 @@
             sources
             call-memory
             loop-safe
-            blocks
             exit-states
             processed
             out
@@ -58141,6 +58339,7 @@
             (compiler-ir-block-list-instruction-count blocks))
           (opt-alias-seed-params type-segment-bases params))]
       (begin
+        (opt-cfg-index-refresh-blocks! index blocks)
         (opt-load-state-array-fill-empty! exit-states count)
         (opt-cfg-fill-bool! processed count false)
         (opt-gvn-block-results-fill-empty! out 0)
@@ -58151,7 +58350,6 @@
           sources
           call-memory
           loop-safe
-          blocks
           exit-states
           processed
           out

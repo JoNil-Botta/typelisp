@@ -31,11 +31,9 @@
         result-x
         i
         (+
-          (+
+          (-
             (* (* (array-ref points-x i) scale-x) cos-theta)
-            (*
-              (* (* (array-ref points-y i) scale-y) sin-theta)
-              (cast -1.0 : f32)))
+            (* (* (array-ref points-y i) scale-y) sin-theta))
           (* translate-x strength)))
       (array-set!
         result-y

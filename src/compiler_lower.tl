@@ -286,6 +286,10 @@
   (No)
   (Some AstExpr))
 
+(defenum LowerMaybeAstType
+  (No)
+  (Some AstType))
+
 (defenum LowerSpmdInlineLetBindings
   (Bindings AstLetBindingList LowerSpmdInlineSubst LowerIdSet))
 
@@ -3307,8 +3311,64 @@
               false]
             [else true]))))))
 
+;; --- proven-canonical path memo ---------------------------------------
+;; lower-normalize-path returns its argument unchanged when the path is
+;; already canonical, and that is what every module path of a normal compile
+;; is: an opt1 self-compile asked 676,802 times and took the rewriting branch
+;; 35 times. The asks come one per declaration per lowering walk over the
+;; program's ~150 distinct module paths, so lower-path-canonical? kept
+;; re-reading the same strings byte by byte -- 693M Ir, 1.3% of the compile.
+;; Remembering which path strings are already proven canonical answers the
+;; repeats with a length compare instead of a scan.
+;;
+;; Two slots, because both decl-level callers (lower-decl-entry-path? and
+;; lower-module-id) normalize the fixed entry path and the current decl path
+;; back to back, and the pair only changes at a module boundary. A remembered
+;; path is only ever used as a comparison key -- lower-normalize-path returns
+;; the caller's own argument on a hit -- so nothing here extends a String's
+;; lifetime past the call that supplied it, and lower-reset-file-state! drops
+;; the keys with the rest of the per-file lowering state.
+(define lower-canonical-path-count : i64
+  0)
+(define lower-canonical-path-recent : String
+  "")
+(define lower-canonical-path-prior : String
+  "")
+
+(define (lower-canonical-path-memo-reset!) : unit
+  (begin
+    (set! lower-canonical-path-count 0)
+    (set! lower-canonical-path-recent "")
+    (set! lower-canonical-path-prior "")))
+
+(define (lower-canonical-path-remembered? [path : String]) : bool
+  (if (and
+    (>= lower-canonical-path-count 1)
+    (string.eq lower-canonical-path-recent path))
+    true
+    (and
+      (>= lower-canonical-path-count 2)
+      (string.eq lower-canonical-path-prior path))))
+
+(define (lower-canonical-path-remember! [path : String]) : unit
+  (begin
+    (set! lower-canonical-path-prior lower-canonical-path-recent)
+    (set! lower-canonical-path-recent path)
+    (if (< lower-canonical-path-count 2)
+      (set! lower-canonical-path-count (+ lower-canonical-path-count 1))
+      unit)))
+
+(define (lower-path-known-canonical? [path : String]) : bool
+  (if (lower-canonical-path-remembered? path)
+    true
+    (if (lower-path-canonical? path)
+      (begin
+        (lower-canonical-path-remember! path)
+        true)
+      false)))
+
 (define (lower-normalize-path [path : String]) : String
-  (if (lower-path-canonical? path)
+  (if (lower-path-known-canonical? path)
     path
     (let
       [n : i64 (string.string-length path)]
@@ -5305,6 +5365,7 @@
 
 (define (lower-reset-file-state!) : unit
   (begin
+    (lower-canonical-path-memo-reset!)
     (set! lower-entry-main-module-active false)
     (set! lower-entry-main-module "")
     (set! lower-entry-main-module-id cbi.compiler-builtin-id-fix-empty)
@@ -39220,12 +39281,33 @@
   [op : AstBinOp]) : bool
   (match op
     [(AstBinOp.Add) true]
+    [(AstBinOp.Sub) true]
     [(AstBinOp.BitAnd) true]
+    [(AstBinOp.BitOr) true]
+    [(AstBinOp.BitXor) true]
+    [(AstBinOp.Shl) (lower-spmd-shift-lane-supported? elem-ty)]
+    [(AstBinOp.Shr) (lower-spmd-shift-lane-supported? elem-ty)]
     [(AstBinOp.Mul)
       (and
         (> (lower-simd-lanes-for-elem mode elem-ty) 0)
         (not (lower-spmd-byte-lane-type? elem-ty)))]
     [_ false]))
+
+(define (lower-spmd-shift-lane-supported? [ty : AstType]) : bool
+  (match (tc-type-without-regions ty)
+    [(AstType.I32) true]
+    [(AstType.U32) true]
+    [(AstType.I64) true]
+    [(AstType.U64) true]
+    [_ false]))
+
+(define (lower-spmd-shift-width [ty : AstType]) : i64
+  (match (tc-type-without-regions ty)
+    [(AstType.I32) 32]
+    [(AstType.U32) 32]
+    [(AstType.I64) 64]
+    [(AstType.U64) 64]
+    [_ 0]))
 
 (define (lower-spmd-byte-lane-type? [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
@@ -39235,6 +39317,148 @@
 
 (define (lower-spmd-byte-mul-diagnostic) : String
   "lower: SPMD foreach SIMD lowering does not support 8-bit lane multiplication; use scalar or widen before multiplying")
+
+(define (lower-spmd-map-shift-diagnostic
+  [op-name : String]
+  [lane-ty : AstType]
+  [mode : CompilerLowerMode]) : String
+  (str_cat.str-cat
+    "lower: SPMD foreach SIMD lowering does not support shift '"
+    op-name
+    "' for lane type "
+    (tc-type-render lane-ty)
+    " in "
+    (if (lower-mode-avx2? mode)
+      "AVX2"
+      "AVX-512")
+    " backend mode; supported lane types are i32, u32, i64, and u64"))
+
+(define (lower-spmd-expr-has-shift?
+  [ctx : TcContext]
+  [want-left : bool]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-spmd-expr-has-shift?
+        ctx
+        want-left
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (lower-spmd-expr-has-shift?
+        ctx
+        want-left
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Cast inner-box _)
+      (lower-spmd-expr-has-shift?
+        ctx
+        want-left
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Binary op lhs-box rhs-box)
+      (let
+        [matches : bool
+          (match op
+            [(AstBinOp.Shl) want-left]
+            [(AstBinOp.Shr) (not want-left)]
+            [_ false])]
+        (or
+          matches
+          (lower-spmd-expr-has-shift?
+            ctx
+            want-left
+            (lower-context-expr-get ctx lhs-box))
+          (lower-spmd-expr-has-shift?
+            ctx
+            want-left
+            (lower-context-expr-get ctx rhs-box))))]
+    [(AstExpr.ArraySet arr-box index-box value-box)
+      (or
+        (lower-spmd-expr-has-shift?
+          ctx
+          want-left
+          (lower-context-expr-get ctx arr-box))
+        (lower-spmd-expr-has-shift?
+          ctx
+          want-left
+          (lower-context-expr-get ctx index-box))
+        (lower-spmd-expr-has-shift?
+          ctx
+          want-left
+          (lower-context-expr-get ctx value-box)))]
+    [(AstExpr.Begin exprs)
+      (lower-spmd-expr-list-has-shift? ctx want-left exprs)]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body-box)
+          (or
+            (lower-spmd-let-bindings-have-shift? ctx want-left bindings)
+            (lower-spmd-expr-has-shift?
+              ctx
+              want-left
+              (lower-context-expr-get ctx body-box)))])]
+    [(AstExpr.If cond-box then-box else-box)
+      (or
+        (lower-spmd-expr-has-shift?
+          ctx
+          want-left
+          (lower-context-expr-get ctx cond-box))
+        (lower-spmd-expr-has-shift?
+          ctx
+          want-left
+          (lower-context-expr-get ctx then-box))
+        (lower-spmd-expr-has-shift?
+          ctx
+          want-left
+          (lower-context-expr-get ctx else-box)))]
+    [_ false]))
+
+(define (lower-spmd-expr-list-has-shift?
+  [ctx : TcContext]
+  [want-left : bool]
+  [exprs : AstExprList]) : bool
+  (lower-spmd-expr-list-has-shift-at? ctx want-left (& exprs) 0))
+
+(define (lower-spmd-expr-list-has-shift-at?
+  [ctx : TcContext]
+  [want-left : bool]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (lower-spmd-expr-has-shift?
+        ctx
+        want-left
+        (lower-context-expr-get ctx (ast-expr-list-get exprs index 0)))
+      (lower-spmd-expr-list-has-shift-at? ctx want-left exprs (+ index 1)))))
+
+(define (lower-spmd-let-bindings-have-shift?
+  [ctx : TcContext]
+  [want-left : bool]
+  [bindings : AstLetBindingList]) : bool
+  (lower-spmd-let-bindings-have-shift-at? ctx want-left (& bindings) 0))
+
+(define (lower-spmd-let-bindings-have-shift-at?
+  [ctx : TcContext]
+  [want-left : bool]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (or
+      (match (ast-let-binding-list-get
+        bindings
+        binding-index
+        (ast-let-binding-fallback))
+        [(AstLetBinding.Binding _ _ init-box)
+          (lower-spmd-expr-has-shift?
+            ctx
+            want-left
+            (lower-context-expr-get ctx init-box))])
+      (lower-spmd-let-bindings-have-shift-at?
+        ctx
+        want-left
+        bindings
+        (+ binding-index 1)))))
 
 (define (lower-spmd-expr-has-mul? [ctx : TcContext] [expr : AstExpr]) : bool
   (match expr
@@ -39344,6 +39568,92 @@
             [(LowerMaybeArrayVar.No) false])
           false))]
     [_ false]))
+
+(define (lower-simple-vector-map-unsupported-shift-lane
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [want-left : bool]
+  [body : AstExpr]) : LowerMaybeAstType
+  (match body
+    [(AstExpr.Spanned inner-box _)
+      (lower-simple-vector-map-unsupported-shift-lane
+        ctx
+        mode
+        env
+        type-env
+        index
+        want-left
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (lower-simple-vector-map-unsupported-shift-lane
+        ctx
+        mode
+        env
+        type-env
+        index
+        want-left
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Begin exprs)
+      (lower-simple-vector-map-expr-list-unsupported-shift-lane-at
+        ctx
+        mode
+        env
+        type-env
+        index
+        want-left
+        (& exprs)
+        0)]
+    [(AstExpr.ArraySet arr-box set-index-box value-box)
+      (let
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [set-index : AstExpr (lower-context-expr-get ctx set-index-box)]
+        [value : AstExpr (lower-context-expr-get ctx value-box)]
+        (if (lower-expr-is-var? ctx set-index index)
+          (match (lower-dynamic-array-var ctx env type-env arr)
+            [(LowerMaybeArrayVar.Some _ dst-elem)
+              (if (and
+                (> (lower-simd-lanes-for-elem mode dst-elem) 0)
+                (not (lower-spmd-shift-lane-supported? dst-elem))
+                (lower-spmd-expr-has-shift? ctx want-left value))
+                (LowerMaybeAstType.Some dst-elem)
+                (LowerMaybeAstType.No))]
+            [(LowerMaybeArrayVar.No) (LowerMaybeAstType.No)])
+          (LowerMaybeAstType.No)))]
+    [_ (LowerMaybeAstType.No)]))
+
+(define (lower-simple-vector-map-expr-list-unsupported-shift-lane-at
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [want-left : bool]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : LowerMaybeAstType
+  (if (>= expr-index (struct-get exprs len))
+    (LowerMaybeAstType.No)
+    (match (lower-simple-vector-map-unsupported-shift-lane
+      ctx
+      mode
+      env
+      type-env
+      index
+      want-left
+      (lower-context-expr-get ctx (ast-expr-list-get exprs expr-index 0)))
+      [(LowerMaybeAstType.Some lane-ty) (LowerMaybeAstType.Some lane-ty)]
+      [(LowerMaybeAstType.No)
+        (lower-simple-vector-map-expr-list-unsupported-shift-lane-at
+          ctx
+          mode
+          env
+          type-env
+          index
+          want-left
+          exprs
+          (+ expr-index 1))])))
 
 (define (lower-simple-vector-map-casted-literal
   [ctx : TcContext]
@@ -40528,6 +40838,160 @@
         (lower-state-emit s (CompilerIrInstr.MaskReduce v op src lanes))
         (CompilerIrValue.Var v)
         (AstType.Bool))]))
+
+(define (lower-vector-map-binop-shift? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Shl) true]
+    [(CompilerIrBinOp.Shr) true]
+    [_ false]))
+
+(define (lower-emit-checked-vector-shift
+  [state : LowerState]
+  [active-mask : CompilerIrMaybeValue]
+  [lanes : i64]
+  [op : CompilerIrBinOp]
+  [left-value : CompilerIrValue]
+  [right-value : CompilerIrValue]
+  [lane-ty : AstType]
+  [count-ty : AstType]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [zero : CompilerIrValue CompilerIrValue.Unit]
+    [width : CompilerIrValue CompilerIrValue.Unit]
+    [negative : CompilerIrValue CompilerIrValue.Unit]
+    [too-large : CompilerIrValue CompilerIrValue.Unit]
+    [invalid : CompilerIrValue CompilerIrValue.Unit]
+    [active-invalid : CompilerIrValue CompilerIrValue.Unit]
+    [any-invalid : CompilerIrValue CompilerIrValue.Unit]
+    [abort-label : i64 (compiler-ir-label-none)]
+    [continue-label : i64 (compiler-ir-label-none)]
+    (begin
+      (match (lower-emit-splat s (CompilerIrValue.I64 0) lanes count-ty)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! zero value))])
+      (match (lower-emit-splat
+        s
+        (CompilerIrValue.I64 (lower-spmd-shift-width lane-ty))
+        lanes
+        count-ty)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! width value))])
+      (match (if (lower-type-signed? count-ty)
+        (lower-emit-vector-compare
+          s
+          (CompilerIrBinOp.Lt)
+          right-value
+          zero
+          lanes
+          count-ty)
+        ;; Unsigned counts cannot be negative. Materialize an all-false mask
+        ;; without relying on the backend's signed/unsigned compare expansion.
+        (lower-emit-vector-compare
+          s
+          (CompilerIrBinOp.Ne)
+          zero
+          zero
+          lanes
+          count-ty))
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! negative value))])
+      (match (lower-emit-vector-compare
+        s
+        (CompilerIrBinOp.Ge)
+        right-value
+        width
+        lanes
+        count-ty)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! too-large value))])
+      (match (lower-emit-mask-binop
+        s
+        (CompilerIrMaskBinOp.Or)
+        negative
+        too-large
+        lanes)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! invalid value))])
+      (match active-mask
+        [(CompilerIrMaybeValue.Some mask)
+          (match (lower-emit-mask-binop
+            s
+            (CompilerIrMaskBinOp.And)
+            invalid
+            mask
+            lanes)
+            [(LowerExpr.Expr next-s value _)
+              (begin
+                (set! s next-s)
+                (set! active-invalid value))])]
+        [(CompilerIrMaybeValue.No) (set! active-invalid invalid)])
+      (match (lower-emit-mask-reduce
+        s
+        (CompilerIrMaskReduceOp.Any)
+        active-invalid
+        lanes)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! any-invalid value))])
+      (match (lower-state-fresh-label s "spmd_shift_abort")
+        [(LowerLabel.Label next-s label)
+          (begin
+            (set! s next-s)
+            (set! abort-label label))])
+      (match (lower-state-fresh-label s "spmd_shift_continue")
+        [(LowerLabel.Label next-s label)
+          (begin
+            (set! s next-s)
+            (set! continue-label label))])
+      (set!
+        s
+        (lower-state-finish-block
+          (lower-state-emit
+            s
+            (CompilerIrInstr.Branch any-invalid abort-label continue-label))
+          abort-label))
+      (set!
+        s
+        (lower-state-finish-block
+          (lower-state-emit
+            (lower-shift-abort s)
+            (CompilerIrInstr.Jump continue-label))
+          continue-label))
+      (lower-emit-vector-binop s op left-value right-value lanes lane-ty))))
+
+(define (lower-emit-vector-map-binop
+  [state : LowerState]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  (if (lower-vector-map-binop-shift? op)
+    (lower-emit-checked-vector-shift
+      state
+      (match emit-mode
+        [(LowerVectorMapEmitMode.Full) (CompilerIrMaybeValue.No)]
+        [(LowerVectorMapEmitMode.Predicated _ mask)
+          (CompilerIrMaybeValue.Some mask)])
+      lanes
+      op
+      lhs
+      rhs
+      elem-ty
+      elem-ty)
+    (lower-emit-vector-binop state op lhs rhs lanes elem-ty)))
 
 (define (lower-emit-mask-select
   [state : LowerState]
@@ -42434,9 +42898,33 @@
       (match right
         [(CompilerIrBinOp.Add) true]
         [_ false])]
+    [(CompilerIrBinOp.Sub)
+      (match right
+        [(CompilerIrBinOp.Sub) true]
+        [_ false])]
     [(CompilerIrBinOp.Mul)
       (match right
         [(CompilerIrBinOp.Mul) true]
+        [_ false])]
+    [(CompilerIrBinOp.BitAnd)
+      (match right
+        [(CompilerIrBinOp.BitAnd) true]
+        [_ false])]
+    [(CompilerIrBinOp.BitOr)
+      (match right
+        [(CompilerIrBinOp.BitOr) true]
+        [_ false])]
+    [(CompilerIrBinOp.BitXor)
+      (match right
+        [(CompilerIrBinOp.BitXor) true]
+        [_ false])]
+    [(CompilerIrBinOp.Shl)
+      (match right
+        [(CompilerIrBinOp.Shl) true]
+        [_ false])]
+    [(CompilerIrBinOp.Shr)
+      (match right
+        [(CompilerIrBinOp.Shr) true]
         [_ false])]
     [_ false]))
 
@@ -42748,13 +43236,14 @@
             (box-get rhs)
             emit-mode)
             [(LowerExpr.Expr rhs-state rhs-value _)
-              (lower-emit-vector-binop
+              (lower-emit-vector-map-binop
                 rhs-state
                 op
                 lhs-value
                 rhs-value
                 lanes
-                (AstType.I64))])])]
+                (AstType.I64)
+                emit-mode)])])]
     ;; The planner rejects these forms before constructing Shuffle.
     [_ (LowerExpr.Expr state CompilerIrValue.Unit (AstType.I64))]))
 
@@ -43043,13 +43532,14 @@
             elem-ty
             (box-get rhs))
             [(LowerExpr.Expr rhs-state rhs-value _)
-              (lower-emit-vector-binop
+              (lower-emit-vector-map-binop
                 rhs-state
                 op
                 lhs-value
                 rhs-value
                 lanes
-                elem-ty)])])]))
+                elem-ty
+                (LowerVectorMapEmitMode.Full))])])]))
 
 (define (lower-vector-map-cache-emitted
   [emitted : LowerExpr]
@@ -43317,13 +43807,14 @@
                   (LowerVectorMapCachedEmit.Emit rhs-state value rhs-cache)]
                 [(LowerMaybeIrValue.No)
                   (lower-vector-map-cache-emitted
-                    (lower-emit-vector-binop
+                    (lower-emit-vector-map-binop
                       rhs-state
                       op
                       lhs-value
                       rhs-value
                       lanes
-                      elem-ty)
+                      elem-ty
+                      emit-mode)
                     (LowerVectorMapValueKey.BinOp op lhs-value rhs-value)
                     rhs-cache)])])])]))
 
@@ -43429,13 +43920,14 @@
             elem-ty
             (box-get rhs))
             [(LowerExpr.Expr rhs-state rhs-value _)
-              (lower-emit-vector-binop
+              (lower-emit-vector-map-binop
                 rhs-state
                 op
                 lhs-value
                 rhs-value
                 lanes
-                elem-ty)])])]))
+                elem-ty
+                (LowerVectorMapEmitMode.Predicated end-value mask))])])]))
 
 (define (lower-vector-map-value-needs-scalar-tail? [plan : LowerVectorMapValue]) : bool
   (match plan
@@ -45050,20 +45542,10 @@
     "AVX-512"))
 
 (define (lower-masked-shift-lane-supported? [ty : AstType]) : bool
-  (match ty
-    [(AstType.I32) true]
-    [(AstType.U32) true]
-    [(AstType.I64) true]
-    [(AstType.U64) true]
-    [_ false]))
+  (lower-spmd-shift-lane-supported? ty))
 
 (define (lower-masked-shift-width [ty : AstType]) : i64
-  (match ty
-    [(AstType.I32) 32]
-    [(AstType.U32) 32]
-    [(AstType.I64) 64]
-    [(AstType.U64) 64]
-    [_ 0]))
+  (lower-spmd-shift-width ty))
 
 (define (lower-masked-shift-unsupported
   [state : LowerState]
@@ -45090,119 +45572,16 @@
   [right-value : CompilerIrValue]
   [lane-ty : AstType]
   [count-ty : AstType]) : ResultLowerExpr
-  (let
-    [s : LowerState state]
-    [zero : CompilerIrValue CompilerIrValue.Unit]
-    [width : CompilerIrValue CompilerIrValue.Unit]
-    [negative : CompilerIrValue CompilerIrValue.Unit]
-    [too-large : CompilerIrValue CompilerIrValue.Unit]
-    [invalid : CompilerIrValue CompilerIrValue.Unit]
-    [active-invalid : CompilerIrValue CompilerIrValue.Unit]
-    [any-invalid : CompilerIrValue CompilerIrValue.Unit]
-    [abort-label : i64 (compiler-ir-label-none)]
-    [continue-label : i64 (compiler-ir-label-none)]
-    (begin
-      (match (lower-emit-splat s (CompilerIrValue.I64 0) lanes count-ty)
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! zero value))])
-      (match (lower-emit-splat
-        s
-        (CompilerIrValue.I64 (lower-masked-shift-width lane-ty))
-        lanes
-        count-ty)
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! width value))])
-      (match (if (lower-type-signed? count-ty)
-        (lower-emit-vector-compare
-          s
-          (CompilerIrBinOp.Lt)
-          right-value
-          zero
-          lanes
-          count-ty)
-        ;; Unsigned counts cannot be negative. Materialize an all-false mask
-        ;; without relying on the backend's signed/unsigned compare expansion.
-        (lower-emit-vector-compare
-          s
-          (CompilerIrBinOp.Ne)
-          zero
-          zero
-          lanes
-          count-ty))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! negative value))])
-      (match (lower-emit-vector-compare
-        s
-        (CompilerIrBinOp.Ge)
-        right-value
-        width
-        lanes
-        count-ty)
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! too-large value))])
-      (match (lower-emit-mask-binop
-        s
-        (CompilerIrMaskBinOp.Or)
-        negative
-        too-large
-        lanes)
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! invalid value))])
-      (match (lower-emit-mask-binop
-        s
-        (CompilerIrMaskBinOp.And)
-        invalid
-        active-mask
-        lanes)
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! active-invalid value))])
-      (match (lower-emit-mask-reduce
-        s
-        (CompilerIrMaskReduceOp.Any)
-        active-invalid
-        lanes)
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! any-invalid value))])
-      (match (lower-state-fresh-label s "spmd_shift_abort")
-        [(LowerLabel.Label next-s label)
-          (begin
-            (set! s next-s)
-            (set! abort-label label))])
-      (match (lower-state-fresh-label s "spmd_shift_continue")
-        [(LowerLabel.Label next-s label)
-          (begin
-            (set! s next-s)
-            (set! continue-label label))])
-      (set!
-        s
-        (lower-state-finish-block
-          (lower-state-emit
-            s
-            (CompilerIrInstr.Branch any-invalid abort-label continue-label))
-          abort-label))
-      (set!
-        s
-        (lower-state-finish-block
-          (lower-state-emit
-            (lower-shift-abort s)
-            (CompilerIrInstr.Jump continue-label))
-          continue-label))
-      (ResultLowerExpr.Ok
-        (lower-emit-vector-binop s op left-value right-value lanes lane-ty)))))
+  (ResultLowerExpr.Ok
+    (lower-emit-checked-vector-shift
+      state
+      (CompilerIrMaybeValue.Some active-mask)
+      lanes
+      op
+      left-value
+      right-value
+      lane-ty
+      count-ty)))
 
 (define (lower-avx512-masked-shift
   [ctx : TcContext]
@@ -50210,11 +50589,47 @@
                         (lower-diagnostic-at-expr
                           body
                           (lower-spmd-byte-mul-diagnostic))))
-                    (ResultLowerExpr.Err
-                      (box
-                        (lower-diagnostic-at-expr
-                          body
-                          (lower-simd-foreach-fallback-diagnostic)))))]
+                    (match (lower-simple-vector-map-unsupported-shift-lane
+                      ctx
+                      (lower-state-mode state)
+                      env
+                      type-env
+                      index
+                      true
+                      body)
+                      [(LowerMaybeAstType.Some lane-ty)
+                        (ResultLowerExpr.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              body
+                              (lower-spmd-map-shift-diagnostic
+                                "shl"
+                                lane-ty
+                                (lower-state-mode state)))))]
+                      [(LowerMaybeAstType.No)
+                        (match (lower-simple-vector-map-unsupported-shift-lane
+                          ctx
+                          (lower-state-mode state)
+                          env
+                          type-env
+                          index
+                          false
+                          body)
+                          [(LowerMaybeAstType.Some lane-ty)
+                            (ResultLowerExpr.Err
+                              (box
+                                (lower-diagnostic-at-expr
+                                  body
+                                  (lower-spmd-map-shift-diagnostic
+                                    "shr"
+                                    lane-ty
+                                    (lower-state-mode state)))))]
+                          [(LowerMaybeAstType.No)
+                            (ResultLowerExpr.Err
+                              (box
+                                (lower-diagnostic-at-expr
+                                  body
+                                  (lower-simd-foreach-fallback-diagnostic))))])]))]
                 [else
                   (lower-scalar-foreach-lowered
                     ctx

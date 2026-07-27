@@ -35,6 +35,8 @@
   (lint_svec.new))
 (define selfhost-lint-cli-has-target : bool
   false)
+(define selfhost-lint-legacy-path-import : bool
+  false)
 
 (define (selfhost-lint-language-config-reset!) : unit
   (begin
@@ -42,7 +44,8 @@
       selfhost-lint-language-target
       (target_cfg.compiler-target-cfg-default))
     (set! selfhost-lint-language-cfg-names (lint_svec.new))
-    (set! selfhost-lint-cli-has-target false)))
+    (set! selfhost-lint-cli-has-target false)
+    (set! selfhost-lint-legacy-path-import false)))
 
 (define (selfhost-lint-language-cfgs) : sym_i64_env.SymI64Env
   (target_cfg.compiler-target-cfgs-with-names
@@ -177,6 +180,21 @@
             redundant-function-name
             prefer-dotted-field
             true)]
+        [(string.eq current "--legacy-path-import")
+          (begin
+            (set! selfhost-lint-legacy-path-import true)
+            (selfhost-lint-parse-options
+              (+ idx 1)
+              count
+              input-paths
+              manifest-path
+              has-manifest
+              stdlib-roots
+              enforcing
+              deprecated-string-concat
+              redundant-function-name
+              prefer-dotted-field
+              name-case))]
         [(string.eq current "--cfg")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
@@ -698,7 +716,13 @@
               (ast-program decls)
               with-redundant)
             with-redundant)]
-        (selfhost-lint-filter-derived-origins source with-prefer))]))
+        [with-legacy-path-imports : LintFindings
+          (if selfhost-lint-legacy-path-import
+            (lint-legacy-path-imports-in-program
+              (ast-program decls)
+              with-prefer)
+            with-prefer)]
+        (selfhost-lint-filter-derived-origins source with-legacy-path-imports))]))
 
 (define (selfhost-lint-findings-append-from
   [src : LintFindings]

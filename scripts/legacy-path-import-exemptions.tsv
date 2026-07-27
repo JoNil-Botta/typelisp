@@ -1,0 +1,19 @@
+# legacy-path-import-exemptions-schema	1
+# path	reason
+src/tests/canonical_import_dotted_first_smoke.tl	Mixed dotted-first/path-second source identity compatibility coverage for #2454.
+src/tests/canonical_import_path_first_smoke.tl	Mixed path-first/dotted-second source identity compatibility coverage for #2454.
+tests/format_golden/comments.tl	Formatter golden intentionally preserves legacy import syntax until #2454.
+tests/format_golden/decls.tl	Formatter golden intentionally preserves legacy import syntax until #2454.
+tests/inline/compiler_lower_body_index_cache.tl	Raw compiler source has no resolvable dotted module identity; retained for #2454.
+tests/inline/doc_md_block_scanner.tl	Raw tool source has no resolvable dotted module identity; retained for #2454.
+tests/inline/module_macro_generated_stdlib_vector_qualified_flat_import_exported.tl	Provider identity intentionally differs from its fixture path; retained for #2454.
+tests/inline/module_macro_generated_stdlib_vector_qualified_import_exported.tl	Provider identity intentionally differs from its fixture path; retained for #2454.
+tests/inline/module_macro_generated_vector_import_exported.tl	Provider identity intentionally differs from its fixture path; retained for #2454.
+tests/inline/windows_param_preassign_backend.tl	Raw compiler source has no resolvable dotted module identity; retained for #2454.
+tests/integration/calc.tl	Flat multi-file relative import compatibility coverage retained for #2454.
+tests/integration/compile_profile_generated_import_inert.tl	Generated provider identity intentionally differs from its fixture path; retained for #2454.
+tests/integration/legacy_dotted_enum_main.tl	Mixed legacy/dotted nominal identity compatibility coverage for #2454.
+tests/integration/mixed_global_annotation_main.tl	Mixed flat-path/dotted global annotation compatibility coverage for #2454.
+tests/integration/struct_match_pattern.tl	Provider identity intentionally differs from its fixture path; retained for #2454.
+tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl	Shadowing provider identity intentionally differs from its fixture path; retained for #2454.
+tests/safety/thread_spawn_unrelated_dotted_spawn_ok.tl	Dotted provider identity intentionally differs from its fixture path; retained for #2454.

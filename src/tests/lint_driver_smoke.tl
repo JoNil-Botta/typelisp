@@ -1794,6 +1794,61 @@
         98]
       [else 42])))
 
+(define (lint-driver-smoke-legacy-path-import-source) : String
+  (string.append
+    "(im"
+    (string.append
+      "port \"../compiler_backend.tl\" as backend)
+(im"
+      "port \"dep.tl\" module package.dep as dep)
+(import stdlib.string)")))
+
+(define (lint-driver-smoke-findings-contain-message?
+  [findings : LintFindings]
+  [needle : String]
+  [index : i64]) : bool
+  (if (>= index (lint-findings-count findings))
+    false
+    (let
+      [finding : LintFinding (lint-findings-ref findings index)]
+      [message : String (struct-get finding message)]
+      (or
+        (string.contains (& message) (& needle))
+        (lint-driver-smoke-findings-contain-message?
+          findings
+          needle
+          (+ index 1))))))
+
+(define (lint-driver-smoke-legacy-path-import-self-test) : i64
+  (match (parse-ast-source-diagnostic
+    "lint_driver_legacy_path_import_smoke.tl"
+    (lint-driver-smoke-legacy-path-import-source))
+    [(ResultAstProgramDiagnostic.Err _) 186]
+    [(ResultAstProgramDiagnostic.Ok program)
+      (let
+        [findings : LintFindings
+          (lint-legacy-path-imports-in-program program (lint-findings-empty))]
+        (cond
+          [(not (= (lint-findings-count findings) 2)) 187]
+          [(not
+              (lint-driver-smoke-findings-contain-message?
+                findings
+                "(import compiler_backend as backend)"
+                0))
+            188]
+          [(not
+              (lint-driver-smoke-findings-contain-message?
+                findings
+                "(import package.dep as dep)"
+                0))
+            189]
+          [(not
+              (string.eq
+                (lint-rule-suggestion (lint-rule-legacy-path-import-id))
+                (lint-rule-legacy-path-import-suggestion)))
+            190]
+          [else 42]))]))
+
 (define (main) : i64
   (begin
     ;; The imported driver core defines printing helpers; keep the print-string
@@ -1827,6 +1882,8 @@
       [copy-result : i64 (lint-driver-smoke-copy-on-update-struct-self-test)]
       [dotted-result : i64 (lint-driver-smoke-prefer-dotted-field-self-test)]
       [name-case-result : i64 (lint-driver-smoke-name-case-self-test)]
+      [legacy-path-import-result : i64
+        (lint-driver-smoke-legacy-path-import-self-test)]
       (cond
         [(not (= core-result 42)) core-result]
         [(not (= unused-import-result 42)) unused-import-result]
@@ -1846,4 +1903,5 @@
         [(not (= unsafe-surface-result 42)) unsafe-surface-result]
         [(not (= copy-result 42)) copy-result]
         [(not (= dotted-result 42)) dotted-result]
-        [else name-case-result]))))
+        [(not (= name-case-result 42)) name-case-result]
+        [else legacy-path-import-result]))))

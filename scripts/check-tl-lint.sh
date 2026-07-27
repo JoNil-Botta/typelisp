@@ -50,6 +50,109 @@ WORKDIR="$ROOT/target/tl-lint-check"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+LEGACY_PATH_IMPORT_ALLOWLIST="$ROOT/scripts/legacy-path-import-allowlist.tsv"
+LEGACY_PATH_IMPORT_EXEMPTIONS="$ROOT/scripts/legacy-path-import-exemptions.tsv"
+LEGACY_PATH_IMPORT_RAW="$WORKDIR/legacy-path-imports.raw"
+LEGACY_PATH_IMPORT_ACTUAL_UNSORTED="$WORKDIR/legacy-path-imports.actual.unsorted.tsv"
+LEGACY_PATH_IMPORT_ACTUAL="$WORKDIR/legacy-path-imports.actual.tsv"
+LEGACY_PATH_IMPORT_EXPECTED_UNSORTED="$WORKDIR/legacy-path-imports.expected.unsorted.tsv"
+LEGACY_PATH_IMPORT_EXPECTED="$WORKDIR/legacy-path-imports.expected.tsv"
+
+if [ ! -f "$LEGACY_PATH_IMPORT_ALLOWLIST" ]; then
+    echo "missing legacy path import allowlist: $LEGACY_PATH_IMPORT_ALLOWLIST" >&2
+    exit 1
+fi
+if [ ! -f "$LEGACY_PATH_IMPORT_EXEMPTIONS" ]; then
+    echo "missing legacy path import exemptions: $LEGACY_PATH_IMPORT_EXEMPTIONS" >&2
+    exit 1
+fi
+
+set +e
+git grep -n -E '^[[:space:]]*\(import[[:space:]]+"' -- '*.tl' \
+    > "$LEGACY_PATH_IMPORT_RAW"
+legacy_scan_status=$?
+set -e
+if [ "$legacy_scan_status" -ne 0 ] && [ "$legacy_scan_status" -ne 1 ]; then
+    echo "legacy path import audit could not scan tracked TypeLisp files" >&2
+    exit "$legacy_scan_status"
+fi
+
+if ! awk -F '\t' '
+    NR == FNR {
+        if ($0 !~ /^#/ && NF > 0) {
+            if (NF < 2 || $1 == "" || $2 == "") {
+                print "invalid legacy path import exemption row: " $0 > "/dev/stderr"
+                invalid = 1
+            } else {
+                exempt[$1] = 1
+            }
+        }
+        next
+    }
+    {
+        split($0, fields, ":")
+        path = fields[1]
+        seen[path] += 1
+        if (!(path in exempt)) {
+            count[path] += 1
+        }
+    }
+    END {
+        if (invalid) {
+            exit 1
+        }
+        stale = 0
+        for (path in exempt) {
+            if (!(path in seen)) {
+                print "stale legacy path import exemption: " path > "/dev/stderr"
+                stale = 1
+            }
+        }
+        if (stale) {
+            exit 1
+        }
+        for (path in count) {
+            print path "\t" count[path]
+        }
+    }
+' "$LEGACY_PATH_IMPORT_EXEMPTIONS" "$LEGACY_PATH_IMPORT_RAW" \
+    > "$LEGACY_PATH_IMPORT_ACTUAL_UNSORTED"; then
+    exit 1
+fi
+LC_ALL=C sort "$LEGACY_PATH_IMPORT_ACTUAL_UNSORTED" \
+    > "$LEGACY_PATH_IMPORT_ACTUAL"
+
+awk -F '\t' '
+    $0 !~ /^#/ && NF > 0 {
+        if (NF != 2 || $1 == "" || $2 !~ /^[1-9][0-9]*$/) {
+            print "invalid legacy path import allowlist row: " $0 > "/dev/stderr"
+            invalid = 1
+        } else {
+            print $1 "\t" $2
+        }
+    }
+    END {
+        if (invalid) {
+            exit 1
+        }
+    }
+' "$LEGACY_PATH_IMPORT_ALLOWLIST" \
+    > "$LEGACY_PATH_IMPORT_EXPECTED_UNSORTED"
+LC_ALL=C sort "$LEGACY_PATH_IMPORT_EXPECTED_UNSORTED" \
+    > "$LEGACY_PATH_IMPORT_EXPECTED"
+
+if ! diff -u "$LEGACY_PATH_IMPORT_EXPECTED" "$LEGACY_PATH_IMPORT_ACTUAL"; then
+    echo "legacy path import counts changed: reject increases/new files and lower the allowlist after reductions" >&2
+    exit 1
+fi
+
+legacy_path_import_count=$(awk -F '\t' '{ total += $2 } END { print total + 0 }' \
+    "$LEGACY_PATH_IMPORT_ACTUAL")
+legacy_path_import_file_count=$(wc -l < "$LEGACY_PATH_IMPORT_ACTUAL" | tr -d ' ')
+legacy_path_import_exemption_count=$(grep -v '^#' "$LEGACY_PATH_IMPORT_EXEMPTIONS" \
+    | grep -c -v '^$' || true)
+echo "Legacy path import ratchet passed: $legacy_path_import_count site(s) in $legacy_path_import_file_count file(s); $legacy_path_import_exemption_count named fixture exemption(s)."
+
 FILES="$WORKDIR/files.txt"
 CURRENT_SYNTAX_FILES="$WORKDIR/current-syntax-files.txt"
 FILTERED_FILES="$WORKDIR/files.filtered"

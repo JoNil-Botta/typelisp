@@ -12158,6 +12158,63 @@
       (CompilerRegAssignment.Assignment 1 dst-location)
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+  [elem-ty : AstType]
+  [lanes : i64]
+  [mnemonic : String]
+  [last-shift : String]) : bool
+  (match (compiler-backend-emit-avx512-vector-reduce
+    (ast-node-pool-reader-type-segment-bases)
+    (compiler-backend-vector-reduce-direct-assignments
+      (CompilerRegLocation.Register "%r10"))
+    1
+    (CompilerIrVectorReduceOp.Min)
+    (CompilerIrValue.Var 0)
+    lanes
+    elem-ty
+    ""
+    ""
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vextracti64x4 $1, %zmm6, %ymm2\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vextracti128 $1, %ymm2, %xmm3\n")
+        (compiler-backend-string-contains? asm mnemonic)
+        (compiler-backend-string-contains? asm last-shift)
+        (compiler-backend-string-contains? asm "    vmovq %xmm2, ")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "unsupported AVX-512 vector reduction")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx512-vector-reduce-narrow-ok?) : bool
+  (and
+    (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+      (AstType.I16)
+      32
+      "    vpminsw "
+      "    vpsrldq $2, ")
+    (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+      (AstType.U16)
+      32
+      "    vpminuw "
+      "    vpsrldq $2, ")
+    (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+      (AstType.I8)
+      64
+      "    vpminsb "
+      "    vpsrldq $1, ")
+    (compiler-backend-avx512-vector-reduce-narrow-case-ok?
+      (AstType.U8)
+      64
+      "    vpminub "
+      "    vpsrldq $1, ")))
+
 (define (compiler-backend-avx2-vector-reduce-direct-stack-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-reduce
     (ast-node-pool-reader-type-segment-bases)
@@ -12267,7 +12324,8 @@
     (compiler-backend-avx2-vector-reduce-direct-stack-ok?)
     (compiler-backend-avx2-vector-reduce-direct-register-ok?)
     (compiler-backend-avx512-vector-reduce-direct-stack-ok?)
-    (compiler-backend-avx512-vector-reduce-direct-register-ok?)))
+    (compiler-backend-avx512-vector-reduce-direct-register-ok?)
+    (compiler-backend-avx512-vector-reduce-narrow-ok?)))
 
 (define (compiler-backend-vector-home-program [func : CompilerIrFunction]) : CompilerIrProgram
   (CompilerIrProgram.Program

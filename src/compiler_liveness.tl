@@ -15,7 +15,53 @@
 
 (defenum CompilerLiveLabelSet
   (Nil)
-  (Cons i64 (Box CompilerLiveLabelSet)))
+  ;; Successor labels in deterministic head-first order. The logical head is
+  ;; the end of the dense prefix, which makes tail views allocation-free.
+  (Dense (Array i64) i64))
+
+(define (compiler-live-label-set-ref [set : CompilerLiveLabelSet] [index : i64]) : i64
+  (match set
+    [(CompilerLiveLabelSet.Nil) -1]
+    [(CompilerLiveLabelSet.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (compiler-live-label-set-tail [set : CompilerLiveLabelSet]) : CompilerLiveLabelSet
+  (match set
+    [(CompilerLiveLabelSet.Nil) CompilerLiveLabelSet.Nil]
+    [(CompilerLiveLabelSet.Dense items len)
+      (if (<= len 1)
+        CompilerLiveLabelSet.Nil
+        (CompilerLiveLabelSet.Dense items (- len 1)))]))
+
+(define (compiler-live-label-set-cons
+  [value : i64]
+  [set : CompilerLiveLabelSet]) : CompilerLiveLabelSet
+  (match set
+    [(CompilerLiveLabelSet.Nil)
+      (let
+        [items : (Array i64) (make-array i64 4)]
+        (begin
+          (array-set! items 0 value)
+          (CompilerLiveLabelSet.Dense items 1)))]
+    [(CompilerLiveLabelSet.Dense items len)
+      (if (< len (array-length items))
+        (begin
+          (array-set! items len value)
+          (CompilerLiveLabelSet.Dense items (+ len 1)))
+        (let
+          [capacity : i64
+            (if (< len 4)
+              4
+              (* len 2))]
+          [bigger : (Array i64) (make-array i64 capacity)]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (array-set! bigger index (array-ref items index))
+                (set! index (+ index 1))))
+            (array-set! bigger len value)
+            (CompilerLiveLabelSet.Dense bigger (+ len 1)))))]))
 
 (defstruct CompilerLiveIndexVec
   (items (Array i64)))
@@ -637,23 +683,24 @@
   [value : i64]) : bool
   (match set
     [(CompilerLiveLabelSet.Nil) false]
-    [(CompilerLiveLabelSet.Cons head rest)
-      (if (= head value)
+    [(CompilerLiveLabelSet.Dense _ _)
+      (if (= (compiler-live-label-set-ref set 0) value)
         true
-        (compiler-live-label-set-contains? (box-get rest) value))]))
+        (compiler-live-label-set-contains?
+          (compiler-live-label-set-tail set)
+          value))]))
 
 (define (compiler-live-label-set-insert
   [set : CompilerLiveLabelSet]
   [value : i64]) : CompilerLiveLabelSet
   (if (compiler-live-label-set-contains? set value)
     set
-    (CompilerLiveLabelSet.Cons value (box set))))
+    (compiler-live-label-set-cons value set)))
 
 (define (compiler-live-label-set-count [set : CompilerLiveLabelSet]) : i64
   (match set
     [(CompilerLiveLabelSet.Nil) 0]
-    [(CompilerLiveLabelSet.Cons _ rest)
-      (+ 1 (compiler-live-label-set-count (box-get rest)))]))
+    [(CompilerLiveLabelSet.Dense _ len) len]))
 
 (define (compiler-live-value-vars [value : CompilerIrValue]) : CompilerLiveI64Set
   (match value
@@ -1031,18 +1078,18 @@
         [(CompilerLiveMaybeInstr.Some instr)
           (match instr
             [(CompilerIrInstr.Jump target)
-              (CompilerLiveLabelSet.Cons target (box CompilerLiveLabelSet.Nil))]
+              (compiler-live-label-set-cons target CompilerLiveLabelSet.Nil)]
             [(CompilerIrInstr.Branch _ true-label false-label)
               (compiler-live-label-set-insert
-                (CompilerLiveLabelSet.Cons
+                (compiler-live-label-set-cons
                   true-label
-                  (box CompilerLiveLabelSet.Nil))
+                  CompilerLiveLabelSet.Nil)
                 false-label)]
             [(CompilerIrInstr.Switch _ _ cases default-label)
               (compiler-live-switch-case-successors
-                (CompilerLiveLabelSet.Cons
+                (compiler-live-label-set-cons
                   default-label
-                  (box CompilerLiveLabelSet.Nil))
+                  CompilerLiveLabelSet.Nil)
                 cases)]
             [_ CompilerLiveLabelSet.Nil])])]))
 
@@ -1096,18 +1143,23 @@
   [index : i64]) : i64
   (match labels
     [(CompilerLiveLabelSet.Nil) index]
-    [(CompilerLiveLabelSet.Cons label rest)
+    [(CompilerLiveLabelSet.Dense _ _)
       (let
+        [label : i64 (compiler-live-label-set-ref labels 0)]
         [slot : i64 (compiler-live-label-id-map-get ids label)]
         (if (>= slot 0)
           (begin
             (array-set! items index slot)
             (compiler-live-label-set-fill-indexes!
-              (box-get rest)
+              (compiler-live-label-set-tail labels)
               ids
               items
               (+ index 1)))
-          (compiler-live-label-set-fill-indexes! (box-get rest) ids items index)))]))
+          (compiler-live-label-set-fill-indexes!
+            (compiler-live-label-set-tail labels)
+            ids
+            items
+            index)))]))
 
 (define (compiler-live-label-set-to-index-vec
   [labels : CompilerLiveLabelSet]

@@ -16134,14 +16134,24 @@
   [le : i64]) : bool
   (match succs
     [(CompilerLiveLabelSet.Nil) false]
-    [(CompilerLiveLabelSet.Cons label rest)
-      (match (backend_label_i64_map.get (& ids) label)
+    [(CompilerLiveLabelSet.Dense _ _)
+      (match (backend_label_i64_map.get
+        (& ids)
+        (compiler-live-label-set-ref succs 0))
         [(backend_label_i64_map.LookupFound q)
           (if (and (> q h) (<= q le))
             true
-            (compiler-backend-const-hoist-succs-inside? ids (box-get rest) h le))]
+            (compiler-backend-const-hoist-succs-inside?
+              ids
+              (compiler-live-label-set-tail succs)
+              h
+              le))]
         [(backend_label_i64_map.LookupMissing)
-          (compiler-backend-const-hoist-succs-inside? ids (box-get rest) h le)])]))
+          (compiler-backend-const-hoist-succs-inside?
+            ids
+            (compiler-live-label-set-tail succs)
+            h
+            le)])]))
 
 (define (compiler-backend-const-hoist-side-entry?
   [orig : (Array CompilerIrBlock)]
@@ -16175,18 +16185,24 @@
   [le : i64]) : bool
   (match succs
     [(CompilerLiveLabelSet.Nil) false]
-    [(CompilerLiveLabelSet.Cons label rest)
-      (match (backend_label_i64_map.get (& ids) label)
+    [(CompilerLiveLabelSet.Dense _ _)
+      (match (backend_label_i64_map.get
+        (& ids)
+        (compiler-live-label-set-ref succs 0))
         [(backend_label_i64_map.LookupFound q)
           (if (and (>= q lo) (<= q le))
             true
             (compiler-backend-const-hoist-succs-within?
               ids
-              (box-get rest)
+              (compiler-live-label-set-tail succs)
               lo
               le))]
         [(backend_label_i64_map.LookupMissing)
-          (compiler-backend-const-hoist-succs-within? ids (box-get rest) lo le)])]))
+          (compiler-backend-const-hoist-succs-within?
+            ids
+            (compiler-live-label-set-tail succs)
+            lo
+            le)])]))
 
 ;; A block may sit on a guard chain only when nothing it holds is a call.
 (define (compiler-backend-const-hoist-block-call-free?
@@ -46721,17 +46737,21 @@
   [labels : OptLabelSet]) : backend_label_i64_map.Map
   (match labels
     [(OptLabelSet.Nil) counts]
-    [(OptLabelSet.Cons label rest)
-      (begin
-        (backend_label_i64_map.insert-ref!
-          (&mut counts)
-          label
-          (+
-            1
-            (match (backend_label_i64_map.get (& counts) label)
-              [(backend_label_i64_map.LookupFound v) v]
-              [(backend_label_i64_map.LookupMissing) 0])))
-        (compiler-backend-peephole-predcount-bump counts (box-get rest)))]))
+    [(OptLabelSet.Dense _ _)
+      (let
+        [label : i64 (opt-label-ref labels 0)]
+        (begin
+          (backend_label_i64_map.insert-ref!
+            (&mut counts)
+            label
+            (+
+              1
+              (match (backend_label_i64_map.get (& counts) label)
+                [(backend_label_i64_map.LookupFound v) v]
+                [(backend_label_i64_map.LookupMissing) 0])))
+          (compiler-backend-peephole-predcount-bump
+            counts
+            (opt-label-tail labels))))]))
 
 ;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
 ;; (explicit IrInstrJump / IrInstrBranch / IrInstrSwitch targets PLUS the

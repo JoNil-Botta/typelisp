@@ -10198,25 +10198,23 @@
 ;; that is redefined only by ordinary (non-phi) instructions has no such hazard --
 ;; the region remap rewrites its def to the register and the internal self-back-edge
 ;; carries it in-register.
-(define (compiler-reg-loop-split-phi-defines-var-list?
-  [instrs : CompilerIrInstrList]
-  [var : i64]) : bool
-  (match instrs
-    [(CompilerIrInstrList.Nil) false]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(CompilerIrInstr.Phi dst _ _)
-          (if (= dst var)
-            true
-            (compiler-reg-loop-split-phi-defines-var-list? (box-get rest) var))]
-        [_ (compiler-reg-loop-split-phi-defines-var-list? (box-get rest) var)])]))
-
+;; Scanned in place over the contiguous sequence: materialising a cons list
+;; first cost one 112 B heap node per instruction to answer a question that
+;; reads one tag and one destination var. refs #5726
 (define (compiler-reg-loop-split-phi-defines-var?
   [instrs : CompilerIrInstrSeq]
   [var : i64]) : bool
-  (compiler-reg-loop-split-phi-defines-var-list?
-    (compiler-ir-instr-seq-to-list instrs)
-    var))
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-instr-seq-ref instrs index)
+            [(CompilerIrInstr.Phi dst _ _) (when (= dst var) (return true))]
+            [_ unit])
+          (set! index (+ index 1))))
+      false)))
 
 ;; SplitKit step 1. Is `block` a single-block self-loop -- i.e. does it list its own
 ;; label among its successors (the loop body branches back to itself)? For such a
@@ -10292,34 +10290,6 @@
           (set! v (+ v 1))))
       set)))
 
-;; Does any phi in `instrs` DEFINE a member of `root`'s coalesce group (a phi whose
-;; destination's root is `root`)? That phi is the loop-carrying phi -- its result
-;; flows around the back-edge. (compiler-ir-instr-seq-to-list materializes the
-;; block's instruction list.)
-(define (compiler-reg-loop-split-phi-group-defined-list?
-  [instrs : CompilerIrInstrList]
-  [parents : (Array i64)]
-  [root : i64]) : bool
-  (match instrs
-    [(CompilerIrInstrList.Nil) false]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(CompilerIrInstr.Phi dst _ _)
-          (if (and
-            (>= dst 0)
-            (< dst (array-length parents))
-            (= (array-ref parents dst) root))
-            true
-            (compiler-reg-loop-split-phi-group-defined-list?
-              (box-get rest)
-              parents
-              root))]
-        [_
-          (compiler-reg-loop-split-phi-group-defined-list?
-            (box-get rest)
-            parents
-            root)])]))
-
 ;; Every input of a group-carrying phi must be a VARIABLE whose root is also
 ;; `root`. This is the phi-correctness gate: after the region remap rewrites every
 ;; group member to the homed register R, such a phi becomes `R = phi [R, ...],
@@ -10353,46 +10323,73 @@
           parents
           root))]))
 
-;; True iff EVERY phi defining a member of `root`'s group has all-in-group inputs
-;; (vacuously true when no such phi exists -- the existence is required separately).
-(define (compiler-reg-loop-split-phi-carry-clean-list?
-  [instrs : CompilerIrInstrList]
-  [parents : (Array i64)]
-  [root : i64]) : bool
-  (match instrs
-    [(CompilerIrInstrList.Nil) true]
-    [(CompilerIrInstrList.Cons instr rest)
-      (and
-        (match instr
-          [(CompilerIrInstr.Phi dst inputs _)
-            (if (and
-              (>= dst 0)
-              (< dst (array-length parents))
-              (= (array-ref parents dst) root))
-              (compiler-reg-loop-split-phi-inputs-all-in-group?
-                inputs
-                parents
-                root)
-              true)]
-          [_ true])
-        (compiler-reg-loop-split-phi-carry-clean-list?
-          (box-get rest)
-          parents
-          root))]))
-
-;; The block is a phi-carrier for `root` iff (a) some phi defines a group member
-;; AND (b) every such phi has all-in-group inputs. (a) ensures we only take this
-;; path for genuinely phi-carried values (step 1 handles the non-phi self-loop
-;; redefinition); (b) is the phi-correctness gate above.
-(define (compiler-reg-loop-split-phi-carried-group?
+;; The block is a phi-carrier for `root` iff (a) some phi DEFINES a group member
+;; -- that phi is the loop-carrying one, its result flows around the back-edge --
+;; AND (b) every such phi has all-in-group inputs (the phi-correctness gate
+;; below; vacuously true when no such phi exists, which is why (a) is required
+;; separately). (a) ensures we only take this path for genuinely phi-carried
+;; values; step 1 handles the non-phi self-loop redefinition.
+;;
+;; This is the top seq->list site of the whole opt2 self-compile (227.9M Ir over
+;; 357 755 calls): it used to materialise the block as a cons list ONCE and then
+;; walk that list TWICE, once per predicate. Both predicates are pure read-only
+;; scans, so they run directly over the sequence and the list is gone. refs #5726
+(define (compiler-reg-loop-split-phi-group-defined-seq?
   [instrs : CompilerIrInstrSeq]
   [parents : (Array i64)]
   [root : i64]) : bool
   (let
-    [items : CompilerIrInstrList (compiler-ir-instr-seq-to-list instrs)]
-    (and
-      (compiler-reg-loop-split-phi-group-defined-list? items parents root)
-      (compiler-reg-loop-split-phi-carry-clean-list? items parents root))))
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-instr-seq-ref instrs index)
+            [(CompilerIrInstr.Phi dst _ _)
+              (when
+                (and
+                  (>= dst 0)
+                  (< dst (array-length parents))
+                  (= (array-ref parents dst) root))
+                (return true))]
+            [_ unit])
+          (set! index (+ index 1))))
+      false)))
+
+(define (compiler-reg-loop-split-phi-carry-clean-seq?
+  [instrs : CompilerIrInstrSeq]
+  [parents : (Array i64)]
+  [root : i64]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-instr-seq-ref instrs index)
+            [(CompilerIrInstr.Phi dst inputs _)
+              (if (and
+                (>= dst 0)
+                (< dst (array-length parents))
+                (= (array-ref parents dst) root))
+                (unless
+                  (compiler-reg-loop-split-phi-inputs-all-in-group?
+                    inputs
+                    parents
+                    root)
+                  (return false))
+                unit)]
+            [_ unit])
+          (set! index (+ index 1))))
+      true)))
+
+(define (compiler-reg-loop-split-phi-carried-group?
+  [instrs : CompilerIrInstrSeq]
+  [parents : (Array i64)]
+  [root : i64]) : bool
+  (and
+    (compiler-reg-loop-split-phi-group-defined-seq? instrs parents root)
+    (compiler-reg-loop-split-phi-carry-clean-seq? instrs parents root)))
 
 ;; The step-2 acceptance predicate: a single-block SELF-LOOP that carries `var`'s
 ;; coalesce group through a phi-correct header phi, with `var` the canonical
@@ -10430,45 +10427,43 @@
     (compiler-live-set-intersects? (compiler-live-instr-uses instr) members)
     (compiler-live-set-intersects? (compiler-live-instr-defs instr) members)))
 
-(define (compiler-reg-loop-split-mention-count-group-list
-  [instrs : CompilerIrInstrList]
-  [members : CompilerLiveI64Set]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (if (compiler-reg-loop-split-instr-mentions-group? instr members)
-          1
-          0)
-        (compiler-reg-loop-split-mention-count-group-list
-          (box-get rest)
-          members))]))
-
+;; Read-only counter: scan the sequence in place. refs #5726
 (define (compiler-reg-loop-split-mention-count-group
   [instrs : CompilerIrInstrSeq]
   [members : CompilerLiveI64Set]) : i64
-  (compiler-reg-loop-split-mention-count-group-list
-    (compiler-ir-instr-seq-to-list instrs)
-    members))
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-loop-split-instr-mentions-group?
+            (compiler-ir-instr-seq-ref instrs index)
+            members)
+            (set! total (+ total 1))
+            unit)
+          (set! index (+ index 1))))
+      total)))
 
-(define (compiler-reg-loop-split-mention-count-list
-  [instrs : CompilerIrInstrList]
-  [var : i64]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (if (compiler-reg-loop-split-instr-mentions-var? instr var)
-          1
-          0)
-        (compiler-reg-loop-split-mention-count-list (box-get rest) var))]))
-
+;; Read-only counter: scan the sequence in place. refs #5726
 (define (compiler-reg-loop-split-mention-count
   [instrs : CompilerIrInstrSeq]
   [var : i64]) : i64
-  (compiler-reg-loop-split-mention-count-list
-    (compiler-ir-instr-seq-to-list instrs)
-    var))
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-loop-split-instr-mentions-var?
+            (compiler-ir-instr-seq-ref instrs index)
+            var)
+            (set! total (+ total 1))
+            unit)
+          (set! index (+ index 1))))
+      total)))
 
 (define (compiler-reg-loop-split-region-interval
   [region-var : i64]
@@ -16630,16 +16625,6 @@
         [_ set])]
     [_ set]))
 
-(define (compiler-reg-group-vars-instrs
-  [set : CompilerLiveI64Set]
-  [instrs : CompilerIrInstrList]) : CompilerLiveI64Set
-  (match instrs
-    [(CompilerIrInstrList.Nil) set]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-reg-group-vars-instrs
-        (compiler-reg-group-vars-instr set instr)
-        (box-get rest))]))
-
 (define (compiler-reg-group-vars-instr-seq
   [set : CompilerLiveI64Set]
   [instrs : CompilerIrInstrSeq]) : CompilerLiveI64Set
@@ -16667,9 +16652,7 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-vars-blocks
-            (compiler-reg-group-vars-instrs
-              set
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-reg-group-vars-instr-seq set instrs)
             (box-get rest))])]
     [(CompilerIrBlockList.Array seq)
       (let
@@ -19907,15 +19890,25 @@
       (compiler-reg-group-pair-add-call-args set args)]
     [_ set]))
 
-(define (compiler-reg-group-pair-caller-unsafe-instrs
+;; Read-only fold over the instruction stream: scan the sequence in place
+;; instead of materialising it as a cons list first. refs #5726
+(define (compiler-reg-group-pair-caller-unsafe-instr-seq
   [set : CompilerLiveI64Set]
-  [instrs : CompilerIrInstrList]) : CompilerLiveI64Set
-  (match instrs
-    [(CompilerIrInstrList.Nil) set]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-reg-group-pair-caller-unsafe-instrs
-        (compiler-reg-group-pair-caller-unsafe-instr set instr)
-        (box-get rest))]))
+  [instrs : CompilerIrInstrSeq]) : CompilerLiveI64Set
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (compiler-reg-group-pair-caller-unsafe-instr
+              out
+              (compiler-ir-instr-seq-ref instrs index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-reg-group-pair-caller-unsafe-blocks
   [set : CompilerLiveI64Set]
@@ -19926,9 +19919,7 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-pair-caller-unsafe-blocks
-            (compiler-reg-group-pair-caller-unsafe-instrs
-              set
-              (compiler-ir-instr-seq-to-list instrs))
+            (compiler-reg-group-pair-caller-unsafe-instr-seq set instrs)
             (box-get rest))])]
     [(CompilerIrBlockList.Array seq)
       (let
@@ -19942,9 +19933,7 @@
                 [(CompilerIrBlock.Block _ instrs)
                   (set!
                     out
-                    (compiler-reg-group-pair-caller-unsafe-instrs
-                      out
-                      (compiler-ir-instr-seq-to-list instrs)))])
+                    (compiler-reg-group-pair-caller-unsafe-instr-seq out instrs))])
               (set! i (+ i 1))))
           out))]))
 
@@ -19970,18 +19959,6 @@
         (compiler-reg-group-pair-add-call-args set args)
         target)]
     [_ set]))
-
-(define (compiler-reg-group-pair-excluded-instrs
-  [set : CompilerLiveI64Set]
-  [instrs : CompilerIrInstrList]
-  [group-vars : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match instrs
-    [(CompilerIrInstrList.Nil) set]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-reg-group-pair-excluded-instrs
-        (compiler-reg-group-pair-excluded-instr set instr group-vars)
-        (box-get rest)
-        group-vars)]))
 
 (define (compiler-reg-group-pair-excluded-instr-seq
   [set : CompilerLiveI64Set]
@@ -20013,10 +19990,7 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-group-pair-excluded-blocks
-            (compiler-reg-group-pair-excluded-instrs
-              set
-              (compiler-ir-instr-seq-to-list instrs)
-              group-vars)
+            (compiler-reg-group-pair-excluded-instr-seq set instrs group-vars)
             (box-get rest)
             group-vars)])]
     [(CompilerIrBlockList.Array seq)
@@ -20425,65 +20399,77 @@
 ;; This can retain a necessary group copy, but it is safe and lets phi-carried
 ;; groups receive pairs. A one-sided group mismatch remains poisoned because it
 ;; indicates incomplete group-identity propagation rather than a normal copy.
-(define (compiler-reg-group-pair-mov-edges-instrs
-  [instrs : CompilerIrInstrList]
+;; Read-only scan (its writes go to the union-find/poison side arrays, never to
+;; the IR): walk the contiguous sequence instead of materialising a cons list.
+;; refs #5726
+(define (compiler-reg-group-pair-mov-edges-instr
+  [instr : CompilerIrInstr]
   [group-vars : CompilerLiveI64Set]
   [excluded : CompilerLiveI64Set]
   [starts : (Array i64)]
   [def-counts : (Array i64)]
   [parents : (Array i64)]
   [poisoned : (Array bool)]) : unit
-  (match instrs
-    [(CompilerIrInstrList.Nil) unit]
-    [(CompilerIrInstrList.Cons instr rest)
+  (match instr
+    [(CompilerIrInstr.Mov dst src _)
+      (match src
+        [(CompilerIrValue.Var src-var)
+          (if (and
+            (compiler-live-set-contains? group-vars dst)
+            (compiler-live-set-contains? group-vars src-var))
+            (if (and
+              (not (= dst src-var))
+              (>= dst 0)
+              (< dst (array-length parents))
+              (>= src-var 0)
+              (< src-var (array-length parents))
+              (not (compiler-live-set-contains? excluded dst))
+              (not (compiler-live-set-contains? excluded src-var))
+              (>= (array-ref starts dst) 0)
+              (>= (array-ref starts src-var) 0)
+              (compiler-reg-sv-single-def? def-counts dst)
+              (compiler-reg-sv-single-def? def-counts src-var))
+              (let
+                [rd : i64 (compiler-reg-group-pair-find parents dst)]
+                [rs : i64 (compiler-reg-group-pair-find parents src-var)]
+                (array-set! parents rd rs))
+              unit)
+            (if (or
+              (compiler-live-set-contains? group-vars dst)
+              (compiler-live-set-contains? group-vars src-var))
+              (begin
+                (if (and (>= dst 0) (< dst (array-length poisoned)))
+                  (array-set! poisoned dst true)
+                  unit)
+                (if (and (>= src-var 0) (< src-var (array-length poisoned)))
+                  (array-set! poisoned src-var true)
+                  unit))
+              unit))]
+        [_ unit])]
+    [_ unit]))
+
+(define (compiler-reg-group-pair-mov-edges-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [group-vars : CompilerLiveI64Set]
+  [excluded : CompilerLiveI64Set]
+  [starts : (Array i64)]
+  [def-counts : (Array i64)]
+  [parents : (Array i64)]
+  [poisoned : (Array bool)]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
       (begin
-        (match instr
-          [(CompilerIrInstr.Mov dst src _)
-            (match src
-              [(CompilerIrValue.Var src-var)
-                (if (and
-                  (compiler-live-set-contains? group-vars dst)
-                  (compiler-live-set-contains? group-vars src-var))
-                  (if (and
-                    (not (= dst src-var))
-                    (>= dst 0)
-                    (< dst (array-length parents))
-                    (>= src-var 0)
-                    (< src-var (array-length parents))
-                    (not (compiler-live-set-contains? excluded dst))
-                    (not (compiler-live-set-contains? excluded src-var))
-                    (>= (array-ref starts dst) 0)
-                    (>= (array-ref starts src-var) 0)
-                    (compiler-reg-sv-single-def? def-counts dst)
-                    (compiler-reg-sv-single-def? def-counts src-var))
-                    (let
-                      [rd : i64 (compiler-reg-group-pair-find parents dst)]
-                      [rs : i64 (compiler-reg-group-pair-find parents src-var)]
-                      (array-set! parents rd rs))
-                    unit)
-                  (if (or
-                    (compiler-live-set-contains? group-vars dst)
-                    (compiler-live-set-contains? group-vars src-var))
-                    (begin
-                      (if (and (>= dst 0) (< dst (array-length poisoned)))
-                        (array-set! poisoned dst true)
-                        unit)
-                      (if (and
-                        (>= src-var 0)
-                        (< src-var (array-length poisoned)))
-                        (array-set! poisoned src-var true)
-                        unit))
-                    unit))]
-              [_ unit])]
-          [_ unit])
-        (compiler-reg-group-pair-mov-edges-instrs
-          (box-get rest)
+        (compiler-reg-group-pair-mov-edges-instr
+          (compiler-ir-instr-seq-ref instrs index)
           group-vars
           excluded
           starts
           def-counts
           parents
-          poisoned))]))
+          poisoned)
+        (set! index (+ index 1))))))
 
 (define (compiler-reg-group-pair-mov-edges-blocks
   [blocks : CompilerIrBlockList]
@@ -20499,8 +20485,8 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (begin
-            (compiler-reg-group-pair-mov-edges-instrs
-              (compiler-ir-instr-seq-to-list instrs)
+            (compiler-reg-group-pair-mov-edges-instr-seq
+              instrs
               group-vars
               excluded
               starts
@@ -20523,8 +20509,8 @@
           (begin
             (match (compiler-ir-block-seq-ref seq i)
               [(CompilerIrBlock.Block _ instrs)
-                (compiler-reg-group-pair-mov-edges-instrs
-                  (compiler-ir-instr-seq-to-list instrs)
+                (compiler-reg-group-pair-mov-edges-instr-seq
+                  instrs
                   group-vars
                   excluded
                   starts

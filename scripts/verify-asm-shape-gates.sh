@@ -464,6 +464,19 @@ check_shift_pin() {
     assert_not_matches "$_body" '\(%rsp\)|\(%rbp\)' shift-pin
 }
 
+check_hashmap_get_leaf_caller_saved() {
+    _asm=$(compile_gate hashmap_get_leaf_caller_saved benchmarks/hashmap_get/bench.tl)
+    _body=$(function_body "$_asm" _tl_bench_stdlib_hashmap_generated_i64_i64_get_value_or)
+    assert_regex_count_eq "$_body" \
+        '^[[:space:]]+movq %r[a-z0-9]+, %r8$' 1 \
+        hashmap-get-leaf-caller-saved
+    assert_contains "$_body" 'leaq (%r8,' hashmap-get-leaf-caller-saved
+    assert_not_matches "$_body" \
+        '^[[:space:]]+(pushq|popq) %r(12|13|14|15|bx|bp)$' \
+        hashmap-get-leaf-caller-saved
+    assert_not_matches "$_body" '\(%rsp\)|\(%rbp\)' hashmap-get-leaf-caller-saved
+}
+
 check_param_pin_interval() {
     _asm=$(compile_gate param_pin_interval tests/integration/param_pin_interval.tl)
     _dead=$(function_body "$_asm" _tl_param_pin_interval_dead_early)
@@ -552,6 +565,7 @@ check_dead_result_store
 check_param_csr_home
 check_handle_arg_csr
 check_shift_pin
+check_hashmap_get_leaf_caller_saved
 check_param_pin_interval
 check_frame_slot_repacking
 check_gep_value_direct

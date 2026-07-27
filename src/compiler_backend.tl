@@ -16122,7 +16122,7 @@
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
-  [intervals : CompilerRegIntervalList]
+  [intervals : CompilerRegIntervalSeq]
   [vars : i64]
   [frame-base-slots : i64]) : CompilerBackendConstHoistSynth
   (let
@@ -16553,26 +16553,28 @@
   [n : i64]
   [i : i64]
   [vars : i64]
-  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalList
-  (if (>= i n)
-    intervals
-    (compiler-reg-interval-cons
-      (CompilerRegInterval.Interval
-        (+ vars i)
-        (array-ref lo i)
-        (array-ref hi i))
-      (compiler-backend-const-hoist-extend-intervals-from
-        lo
-        hi
-        n
-        (+ i 1)
-        vars
-        intervals))))
+  [intervals : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
+  (let
+    [out : CompilerRegIntervalSeq (compiler-reg-interval-seq-empty)]
+    [index : i64 i]
+    (begin
+      (while (< index n)
+        (begin
+          (set!
+            out
+            (compiler-reg-interval-seq-append
+              out
+              (CompilerRegInterval.Interval
+                (+ vars index)
+                (array-ref lo index)
+                (array-ref hi index))))
+          (set! index (+ index 1))))
+      (compiler-reg-interval-seq-append-all out intervals))))
 
 (define (compiler-backend-const-hoist-extend-intervals
   [synth : CompilerBackendConstHoistSynth]
   [vars : i64]
-  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalList
+  [intervals : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
   (match synth
     [(CompilerBackendConstHoistSynth n _ lo hi)
       (compiler-backend-const-hoist-extend-intervals-from
@@ -16708,37 +16710,38 @@
   [index : i64]
   [success : i64]
   [vars : i64]
-  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalList
-  (if (>= index (array-length items))
-    intervals
-    (let
-      [item : CompilerRegScratchAssignment (array-ref items index)]
-      [reg : String (struct-get item register)]
-      [requirement : CompilerRegScratchRequirement
-        (struct-get item requirement)]
-      (if (string.eq reg "")
-        (compiler-backend-scratch-plan-extend-intervals-from
-          items
-          (+ index 1)
-          success
-          vars
-          intervals)
-        (compiler-reg-interval-cons
-          (CompilerRegInterval.Interval
-            (+ vars success)
-            (struct-get requirement lo)
-            (struct-get requirement hi))
-          (compiler-backend-scratch-plan-extend-intervals-from
-            items
-            (+ index 1)
-            (+ success 1)
-            vars
-            intervals))))))
+  [intervals : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
+  (let
+    [out : CompilerRegIntervalSeq (compiler-reg-interval-seq-empty)]
+    [item-index : i64 index]
+    [success-index : i64 success]
+    (begin
+      (while (< item-index (array-length items))
+        (let
+          [item : CompilerRegScratchAssignment (array-ref items item-index)]
+          [reg : String (struct-get item register)]
+          [requirement : CompilerRegScratchRequirement
+            (struct-get item requirement)]
+          (begin
+            (if (string.eq reg "")
+              unit
+              (begin
+                (set!
+                  out
+                  (compiler-reg-interval-seq-append
+                    out
+                    (CompilerRegInterval.Interval
+                      (+ vars success-index)
+                      (struct-get requirement lo)
+                      (struct-get requirement hi))))
+                (set! success-index (+ success-index 1))))
+            (set! item-index (+ item-index 1)))))
+      (compiler-reg-interval-seq-append-all out intervals))))
 
 (define (compiler-backend-scratch-plan-extend-intervals
   [plan : CompilerRegScratchPlan]
   [vars : i64]
-  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalList
+  [intervals : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
   (compiler-backend-scratch-plan-extend-intervals-from
     (struct-get plan items)
     0
@@ -45316,7 +45319,7 @@
 (define (compiler-backend-scavenge-install-ctx-from-intervals!
   [slot-vars : i64]
   [assignments : CompilerRegAssignmentList]
-  [intervals : CompilerRegIntervalList]) : unit
+  [intervals : CompilerRegIntervalSeq]) : unit
   (begin
     (set! compiler-backend-emit-instr-post-base 0)
     (if (< slot-vars 1)
@@ -49954,7 +49957,7 @@
             [(CompilerRegColoring.None) remat-vars]
             [(CompilerRegColoring.Remap _ slots) slots])]
         [scavenge-intervals
-          : CompilerRegIntervalList
+          : CompilerRegIntervalSeq
           ;; Scavenge occupancy must be keyed to the FINAL emitted IR at
           ;; instruction precision. The allocator plan intervals predate
           ;; call-save/remat rewrites and frame slot compaction, and the cheap
@@ -49974,7 +49977,7 @@
               (compiler-reg-live-intervals
                 scavenge-func
                 (compiler-live-analyze-function scavenge-func)))
-            CompilerRegIntervalList.Nil)]
+            (compiler-reg-interval-seq-empty))]
         [types : CompilerRegVarTypeList
           (match coloring
             [(CompilerRegColoring.None) plan-types]
@@ -50086,7 +50089,7 @@
             scratch-plan
             scratch-vars
             assignments)]
-        [const-hoist-occupancy-intervals : CompilerRegIntervalList
+        [const-hoist-occupancy-intervals : CompilerRegIntervalSeq
           (compiler-backend-scratch-plan-extend-intervals
             scratch-plan
             scratch-vars
@@ -50132,7 +50135,7 @@
             const-hoist-synth
             scratch-vars
             scavenge-assignments)]
-        [scavenge-base-intervals : CompilerRegIntervalList
+        [scavenge-base-intervals : CompilerRegIntervalSeq
           (compiler-backend-const-hoist-extend-intervals
             const-hoist-synth
             scratch-vars

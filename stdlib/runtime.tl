@@ -232,25 +232,50 @@
 ;: Write one non-negative integer without constructing a String. The digit
 ;: bytes come from static storage and recursion uses only the native stack, so
 ;: this stays safe when the current arena is null or exhausted.
-(cfg
-  windows
-  (define (abort-write-decimal [value : u64]) : unit
-    (begin
-      (if (>= value 10)
-        (abort-write-decimal (/ value 10))
-        unit)
-      (let
-        [digit : u64 (% value 10)]
-        [digits : (Ptr u8)
+(define (abort-write-decimal [value : u64]) : unit
+  (begin
+    (if (>= value 10)
+      (abort-write-decimal (/ value 10))
+      unit)
+    (let
+      [digit : u64 (% value 10)]
+      [digits : (Ptr u8)
+        (unsafe
+          (string-data "0123456789"))]
+      (begin
+        (os-write
+          2
           (unsafe
-            (string-data "0123456789"))]
-        (begin
-          (os-write
-            2
-            (unsafe
-              (ptr-offset digits (cast digit : i64)))
-            1)
-          unit)))))
+            (ptr-offset digits (cast digit : i64)))
+          1)
+        unit))))
+
+;: Write a negative-domain integer magnitude. Keeping the value non-positive
+;: makes INT64_MIN representable throughout the recursion.
+(define (abort-write-negative-decimal [value : i64]) : unit
+  (begin
+    (if (<= value -10)
+      (abort-write-negative-decimal (/ value 10))
+      unit)
+    (let
+      [digit : i64 (- 0 (% value 10))]
+      [digits : (Ptr u8)
+        (unsafe
+          (string-data "0123456789"))]
+      (begin
+        (os-write
+          2
+          (unsafe
+            (ptr-offset digits digit))
+          1)
+        unit))))
+
+(define (abort-write-signed-decimal [value : i64]) : unit
+  (if (< value 0)
+    (begin
+      (abort-write "-")
+      (abort-write-negative-decimal value))
+    (abort-write-decimal (cast value : u64))))
 
 ;: Allocation-free Windows VirtualAlloc failure reporter. KIND is 0 for an
 ;: ordinary arena and 1 for an atomic arena. OPERATION is 0 for reserve, 1 for
@@ -311,6 +336,89 @@
   (begin
     (abort-write "tl: shift count out of range\n")
     (os-exit 129)))
+
+;: A compiler-emitted abort-site descriptor is four machine words:
+;: path-data pointer, path byte length, one-based line, and one-based column.
+;: Reading and rendering it stays allocation-free so diagnostics also work
+;: while the active arena is unavailable.
+(define (abort-site-word [site : (Ptr i64)] [offset : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset site offset))))
+
+(define (abort-write-site [site : (Ptr i64)]) : unit
+  (let
+    [path-address : i64 (abort-site-word site 0)]
+    [path-length : i64 (abort-site-word site 1)]
+    [line : i64 (abort-site-word site 2)]
+    [column : i64 (abort-site-word site 3)]
+    (begin
+      (os-write
+        2
+        (unsafe
+          (int->ptr (cast path-address : u64) : (Ptr u8)))
+        path-length)
+      (abort-write ":")
+      (abort-write-signed-decimal line)
+      (abort-write ":")
+      (abort-write-signed-decimal column)
+      (abort-write ": "))))
+
+(define (oob-abort-at [site : (Ptr i64)] [index : i64] [length : i64])
+  (:export-symbol "tl_oob_abort_at") : never
+  (begin
+    (abort-write "tl: ")
+    (abort-write-site site)
+    (abort-write "array index out of bounds: index=")
+    (abort-write-signed-decimal index)
+    (abort-write " length=")
+    (abort-write-signed-decimal length)
+    (abort-write "\n")
+    (os-exit 134)))
+
+(define (div-abort-at [site : (Ptr i64)] [dividend : i64] [divisor : i64])
+  (:export-symbol "tl_div_abort_at") : never
+  (begin
+    (abort-write "tl: ")
+    (abort-write-site site)
+    (abort-write "integer division or remainder error: dividend=")
+    (abort-write-signed-decimal dividend)
+    (abort-write " divisor=")
+    (abort-write-signed-decimal divisor)
+    (abort-write "\n")
+    (os-exit 135)))
+
+(define (shift-abort-at [site : (Ptr i64)] [count : i64] [width : i64])
+  (:export-symbol "tl_shift_abort_at") : never
+  (begin
+    (abort-write "tl: ")
+    (abort-write-site site)
+    (abort-write "shift count out of range: count=")
+    (abort-write-signed-decimal count)
+    (abort-write " width=")
+    (abort-write-signed-decimal width)
+    (abort-write "\n")
+    (os-exit 129)))
+
+(define (panic-abort-at [site : (Ptr i64)] [message : String])
+  (:export-symbol "tl_panic_at") : never
+  (let
+    [len : i64 (string-length message)]
+    (begin
+      (abort-write "tl: ")
+      (abort-write-site site)
+      (abort-write "panic: ")
+      (abort-write message)
+      (if (and
+        (> len 0)
+        (=
+          (cast
+            (unsafe
+              (ptr-read (ptr-offset (string-data message) (- len 1))))
+            : i64)
+          10))
+        unit
+        (abort-write "\n"))
+      (os-exit 134))))
 
 ;: General panic abort: write the supplied message to stderr and exit 134.
 ;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and

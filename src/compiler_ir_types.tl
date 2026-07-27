@@ -4709,7 +4709,10 @@
 ;; probed entry. Refs #5142.
 (defenum CompilerSourceSpansInstrKey
   (Value i64 i64)
-  (Store i64 i64))
+  (Store i64 i64)
+  ;; Bounds checks have no destination value; their fresh success label is
+  ;; unique within the function and remains stable through optimization.
+  (Bounds i64 i64))
 
 (defenum CompilerSourceSpansInstrEntry
   (Entry CompilerSourceSpansInstrKey i64 AstSourceSpan))
@@ -4820,6 +4823,11 @@
       (match right
         [(CompilerSourceSpansInstrKey.Store right-function right-name)
           (and (= left-name right-name) (= left-function right-function))]
+        [_ false])]
+    [(CompilerSourceSpansInstrKey.Bounds left-function left-label)
+      (match right
+        [(CompilerSourceSpansInstrKey.Bounds right-function right-label)
+          (and (= left-label right-label) (= left-function right-function))]
         [_ false])]))
 
 (define (compiler-source-spans-instr-entry-list-count
@@ -5209,6 +5217,11 @@
         spans
         (CompilerSourceSpansInstrKey.Value function dst)
         span)]
+    [(CompilerIrInstr.BoundsCheck _ _ ok-label)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (CompilerSourceSpansInstrKey.Bounds function ok-label)
+        span)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _) spans])]
@@ -5428,6 +5441,10 @@
           (compiler-source-spans-instr-entry-list-lookup
             instr-entries
             (CompilerSourceSpansInstrKey.Value function dst))]
+        [(CompilerIrInstr.BoundsCheck _ _ ok-label)
+          (compiler-source-spans-instr-entry-list-lookup
+            instr-entries
+            (CompilerSourceSpansInstrKey.Bounds function ok-label))]
         [(CompilerIrInstr.CallCAbiStoreResult payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _)

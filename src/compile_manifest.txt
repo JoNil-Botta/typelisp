@@ -183,8 +183,8 @@ contains|_tl_compiler_cfg_enable:
 contains|_tl_compiler_driver_core_compiler_driver_state_emit_file_buffer_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_core_compiler_driver_state_emit_file_pic_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_core_compiler_driver_state_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
-contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_with_type_segment_bases_and_crt:
-contains|_tl_compiler_backend_emit_program_target_with_mode_with_pools_and_crt:
+contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_with_type_segment_bases_and_crt_and_profile_state:
+contains|_tl_compiler_backend_emit_program_target_with_mode_with_pools_and_crt_and_profile_state:
 contains|compile: expected source path
 contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value
@@ -279,7 +279,7 @@ contains|_tl_tltest_run_harness_in_temp:
 contains|_tl_tltest_invalid_opt_level:
 contains|_tl_source_tool_assemble_and_link:
 contains|_tl_source_tool_run_executable:
-contains|_tl_optimize_program_with_spans_and_pools_and_level:
+contains|_tl_optimize_program_with_spans_and_pools_and_level_and_profile_state:
 contains|_tl_opt_inline_program_functions_with_spans:
 contains|TypeLisp package tests passed:
 contains|TypeLisp test batch typecheck passed:
@@ -326,6 +326,7 @@ decision|src/scaffold_cli_core.tl|new/init scaffold command logic (#1642): packa
 decision|src/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/lsp_vector_families.tl|generated vector-backed LSP collection shim: document and declaration vector helpers split out of lsp_frame_core.tl; main-less, imported through src/lsp_frame_core.tl and exercised through the selfhost_main case
 decision|src/compiler_clone.tl|type-directed clone$<Type> support (#1633, #4779): compiler-side least-fixpoint cloneability and reachable-root discovery feed the stdlib/clone.tl declaration macro, including match-reconstruct and tail-recursive list helper generation; main-less, imported by src/compiler_lower.tl and exercised through the selfhost_compiler_lower case
+decision|src/compiler_profile_state.tl|job-owned compact compile-profile storage (#4959): one-word main-less handle with cfg-gated summary tables, imported by compiler driver, optimizer, backend, and profile summary paths; exercised by profile isolation tests, scripts/verify-compile-profile.sh, and the selfhost_main import graph
 decision|src/compiler_profile_summary.tl|bounded compact compile-profile aggregation (#4849): main-less and cfg-only, imported by compiler_optimize.tl and compiler_backend.tl under compile-profile-summary; exercised by scripts/verify-compile-profile.sh and the selfhost_main import graph
 decision|src/compiler_startup_clock.tl|earliest source-level compile-start timestamp (#5519): main-less and cfg-only, imported before compiler-owned globals by compiler_startup_profile.tl; exercised with the active cfg by scripts/verify-compile-startup-profile.sh in ci-verify
 decision|src/compiler_startup_profile.tl|one-shot compile-start attribution markers (#5519): main-less and cfg-only, imported by main/compile CLI/compiler driver entry points under compile-startup-profile; exercised with the active cfg by scripts/verify-compile-startup-profile.sh in ci-verify
@@ -419,7 +420,7 @@ contains|_tl_compiler_driver_emit_package_loaded_object_image:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_state_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_ir_summary_render:
-contains|_tl_compiler_backend_emit_program_target_with_mode_with_pools_and_crt:
+contains|_tl_compiler_backend_emit_program_target_with_mode_with_pools_and_crt_and_profile_state:
 contains|_tl_compiler_backend_emit_source:
 end
 

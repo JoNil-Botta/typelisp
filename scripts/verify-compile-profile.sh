@@ -1005,9 +1005,9 @@ fi
 # archaeology that took (#5764).
 #
 # Current headroom, used against capacity: expr macro_expand
-# 2817368/2818048, measured on Windows after the backend/optimizer dead-code
-# cleanup merged with the leaf-CSR split work. The compiler-state isolation
-# work in
+# 2690103/2752512 after transformer-owned hygiene nodes started reusing their
+# CTFE slots instead of retaining a second complete expression tree. The
+# compiler-state isolation work in
 # #5751 moved expr typecheck across its next boundary at 1639597/1703936;
 # type macro_expand 20018/20480, type typecheck 5887/6144. All four sit within a
 # few percent of their next step, so expect these to move. #5701 landed while
@@ -1044,7 +1044,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 44 65536 40 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 40 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 26 65536 40 \
@@ -1150,6 +1150,14 @@ assert_contains "$CHECK_STDERR" "stdlib.core_macros/or arity=2"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/cond arity=4"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_rewalk_zero_fire_calls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_rewalk_provenance_skips|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_hygiene_nodes_reused|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_hygiene_nodes_copied|"
+assert_profile_counter_at_least_in \
+    "$CHECK_STDERR" \
+    "typecheck.macro.walk_hygiene_nodes_reused" \
+    1 \
+    "$CHECK_STDOUT" \
+    "$CHECK_STDERR"
 assert_profile_counter_at_least_in \
     "$CHECK_STDERR" \
     "typecheck.macro.walk_rewalk_provenance_skips" \

@@ -4,8 +4,6 @@
 ;; storage cell, while ordinary and full-detail builds carry only a zero
 ;; sentinel and allocate nothing. Profile hooks pass the handle explicitly, so
 ;; two compiler jobs never select or mutate one process-global summary table.
-(import stdlib.array)
-
 ;; Allocate ranked-summary tables only when that reporting mode (or this
 ;; module's tests) is actually selected.
 (define compiler-profile-state-summary-row-capacity : i64

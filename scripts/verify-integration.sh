@@ -524,6 +524,16 @@ spmd_shuffle_tail_selector
 EOF
 }
 
+# This compiler-only debug fixture needs the current-tree
+# `compiler-arena-debug` cfg plus multiple expected exits and stderr streams.
+# The seed-backed integration manifest cannot express that matrix; the runtime
+# emitter tests cover both targets and this source is the native matrix driver.
+compiler_cfg_native_fixture_cases() {
+    cat <<'EOF'
+compiler_arena_debug
+EOF
+}
+
 validate_manifest() {
     _known="$WORKDIR/manifest-known.txt"
     _known_sorted="$WORKDIR/manifest-known.sorted"
@@ -545,6 +555,7 @@ validate_manifest() {
     fi
     selfhost_native_manifest_cases >> "$_known"
     spmd_simd_manifest_cases >> "$_known"
+    compiler_cfg_native_fixture_cases >> "$_known"
 
     find tests/integration -maxdepth 1 -type f -name '*.tl' |
         sed 's#^tests/integration/##; s#\.tl$##' | sort > "$_actual"

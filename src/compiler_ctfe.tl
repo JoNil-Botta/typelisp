@@ -5574,6 +5574,11 @@
           expr
           (string.append query-name " expects exactly two args"))))))
 
+(define (ctfe-module-hook-missing-message [module : String] [name : String]) : String
+  (string.append
+    "typecheck: strategy module "
+    (string.append module (string.append " does not export hook " name))))
+
 (define (ctfe-eval-module-hook-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -5615,11 +5620,7 @@
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
-                        (string.append
-                          "typecheck: strategy module "
-                          (string.append
-                            module
-                            (string.append " does not export hook " name))))))))]
+                        (ctfe-module-hook-missing-message module name))))))]
             [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err

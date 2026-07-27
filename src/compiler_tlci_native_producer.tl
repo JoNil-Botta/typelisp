@@ -2040,6 +2040,46 @@
                             "0"
                             "0")
                           (+ inner-opened 1))))))]
+              ;; Module operands arrive as canonical identity Strings. Preserve
+              ;; that value through the module-name op so computed consumers use
+              ;; same identity as interpreted `(comptime.module-name format)`.
+              [(and
+                  (or
+                    (string.eq head "comptime.module-name")
+                    (string.eq head "module-name"))
+                  (= argc 1))
+                (let
+                  [inner-opened : i64
+                    (embedded-native-computed-expr-ops
+                      params
+                      (ast-expr-list-get (& args) 0 0)
+                      ops
+                      ops-count)]
+                  (if (< inner-opened 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        tlci-host-callback-op-module-name
+                        "0"
+                        "0"
+                        "0")
+                      (+ inner-opened 1))))]
+              ;; Resolve a literal or computed hook name against a Module
+              ;; operand through the host's interpreted-CTFE export index.
+              [(and
+                  (or
+                    (string.eq head "comptime.module-hook")
+                    (string.eq head "module-hook"))
+                  (= argc 2))
+                (embedded-native-computed-binary-ops
+                  params
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0)
+                  tlci-host-callback-op-module-hook
+                  ops
+                  ops-count)]
               ;; `(comptime.expr-type p)`: the checked type of an Expr
               ;; operand. Op 125 pops the Expr and pushes its type, so the
               ;; operand push is the whole argument. Refs #5626.

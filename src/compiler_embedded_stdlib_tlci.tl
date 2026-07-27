@@ -947,6 +947,69 @@
                   (ci.intern-source-slice name 0 (string.string-length name)))))]
           (compiler-comptime-host-push!
             (CompilerCtfeValue.Expr node (AstType.Expr)))))]
+    ;; Module values cross the callback boundary as their canonical identity
+    ;; String. module-name preserves that exact value and identity for a
+    ;; following computed String consumer such as expr-var-from-value.
+    [(= operation tlci-host-callback-op-module-name)
+      (if (< compiler-comptime-host-stack-len 1)
+        tlci-host-callback-status-bad-request
+        (let
+          [value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          (match value
+            [(CompilerCtfeValue.String _ _)
+              (begin
+                (set!
+                  compiler-comptime-host-stack-len
+                  (- compiler-comptime-host-stack-len 1))
+                (compiler-comptime-host-push! value))]
+            [_ tlci-host-callback-status-bad-request])))]
+    ;; Resolve a named macro hook exactly like interpreted CTFE: the module and
+    ;; hook are comptime Strings on the stack, and a successful lookup becomes
+    ;; one canonical qualified Var expression. Missing hooks share the
+    ;; interpreted diagnostic constructor so route diagnostics are identical.
+    [(= operation tlci-host-callback-op-module-hook)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [name-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [module-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          (match module-value
+            [(CompilerCtfeValue.String module module-id)
+              (match name-value
+                [(CompilerCtfeValue.String name name-id)
+                  (if (or
+                    (string.eq module "")
+                    (ctfe-module-macro-export-id? module-id name-id))
+                    (begin
+                      (set!
+                        compiler-comptime-host-stack-len
+                        (- compiler-comptime-host-stack-len 2))
+                      (compiler-comptime-host-push!
+                        (CompilerCtfeValue.Expr
+                          (ast-node-pool-context-expr-push
+                            (array-ref compiler-comptime-host-pools 0)
+                            (AstExpr.Var
+                              (if (string.eq module "")
+                                name-id
+                                (intern-composite-pair-id module-id name-id))))
+                          (ctfe-untyped-expr-type))))
+                    (begin
+                      (array-set!
+                        compiler-comptime-host-diagnostic
+                        0
+                        (ctfe-module-hook-missing-message module name))
+                      tlci-host-callback-status-diagnostic))]
+                [_ tlci-host-callback-status-bad-request])]
+            [_ tlci-host-callback-status-bad-request])))]
     [(= operation tlci-host-callback-op-expr-list-empty)
       (compiler-comptime-host-push!
         (CompilerCtfeValue.ExprList (ast-expr-list-new)))]

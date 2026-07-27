@@ -3829,11 +3829,30 @@
         true)]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-closure-debug-cfi-balanced-ok?) : bool
+  (let
+    [previous : bool (compiler-debug-info-enabled?)]
+    [result : ResultCompilerBackend
+      (begin
+        (compiler-debug-info-set-enabled! true)
+        (compiler-backend-emit-source (compiler-backend-closure-literal-source)))]
+    (begin
+      (compiler-debug-info-set-enabled! previous)
+      (match result
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (> (compiler-backend-string-count asm ".cfi_startproc") 1)
+            (=
+              (compiler-backend-string-count asm ".cfi_startproc")
+              (compiler-backend-string-count asm ".cfi_endproc")))]
+        [(ResultCompilerBackend.Err _) false]))))
+
 (define (compiler-backend-closure-emit-shape-ok?) : bool
   (and
     (compiler-backend-closure-literal-shape-ok?)
     (compiler-backend-closure-inferred-shape-ok?)
-    (compiler-backend-closure-aggregate-return-shape-ok?)))
+    (compiler-backend-closure-aggregate-return-shape-ok?)
+    (compiler-backend-closure-debug-cfi-balanced-ok?)))
 
 (define (compiler-backend-enum-match-ok?) : bool
   ;; `Maybe (None) (Some i64)` is a 16-byte register-resident enum, so the
@@ -5745,6 +5764,35 @@
     (compiler-backend-scavenge-emergency-reg-supported? "%xmm5")
     (not (compiler-backend-scavenge-emergency-reg-supported? "%r16"))))
 
+(define (compiler-backend-debug-location-preserves-emergency-wrap-ok?) : bool
+  (let
+    [previous-offset : i64 compiler-backend-emergency-slot-offset]
+    (begin
+      (set! compiler-backend-emergency-pending false)
+      (set! compiler-backend-emergency-used false)
+      (set! compiler-backend-emergency-pending-count 0)
+      (set! compiler-backend-emergency-used-count 0)
+      (set! compiler-backend-emergency-slot-offset -64)
+      (compiler-backend-emergency-add! "%r9")
+      (let
+        [rendered : String
+          (text_buf.render
+            (compiler-backend-append-located-instr
+              (text_buf.empty)
+              "    .loc 1 2 3\n"
+              "    shlq %cl, %r10\n"))]
+        [ok : bool
+          (string.eq
+            rendered
+            "    .loc 1 2 3\n    movq %r9, -64(%rbp)\n    shlq %cl, %r10\n    movq -64(%rbp), %r9\n")]
+        (begin
+          (set! compiler-backend-emergency-pending false)
+          (set! compiler-backend-emergency-used false)
+          (set! compiler-backend-emergency-pending-count 0)
+          (set! compiler-backend-emergency-used-count 0)
+          (set! compiler-backend-emergency-slot-offset previous-offset)
+          ok)))))
+
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
     [counts : (Array i64) (array.make-array i64 12)]
@@ -6752,6 +6800,7 @@
         CompilerIrExternList.Nil
         program-index
         (compiler-source-spans-empty)
+        (compiler-backend-source-span-index-build (compiler-source-spans-empty))
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
@@ -6906,6 +6955,7 @@
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
+        (compiler-backend-source-span-index-build (compiler-source-spans-empty))
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
@@ -8128,6 +8178,7 @@
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
+        (compiler-backend-source-span-index-build (compiler-source-spans-empty))
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
@@ -8394,6 +8445,7 @@
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
+        (compiler-backend-source-span-index-build (compiler-source-spans-empty))
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
@@ -13595,6 +13647,7 @@
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
+        (compiler-backend-source-span-index-build (compiler-source-spans-empty))
         (compiler-diagnostic-at-start "" "")
         (array.make-array i64 0))
       (CompilerBackendMaybeLabel.No)
@@ -13726,6 +13779,7 @@
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         (compiler-source-spans-empty)
+        (compiler-backend-source-span-index-build (compiler-source-spans-empty))
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
@@ -28822,6 +28876,7 @@
         (compiler-backend-register-group-fail-closed-ok?)
         (compiler-backend-reg-part-pools-ok?)
         (compiler-backend-scavenge-emergency-reg-support-ok?)
+        (compiler-backend-debug-location-preserves-emergency-wrap-ok?)
         (compiler-backend-ir-walkers-fail-closed-ok?))
       (compiler-backend-optimizer-rewrite-diagnostic-ok?)
       (and

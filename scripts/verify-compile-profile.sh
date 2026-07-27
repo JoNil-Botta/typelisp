@@ -1005,7 +1005,7 @@ fi
 # archaeology that took (#5764).
 #
 # Current headroom, used against capacity: expr macro_expand
-# 2790190/2818048 after #5847 replaced the shared numeric callback dispatcher
+# 2800228/2818048 after #5847 replaced the shared numeric callback dispatcher
 # with direct per-name host functions. Transformer-owned hygiene nodes still
 # reuse their CTFE slots instead of retaining a second complete expression
 # tree. The

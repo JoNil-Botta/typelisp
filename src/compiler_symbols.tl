@@ -778,12 +778,11 @@
 (define (compiler-symbol-module-key-id-by-id [module-id : i64] [name-id : i64]) : i64
   (cond
     [(compiler-symbol-root-module-id? module-id) name-id]
-    [(intern-renderable-id? name-id)
-      (if (and
+    [(and
+        (intern-renderable-id? name-id)
         (intern-qualified? name-id)
         (= (intern-qualified-module-id name-id) module-id))
-        (compiler-symbol-name-id-key name-id)
-        (compiler-composite-pair-key-id module-id name-id))]
+      (compiler-symbol-name-id-key name-id)]
     [(compiler-composite-pair-key-id? name-id)
       (compiler-composite-triple-key-id
         module-id

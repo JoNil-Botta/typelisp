@@ -12527,8 +12527,6 @@
         (CompilerRegMaybeString.Some reg))]))
 
 (define (compiler-reg-leaf-csr-try-var
-  [type-segment-bases : i64]
-  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]
   [live-blocks : (Array CompilerLiveBlock)]
@@ -12657,8 +12655,6 @@
         CompilerRegLeafCsrSplitCandidate.NoCandidate])))
 
 (define (compiler-reg-leaf-csr-select-var
-  [type-segment-bases : i64]
-  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]
   [live-blocks : (Array CompilerLiveBlock)]
@@ -12683,8 +12679,6 @@
   (if (>= var vars)
     CompilerRegLeafCsrSplitCandidate.NoCandidate
     (match (compiler-reg-leaf-csr-try-var
-      type-segment-bases
-      abi
       func
       liveness
       live-blocks
@@ -12708,8 +12702,6 @@
       callee-regs)
       [(CompilerRegLeafCsrSplitCandidate.NoCandidate)
         (compiler-reg-leaf-csr-select-var
-          type-segment-bases
-          abi
           func
           liveness
           live-blocks
@@ -12792,8 +12784,6 @@
               region-start
               region-end)]
           (match (compiler-reg-leaf-csr-select-var
-            type-segment-bases
-            abi
             func
             liveness
             live-blocks

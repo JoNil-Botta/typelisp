@@ -168,68 +168,52 @@
 ;; entries in the string pool. Keep their compatibility raw-handle adapters at
 ;; this lowest layer while typed boundaries migrate outward.
 (define (intern-composite-pair-id [left-id : i64] [right-id : i64]) : i64
-  (begin
-    (if (and
-      intern-structural-pair-recent-ready
-      (= intern-structural-pair-recent-left left-id)
-      (= intern-structural-pair-recent-right right-id))
-      (return intern-structural-pair-recent-raw)
-      unit)
-    (let
-      [cache-slot : i64
-        (bit-and
-          (bit-xor right-id (* left-id 6364136223846793005))
-          (- (intern-structural-pair-cache-capacity) 1))]
-      [cached-raw : i64
-        (intern-active-i64-ref
-          intern-active-structural-cache-raws-address
-          cache-slot)]
-      (begin
-        (if (> cached-raw 0)
-          (let
-            [cached-index : i64
-              (- (bit-and cached-raw (intern-structural-key-index-mask)) 1)]
+  (let
+    [cache-slot : i64
+      (bit-and
+        (bit-xor right-id (* left-id 6364136223846793005))
+        (- (intern-structural-pair-cache-capacity) 1))]
+    [cached-raw : i64
+      (intern-active-i64-ref
+        intern-active-structural-cache-raws-address
+        cache-slot)]
+    (begin
+      (if (> cached-raw 0)
+        (let
+          [cached-index : i64
+            (- (bit-and cached-raw (intern-structural-key-index-mask)) 1)]
+          (if (=
+            (intern-active-i64-ref
+              intern-active-structural-lefts-address
+              cached-index)
+            left-id)
             (if (=
               (intern-active-i64-ref
-                intern-active-structural-lefts-address
+                intern-active-structural-rights-address
                 cached-index)
-              left-id)
-              (if (=
-                (intern-active-i64-ref
-                  intern-active-structural-rights-address
-                  cached-index)
-                right-id)
-                (begin
-                  (set! intern-structural-pair-recent-ready true)
-                  (set! intern-structural-pair-recent-left left-id)
-                  (set! intern-structural-pair-recent-right right-id)
-                  (set! intern-structural-pair-recent-raw cached-raw)
-                  (return cached-raw))
-                unit)
-              unit))
-          unit)
-        (let
-          [raw : i64
-            (intern-structural-table-intern
-              intern-structural-table-cell
-              intern-persistent-arena
-              (intern-structural-kind-pair)
-              left-id
-              0
-              right-id)]
-          (begin
-            (intern-active-i64-set!
-              intern-active-structural-cache-raws-address
-              cache-slot
-              raw)
-            (set!
-              intern-active-structural-len
-              (struct-get (array-ref intern-structural-table-cell 0) len))
-            (set! intern-structural-pair-recent-ready true)
-            (set! intern-structural-pair-recent-left left-id)
-            (set! intern-structural-pair-recent-right right-id)
-            (set! intern-structural-pair-recent-raw raw)
-            raw))))))
+              right-id)
+              (return cached-raw)
+              unit)
+            unit))
+        unit)
+      (let
+        [raw : i64
+          (intern-structural-table-intern
+            intern-structural-table-cell
+            intern-persistent-arena
+            (intern-structural-kind-pair)
+            left-id
+            0
+            right-id)]
+        (begin
+          (intern-active-i64-set!
+            intern-active-structural-cache-raws-address
+            cache-slot
+            raw)
+          (set!
+            intern-active-structural-len
+            (struct-get (array-ref intern-structural-table-cell 0) len))
+          raw)))))
 
 (defmacro (intern-composite-pair-id? [id : Expr]) : bool
   `(let
@@ -259,83 +243,64 @@
   [left-id : i64]
   [middle-id : i64]
   [right-id : i64]) : i64
-  (begin
-    (if (and
-      intern-structural-triple-recent-ready
-      (= intern-structural-triple-recent-left left-id)
-      (= intern-structural-triple-recent-middle middle-id)
-      (= intern-structural-triple-recent-right right-id))
-      (return intern-structural-triple-recent-raw)
-      unit)
-    (let
-      [cache-slot : i64
-        (+
-          (intern-structural-pair-cache-capacity)
-          (bit-and
+  (let
+    [cache-slot : i64
+      (+
+        (intern-structural-pair-cache-capacity)
+        (bit-and
+          (bit-xor
+            right-id
             (bit-xor
-              right-id
-              (bit-xor
-                (* left-id 6364136223846793005)
-                (* middle-id 1442695040888963407)))
-            (- (intern-structural-triple-cache-capacity) 1)))]
-      [cached-raw : i64
-        (intern-active-i64-ref
-          intern-active-structural-cache-raws-address
-          cache-slot)]
-      (begin
-        (if (> cached-raw 0)
-          (let
-            [cached-index : i64
-              (- (bit-and cached-raw (intern-structural-key-index-mask)) 1)]
+              (* left-id 6364136223846793005)
+              (* middle-id 1442695040888963407)))
+          (- (intern-structural-triple-cache-capacity) 1)))]
+    [cached-raw : i64
+      (intern-active-i64-ref
+        intern-active-structural-cache-raws-address
+        cache-slot)]
+    (begin
+      (if (> cached-raw 0)
+        (let
+          [cached-index : i64
+            (- (bit-and cached-raw (intern-structural-key-index-mask)) 1)]
+          (if (=
+            (intern-active-i64-ref
+              intern-active-structural-lefts-address
+              cached-index)
+            left-id)
             (if (=
               (intern-active-i64-ref
-                intern-active-structural-lefts-address
+                intern-active-structural-middles-address
                 cached-index)
-              left-id)
+              middle-id)
               (if (=
                 (intern-active-i64-ref
-                  intern-active-structural-middles-address
+                  intern-active-structural-rights-address
                   cached-index)
-                middle-id)
-                (if (=
-                  (intern-active-i64-ref
-                    intern-active-structural-rights-address
-                    cached-index)
-                  right-id)
-                  (begin
-                    (set! intern-structural-triple-recent-ready true)
-                    (set! intern-structural-triple-recent-left left-id)
-                    (set! intern-structural-triple-recent-middle middle-id)
-                    (set! intern-structural-triple-recent-right right-id)
-                    (set! intern-structural-triple-recent-raw cached-raw)
-                    (return cached-raw))
-                  unit)
+                right-id)
+                (return cached-raw)
                 unit)
-              unit))
-          unit)
-        (let
-          [raw : i64
-            (intern-structural-table-intern
-              intern-structural-table-cell
-              intern-persistent-arena
-              (intern-structural-kind-triple)
-              left-id
-              middle-id
-              right-id)]
-          (begin
-            (intern-active-i64-set!
-              intern-active-structural-cache-raws-address
-              cache-slot
-              raw)
-            (set!
-              intern-active-structural-len
-              (struct-get (array-ref intern-structural-table-cell 0) len))
-            (set! intern-structural-triple-recent-ready true)
-            (set! intern-structural-triple-recent-left left-id)
-            (set! intern-structural-triple-recent-middle middle-id)
-            (set! intern-structural-triple-recent-right right-id)
-            (set! intern-structural-triple-recent-raw raw)
-            raw))))))
+              unit)
+            unit))
+        unit)
+      (let
+        [raw : i64
+          (intern-structural-table-intern
+            intern-structural-table-cell
+            intern-persistent-arena
+            (intern-structural-kind-triple)
+            left-id
+            middle-id
+            right-id)]
+        (begin
+          (intern-active-i64-set!
+            intern-active-structural-cache-raws-address
+            cache-slot
+            raw)
+          (set!
+            intern-active-structural-len
+            (struct-get (array-ref intern-structural-table-cell 0) len))
+          raw)))))
 
 (defmacro (intern-composite-triple-id? [id : Expr]) : bool
   `(let
@@ -482,24 +447,6 @@
   1)
 (define intern-next-structural-owner : i64
   1)
-(define intern-structural-pair-recent-ready : bool
-  false)
-(define intern-structural-pair-recent-left : i64
-  0)
-(define intern-structural-pair-recent-right : i64
-  0)
-(define intern-structural-pair-recent-raw : i64
-  0)
-(define intern-structural-triple-recent-ready : bool
-  false)
-(define intern-structural-triple-recent-left : i64
-  0)
-(define intern-structural-triple-recent-middle : i64
-  0)
-(define intern-structural-triple-recent-right : i64
-  0)
-(define intern-structural-triple-recent-raw : i64
-  0)
 
 (define (intern-pool-len) : i64
   intern-pool-count)
@@ -655,9 +602,7 @@
         (intern-i64-array-address (struct-get table rights)))
       (set!
         intern-active-structural-cache-raws-address
-        (intern-i64-array-address (struct-get table structural-cache-raws)))
-      (set! intern-structural-pair-recent-ready false)
-      (set! intern-structural-triple-recent-ready false))))
+        (intern-i64-array-address (struct-get table structural-cache-raws))))))
 
 (defmacro (intern-structural-raw-for-index
   [owner : Expr]
@@ -914,10 +859,7 @@
 
 (define (intern-structural-session-reset!
   [table-cell : (Array InternStructuralTable)]) : unit
-  (begin
-    (set! intern-structural-pair-recent-ready false)
-    (set! intern-structural-triple-recent-ready false)
-    (intern-structural-table-reset! table-cell)))
+  (intern-structural-table-reset! table-cell))
 
 ;; Bucket IDs use the compact encoded `InternId` representation. The pool owns
 ;; each spelling, so the hash table needs only identity and hash lanes rather

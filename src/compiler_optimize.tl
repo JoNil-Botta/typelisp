@@ -46980,6 +46980,17 @@
 ;; source span under the clone's new caller/value key. If the callee instruction
 ;; has no recorded span (notably the synthetic return->mov), use the call-site
 ;; span so the cloned instruction still points at useful user code.
+(define (opt-source-spans-lookup-instr-span
+  [source-spans : CompilerSourceSpans]
+  [function : i64]
+  [instr : CompilerIrInstr]) : CompilerMaybeSourceSpan
+  (match source-spans
+    [(CompilerSourceSpans.Spans _ instr-entries _)
+      (match (opt-remap-spans-instr-key function instr)
+        [(OptRemapSpanKey.NoKey) (CompilerMaybeSourceSpan.No)]
+        [(OptRemapSpanKey.SomeKey key)
+          (compiler-source-spans-instr-entry-list-lookup-span instr-entries key)])]))
+
 (define (opt-inline-record-clone-span
   [source-spans : CompilerSourceSpans]
   [out : CompilerSourceSpans]
@@ -46988,14 +46999,43 @@
   [callee : i64]
   [callee-instr : CompilerIrInstr]
   [cloned : CompilerIrInstr]) : CompilerSourceSpans
-  (match (compiler-source-spans-lookup-instr source-spans callee callee-instr)
-    [(CompilerMaybeSourceSpan.Some span)
-      (compiler-source-spans-insert-instr out caller cloned span)]
-    [(CompilerMaybeSourceSpan.No)
-      (match (compiler-source-spans-lookup-instr source-spans caller call-instr)
-        [(CompilerMaybeSourceSpan.Some span)
-          (compiler-source-spans-insert-instr out caller cloned span)]
-        [(CompilerMaybeSourceSpan.No) out])]))
+  (if (compiler-debug-info-enabled?)
+    (match (compiler-source-spans-lookup-instr-location
+      source-spans
+      callee
+      callee-instr)
+      [(CompilerMaybeSourceLocation.Some (CompilerSourceLocation path-id span))
+        (compiler-source-spans-insert-instr-located
+          out
+          caller
+          cloned
+          path-id
+          span)]
+      [(CompilerMaybeSourceLocation.No)
+        (match (compiler-source-spans-lookup-instr-location
+          source-spans
+          caller
+          call-instr)
+          [(CompilerMaybeSourceLocation.Some
+              (CompilerSourceLocation path-id span))
+            (compiler-source-spans-insert-instr-located
+              out
+              caller
+              cloned
+              path-id
+              span)]
+          [(CompilerMaybeSourceLocation.No) out])])
+    (match (opt-source-spans-lookup-instr-span source-spans callee callee-instr)
+      [(CompilerMaybeSourceSpan.Some span)
+        (compiler-source-spans-insert-instr out caller cloned span)]
+      [(CompilerMaybeSourceSpan.No)
+        (match (opt-source-spans-lookup-instr-span
+          source-spans
+          caller
+          call-instr)
+          [(CompilerMaybeSourceSpan.Some span)
+            (compiler-source-spans-insert-instr out caller cloned span)]
+          [(CompilerMaybeSourceSpan.No) out])])))
 
 (define (opt-inline-expand-instrs-with-spans
   [instrs : CompilerIrInstrList]
@@ -47367,10 +47407,26 @@
   [func-name : i64]
   [call-instr : CompilerIrInstr]
   [new-instr : CompilerIrInstr]) : CompilerSourceSpans
-  (match (compiler-source-spans-lookup-instr source-spans func-name call-instr)
-    [(CompilerMaybeSourceSpan.Some span)
-      (compiler-source-spans-insert-instr out-spans func-name new-instr span)]
-    [(CompilerMaybeSourceSpan.No) out-spans]))
+  (if (compiler-debug-info-enabled?)
+    (match (compiler-source-spans-lookup-instr-location
+      source-spans
+      func-name
+      call-instr)
+      [(CompilerMaybeSourceLocation.Some (CompilerSourceLocation path-id span))
+        (compiler-source-spans-insert-instr-located
+          out-spans
+          func-name
+          new-instr
+          path-id
+          span)]
+      [(CompilerMaybeSourceLocation.No) out-spans])
+    (match (opt-source-spans-lookup-instr-span
+      source-spans
+      func-name
+      call-instr)
+      [(CompilerMaybeSourceSpan.Some span)
+        (compiler-source-spans-insert-instr out-spans func-name new-instr span)]
+      [(CompilerMaybeSourceSpan.No) out-spans])))
 
 (define (opt-inline-lookup-inlinable
   [index : OptFunctionIndex]
@@ -52801,8 +52857,9 @@
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
   [key : CompilerSourceSpansInstrKey]
+  [path-id : i64]
   [span : AstSourceSpan]) : CompilerSourceSpans
-  (compiler-source-spans-insert-instr-entry spans key span))
+  (compiler-source-spans-insert-instr-entry-located spans key path-id span))
 
 ;; Span keys are typed (function id, var/name id) pairs, so building one is a
 ;; couple of integer moves and probing an entry is two integer compares; only
@@ -52930,10 +52987,18 @@
   (match (opt-remap-spans-instr-key function instr)
     [(OptRemapSpanKey.NoKey) out]
     [(OptRemapSpanKey.SomeKey key)
-      (match (compiler-source-spans-instr-entry-list-lookup instr-entries key)
-        [(CompilerMaybeSourceSpan.Some span)
-          (opt-remap-spans-prepend-entry out key span)]
-        [(CompilerMaybeSourceSpan.No) out])]))
+      (if (compiler-debug-info-enabled?)
+        (match (compiler-source-spans-instr-entry-list-lookup instr-entries key)
+          [(CompilerMaybeSourceLocation.Some
+              (CompilerSourceLocation path-id span))
+            (opt-remap-spans-prepend-entry out key path-id span)]
+          [(CompilerMaybeSourceLocation.No) out])
+        (match (compiler-source-spans-instr-entry-list-lookup-span
+          instr-entries
+          key)
+          [(CompilerMaybeSourceSpan.Some span)
+            (compiler-source-spans-insert-instr-entry out key span)]
+          [(CompilerMaybeSourceSpan.No) out]))]))
 
 (define (opt-remap-spans-instr-seq-from
   [instr-entries : CompilerSourceSpansInstrEntryList]
@@ -53009,7 +53074,9 @@
         (compiler-ir-function-seq-to-list seq))]))
 
 (define (opt-remap-spans-fast-path? [source-spans : CompilerSourceSpans]) : bool
-  (compiler-source-spans-instr-count-at-least? source-spans 2049))
+  (and
+    (not (compiler-debug-info-enabled?))
+    (compiler-source-spans-instr-count-at-least? source-spans 2049)))
 
 (define (opt-remap-spans-program
   [source-spans : CompilerSourceSpans]

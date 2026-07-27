@@ -3112,6 +3112,9 @@ typecheck: return type mismatch"))]
       (source-tool-windows-stack-reserve-smoke-ok?)
       (return (io.panic "source-tool: windows stack reserve smoke regressed")))
     (unless
+      (source-tool-windows-debug-linker-smoke-ok?)
+      (return (io.panic "source-tool: windows debug linker smoke regressed")))
+    (unless
       (source-tool-linux-direct-object-linkability-smoke-ok?)
       (return (io.panic "source-tool: linux direct object smoke regressed")))
     (unless

@@ -8674,11 +8674,118 @@
         ,shared)))
 (define (main) : i64 (shared-fresh-node))")
 
+(define (compiler-typecheck-macro-hygiene-indexed-snapshot-source) : String
+  "(defenum HygieneSnapshotChoice
+  (Left i64)
+  (Right i64))
+(defmacro (nested-snapshot [value : i64]) : i64
+  `(let [shadow : i64 ,value]
+     ((lambda ([shadow : i64]) : i64
+        (match (HygieneSnapshotChoice.Left shadow)
+          [(HygieneSnapshotChoice.Left shadow) shadow]
+          [(HygieneSnapshotChoice.Right shadow) shadow]))
+      shadow)))
+(define (main) : i64
+  (let [shadow : bool true]
+    (if shadow (nested-snapshot 42) 0)))")
+
+(define (compiler-typecheck-macro-hygiene-lifetime-decl-source) : String
+  "(defmacro (emit-ref-box) : Decls
+  `(defstruct GeneratedRefBox
+     (:lifetimes owner)
+     (value (& owner i64))))
+(emit-ref-box)
+(define (observe [box : (GeneratedRefBox owner)]) : i64 1)
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-macro-hygiene-unsafe-global-source) : String
   "(unsafe (define (danger [x : i64]) : i64 x))
 (defmacro (call-danger [x : i64]) : i64
   `(danger ,x))
 (define (main) : i64 (call-danger 1))")
+
+(define (compiler-typecheck-hygiene-name-is?
+  [value : MacroMaybeHygieneName]
+  [expected : i64]) : bool
+  (match value
+    [(MacroMaybeHygieneName.No) false]
+    [(MacroMaybeHygieneName.Some actual) (= actual expected)]))
+
+(define (compiler-typecheck-hygiene-name-missing?
+  [value : MacroMaybeHygieneName]) : bool
+  (match value
+    [(MacroMaybeHygieneName.No) true]
+    [(MacroMaybeHygieneName.Some _) false]))
+
+(define (compiler-typecheck-macro-hygiene-env-extend
+  [env : MacroHygieneEnv]
+  [index : i64]
+  [limit : i64]) : MacroHygieneEnv
+  (if (>= index limit)
+    env
+    (compiler-typecheck-macro-hygiene-env-extend
+      (macro-hygiene-env-bind-raw env (+ 100 index) (+ 1000 index))
+      (+ index 1)
+      limit)))
+
+(define (compiler-typecheck-macro-hygiene-env-snapshots-ok?) : bool
+  (begin
+    (macro-hygiene-env-reset!)
+    (let
+      [empty : MacroHygieneEnv (macro-hygiene-env-empty)]
+      [parent : MacroHygieneEnv (macro-hygiene-env-bind-raw empty 7 70)]
+      [left : MacroHygieneEnv (macro-hygiene-env-bind-raw parent 8 80)]
+      [right : MacroHygieneEnv (macro-hygiene-env-bind-raw parent 9 90)]
+      [shadow-one : MacroHygieneEnv (macro-hygiene-env-bind-raw parent 7 71)]
+      [shadow-two : MacroHygieneEnv
+        (macro-hygiene-env-bind-raw shadow-one 7 72)]
+      [pattern : MacroHygieneEnv
+        (macro-hygiene-env-bind-pattern-name-raw empty 10 100)]
+      [pattern-with-bind : MacroHygieneEnv
+        (macro-hygiene-env-bind-raw pattern 10 101)]
+      [pattern-shadow : MacroHygieneEnv
+        (macro-hygiene-env-bind-pattern-name-raw pattern-with-bind 10 102)]
+      ;; Force two capacity growths while retaining earlier sibling heads.
+      [deep : MacroHygieneEnv
+        (compiler-typecheck-macro-hygiene-env-extend parent 0 80)]
+      (and
+        (compiler-typecheck-hygiene-name-missing?
+          (macro-hygiene-env-lookup empty 7))
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup parent 7)
+          70)
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup left 8)
+          80)
+        (compiler-typecheck-hygiene-name-missing?
+          (macro-hygiene-env-lookup left 9))
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup right 9)
+          90)
+        (compiler-typecheck-hygiene-name-missing?
+          (macro-hygiene-env-lookup right 8))
+        (compiler-typecheck-hygiene-name-missing?
+          (macro-hygiene-env-lookup parent 8))
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup shadow-two 7)
+          72)
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup pattern-with-bind 10)
+          101)
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup-pattern-name pattern-with-bind 10)
+          100)
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup-pattern-name pattern-shadow 10)
+          102)
+        (compiler-typecheck-hygiene-name-missing?
+          (macro-hygiene-env-lookup-pattern-name left 8))
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup parent 7)
+          70)
+        (compiler-typecheck-hygiene-name-is?
+          (macro-hygiene-env-lookup deep 179)
+          1079)))))
 
 (define (compiler-typecheck-macro-own-when-source) : String
   "(defmacro (when [condition : i64] [body : unit]) : unit body)
@@ -8934,6 +9041,10 @@
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-splice-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-shared-produced-node-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-hygiene-indexed-snapshot-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-hygiene-lifetime-decl-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-hygiene-unsafe-global-source)
       "typecheck: danger requires unsafe context")
@@ -8972,6 +9083,9 @@
       unit
       (io.panic
         "typecheck: hygienic local renaming depends on the dense declaration id"))
+    (if (compiler-typecheck-macro-hygiene-env-snapshots-ok?)
+      unit
+      (io.panic "typecheck: macro hygiene environment snapshot mismatch"))
     (if (compiler-typecheck-ptr-null-tests-ok?)
       unit
       (io.panic "typecheck: ptr-null construction/check tests failed"))

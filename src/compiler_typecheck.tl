@@ -8663,6 +8663,17 @@
   (let [tmp : unit unit]
     (with-temp-do tmp)))")
 
+;; A transformer-owned node can still form a DAG when the same freshly quoted
+;; Expr is unquoted into two scopes. Hygiene must copy that shared node per
+;; occurrence instead of committing the first scope's rename in place.
+(define (compiler-typecheck-macro-hygiene-shared-produced-node-source) : String
+  "(define tmp : i64 22)
+(defmacro (shared-fresh-node) : i64
+  (let [shared : Expr `tmp]
+    `(+ (let [tmp : i64 20] ,shared)
+        ,shared)))
+(define (main) : i64 (shared-fresh-node))")
+
 (define (compiler-typecheck-macro-hygiene-unsafe-global-source) : String
   "(unsafe (define (danger [x : i64]) : i64 x))
 (defmacro (call-danger [x : i64]) : i64
@@ -8921,6 +8932,8 @@
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-exported-helper-local-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-splice-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-hygiene-shared-produced-node-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-hygiene-unsafe-global-source)
       "typecheck: danger requires unsafe context")

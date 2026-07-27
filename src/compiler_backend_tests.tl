@@ -24,6 +24,73 @@
 
 (extern (compiler-backend-test-runtime-alloc [bytes : i64]) : i64 (:symbol "tl_alloc"))
 
+;; String-returning shim for the outgoing stack-argument emitter, for the same
+;; reason: its Ok payload is the planned stage register, not the emitted text.
+(define (compiler-backend-test-emit-scalar-stack-call-arg-text
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [arg-ty : AstType]
+  [is-float : bool]
+  [stack-idx : i64]
+  [planned-stage : String]) : ResultCompilerBackend
+  (let
+    [body : CompilerBackendAsmBuf
+      (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    (match (compiler-backend-emit-scalar-stack-call-arg-into
+      (&mut body)
+      type-segment-bases
+      target
+      assignments
+      value
+      arg-ty
+      is-float
+      stack-idx
+      planned-stage)
+      [(ResultCompilerBackend.Ok _)
+        (ResultCompilerBackend.Ok (compiler-backend-asm-buf-finish (& body)))]
+      [(ResultCompilerBackend.Err diagnostic)
+        (ResultCompilerBackend.Err diagnostic)])))
+
+;; String-returning shim for instruction-sequence emission. Emission appends
+;; into a caller-owned body buffer and its Ok payload is no longer the text, so
+;; these assertions own the buffer and hand back what was written.
+(define (compiler-backend-test-emit-instrs-text
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instrs : CompilerIrInstrList]) : ResultCompilerBackend
+  (let
+    [body : CompilerBackendAsmBuf
+      (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    (match (compiler-backend-emit-instrs ctx fallthrough instrs (&mut body))
+      [(ResultCompilerBackend.Ok _)
+        (ResultCompilerBackend.Ok (compiler-backend-asm-buf-finish (& body)))]
+      [(ResultCompilerBackend.Err diagnostic)
+        (ResultCompilerBackend.Err diagnostic)])))
+
+;; String-returning shim for the load-var emitter. The production emitter now
+;; appends straight into a body buffer (`...-with-plan-into`); its store sibling
+;; kept a String wrapper for callers that need one, but the load side did not,
+;; so these assertions render one line into a scratch buffer themselves. Test
+;; helper only -- adding the wrapper back to compiler_backend.tl would put a
+;; production-dead function in every compiler binary.
+(define (compiler-backend-test-emit-load-var-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]
+  [reg : String]) : String
+  (let
+    [line : CompilerBackendAsmBuf
+      (compiler-backend-asm-buf-with-capacity
+        compiler-backend-asm-line-capacity)]
+    (begin
+      (compiler-backend-emit-load-var-with-plan-into
+        (&mut line)
+        assignments
+        var-id
+        reg)
+      (compiler-backend-asm-buf-finish (& line)))))
+
 (define (compiler-backend-test-f64-bits [text : String]) : u64
   (match (compiler-float-parse-f64-bits text)
     [(CompilerFloatSomeBits bits) bits]
@@ -4333,7 +4400,7 @@
       (compiler-backend-expanded-scalar-assignments)]
     (and
       (string.eq
-        (compiler-backend-emit-load-var-with-plan assignments 0 "%rax")
+        (compiler-backend-test-emit-load-var-with-plan assignments 0 "%rax")
         "    movq %r8, %rax\n")
       (string.eq
         (compiler-backend-emit-store-var-with-plan assignments 1 "%rax")
@@ -4865,7 +4932,7 @@
           CompilerRegAssignmentList.Nil))]
     (and
       (string.eq
-        (compiler-backend-emit-load-var-with-plan assignments 0 "%r12")
+        (compiler-backend-test-emit-load-var-with-plan assignments 0 "%r12")
         "")
       (string.eq
         (compiler-backend-emit-store-var-with-plan assignments 0 "%r12")
@@ -6782,7 +6849,7 @@
         CompilerIrBlockList.Nil)]
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
-    (compiler-backend-emit-instrs
+    (compiler-backend-test-emit-instrs-text
       (CompilerBackendEmissionContext
         (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
@@ -6804,8 +6871,7 @@
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
-      instrs
-      (text_buf.empty))))
+      instrs)))
 
 (define (compiler-backend-emit-rax-forward-test-instrs
   [instrs : CompilerIrInstrList]
@@ -6934,7 +7000,7 @@
       (compiler-backend-function-use-counts
         compiler-backend-long-block-instr-count
         blocks)]
-    (match (compiler-backend-emit-instrs
+    (match (compiler-backend-test-emit-instrs-text
       (CompilerBackendEmissionContext
         (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
@@ -6959,8 +7025,7 @@
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
-      instrs
-      (text_buf.empty))
+      instrs)
       [(ResultCompilerBackend.Ok asm)
         (and
           (compiler-backend-string-contains? asm "    movl $4095, %eax\n")
@@ -8157,7 +8222,7 @@
   (let
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
-    (compiler-backend-emit-instrs
+    (compiler-backend-test-emit-instrs-text
       (CompilerBackendEmissionContext
         (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
@@ -8182,8 +8247,7 @@
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
-      entry-instrs
-      (text_buf.empty))))
+      entry-instrs)))
 
 (define (compiler-backend-single-phi-return-entry-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -8424,7 +8488,7 @@
   (let
     [blocks : CompilerIrBlockList (compiler-backend-mov-phi-copy-blocks)]
     [use-counts : (Array i64) (compiler-backend-function-use-counts 3 blocks)]
-    (match (compiler-backend-emit-instrs
+    (match (compiler-backend-test-emit-instrs-text
       (CompilerBackendEmissionContext
         (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
@@ -8449,8 +8513,7 @@
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
-      (compiler-backend-mov-phi-copy-entry-instrs)
-      (text_buf.empty))
+      (compiler-backend-mov-phi-copy-entry-instrs))
       [(ResultCompilerBackend.Ok asm)
         (and
           (compiler-backend-string-contains? asm "    movl $7, %r12d\n")
@@ -13758,7 +13821,7 @@
       (compiler-backend-function-use-counts vars blocks)]
     [_addr-forward : unit
       (compiler-backend-addr-of-forwarding-enable! vars blocks use-counts)]
-    (match (compiler-backend-emit-instrs
+    (match (compiler-backend-test-emit-instrs-text
       (CompilerBackendEmissionContext
         (ast-node-pool-reader-type-segment-bases)
         (CompilerBackendTarget.Linux)
@@ -13783,8 +13846,7 @@
         (compiler-diagnostic-at-start "" "")
         use-counts)
       (CompilerBackendMaybeLabel.No)
-      instrs
-      (text_buf.empty))
+      instrs)
       [(ResultCompilerBackend.Ok asm)
         (let
           [_restore : unit
@@ -21519,7 +21581,7 @@
           0
           (CompilerRegLocation.Register "%xmm3"))
         CompilerRegAssignmentList.Nil)]
-    (match (compiler-backend-emit-scalar-stack-call-arg
+    (match (compiler-backend-test-emit-scalar-stack-call-arg-text
       (ast-node-pool-reader-type-segment-bases)
       (CompilerBackendTarget.Linux)
       assignments
@@ -25426,7 +25488,7 @@
         "%r15"
         (compiler-diagnostic-at-start "" ""))
         [(ResultCompilerBackend.Ok aggregate)
-          (match (compiler-backend-emit-scalar-stack-call-arg
+          (match (compiler-backend-test-emit-scalar-stack-call-arg-text
             (ast-node-pool-reader-type-segment-bases)
             (CompilerBackendTarget.Linux)
             scalar-assignments

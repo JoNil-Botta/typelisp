@@ -15,6 +15,25 @@
 ;; imports, so this adds no cycle.
 (import stdlib.arena)
 
+(cfg
+  compiler-arena-debug
+  (extern (tl_arena_debug_protect_never_reset [handle : i64]) : unit (:symbol "tl_arena_debug_protect_never_reset")))
+(cfg
+  compiler-arena-debug
+  (extern (tl_arena_debug_assert_pool_install [handle : i64]) : unit (:symbol "tl_arena_debug_assert_pool_install")))
+
+(define (compiler-arena-debug-protect-never-reset! [handle : i64]) : unit
+  (cfg
+    (all compiler-arena-debug (not stage0-seed-bootstrap))
+    (tl_arena_debug_protect_never_reset handle)
+    unit))
+
+(define (compiler-arena-debug-assert-pool-install! [handle : i64]) : unit
+  (cfg
+    (all compiler-arena-debug (not stage0-seed-bootstrap))
+    (tl_arena_debug_assert_pool_install handle)
+    unit))
+
 ;; Compiler AST pool storage starts with 16 MiB instead of a general arena's
 ;; 64 MiB. Larger inputs append general chunks that pack multiple segments.
 (define (ast-node-pool-arena-make) : i64
@@ -2244,6 +2263,8 @@
   (if ast-node-pool-compat-context-explicit?
     unit
     (begin
+      (compiler-arena-debug-assert-pool-install!
+        (struct-get (array-ref (struct-get pools expr-pool) 0) base-arena))
       (ast-node-pools-state-install!
         (array-ref (struct-get pools expr-pool) 0)
         (array-ref (struct-get pools type-pool) 0))

@@ -3,13 +3,26 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
-(define (compiler-backend-runtime-arena-data) : String
-  "    .section .bss
+(define (compiler-backend-runtime-arena-data [arena-debug : bool]) : String
+  (str_cat.str-cat
+    "    .section .bss
     .balign 8
 .L_tl_arena_poison_enabled:
     .zero 8
 
-")
+"
+    (cfg
+      (any compiler-arena-debug test)
+      (if arena-debug
+        "    .balign 8
+.L_tl_arena_debug_roots:
+    .zero 32768
+
+"
+        "")
+      "")
+    ""
+    ""))
 
 (define (compiler-backend-current-arena-load [dst : String]) : String
   (str_cat.str-cat "    movq %gs:0x28, " dst "\n"))
@@ -36,7 +49,8 @@
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
   (runtime_common.compiler-backend-runtime-common-data
     features
-    (compiler-backend-runtime-arena-data)))
+    (compiler-backend-runtime-arena-data
+      (runtime_common.compiler-backend-runtime-features-arena-debug? features))))
 
 (define (compiler-backend-runtime-windows-libc-shim-functions) : String
   "    .globl __chkstk
@@ -243,7 +257,7 @@ tl_boot_pool:
 
 ")
 
-(define (compiler-backend-runtime-windows-arena-functions [profile : bool]) : String
+(define (compiler-backend-runtime-windows-arena-functions-base [profile : bool]) : String
   (string.append
     "    .globl tl_arena_current
 tl_arena_current:
@@ -477,7 +491,133 @@ tl_arena_destroy:
 
 ")))))))
 
-(define (compiler-backend-runtime-windows-alloc-functions [profile : bool]) : String
+(define (compiler-backend-runtime-windows-arena-debug-functions) : String
+  ".L_tl_arena_debug_register_root:
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %rdx, %rdx
+.L_tl_arena_debug_register_root_win_loop:
+    cmpq $4096, %rdx
+    jae .L_tl_arena_debug_protect_win_invalid
+    xorq %rax, %rax
+    lock cmpxchgq %rcx, (%r8,%rdx,8)
+    je .L_tl_arena_debug_register_root_win_done
+    cmpq %rcx, %rax
+    je .L_tl_arena_debug_register_root_win_done
+    incq %rdx
+    jmp .L_tl_arena_debug_register_root_win_loop
+.L_tl_arena_debug_register_root_win_done:
+    movq %rcx, %rax
+    ret
+
+.L_tl_arena_debug_unregister_root:
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %rdx, %rdx
+.L_tl_arena_debug_unregister_root_win_loop:
+    cmpq $4096, %rdx
+    jae .L_tl_arena_debug_unregister_root_win_done
+    movq (%r8,%rdx,8), %rax
+    cmpq %rcx, %rax
+    jne .L_tl_arena_debug_unregister_root_win_next
+    xorq %r9, %r9
+    lock cmpxchgq %r9, (%r8,%rdx,8)
+    jne .L_tl_arena_debug_unregister_root_win_loop
+    ret
+.L_tl_arena_debug_unregister_root_win_next:
+    incq %rdx
+    jmp .L_tl_arena_debug_unregister_root_win_loop
+.L_tl_arena_debug_unregister_root_win_done:
+    ret
+
+    .globl tl_arena_debug_protect_never_reset
+tl_arena_debug_protect_never_reset:
+    testq %rcx, %rcx
+    jz .L_tl_arena_debug_protect_win_invalid
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %rdx, %rdx
+.L_tl_arena_debug_protect_win_find:
+    cmpq $4096, %rdx
+    jae .L_tl_arena_debug_protect_win_invalid
+    cmpq %rcx, (%r8,%rdx,8)
+    je .L_tl_arena_debug_protect_win_found
+    incq %rdx
+    jmp .L_tl_arena_debug_protect_win_find
+.L_tl_arena_debug_protect_win_found:
+    cmpq %rcx, 40(%rcx)
+    jne .L_tl_arena_debug_protect_win_invalid
+    testq $1, 48(%rcx)
+    jnz .L_tl_arena_debug_protect_win_invalid
+    orq $8, 48(%rcx)
+    ret
+.L_tl_arena_debug_protect_win_invalid:
+    subq $40, %rsp
+    call tl_arena_debug_protect_abort
+
+    .globl tl_arena_debug_assert_pool_install
+tl_arena_debug_assert_pool_install:
+    testq %rcx, %rcx
+    jz .L_tl_arena_debug_pool_install_win_done
+    movq 40(%rcx), %rax
+    testq %rax, %rax
+    jz .L_tl_arena_debug_pool_install_win_done
+    testq $8, 48(%rax)
+    jnz .L_tl_arena_debug_pool_install_win_abort
+.L_tl_arena_debug_pool_install_win_done:
+    ret
+.L_tl_arena_debug_pool_install_win_abort:
+    subq $40, %rsp
+    call tl_arena_debug_pool_install_abort
+
+")
+
+(define (compiler-backend-runtime-windows-arena-functions
+  [profile : bool]
+  [arena-debug : bool]) : String
+  (let
+    [base : String
+      (compiler-backend-runtime-windows-arena-functions-base profile)]
+    (cfg
+      (any compiler-arena-debug test)
+      (if arena-debug
+        (string.append
+          (compiler-backend-runtime-windows-arena-debug-functions)
+          (string.replace
+            (string.replace
+              (string.replace
+                base
+                "    movq %rbx, %rax
+    add $48, %rsp
+"
+                "    movq %rbx, %rcx
+    call .L_tl_arena_debug_register_root
+    add $48, %rsp
+")
+              "    movq %rbx, %rax
+    add $48, %rsp
+"
+              "    movq %rbx, %rcx
+    call .L_tl_arena_debug_register_root
+    add $48, %rsp
+")
+            "    movq 40(%rsi), %r12
+    testq %r12, %r12
+    jz .L_tl_arena_destroy_win_loop
+    movq 56(%r12), %rsi
+"
+            "    movq 40(%rsi), %r12
+    testq %r12, %r12
+    jz .L_tl_arena_destroy_win_loop
+    testq $8, 48(%r12)
+    jz .L_tl_arena_destroy_win_debug_guard_done
+    call tl_arena_debug_destroy_abort
+.L_tl_arena_destroy_win_debug_guard_done:
+    movq %r12, %rcx
+    call .L_tl_arena_debug_unregister_root
+    movq 56(%r12), %rsi
+"))
+        base)
+      base)))
+
+(define (compiler-backend-runtime-windows-alloc-functions-base [profile : bool]) : String
   (let
     [fast-profile : String
       (runtime_common.compiler-backend-runtime-profile-alloc-account
@@ -902,10 +1042,34 @@ tl_alloc:
 
 ")))
 
+(define (compiler-backend-runtime-windows-alloc-functions
+  [profile : bool]
+  [arena-debug : bool]) : String
+  (let
+    [base : String
+      (compiler-backend-runtime-windows-alloc-functions-base profile)]
+    (cfg
+      (any compiler-arena-debug test)
+      (if arena-debug
+        (string.replace
+          base
+          ".L_tl_alloc_win_root_self:
+    movq %rax, %r10
+.L_tl_alloc_win_root_ready:
+"
+          ".L_tl_alloc_win_root_self:
+    movq %rax, %rcx
+    call .L_tl_arena_debug_register_root
+    movq %rax, %r10
+.L_tl_alloc_win_root_ready:
+")
+        base)
+      base)))
+
 ;; Rewinding a non-atomic arena marks it as reused with flags bit 2 (bit 0 is
 ;; the atomic flag, which runs a 1/3 lock protocol and is left untouched);
 ;; tl_array_zero consults that bit to skip its fill only for virgin arenas.
-(define (compiler-backend-runtime-windows-region-reset-functions
+(define (compiler-backend-runtime-windows-region-reset-functions-base
   [profile : bool]) : String
   (string.append
     "    .globl tl_region_reset
@@ -1074,6 +1238,53 @@ tl_region_reset:
     ret
 
 ")))))))
+
+(define (compiler-backend-runtime-windows-region-reset-functions
+  [profile : bool]
+  [arena-debug : bool]) : String
+  (let
+    [base : String
+      (compiler-backend-runtime-windows-region-reset-functions-base profile)]
+    (cfg
+      (any compiler-arena-debug test)
+      (if arena-debug
+        (string.replace
+          (string.replace
+            base
+            "    movq 40(%r13), %r11
+    testq $1, 48(%r11)
+"
+            "    movq 40(%r13), %r11
+    testq $8, 48(%r11)
+    jz .L_tl_region_reset_win_debug_guard_done
+    subq $32, %rsp
+    call tl_arena_debug_reset_abort
+.L_tl_region_reset_win_debug_guard_done:
+    testq $1, 48(%r11)
+")
+          "    movq %gs:0x28, %r14
+    movq $0, %gs:0x28
+"
+          "    movq %gs:0x28, %r14
+    testq %r14, %r14
+    jz .L_tl_region_reset_win_all_debug_guard_done
+    movq 40(%r14), %r11
+    testq $8, 48(%r11)
+    jz .L_tl_region_reset_win_all_debug_guard_done
+    subq $32, %rsp
+    call tl_arena_debug_reset_abort
+.L_tl_region_reset_win_all_debug_guard_done:
+    testq %r14, %r14
+    jz .L_tl_region_reset_win_all_debug_unregister_done
+    movq %r11, %rcx
+    subq $32, %rsp
+    call .L_tl_arena_debug_unregister_root
+    addq $32, %rsp
+.L_tl_region_reset_win_all_debug_unregister_done:
+    movq $0, %gs:0x28
+")
+        base)
+      base)))
 
 (define (compiler-backend-runtime-windows-thread-functions) : String
   "    .data
@@ -1312,9 +1523,11 @@ tl_comptime_host_invoke_set:
   (let
     [profile : bool
       (runtime_common.compiler-backend-runtime-features-profile? features)]
+    [arena-debug : bool
+      (runtime_common.compiler-backend-runtime-features-arena-debug? features)]
     [alloc-asm : String
       (if (runtime_common.compiler-backend-runtime-features-alloc? features)
-        (compiler-backend-runtime-windows-alloc-functions profile)
+        (compiler-backend-runtime-windows-alloc-functions profile arena-debug)
         "")]
     [region-mark-asm : String
       (if (runtime_common.compiler-backend-runtime-features-region-mark?
@@ -1324,10 +1537,12 @@ tl_comptime_host_invoke_set:
     [region-reset-asm : String
       (if (runtime_common.compiler-backend-runtime-features-region-reset?
         features)
-        (compiler-backend-runtime-windows-region-reset-functions profile)
+        (compiler-backend-runtime-windows-region-reset-functions
+          profile
+          arena-debug)
         "")]
     [arena-asm : String
-      (compiler-backend-runtime-windows-arena-functions profile)]
+      (compiler-backend-runtime-windows-arena-functions profile arena-debug)]
     [profile-asm : String
       (if profile
         (runtime_common.compiler-backend-runtime-profile-functions)

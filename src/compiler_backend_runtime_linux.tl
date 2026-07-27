@@ -3,8 +3,9 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
-(define (compiler-backend-runtime-arena-data) : String
-  "    .section .tbss,\"awT\",@nobits
+(define (compiler-backend-runtime-arena-data [arena-debug : bool]) : String
+  (str_cat.str-cat
+    "    .section .tbss,\"awT\",@nobits
     .balign 8
     .globl tl_current_arena
 tl_current_arena:
@@ -15,7 +16,19 @@ tl_current_arena:
 .L_tl_arena_poison_enabled:
     .zero 8
 
-")
+"
+    (cfg
+      (any compiler-arena-debug test)
+      (if arena-debug
+        "    .balign 8
+.L_tl_arena_debug_roots:
+    .zero 32768
+
+"
+        "")
+      "")
+    ""
+    ""))
 
 (define (compiler-backend-current-arena-load [dst : String]) : String
   (str_cat.str-cat "    movq %fs:tl_current_arena@tpoff, " dst "\n"))
@@ -42,9 +55,10 @@ tl_current_arena:
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
   (runtime_common.compiler-backend-runtime-common-data
     features
-    (compiler-backend-runtime-arena-data)))
+    (compiler-backend-runtime-arena-data
+      (runtime_common.compiler-backend-runtime-features-arena-debug? features))))
 
-(define (compiler-backend-runtime-linux-alloc-functions [profile : bool]) : String
+(define (compiler-backend-runtime-linux-alloc-functions-base [profile : bool]) : String
   (let
     [fast-profile : String
       (runtime_common.compiler-backend-runtime-profile-alloc-account
@@ -250,10 +264,36 @@ tl_alloc:
       new-profile
       tail-asm)))
 
+(define (compiler-backend-runtime-linux-alloc-functions
+  [profile : bool]
+  [arena-debug : bool]) : String
+  (let
+    [base : String
+      (compiler-backend-runtime-linux-alloc-functions-base profile)]
+    (cfg
+      (any compiler-arena-debug test)
+      (if arena-debug
+        (string.replace
+          base
+          ".L_tl_alloc_root_self:
+    movq %rax, %r10
+.L_tl_alloc_root_ready:
+"
+          ".L_tl_alloc_root_self:
+    movq %rax, %rdi
+    subq $8, %rsp
+    call .L_tl_arena_debug_register_root
+    addq $8, %rsp
+    movq %rax, %r10
+.L_tl_alloc_root_ready:
+")
+        base)
+      base)))
+
 (define (compiler-backend-runtime-linux-libc-shim-functions) : String
   "")
 
-(define (compiler-backend-runtime-linux-arena-functions [profile : bool]) : String
+(define (compiler-backend-runtime-linux-arena-functions-base [profile : bool]) : String
   (string.append
     "    .globl tl_thread_init
 tl_thread_init:
@@ -443,10 +483,142 @@ tl_arena_destroy:
 
 ")))))))
 
+(define (compiler-backend-runtime-linux-arena-debug-functions) : String
+  ".L_tl_arena_debug_register_root:
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %rcx, %rcx
+.L_tl_arena_debug_register_root_loop:
+    cmpq $4096, %rcx
+    jae .L_tl_arena_debug_protect_invalid
+    xorq %rax, %rax
+    lock cmpxchgq %rdi, (%r8,%rcx,8)
+    je .L_tl_arena_debug_register_root_done
+    cmpq %rdi, %rax
+    je .L_tl_arena_debug_register_root_done
+    incq %rcx
+    jmp .L_tl_arena_debug_register_root_loop
+.L_tl_arena_debug_register_root_done:
+    movq %rdi, %rax
+    ret
+
+.L_tl_arena_debug_unregister_root:
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %rcx, %rcx
+.L_tl_arena_debug_unregister_root_loop:
+    cmpq $4096, %rcx
+    jae .L_tl_arena_debug_unregister_root_done
+    movq (%r8,%rcx,8), %rax
+    cmpq %rdi, %rax
+    jne .L_tl_arena_debug_unregister_root_next
+    xorq %r9, %r9
+    lock cmpxchgq %r9, (%r8,%rcx,8)
+    jne .L_tl_arena_debug_unregister_root_loop
+    ret
+.L_tl_arena_debug_unregister_root_next:
+    incq %rcx
+    jmp .L_tl_arena_debug_unregister_root_loop
+.L_tl_arena_debug_unregister_root_done:
+    ret
+
+    .globl tl_arena_debug_protect_never_reset
+tl_arena_debug_protect_never_reset:
+    testq %rdi, %rdi
+    jz .L_tl_arena_debug_protect_invalid
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %rcx, %rcx
+.L_tl_arena_debug_protect_find:
+    cmpq $4096, %rcx
+    jae .L_tl_arena_debug_protect_invalid
+    cmpq %rdi, (%r8,%rcx,8)
+    je .L_tl_arena_debug_protect_found
+    incq %rcx
+    jmp .L_tl_arena_debug_protect_find
+.L_tl_arena_debug_protect_found:
+    cmpq %rdi, 40(%rdi)
+    jne .L_tl_arena_debug_protect_invalid
+    testq $1, 48(%rdi)
+    jnz .L_tl_arena_debug_protect_invalid
+    orq $8, 48(%rdi)
+    ret
+.L_tl_arena_debug_protect_invalid:
+    jmp tl_arena_debug_protect_abort
+
+    .globl tl_arena_debug_assert_pool_install
+tl_arena_debug_assert_pool_install:
+    testq %rdi, %rdi
+    jz .L_tl_arena_debug_pool_install_done
+    movq 40(%rdi), %rax
+    testq %rax, %rax
+    jz .L_tl_arena_debug_pool_install_done
+    testq $8, 48(%rax)
+    jnz tl_arena_debug_pool_install_abort
+.L_tl_arena_debug_pool_install_done:
+    ret
+
+")
+
+(define (compiler-backend-runtime-linux-arena-functions
+  [profile : bool]
+  [arena-debug : bool]) : String
+  (let
+    [base : String
+      (compiler-backend-runtime-linux-arena-functions-base profile)]
+    (cfg
+      (any compiler-arena-debug test)
+      (if arena-debug
+        (string.append
+          (compiler-backend-runtime-linux-arena-debug-functions)
+          (string.replace
+            (string.replace
+              (string.replace
+                base
+                "    movq %rcx, 24(%rax)
+    ret
+.L_tl_arena_make_abort:
+"
+                "    movq %rcx, 24(%rax)
+    movq %rax, %rdi
+    subq $8, %rsp
+    call .L_tl_arena_debug_register_root
+    addq $8, %rsp
+    ret
+.L_tl_arena_make_abort:
+")
+              "    movq %rcx, 24(%rax)
+    ret
+.L_tl_arena_make_atomic_abort:
+"
+              "    movq %rcx, 24(%rax)
+    movq %rax, %rdi
+    subq $8, %rsp
+    call .L_tl_arena_debug_register_root
+    addq $8, %rsp
+    ret
+.L_tl_arena_make_atomic_abort:
+")
+            "    movq 40(%rbx), %r12
+    testq %r12, %r12
+    jz .L_tl_arena_destroy_loop
+    movq 56(%r12), %rbx
+"
+            "    movq 40(%rbx), %r12
+    testq %r12, %r12
+    jz .L_tl_arena_destroy_loop
+    testq $8, 48(%r12)
+    jnz tl_arena_debug_destroy_abort
+    movq %r12, %rdi
+    subq $8, %rsp
+    call .L_tl_arena_debug_unregister_root
+    addq $8, %rsp
+    movq 56(%r12), %rbx
+"))
+        base)
+      base)))
+
 ;; Rewinding a non-atomic arena marks it as reused with flags bit 2 (bit 0 is
 ;; the atomic flag, which runs a 1/3 lock protocol and is left untouched);
 ;; tl_array_zero consults that bit to skip its fill only for virgin arenas.
-(define (compiler-backend-runtime-region-reset-functions [profile : bool]) : String
+(define (compiler-backend-runtime-region-reset-functions-base [profile : bool]) : String
   (string.append
     "    .globl tl_region_reset
 tl_region_reset:
@@ -614,6 +786,48 @@ tl_region_reset:
 
 ")))))))
 
+(define (compiler-backend-runtime-region-reset-functions
+  [profile : bool]
+  [arena-debug : bool]) : String
+  (let
+    [base : String
+      (compiler-backend-runtime-region-reset-functions-base profile)]
+    (cfg
+      (any compiler-arena-debug test)
+      (if arena-debug
+        (string.replace
+          (string.replace
+            base
+            "    movq 40(%r8), %r12
+    testq $1, 48(%r12)
+"
+            "    movq 40(%r8), %r12
+    testq $8, 48(%r12)
+    jnz tl_arena_debug_reset_abort
+    testq $1, 48(%r12)
+")
+          "    movq %fs:tl_current_arena@tpoff, %r8
+    movq $0, %fs:tl_current_arena@tpoff
+"
+          "    movq %fs:tl_current_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .L_tl_region_reset_all_debug_guard_done
+    movq 40(%r8), %r10
+    testq $8, 48(%r10)
+    jnz tl_arena_debug_reset_abort
+.L_tl_region_reset_all_debug_guard_done:
+    testq %r8, %r8
+    jz .L_tl_region_reset_all_debug_unregister_done
+    pushq %r8
+    movq %r10, %rdi
+    call .L_tl_arena_debug_unregister_root
+    popq %r8
+.L_tl_region_reset_all_debug_unregister_done:
+    movq $0, %fs:tl_current_arena@tpoff
+")
+        base)
+      base)))
+
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
 tl_memcpy:
@@ -744,9 +958,11 @@ tl_comptime_host_invoke_set:
   (let
     [profile : bool
       (runtime_common.compiler-backend-runtime-features-profile? features)]
+    [arena-debug : bool
+      (runtime_common.compiler-backend-runtime-features-arena-debug? features)]
     [alloc-asm : String
       (if (runtime_common.compiler-backend-runtime-features-alloc? features)
-        (compiler-backend-runtime-linux-alloc-functions profile)
+        (compiler-backend-runtime-linux-alloc-functions profile arena-debug)
         "")]
     [region-mark-asm : String
       (if (runtime_common.compiler-backend-runtime-features-region-mark?
@@ -756,10 +972,10 @@ tl_comptime_host_invoke_set:
     [region-reset-asm : String
       (if (runtime_common.compiler-backend-runtime-features-region-reset?
         features)
-        (compiler-backend-runtime-region-reset-functions profile)
+        (compiler-backend-runtime-region-reset-functions profile arena-debug)
         "")]
     [arena-asm : String
-      (compiler-backend-runtime-linux-arena-functions profile)]
+      (compiler-backend-runtime-linux-arena-functions profile arena-debug)]
     [profile-asm : String
       (if profile
         (runtime_common.compiler-backend-runtime-profile-functions)

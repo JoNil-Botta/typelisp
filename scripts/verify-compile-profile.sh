@@ -1005,8 +1005,9 @@ fi
 # archaeology that took (#5764).
 #
 # Current headroom, used against capacity: expr macro_expand
-# 2797261/2818048, measured on Windows CI after the constrained low-XMM
-# allocation work. The compiler-state isolation work in
+# 2819283/2883584, measured on Windows CI after the leaf-CSR split work merged
+# with the narrow SPMD uniform-result changes. The compiler-state isolation
+# work in
 # #5751 moved expr typecheck across its next boundary at 1639597/1703936;
 # type macro_expand 20018/20480, type typecheck 5887/6144. All four sit within a
 # few percent of their next step, so expect these to move. #5701 landed while
@@ -1043,7 +1044,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 40 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 44 65536 40 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 26 65536 40 \

@@ -470,6 +470,21 @@
   (NoCandidate)
   (Candidate i64 CompilerRegLabelList AstType String CompilerRegEdgeCopySeq i64))
 
+(defenum CompilerRegLeafCsrSplitCandidate
+  (NoCandidate)
+  (Candidate
+    i64
+    CompilerRegLabelList
+    AstType
+    String
+    String
+    CompilerRegEdgeCopySeq
+    i64))
+
+(defstruct CompilerRegLeafCsrFuseFacts
+  (uses i64)
+  (free-branches i64))
+
 (defenum CompilerRegLoopSplitRewriteResult
   (Result CompilerRegCallSaveRewrite i64))
 
@@ -5819,6 +5834,20 @@
           (if (compiler-reg-location-uses-register? location reg)
             true
             (compiler-reg-assignments-use-register? (box-get rest) reg))])]))
+
+(define (compiler-reg-assignments-register-use-count
+  [assignments : CompilerRegAssignmentList]
+  [reg : String]) : i64
+  (match assignments
+    [(CompilerRegAssignmentList.Nil) 0]
+    [(CompilerRegAssignmentList.Cons item rest)
+      (match item
+        [(CompilerRegAssignment.Assignment _ location)
+          (+
+            (if (compiler-reg-location-uses-register? location reg)
+              1
+              0)
+            (compiler-reg-assignments-register-use-count (box-get rest) reg))])]))
 
 (define (compiler-reg-var-live-at-point?
   [starts : (Array i64)]
@@ -12113,6 +12142,1028 @@
         group-vars
         parents
         weights))))
+
+;; A leaf can still exhaust the caller-saved bank inside a hot loop even when a
+;; caller-saved register is free before or after that loop. The whole-range
+;; greedy then gives a read-only loop invariant a callee-saved home and pays a
+;; push/pop on every function invocation. Split that range at the natural-loop
+;; boundary when all of the following are proven:
+;;
+;;   * the function has no kind-0 caller-clobber point;
+;;   * the invariant is the sole user of its callee-saved physical register;
+;;   * one caller-saved register is free over the loop and a different one is
+;;     free over every live segment outside the loop;
+;;   * the edge-copy planner needs exactly one INTO move and no write-back.
+;;
+;; The last gate makes the static instruction-count delta strictly profitable:
+;; one boundary move replaces the callee-save push+pop pair. No spill or
+;; eviction is admitted. The hashmap get-value-or shape is the motivating case:
+;; its slots pointer moves from a pre-loop volatile register into the %r8 that
+;; becomes dead after the hash multiply.
+(define (compiler-reg-leaf-csr-fuse-free-branch-var
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]) : i64
+  (if (<= index 0)
+    (- 0 1)
+    (match (array-ref slots index)
+      [(CompilerIrInstr.Branch cond _ _)
+        (match cond
+          [(CompilerIrValue.Var var)
+            (match (array-ref slots (- index 1))
+              [(CompilerIrInstr.BinOp dst op _ _ ty)
+                (if (and
+                  (= dst var)
+                  (compiler-reg-scratch-compare-op? op)
+                  (not (compiler-reg-float-type? ty)))
+                  var
+                  (- 0 1))]
+              [(CompilerIrInstr.UnOp dst (CompilerIrUnOp.Not) _ (AstType.Bool))
+                (if (= dst var)
+                  var
+                  (- 0 1))]
+              [_ (- 0 1)])]
+          [_ (- 0 1)])]
+      [_ (- 0 1)])))
+
+(define (compiler-reg-leaf-csr-fuse-facts-seq
+  [instrs : CompilerIrInstrSeq]
+  [var : i64]) : CompilerRegLeafCsrFuseFacts
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [uses : i64 0]
+    [free-branches : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-live-set-contains?
+            (compiler-live-instr-uses (array-ref slots index))
+            var)
+            (set! uses (+ uses 1))
+            unit)
+          (if (= (compiler-reg-leaf-csr-fuse-free-branch-var slots index) var)
+            (set! free-branches (+ free-branches 1))
+            unit)
+          (set! index (+ index 1))))
+      (CompilerRegLeafCsrFuseFacts uses free-branches))))
+
+(define (compiler-reg-leaf-csr-fuse-facts-blocks
+  [blocks : CompilerIrBlockList]
+  [var : i64]
+  [uses : i64]
+  [free-branches : i64]) : CompilerRegLeafCsrFuseFacts
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerRegLeafCsrFuseFacts uses free-branches)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [facts : CompilerRegLeafCsrFuseFacts
+              (compiler-reg-leaf-csr-fuse-facts-seq instrs var)]
+            (compiler-reg-leaf-csr-fuse-facts-blocks
+              (box-get rest)
+              var
+              (+ uses (struct-get facts uses))
+              (+ free-branches (struct-get facts free-branches))))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-leaf-csr-fuse-facts-block-seq seq var uses free-branches)]))
+
+(define (compiler-reg-leaf-csr-fuse-facts-block-seq
+  [blocks : CompilerIrBlockSeq]
+  [var : i64]
+  [uses : i64]
+  [free-branches : i64]) : CompilerRegLeafCsrFuseFacts
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [total-uses : i64 uses]
+    [total-free : i64 free-branches]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-block-seq-ref blocks index)
+            [(CompilerIrBlock.Block _ instrs)
+              (let
+                [facts : CompilerRegLeafCsrFuseFacts
+                  (compiler-reg-leaf-csr-fuse-facts-seq instrs var)]
+                (begin
+                  (set! total-uses (+ total-uses (struct-get facts uses)))
+                  (set!
+                    total-free
+                    (+ total-free (struct-get facts free-branches)))))])
+          (set! index (+ index 1))))
+      (CompilerRegLeafCsrFuseFacts total-uses total-free))))
+
+(define (compiler-reg-leaf-csr-fuse-safe?
+  [func : CompilerIrFunction]
+  [var : i64]) : bool
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (let
+        [facts : CompilerRegLeafCsrFuseFacts
+          (compiler-reg-leaf-csr-fuse-facts-blocks blocks var 0 0)]
+        (and
+          (> (struct-get facts uses) 0)
+          (= (struct-get facts uses) (struct-get facts free-branches))))]))
+
+(define (compiler-reg-leaf-csr-location-conflicts-region?
+  [func : CompilerIrFunction]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-intervals : CompilerRegIntervalList]
+  [ignore-var : i64]
+  [location : CompilerRegLocation]) : bool
+  (match assignments
+    [(CompilerRegAssignmentList.Nil) false]
+    [(CompilerRegAssignmentList.Cons item rest)
+      (match item
+        [(CompilerRegAssignment.Assignment assigned-var assigned-location)
+          (if (or
+            (= assigned-var ignore-var)
+            (not (compiler-reg-location-overlaps? assigned-location location))
+            (compiler-reg-leaf-csr-fuse-safe? func assigned-var))
+            (compiler-reg-leaf-csr-location-conflicts-region?
+              func
+              (box-get rest)
+              intervals
+              region-intervals
+              ignore-var
+              location)
+            (if (compiler-reg-loop-split-var-overlaps-region?
+              intervals
+              assigned-var
+              region-intervals)
+              true
+              (compiler-reg-leaf-csr-location-conflicts-region?
+                func
+                (box-get rest)
+                intervals
+                region-intervals
+                ignore-var
+                location)))])]))
+
+(define (compiler-reg-leaf-csr-first-inner-register
+  [func : CompilerIrFunction]
+  [regs : CompilerRegStringList]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-intervals : CompilerRegIntervalList]
+  [ignore-var : i64]) : CompilerRegMaybeString
+  (match regs
+    [(CompilerRegStringList.Nil) CompilerRegMaybeString.No]
+    [(CompilerRegStringList.Cons reg rest)
+      (if (compiler-reg-leaf-csr-location-conflicts-region?
+        func
+        assignments
+        intervals
+        region-intervals
+        ignore-var
+        (CompilerRegLocation.Register reg))
+        (compiler-reg-leaf-csr-first-inner-register
+          func
+          (box-get rest)
+          assignments
+          intervals
+          region-intervals
+          ignore-var)
+        (CompilerRegMaybeString.Some reg))]))
+
+(define (compiler-reg-leaf-csr-filter-caller-regs
+  [regs : CompilerRegStringList]
+  [rax-safe? : bool]
+  [rcx-safe? : bool]
+  [rdx-safe? : bool]) : CompilerRegStringList
+  (match regs
+    [(CompilerRegStringList.Nil) CompilerRegStringList.Nil]
+    [(CompilerRegStringList.Cons reg rest)
+      (let
+        [tail : CompilerRegStringList
+          (compiler-reg-leaf-csr-filter-caller-regs
+            (box-get rest)
+            rax-safe?
+            rcx-safe?
+            rdx-safe?)]
+        (if (or
+          (and (string.eq reg "%rax") (not rax-safe?))
+          (and (string.eq reg "%rcx") (not rcx-safe?))
+          (and (string.eq reg "%rdx") (not rdx-safe?)))
+          tail
+          (compiler-reg-string-cons reg tail)))]))
+
+(define (compiler-reg-leaf-csr-caller-regs
+  [type-segment-bases : i64]
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [start : i64]
+  [end : i64]) : CompilerRegStringList
+  (compiler-reg-leaf-csr-filter-caller-regs
+    (compiler-reg-caller-saved-integer-registers-from-abi abi 0)
+    (not
+      (compiler-reg-loop-split-region-crosses-kind?
+        type-segment-bases
+        func
+        1
+        start
+        end))
+    (compiler-reg-loop-split-region-rcx-safe? type-segment-bases func start end)
+    (compiler-reg-loop-split-region-rdx-safe? type-segment-bases func start end)))
+
+(define (compiler-reg-leaf-csr-region-defines?
+  [live-blocks : (Array CompilerLiveBlock)]
+  [start-index : i64]
+  [end-index : i64]
+  [var : i64]) : bool
+  (let
+    [index : i64 start-index]
+    [found : bool false]
+    (begin
+      (while (and
+        (<= index end-index)
+        (< index (array-length live-blocks))
+        (not found))
+        (begin
+          (if (compiler-live-set-contains?
+            (compiler-live-block-defs (array-ref live-blocks index))
+            var)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-reg-leaf-csr-region-mentions
+  [blocks : (Array CompilerIrBlock)]
+  [start-index : i64]
+  [end-index : i64]
+  [var : i64]) : i64
+  (if (or (> start-index end-index) (>= start-index (array-length blocks)))
+    0
+    (+
+      (match (array-ref blocks start-index)
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-loop-split-mention-count instrs var)])
+      (compiler-reg-leaf-csr-region-mentions
+        blocks
+        (+ start-index 1)
+        end-index
+        var))))
+
+(define (compiler-reg-leaf-csr-location-conflicts-outer-segments?
+  [segments : CompilerRegIntervalList]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-start : i64]
+  [region-end : i64]
+  [ignore-var : i64]
+  [location : CompilerRegLocation]) : bool
+  (match segments
+    [(CompilerRegIntervalList.Nil) false]
+    [(CompilerRegIntervalList.Cons segment rest)
+      (match segment
+        [(CompilerRegInterval.Interval _ start end)
+          (let
+            [before? : bool
+              (and
+                (< start region-start)
+                (compiler-reg-loop-split-location-conflicts-region?
+                  assignments
+                  intervals
+                  (compiler-reg-loop-split-region-interval
+                    ignore-var
+                    start
+                    (if (< end region-start)
+                      end
+                      region-start))
+                  ignore-var
+                  location))]
+            [after? : bool
+              (and
+                (> end region-end)
+                (compiler-reg-loop-split-location-conflicts-region?
+                  assignments
+                  intervals
+                  (compiler-reg-loop-split-region-interval
+                    ignore-var
+                    (if (> start region-end)
+                      start
+                      region-end)
+                    end)
+                  ignore-var
+                  location))]
+            (or
+              before?
+              after?
+              (compiler-reg-leaf-csr-location-conflicts-outer-segments?
+                (box-get rest)
+                assignments
+                intervals
+                region-start
+                region-end
+                ignore-var
+                location)))])]))
+
+(define (compiler-reg-leaf-csr-location-conflicts-outer?
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-start : i64]
+  [region-end : i64]
+  [var : i64]
+  [location : CompilerRegLocation]) : bool
+  (let
+    [segments : (Array CompilerRegIntervalList) (struct-get intervals segments)]
+    [var-segments : CompilerRegIntervalList
+      (if (and (>= var 0) (< var (array-length segments)))
+        (array-ref segments var)
+        CompilerRegIntervalList.Nil)]
+    (if (not (compiler-reg-interval-list-empty? var-segments))
+      (compiler-reg-leaf-csr-location-conflicts-outer-segments?
+        var-segments
+        assignments
+        intervals
+        region-start
+        region-end
+        var
+        location)
+      (match (compiler-reg-interval-index-lookup intervals var)
+        [(CompilerRegMaybeInterval.Some interval)
+          (compiler-reg-leaf-csr-location-conflicts-outer-segments?
+            (compiler-reg-interval-cons interval CompilerRegIntervalList.Nil)
+            assignments
+            intervals
+            region-start
+            region-end
+            var
+            location)]
+        [(CompilerRegMaybeInterval.No) true]))))
+
+(define (compiler-reg-leaf-csr-first-outer-register
+  [regs : CompilerRegStringList]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-start : i64]
+  [region-end : i64]
+  [var : i64]
+  [inner-reg : String]) : CompilerRegMaybeString
+  (match regs
+    [(CompilerRegStringList.Nil) CompilerRegMaybeString.No]
+    [(CompilerRegStringList.Cons reg rest)
+      (if (or
+        (compiler-reg-registers-overlap? reg inner-reg)
+        (compiler-reg-leaf-csr-location-conflicts-outer?
+          assignments
+          intervals
+          region-start
+          region-end
+          var
+          (CompilerRegLocation.Register reg)))
+        (compiler-reg-leaf-csr-first-outer-register
+          (box-get rest)
+          assignments
+          intervals
+          region-start
+          region-end
+          var
+          inner-reg)
+        (CompilerRegMaybeString.Some reg))]))
+
+(define (compiler-reg-leaf-csr-try-var
+  [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
+  [live-blocks : (Array CompilerLiveBlock)]
+  [block-array : (Array CompilerIrBlock)]
+  [region-labels : CompilerRegLabelList]
+  [region-start-index : i64]
+  [region-end-index : i64]
+  [region-start : i64]
+  [region-end : i64]
+  [vars : i64]
+  [var : i64]
+  [param-vars : CompilerLiveI64Set]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]
+  [inner-regs : CompilerRegStringList]
+  [outer-regs : CompilerRegStringList]
+  [callee-regs : CompilerRegStringList]) : CompilerRegLeafCsrSplitCandidate
+  (if (or
+    (compiler-live-set-contains? param-vars var)
+    (compiler-live-set-contains? group-vars var)
+    (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)
+    (>= region-start-index (array-length live-blocks))
+    (not
+      (compiler-live-set-contains?
+        (compiler-live-block-live-in (array-ref live-blocks region-start-index))
+        var))
+    (compiler-reg-leaf-csr-region-defines?
+      live-blocks
+      region-start-index
+      region-end-index
+      var)
+    (<=
+      (compiler-reg-leaf-csr-region-mentions
+        block-array
+        region-start-index
+        region-end-index
+        var)
+      0))
+    CompilerRegLeafCsrSplitCandidate.NoCandidate
+    (match (compiler-reg-assignment-lookup assignments var)
+      [(CompilerRegMaybeLocation.Some location)
+        (match location
+          [(CompilerRegLocation.Register csr)
+            (if (and
+              (compiler-reg-string-list-contains? callee-regs csr)
+              (=
+                (compiler-reg-assignments-register-use-count assignments csr)
+                1))
+              (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
+                [(CompilerRegMaybeType.Some ty)
+                  (let
+                    [region-intervals : CompilerRegIntervalList
+                      (compiler-reg-loop-split-region-interval
+                        vars
+                        region-start
+                        region-end)]
+                    (match (compiler-reg-leaf-csr-first-inner-register
+                      func
+                      inner-regs
+                      assignments
+                      intervals
+                      region-intervals
+                      var)
+                      [(CompilerRegMaybeString.Some inner-reg)
+                        (let
+                          [fused-occupant : i64
+                            (compiler-reg-loop-split-region-occupant
+                              assignments
+                              intervals
+                              region-intervals
+                              var
+                              (CompilerRegLocation.Register inner-reg)
+                              (- 0 2))]
+                          [outer : CompilerRegMaybeString
+                            (compiler-reg-leaf-csr-first-outer-register
+                              outer-regs
+                              assignments
+                              intervals
+                              region-start
+                              region-end
+                              var
+                              inner-reg)]
+                          (if (= fused-occupant (- 0 1))
+                            CompilerRegLeafCsrSplitCandidate.NoCandidate
+                            (match outer
+                              [(CompilerRegMaybeString.Some outer-reg)
+                                (match (compiler-reg-edge-copy-plan-for-region-with-liveness
+                                  liveness
+                                  region-labels
+                                  var
+                                  (+ vars 1)
+                                  ty)
+                                  [(CompilerRegEdgeCopyPlan.Plan copies)
+                                    (if (and
+                                      (=
+                                        (compiler-reg-edge-copy-list-count
+                                          copies)
+                                        1)
+                                      (compiler-reg-loop-split-direction-present?
+                                        copies
+                                        true))
+                                      (CompilerRegLeafCsrSplitCandidate.Candidate
+                                        var
+                                        region-labels
+                                        ty
+                                        inner-reg
+                                        outer-reg
+                                        copies
+                                        fused-occupant)
+                                      CompilerRegLeafCsrSplitCandidate.NoCandidate)]
+                                  [(CompilerRegEdgeCopyPlan.Refused _)
+                                    CompilerRegLeafCsrSplitCandidate.NoCandidate])]
+                              [(CompilerRegMaybeString.No)
+                                CompilerRegLeafCsrSplitCandidate.NoCandidate])))]
+                      [(CompilerRegMaybeString.No)
+                        CompilerRegLeafCsrSplitCandidate.NoCandidate]))]
+                [(CompilerRegMaybeType.No)
+                  CompilerRegLeafCsrSplitCandidate.NoCandidate])
+              CompilerRegLeafCsrSplitCandidate.NoCandidate)]
+          [_ CompilerRegLeafCsrSplitCandidate.NoCandidate])]
+      [(CompilerRegMaybeLocation.No)
+        CompilerRegLeafCsrSplitCandidate.NoCandidate])))
+
+(define (compiler-reg-leaf-csr-select-var
+  [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
+  [live-blocks : (Array CompilerLiveBlock)]
+  [block-array : (Array CompilerIrBlock)]
+  [region-labels : CompilerRegLabelList]
+  [region-start-index : i64]
+  [region-end-index : i64]
+  [region-start : i64]
+  [region-end : i64]
+  [vars : i64]
+  [var : i64]
+  [param-vars : CompilerLiveI64Set]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]
+  [inner-regs : CompilerRegStringList]
+  [outer-regs : CompilerRegStringList]
+  [callee-regs : CompilerRegStringList]) : CompilerRegLeafCsrSplitCandidate
+  (if (>= var vars)
+    CompilerRegLeafCsrSplitCandidate.NoCandidate
+    (match (compiler-reg-leaf-csr-try-var
+      func
+      liveness
+      live-blocks
+      block-array
+      region-labels
+      region-start-index
+      region-end-index
+      region-start
+      region-end
+      vars
+      var
+      param-vars
+      type-info
+      assignments
+      intervals
+      group-vars
+      parents
+      merged-roots
+      inner-regs
+      outer-regs
+      callee-regs)
+      [(CompilerRegLeafCsrSplitCandidate.NoCandidate)
+        (compiler-reg-leaf-csr-select-var
+          func
+          liveness
+          live-blocks
+          block-array
+          region-labels
+          region-start-index
+          region-end-index
+          region-start
+          region-end
+          vars
+          (+ var 1)
+          param-vars
+          type-info
+          assignments
+          intervals
+          group-vars
+          parents
+          merged-roots
+          inner-regs
+          outer-regs
+          callee-regs)]
+      [(CompilerRegLeafCsrSplitCandidate.Candidate
+          split-var
+          labels
+          ty
+          inner-reg
+          outer-reg
+          copies
+          fused-occupant)
+        (CompilerRegLeafCsrSplitCandidate.Candidate
+          split-var
+          labels
+          ty
+          inner-reg
+          outer-reg
+          copies
+          fused-occupant)])))
+
+(define (compiler-reg-leaf-csr-select-headers
+  [type-segment-bases : i64]
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
+  [live-blocks : (Array CompilerLiveBlock)]
+  [block-array : (Array CompilerIrBlock)]
+  [points : (Array i64)]
+  [loop-ends : (Array i64)]
+  [depths : (Array i64)]
+  [header : i64]
+  [vars : i64]
+  [param-vars : CompilerLiveI64Set]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]
+  [outer-regs : CompilerRegStringList]
+  [callee-regs : CompilerRegStringList]) : CompilerRegLeafCsrSplitCandidate
+  (if (>= header (array-length block-array))
+    CompilerRegLeafCsrSplitCandidate.NoCandidate
+    (let
+      [end-index : i64
+        (if (< header (array-length loop-ends))
+          (array-ref loop-ends header)
+          (- 0 1))]
+      (if (and
+        (>= end-index header)
+        (< (+ end-index 1) (array-length points))
+        (< header (array-length depths))
+        (> (array-ref depths header) 0))
+        (let
+          [region-start : i64 (array-ref points header)]
+          [region-end : i64 (array-ref points (+ end-index 1))]
+          [inner-regs : CompilerRegStringList
+            (compiler-reg-leaf-csr-caller-regs
+              type-segment-bases
+              abi
+              func
+              region-start
+              region-end)]
+          (match (compiler-reg-leaf-csr-select-var
+            func
+            liveness
+            live-blocks
+            block-array
+            (compiler-reg-loop-phi-mb-region-labels
+              block-array
+              header
+              end-index)
+            header
+            end-index
+            region-start
+            region-end
+            vars
+            0
+            param-vars
+            type-info
+            assignments
+            intervals
+            group-vars
+            parents
+            merged-roots
+            inner-regs
+            outer-regs
+            callee-regs)
+            [(CompilerRegLeafCsrSplitCandidate.NoCandidate)
+              (compiler-reg-leaf-csr-select-headers
+                type-segment-bases
+                abi
+                func
+                liveness
+                live-blocks
+                block-array
+                points
+                loop-ends
+                depths
+                (+ header 1)
+                vars
+                param-vars
+                type-info
+                assignments
+                intervals
+                group-vars
+                parents
+                merged-roots
+                outer-regs
+                callee-regs)]
+            [(CompilerRegLeafCsrSplitCandidate.Candidate
+                split-var
+                labels
+                ty
+                inner-reg
+                outer-reg
+                copies
+                fused-occupant)
+              (CompilerRegLeafCsrSplitCandidate.Candidate
+                split-var
+                labels
+                ty
+                inner-reg
+                outer-reg
+                copies
+                fused-occupant)]))
+        (compiler-reg-leaf-csr-select-headers
+          type-segment-bases
+          abi
+          func
+          liveness
+          live-blocks
+          block-array
+          points
+          loop-ends
+          depths
+          (+ header 1)
+          vars
+          param-vars
+          type-info
+          assignments
+          intervals
+          group-vars
+          parents
+          merged-roots
+          outer-regs
+          callee-regs)))))
+
+(define (compiler-reg-leaf-csr-remap-edge-copy
+  [copy : CompilerRegEdgeCopy]
+  [from-var : i64]
+  [to-var : i64]) : CompilerRegEdgeCopy
+  (match copy
+    [(CompilerRegEdgeCopy.Copy
+        from-label
+        to-label
+        src
+        dst
+        ty
+        direction
+        placement)
+      (CompilerRegEdgeCopy.Copy
+        from-label
+        to-label
+        (if (= src from-var)
+          to-var
+          src)
+        (if (= dst from-var)
+          to-var
+          dst)
+        ty
+        direction
+        placement)]))
+
+(define (compiler-reg-leaf-csr-remap-edge-copies
+  [copies : CompilerRegEdgeCopySeq]
+  [from-var : i64]
+  [to-var : i64]) : CompilerRegEdgeCopySeq
+  (let
+    [source : (Array CompilerRegEdgeCopy) (struct-get copies slots)]
+    [count : i64 (struct-get copies len)]
+    [out : (Array CompilerRegEdgeCopy)
+      (array.make-array
+        CompilerRegEdgeCopy
+        (if (< count 1)
+          1
+          count))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            out
+            index
+            (compiler-reg-leaf-csr-remap-edge-copy
+              (array-ref source index)
+              from-var
+              to-var))
+          (set! index (+ index 1))))
+      (CompilerRegEdgeCopySeq out count))))
+
+;; The split boundary must remain a real copy after the fresh allocation pass.
+;; A plain Mov is deliberately coalescable, which would reunite the outside and
+;; loop pieces and recreate the original whole-function callee-saved range.
+;; A same-type Bitcast has identical backend copy semantics, but is not a
+;; coalescing candidate.
+(define (compiler-reg-leaf-csr-boundary-instr
+  [instr : CompilerIrInstr]
+  [src-var : i64]
+  [dst-var : i64]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov dst src ty)
+      (match src
+        [(CompilerIrValue.Var found-src)
+          (if (and (= dst dst-var) (= found-src src-var))
+            (match ty
+              [(AstType.I64) (CompilerIrInstr.Bitcast dst src ty ty)]
+              [(AstType.U64) (CompilerIrInstr.Bitcast dst src ty ty)]
+              [_ (CompilerIrInstr.Cast dst src ty ty)])
+            instr)]
+        [_ instr])]
+    [_ instr]))
+
+(define (compiler-reg-leaf-csr-boundary-instrs
+  [instrs : CompilerIrInstrList]
+  [src-var : i64]
+  [dst-var : i64]) : CompilerIrInstrList
+  (match instrs
+    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
+    [(CompilerIrInstrList.Cons instr rest)
+      (compiler-ir-instr-cons
+        (compiler-reg-leaf-csr-boundary-instr instr src-var dst-var)
+        (compiler-reg-leaf-csr-boundary-instrs (box-get rest) src-var dst-var))]))
+
+(define (compiler-reg-leaf-csr-boundary-blocks
+  [blocks : CompilerIrBlockList]
+  [src-var : i64]
+  [dst-var : i64]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (CompilerIrBlock.Block
+              label
+              (compiler-ir-instr-seq-from-list
+                (compiler-reg-leaf-csr-boundary-instrs
+                  (compiler-ir-instr-seq-to-list instrs)
+                  src-var
+                  dst-var)))
+            (compiler-reg-leaf-csr-boundary-blocks
+              (box-get rest)
+              src-var
+              dst-var))])]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [slots : (Array CompilerIrBlock)
+          (array.make-array CompilerIrBlock count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq index)
+                [(CompilerIrBlock.Block label instrs)
+                  (array-set!
+                    slots
+                    index
+                    (CompilerIrBlock.Block
+                      label
+                      (compiler-ir-instr-seq-from-list
+                        (compiler-reg-leaf-csr-boundary-instrs
+                          (compiler-ir-instr-seq-to-list instrs)
+                          src-var
+                          dst-var))))])
+              (set! index (+ index 1))))
+          (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count))))]))
+
+(define (compiler-reg-leaf-csr-apply-candidate
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [stack-var : i64]
+  [region-labels : CompilerRegLabelList]
+  [ty : AstType]
+  [inner-reg : String]
+  [outer-reg : String]
+  [copies : CompilerRegEdgeCopySeq]
+  [fused-occupant : i64]) : CompilerRegCallSaveRewrite
+  (let
+    [outer-var : i64 vars]
+    [inner-var : i64 (+ vars 1)]
+    [outer-remap : (Array i64) (compiler-reg-caller-save-remap vars)]
+    [region-remap : (Array i64) (compiler-reg-caller-save-remap (+ vars 1))]
+    [extra-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          outer-var
+          (CompilerRegLocation.Register outer-reg))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            inner-var
+            (CompilerRegLocation.Register inner-reg))
+          (if (>= fused-occupant 0)
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                fused-occupant
+                (CompilerRegLocation.Register inner-reg))
+              CompilerRegAssignmentList.Nil)
+            CompilerRegAssignmentList.Nil)))]
+    (begin
+      (array-set! outer-remap stack-var outer-var)
+      (array-set! region-remap outer-var inner-var)
+      (match (compiler-reg-edge-copy-apply
+        (compiler-reg-loop-split-region-remap-blocks
+          (compiler-reg-remap-blocks outer-remap blocks)
+          (compiler-reg-region-label-map region-labels)
+          region-remap)
+        (compiler-reg-leaf-csr-remap-edge-copies copies stack-var outer-var))
+        [(CompilerRegEdgeCopyRewrite.Rewrite rewritten-blocks)
+          (CompilerRegCallSaveRewrite.Rewrite
+            (compiler-reg-leaf-csr-boundary-blocks
+              rewritten-blocks
+              outer-var
+              inner-var)
+            vars
+            (+ vars 2)
+            extra-assignments
+            (compiler-reg-var-type-cons
+              (CompilerRegVarType.Type outer-var ty)
+              (compiler-reg-var-type-cons
+                (CompilerRegVarType.Type inner-var ty)
+                CompilerRegVarTypeList.Nil)))]
+        [(CompilerRegEdgeCopyRewrite.Refused _)
+          (compiler-reg-loop-split-noop blocks vars)]))))
+
+(define (compiler-reg-leaf-csr-split-rewrite-one
+  [type-segment-bases : i64]
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
+  (if (or
+    (not (compiler-reg-scalar-full-intervals? func))
+    (>
+      (compiler-live-set-count
+        (compiler-reg-clobber-kind-points type-segment-bases func 0))
+      0))
+    (compiler-reg-loop-split-noop blocks vars)
+    (let
+      [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+      (if (not (compiler-reg-depths-have-loop? depths 0))
+        (compiler-reg-loop-split-noop blocks vars)
+        (let
+          [liveness : CompilerFunctionLiveness
+            (compiler-live-analyze-function func)]
+          [selection : CompilerRegIntervalSelection
+            (compiler-reg-live-interval-selection func liveness)]
+          [assignments : CompilerRegAssignmentList
+            (compiler-reg-plan-assignments plan)]
+          [types : CompilerRegVarTypeList
+            (compiler-reg-var-types-list type-info)]
+          [group-vars : CompilerLiveI64Set
+            (compiler-reg-function-group-vars type-segment-bases func types)]
+          [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+          [block-array : (Array CompilerIrBlock) (struct-get seq slots)]
+          [param-vars : CompilerLiveI64Set
+            (match func
+              [(CompilerIrFunction.Function _ params _ _ _)
+                (compiler-reg-ineligible-params
+                  params
+                  (compiler-live-set-empty))])]
+          [outer-regs : CompilerRegStringList
+            (compiler-reg-leaf-csr-caller-regs
+              type-segment-bases
+              abi
+              func
+              0
+              (array-ref
+                (compiler-reg-loop-phi-mb-block-points block-array)
+                (array-length block-array)))]
+          [callee-regs : CompilerRegStringList
+            (compiler-reg-callee-saved-integer-registers-from-abi abi 0)]
+          (match selection
+            [(CompilerRegIntervalSelection.Selection _ intervals)
+              (let
+                [coalesce : CompilerRegCoalesceMap
+                  (compiler-reg-coalesce-map-build
+                    (compiler-reg-function-moves func false)
+                    intervals
+                    type-info
+                    group-vars
+                    vars
+                    (array.make-array i64 0))]
+                [parents : (Array i64) (struct-get coalesce parents)]
+                [merged-roots : CompilerLiveI64Set
+                  (compiler-reg-coalesce-merged-root-set coalesce)]
+                (match liveness
+                  [(CompilerFunctionLiveness.Liveness _ live-blocks)
+                    (match (compiler-reg-leaf-csr-select-headers
+                      type-segment-bases
+                      abi
+                      func
+                      liveness
+                      live-blocks
+                      block-array
+                      (compiler-reg-loop-phi-mb-block-points block-array)
+                      (compiler-reg-preheader-loop-ends-seq
+                        seq
+                        (array-length block-array))
+                      depths
+                      0
+                      vars
+                      param-vars
+                      type-info
+                      assignments
+                      intervals
+                      group-vars
+                      parents
+                      merged-roots
+                      outer-regs
+                      callee-regs)
+                      [(CompilerRegLeafCsrSplitCandidate.NoCandidate)
+                        (compiler-reg-loop-split-noop blocks vars)]
+                      [(CompilerRegLeafCsrSplitCandidate.Candidate
+                          stack-var
+                          region-labels
+                          ty
+                          inner-reg
+                          outer-reg
+                          copies
+                          fused-occupant)
+                        (compiler-reg-leaf-csr-apply-candidate
+                          blocks
+                          vars
+                          stack-var
+                          region-labels
+                          ty
+                          inner-reg
+                          outer-reg
+                          copies
+                          fused-occupant)])]))]))))))
 
 ;; Multi-split: rescue EVERY profitable spilled loop-carried var, not just the
 ;; first. Each split rewrites the IR (region uses -> a new register-resident var
@@ -20499,12 +21550,13 @@
 ;; `type-info` must be `(compiler-reg-function-var-types func)`. The backend
 ;; already needs that view for its caller-save rewrite, so it computes it once
 ;; and passes it in rather than having both walk the function.
-(define (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types
+(define (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-preassignments
   [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [forced-spill-from : i64]
-  [type-info : CompilerRegVarTypes]) : CompilerRegPlan
+  [type-info : CompilerRegVarTypes]
+  [forced-assignments : CompilerRegAssignmentList]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func true)]
@@ -20567,22 +21619,41 @@
               cold-split?)]
           (match param-plan
             [(CompilerRegParamAssignPlan.Plan preassignments ineligible blocked)
-              (compiler-reg-plan-from
-                type-segment-bases
-                func
-                liveness-handle
-                type-info
-                types
-                intervals
-                interval-index
-                preassignments
-                ineligible
-                blocked
-                true
-                false
-                abi
-                cold-split?
-                forced-spill-from)]))])))
+              (let
+                [_forced : unit
+                  (compiler-reg-assignment-table-fill!
+                    preassignments
+                    forced-assignments)]
+                (compiler-reg-plan-from
+                  type-segment-bases
+                  func
+                  liveness-handle
+                  type-info
+                  types
+                  intervals
+                  interval-index
+                  preassignments
+                  ineligible
+                  blocked
+                  true
+                  false
+                  abi
+                  cold-split?
+                  forced-spill-from))]))])))
+
+(define (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types
+  [type-segment-bases : i64]
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [forced-spill-from : i64]
+  [type-info : CompilerRegVarTypes]) : CompilerRegPlan
+  (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-preassignments
+    type-segment-bases
+    abi
+    func
+    forced-spill-from
+    type-info
+    CompilerRegAssignmentList.Nil))
 
 (define (compiler-reg-plan-function-scalar-cold-for-abi-with-types
   [abi : CompilerRegTargetAbi]
@@ -23345,6 +24416,51 @@
             (compiler-reg-var-type-list-merge extra-types types)
             shadows
             split-plan)])]))
+
+;; Leaf-CSR replanning temporarily preassigns an adjacent compare->branch result
+;; to the loop register so the greedy can place the real split range there.
+;; That boolean is proven fuse-only by candidate selection and therefore has no
+;; materialized home in emitted code. Publish it as frame-free rematerialized
+;; metadata after allocation so scratch occupancy does not treat the phantom
+;; result as a second physical value. Fresh split vars are >= `in-vars` and keep
+;; their real preassigned homes.
+(define (compiler-reg-leaf-csr-phantom-assignments
+  [assignments : CompilerRegAssignmentList]
+  [in-vars : i64]) : CompilerRegAssignmentList
+  (match assignments
+    [(CompilerRegAssignmentList.Nil) CompilerRegAssignmentList.Nil]
+    [(CompilerRegAssignmentList.Cons item rest)
+      (match item
+        [(CompilerRegAssignment.Assignment var _)
+          (if (< var in-vars)
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                var
+                (CompilerRegLocation.Remat (CompilerIrValue.Bool false)))
+              (compiler-reg-leaf-csr-phantom-assignments (box-get rest) in-vars))
+            (compiler-reg-leaf-csr-phantom-assignments (box-get rest) in-vars))])]))
+
+(define (compiler-reg-plan-hide-leaf-csr-phantoms
+  [plan : CompilerRegPlan]
+  [preassignments : CompilerRegAssignmentList]
+  [in-vars : i64]) : CompilerRegPlan
+  (match plan
+    [(CompilerRegPlan.Plan
+        assignments
+        ineligible
+        intervals
+        types
+        shadows
+        split-plan)
+      (CompilerRegPlan.Plan
+        (compiler-reg-assignment-list-merge
+          (compiler-reg-leaf-csr-phantom-assignments preassignments in-vars)
+          assignments)
+        ineligible
+        intervals
+        types
+        shadows
+        split-plan)]))
 
 (define (compiler-reg-plan-var-count-intervals
   [intervals : CompilerRegIntervalList]
@@ -33043,6 +34159,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-split-multiple-rewrite-ok?"
       (cfg test (compiler-reg-loop-split-multiple-rewrite-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-leaf-csr-split-ok?"
+      (cfg test (compiler-reg-leaf-csr-split-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-loop-split-low-benefit-ok?"
       (cfg test (compiler-reg-loop-split-low-benefit-ok?) true))

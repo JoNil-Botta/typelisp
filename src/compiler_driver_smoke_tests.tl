@@ -478,9 +478,9 @@
   [lowered-a : ResultCompilerDriverLowered]
   [lowered-b : ResultCompilerDriverLowered]) : bool
   (match lowered-a
-    [(ResultCompilerDriverLowered.Ok program-a spans-a pools-a)
+    [(ResultCompilerDriverLowered.Ok program-a spans-a pools-a _profile-a)
       (match lowered-b
-        [(ResultCompilerDriverLowered.Ok program-b spans-b pools-b)
+        [(ResultCompilerDriverLowered.Ok program-b spans-b pools-b _profile-b)
           (let
             [restore-reader : AstNodePoolContext
               (ast-node-pool-reader-context-current)]
@@ -559,7 +559,7 @@
         ;; state-owned reader context here, then interleave the phases covered
         ;; by this smoke: optimizer, regalloc, and backend.
         (match lowered-a
-          [(ResultCompilerDriverLowered.Ok program-a spans-a pools-a)
+          [(ResultCompilerDriverLowered.Ok program-a spans-a pools-a _profile-a)
             (let
               [pools-b : AstNodePoolContext
                 (ast-node-pool-context-clone-types-only pools-a)]
@@ -570,7 +570,11 @@
                 (compiler-driver-state-adopt-pools! state-b pools-b)
                 (compiler-driver-reader-context-smoke-lowered-ok?
                   lowered-a
-                  (ResultCompilerDriverLowered.Ok program-b spans-b pools-b))))]
+                  (ResultCompilerDriverLowered.Ok
+                    program-b
+                    spans-b
+                    pools-b
+                    (compiler-driver-state-profile state-b)))))]
           [(ResultCompilerDriverLowered.Err diag)
             (compiler-driver-reader-context-smoke-fail
               (string.append

@@ -227,7 +227,7 @@
         (compiler-driver-target-cfgs
           (CompilerBackendTarget.Linux)
           (compiler-cfg-empty)))
-        [(ResultCompilerDriverLowered.Ok _ _ _) true]
+        [(ResultCompilerDriverLowered.Ok _ _ _ _) true]
         [(ResultCompilerDriverLowered.Err _) false]))))
 
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source) : String

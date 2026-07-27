@@ -930,27 +930,6 @@ tl_tlci_call_macro_entry:
     addq $8, %rsp
     ret
 
-    .data
-    .globl tl_comptime_host_invoke_fn
-    .balign 8
-tl_comptime_host_invoke_fn:
-    .quad 0
-    .globl tl_comptime_host_invoke_entry_ptr
-tl_comptime_host_invoke_entry_ptr:
-    .quad .L_tl_comptime_host_invoke_entry
-
-    .text
-    .globl tl_comptime_host_invoke_set
-tl_comptime_host_invoke_set:
-    movq %rdi, tl_comptime_host_invoke_fn(%rip)
-    leaq .L_tl_comptime_host_invoke_entry(%rip), %rax
-    ret
-
-.L_tl_comptime_host_invoke_entry:
-    movq tl_comptime_host_invoke_fn(%rip), %r11
-    movq 8(%r11), %rdi
-    jmp *(%r11)
-
 ")
 
 (define (compiler-backend-runtime-functions

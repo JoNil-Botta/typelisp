@@ -4821,24 +4821,23 @@ Exclusions:
   and type-erased dispatch are not part of this surface.
 - Reflection metadata strings are not runtime `String` allocation hooks.
 
-#### 5.17.1 TypeLisp comptime image (`.tlci`) v1
+#### 5.17.1 TypeLisp comptime image (`.tlci`) v2
 
 A TypeLisp comptime image (`tlci`) is the package compile-time interface. Every
 package emits one: a metadata-only image carries signature/layout metadata, and
 a package that defines macros additionally carries compiled comptime code. The
 runtime archive (`lib<name>.a` / `<name>.lib`) is separate. This section
-specifies the v1 container, metadata schema v1, and the backward-compatible
-metadata schema v2 extension.
+specifies the v2 container and its independently versioned metadata schemas.
 
 The container is a custom little-endian binary format shared by Linux and
-Windows. It is not ELF or COFF. The first 160 bytes are a fixed header:
+Windows. It is not ELF or COFF. The first 176 bytes are a fixed header:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic bytes `54 4c 43 49 0d 0a 1a 0a` (`TLCI\r\n\x1a\n`) |
-| 8 | 8 | Format version (`1`) |
+| 8 | 8 | Format version (`2`) |
 | 16 | 8 | Host architecture enum, `1 = x86_64` |
-| 24 | 8 | Callback ABI version (`1`) |
+| 24 | 8 | Callback ABI version (`2`) |
 | 32 | 8 | Compiler build hash byte offset |
 | 40 | 8 | Compiler build hash byte length |
 | 48 | 8 | Content hash |
@@ -4854,7 +4853,9 @@ Windows. It is not ELF or COFF. The first 160 bytes are a fixed header:
 | 128 | 8 | Entry table record count |
 | 136 | 8 | Symbol-name table byte offset, or `0` when empty |
 | 144 | 8 | Symbol-name table record count |
-| 152 | 8 | Total file size in bytes |
+| 152 | 8 | Host import section byte offset, or `0` when empty |
+| 160 | 8 | Host import record count |
+| 168 | 8 | Total file size in bytes |
 
 The compiler build hash payload is the producer-compiler identity. Producers
 encode the full 40-byte lowercase Git object name of the checked-in compiler
@@ -4870,11 +4871,11 @@ All integer fields are unsigned logical values encoded in little-endian 64-bit
 slots; values that do not fit the `i64` range are rejected. The metadata
 section starts on an 8-byte boundary. Rodata and code sections are page-aligned
 at 4096-byte offsets so a loader can map them directly. Fixup, entry, and
-symbol tables are 8-byte aligned. Empty sections must use offset `0` and
-count/length `0`.
+symbol, and import sections are 8-byte aligned. Empty sections must use offset
+`0` and count/length `0`.
 
 The content hash is a deterministic integrity check over the full file with the
-8-byte hash field treated as zero. The v1 hash is the rolling hash
+8-byte hash field treated as zero. It is the rolling hash
 `hash = (hash * 131 + byte) mod 2147483647` with seed `1`. This is an
 integrity/versioning guard, not a cryptographic authenticity mechanism. A
 loader must reject hash mismatches before trusting offsets or metadata.
@@ -4902,6 +4903,30 @@ symbolization, never for linking:
 
 Table bytes are opaque beyond count/size validation until consumed; a loader
 must validate referenced name ranges and code offsets before use.
+
+The host import section is the mirror of an export table. A non-empty section
+starts with an 8-byte record count equal to the header field, followed by
+24-byte records and a packed UTF-8 name blob:
+
+| Record offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Image-base-relative address of one writable 8-byte GOT slot |
+| 8 | 8 | Name byte offset relative to the import section |
+| 16 | 8 | Name byte length |
+
+Names are non-empty and their ranges must follow the complete record array and
+stay inside the import section. Slot addresses must be 8-byte aligned and lie
+inside a mapped rodata or code section. Normal-backend images place the slots
+in their code-region GOT. The mapping is writable while loading; after
+load-base fixups and import binding, the loader seals rodata read-only and code
+read/execute, so import slots are not mutable during execution.
+
+Before any image entry or comptime macro can run, the loader resolves every
+name in the compiler's static host callback registry and writes the callback's
+raw address into the corresponding slot. An unresolved name rejects the image
+and the diagnostic includes the package identity and missing import name.
+Duplicate or empty registry names and null registry addresses reject the host
+table before mapping. No OS dynamic-symbol lookup participates in this step.
 
 ##### 5.17.1.1 Auxiliary rodata sections
 
@@ -4933,16 +4958,16 @@ inputs before hydrating any AST, type, intern identity, or checked fact.
 
 ##### 5.17.1.2 Host ABI handshake
 
-The tlci header field at byte offset 24 is the host callback ABI version. In v1
-it equals the host callback table version below; both values are `1`. A loader
-must reject a code-bearing image whose tlci header callback ABI version does
-not match the host callback table version it will pass to the image.
+The tlci header field at byte offset 24 is callback ABI version `2`. This is a
+hard cutover: a loader rejects a code-bearing image whose callback ABI is not
+`2`, and it validates the host callback table as version `2` before mapping
+the image. There is no numeric-dispatch or callback-ABI-v1 compatibility path.
 
 A code-bearing image exports one native entry point named `tlci_image_entry`.
 The host calls it with the host platform's ordinary C integer calling
 convention. A tlci image always executes on the host architecture named in the
-tlci header; code for the consumer program's runtime target remains separate
-runtime output and is not loaded through this comptime ABI:
+header; code for the consumer program's runtime target remains separate
+runtime output:
 
 | Position | Type | Meaning |
 | ---: | --- | --- |
@@ -4950,35 +4975,47 @@ runtime output and is not loaded through this comptime ABI:
 | 1 | pointer-sized integer | Address of a writable image registration record |
 | return | `i64` status | `0` on successful registration; nonzero values are reserved diagnostics |
 
-The callback table begins with a fixed 48-byte header and appends two required
-function-pointer slots. Any bytes after `byte-size` are outside the record:
+The callback table's image-visible prefix remains 64 bytes. ABI v2 retires the
+old `invoke` slot and reserves it as zero:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic little-endian u64 for ASCII `TLCIHOST` |
-| 8 | 8 | Host callback ABI version (`1`) |
+| 8 | 8 | Host callback ABI version (`2`) |
 | 16 | 8 | Callback table byte size; must be at least `64` |
 | 24 | 8 | Opaque host context pointer, or `0` |
-| 32 | 8 | Reserved, must be `0` in v1 |
-| 40 | 8 | Reserved, must be `0` in v1 |
-| 48 | 8 | Required `invoke` callback function pointer |
+| 32 | 8 | Reserved, must be `0` |
+| 40 | 8 | Reserved, must be `0` |
+| 48 | 8 | Reserved, must be `0` (the removed v1 numeric `invoke` slot) |
 | 56 | 8 | Required `abort` callback function pointer |
 
-The `invoke` callback is the only stdlib/comptime operation dispatcher. It uses
-the host C ABI:
+The compiler's in-language host object pairs that raw prefix with a loader-only
+registry of UTF-8 callback names and raw function addresses. The registry is
+not copied into the image-visible prefix. Its rows are unique and non-empty,
+its addresses are nonzero, and its name/address storage covers at least its
+declared row count.
+
+Generated comptime code declares one extern value per operation and calls the
+loader-patched GOT slot directly. A named callback uses the host C ABI:
 
 | Position | Type | Meaning |
 | ---: | --- | --- |
-| 0 | pointer-sized integer | Opaque host context from the table |
-| 1 | pointer-sized integer | Opaque expansion/session context passed to the macro entry |
-| 2 | `i64` | Callback operation id from the catalog below |
-| 3 | pointer-sized integer | Address of an array of 64-bit argument handles/scalars, or `0` for no arguments |
-| 4 | `i64` | Argument count |
-| 5 | pointer-sized integer | Address of one writable 64-bit result slot, or `0` for unit/no result |
-| return | `i64` status | `0` on success; nonzero status values are listed below |
+| 0 | pointer-sized integer | Opaque host context carried by the macro entry |
+| 1 | pointer-sized integer | Opaque expansion/session context |
+| 2 | `i64` | Callback-specific argument A |
+| 3 | `i64` | Callback-specific argument B |
+| 4 | `i64` | Callback-specific argument C |
+| return | `i64` | Callback-specific status or scalar data result |
 
-The `abort` callback is for native image failures that cannot be represented as
-a normal macro diagnostic. It uses the same host C ABI:
+Each named function owns its return contract. Status-returning callbacks latch
+the first nonzero session status and later callbacks return it without
+mutation. Data-returning probes return their nonnegative scalar answer
+directly and use a negative malformed-request sentinel; a nonzero data answer
+is not a session failure. There is no separate operation-id argument, central
+numeric catalog, or hand-maintained data-operation exception list.
+
+The `abort` callback is for native image failures that cannot be represented
+as a normal macro diagnostic. Its fixed host-C-ABI signature is:
 
 | Position | Type | Meaning |
 | ---: | --- | --- |
@@ -5000,219 +5037,38 @@ Callback status values are fixed:
 | 3 | Native macro panic/abort |
 | 4 | Bad callback request or malformed arguments |
 
-Macro diagnostics are reported through `diagnostic` and return status `1`.
-`fuel-check` returns status `2` when the expansion has exhausted its fuel.
-Native traps, explicit native aborts, and symbolized failures call `abort` with
-status `3` and, when available, a tlci symbol-table record id/offset so the
-host diagnostic can include the image symbol name. Malformed callback ids,
-wrong arity, bad handles, and invalid scratch requests return status `4`.
-
-Callback operation ids are append-only after v1. IDs `1` through `99` are
-host-control operations; IDs `100` and above mirror the public macro/comptime
-helper surface: `stdlib.comptime`, the pure string helpers admitted in macro
-CTFE, and the section 5.17 reflection primitives. V1 assigns:
-
-| ID | Operation |
-| ---: | --- |
-| 1 | `fuel-check` |
-| 2 | `diagnostic` |
-| 3 | `scratch-alloc` |
-| 4 | `scratch-reset` |
-| 100 | `expr-bool` |
-| 101 | `expr-int` |
-| 102 | `expr-string` |
-| 103 | `expr-var` |
-| 104 | `expr-struct-get` |
-| 105 | `expr-tuple-ref` |
-| 106 | `expr-struct-set` |
-| 107 | `string-eq` / `stdlib.string.eq` |
-| 108 | `string-concat` / `stdlib.string.concat` |
-| 109 | `string-append` / `stdlib.string.append` |
-| 110 | `string-length` / `stdlib.string.string-length` |
-| 111 | `string-ref` / `stdlib.string.string-ref` |
-| 112 | `string->int` / `stdlib.string.>int` |
-| 113 | `int->string` / `stdlib.string.int->string` |
-| 114 | `expr-splice` |
-| 115 | `expr-if` |
-| 116 | `pattern-wildcard` |
-| 117 | `pattern-binding` |
-| 118 | `pattern-variant` |
-| 119 | `pattern-list-empty` |
-| 120 | `pattern-list-cons` |
-| 121 | `match-arm` |
-| 122 | `match-arm-list-empty` |
-| 123 | `match-arm-list-cons` |
-| 124 | `expr-match` |
-| 125 | `expr-type` |
-| 126 | `type-info` |
-| 127 | `module-name` |
-| 128 | `module-export-macro?` |
-| 129 | `module-hook` |
-| 130 | `type-kind` |
-| 131 | `type-key` |
-| 132 | `type-nominal-module` |
-| 133 | `type-nominal-name` |
-| 134 | `struct-field-count` |
-| 135 | `struct-field-name` |
-| 136 | `struct-field-type` |
-| 137 | `enum-variant-count` |
-| 138 | `enum-variant-name` |
-| 139 | `enum-variant-payload-count` |
-| 140 | `enum-variant-payload-type` |
-| 141 | `array-element-type` |
-| 142 | `array-length` |
-| 143 | `array-dynamic?` |
-| 144 | `tuple-element-count` |
-| 145 | `tuple-element-type` |
-| 146 | `function-param-count` |
-| 147 | `function-param-type` |
-| 148 | `function-return-type` |
-| 149 | `expr-bool?` |
-| 150 | `expr-bool-value` |
-| 151 | `expr-if?` |
-| 152 | `expr-if-cond` |
-| 153 | `expr-if-then` |
-| 154 | `expr-if-else` |
-| 155 | `expr-list-length` |
-| 156 | `expr-list-nth` |
-| 157 | `expr-clause-first` |
-| 158 | `expr-clause-second` |
-| 159 | `expr-clause-list-length` |
-| 160 | `expr-clause-list-nth` |
-| 161 | `expr-clause-list->expr-list` |
-| 162 | `expr-binding-clause-name` |
-| 163 | `expr-binding-clause-has-type?` |
-| 164 | `expr-binding-clause-type` |
-| 165 | `expr-binding-clause-init` |
-| 166 | `expr-binding-clause-list-length` |
-| 167 | `expr-binding-clause-list-nth` |
-| 168 | `expr-binding-clause-list->expr-list` |
-| 169 | `pattern-list-bindings` |
-| 170 | `type-cleanup-owning?` |
-| 171 | `type-cleanup-function` |
-| 172 | `expr-binary-data` |
-| 173 | `box-element-type` |
-| 174 | `expr-list-type-nth` |
-| 175 | `module-value?` |
-| 176 | `module-value-type` |
-| 177 | `reference-element-type` |
-| 178 | `expr-list-empty` (native template construction) |
-| 179 | `expr-list-append` (native template construction) |
-| 180 | `push-operand` (native template construction) |
-| 181 | `expr-call` (native template construction) |
-| 182 | `commit-result` (native template construction) |
-| 183 | `expr-array-ref` (native template construction) |
-| 184 | `expr-array-push` (native template construction) |
-| 185 | `expr-make-array` (native template construction) |
-| 186 | `operand-type-kind-eq` (data-returning probe) |
-| 187 | `expr-bool-literal` (native template construction) |
-| 188 | `expr-int-literal` (native template construction) |
-| 189 | `expr-list-fold-if` (native fold construction) |
-| 190 | `expr-clause-list-fold-if` (native fold construction) |
-| 191 | `pattern-binding-typed` |
-| 192 | `expr-resource-scope` |
-| 193 | `expr-let-scope` |
-| 194 | `expr-set-var` |
-| 195 | `expr-begin-unit` |
-| 196 | `expr-not` |
-| 197 | `expr-while` |
-| 198 | `syntax-name-fresh` |
-| 199 | `expr-begin` (native template construction) |
-| 200 | `expr-binary-op` (native template construction) |
-| 201 | `expr-unary-op` (native template construction) |
-| 202 | `expr-char-literal` (native template construction) |
-| 203 | `expr-unit-literal` (native template construction) |
-| 204 | `local-set` (computed-body locals) |
-| 205 | `local-get` (computed-body locals) |
-| 206 | `expr-var-from-value` (computed-body construction) |
-| 207 | `expr-bracket-clause` (native template construction) |
-| 208 | `expr-borrow` (native template construction) |
-| 209 | `string-value` (computed-body construction) |
-| 210 | `diagnostic-from-value` (computed-body diagnostic) |
-| 211 | `pattern-var` (native pattern construction) |
-| 212 | `expr-array-set` (native template construction) |
-| 213 | `let-binding` (native template construction) |
-| 214 | `let-binding-list-empty` (native template construction) |
-| 215 | `let-binding-list-cons` (native template construction) |
-| 216 | `expr-let` (native template construction) |
-| 218 | `type-var` (native type construction) |
-| 219 | `let-binding-typed` (native template construction) |
-| 220 | `type-scalar` (native type construction) |
-| 221 | `expr-int-from-data` (computed-body construction) |
-| 222 | `operand-expr-call?` |
-| 223 | `operand-expr-call-callee` |
-| 224 | `operand-expr-call-args` |
-| 225 | `operand-expr-int?` |
-| 226 | `operand-expr-int-value` |
-| 227 | `local-expr-list-length` |
-| 228 | `local-expr-list-nth` |
-| 229 | `expr-return` (native template construction) |
-| 230 | `expr-box` (native template construction) |
-| 231 | `expr-box-get` (native template construction) |
-| 232 | `expr-float-literal` (native template construction) |
-| 233 | `operand-expr-type-kind-eq` |
-| 234 | `operand-type-key-eq` |
-| 235 | `expr-cast` (native template construction) |
-| 236 | `expr-unsafe` (native template construction) |
-| 237 | `expr-ptr-read` (native template construction) |
-| 238 | `expr-ptr-to-int` (native template construction) |
-| 239 | `expr-string-data` (native template construction) |
-| 240 | `expr-ptr-write` (native template construction) |
-| 241 | `expr-ptr-offset` (native template construction) |
-| 242 | `expr-ptr-cast` (native template construction) |
-| 243 | `expr-string-from-bytes` (native template construction) |
-| 244 | `expr-array-data` (native template construction) |
-| 245 | `operand-expr-var?` |
-| 246 | `operand-expr-string-value` |
-| 247 | `value-i64` |
-| 248 | `operand-expr-var-name` |
-| 249 | `type-ptr` (native type construction) |
-| 250 | `type-box` (native type construction) |
-| 251 | `type-dyn-array` (native type construction) |
-| 252 | `local-string-length` |
-| 253 | `local-string-ref` |
-| 254 | `local-string-slice` |
-| 255 | `expr-string-from-value` (computed-body construction) |
-| 256 | `operand-expr-string?` |
-| 257 | `type-array` (native type construction) |
-| 258 | `type-ref` (native type construction) |
-| 259 | `expr-struct-get-from-value` (computed-body construction) |
-| 260 | `pattern-variant-from-value` (computed-body construction) |
-| 261 | `match-arm-list-cons-from-values` (computed-body construction) |
-| 262 | `expr-tuple` (native template construction) |
-
-`comptime-error` and `stdlib.comptime.error` are not separate operations; they
-call `diagnostic` and return status `1`. `type-info` returns a host-owned
-reflection value with the public `TypeInfo` shape. Compiled code that inspects
-reflection must lower to `type-info` plus the scalar reflection callbacks above
-or ordinary value code over handles returned by those callbacks; it must not
-use compiled-only helper ids. A host must report any callback id outside the
-catalog as a bad request (status `4`).
+Macro diagnostics call the named `diagnostic` callback and return status
+`1`. `fuel-check` returns status `2` when the expansion has exhausted its
+fuel. Native traps and explicit aborts use status `3`. Malformed arguments,
+bad handles, and invalid scratch requests return status `4`. Adding an
+operation requires a distinct callback function, one unique registry row, and
+the same name at its producer emit site; there is no number to allocate or
+renumber.
 
 The image fills the writable registration record before returning success. The
-v1 registration record keeps the 48-byte header shape and appends the macro
+v2 registration record keeps the 48-byte header shape and appends the macro
 entry table:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic little-endian u64 for ASCII `TLCIIMAG` |
-| 8 | 8 | Host callback ABI version used by the image (`1`) |
+| 8 | 8 | Host callback ABI version used by the image (`2`) |
 | 16 | 8 | Registration record byte size; must be at least `64` |
 | 24 | 8 | Opaque image context pointer for later dispatch, or `0` |
-| 32 | 8 | Reserved, must be `0` in v1 |
-| 40 | 8 | Reserved, must be `0` in v1 |
+| 32 | 8 | Reserved, must be `0` |
+| 40 | 8 | Reserved, must be `0` |
 | 48 | 8 | Macro entry table pointer, or `0` when the image registers no macros |
 | 56 | 8 | Macro entry record count; must be `0` when the table pointer is `0` |
 
 Each macro entry record is 32 bytes and is owned by the image for the lifetime
-of the mapped tlci image:
+of the mapping:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Macro name byte pointer |
 | 8 | 8 | Macro name byte length |
 | 16 | 8 | Macro entry function pointer |
-| 24 | 8 | Reserved, must be `0` in v1 |
+| 24 | 8 | Reserved, must be `0` |
 
 A macro entry function uses the host C ABI:
 
@@ -5226,36 +5082,25 @@ A macro entry function uses the host C ABI:
 | 5 | pointer-sized integer | Address of one writable result-handle slot |
 | return | `i64` status | Same status values as the host callbacks |
 
-Macro operands, generated `Expr` values, reflected metadata values, and strings
-cross this boundary only as host-owned opaque handles or scalar values. Native
-macro code must construct public `Expr`/reflection values through the callback
-catalog above and must not mutate compiler AST/typechecker structures directly.
-The host creates a fresh expansion session/scratch arena for one macro
-invocation. On diagnostic, fuel exhaustion, native abort, or any nonzero status,
-the host discards that session state; only diagnostics already recorded through
-callbacks survive. Successful expansion commits exactly the result handle
-written by the macro entry.
+Macro operands, generated `Expr` values, reflected metadata, and strings cross
+this boundary only as host-owned handles or scalar values. Native macro code
+constructs public values through named callbacks and must not mutate compiler
+AST/typechecker structures directly. The host creates a fresh session for one
+macro invocation. On diagnostic, fuel exhaustion, abort, or any other nonzero
+status, it discards that session state; only recorded diagnostics survive.
+Successful expansion commits exactly one result handle.
 
-Native-comptime helpers that can invoke a host callback use the same
-status/out-slot convention internally: image context, host context, and the
-expansion/session context are carried through the helper call graph; the helper
-returns `0` only after committing its result out-slot and returns any nonzero
-callback status to its caller unchanged. A macro entry must immediately unwind
-that nonzero status without committing its public result slot. This is the
-insertion boundary for deterministic fuel checks: a call or loop-backedge probe
-invokes `fuel-check` with the current contexts and uses the same status unwind,
-without image-global per-invocation state.
+Native-comptime helpers carry image context, host context, and session context
+through their call graph. A status-returning helper immediately unwinds a
+nonzero result without committing its public result slot. This is the
+deterministic fuel-check insertion boundary for calls and loop backedges.
 
-Compatibility is append-only. Future ABI versions may require larger byte-size
-values and assign callback, operation, macro-entry, or registration fields
-after the v1 ranges above, but they must not reinterpret the v1 offsets or
-operation ids. A v1 loader accepts larger records when the magic, ABI version,
-minimum byte size, required callback pointers, macro table/count consistency,
-and reserved-zero fields are valid, and ignores unknown tails. ABI version
-mismatches are diagnostics naming the unsupported callback ABI version. The
-embedded stdlib comptime tier and package tlci images use this same callback
-table, entry symbol, registration record, macro-entry function shape, and
-operation catalog; there is no separate compiled-only path.
+ABI v2 accepts larger raw callback and registration records when their magic,
+exact ABI version, minimum byte size, required pointers, table/count
+consistency, and reserved-zero fields are valid; unknown tails are ignored.
+Format, callback-ABI, and registration version mismatches are diagnostics.
+Stale v1 images are rejected rather than rebound. The embedded stdlib tier and
+package images use this same named-import linker and callback registry.
 
 The metadata section is UTF-8/ASCII S-expression text with stable field order:
 
@@ -5271,7 +5116,7 @@ S-expressions, empty required sections, bad magic/version/arch/ABI/hash, and
 truncated section ranges are diagnostics.
 
 Metadata schema v2 keeps the container format version and callback ABI version
-at `1`. It retains the v1 fields and may append `spmd-callables` after
+at `2`. It retains the v1 fields and may append `spmd-callables` after
 `package`:
 
 ```lisp test=ignore name=tlci-metadata-schema-v2 reason="tlci metadata S-expression, not TypeLisp source"
@@ -5311,9 +5156,9 @@ target-independent TypeLisp linker symbol in the package runtime archive.
 Helper names and signatures are nonempty. Metadata v1 images continue to parse
 and emit without this field and remain byte-layout compatible.
 
-Metadata-only tlci files are valid: rodata, code, fixups, entries, and symbols
-are all empty. Emission is deterministic: an image's layout and content hash
-round-trip byte-identically.
+Metadata-only tlci files are valid: rodata, code, fixups, entries, symbols, and
+imports are all empty. Emission is deterministic: an image's layout and
+content hash round-trip byte-identically.
 
 `typelisp inspect <file.tlci>` parses a tlci image with the same validation
 path as loaders and prints a stable human-readable header, section table, and

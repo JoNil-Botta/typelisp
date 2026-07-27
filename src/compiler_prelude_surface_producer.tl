@@ -51,9 +51,17 @@
               (surface_svec.push (&mut items) path))
             (set! index (+ index 1)))))
       (let
-        [out : (Array String) (surface_svec.to-array (& items))]
+        [out (make-array String (surface_svec.len (& items)))]
+        [copy-index : i64 0]
         [sort-index : i64 1]
         (begin
+          (while (< copy-index (surface_svec.len (& items)))
+            (begin
+              (array-set!
+                out
+                copy-index
+                (surface_svec.get (& items) copy-index ""))
+              (set! copy-index (+ copy-index 1))))
           (while (< sort-index (array-length out))
             (let
               [value : String (array-ref out sort-index)]

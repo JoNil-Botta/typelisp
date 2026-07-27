@@ -80,12 +80,10 @@
   [first : String]
   [second : String]
   [message : String]) : unit
-  (let
-    [values : (Array String) (svec.to-array items)]
-    (begin
-      (args-api-assert-i64-eq (array-length values) 2 message)
-      (args-api-assert-string-eq (array-ref values 0) first message)
-      (args-api-assert-string-eq (array-ref values 1) second message))))
+  (begin
+    (args-api-assert-i64-eq (svec.len items) 2 message)
+    (args-api-assert-string-eq (svec.get items 0 "") first message)
+    (args-api-assert-string-eq (svec.get items 1 "") second message)))
 
 (define (args-api-assert-vec3
   [items : (& items svec.Vec)]
@@ -93,13 +91,11 @@
   [second : String]
   [third : String]
   [message : String]) : unit
-  (let
-    [values : (Array String) (svec.to-array items)]
-    (begin
-      (args-api-assert-i64-eq (array-length values) 3 message)
-      (args-api-assert-string-eq (array-ref values 0) first message)
-      (args-api-assert-string-eq (array-ref values 1) second message)
-      (args-api-assert-string-eq (array-ref values 2) third message))))
+  (begin
+    (args-api-assert-i64-eq (svec.len items) 3 message)
+    (args-api-assert-string-eq (svec.get items 0 "") first message)
+    (args-api-assert-string-eq (svec.get items 1 "") second message)
+    (args-api-assert-string-eq (svec.get items 2 "") third message)))
 
 (test
   args-api-empty-argv

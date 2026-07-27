@@ -933,21 +933,16 @@
   [first : String]
   [second : String]
   [message : String]) : unit
-  (let
-    [values : (Array String) (svec.to-array items)]
-    (begin
-      (test-assert-i64-eq
-        (array-length values)
-        2
-        (str_cat.str-cat message " count"))
-      (test-assert-owned-string-eq
-        (array-ref values 0)
-        first
-        (str_cat.str-cat message " first"))
-      (test-assert-owned-string-eq
-        (array-ref values 1)
-        second
-        (str_cat.str-cat message " second")))))
+  (begin
+    (test-assert-i64-eq (svec.len items) 2 (str_cat.str-cat message " count"))
+    (test-assert-owned-string-eq
+      (svec.get items 0 "")
+      first
+      (str_cat.str-cat message " first"))
+    (test-assert-owned-string-eq
+      (svec.get items 1 "")
+      second
+      (str_cat.str-cat message " second"))))
 
 ;: Assert that a string vector contains exactly three strings.
 (define (test-assert-string-vec3
@@ -956,25 +951,20 @@
   [second : String]
   [third : String]
   [message : String]) : unit
-  (let
-    [values : (Array String) (svec.to-array items)]
-    (begin
-      (test-assert-i64-eq
-        (array-length values)
-        3
-        (str_cat.str-cat message " count"))
-      (test-assert-owned-string-eq
-        (array-ref values 0)
-        first
-        (str_cat.str-cat message " first"))
-      (test-assert-owned-string-eq
-        (array-ref values 1)
-        second
-        (str_cat.str-cat message " second"))
-      (test-assert-owned-string-eq
-        (array-ref values 2)
-        third
-        (str_cat.str-cat message " third")))))
+  (begin
+    (test-assert-i64-eq (svec.len items) 3 (str_cat.str-cat message " count"))
+    (test-assert-owned-string-eq
+      (svec.get items 0 "")
+      first
+      (str_cat.str-cat message " first"))
+    (test-assert-owned-string-eq
+      (svec.get items 1 "")
+      second
+      (str_cat.str-cat message " second"))
+    (test-assert-owned-string-eq
+      (svec.get items 2 "")
+      third
+      (str_cat.str-cat message " third"))))
 
 ;: Exercise an empty argv sequence.
 (define (test-empty-argv) : unit

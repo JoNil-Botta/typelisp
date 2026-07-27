@@ -9,7 +9,8 @@ of a file or module.
 These are the uses that should move to generated vectors or vector/slice-style
 borrowed APIs.
 
-- `stdlib/vector.tl`: public growable sequences use generated modules such as
+- `stdlib/vector.tl`: public growable sequences use generated modules with
+  compiler-private `__tl_dyn-array` backing such as
   `(import stdlib.vector)` plus
   `(import (vector.vector i64) as ivec)`, whose reads take `&` and mutators take
   `&mut`.
@@ -28,8 +29,7 @@ borrowed APIs.
 These unsized arrays should stay isolated until private-buffer or byte-buffer
 surfaces replace them.
 
-- Collection internals in `stdlib/vector.tl`, `stdlib/vector_slice.tl`,
-  `stdlib/queue.tl`, `stdlib/hashmap.tl`,
+- Collection internals in `stdlib/queue.tl`, `stdlib/hashmap.tl`,
   `stdlib/set.tl`, and `stdlib/text_buf*.tl`.
 - Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/byte_buf_core.tl`,
   `stdlib/ffi.tl`,
@@ -56,15 +56,16 @@ array-backed storage.
   `tests/integration/two_phase_mutable_call_borrow.tl`, and matching
   `tests/safety/*array*.tl` fixtures cover dynamic-array typing, bounds,
   borrow, move, and lowering behavior.
-- `tests/spmd/*.tl` and SPMD integration tests use dynamic arrays as the current
-  contiguous source/destination surface. The public SPMD vector/slice migration
-  is separate from ordinary collection migration.
+- Most `tests/spmd/*.tl` fixtures intentionally use dynamic arrays to cover the
+  low-level contiguous source/destination surface. The public
+  `vector_slice_surface_i64.tl` fixture instead takes Vec/Slice values and
+  infers private backing borrows without caller-authored dynamic-array types.
 - `tests/integration/thread_safe_array_i64.tl` and thread runtime fixtures cover
   the currently implemented `thread.spawn-array-i64` / `thread.join-array-i64`
   aggregate transfer surface.
-- `stdlib/tests/vector_slice_escape.tl` and vector/slice inline tests keep
-  explicit array conversion coverage for `from-array`, `to-array`, and slice
-  views.
+- `stdlib/tests/vector_slice_escape.tl` and vector/slice inline tests cover
+  Vec-backed slice lifetimes, traversal, mutation, and the owned `to-vec` copy
+  boundary without public dynamic-array conversions.
 
 ## Follow-Up Rule
 

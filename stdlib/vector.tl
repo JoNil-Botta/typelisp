@@ -1,10 +1,10 @@
 ;# Generated concrete vector family (collections v1).
 ;#
-;# A growable, owned sequence built on the fixed `(Array T)` primitive: a
-;# backing array plus a live-element count (`len`). Capacity is the backing array
-;# length; `push` doubles the backing array when it is full, copying the live
-;# prefix into the larger array. Each generated module has a stable namespace
-;# keyed by its element type.
+;# A growable, owned sequence with private dynamic backing storage plus a
+;# live-element count (`len`). Capacity is the backing buffer length; `push`
+;# doubles that buffer when it is full, copying the live prefix into the larger
+;# buffer. Each generated module has a stable namespace keyed by its element
+;# type.
 ;#
 ;# Mutating operations take `&mut Vec`: `set`, `push`, `pop`, and `reverse!`
 ;# update the backing array in place, while `push` grows that array when needed.
@@ -15,19 +15,20 @@
 ;# `(vector T)` emits the full API. Append-oriented users can import
 ;# `(vector T core)` to emit only `Vec`, construction, length/capacity,
 ;# bounds-checked get/set, push, and their storage/growth helpers. Core mode
-;# does not construct iterator, clone/pop, conversion, map/fold, reverse, or
+;# does not construct iterator, clone/pop, map/fold, reverse, or
 ;# contains declarations, so non-cloneable aggregate elements remain usable.
 ;# Full mode instantiates `stdlib.eq` structural equality for `contains?`;
 ;# element types unsupported by generated equality can still use core mode
 ;# when containment and the other full helpers are not required.
 ;#
 ;# Generated family metadata is type-agnostic. Struct and enum element
-;# instantiations use the same `(Array T)` storage and `array-ref`/`array-set!`
+;# instantiations use the same private dynamic storage and
+;# `array-ref`/`array-set!`
 ;# move pattern as scalar and `String` families: `push`/`set!` move the element
 ;# into a live slot, `pop` moves the last live element out with the shrunk
-;# vector, and copying/growth/snapshot helpers move the live prefix into fresh
-;# arrays. The same source API works whether aggregate elements occupy handle
-;# slots or are stored inline in the backing array.
+;# vector, and growth helpers move the live prefix into fresh storage. The same
+;# source API works whether aggregate elements occupy handle slots or are stored
+;# inline in the backing buffer.
 ;#
 ;# Shared traversal uses the generated `iterator` / `next` pair. Its
 ;# `IterNext.Item` payload is a borrow of the original vector element, so
@@ -126,7 +127,7 @@
         (match `(begin
           (defstruct Iter
             (:lifetimes source)
-            (slots (& source (Array ,T)))
+            (slots (& source (__tl_dyn-array ,T)))
             (len i64)
             (index i64))
           (defenum IterNext
@@ -135,7 +136,7 @@
             (Item (& source ,T)))
           (defstruct IterMut
             (:lifetimes source)
-            (slots (&mut source (Array ,T)))
+            (slots (&mut source (__tl_dyn-array ,T)))
             (len i64)
             (index i64))
           (defenum IterMutNext
@@ -208,8 +209,8 @@
         ;; Only constructed elements enter storage. The liveness bitmap is the
         ;; single source of truth for cleanup after consuming extraction.
         (defstruct SlotState
-          (slots (Array ,T))
-          (live (Array bool)))
+          (slots (__tl_dyn-array ,T))
+          (live (__tl_dyn-array bool)))
         (define (cleanup-slot-state [state : SlotState]) : unit
           (let
             [index : i64 0]
@@ -233,7 +234,7 @@
           (state SlotState (:cleanup cleanup-slot-state))
           (len i64)
           (capacity i64))
-        (define (slots [v : (& v Vec)]) : (& v (Array ,T))
+        (define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array ,T))
           (& (struct-get (struct-get v state) slots)))
         (define (len [v : (& v Vec)]) : i64
           (struct-get v len))
@@ -291,7 +292,7 @@
         (defstruct Vec
           (slots (__tl_dyn-array ,T))
           (len i64))
-        (define (slots [v : (& v Vec)]) : (& v (Array ,T))
+        (define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array ,T))
           (& (struct-get v slots)))
         (define (len [v : (& v Vec)]) : i64
           (struct-get v len))
@@ -319,8 +320,8 @@
             (array-set! (struct-get v slots) index value)
             unit))
         (define (copy-range!
-          [dst : (&mut dst (Array ,T))]
-          [src : (& src (Array ,T))]
+          [dst : (&mut dst (__tl_dyn-array ,T))]
+          [src : (& src (__tl_dyn-array ,T))]
           [index : i64]
           [count : i64]) : unit
           (if (>= index count)
@@ -336,7 +337,7 @@
               (if (< old-cap 1)
                 1
                 (* old-cap 2))]
-            [bigger : (Array ,T) (make-array ,T new-cap)]
+            [bigger : (__tl_dyn-array ,T) (make-array ,T new-cap)]
             (begin
               (copy-range! (&mut bigger) (& (struct-get v slots)) 0 n)
               (set! (struct-get v slots) bigger))))
@@ -407,7 +408,7 @@
                 ;; iterator state.
                 (defstruct ,iter-name
                   (:lifetimes source)
-                  (slots (& source (Array ,T)))
+                  (slots (& source (__tl_dyn-array ,T)))
                   (len i64)
                   (index i64))
                 (defenum ,iter-next-name
@@ -419,7 +420,7 @@
                 ;; the vector lifetime rather than the short borrow of the state.
                 (defstruct ,iter-mut-name
                   (:lifetimes source)
-                  (slots (&mut source (Array ,T)))
+                  (slots (&mut source (__tl_dyn-array ,T)))
                   (len i64)
                   (index i64))
                 ;; Mutable iteration is lending: an Item keeps the source borrow live,
@@ -432,8 +433,8 @@
                 ;; records which live-prefix slots still own values, so each Item
                 ;; can move exactly once through `array-take!`.
                 (defstruct ,into-iter-name
-                  (slots (Array ,T))
-                  (live (Array bool))
+                  (slots (__tl_dyn-array ,T))
+                  (live (__tl_dyn-array bool))
                   (len i64)
                   (index i64))
                 (defenum ,into-next-name
@@ -441,7 +442,7 @@
                   (Item ,T))
                 (define (slots-mut [v : (&mut v ,vec-name)]) : (&mut
                     v
-                    (Array ,T))
+                    (__tl_dyn-array ,T))
                   (&mut (struct-get v slots)))
                 (define (len-mut [v : (&mut v ,vec-name)]) : i64
                   (struct-get v len))
@@ -477,9 +478,9 @@
                         (,iter-mut-item-name
                           (,iter-mut-borrow-name
                             (array-ref (struct-get iter slots) index)))))))
-                (define (into-live-slots [len : i64]) : (Array bool)
+                (define (into-live-slots [len : i64]) : (__tl_dyn-array bool)
                   (let
-                    [live : (Array bool) (make-array bool len)]
+                    [live : (__tl_dyn-array bool) (make-array bool len)]
                     [index : i64 0]
                     (begin
                       (while (< index len)
@@ -490,8 +491,8 @@
                 (define (into-iterator [v : ,vec-name (:consume)]) : ,into-iter-name
                   (let
                     [len : i64 (struct-get v len)]
-                    [live : (Array bool) (into-live-slots len)]
-                    [slots : (Array ,T) (struct-get v slots)]
+                    [live : (__tl_dyn-array bool) (into-live-slots len)]
+                    [slots : (__tl_dyn-array ,T) (struct-get v slots)]
                     (,into-iter-name slots live len 0)))
                 (define (into-next [iter : (&mut state ,into-iter-name)]) : ,into-next-name
                   (let
@@ -521,45 +522,8 @@
                       (begin
                         (set! (struct-get v len) last-index)
                         (,pop-ok-name value)))))
-                (define (from-array [src : (& src (Array ,T))] [count : i64]) : ,vec-name
-                  (let
-                    [n : i64
-                      (if (< count 0)
-                        0
-                        count)]
-                    [items : (Array ,T)
-                      (make-array
-                        ,T
-                        (if (< n 1)
-                          1
-                          n))]
-                    (begin
-                      (copy-range! (&mut items) src 0 n)
-                      (,vec-name items n))))
-                (define (to-array [v : (& v ,vec-name)]) : (Array ,T)
-                  (let
-                    [n : i64 (len v)]
-                    [out : (Array ,T) (make-array ,T n)]
-                    (begin
-                      (copy-range! (&mut out) (slots v) 0 n)
-                      out)))
-                (define (extend-from
-                  [v : (&mut v ,vec-name)]
-                  [src : (& src (Array ,T))]
-                  [index : i64]
-                  [count : i64]) : unit
-                  (if (>= index count)
-                    unit
-                    (begin
-                      (push v (array-ref src index))
-                      (extend-from v src (+ index 1) count))))
-                (define (extend
-                  [v : (&mut v ,vec-name)]
-                  [src : (& src (Array ,T))]
-                  [count : i64]) : unit
-                  (extend-from v src 0 count))
                 (define (reverse-range!
-                  [items : (&mut items (Array ,T))]
+                  [items : (&mut items (__tl_dyn-array ,T))]
                   [lo : i64]
                   [hi : i64]) : unit
                   (if (>= lo hi)

@@ -30,6 +30,14 @@
 (define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
   (compiler-cfg-bind cfgs name 1))
 
+(define (compiler-cfg-union-value) : i64
+  2)
+
+;; Static analyses can request both arms of a simple cfg expression. The
+;; predicate remains enabled for declarations and one-armed expressions.
+(define (compiler-cfg-union [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
+  (compiler-cfg-bind cfgs name (compiler-cfg-union-value)))
+
 (define (compiler-cfg-bind
   [cfgs : sym_i64_env.SymI64Env]
   [name : String]
@@ -62,3 +70,8 @@
   [dispatch : sym_i64_env.SymI64Env]
   [name-id : i64]) : bool
   (sym_i64_env.sym-i64-contains-id dispatch (compiler-cfg-key-id name-id)))
+
+(define (compiler-cfg-union? [dispatch : sym_i64_env.SymI64Env] [name-id : i64]) : bool
+  (=
+    (sym_i64_env.sym-i64-lookup-id-or dispatch (compiler-cfg-key-id name-id) 0)
+    (compiler-cfg-union-value)))

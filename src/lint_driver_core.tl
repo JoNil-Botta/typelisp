@@ -12,6 +12,7 @@
 (import "compiler_check_core.tl")
 (import compiler_target_cfg_core as target_cfg)
 (import "compiler_load.tl")
+(import compiler_intern as ci)
 (import "lint_core.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
@@ -1458,7 +1459,10 @@
   (decls SelfhostLintDeadDecls)
   (roots lint_svec.Vec))
 
-(define (selfhost-lint-package-dead-cfgs) : sym_i64_env.SymI64Env
+(define selfhost-lint-dead-import-aliases : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+
+(define (selfhost-lint-package-dead-cfgs-base) : sym_i64_env.SymI64Env
   ;; Package reachability models the configurations built by the shipped
   ;; bootstrap and the repository's compiler instrumentation gates. Keep this
   ;; list explicit: arbitrary caller cfgs must stay inactive rather than
@@ -1469,17 +1473,20 @@
         (compiler-cfg-enable
           (compiler-cfg-enable
             (compiler-cfg-enable
-              (compiler-cfg-enable
-                (compiler-cfg-enable
-                  (compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
-                  "scratch-vreg")
-                "embedded-stdlib-tlci")
-              "compiler-build-identity")
-            "compile-profile")
-          "compile-profile-summary")
-        "regalloc-census")
-      "scavenge-census")
-    "scavenge-self-check"))
+              (compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
+              "scratch-vreg")
+            "embedded-stdlib-tlci")
+          "compiler-build-identity")
+        "compile-profile")
+      "regalloc-census")
+    "scavenge-census"))
+
+(define (selfhost-lint-package-dead-cfgs) : sym_i64_env.SymI64Env
+  (compiler-cfg-union
+    (compiler-cfg-enable
+      (selfhost-lint-package-dead-cfgs-base)
+      "scavenge-self-check")
+    "compile-profile-summary"))
 
 (define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (Array
     SelfhostLintDeadDecl)
@@ -1600,6 +1607,10 @@
     name
     (string.append module (string.append "/" name))))
 
+(define (selfhost-lint-dead-default-module-from-path [path : String]) : String
+  (parse-ast-dotted-import-default-alias
+    (compiler-load-canonical-module-id-from-path path)))
+
 (define (selfhost-lint-dead-qualified-ref-prefix) : String
   "\nselfhost-lint-dead-qualified-ref\n")
 
@@ -1633,6 +1644,30 @@
     (if (or (< sep 0) (>= (+ sep 1) name-len))
       ""
       (string.substring ref (+ sep 1) (- name-len (+ sep 1))))))
+
+(define (selfhost-lint-dead-qualified-ref-module-separator [key : String]) : i64
+  (string.index-of-byte (& key) 0 (cast '/' : u8)))
+
+(define (selfhost-lint-dead-remap-qualified-ref [ref : String]) : String
+  (let
+    [key : String (selfhost-lint-dead-qualified-ref-key ref)]
+    [sep : i64 (selfhost-lint-dead-qualified-ref-module-separator key)]
+    (if (< sep 1)
+      ref
+      (let
+        [module : String (string.substring key 0 sep)]
+        [target : i64
+          (sym_i64_env.sym-i64-lookup-id-or
+            selfhost-lint-dead-import-aliases
+            (ci.intern module)
+            -1)]
+        (if (< target 0)
+          ref
+          (selfhost-lint-dead-qualified-ref
+            (string.append
+              (intern-str target)
+              (string.substring key sep (- (string.string-length key) sep)))
+            (selfhost-lint-dead-qualified-ref-fallback ref)))))))
 
 (define (selfhost-lint-dead-source-root-prefix) : String
   "\nselfhost-lint-dead-source-root\n")
@@ -1670,13 +1705,13 @@
       (string.substring root (+ sep 1) (- n (+ sep 1))))))
 
 (define (selfhost-lint-dead-local-ref [module : String] [ref : String]) : String
-  (if (or
-    (= (string.string-length module) 0)
-    (selfhost-lint-dead-qualified-ref? ref))
-    ref
-    (selfhost-lint-dead-qualified-ref
-      (selfhost-lint-dead-module-key module ref)
-      ref)))
+  (if (selfhost-lint-dead-qualified-ref? ref)
+    (selfhost-lint-dead-remap-qualified-ref ref)
+    (if (= (string.string-length module) 0)
+      ref
+      (selfhost-lint-dead-qualified-ref
+        (selfhost-lint-dead-module-key module ref)
+        ref))))
 
 (define (selfhost-lint-dead-localize-refs-from
   [module : String]
@@ -2473,16 +2508,10 @@
   [reportable : bool]) : SelfhostLintDeadScan
   (let
     [node-refs : lint_svec.Vec (selfhost-lint-dead-localize-refs module refs)]
+    [key : String (selfhost-lint-dead-module-key module name)]
     (selfhost-lint-dead-scan-add-decl
       scan
-      (SelfhostLintDeadDecl
-        path
-        name
-        (selfhost-lint-dead-module-key module name)
-        span
-        node-refs
-        false
-        reportable))))
+      (SelfhostLintDeadDecl path name key span node-refs false reportable))))
 
 (define (selfhost-lint-dead-add-visible-node
   [scan : SelfhostLintDeadScan]
@@ -2767,28 +2796,80 @@
             reportable
             rest)])]))
 
+(define (selfhost-lint-dead-import-aliases-from-decls
+  [decls : AstDeclList]
+  [aliases : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) aliases]
+    [(AstDeclListStep.Cons decl rest)
+      (match decl
+        [(AstDecl.Import
+            _
+            (AstImportSpec.Spec
+              (AstImportKind.Module)
+              _
+              (AstMaybeModuleName.Some target)
+              (AstMaybeImportAlias.Some alias)
+              _))
+          (selfhost-lint-dead-import-aliases-from-decls
+            rest
+            (sym_i64_env.sym-i64-bind-id
+              aliases
+              alias
+              (parse-ast-dotted-import-default-alias-id target)))]
+        [(AstDecl.ModuleBody _ body-box)
+          (selfhost-lint-dead-import-aliases-from-decls
+            rest
+            (selfhost-lint-dead-import-aliases-from-decls
+              (box-get body-box)
+              aliases))]
+        [_ (selfhost-lint-dead-import-aliases-from-decls rest aliases)])]))
+
+(define (selfhost-lint-dead-scan-source-with-cfgs
+  [scan : SelfhostLintDeadScan]
+  [path : String]
+  [source : String]
+  [visible-root : bool]
+  [reportable : bool]
+  [cfgs : sym_i64_env.SymI64Env]) : SelfhostLintDeadScan
+  (match (parse-ast-source-diagnostic-with-cfg path source cfgs)
+    [(ResultAstProgramDiagnostic.Ok program)
+      (match program
+        [(AstProgram.Program decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (begin
+              (set!
+                selfhost-lint-dead-import-aliases
+                (selfhost-lint-dead-import-aliases-from-decls
+                  decls
+                  (sym_i64_env.sym-i64-empty)))
+              (selfhost-lint-dead-scan-decls
+                scan
+                path
+                (selfhost-lint-dead-default-module-from-path path)
+                source
+                visible-root
+                reportable
+                decls)))])]
+    [(ResultAstProgramDiagnostic.Err _) scan]))
+
 (define (selfhost-lint-dead-scan-source
   [scan : SelfhostLintDeadScan]
   [path : String]
   [source : String]
   [visible-root : bool]
   [reportable : bool]) : SelfhostLintDeadScan
-  (match (parse-ast-source-diagnostic-with-cfg
+  ;; Branch-union cfgs preserve both supported sides of an expression in one
+  ;; AST, so large compiler sources are parsed once while reachability still
+  ;; observes summary and detailed compile-profile references.
+  (selfhost-lint-dead-scan-source-with-cfgs
+    scan
     path
     source
-    (selfhost-lint-package-dead-cfgs))
-    [(ResultAstProgramDiagnostic.Ok program)
-      (match program
-        [(AstProgram.Program decls-box)
-          (selfhost-lint-dead-scan-decls
-            scan
-            path
-            ""
-            source
-            visible-root
-            reportable
-            (box-get decls-box))])]
-    [(ResultAstProgramDiagnostic.Err _) scan]))
+    visible-root
+    reportable
+    (selfhost-lint-package-dead-cfgs)))
 
 (define (selfhost-lint-dead-clone-string-vec-from
   [source : lint_svec.Vec]
@@ -4617,7 +4698,7 @@ end
   "(define (main) : i64
   (+ (cfg scratch-vreg (scratch-vreg-helper) 40)
      (+ (cfg embedded-stdlib-tlci (embedded-helper) 1)
-        (cfg compile-profile (profile-helper) 1))))
+        (cfg compile-profile (profile-mode-helper) 1))))
 (cfg scratch-vreg
   (define (scratch-vreg-helper) : i64 7))
 (cfg scratch-vreg
@@ -4628,6 +4709,13 @@ end
   (define (embedded-unused) : i64 2))
 (cfg compile-profile
   (define (profile-helper) : i64 1))
+(cfg compile-profile-summary
+  (define (profile-summary-helper) : i64 1))
+(cfg compile-profile
+  (define (profile-mode-helper) : i64
+    (cfg compile-profile-summary
+      (profile-summary-helper)
+      (profile-helper))))
 (cfg compile-profile
   (define (profile-unused) : i64 2))
 (cfg lint-fixture-experimental
@@ -4648,6 +4736,21 @@ end
 (import left)
 (import right)
 (define (main) : i64 (right.live))")
+
+(define (selfhost-lint-package-dead-moduleless-left-source) : String
+  "(define (live) : i64 (helper))
+(define (helper) : i64 1)
+(define (unused) : i64 11)")
+
+(define (selfhost-lint-package-dead-moduleless-right-source) : String
+  "(define (live) : i64 (helper))
+(define (helper) : i64 2)
+(define (unused) : i64 12)")
+
+(define (selfhost-lint-package-dead-moduleless-main-source) : String
+  "(import pkg.left as first)
+(import pkg.right as second)
+(define (main) : i64 (+ (first.live) (second.live)))")
 
 (define (selfhost-lint-unused-assignment-init-source) : String
   "(define (main) : i64
@@ -5276,6 +5379,39 @@ end
       (struct-get scan roots)
       0)))
 
+(define (selfhost-lint-package-dead-moduleless-import-fixture-decls) : SelfhostLintDeadDecls
+  (let
+    [left-source : String (selfhost-lint-package-dead-moduleless-left-source)]
+    [right-source : String (selfhost-lint-package-dead-moduleless-right-source)]
+    [main-source : String (selfhost-lint-package-dead-moduleless-main-source)]
+    [scan-left : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (lint_svec.new))
+        "pkg/left.tl"
+        left-source
+        false
+        true)]
+    [scan-right : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        scan-left
+        "pkg/right.tl"
+        right-source
+        false
+        true)]
+    [scan-main : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        scan-right
+        "pkg/main.tl"
+        main-source
+        false
+        true)]
+    [scan : SelfhostLintDeadScan
+      (selfhost-lint-package-dead-add-kind-roots scan-main CompilerPkgKindBin)]
+    (selfhost-lint-dead-mark-roots-from
+      (struct-get scan decls)
+      (struct-get scan roots)
+      0)))
+
 (define (selfhost-lint-package-dead-import-closure-fixture-ok?) : bool
   (let
     [root : String "target/lint_dead_root_import_closure"]
@@ -5426,6 +5562,18 @@ end
         "pkg/right.tl"
         (selfhost-lint-package-dead-qualified-right-source)
         qualified-import-decls)]
+    [moduleless-import-decls : SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-moduleless-import-fixture-decls)]
+    [moduleless-left-count : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/left.tl"
+        (selfhost-lint-package-dead-moduleless-left-source)
+        moduleless-import-decls)]
+    [moduleless-right-count : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/right.tl"
+        (selfhost-lint-package-dead-moduleless-right-source)
+        moduleless-import-decls)]
     [finding : LintFinding (lint-dead-code-finding "unused" (lint-no-span))]
     [finding-message : String (struct-get finding message)]
     [dead-suggestion : String (lint-rule-dead-code-suggestion)]
@@ -5449,6 +5597,11 @@ end
       [(not (selfhost-lint-package-dead-import-closure-fixture-ok?)) 58]
       [(not (= qualified-left-count 1)) 59]
       [(not (= qualified-right-count 0)) 60]
+      ;; Moduleless dotted imports use their path-derived default aliases.
+      ;; Duplicate declaration/helper names in both imported modules remain
+      ;; distinct, while each unrelated sibling remains dead.
+      [(not (= moduleless-left-count 1)) 64]
+      [(not (= moduleless-right-count 1)) 65]
       [(not
           (string.eq
             (lint-rule-message (lint-rule-dead-code-id))

@@ -1034,6 +1034,9 @@
 (define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-enable cfgs name))
 
+(define (compiler-cfg-union [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
+  (cfg_core.compiler-cfg-union cfgs name))
+
 (define (compiler-cfg-bind
   [cfgs : sym_i64_env.SymI64Env]
   [name : String]
@@ -1055,6 +1058,16 @@
   [dispatch : sym_i64_env.SymI64Env]
   [name-id : i64]) : bool
   (cfg_core.compiler-cfg-enabled? dispatch name-id))
+
+(define (compiler-cfg-union? [dispatch : sym_i64_env.SymI64Env] [name-id : i64]) : bool
+  (cfg_core.compiler-cfg-union? dispatch name-id))
+
+(define (compiler-cfg-predicate-union?
+  [dispatch : sym_i64_env.SymI64Env]
+  [predicate : reader.SpannedSexpr]) : bool
+  (match predicate
+    [(reader.SpannedSexpr.Sym name _) (compiler-cfg-union? dispatch name)]
+    [_ false]))
 
 (define (compiler-cfg-eval-list-all
   [dispatch : sym_i64_env.SymI64Env]
@@ -4651,20 +4664,48 @@
             [(reader.SpannedSexpr.Cons else-expr end _)
               (match (reader.sp-node-get end)
                 [(reader.SpannedSexpr.Nil _)
-                  (match (compiler-cfg-eval dispatch (reader.sp-node-get pred))
-                    [(ResultCompilerCfg.Ok enabled)
-                      (match (parse-ast-expr-with-pools
-                        dispatch
-                        pools
-                        (if enabled
-                          (reader.sp-node-get then-expr)
-                          (reader.sp-node-get else-expr)))
-                        [(ResultAstExpr.Ok parsed)
-                          (ResultAstMaybeExpr.SomeExpr parsed)]
-                        [(ResultAstExpr.Err message)
-                          (ResultAstMaybeExpr.Err message)])]
-                    [(ResultCompilerCfg.Err message)
-                      (ResultAstMaybeExpr.Err message)])]
+                  (if (compiler-cfg-predicate-union?
+                    dispatch
+                    (reader.sp-node-get pred))
+                    (match (parse-ast-expr-with-pools
+                      dispatch
+                      pools
+                      (reader.sp-node-get then-expr))
+                      [(ResultAstExpr.Ok parsed-then)
+                        (match (parse-ast-expr-with-pools
+                          dispatch
+                          pools
+                          (reader.sp-node-get else-expr))
+                          [(ResultAstExpr.Ok parsed-else)
+                            (let
+                              [exprs : AstExprList (ast-expr-list-new)]
+                              (begin
+                                (ast-expr-list-push (&mut exprs) parsed-then)
+                                (ast-expr-list-push (&mut exprs) parsed-else)
+                                (ResultAstMaybeExpr.SomeExpr
+                                  (ast-node-pool-context-expr-push
+                                    pools
+                                    (AstExpr.Begin exprs)))))]
+                          [(ResultAstExpr.Err message)
+                            (ResultAstMaybeExpr.Err message)])]
+                      [(ResultAstExpr.Err message)
+                        (ResultAstMaybeExpr.Err message)])
+                    (match (compiler-cfg-eval
+                      dispatch
+                      (reader.sp-node-get pred))
+                      [(ResultCompilerCfg.Ok enabled)
+                        (match (parse-ast-expr-with-pools
+                          dispatch
+                          pools
+                          (if enabled
+                            (reader.sp-node-get then-expr)
+                            (reader.sp-node-get else-expr)))
+                          [(ResultAstExpr.Ok parsed)
+                            (ResultAstMaybeExpr.SomeExpr parsed)]
+                          [(ResultAstExpr.Err message)
+                            (ResultAstMaybeExpr.Err message)])]
+                      [(ResultCompilerCfg.Err message)
+                        (ResultAstMaybeExpr.Err message)]))]
                 [_
                   (ResultAstMaybeExpr.Err
                     "parse: cfg expression expects predicate and expression")])]
@@ -12704,6 +12745,8 @@
   (let
     [feature-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable (compiler-cfg-empty) "feature")]
+    [feature-union-cfg : sym_i64_env.SymI64Env
+      (compiler-cfg-union (compiler-cfg-empty) "feature")]
     [windows-feature-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable feature-cfg "windows")]
     (and
@@ -12714,6 +12757,10 @@
       (compiler-parse-cfg-decl-count-ok?
         "(cfg feature (define answer : i64 42))"
         feature-cfg
+        1)
+      (compiler-parse-cfg-decl-count-ok?
+        "(cfg feature (define answer : i64 42))"
+        feature-union-cfg
         1)
       (compiler-parse-cfg-decl-count-ok?
         "(cfg feature (define))"
@@ -12739,6 +12786,12 @@
         "(define (main) : i64 (cfg feature (if) 42))"
         (compiler-cfg-empty)
         1)
+      (compiler-parse-ok-with-cfg?
+        "(define (main) : i64 (cfg feature 42 (if)))"
+        feature-cfg)
+      (compiler-parse-cfg-error?
+        "(define (main) : i64 (cfg feature 42 (if)))"
+        feature-union-cfg)
       (compiler-parse-cfg-error?
         "(define (main) : i64 (cfg feature (if) 42))"
         feature-cfg))))

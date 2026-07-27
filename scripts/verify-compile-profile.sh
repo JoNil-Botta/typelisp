@@ -1005,8 +1005,10 @@ fi
 # archaeology that took (#5764).
 #
 # Current headroom, used against capacity: expr macro_expand
-# 2690103/2752512 after transformer-owned hygiene nodes started reusing their
-# CTFE slots instead of retaining a second complete expression tree. The
+# 2800228/2818048 after #5847 replaced the shared numeric callback dispatcher
+# with direct per-name host functions. Transformer-owned hygiene nodes still
+# reuse their CTFE slots instead of retaining a second complete expression
+# tree. The
 # compiler-state isolation work in
 # #5751 moved expr typecheck across its next boundary at 1639597/1703936;
 # type macro_expand 20018/20480, type typecheck 5887/6144. All four sit within a
@@ -1044,7 +1046,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 42 65536 40 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 40 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 26 65536 40 \

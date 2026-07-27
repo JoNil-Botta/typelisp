@@ -35,7 +35,7 @@
   (Err String))
 
 (define compiler-tlci-native-import-cap : i64
-  64)
+  256)
 (define compiler-tlci-native-fixup-cap : i64
   1024)
 
@@ -209,10 +209,29 @@
 ;; labels, then bss labels. Externs resolve to their GOT slot. -1 = unknown.
 ;; Module-qualified spellings of host externs resolve to the canonical ABI
 ;; symbol (generated entry modules qualify the extern user id).
+(define (compiler-tlci-native-prefix?
+  [text : (& text str)]
+  [prefix : (& prefix str)]) : bool
+  (let
+    [text-len : i64 (string.string-length text)]
+    [prefix-len : i64 (string.string-length prefix)]
+    (and
+      (>= text-len prefix-len)
+      (string.eq (string.substring text 0 prefix-len) prefix))))
+
 (define (compiler-tlci-native-extern-alias [name : String]) : String
-  (if (string.eq name "_tl_tlci_entries_comptime_host_invoke")
-    "_tl_comptime_host_invoke"
-    name))
+  (let
+    [qualified-prefix : String "_tl_tlci_entries_comptime_host_"]
+    (if (compiler-tlci-native-prefix? name qualified-prefix)
+      (string.append
+        "_tl_comptime_host_"
+        (string.substring
+          name
+          (string.string-length qualified-prefix)
+          (-
+            (string.string-length name)
+            (string.string-length qualified-prefix))))
+      name)))
 
 (define (compiler-tlci-native-index-offset
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
@@ -913,18 +932,58 @@
           (set! index (+ index 1))))
       out)))
 
-;; Map an extern value name to its stable host-import ABI id, or -1 when the
-;; name is not a known host entry point (the closed host ABI).
-(define (compiler-tlci-native-host-import-id [name : (& name str)]) : i64
-  (if (or
-    (string.eq name "_tl_comptime_host_invoke")
-    (string.eq name "_tl_tlci_entries_comptime_host_invoke"))
-    tlci-host-import-invoke
-    -1))
+;; Reverse the compiler's assembly-safe spelling for the callback-name
+;; alphabet. Callback names contain lowercase ASCII, hyphens, `?`, and `->`;
+;; they never contain source underscores, so this transform is unambiguous.
+(define (compiler-tlci-native-host-import-unmangle [encoded : (& encoded str)]) : String
+  (let
+    [index : i64 0]
+    [len : i64 (string.string-length encoded)]
+    [out : String ""]
+    (begin
+      (while (< index len)
+        (cond
+          [(and
+              (<= (+ index 9) len)
+              (string.eq (string.substring encoded index 9) "_question"))
+            (begin
+              (set! out (string.append out "?"))
+              (set! index (+ index 9)))]
+          [(and
+              (<= (+ index 3) len)
+              (string.eq (string.substring encoded index 3) "_gt"))
+            (begin
+              (set! out (string.append out ">"))
+              (set! index (+ index 3)))]
+          [(= (string.string-ref encoded index) '_')
+            (begin
+              (set! out (string.append out "-"))
+              (set! index (+ index 1)))]
+          [else
+            (begin
+              (set! out (string.append out (string.substring encoded index 1)))
+              (set! index (+ index 1)))]))
+      out)))
 
-;; Emit the layout's imports as a tlci imports section: one 16-byte record
-;; (got-slot-offset u64, host-import-id u64) per import. Unknown host entry
-;; names abort with an empty result and a message, keeping the ABI closed.
+;; Map a canonical extern symbol to the source-level name resolved by the
+;; built-in linker. Unknown externs stay closed at package time.
+(define (compiler-tlci-native-host-import-name [symbol : (& symbol str)]) : String
+  (let
+    [prefix : String "_tl_comptime_host_"]
+    (if (and
+      (compiler-tlci-native-prefix? symbol prefix)
+      (> (string.string-length symbol) (string.string-length prefix)))
+      (let
+        [suffix : String
+          (string.substring
+            symbol
+            (string.string-length prefix)
+            (- (string.string-length symbol) (string.string-length prefix)))]
+        (compiler-tlci-native-host-import-unmangle (& suffix)))
+      "")))
+
+;; Emit count + fixed records + packed names. Records contain a GOT slot and
+;; section-relative name slice; the loader resolves the name before W^X.
 (defenum ResultCompilerTlciNativeImports
   (Ok (Array u8))
   (Err String))
@@ -933,33 +992,58 @@
   [layout : (& layout CompilerTlciNativeLayout)]) : ResultCompilerTlciNativeImports
   (let
     [count : i64 (struct-get layout import-count)]
-    [out : (Array u8)
-      (array.make-array u8 (* count tlci-section-import-record-size))]
+    [names : (Array String) (array.make-array String count)]
     [index : i64 0]
+    [names-len : i64 0]
     [error : String ""]
     (begin
       (while (and (= (string.string-length error) 0) (< index count))
         (let
-          [id : i64
-            (compiler-tlci-native-host-import-id
+          [name : String
+            (compiler-tlci-native-host-import-name
               (array-ref (struct-get layout import-names) index))]
-          (if (< id 0)
+          (if (= (string.string-length name) 0)
             (set!
               error
               (string.append
                 "tlci native image: unknown host import "
                 (array-ref (struct-get layout import-names) index)))
-            (let
-              [record : i64 (* index tlci-section-import-record-size)]
-              (begin
-                (tlci-set-u64!
-                  out
-                  record
-                  (array-ref (struct-get layout import-offsets) index))
-                (tlci-set-u64! out (+ record 8) id)
-                (set! index (+ index 1)))))))
+            (begin
+              (array-set! names index name)
+              (set! names-len (+ names-len (string.string-length name)))
+              (set! index (+ index 1))))))
       (if (= (string.string-length error) 0)
-        (ResultCompilerTlciNativeImports.Ok out)
+        (if (= count 0)
+          (ResultCompilerTlciNativeImports.Ok (array.make-array u8 0))
+          (let
+            [records-end : i64
+              (+
+                tlci-section-import-header-size
+                (* count tlci-section-import-record-size))]
+            [out : (Array u8) (array.make-array u8 (+ records-end names-len))]
+            [name-offset : i64 records-end]
+            (begin
+              (tlci-set-u64! out 0 count)
+              (set! index 0)
+              (while (< index count)
+                (let
+                  [record : i64
+                    (+
+                      tlci-section-import-header-size
+                      (* index tlci-section-import-record-size))]
+                  [name : String (array-ref names index)]
+                  [name-len : i64 (string.string-length name)]
+                  (begin
+                    (tlci-set-u64!
+                      out
+                      record
+                      (array-ref (struct-get layout import-offsets) index))
+                    (tlci-set-u64! out (+ record 8) name-offset)
+                    (tlci-set-u64! out (+ record 16) name-len)
+                    (tlci-put-string! out name-offset name)
+                    (set! name-offset (+ name-offset name-len))
+                    (set! index (+ index 1)))))
+              (ResultCompilerTlciNativeImports.Ok out))))
         (ResultCompilerTlciNativeImports.Err error)))))
 
 (cfg
@@ -1137,33 +1221,68 @@
 
 (cfg
   test
+  (define (compiler-tlci-native-test-host-import-names-ok?) : bool
+    (let
+      [question : String "_tl_comptime_host_operand_expr_call_question"]
+      [arrow : String "_tl_comptime_host_int__gtstring"]
+      (and
+        (string.eq
+          (compiler-tlci-native-host-import-name (& question))
+          "operand-expr-call?")
+        (string.eq
+          (compiler-tlci-native-host-import-name (& arrow))
+          "int->string")))))
+
+(cfg
+  test
   (define (compiler-tlci-native-test-emitters-ok?) : bool
-    (match (compiler-tlci-native-layout-image
-      (compiler-tlci-native-test-image "_tl_comptime_host_invoke" false false))
-      [(ResultCompilerTlciNativeLayout.Err _) false]
-      [(ResultCompilerTlciNativeLayout.Ok layout)
-        (let
-          [fixups : (Array u8) (compiler-tlci-native-emit-fixups (& layout))]
-          (and
-            (= (array-length fixups) tlci-section-fixup-record-size)
-            (= (tlci-read-u64 fixups 0) 32)
-            (match (compiler-tlci-native-emit-imports (& layout))
-              [(ResultCompilerTlciNativeImports.Err _) false]
-              [(ResultCompilerTlciNativeImports.Ok imports)
-                (and
-                  (= (array-length imports) tlci-section-import-record-size)
-                  (= (tlci-read-u64 imports 0) 40)
-                  (= (tlci-read-u64 imports 8) tlci-host-import-invoke))])
-            (match (compiler-tlci-native-layout-image
-              (compiler-tlci-native-test-image "host-a" false false))
-              [(ResultCompilerTlciNativeLayout.Err _) false]
-              [(ResultCompilerTlciNativeLayout.Ok other)
-                (match (compiler-tlci-native-emit-imports (& other))
-                  [(ResultCompilerTlciNativeImports.Err message)
+    (and
+      (compiler-tlci-native-test-host-import-names-ok?)
+      (match (compiler-tlci-native-layout-image
+        (compiler-tlci-native-test-image
+          "_tl_comptime_host_fuel-check"
+          false
+          false))
+        [(ResultCompilerTlciNativeLayout.Err _) false]
+        [(ResultCompilerTlciNativeLayout.Ok layout)
+          (let
+            [fixups : (Array u8) (compiler-tlci-native-emit-fixups (& layout))]
+            (and
+              (= (array-length fixups) tlci-section-fixup-record-size)
+              (= (tlci-read-u64 fixups 0) 32)
+              (match (compiler-tlci-native-emit-imports (& layout))
+                [(ResultCompilerTlciNativeImports.Err _) false]
+                [(ResultCompilerTlciNativeImports.Ok imports)
+                  (and
+                    (=
+                      (array-length imports)
+                      (+
+                        tlci-section-import-header-size
+                        (+ tlci-section-import-record-size 10)))
+                    (= (tlci-read-u64 imports 0) 1)
+                    (=
+                      (tlci-read-u64 imports tlci-section-import-header-size)
+                      40)
                     (string.eq
-                      message
-                      "tlci native image: unknown host import host-a")]
-                  [(ResultCompilerTlciNativeImports.Ok _) false])])))])))
+                      (tlci-bytes->string
+                        imports
+                        (tlci-read-u64
+                          imports
+                          (+ tlci-section-import-header-size 8))
+                        (tlci-read-u64
+                          imports
+                          (+ tlci-section-import-header-size 16)))
+                      "fuel-check"))])
+              (match (compiler-tlci-native-layout-image
+                (compiler-tlci-native-test-image "host-a" false false))
+                [(ResultCompilerTlciNativeLayout.Err _) false]
+                [(ResultCompilerTlciNativeLayout.Ok other)
+                  (match (compiler-tlci-native-emit-imports (& other))
+                    [(ResultCompilerTlciNativeImports.Err message)
+                      (string.eq
+                        message
+                        "tlci native image: unknown host import host-a")]
+                    [(ResultCompilerTlciNativeImports.Ok _) false])])))]))))
 
 (cfg
   test
@@ -1174,8 +1293,8 @@
         (let
           [bytes : (Array u8) (struct-get layout bytes)]
           (and
-            (= (struct-get layout size) 560)
-            (= (array-length bytes) 560)
+            (= (struct-get layout size) 2096)
+            (= (array-length bytes) 2096)
             (= (struct-get layout bss-size) 16)
             (= (struct-get layout import-count) 1)
             (string.eq (array-ref (struct-get layout import-names) 0) "host-a")

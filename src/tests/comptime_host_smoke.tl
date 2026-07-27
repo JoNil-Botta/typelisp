@@ -1,11 +1,11 @@
 ;; comptime_host_smoke.tl - Compiler-owned native-comptime host session smoke.
 ;;
-;; Drives the callback-invoke dispatcher directly through the operation
-;; sequence a natively compiled `(f ,x)` quasiquote body will emit, and
+;; Drives the named host callbacks directly through the sequence a natively
+;; compiled `(f ,x)` quasiquote body will emit, and
 ;; asserts the committed result is the same AST shape the interpreted
 ;; builders produce. It also checks macro-call provenance, fold hygiene-marker
 ;; parity, and the status contract for stale cookies, empty-stack and duplicate
-;; commits, unknown operations, and fuel exhaustion. Refs #5212, #5475, #5503,
+;; commits, and fuel exhaustion. Refs #5212, #5475, #5503,
 ;; #4870.
 (import "../compiler_embedded_stdlib_tlci.tl")
 (import "../tlci_core.tl")
@@ -26,10 +26,13 @@
       (ptr->int (string-data name)))
     : i64))
 
-(define (comptime-host-smoke-invoke [operation : i64] [a : i64] [b : i64]) : i64
-  (compiler-comptime-host-invoke comptime-host-smoke-cookie operation a b 0))
+(define (comptime-host-smoke-invoke
+  [callback : (-> i64 i64 i64 i64 i64)]
+  [a : i64]
+  [b : i64]) : i64
+  (callback comptime-host-smoke-cookie a b 0))
 
-;; Build `(f ,x)` through the dispatcher: callee var, empty list, operand
+;; Build `(f ,x)` through named callbacks: callee var, empty list, operand
 ;; push, append, call, commit.
 (define (comptime-host-smoke-construct-ok?) : bool
   (let
@@ -52,28 +55,47 @@
         comptime-host-smoke-cookie
         (ctfe-reflect-info-list-empty))
       (and
-        (= (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0) 0)
         (=
           (comptime-host-smoke-invoke
-            tlci-host-callback-op-expr-var
+            compiler-comptime-host-callback-fuel-check
+            0
+            0)
+          0)
+        (=
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-expr-var
             (comptime-host-smoke-name-ptr callee-name)
             (string.string-length callee-name))
           0)
         (=
-          (comptime-host-smoke-invoke tlci-host-callback-op-expr-list-empty 0 0)
-          0)
-        (=
-          (comptime-host-smoke-invoke tlci-host-callback-op-push-operand 0 0)
-          0)
-        (=
           (comptime-host-smoke-invoke
-            tlci-host-callback-op-expr-list-append
+            compiler-comptime-host-callback-expr-list-empty
             0
             0)
           0)
-        (= (comptime-host-smoke-invoke tlci-host-callback-op-expr-call 0 0) 0)
         (=
-          (comptime-host-smoke-invoke tlci-host-callback-op-commit-result 0 0)
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-push-operand
+            0
+            0)
+          0)
+        (=
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-expr-list-append
+            0
+            0)
+          0)
+        (=
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-expr-call
+            0
+            0)
+          0)
+        (=
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-commit-result
+            0
+            0)
           0)
         (compiler-comptime-host-result-ready?)
         (comptime-host-smoke-result-shape-ok? pools operand-node)))))
@@ -125,29 +147,26 @@
         (ctfe-reflect-info-list-empty))
       (let
         [matched : i64
-          (compiler-comptime-host-invoke
+          (compiler-comptime-host-callback-operand-type-kind-eq
             comptime-host-smoke-cookie
-            tlci-host-callback-op-operand-type-kind-eq
             0
             (comptime-host-smoke-name-ptr i64-kind)
             (string.string-length i64-kind))]
         [mismatched : i64
-          (compiler-comptime-host-invoke
+          (compiler-comptime-host-callback-operand-type-kind-eq
             comptime-host-smoke-cookie
-            tlci-host-callback-op-operand-type-kind-eq
             0
             (comptime-host-smoke-name-ptr string-kind)
             (string.string-length string-kind))]
         [malformed : i64
-          (compiler-comptime-host-invoke
+          (compiler-comptime-host-callback-operand-type-kind-eq
             comptime-host-smoke-cookie
-            tlci-host-callback-op-operand-type-kind-eq
             1
             (comptime-host-smoke-name-ptr i64-kind)
             (string.string-length i64-kind))]
         [after-data : i64
           (comptime-host-smoke-invoke
-            tlci-host-callback-op-expr-bool-literal
+            compiler-comptime-host-callback-expr-bool-literal
             1
             0)]
         [ok : bool
@@ -225,7 +244,10 @@
 
 (define (comptime-host-smoke-commit-result!) : bool
   (=
-    (comptime-host-smoke-invoke tlci-host-callback-op-commit-result 0 0)
+    (comptime-host-smoke-invoke
+      compiler-comptime-host-callback-commit-result
+      0
+      0)
     tlci-host-callback-status-ok))
 
 ;; The reflection builder test below batches several independent logical
@@ -367,49 +389,49 @@
             ;; Count callbacks return data and consume their pushed type.
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-struct-field-count
+                compiler-comptime-host-callback-struct-field-count
                 0
                 0)
               2)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 2
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-tuple-element-count
+                compiler-comptime-host-callback-tuple-element-count
                 0
                 0)
               2)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 1
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-enum-variant-count
+                compiler-comptime-host-callback-enum-variant-count
                 0
                 0)
               2)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 1
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-enum-variant-payload-count
+                compiler-comptime-host-callback-enum-variant-payload-count
                 0
                 0)
               2)
@@ -417,13 +439,13 @@
             ;; reflection.
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-struct-field-name
+                compiler-comptime-host-callback-struct-field-name
                 1
                 0)
               0)
@@ -435,19 +457,19 @@
             ;; generated object keys.
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-struct-field-name
+                compiler-comptime-host-callback-struct-field-name
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-string-from-value
+                compiler-comptime-host-callback-expr-string-from-value
                 0
                 0)
               0)
@@ -458,25 +480,25 @@
             ;; this exact `"." + field-name` shape is used by struct hashing.
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-string-value
+                compiler-comptime-host-callback-string-value
                 (comptime-host-smoke-name-ptr ".")
                 1)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-struct-field-name
+                compiler-comptime-host-callback-struct-field-name
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-string-append
+                compiler-comptime-host-callback-string-append
                 0
                 0)
               0)
@@ -485,13 +507,13 @@
             (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-struct-field-type
+                compiler-comptime-host-callback-struct-field-type
                 0
                 0)
               0)
@@ -500,13 +522,13 @@
             (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 2
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-tuple-element-type
+                compiler-comptime-host-callback-tuple-element-type
                 1
                 0)
               0)
@@ -515,13 +537,13 @@
             (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 1
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-enum-variant-name
+                compiler-comptime-host-callback-enum-variant-name
                 0
                 0)
               0)
@@ -530,13 +552,13 @@
             (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 1
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-enum-variant-payload-type
+                compiler-comptime-host-callback-enum-variant-payload-type
                 0
                 1)
               0)
@@ -546,25 +568,25 @@
             ;; Dynamic projections consume reflected names/indexes.
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 3
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-struct-field-name
+                compiler-comptime-host-callback-struct-field-name
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-struct-get-from-value
+                compiler-comptime-host-callback-expr-struct-get-from-value
                 0
                 0)
               0)
@@ -573,13 +595,13 @@
             (comptime-host-smoke-consume-test-result!)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 3
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-tuple-ref
+                compiler-comptime-host-callback-expr-tuple-ref
                 1
                 0)
               0)
@@ -590,63 +612,69 @@
             ;; generated payload bindings.
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 3
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 1
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-enum-variant-name
+                compiler-comptime-host-callback-enum-variant-name
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-string-value
+                compiler-comptime-host-callback-string-value
                 (comptime-host-smoke-name-ptr prefix)
                 (string.string-length prefix))
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-pattern-list-bindings
+                compiler-comptime-host-callback-pattern-list-bindings
                 2
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-pattern-variant-from-value
+                compiler-comptime-host-callback-pattern-variant-from-value
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-push-operand
+                compiler-comptime-host-callback-push-operand
                 4
                 0)
               0)
             (=
-              (comptime-host-smoke-invoke tlci-host-callback-op-match-arm 0 0)
-              0)
-            (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-match-arm-list-empty
+                compiler-comptime-host-callback-match-arm
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-match-arm-list-cons-from-values
+                compiler-comptime-host-callback-match-arm-list-empty
                 0
                 0)
               0)
             (=
-              (comptime-host-smoke-invoke tlci-host-callback-op-expr-match 0 0)
+              (comptime-host-smoke-invoke
+                compiler-comptime-host-callback-match-arm-list-cons-from-values
+                0
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
+                compiler-comptime-host-callback-expr-match
+                0
+                0)
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-reflected-match?
@@ -679,13 +707,13 @@
           (and
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-string-value
+                compiler-comptime-host-callback-string-value
                 (comptime-host-smoke-name-ptr prefix)
                 (string.string-length prefix))
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-pattern-list-bindings
+                compiler-comptime-host-callback-pattern-list-bindings
                 2
                 0)
               tlci-host-callback-status-fuel-exhausted))]
@@ -719,25 +747,25 @@
           (and
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-bool-literal
+                compiler-comptime-host-callback-expr-bool-literal
                 1
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-bool-literal
+                compiler-comptime-host-callback-expr-bool-literal
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-list-fold-if
+                compiler-comptime-host-callback-expr-list-fold-if
                 0
                 1)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-commit-result
+                compiler-comptime-host-callback-commit-result
                 0
                 0)
               0)
@@ -781,25 +809,25 @@
           (and
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-bool-literal
+                compiler-comptime-host-callback-expr-bool-literal
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-bool-literal
+                compiler-comptime-host-callback-expr-bool-literal
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-clause-list-fold-if
+                compiler-comptime-host-callback-expr-clause-list-fold-if
                 0
                 0)
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-commit-result
+                compiler-comptime-host-callback-commit-result
                 0
                 0)
               0)
@@ -831,18 +859,21 @@
           (and
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-var
+                compiler-comptime-host-callback-expr-var
                 (comptime-host-smoke-name-ptr macro-name)
                 (string.string-length macro-name))
               0)
             (=
               (comptime-host-smoke-invoke
-                tlci-host-callback-op-expr-list-empty
+                compiler-comptime-host-callback-expr-list-empty
                 0
                 0)
               0)
             (=
-              (comptime-host-smoke-invoke tlci-host-callback-op-expr-call 0 0)
+              (comptime-host-smoke-invoke
+                compiler-comptime-host-callback-expr-call
+                0
+                0)
               0)
             (ctfe-result-may-contain-macro?))]
         (begin
@@ -868,23 +899,32 @@
         (ctfe-reflect-info-list-empty))
       (let
         [first-push : i64
-          (comptime-host-smoke-invoke tlci-host-callback-op-push-operand 0 0)]
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-push-operand
+            0
+            0)]
         [first-commit : i64
-          (comptime-host-smoke-invoke tlci-host-callback-op-commit-result 0 0)]
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-commit-result
+            0
+            0)]
         [second-push : i64
           (comptime-host-smoke-invoke
-            tlci-host-callback-op-expr-bool-literal
+            compiler-comptime-host-callback-expr-bool-literal
             0
             0)]
         [second-commit : i64
-          (comptime-host-smoke-invoke tlci-host-callback-op-commit-result 0 0)]
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-commit-result
+            0
+            0)]
         [first-result-kept : bool
           (match (compiler-comptime-host-result-value)
             [(CompilerCtfeValue.Bool flag) flag]
             [_ false])]
         [latched : i64
           (comptime-host-smoke-invoke
-            tlci-host-callback-op-expr-unit-literal
+            compiler-comptime-host-callback-expr-unit-literal
             0
             0)]
         [ok : bool
@@ -899,8 +939,8 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
-;; Statuses: stale cookie, empty-stack commit, unknown operation, and fuel
-;; exhaustion all answer without committing state.
+;; Statuses: stale cookie, empty-stack commit, and fuel exhaustion all answer
+;; without committing state.
 (define (comptime-host-smoke-status-ok?) : bool
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -916,21 +956,19 @@
         (ctfe-reflect-info-list-empty))
       (and
         (=
-          (compiler-comptime-host-invoke
-            0x9999
-            tlci-host-callback-op-expr-list-empty
-            0
+          (compiler-comptime-host-callback-expr-list-empty 0x9999 0 0 0)
+          tlci-host-callback-status-bad-request)
+        (=
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-commit-result
             0
             0)
           tlci-host-callback-status-bad-request)
         (=
-          (comptime-host-smoke-invoke tlci-host-callback-op-commit-result 0 0)
-          tlci-host-callback-status-bad-request)
-        (=
-          (comptime-host-smoke-invoke 9999 0 0)
-          tlci-host-callback-status-bad-request)
-        (=
-          (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0)
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-fuel-check
+            0
+            0)
           tlci-host-callback-status-bad-request)
         (begin
           (compiler-comptime-host-session-close!)
@@ -942,12 +980,23 @@
             comptime-host-smoke-cookie
             (ctfe-reflect-info-list-empty))
           true)
-        (= (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0) 0)
         (=
-          (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0)
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-fuel-check
+            0
+            0)
+          0)
+        (=
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-fuel-check
+            0
+            0)
           tlci-host-callback-status-fuel-exhausted)
         (=
-          (comptime-host-smoke-invoke tlci-host-callback-op-expr-list-empty 0 0)
+          (comptime-host-smoke-invoke
+            compiler-comptime-host-callback-expr-list-empty
+            0
+            0)
           tlci-host-callback-status-fuel-exhausted)
         (not (compiler-comptime-host-result-ready?))))))
 
@@ -955,7 +1004,10 @@
   (begin
     (compiler-comptime-host-session-close!)
     (=
-      (comptime-host-smoke-invoke tlci-host-callback-op-expr-list-empty 0 0)
+      (comptime-host-smoke-invoke
+        compiler-comptime-host-callback-expr-list-empty
+        0
+        0)
       tlci-host-callback-status-bad-request)))
 
 (define (comptime-host-smoke-table-ok?) : bool

@@ -5,7 +5,7 @@ specified by `SPEC.md` section 5.17.1. The specification remains the only
 normative format description.
 
 The current container format is version 2: a 176-byte header plus an imports
-section that binds GOT slots to host entry points by stable ABI id. Format
+section that binds GOT slots to host entry points by name. Format
 version 1 has been removed — there were no external consumers — so the parser
 and emitter target v2 only.
 
@@ -33,7 +33,7 @@ offsets, records, and rolling content hash against `SPEC.md` section 5.17.1.
 
 The valid fixture layout is summarized for review:
 
-| Fixture | Build hash | Metadata | Rodata | Code | Fixups | Entries | Symbols |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| `valid-metadata-only.tlci` | `tlci-v1-corpus` | `corpus.empty` 1.0.0 | 0 | 0 | 0 | 0 | 0 |
-| `valid-sections.tlci` | `tlci-v1-corpus` | `corpus.sections` 1.0.0 | 4 bytes at 4096 | 3 bytes at 8192 | 1 | 1 | 1 |
+| Fixture | Build hash | Metadata | Rodata | Code | Fixups | Entries | Symbols | Imports |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `valid-metadata-only.tlci` | `tlci-v2-corpus` | `corpus.empty` 1.0.0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `valid-sections.tlci` | `tlci-v2-corpus` | `corpus.sections` 1.0.0 | 4 bytes at 4096 | 3 bytes at 8192 | 1 | 1 | 1 | 0 |

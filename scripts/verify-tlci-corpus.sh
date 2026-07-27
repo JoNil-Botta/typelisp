@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Verify immutable TLCI v1 bytes and public inspector output on every CI host.
+# Verify immutable TLCI v2 bytes and public inspector output on every CI host.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -9,7 +9,7 @@ cd "$ROOT"
 case "$(uname -s)" in
     Linux* | MINGW* | MSYS* | CYGWIN*) ;;
     *)
-        echo "TLCI v1 corpus verification is unsupported on this host" >&2
+        echo "TLCI v2 corpus verification is unsupported on this host" >&2
         exit 1
         ;;
 esac
@@ -32,14 +32,14 @@ if [ ! -x "$COMPILER" ]; then
 fi
 
 CORPUS=tests/tlci/corpus
-WORKDIR=target/tlci-v1-corpus
+WORKDIR=target/tlci-v2-corpus
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
 (cd "$CORPUS" && sha256sum -c SHA256SUMS >/dev/null)
 
 fail() {
-    echo "TLCI v1 corpus: $*" >&2
+    echo "TLCI v2 corpus: $*" >&2
     exit 1
 }
 
@@ -48,7 +48,7 @@ compare_file() {
     actual=$2
     label=$3
     if ! cmp -s "$expected" "$actual"; then
-        echo "TLCI v1 corpus: $label mismatch" >&2
+        echo "TLCI v2 corpus: $label mismatch" >&2
         diff -u "$expected" "$actual" >&2 || true
         exit 1
     fi

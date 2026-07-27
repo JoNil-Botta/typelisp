@@ -260,8 +260,11 @@
   (host-context i64)
   (reserved0 i64)
   (reserved1 i64)
-  (invoke-callback i64)
-  (abort-callback i64))
+  (reserved2 i64)
+  (abort-callback i64)
+  (import-names (Array String))
+  (import-callbacks (Array i64))
+  (import-count i64))
 
 (defstruct TlciImageRegistration
   (magic i64)
@@ -286,9 +289,9 @@
 (define tlci-host-arch-x86-64 : i64
   1)
 (define tlci-callback-abi-version : i64
-  1)
+  2)
 (define tlci-host-abi-version : i64
-  1)
+  2)
 (define tlci-image-entry-symbol : String
   "tlci_image_entry")
 (define tlci-image-entry-param-count : i64
@@ -319,7 +322,7 @@
   32)
 (define tlci-host-callback-table-reserved1-offset : i64
   40)
-(define tlci-host-callback-table-invoke-offset : i64
+(define tlci-host-callback-table-reserved2-offset : i64
   48)
 (define tlci-host-callback-table-abort-offset : i64
   56)
@@ -359,170 +362,170 @@
   3)
 (define tlci-host-callback-status-bad-request : i64
   4)
-(define tlci-host-callback-op-fuel-check : i64
-  1)
-(define tlci-host-callback-op-diagnostic : i64
-  2)
-(define tlci-host-callback-op-scratch-alloc : i64
-  3)
-(define tlci-host-callback-op-scratch-reset : i64
-  4)
-(define tlci-host-callback-op-expr-bool : i64
-  100)
-(define tlci-host-callback-op-expr-int : i64
-  101)
-(define tlci-host-callback-op-expr-string : i64
-  102)
-(define tlci-host-callback-op-expr-var : i64
-  103)
-(define tlci-host-callback-op-expr-struct-get : i64
-  104)
-(define tlci-host-callback-op-expr-tuple-ref : i64
-  105)
-(define tlci-host-callback-op-expr-struct-set : i64
-  106)
-(define tlci-host-callback-op-string-eq : i64
-  107)
-(define tlci-host-callback-op-string-concat : i64
-  108)
-(define tlci-host-callback-op-string-append : i64
-  109)
-(define tlci-host-callback-op-string-length : i64
-  110)
-(define tlci-host-callback-op-string-ref : i64
-  111)
-(define tlci-host-callback-op-string->int : i64
-  112)
-(define tlci-host-callback-op-int->string : i64
-  113)
-(define tlci-host-callback-op-expr-splice : i64
-  114)
-(define tlci-host-callback-op-expr-if : i64
-  115)
-(define tlci-host-callback-op-pattern-wildcard : i64
-  116)
-(define tlci-host-callback-op-pattern-binding : i64
-  117)
-(define tlci-host-callback-op-pattern-variant : i64
-  118)
-(define tlci-host-callback-op-pattern-list-empty : i64
-  119)
-(define tlci-host-callback-op-pattern-list-cons : i64
-  120)
-(define tlci-host-callback-op-match-arm : i64
-  121)
-(define tlci-host-callback-op-match-arm-list-empty : i64
-  122)
-(define tlci-host-callback-op-match-arm-list-cons : i64
-  123)
-(define tlci-host-callback-op-expr-match : i64
-  124)
-(define tlci-host-callback-op-expr-type : i64
-  125)
-(define tlci-host-callback-op-type-info : i64
-  126)
-(define tlci-host-callback-op-module-name : i64
-  127)
-(define tlci-host-callback-op-module-export-macro? : i64
-  128)
-(define tlci-host-callback-op-module-hook : i64
-  129)
-(define tlci-host-callback-op-type-kind : i64
-  130)
-(define tlci-host-callback-op-type-key : i64
-  131)
-(define tlci-host-callback-op-type-nominal-module : i64
-  132)
-(define tlci-host-callback-op-type-nominal-name : i64
-  133)
-(define tlci-host-callback-op-struct-field-count : i64
-  134)
-(define tlci-host-callback-op-struct-field-name : i64
-  135)
-(define tlci-host-callback-op-struct-field-type : i64
-  136)
-(define tlci-host-callback-op-enum-variant-count : i64
-  137)
-(define tlci-host-callback-op-enum-variant-name : i64
-  138)
-(define tlci-host-callback-op-enum-variant-payload-count : i64
-  139)
-(define tlci-host-callback-op-enum-variant-payload-type : i64
-  140)
-(define tlci-host-callback-op-array-element-type : i64
-  141)
-(define tlci-host-callback-op-array-length : i64
-  142)
-(define tlci-host-callback-op-array-dynamic? : i64
-  143)
-(define tlci-host-callback-op-tuple-element-count : i64
-  144)
-(define tlci-host-callback-op-tuple-element-type : i64
-  145)
-(define tlci-host-callback-op-function-param-count : i64
-  146)
-(define tlci-host-callback-op-function-param-type : i64
-  147)
-(define tlci-host-callback-op-function-return-type : i64
-  148)
-(define tlci-host-callback-op-expr-bool? : i64
-  149)
-(define tlci-host-callback-op-expr-bool-value : i64
-  150)
-(define tlci-host-callback-op-expr-if? : i64
-  151)
-(define tlci-host-callback-op-expr-if-cond : i64
-  152)
-(define tlci-host-callback-op-expr-if-then : i64
-  153)
-(define tlci-host-callback-op-expr-if-else : i64
-  154)
-(define tlci-host-callback-op-expr-list-length : i64
-  155)
-(define tlci-host-callback-op-expr-list-nth : i64
-  156)
-(define tlci-host-callback-op-expr-clause-first : i64
-  157)
-(define tlci-host-callback-op-expr-clause-second : i64
-  158)
-(define tlci-host-callback-op-expr-clause-list-length : i64
-  159)
-(define tlci-host-callback-op-expr-clause-list-nth : i64
-  160)
-(define tlci-host-callback-op-expr-clause-list->expr-list : i64
-  161)
-(define tlci-host-callback-op-expr-binding-clause-name : i64
-  162)
-(define tlci-host-callback-op-expr-binding-clause-has-type? : i64
-  163)
-(define tlci-host-callback-op-expr-binding-clause-type : i64
-  164)
-(define tlci-host-callback-op-expr-binding-clause-init : i64
-  165)
-(define tlci-host-callback-op-expr-binding-clause-list-length : i64
-  166)
-(define tlci-host-callback-op-expr-binding-clause-list-nth : i64
-  167)
-(define tlci-host-callback-op-expr-binding-clause-list->expr-list : i64
-  168)
-(define tlci-host-callback-op-pattern-list-bindings : i64
-  169)
-(define tlci-host-callback-op-type-cleanup-owning? : i64
-  170)
-(define tlci-host-callback-op-type-cleanup-function : i64
-  171)
-(define tlci-host-callback-op-expr-binary-data : i64
-  172)
-(define tlci-host-callback-op-box-element-type : i64
-  173)
-(define tlci-host-callback-op-expr-list-type-nth : i64
-  174)
-(define tlci-host-callback-op-module-value? : i64
-  175)
-(define tlci-host-callback-op-module-value-type : i64
-  176)
-(define tlci-host-callback-op-reference-element-type : i64
-  177)
+(define tlci-host-callback-name-fuel-check : String
+  "fuel-check")
+(define tlci-host-callback-name-diagnostic : String
+  "diagnostic")
+(define tlci-host-callback-name-scratch-alloc : String
+  "scratch-alloc")
+(define tlci-host-callback-name-scratch-reset : String
+  "scratch-reset")
+(define tlci-host-callback-name-expr-bool : String
+  "expr-bool")
+(define tlci-host-callback-name-expr-int : String
+  "expr-int")
+(define tlci-host-callback-name-expr-string : String
+  "expr-string")
+(define tlci-host-callback-name-expr-var : String
+  "expr-var")
+(define tlci-host-callback-name-expr-struct-get : String
+  "expr-struct-get")
+(define tlci-host-callback-name-expr-tuple-ref : String
+  "expr-tuple-ref")
+(define tlci-host-callback-name-expr-struct-set : String
+  "expr-struct-set")
+(define tlci-host-callback-name-string-eq : String
+  "string-eq")
+(define tlci-host-callback-name-string-concat : String
+  "string-concat")
+(define tlci-host-callback-name-string-append : String
+  "string-append")
+(define tlci-host-callback-name-string-length : String
+  "string-length")
+(define tlci-host-callback-name-string-ref : String
+  "string-ref")
+(define tlci-host-callback-name-string->int : String
+  "string->int")
+(define tlci-host-callback-name-int->string : String
+  "int->string")
+(define tlci-host-callback-name-expr-splice : String
+  "expr-splice")
+(define tlci-host-callback-name-expr-if : String
+  "expr-if")
+(define tlci-host-callback-name-pattern-wildcard : String
+  "pattern-wildcard")
+(define tlci-host-callback-name-pattern-binding : String
+  "pattern-binding")
+(define tlci-host-callback-name-pattern-variant : String
+  "pattern-variant")
+(define tlci-host-callback-name-pattern-list-empty : String
+  "pattern-list-empty")
+(define tlci-host-callback-name-pattern-list-cons : String
+  "pattern-list-cons")
+(define tlci-host-callback-name-match-arm : String
+  "match-arm")
+(define tlci-host-callback-name-match-arm-list-empty : String
+  "match-arm-list-empty")
+(define tlci-host-callback-name-match-arm-list-cons : String
+  "match-arm-list-cons")
+(define tlci-host-callback-name-expr-match : String
+  "expr-match")
+(define tlci-host-callback-name-expr-type : String
+  "expr-type")
+(define tlci-host-callback-name-type-info : String
+  "type-info")
+(define tlci-host-callback-name-module-name : String
+  "module-name")
+(define tlci-host-callback-name-module-export-macro? : String
+  "module-export-macro?")
+(define tlci-host-callback-name-module-hook : String
+  "module-hook")
+(define tlci-host-callback-name-type-kind : String
+  "type-kind")
+(define tlci-host-callback-name-type-key : String
+  "type-key")
+(define tlci-host-callback-name-type-nominal-module : String
+  "type-nominal-module")
+(define tlci-host-callback-name-type-nominal-name : String
+  "type-nominal-name")
+(define tlci-host-callback-name-struct-field-count : String
+  "struct-field-count")
+(define tlci-host-callback-name-struct-field-name : String
+  "struct-field-name")
+(define tlci-host-callback-name-struct-field-type : String
+  "struct-field-type")
+(define tlci-host-callback-name-enum-variant-count : String
+  "enum-variant-count")
+(define tlci-host-callback-name-enum-variant-name : String
+  "enum-variant-name")
+(define tlci-host-callback-name-enum-variant-payload-count : String
+  "enum-variant-payload-count")
+(define tlci-host-callback-name-enum-variant-payload-type : String
+  "enum-variant-payload-type")
+(define tlci-host-callback-name-array-element-type : String
+  "array-element-type")
+(define tlci-host-callback-name-array-length : String
+  "array-length")
+(define tlci-host-callback-name-array-dynamic? : String
+  "array-dynamic?")
+(define tlci-host-callback-name-tuple-element-count : String
+  "tuple-element-count")
+(define tlci-host-callback-name-tuple-element-type : String
+  "tuple-element-type")
+(define tlci-host-callback-name-function-param-count : String
+  "function-param-count")
+(define tlci-host-callback-name-function-param-type : String
+  "function-param-type")
+(define tlci-host-callback-name-function-return-type : String
+  "function-return-type")
+(define tlci-host-callback-name-expr-bool? : String
+  "expr-bool?")
+(define tlci-host-callback-name-expr-bool-value : String
+  "expr-bool-value")
+(define tlci-host-callback-name-expr-if? : String
+  "expr-if?")
+(define tlci-host-callback-name-expr-if-cond : String
+  "expr-if-cond")
+(define tlci-host-callback-name-expr-if-then : String
+  "expr-if-then")
+(define tlci-host-callback-name-expr-if-else : String
+  "expr-if-else")
+(define tlci-host-callback-name-expr-list-length : String
+  "expr-list-length")
+(define tlci-host-callback-name-expr-list-nth : String
+  "expr-list-nth")
+(define tlci-host-callback-name-expr-clause-first : String
+  "expr-clause-first")
+(define tlci-host-callback-name-expr-clause-second : String
+  "expr-clause-second")
+(define tlci-host-callback-name-expr-clause-list-length : String
+  "expr-clause-list-length")
+(define tlci-host-callback-name-expr-clause-list-nth : String
+  "expr-clause-list-nth")
+(define tlci-host-callback-name-expr-clause-list->expr-list : String
+  "expr-clause-list->expr-list")
+(define tlci-host-callback-name-expr-binding-clause-name : String
+  "expr-binding-clause-name")
+(define tlci-host-callback-name-expr-binding-clause-has-type? : String
+  "expr-binding-clause-has-type?")
+(define tlci-host-callback-name-expr-binding-clause-type : String
+  "expr-binding-clause-type")
+(define tlci-host-callback-name-expr-binding-clause-init : String
+  "expr-binding-clause-init")
+(define tlci-host-callback-name-expr-binding-clause-list-length : String
+  "expr-binding-clause-list-length")
+(define tlci-host-callback-name-expr-binding-clause-list-nth : String
+  "expr-binding-clause-list-nth")
+(define tlci-host-callback-name-expr-binding-clause-list->expr-list : String
+  "expr-binding-clause-list->expr-list")
+(define tlci-host-callback-name-pattern-list-bindings : String
+  "pattern-list-bindings")
+(define tlci-host-callback-name-type-cleanup-owning? : String
+  "type-cleanup-owning?")
+(define tlci-host-callback-name-type-cleanup-function : String
+  "type-cleanup-function")
+(define tlci-host-callback-name-expr-binary-data : String
+  "expr-binary-data")
+(define tlci-host-callback-name-box-element-type : String
+  "box-element-type")
+(define tlci-host-callback-name-expr-list-type-nth : String
+  "expr-list-type-nth")
+(define tlci-host-callback-name-module-value? : String
+  "module-value?")
+(define tlci-host-callback-name-module-value-type : String
+  "module-value-type")
+(define tlci-host-callback-name-reference-element-type : String
+  "reference-element-type")
 
 ;; Construction ops for natively compiled quasiquote bodies. Values under
 ;; construction live entirely on a compiler-owned session value stack, so the
@@ -531,63 +534,63 @@
 ;; appended list, push-operand pushes the macro operand named by immediate
 ;; `a`, expr-call pops an argument list then a callee and pushes the call
 ;; expression, and commit-result pops the stack top into the session result.
-;; All are additive ABI v1 ops -- the embedded image and its consumer are
-;; always the same source-bound binary. Refs #5212.
-(define tlci-host-callback-op-expr-list-empty : i64
-  178)
-(define tlci-host-callback-op-expr-list-append : i64
-  179)
-(define tlci-host-callback-op-push-operand : i64
-  180)
-(define tlci-host-callback-op-expr-call : i64
-  181)
-(define tlci-host-callback-op-commit-result : i64
-  182)
+;; The embedded image and its consumer are always the same source-bound binary.
+;; Refs #5212.
+(define tlci-host-callback-name-expr-list-empty : String
+  "expr-list-empty")
+(define tlci-host-callback-name-expr-list-append : String
+  "expr-list-append")
+(define tlci-host-callback-name-push-operand : String
+  "push-operand")
+(define tlci-host-callback-name-expr-call : String
+  "expr-call")
+(define tlci-host-callback-name-commit-result : String
+  "commit-result")
 
 ;; Intrinsic array-node construction: pop two operand expressions and push the
 ;; array-ref / array-push expression node the parser produces for these forms
 ;; (they are recognized as dedicated AST nodes, not generic calls). Refs #5213.
-(define tlci-host-callback-op-expr-array-ref : i64
-  183)
-(define tlci-host-callback-op-expr-array-push : i64
-  184)
+(define tlci-host-callback-name-expr-array-ref : String
+  "expr-array-ref")
+(define tlci-host-callback-name-expr-array-push : String
+  "expr-array-push")
 
 ;; Pop a size expression and a type value and push the make-array node the
 ;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
-(define tlci-host-callback-op-expr-make-array : i64
-  185)
+(define tlci-host-callback-name-expr-make-array : String
+  "expr-make-array")
 
 ;; Comptime reflection and literal construction for computed transformer
 ;; bodies (refs #5213 N2/N3). operand-type-kind-eq compares the type-kind
 ;; string of a type operand against caller bytes and returns 1/0 as data (a
 ;; negative value reports a bad request); the literal ops push literal
 ;; expression nodes.
-(define tlci-host-callback-op-operand-type-kind-eq : i64
-  186)
-(define tlci-host-callback-op-expr-bool-literal : i64
-  187)
-(define tlci-host-callback-op-expr-int-literal : i64
-  188)
-(define tlci-host-callback-op-expr-list-fold-if : i64
-  189)
-(define tlci-host-callback-op-expr-clause-list-fold-if : i64
-  190)
-(define tlci-host-callback-op-pattern-binding-typed : i64
-  191)
-(define tlci-host-callback-op-expr-resource-scope : i64
-  192)
-(define tlci-host-callback-op-expr-let-scope : i64
-  193)
-(define tlci-host-callback-op-expr-set-var : i64
-  194)
-(define tlci-host-callback-op-expr-begin-unit : i64
-  195)
-(define tlci-host-callback-op-expr-not : i64
-  196)
-(define tlci-host-callback-op-expr-while : i64
-  197)
-(define tlci-host-callback-op-syntax-name-fresh : i64
-  198)
+(define tlci-host-callback-name-operand-type-kind-eq : String
+  "operand-type-kind-eq")
+(define tlci-host-callback-name-expr-bool-literal : String
+  "expr-bool-literal")
+(define tlci-host-callback-name-expr-int-literal : String
+  "expr-int-literal")
+(define tlci-host-callback-name-expr-list-fold-if : String
+  "expr-list-fold-if")
+(define tlci-host-callback-name-expr-clause-list-fold-if : String
+  "expr-clause-list-fold-if")
+(define tlci-host-callback-name-pattern-binding-typed : String
+  "pattern-binding-typed")
+(define tlci-host-callback-name-expr-resource-scope : String
+  "expr-resource-scope")
+(define tlci-host-callback-name-expr-let-scope : String
+  "expr-let-scope")
+(define tlci-host-callback-name-expr-set-var : String
+  "expr-set-var")
+(define tlci-host-callback-name-expr-begin-unit : String
+  "expr-begin-unit")
+(define tlci-host-callback-name-expr-not : String
+  "expr-not")
+(define tlci-host-callback-name-expr-while : String
+  "expr-while")
+(define tlci-host-callback-name-syntax-name-fresh : String
+  "syntax-name-fresh")
 
 ;; General quasiquote template construction (refs #5596): expr-begin pops an
 ;; expression list and pushes the begin node the parser produces; expr-binary-op
@@ -595,19 +598,18 @@
 ;; the AstBinOp ordinal in immediate `a`; expr-unary-op pops the operand
 ;; expression and pushes a unary node for the AstUnOp ordinal in immediate `a`;
 ;; expr-char-literal pushes a char literal node for the code point in immediate
-;; `a`; expr-unit-literal pushes the unit literal node. All are additive ABI v1
-;; ops -- the embedded image and its consumer are always the same source-bound
-;; binary.
-(define tlci-host-callback-op-expr-begin : i64
-  199)
-(define tlci-host-callback-op-expr-binary-op : i64
-  200)
-(define tlci-host-callback-op-expr-unary-op : i64
-  201)
-(define tlci-host-callback-op-expr-char-literal : i64
-  202)
-(define tlci-host-callback-op-expr-unit-literal : i64
-  203)
+;; `a`; expr-unit-literal pushes the unit literal node. The embedded image and
+;; its consumer are always the same source-bound binary.
+(define tlci-host-callback-name-expr-begin : String
+  "expr-begin")
+(define tlci-host-callback-name-expr-binary-op : String
+  "expr-binary-op")
+(define tlci-host-callback-name-expr-unary-op : String
+  "expr-unary-op")
+(define tlci-host-callback-name-expr-char-literal : String
+  "expr-char-literal")
+(define tlci-host-callback-name-expr-unit-literal : String
+  "expr-unit-literal")
 
 ;; Computed-body locals and declaration-template construction (refs #5603).
 ;; local-set pops one value into the session local slot named by immediate `a`;
@@ -618,68 +620,66 @@
 ;; and pushes the bracket-clause node the parser produces for `[item ...]` in
 ;; templates. expr-borrow pops the place expression and pushes a borrow node:
 ;; immediate `a` is 1 for `&mut` and 0 for `&`; the lifetime is inferred.
-;; All are additive ABI v1 ops -- the embedded image and its consumer are
-;; always the same source-bound binary.
-(define tlci-host-callback-op-local-set : i64
-  204)
-(define tlci-host-callback-op-local-get : i64
-  205)
-(define tlci-host-callback-op-expr-var-from-value : i64
-  206)
-(define tlci-host-callback-op-expr-bracket-clause : i64
-  207)
-(define tlci-host-callback-op-expr-borrow : i64
-  208)
+;; The embedded image and its consumer are always the same source-bound binary.
+(define tlci-host-callback-name-local-set : String
+  "local-set")
+(define tlci-host-callback-name-local-get : String
+  "local-get")
+(define tlci-host-callback-name-expr-var-from-value : String
+  "expr-var-from-value")
+(define tlci-host-callback-name-expr-bracket-clause : String
+  "expr-bracket-clause")
+(define tlci-host-callback-name-expr-borrow : String
+  "expr-borrow")
 
 ;; Computed-body support (refs #5603): string-value pushes the comptime String
 ;; value for caller bytes (a parsed-source string identity like the lexer's);
 ;; diagnostic-from-value pops a comptime String into the session diagnostic
 ;; and answers with the diagnostic status; pattern-var pushes a unit/variable
-;; pattern for caller bytes with the template-source mark. All are additive
-;; ABI v1 ops.
-(define tlci-host-callback-op-string-value : i64
-  209)
-(define tlci-host-callback-op-diagnostic-from-value : i64
-  210)
-(define tlci-host-callback-op-pattern-var : i64
-  211)
+;; pattern for caller bytes with the template-source mark.
+(define tlci-host-callback-name-string-value : String
+  "string-value")
+(define tlci-host-callback-name-diagnostic-from-value : String
+  "diagnostic-from-value")
+(define tlci-host-callback-name-pattern-var : String
+  "pattern-var")
 
 ;; More template construction (refs #5603): expr-array-set pops the value,
 ;; index, and target expressions and pushes the array-set! node; let-binding
 ;; pops the init expression and pushes a named let binding (template-source
 ;; marked like the interpreted quote); let-binding-list-empty/cons build the
 ;; binding list; expr-let pops the body and the binding list and pushes the
-;; let node. All are additive ABI v1 ops.
-(define tlci-host-callback-op-expr-array-set : i64
-  212)
-(define tlci-host-callback-op-let-binding : i64
-  213)
-(define tlci-host-callback-op-let-binding-list-empty : i64
-  214)
-(define tlci-host-callback-op-let-binding-list-cons : i64
-  215)
-(define tlci-host-callback-op-expr-let : i64
-  216)
+;; let node.
+(define tlci-host-callback-name-expr-array-set : String
+  "expr-array-set")
+(define tlci-host-callback-name-let-binding : String
+  "let-binding")
+(define tlci-host-callback-name-let-binding-list-empty : String
+  "let-binding-list-empty")
+(define tlci-host-callback-name-let-binding-list-cons : String
+  "let-binding-list-cons")
+(define tlci-host-callback-name-expr-let : String
+  "expr-let")
 
 ;; Typed template bindings (refs #5603): type-var pushes the AstType.Var for
 ;; caller bytes (unmarked, matching the interpreted type quote); let-binding-
 ;; typed pops the type value then the init expression and pushes a binding
-;; carrying both. Additive ABI v1 ops.
-(define tlci-host-callback-op-type-var : i64
-  218)
-(define tlci-host-callback-op-let-binding-typed : i64
-  219)
+;; carrying both.
+(define tlci-host-callback-name-type-var : String
+  "type-var")
+(define tlci-host-callback-name-let-binding-typed : String
+  "let-binding-typed")
 
 ;; type-scalar pushes the scalar AstType variant named by immediate ordinal
-;; (the primitive type constructors; additive ABI v1 op, refs #5603).
-(define tlci-host-callback-op-type-scalar : i64
-  220)
+;; (the primitive type constructors; refs #5603).
+(define tlci-host-callback-name-type-scalar : String
+  "type-scalar")
 
 ;; expr-int-from-data pushes an int literal expression whose value is the
 ;; data i64 in immediate `a` (used when a computed reflection yields a
-;; runtime count, refs #5603). Additive ABI v1 op.
-(define tlci-host-callback-op-expr-int-from-data : i64
-  221)
+;; runtime count, refs #5603).
+(define tlci-host-callback-name-expr-int-from-data : String
+  "expr-int-from-data")
 
 ;; Expression-value destructuring for computed bodies that match on the shape
 ;; of an operand (refs #5602). operand-expr-call? answers 1/0 as data for
@@ -687,46 +687,46 @@
 ;; sentinel, like the other data-returning probes); the two accessors push the
 ;; callee expression and the argument list the interpreted
 ;; `(comptime.Expr.Call callee args)` pattern binds. All three unwrap `Spanned`
-;; first, matching `ctfe-match-expr-variant`. Additive ABI v1 ops.
-(define tlci-host-callback-op-operand-expr-call? : i64
-  222)
-(define tlci-host-callback-op-operand-expr-call-callee : i64
-  223)
-(define tlci-host-callback-op-operand-expr-call-args : i64
-  224)
+;; first, matching `ctfe-match-expr-variant`.
+(define tlci-host-callback-name-operand-expr-call? : String
+  "operand-expr-call?")
+(define tlci-host-callback-name-operand-expr-call-callee : String
+  "operand-expr-call-callee")
+(define tlci-host-callback-name-operand-expr-call-args : String
+  "operand-expr-call-args")
 
 ;; The `comptime.Expr.Int` half of the same destructuring (refs #5602).
 ;; operand-expr-int? answers 1/0 as data with a negative malformed-request
 ;; sentinel; operand-expr-int-value answers the literal's i64 value as data and
 ;; is only issued after the probe, so it has no error channel of its own. Both
 ;; unwrap `Spanned` first. local-expr-list-length and local-expr-list-nth are
-;; the local-slot twins of ops 155/156, which address operands only: a
-;; destructured `ExprList` payload lives in a session local, and the fold
-;; bodies index it there. Additive ABI v1 ops.
-(define tlci-host-callback-op-operand-expr-int? : i64
-  225)
-(define tlci-host-callback-op-operand-expr-int-value : i64
-  226)
-(define tlci-host-callback-op-local-expr-list-length : i64
-  227)
-(define tlci-host-callback-op-local-expr-list-nth : i64
-  228)
+;; the local-slot twins of the operand-only expr-list callbacks: a destructured
+;; `ExprList` payload lives in a session local, and the fold bodies index it
+;; there.
+(define tlci-host-callback-name-operand-expr-int? : String
+  "operand-expr-int?")
+(define tlci-host-callback-name-operand-expr-int-value : String
+  "operand-expr-int-value")
+(define tlci-host-callback-name-local-expr-list-length : String
+  "local-expr-list-length")
+(define tlci-host-callback-name-local-expr-list-nth : String
+  "local-expr-list-nth")
 
 ;; Remaining binder-free template node kinds (refs #5605): expr-return,
 ;; expr-box, and expr-box-get each pop one expression and push the node the
 ;; parser produces for `(return e)`, `(box e)`, and `(box-get e)`;
 ;; expr-float-literal pushes a float literal carrying the caller bytes, which
 ;; are the literal's exact source text (the interpreted quote preserves float
-;; spelling verbatim). All are additive ABI v1 ops -- the embedded image and
-;; its consumer are always the same source-bound binary.
-(define tlci-host-callback-op-expr-return : i64
-  229)
-(define tlci-host-callback-op-expr-box : i64
-  230)
-(define tlci-host-callback-op-expr-box-get : i64
-  231)
-(define tlci-host-callback-op-expr-float-literal : i64
-  232)
+;; spelling verbatim). The embedded image and its consumer are always the same
+;; source-bound binary.
+(define tlci-host-callback-name-expr-return : String
+  "expr-return")
+(define tlci-host-callback-name-expr-box : String
+  "expr-box")
+(define tlci-host-callback-name-expr-box-get : String
+  "expr-box-get")
+(define tlci-host-callback-name-expr-float-literal : String
+  "expr-float-literal")
 
 ;; Computed-scrutinee probes and cast templates (refs #5604). The two probes
 ;; share operand-type-kind-eq's shape -- operand index in `a`, caller bytes in
@@ -734,15 +734,14 @@
 ;; bypass the status latch the same way: operand-expr-type-kind-eq compares
 ;; the type-kind of an Expr operand's produced type, and operand-type-key-eq
 ;; compares a type operand's canonical key. expr-cast pops the type value then
-;; the operand expression and pushes the cast node the parser produces. All
-;; are additive ABI v1 ops -- the embedded image and its consumer are always
-;; the same source-bound binary.
-(define tlci-host-callback-op-operand-expr-type-kind-eq : i64
-  233)
-(define tlci-host-callback-op-operand-type-key-eq : i64
-  234)
-(define tlci-host-callback-op-expr-cast : i64
-  235)
+;; the operand expression and pushes the cast node the parser produces. The
+;; embedded image and its consumer are always the same source-bound binary.
+(define tlci-host-callback-name-operand-expr-type-kind-eq : String
+  "operand-expr-type-kind-eq")
+(define tlci-host-callback-name-operand-type-key-eq : String
+  "operand-type-key-eq")
+(define tlci-host-callback-name-expr-cast : String
+  "expr-cast")
 
 ;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe pops
 ;; an expression list and pushes the `(unsafe ...)` node; expr-ptr-read,
@@ -750,29 +749,29 @@
 ;; expr-ptr-write, expr-ptr-offset, and expr-string-from-bytes pop the second
 ;; then the first operand; expr-array-data pops one. expr-ptr-cast pops the type
 ;; value then the pointer expression. These complete the template subset the
-;; `stdlib.text_buf_family` generators need. Additive ABI v1 ops.
-(define tlci-host-callback-op-expr-unsafe : i64
-  236)
-(define tlci-host-callback-op-expr-ptr-read : i64
-  237)
-(define tlci-host-callback-op-expr-ptr-to-int : i64
-  238)
-(define tlci-host-callback-op-expr-string-data : i64
-  239)
-(define tlci-host-callback-op-expr-ptr-write : i64
-  240)
-(define tlci-host-callback-op-expr-ptr-offset : i64
-  241)
-(define tlci-host-callback-op-expr-string-from-bytes : i64
-  243)
-(define tlci-host-callback-op-expr-array-data : i64
-  244)
+;; `stdlib.text_buf_family` generators need.
+(define tlci-host-callback-name-expr-unsafe : String
+  "expr-unsafe")
+(define tlci-host-callback-name-expr-ptr-read : String
+  "expr-ptr-read")
+(define tlci-host-callback-name-expr-ptr-to-int : String
+  "expr-ptr-to-int")
+(define tlci-host-callback-name-expr-string-data : String
+  "expr-string-data")
+(define tlci-host-callback-name-expr-ptr-write : String
+  "expr-ptr-write")
+(define tlci-host-callback-name-expr-ptr-offset : String
+  "expr-ptr-offset")
+(define tlci-host-callback-name-expr-string-from-bytes : String
+  "expr-string-from-bytes")
+(define tlci-host-callback-name-expr-array-data : String
+  "expr-array-data")
 
 ;; expr-ptr-cast pops the type value then the pointer expression, the order
 ;; expr-make-array uses. Held back from #5703 because the type walker could not
-;; render `(Ptr T)`; ops 247-251 fix that, so it lands here. Refs #5605.
-(define tlci-host-callback-op-expr-ptr-cast : i64
-  242)
+;; render `(Ptr T)`; the composite type callbacks fix that. Refs #5605.
+(define tlci-host-callback-name-expr-ptr-cast : String
+  "expr-ptr-cast")
 
 ;; The literal text of a string-literal `Expr` operand, pushed as the comptime
 ;; String value the interpreted `comptime.expr-string-value` yields -- the same
@@ -781,110 +780,97 @@
 ;; non-literal operand is a bad request, matching the interpreted error rather
 ;; than silently yielding empty text. This is the single most common first
 ;; blocker in the embedded census (5 shells across #5626, #5701 and #5606).
-;; Additive ABI v1 op.
-(define tlci-host-callback-op-operand-expr-string-value : i64
-  246)
+(define tlci-host-callback-name-operand-expr-string-value : String
+  "operand-expr-string-value")
 
 ;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a plain
 ;; identifier expression", and an accessor pushing that identifier's spelling as
 ;; a comptime String so the body can build a derived name from it. The serialize
 ;; nested-alias shape needs exactly this pair. Both unwrap `Spanned` first,
-;; matching `ctfe-match-expr-variant`. Additive ABI v1 ops. Refs #5700.
-(define tlci-host-callback-op-operand-expr-var? : i64
-  245)
-(define tlci-host-callback-op-operand-expr-var-name : i64
-  248)
+;; matching `ctfe-match-expr-variant`. Refs #5700.
+(define tlci-host-callback-name-operand-expr-var? : String
+  "operand-expr-var?")
+(define tlci-host-callback-name-operand-expr-var-name : String
+  "operand-expr-var-name")
 
 ;; value-i64 pushes a comptime i64 from immediate `a`, which is what
 ;; `comptime.int->string` consumes when its argument is a literal or a
-;; compile-time data local rather than a stack value. Additive ABI v1 op.
-;; Refs #5700.
-(define tlci-host-callback-op-value-i64 : i64
-  247)
+;; compile-time data local rather than a stack value. Refs #5700.
+(define tlci-host-callback-name-value-i64 : String
+  "value-i64")
 
 ;; Comptime string scanning over a String session local (refs #5701). The
 ;; scanner bodies bind a String once -- from `comptime.expr-string-value` or
-;; `type-key` -- and then walk it, so all three read the local by slot the way
-;; ops 227/228 read a destructured `ExprList`, instead of routing every step
-;; through a stack push. local-string-length answers the byte length as data and
-;; local-string-ref the byte at `b` as data, both with a negative
-;; malformed-request sentinel; local-string-slice pushes the `[b, b+c)` range as
-;; the generated comptime String `comptime.string-slice` yields.
+;; `type-key` -- and then walk it, so all three read the local by slot instead
+;; of routing every step through a stack push. local-string-length answers the
+;; byte length as data and local-string-ref the byte at `b` as data, both with
+;; a negative malformed-request sentinel; local-string-slice pushes the
+;; `[b, b+c)` range as the generated comptime String
+;; `comptime.string-slice` yields.
 ;; expr-string-from-value pops a comptime String and pushes the string-literal
 ;; expression `comptime.expr-string` builds, carrying the popped value's own
 ;; intern id so a template embeds exactly the text interpretation would.
-;; Deliberately not ops 110/111: those name a stack-shaped `string-length` /
-;; `string-ref` pair that no producer emits, and giving them local-slot
-;; semantics would leave the stack forms unnameable. Additive ABI v1 ops.
-;;
-;; Numbered from 252 rather than the next free slot: #5712 was open first and
-;; claims 245, 247 and 248, and two branches adding ops in different regions of
-;; this file merge without a textual conflict, so the overlap would only surface
-;; as a red `scripts/check-tlci-op-numbers.sh` on whichever landed second.
-(define tlci-host-callback-op-local-string-length : i64
-  252)
-(define tlci-host-callback-op-local-string-ref : i64
-  253)
-(define tlci-host-callback-op-local-string-slice : i64
-  254)
-(define tlci-host-callback-op-expr-string-from-value : i64
-  255)
+;; Their explicit names keep the local-slot semantics distinct from the
+;; stack-shaped `string-length` / `string-ref` callbacks.
+(define tlci-host-callback-name-local-string-length : String
+  "local-string-length")
+(define tlci-host-callback-name-local-string-ref : String
+  "local-string-ref")
+(define tlci-host-callback-name-local-string-slice : String
+  "local-string-slice")
+(define tlci-host-callback-name-expr-string-from-value : String
+  "expr-string-from-value")
 
 ;; operand-expr-string? answers 1/0 as data for "operand `a` is a string
 ;; literal expression", the `comptime.expr-string?` guard every literal-template
 ;; macro opens with, with the same negative malformed-request sentinel as the
-;; other operand probes. Additive ABI v1 op. Refs #5701.
-(define tlci-host-callback-op-operand-expr-string? : i64
-  256)
+;; other operand probes. Refs #5701.
+(define tlci-host-callback-name-operand-expr-string? : String
+  "operand-expr-string?")
 
 ;; Composite type templates (refs #5605). `embedded-native-template-type-ops`
 ;; rendered only `AstType.Var` and scalars, which is what actually kept the
 ;; `stdlib.text_buf_family` generators and `stdlib.vector_slice/slice` on the
 ;; interpreted route -- their annotations are `(Array String)`, `(Ptr u8)`,
 ;; `(MutPtr i64)`, `(& text str)` and `(&mut buf TextBuf)`, not any missing
-;; expression node kind. Each op pops the element/inner type value and pushes
-;; the wrapper, so a nested annotation builds bottom-up like an expression
-;; template does. type-ptr, type-box and type-dyn-array sit at 249-251, immediately above
-;; the #5700 pair that took 247/248; type-array and type-ref are at 257/258
-;; because #5701 landed 252-256 while this branch was in review, and two
-;; branches adding ops in different regions of this file merge without a
-;; textual conflict. type-ptr and type-ref select mutability with immediate `a`;
-;; type-array takes its element count in `a`; type-ref takes the lifetime name
-;; in `b`/`c`. Additive ABI v1 ops.
-(define tlci-host-callback-op-type-ptr : i64
-  249)
-(define tlci-host-callback-op-type-box : i64
-  250)
-(define tlci-host-callback-op-type-dyn-array : i64
-  251)
-(define tlci-host-callback-op-type-array : i64
-  257)
-(define tlci-host-callback-op-type-ref : i64
-  258)
+;; expression node kind. Each callback pops the element/inner type value and
+;; pushes the wrapper, so a nested annotation builds bottom-up like an
+;; expression template does. type-ptr and type-ref select mutability with
+;; immediate `a`; type-array takes its element count in `a`; type-ref takes the
+;; lifetime name in `b`/`c`.
+(define tlci-host-callback-name-type-ptr : String
+  "type-ptr")
+(define tlci-host-callback-name-type-box : String
+  "type-box")
+(define tlci-host-callback-name-type-dyn-array : String
+  "type-dyn-array")
+(define tlci-host-callback-name-type-array : String
+  "type-array")
+(define tlci-host-callback-name-type-ref : String
+  "type-ref")
 
 ;; A computed struct field name is a stack value rather than caller bytes:
 ;; pop the name after the target expression and push the resulting field
-;; projection. Additive ABI v1 op. Refs #5626.
-(define tlci-host-callback-op-expr-struct-get-from-value : i64
-  259)
+;; projection. Refs #5626.
+(define tlci-host-callback-name-expr-struct-get-from-value : String
+  "expr-struct-get-from-value")
 
 ;; Computed enum variant names likewise retain their source-name identity as a
 ;; session value. Pop a PatternList after the name and push the resulting
-;; variant pattern. Additive ABI v1 op. Refs #5626.
-(define tlci-host-callback-op-pattern-variant-from-value : i64
-  260)
+;; variant pattern. Refs #5626.
+(define tlci-host-callback-name-pattern-variant-from-value : String
+  "pattern-variant-from-value")
 
 ;; The computed public cons builder evaluates its head before its tail; consume
-;; that stack order and prepend the head to the MatchArmList. Additive ABI v1
-;; op. Refs #5626.
-(define tlci-host-callback-op-match-arm-list-cons-from-values : i64
-  261)
+;; that stack order and prepend the head to the MatchArmList. Refs #5626.
+(define tlci-host-callback-name-match-arm-list-cons-from-values : String
+  "match-arm-list-cons-from-values")
 
 ;; Tuple templates consume the ExprList assembled by the shared template
 ;; argument/splice path and push the `(tuple ...)` expression reconstructed by
-;; interpreted quasiquote. Additive ABI v1 op. Refs #5724.
-(define tlci-host-callback-op-expr-tuple : i64
-  262)
+;; interpreted quasiquote. Refs #5724.
+(define tlci-host-callback-name-expr-tuple : String
+  "expr-tuple")
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64
@@ -902,13 +888,14 @@
 (define tlci-section-symbol-record-size : i64
   40)
 
-;; Import records bind a GOT slot in a native-region image to a host entry
-;; point identified by a stable ABI id (a closed, versioned host ABI, not a
-;; string-resolved symbol). Record: (got-slot-offset u64, host-import-id u64).
+;; A non-empty import section starts with its record count, followed by fixed
+;; records and a packed UTF-8 name blob. Each record is:
+;;   (got-slot-offset u64, name-offset u64, name-length u64)
+;; Name offsets are relative to the start of the import section.
+(define tlci-section-import-header-size : i64
+  8)
 (define tlci-section-import-record-size : i64
-  16)
-(define tlci-host-import-invoke : i64
-  0)
+  24)
 
 ;; Little-endian ASCII `TLCIAUX1`. The trailer is:
 ;;   magic, version, base-rodata-len, directory-offset, count, rodata-len.
@@ -939,6 +926,41 @@
     "tlci host ABI: unsupported callback ABI version "
     (string.int->string actual)))
 
+(define (tlci-host-callback-registry-error
+  [table : (& table TlciHostCallbackTable)]) : String
+  (let
+    [count : i64 (struct-get table import-count)]
+    [index : i64 0]
+    [prior : i64 0]
+    [error : String ""]
+    (cond
+      [(< count 0) "host callback registry count must not be negative"]
+      [(< (array-length (struct-get table import-names)) count)
+        "host callback registry name storage is smaller than its count"]
+      [(< (array-length (struct-get table import-callbacks)) count)
+        "host callback registry address storage is smaller than its count"]
+      [else
+        (begin
+          (while (and (= (string.string-length error) 0) (< index count))
+            (cond
+              [(string.eq (array-ref (struct-get table import-names) index) "")
+                (set! error "host callback registry name must not be empty")]
+              [(= (array-ref (struct-get table import-callbacks) index) 0)
+                (set! error "host callback registry address must be nonzero")]
+              [else
+                (begin
+                  (set! prior 0)
+                  (while (and
+                    (= (string.string-length error) 0)
+                    (< prior index))
+                    (if (string.eq
+                      (array-ref (struct-get table import-names) prior)
+                      (array-ref (struct-get table import-names) index))
+                      (set! error "duplicate host callback registry name")
+                      (set! prior (+ prior 1))))
+                  (set! index (+ index 1)))]))
+          error)])))
+
 (define (tlci-validate-host-callback-table [table : TlciHostCallbackTable]) : ResultTlciHostAbi
   (cond
     [(not (= (struct-get table magic) tlci-host-callback-table-magic))
@@ -948,19 +970,24 @@
         (tlci-host-abi-version-error (struct-get table abi-version)))]
     [(< (struct-get table byte-size) tlci-host-callback-table-size)
       (ResultTlciHostAbi.Err
-        "tlci host ABI: host callback table byte-size is smaller than v1")]
+        "tlci host ABI: host callback table byte-size is smaller than v2")]
     [(not (= (struct-get table reserved0) 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table reserved0 must be zero")]
     [(not (= (struct-get table reserved1) 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table reserved1 must be zero")]
-    [(= (struct-get table invoke-callback) 0)
+    [(not (= (struct-get table reserved2) 0))
       (ResultTlciHostAbi.Err
-        "tlci host ABI: host invoke callback must be nonzero")]
+        "tlci host ABI: host callback table reserved2 must be zero")]
     [(= (struct-get table abort-callback) 0)
       (ResultTlciHostAbi.Err
         "tlci host ABI: host abort callback must be nonzero")]
+    [(not (string.eq (tlci-host-callback-registry-error (& table)) ""))
+      (ResultTlciHostAbi.Err
+        (str_cat.str-cat
+          "tlci host ABI: "
+          (tlci-host-callback-registry-error (& table))))]
     [else (ResultTlciHostAbi.Ok)]))
 
 (define (tlci-validate-image-registration
@@ -973,7 +1000,7 @@
         (tlci-host-abi-version-error (struct-get registration abi-version)))]
     [(< (struct-get registration byte-size) tlci-image-registration-size)
       (ResultTlciHostAbi.Err
-        "tlci host ABI: image registration byte-size is smaller than v1")]
+        "tlci host ABI: image registration byte-size is smaller than v2")]
     [(not (= (struct-get registration reserved0) 0))
       (ResultTlciHostAbi.Err
         "tlci host ABI: image registration reserved0 must be zero")]
@@ -1211,7 +1238,9 @@
             [slot : i64
               (+
                 imports-offset
-                (* import-index tlci-section-import-record-size))]
+                (+
+                  tlci-section-import-header-size
+                  (* import-index tlci-section-import-record-size)))]
             (begin
               (tlci-set-u64!
                 bytes
@@ -2698,6 +2727,63 @@
 (define (tlci-section-ordered? [cursor : i64] [offset : i64] [len : i64]) : bool
   (or (= len 0) (>= offset cursor)))
 
+(define (tlci-import-section-count [imports : (Array u8)]) : i64
+  (let
+    [len : i64 (array-length imports)]
+    (cond
+      [(= len 0) 0]
+      [(< len tlci-section-import-header-size) -1]
+      [else (tlci-read-u64 imports 0)])))
+
+(define (tlci-import-section-validation-error
+  [imports : (Array u8)]
+  [expected-count : i64]) : String
+  (let
+    [len : i64 (array-length imports)]
+    [records-end : i64
+      (+
+        tlci-section-import-header-size
+        (* expected-count tlci-section-import-record-size))]
+    [index : i64 0]
+    [error : String ""]
+    (cond
+      [(< expected-count 0) "import count must not be negative"]
+      [(= expected-count 0)
+        (if (= len 0)
+          ""
+          "empty import table has payload bytes")]
+      [(< len tlci-section-import-header-size)
+        "import section is smaller than its header"]
+      [(not (= (tlci-read-u64 imports 0) expected-count))
+        "import section count does not match the tlci header"]
+      [(or (< records-end tlci-section-import-header-size) (> records-end len))
+        "import records exceed the import section"]
+      [else
+        (begin
+          (while (and
+            (= (string.string-length error) 0)
+            (< index expected-count))
+            (let
+              [record : i64
+                (+
+                  tlci-section-import-header-size
+                  (* index tlci-section-import-record-size))]
+              [name-offset : i64 (tlci-read-u64 imports (+ record 8))]
+              [name-len : i64 (tlci-read-u64 imports (+ record 16))]
+              (cond
+                [(= name-len 0) (set! error "import name must not be empty")]
+                [(< name-offset records-end)
+                  (set! error "import name overlaps the record table")]
+                [(not
+                    (and
+                      (>= name-offset 0)
+                      (>= name-len 0)
+                      (<= name-offset len)
+                      (<= name-len (- len name-offset))))
+                  (set! error "import name is outside the import section")]
+                [else (set! index (+ index 1))])))
+          error)])))
+
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
   (cond
     [(not
@@ -2729,6 +2815,18 @@
             tlci-section-symbol-record-size)
           0))
       (ResultTlciBytes.Err "tlci: malformed symbol table length")]
+    [(not
+        (string.eq
+          (tlci-import-section-validation-error
+            (struct-get image imports)
+            (tlci-import-section-count (struct-get image imports)))
+          ""))
+      (ResultTlciBytes.Err
+        (str_cat.str-cat
+          "tlci: malformed import section: "
+          (tlci-import-section-validation-error
+            (struct-get image imports)
+            (tlci-import-section-count (struct-get image imports)))))]
     [else
       (let
         [compiler-hash-bytes : (Array u8)
@@ -2798,7 +2896,7 @@
           (tlci-push-u64! (&mut out) imports-offset)
           (tlci-push-u64!
             (&mut out)
-            (/ imports-len tlci-section-import-record-size))
+            (tlci-import-section-count (struct-get image imports)))
           (tlci-push-u64! (&mut out) file-size)
           (tlci-append-bytes! (&mut out) compiler-hash-bytes)
           (tlci-pad-to! (&mut out) metadata-offset)
@@ -2894,7 +2992,10 @@
           [fixups-len : i64 (* fixups-count tlci-section-fixup-record-size)]
           [entries-len : i64 (* entries-count tlci-section-entry-record-size)]
           [symbols-len : i64 (* symbols-count tlci-section-symbol-record-size)]
-          [imports-len : i64 (* imports-count tlci-section-import-record-size)]
+          [imports-len : i64
+            (if (= imports-count 0)
+              0
+              (- declared-size imports-offset))]
           [hash-end : i64 (+ hash-offset hash-len)]
           [metadata-end : i64 (+ metadata-offset metadata-len)]
           [rodata-end : i64
@@ -2992,11 +3093,27 @@
                 (tlci-table-len-ok? symbols-len tlci-section-symbol-record-size))
               (ResultTlciImage.Err "tlci: malformed symbol table length")]
             [(not
-                (tlci-table-len-ok? imports-len tlci-section-import-record-size))
-              (ResultTlciImage.Err "tlci: malformed import table length")]
-            [(not
                 (tlci-section-range-ok? actual-size imports-offset imports-len))
               (tlci-section-error "imports")]
+            [(not (tlci-section-aligned? imports-offset imports-len 8))
+              (ResultTlciImage.Err
+                "tlci: import section must be 8-byte aligned")]
+            [(not
+                (tlci-section-ordered? symbols-end imports-offset imports-len))
+              (ResultTlciImage.Err
+                "tlci: import section overlaps previous section")]
+            [(not
+                (string.eq
+                  (tlci-import-section-validation-error
+                    (tlci-slice-bytes bytes imports-offset imports-len)
+                    imports-count)
+                  ""))
+              (ResultTlciImage.Err
+                (str_cat.str-cat
+                  "tlci: malformed import section: "
+                  (tlci-import-section-validation-error
+                    (tlci-slice-bytes bytes imports-offset imports-len)
+                    imports-count)))]
             [(not (= declared-size content-end))
               (ResultTlciImage.Err "tlci: file has trailing bytes")]
             [(not (= expected-hash (tlci-content-hash bytes)))
@@ -3122,10 +3239,17 @@
 
 (define (tlci-test-imports-bytes) : (Array u8)
   (let
-    [out : (Array u8) (make-array u8 tlci-section-import-record-size)]
+    [name : String "fuel-check"]
+    [name-len : i64 (tlci-string-length name)]
+    [name-offset : i64
+      (+ tlci-section-import-header-size tlci-section-import-record-size)]
+    [out : (Array u8) (make-array u8 (+ name-offset name-len))]
     (begin
-      (tlci-set-u64! out 0 8)
-      (tlci-set-u64! out 8 tlci-host-import-invoke)
+      (tlci-set-u64! out 0 1)
+      (tlci-set-u64! out tlci-section-import-header-size 8)
+      (tlci-set-u64! out (+ tlci-section-import-header-size 8) name-offset)
+      (tlci-set-u64! out (+ tlci-section-import-header-size 16) name-len)
+      (tlci-put-string! out name-offset name)
       out)))
 
 (define (tlci-test-imports-image) : TlciImage
@@ -3175,8 +3299,11 @@
     1234
     0
     0
-    4096
-    8192))
+    0
+    8192
+    (array.make-array String 0)
+    (array.make-array i64 0)
+    0))
 
 (define (tlci-test-image-registration) : TlciImageRegistration
   (TlciImageRegistration
@@ -3212,7 +3339,7 @@
     (= tlci-host-callback-table-host-context-offset 24)
     (= tlci-host-callback-table-reserved0-offset 32)
     (= tlci-host-callback-table-reserved1-offset 40)
-    (= tlci-host-callback-table-invoke-offset 48)
+    (= tlci-host-callback-table-reserved2-offset 48)
     (= tlci-host-callback-table-abort-offset 56)
     (= tlci-image-registration-magic-offset 0)
     (= tlci-image-registration-abi-version-offset 8)
@@ -3228,126 +3355,9 @@
     (= tlci-macro-entry-function-offset 16)
     (= tlci-macro-entry-reserved0-offset 24)))
 
-(define (tlci-test-host-callback-op-layout-ok?) : bool
-  (and
-    (= tlci-host-callback-status-ok 0)
-    (= tlci-host-callback-status-diagnostic 1)
-    (= tlci-host-callback-status-fuel-exhausted 2)
-    (= tlci-host-callback-status-panic 3)
-    (= tlci-host-callback-status-bad-request 4)
-    (= tlci-host-callback-op-fuel-check 1)
-    (= tlci-host-callback-op-diagnostic 2)
-    (= tlci-host-callback-op-scratch-alloc 3)
-    (= tlci-host-callback-op-scratch-reset 4)
-    (= tlci-host-callback-op-expr-bool 100)
-    (= tlci-host-callback-op-expr-int 101)
-    (= tlci-host-callback-op-expr-string 102)
-    (= tlci-host-callback-op-expr-var 103)
-    (= tlci-host-callback-op-expr-struct-get 104)
-    (= tlci-host-callback-op-expr-tuple-ref 105)
-    (= tlci-host-callback-op-expr-struct-set 106)
-    (= tlci-host-callback-op-string-eq 107)
-    (= tlci-host-callback-op-string-concat 108)
-    (= tlci-host-callback-op-string-append 109)
-    (= tlci-host-callback-op-string-length 110)
-    (= tlci-host-callback-op-string-ref 111)
-    (= tlci-host-callback-op-string->int 112)
-    (= tlci-host-callback-op-int->string 113)
-    (= tlci-host-callback-op-expr-splice 114)
-    (= tlci-host-callback-op-expr-if 115)
-    (= tlci-host-callback-op-pattern-wildcard 116)
-    (= tlci-host-callback-op-pattern-binding 117)
-    (= tlci-host-callback-op-pattern-variant 118)
-    (= tlci-host-callback-op-pattern-list-empty 119)
-    (= tlci-host-callback-op-pattern-list-cons 120)
-    (= tlci-host-callback-op-match-arm 121)
-    (= tlci-host-callback-op-match-arm-list-empty 122)
-    (= tlci-host-callback-op-match-arm-list-cons 123)
-    (= tlci-host-callback-op-expr-match 124)
-    (= tlci-host-callback-op-expr-type 125)
-    (= tlci-host-callback-op-type-info 126)
-    (= tlci-host-callback-op-module-name 127)
-    (= tlci-host-callback-op-module-export-macro? 128)
-    (= tlci-host-callback-op-module-hook 129)
-    (= tlci-host-callback-op-type-kind 130)
-    (= tlci-host-callback-op-type-key 131)
-    (= tlci-host-callback-op-type-nominal-module 132)
-    (= tlci-host-callback-op-type-nominal-name 133)
-    (= tlci-host-callback-op-struct-field-count 134)
-    (= tlci-host-callback-op-struct-field-name 135)
-    (= tlci-host-callback-op-struct-field-type 136)
-    (= tlci-host-callback-op-enum-variant-count 137)
-    (= tlci-host-callback-op-enum-variant-name 138)
-    (= tlci-host-callback-op-enum-variant-payload-count 139)
-    (= tlci-host-callback-op-enum-variant-payload-type 140)
-    (= tlci-host-callback-op-array-element-type 141)
-    (= tlci-host-callback-op-array-length 142)
-    (= tlci-host-callback-op-array-dynamic? 143)
-    (= tlci-host-callback-op-tuple-element-count 144)
-    (= tlci-host-callback-op-tuple-element-type 145)
-    (= tlci-host-callback-op-function-param-count 146)
-    (= tlci-host-callback-op-function-param-type 147)
-    (= tlci-host-callback-op-function-return-type 148)
-    (= tlci-host-callback-op-expr-bool? 149)
-    (= tlci-host-callback-op-expr-bool-value 150)
-    (= tlci-host-callback-op-expr-if? 151)
-    (= tlci-host-callback-op-expr-if-cond 152)
-    (= tlci-host-callback-op-expr-if-then 153)
-    (= tlci-host-callback-op-expr-if-else 154)
-    (= tlci-host-callback-op-expr-list-length 155)
-    (= tlci-host-callback-op-expr-list-nth 156)
-    (= tlci-host-callback-op-expr-clause-first 157)
-    (= tlci-host-callback-op-expr-clause-second 158)
-    (= tlci-host-callback-op-expr-clause-list-length 159)
-    (= tlci-host-callback-op-expr-clause-list-nth 160)
-    (= tlci-host-callback-op-expr-clause-list->expr-list 161)
-    (= tlci-host-callback-op-expr-binding-clause-name 162)
-    (= tlci-host-callback-op-expr-binding-clause-has-type? 163)
-    (= tlci-host-callback-op-expr-binding-clause-type 164)
-    (= tlci-host-callback-op-expr-binding-clause-init 165)
-    (= tlci-host-callback-op-expr-binding-clause-list-length 166)
-    (= tlci-host-callback-op-expr-binding-clause-list-nth 167)
-    (= tlci-host-callback-op-expr-binding-clause-list->expr-list 168)
-    (= tlci-host-callback-op-pattern-list-bindings 169)
-    (= tlci-host-callback-op-type-cleanup-owning? 170)
-    (= tlci-host-callback-op-type-cleanup-function 171)
-    (= tlci-host-callback-op-expr-binary-data 172)
-    (= tlci-host-callback-op-box-element-type 173)
-    (= tlci-host-callback-op-expr-list-type-nth 174)
-    (= tlci-host-callback-op-module-value? 175)
-    (= tlci-host-callback-op-module-value-type 176)
-    (= tlci-host-callback-op-reference-element-type 177)
-    (= tlci-host-callback-op-expr-list-empty 178)
-    (= tlci-host-callback-op-expr-list-append 179)
-    (= tlci-host-callback-op-push-operand 180)
-    (= tlci-host-callback-op-expr-call 181)
-    (= tlci-host-callback-op-commit-result 182)
-    (= tlci-host-callback-op-expr-array-ref 183)
-    (= tlci-host-callback-op-expr-array-push 184)
-    (= tlci-host-callback-op-expr-make-array 185)
-    (= tlci-host-callback-op-operand-type-kind-eq 186)
-    (= tlci-host-callback-op-expr-bool-literal 187)
-    (= tlci-host-callback-op-expr-int-literal 188)
-    (= tlci-host-callback-op-expr-list-fold-if 189)
-    (= tlci-host-callback-op-expr-clause-list-fold-if 190)
-    (= tlci-host-callback-op-pattern-binding-typed 191)
-    (= tlci-host-callback-op-expr-resource-scope 192)
-    (= tlci-host-callback-op-expr-let-scope 193)
-    (= tlci-host-callback-op-expr-set-var 194)
-    (= tlci-host-callback-op-expr-begin-unit 195)
-    (= tlci-host-callback-op-expr-not 196)
-    (= tlci-host-callback-op-expr-while 197)
-    (= tlci-host-callback-op-syntax-name-fresh 198)
-    (= tlci-host-callback-op-expr-struct-get-from-value 259)
-    (= tlci-host-callback-op-pattern-variant-from-value 260)
-    (= tlci-host-callback-op-match-arm-list-cons-from-values 261)
-    (= tlci-host-callback-op-expr-tuple 262)
-    (= tlci-host-callback-stdlib-op-count 99)))
-
 (define (tlci-test-host-abi-ok?) : bool
   (and
     (tlci-test-host-abi-layout-ok?)
-    (tlci-test-host-callback-op-layout-ok?)
     (match (tlci-validate-host-callback-table (tlci-test-host-callback-table))
       [(ResultTlciHostAbi.Ok) true]
       [(ResultTlciHostAbi.Err _) false])
@@ -3362,8 +3372,11 @@
         1234
         0
         0
-        4096
-        8192))
+        0
+        8192
+        (array.make-array String 0)
+        (array.make-array i64 0)
+        0))
       [(ResultTlciHostAbi.Ok) true]
       [(ResultTlciHostAbi.Err _) false])
     (match (tlci-validate-image-registration
@@ -3388,7 +3401,10 @@
           0
           0
           1
-          1))
+          1
+          (array.make-array String 0)
+          (array.make-array i64 0)
+          0))
       "tlci host ABI: bad host callback table magic")
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
@@ -3400,8 +3416,11 @@
           0
           0
           1
-          1))
-      "tlci host ABI: unsupported callback ABI version 2")
+          1
+          (array.make-array String 0)
+          (array.make-array i64 0)
+          0))
+      "tlci host ABI: unsupported callback ABI version 3")
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
         (TlciHostCallbackTable
@@ -3412,8 +3431,11 @@
           0
           0
           1
-          1))
-      "tlci host ABI: host callback table byte-size is smaller than v1")
+          1
+          (array.make-array String 0)
+          (array.make-array i64 0)
+          0))
+      "tlci host ABI: host callback table byte-size is smaller than v2")
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
         (TlciHostCallbackTable
@@ -3423,8 +3445,11 @@
           0
           1
           0
+          0
           1
-          1))
+          (array.make-array String 0)
+          (array.make-array i64 0)
+          0))
       "tlci host ABI: host callback table reserved0 must be zero")
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
@@ -3435,9 +3460,12 @@
           0
           0
           0
-          0
-          1))
-      "tlci host ABI: host invoke callback must be nonzero")
+          1
+          1
+          (array.make-array String 0)
+          (array.make-array i64 0)
+          0))
+      "tlci host ABI: host callback table reserved2 must be zero")
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
         (TlciHostCallbackTable
@@ -3447,9 +3475,42 @@
           0
           0
           0
-          1
+          0
+          0
+          (array.make-array String 0)
+          (array.make-array i64 0)
           0))
       "tlci host ABI: host abort callback must be nonzero")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-host-callback-table
+        (TlciHostCallbackTable
+          tlci-host-callback-table-magic
+          tlci-host-abi-version
+          tlci-host-callback-table-size
+          0
+          0
+          0
+          0
+          1
+          (make-array "fuel-check")
+          (make-array 0)
+          1))
+      "tlci host ABI: host callback registry address must be nonzero")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-host-callback-table
+        (TlciHostCallbackTable
+          tlci-host-callback-table-magic
+          tlci-host-abi-version
+          tlci-host-callback-table-size
+          0
+          0
+          0
+          0
+          1
+          (make-array "fuel-check" "fuel-check")
+          (make-array 1 2)
+          2))
+      "tlci host ABI: duplicate host callback registry name")
     (tlci-test-host-abi-rejects?
       (tlci-validate-image-registration
         (TlciImageRegistration
@@ -3473,7 +3534,7 @@
           0
           0
           0))
-      "tlci host ABI: unsupported callback ABI version 2")
+      "tlci host ABI: unsupported callback ABI version 3")
     (tlci-test-host-abi-rejects?
       (tlci-validate-image-registration
         (TlciImageRegistration
@@ -3485,7 +3546,7 @@
           0
           0
           0))
-      "tlci host ABI: image registration byte-size is smaller than v1")
+      "tlci host ABI: image registration byte-size is smaller than v2")
     (tlci-test-host-abi-rejects?
       (tlci-validate-image-registration
         (TlciImageRegistration

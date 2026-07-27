@@ -5177,6 +5177,7 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 259 | `expr-struct-get-from-value` (computed-body construction) |
 | 260 | `pattern-variant-from-value` (computed-body construction) |
 | 261 | `match-arm-list-cons-from-values` (computed-body construction) |
+| 262 | `expr-tuple` (native template construction) |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned

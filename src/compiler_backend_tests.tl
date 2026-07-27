@@ -28067,6 +28067,113 @@
             prev-vars)
           ok)))))
 
+;; #5982. The constant-remainder expansion ends `subq product, SRC`, so electing
+;; the dividend's own home as SRC needs the REGISTER free afterwards, not just
+;; the VALUE dead. Model the miscompiled shape at point 10 with three vars
+;; sharing %r13: the dividend definition dying exactly at 10, the loop-carried
+;; home shared with the header phi spanning the loop, and this instruction's own
+;; result opening at 11. The phi must veto own-SRC; the instruction's own output
+;; must not.
+(define (compiler-backend-divmod-live-dividend-ctx! [carried? : bool]) : unit
+  (let
+    [vars : i64 3]
+    [starts : (Array i64) (make-array i64 vars)]
+    [ends : (Array i64) (make-array i64 vars)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r13"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register
+              (if carried?
+                "%r13"
+                "%r14")))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%r13"))
+            CompilerRegAssignmentList.Nil)))]
+    (begin
+      ;; var 0: the dividend definition -- dead after point 10
+      (array-set! starts 0 9)
+      (array-set! ends 0 10)
+      ;; var 1: the loop-carried home (phi-shared) -- spans the whole region
+      (array-set! starts 1 2)
+      (array-set! ends 1 30)
+      ;; var 2: this instruction's own result -- opens on the def half-step
+      (array-set! starts 2 11)
+      (array-set! ends 2 20)
+      (compiler-backend-set-scavenge-ctx-index!
+        starts
+        ends
+        (compiler-reg-assignment-index-build assignments vars)
+        0
+        vars))))
+
+(define (compiler-backend-divmod-live-dividend-src-ok?) : bool
+  (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+    [prev-count : i64 compiler-backend-emit-current-count]
+    ;; place the emission point at 10: 2 * (post-base - count)
+    [_point : unit
+      (begin
+        (set! compiler-backend-emit-instr-post-base 5)
+        (set! compiler-backend-emit-current-count 0))]
+    [_carried-ctx : unit (compiler-backend-divmod-live-dividend-ctx! true)]
+    [carried : bool (compiler-backend-divmod-home-carried-after? "%r13" 10)]
+    ;; the value fact alone still reports the dividend dead here
+    [value-dead : bool
+      (not (compiler-backend-value-live-after-here? (CompilerIrValue.Var 0)))]
+    ;; a remainder must refuse the home the phi still carries ...
+    [remainder-refused : bool
+      (not (compiler-backend-divmod-src-home-safe? true "%r13" ""))]
+    ;; ... a quotient never writes SRC, so it is unaffected ...
+    [quotient-allowed : bool
+      (compiler-backend-divmod-src-home-safe? false "%r13" "")]
+    ;; ... and a destination living in that same register is the result's own
+    ;; home, so it stays eligible.
+    [dst-home-allowed : bool
+      (compiler-backend-divmod-src-home-safe? true "%r13" "%r13")]
+    ;; a register nothing is homed in is never carried
+    [free-reg : bool
+      (not (compiler-backend-divmod-home-carried-after? "%r15" 10))]
+    [_plain-ctx : unit (compiler-backend-divmod-live-dividend-ctx! false)]
+    ;; without the phi only this instruction's own result remains, and a var
+    ;; opening on the def half-step is what the expansion is producing
+    [own-output-ok : bool
+      (and
+        (not (compiler-backend-divmod-home-carried-after? "%r13" 10))
+        (compiler-backend-divmod-src-home-safe? true "%r13" ""))]
+    (begin
+      (compiler-backend-set-scavenge-ctx-ready!
+        prev-starts
+        prev-ends
+        prev-assignment-index
+        prev-plan-mask
+        prev-occupied-masks
+        prev-vars)
+      (set! compiler-backend-emit-instr-post-base prev-post-base)
+      (set! compiler-backend-emit-current-count prev-count)
+      (and
+        carried
+        value-dead
+        remainder-refused
+        quotient-allowed
+        dst-home-allowed
+        free-reg
+        own-output-ok))))
+
 (define (compiler-backend-param-spill-stack-scratch-preserves-home-ok?) : bool
   (let
     [params : CompilerIrParamList
@@ -28788,6 +28895,7 @@
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
+        (compiler-backend-divmod-live-dividend-src-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)

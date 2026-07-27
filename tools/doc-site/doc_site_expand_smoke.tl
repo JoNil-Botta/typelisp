@@ -28,6 +28,14 @@
         "<h3><a href=\"#tl-len\">len</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         sections
-        "<h3><a href=\"#tl-push\">push</a></h3>"))
+        "<h3><a href=\"#tl-push\">push</a></h3>")
+      (not
+        (doc_site_expand_pages_core.doc-site-expand-string-contains?
+          sections
+          "tl-from-array"))
+      (not
+        (doc_site_expand_pages_core.doc-site-expand-string-contains?
+          sections
+          "tl-to-array")))
       42
       (io.panic "doc-site-expand: generated vector smoke mismatch"))))

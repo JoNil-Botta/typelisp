@@ -135,7 +135,7 @@
     [sort-body : comptime.Expr
       `(let
         [n : i64 (len-mut v)]
-        [slots : (&mut v (Array ,T)) (slots-mut v)]
+        [slots (slots-mut v)]
         [chunk-start : i64 0]
         (begin
           (while (< chunk-start n)
@@ -162,7 +162,7 @@
                 (set! chunk-start chunk-end))))
           (if (> n 16)
             (let
-              [scratch : (Array ,T) (make-array ,T n)]
+              [scratch : (__tl_dyn-array ,T) (make-array ,T n)]
               [width : i64 16]
               (while (< width n)
                 (let

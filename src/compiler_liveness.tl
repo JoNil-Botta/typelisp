@@ -1583,43 +1583,45 @@
             (array-ref blocks i)))
         (set! i (+ i 1))))))
 
+;; The analysis reads nothing but the block list, so callers holding blocks
+;; without a whole CompilerIrFunction (the backend's stack-slot colorer runs on
+;; the final rewritten blocks) enter here directly.
+(define (compiler-live-analyze-blocks-edge-precise
+  [blocks : CompilerIrBlockList]) : CompilerFunctionLiveness
+  (let
+    [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+    [build : CompilerLiveFunctionGraphBuild
+      (compiler-live-function-graph-build
+        seq
+        (compiler-live-build-block-array-nophi seq))]
+    [graph0 : CompilerLiveBlockGraph (struct-get build graph)]
+    [phi-out : (Array CompilerLiveI64Set)
+      (make-array CompilerLiveI64Set (array-length (struct-get graph0 blocks)))]
+    (begin
+      (let
+        [i : i64 0]
+        [n : i64 (array-length phi-out)]
+        (while (< i n)
+          (begin
+            (array-set! phi-out i (compiler-live-set-empty))
+            (set! i (+ i 1)))))
+      (compiler-live-phi-out-build-seq! seq (& (struct-get graph0 ids)) phi-out)
+      (let
+        [graph : CompilerLiveBlockGraph
+          (compiler-live-fixpoint-ep graph0 phi-out)]
+        (begin
+          (compiler-live-fill-instr-after-graph-ep-seq!
+            seq
+            (struct-get graph blocks))
+          (CompilerFunctionLiveness.Liveness
+            (struct-get graph ids)
+            (struct-get graph blocks)))))))
+
 (define (compiler-live-analyze-function-edge-precise
   [func : CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (let
-        [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
-        [build : CompilerLiveFunctionGraphBuild
-          (compiler-live-function-graph-build
-            seq
-            (compiler-live-build-block-array-nophi seq))]
-        [graph0 : CompilerLiveBlockGraph (struct-get build graph)]
-        [phi-out : (Array CompilerLiveI64Set)
-          (make-array
-            CompilerLiveI64Set
-            (array-length (struct-get graph0 blocks)))]
-        (begin
-          (let
-            [i : i64 0]
-            [n : i64 (array-length phi-out)]
-            (while (< i n)
-              (begin
-                (array-set! phi-out i (compiler-live-set-empty))
-                (set! i (+ i 1)))))
-          (compiler-live-phi-out-build-seq!
-            seq
-            (& (struct-get graph0 ids))
-            phi-out)
-          (let
-            [graph : CompilerLiveBlockGraph
-              (compiler-live-fixpoint-ep graph0 phi-out)]
-            (begin
-              (compiler-live-fill-instr-after-graph-ep-seq!
-                seq
-                (struct-get graph blocks))
-              (CompilerFunctionLiveness.Liveness
-                (struct-get graph ids)
-                (struct-get graph blocks))))))]))
+      (compiler-live-analyze-blocks-edge-precise blocks)]))
 
 (define (compiler-live-function-block-index
   [liveness : CompilerFunctionLiveness]

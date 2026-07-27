@@ -428,6 +428,21 @@
     [(CompilerMaybeSourceSpan.Some _) false]
     [(CompilerMaybeSourceSpan.No) true]))
 
+(define (opt-location-lookup-ok?
+  [spans : CompilerSourceSpans]
+  [function : i64]
+  [instr : CompilerIrInstr]
+  [path-id : i64]
+  [line : i64]
+  [col : i64]) : bool
+  (match (compiler-source-spans-lookup-instr-location spans function instr)
+    [(CompilerMaybeSourceLocation.Some
+        (CompilerSourceLocation found-path-id span))
+      (and
+        (= found-path-id path-id)
+        (opt-source-span-line-col-ok? span line col))]
+    [(CompilerMaybeSourceLocation.No) false]))
+
 (define (opt-test-symbol [name : String]) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -818,14 +833,16 @@
   (let
     [symbols : OptInlineSpanTestSymbols (opt-inline-span-test-symbols)]
     [spans : CompilerSourceSpans
-      (compiler-source-spans-insert-instr
-        (compiler-source-spans-insert-instr
+      (compiler-source-spans-insert-instr-located
+        (compiler-source-spans-insert-instr-located
           (opt-spans-base)
           (opt-test-symbol "inline_span")
           (opt-inline-span-callee-call symbols)
+          701
           (opt-test-span 71 13))
         (opt-test-symbol "main")
         (opt-inline-span-caller-call symbols)
+        801
         (opt-test-span 81 15))]
     [cloned-call : CompilerIrInstr
       (CompilerIrInstr.Call
@@ -833,17 +850,32 @@
         (struct-get symbols opaque)
         (CompilerIrCallArgs.One (CompilerIrValue.I64 7))
         (AstType.I64))]
-    (match (optimize-program-with-spans-and-level
-      (opt-inline-span-program symbols)
-      spans
-      2)
-      [(CompilerOptimizedProgram.Program _ optimized-spans)
-        (opt-span-lookup-ok?
-          optimized-spans
-          (opt-test-symbol "main")
-          cloned-call
-          71
-          13)])))
+    [previous-debug : bool (compiler-debug-info-enabled?)]
+    [ok : bool
+      (begin
+        (compiler-debug-info-set-enabled! true)
+        (match (optimize-program-with-spans-and-level
+          (opt-inline-span-program symbols)
+          spans
+          2)
+          [(CompilerOptimizedProgram.Program _ optimized-spans)
+            (and
+              (opt-span-lookup-ok?
+                optimized-spans
+                (opt-test-symbol "main")
+                cloned-call
+                71
+                13)
+              (opt-location-lookup-ok?
+                optimized-spans
+                (opt-test-symbol "main")
+                cloned-call
+                701
+                71
+                13))]))]
+    (begin
+      (compiler-debug-info-set-enabled! previous-debug)
+      ok)))
 
 (define (compiler-optimize-spans-inline-fallback-ok?) : bool
   (let

@@ -2931,6 +2931,34 @@
   compile-profile
   (define compiler-tc-walk-hygiene-calls : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-hygiene-nodes-reused : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-hygiene-nodes-copied : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-env-bindings : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-env-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-env-lookup-steps : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-pattern-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-hygiene-pattern-lookup-steps : i64
+    0))
 
 (cfg
   compile-profile
@@ -5005,6 +5033,27 @@
       (compiler-tc-macro-counter-profile-line
         "walk_hygiene_calls"
         compiler-tc-walk-hygiene-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_hygiene_nodes_reused"
+        compiler-tc-walk-hygiene-nodes-reused)
+      (compiler-tc-macro-counter-profile-line
+        "walk_hygiene_nodes_copied"
+        compiler-tc-walk-hygiene-nodes-copied)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_env_bindings"
+        compiler-tc-macro-hygiene-env-bindings)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_env_lookups"
+        compiler-tc-macro-hygiene-env-lookups)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_env_lookup_steps"
+        compiler-tc-macro-hygiene-env-lookup-steps)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_pattern_lookups"
+        compiler-tc-macro-hygiene-pattern-lookups)
+      (compiler-tc-macro-counter-profile-line
+        "hygiene_pattern_lookup_steps"
+        compiler-tc-macro-hygiene-pattern-lookup-steps)
       (compiler-tc-macro-counter-profile-line
         "walk_rewalk_us"
         (/ compiler-tc-walk-rewalk-ns 1000))
@@ -59371,10 +59420,28 @@
   (No)
   (Some AstDeclList))
 
+;; Keep the scalar head opaque without using a one-field struct: Linux opt2
+;; currently miscompiles that aggregate argument/return shape (#5953).
 (defenum MacroHygieneEnv
-  (Nil)
-  (Bind i64 i64 (Box MacroHygieneEnv))
-  (PatternName i64 i64 (Box MacroHygieneEnv)))
+  (Snapshot i64))
+
+;; Hygiene environments are immutable snapshots into this dense append-only
+;; store. A branch extends a retained head without copying or mutating its
+;; parent, so sibling expression/type/pattern walks remain isolated.
+(define macro-hygiene-env-kinds : (Array i64)
+  (array.make-array i64 0))
+(define macro-hygiene-env-keys : (Array i64)
+  (array.make-array i64 0))
+(define macro-hygiene-env-values : (Array i64)
+  (array.make-array i64 0))
+(define macro-hygiene-env-parents : (Array i64)
+  (array.make-array i64 0))
+(define macro-hygiene-env-slot-count : i64
+  0)
+(define macro-hygiene-env-root-depth : i64
+  0)
+(define macro-hygiene-env-storage-arena : i64
+  0)
 
 (defenum MacroMaybeHygieneName
   (No)
@@ -64275,18 +64342,29 @@
   [depth : i64]) : CompilerCtfeValue
   (match value
     [(CompilerCtfeValue.Expr node produced)
-      (let
-        [expr : AstExpr (ast-expr-segment-bases-get expr-bases node)]
-        [param-env : MacroHygieneEnv
-          (macro-hygiene-output-macro-param-env
-            (& params)
-            0
-            MacroHygieneEnv.Nil)]
-        [output-env : MacroHygieneEnv
-          (macro-hygiene-output-decl-env expr param-env)]
-        (CompilerCtfeValue.Expr
-          (macro-hygiene-expr expr-bases expr output-env hygiene depth)
-          produced))]
+      (begin
+        (macro-hygiene-env-root-begin!)
+        (let
+          [expr : AstExpr (ast-expr-segment-bases-get expr-bases node)]
+          [param-env : MacroHygieneEnv
+            (macro-hygiene-output-macro-param-env
+              (& params)
+              0
+              (macro-hygiene-env-empty))]
+          [output-env : MacroHygieneEnv
+            (macro-hygiene-output-decl-env expr param-env)]
+          [out : CompilerCtfeValue
+            (CompilerCtfeValue.Expr
+              (macro-hygiene-produced-expr
+                expr-bases
+                node
+                output-env
+                hygiene
+                depth)
+              produced)]
+          (begin
+            (macro-hygiene-env-root-finish!)
+            out)))]
     [_ value]))
 
 (define (macro-collect-decl-name
@@ -65081,46 +65159,262 @@
         (macro-hygiene-structural-source-name-id name-id)]
       [else fallback])))
 
-(define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-binding!) : unit
+    (set!
+      compiler-tc-macro-hygiene-env-bindings
+      (+ compiler-tc-macro-hygiene-env-bindings 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-lookup!) : unit
+    (set!
+      compiler-tc-macro-hygiene-env-lookups
+      (+ compiler-tc-macro-hygiene-env-lookups 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-lookup-step!) : unit
+    (set!
+      compiler-tc-macro-hygiene-env-lookup-steps
+      (+ compiler-tc-macro-hygiene-env-lookup-steps 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-pattern-lookup!) : unit
+    (set!
+      compiler-tc-macro-hygiene-pattern-lookups
+      (+ compiler-tc-macro-hygiene-pattern-lookups 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-hygiene-note-pattern-lookup-step!) : unit
+    (set!
+      compiler-tc-macro-hygiene-pattern-lookup-steps
+      (+ compiler-tc-macro-hygiene-pattern-lookup-steps 1))))
+
+(define (macro-hygiene-env-bind-kind) : i64
+  0)
+
+(define (macro-hygiene-env-pattern-name-kind) : i64
+  1)
+
+(define (macro-hygiene-env-empty) : MacroHygieneEnv
+  (MacroHygieneEnv.Snapshot -1))
+
+(define (macro-hygiene-env-head [env : MacroHygieneEnv]) : i64
   (match env
-    [(MacroHygieneEnv.Nil) (MacroMaybeHygieneName.No)]
-    [(MacroHygieneEnv.Bind key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup (box-get rest) name-id))]
-    [(MacroHygieneEnv.PatternName key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup (box-get rest) name-id))]))
+    [(MacroHygieneEnv.Snapshot head) head]))
+
+(define (macro-hygiene-env-reset!) : unit
+  (set! macro-hygiene-env-slot-count 0))
+
+(define (macro-hygiene-env-root-begin!) : unit
+  (begin
+    ;; Transformer evaluation can recursively expand another macro while the
+    ;; caller still retains snapshot heads. Reuse slots only at the outermost
+    ;; root; nested roots append until their caller has finished.
+    (if (= macro-hygiene-env-root-depth 0)
+      (macro-hygiene-env-reset!)
+      unit)
+    (set! macro-hygiene-env-root-depth (+ macro-hygiene-env-root-depth 1))))
+
+(define (macro-hygiene-env-root-finish!) : unit
+  (if (> macro-hygiene-env-root-depth 0)
+    (set! macro-hygiene-env-root-depth (- macro-hygiene-env-root-depth 1))
+    (io.panic "typecheck: macro hygiene root depth underflow")))
+
+(define (macro-hygiene-env-storage-handle) : i64
+  (begin
+    (if (= macro-hygiene-env-storage-arena 0)
+      (begin
+        ;; The retained slot table is small (thousands of 32-byte entries in a
+        ;; self-compile), so avoid the default arena's larger virtual reservation.
+        (set! macro-hygiene-env-storage-arena (arena.tl_arena_make_small))
+        (compiler-arena-debug-protect-never-reset!
+          macro-hygiene-env-storage-arena))
+      unit)
+    macro-hygiene-env-storage-arena))
+
+(define (macro-hygiene-env-storage-restore! [previous : i64] [storage : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      ;; Large array growth can advance the arena to a new segment. Retain that
+      ;; newest head, and keep it active when the caller was already allocating
+      ;; in this owner, rather than restoring a stale pre-growth handle.
+      (set! macro-hygiene-env-storage-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous storage)
+            head
+            previous))))))
+
+(define (macro-hygiene-env-grow-copy!
+  [dst-kinds : (Array i64)]
+  [dst-keys : (Array i64)]
+  [dst-values : (Array i64)]
+  [dst-parents : (Array i64)]
+  [src-kinds : (Array i64)]
+  [src-keys : (Array i64)]
+  [src-values : (Array i64)]
+  [src-parents : (Array i64)]
+  [index : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i macro-hygiene-env-slot-count)
+      (begin
+        (array-set! dst-kinds i (array-ref src-kinds i))
+        (array-set! dst-keys i (array-ref src-keys i))
+        (array-set! dst-values i (array-ref src-values i))
+        (array-set! dst-parents i (array-ref src-parents i))
+        (set! i (+ i 1))))))
+
+(define (macro-hygiene-env-ensure-capacity!) : unit
+  (if (< macro-hygiene-env-slot-count (array.length macro-hygiene-env-keys))
+    unit
+    (let
+      [old-kinds : (Array i64) macro-hygiene-env-kinds]
+      [old-keys : (Array i64) macro-hygiene-env-keys]
+      [old-values : (Array i64) macro-hygiene-env-values]
+      [old-parents : (Array i64) macro-hygiene-env-parents]
+      [old-capacity : i64 (array.length old-keys)]
+      [next-capacity : i64
+        (if (< old-capacity 1)
+          64
+          (* old-capacity 2))]
+      [previous-arena : i64 (arena.tl_arena_current)]
+      [storage : i64 (macro-hygiene-env-storage-handle)]
+      (begin
+        ;; Snapshots can cross every scratch rewind involved in an expansion.
+        ;; Allocate initial storage and every growth in one retained arena, then
+        ;; restore the caller's active owner.
+        (unsafe
+          (arena.tl_arena_set storage))
+        (let
+          [next-kinds : (Array i64) (array.make-array i64 next-capacity)]
+          [next-keys : (Array i64) (array.make-array i64 next-capacity)]
+          [next-values : (Array i64) (array.make-array i64 next-capacity)]
+          [next-parents : (Array i64) (array.make-array i64 next-capacity)]
+          (begin
+            (macro-hygiene-env-grow-copy!
+              next-kinds
+              next-keys
+              next-values
+              next-parents
+              old-kinds
+              old-keys
+              old-values
+              old-parents
+              0)
+            (set! macro-hygiene-env-kinds next-kinds)
+            (set! macro-hygiene-env-keys next-keys)
+            (set! macro-hygiene-env-values next-values)
+            (set! macro-hygiene-env-parents next-parents)
+            (macro-hygiene-env-storage-restore! previous-arena storage)))))))
+
+(define (macro-hygiene-env-push
+  [kind : i64]
+  [env : MacroHygieneEnv]
+  [key-id : i64]
+  [value-id : i64]) : MacroHygieneEnv
+  (begin
+    (macro-hygiene-env-ensure-capacity!)
+    (let
+      [index : i64 macro-hygiene-env-slot-count]
+      (begin
+        (array-set! macro-hygiene-env-kinds index kind)
+        (array-set! macro-hygiene-env-keys index key-id)
+        (array-set! macro-hygiene-env-values index value-id)
+        (array-set!
+          macro-hygiene-env-parents
+          index
+          (macro-hygiene-env-head env))
+        (set! macro-hygiene-env-slot-count (+ macro-hygiene-env-slot-count 1))
+        (cfg compile-profile (compiler-tc-macro-hygiene-note-binding!))
+        (MacroHygieneEnv.Snapshot index)))))
+
+(define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
+  (let
+    [cursor : i64 (macro-hygiene-env-head env)]
+    [out : MacroMaybeHygieneName (MacroMaybeHygieneName.No)]
+    [done : bool false]
+    (begin
+      (cfg compile-profile (compiler-tc-macro-hygiene-note-lookup!))
+      (while (and (not done) (>= cursor 0))
+        (begin
+          (cfg compile-profile (compiler-tc-macro-hygiene-note-lookup-step!))
+          (if (= (array-ref macro-hygiene-env-keys cursor) name-id)
+            (begin
+              (set!
+                out
+                (MacroMaybeHygieneName.Some
+                  (array-ref macro-hygiene-env-values cursor)))
+              (set! done true))
+            (set! cursor (array-ref macro-hygiene-env-parents cursor)))))
+      out)))
 
 (define (macro-hygiene-env-lookup-pattern-name
   [env : MacroHygieneEnv]
   [name-id : i64]) : MacroMaybeHygieneName
-  (match env
-    [(MacroHygieneEnv.Nil) (MacroMaybeHygieneName.No)]
-    [(MacroHygieneEnv.Bind _ _ rest)
-      (macro-hygiene-env-lookup-pattern-name (box-get rest) name-id)]
-    [(MacroHygieneEnv.PatternName key-id value-id rest)
-      (if (= key-id name-id)
-        (MacroMaybeHygieneName.Some value-id)
-        (macro-hygiene-env-lookup-pattern-name (box-get rest) name-id))]))
+  (let
+    [cursor : i64 (macro-hygiene-env-head env)]
+    [out : MacroMaybeHygieneName (MacroMaybeHygieneName.No)]
+    [done : bool false]
+    (begin
+      (cfg compile-profile (compiler-tc-macro-hygiene-note-pattern-lookup!))
+      (while (and (not done) (>= cursor 0))
+        (begin
+          (cfg
+            compile-profile
+            (compiler-tc-macro-hygiene-note-pattern-lookup-step!))
+          (if (and
+            (=
+              (array-ref macro-hygiene-env-kinds cursor)
+              (macro-hygiene-env-pattern-name-kind))
+            (= (array-ref macro-hygiene-env-keys cursor) name-id))
+            (begin
+              (set!
+                out
+                (MacroMaybeHygieneName.Some
+                  (array-ref macro-hygiene-env-values cursor)))
+              (set! done true))
+            (set! cursor (array-ref macro-hygiene-env-parents cursor)))))
+      out)))
+
+(define (macro-hygiene-env-bind-raw
+  [env : MacroHygieneEnv]
+  [key-id : i64]
+  [value-id : i64]) : MacroHygieneEnv
+  (macro-hygiene-env-push (macro-hygiene-env-bind-kind) env key-id value-id))
+
+(define (macro-hygiene-env-bind-pattern-name-raw
+  [env : MacroHygieneEnv]
+  [key-id : i64]
+  [value-id : i64]) : MacroHygieneEnv
+  (macro-hygiene-env-push
+    (macro-hygiene-env-pattern-name-kind)
+    env
+    key-id
+    value-id))
 
 (define (macro-hygiene-output-bind-id [env : MacroHygieneEnv] [name-id : i64]) : MacroHygieneEnv
   (if (ci.intern-template-source-id? name-id)
-    (MacroHygieneEnv.Bind
+    (macro-hygiene-env-bind-raw
+      env
       name-id
-      (ci.intern-template-source-name-id name-id)
-      (box env))
+      (ci.intern-template-source-name-id name-id))
     env))
 
 (define (macro-hygiene-output-pattern-name-id
   [env : MacroHygieneEnv]
   [name-id : i64]) : MacroHygieneEnv
   (if (ci.intern-template-source-id? name-id)
-    (MacroHygieneEnv.PatternName
+    (macro-hygiene-env-bind-pattern-name-raw
+      env
       name-id
-      (ci.intern-template-source-name-id name-id)
-      (box env))
+      (ci.intern-template-source-name-id name-id))
     env))
 
 (define (macro-hygiene-output-macro-param-env
@@ -65134,10 +65428,10 @@
         (macro-hygiene-output-macro-param-env
           params
           (+ index 1)
-          (MacroHygieneEnv.Bind
+          (macro-hygiene-env-bind-raw
+            env
             (ci.intern-template-source-id name-id)
-            name-id
-            (box env)))])))
+            name-id))])))
 
 (define (macro-hygiene-output-param-env
   [expr : AstExpr]
@@ -65553,8 +65847,408 @@
             (io.panic "typecheck: missing macro template binding source id"))
           (MacroHygieneName.Name
             renamed-id
-            (MacroHygieneEnv.Bind name-id renamed-id (box env)))))
+            (macro-hygiene-env-bind-raw env name-id renamed-id))))
       (MacroHygieneName.Name name-id env))))
+
+;; A transformer appends newly constructed syntax after its bound operands and
+;; captured source syntax. Hygiene may therefore rewrite a fresh node in place
+;; when it has one reachable occurrence, while preserving the old copy path for
+;; source/captured nodes and DAG nodes reused in multiple lexical contexts.
+;;
+;; Refcounts are saturated at two. When a second path reaches a node, its whole
+;; descendant subgraph is marked shared as well: even a child with one incoming
+;; AST edge is observed twice through a shared parent and must not retain the
+;; hygiene environment from the first occurrence.
+(define macro-hygiene-produced-active : bool
+  false)
+(define macro-hygiene-produced-floor : i64
+  0)
+(define macro-hygiene-produced-limit : i64
+  0)
+(define macro-hygiene-produced-refcounts : (Array i64)
+  (array.make-array i64 1))
+
+(define (macro-hygiene-produced-eval-start! [env : CtfeEnv]) : unit
+  (begin
+    (set! macro-hygiene-produced-active false)
+    (set!
+      macro-hygiene-produced-floor
+      (ast-node-pool-context-expr-len (ctfe-env-syntax-pool-context env)))))
+
+(define (macro-hygiene-produced-refcounts-ensure! [needed : i64]) : unit
+  (if (<= needed (array.length macro-hygiene-produced-refcounts))
+    unit
+    (let
+      [capacity : i64 (array.length macro-hygiene-produced-refcounts)]
+      (begin
+        (while (< capacity needed)
+          (set! capacity (* capacity 2)))
+        (let
+          [previous-arena : i64 (arena.tl_arena_current)]
+          (begin
+            ;; The side table is reused across transformer calls and can outlive
+            ;; a per-declaration scratch reset.
+            (unsafe
+              (arena.tl_arena_set (compiler-load-provenance-arena)))
+            (set!
+              macro-hygiene-produced-refcounts
+              (array.make-array i64 capacity))
+            (unsafe
+              (arena.tl_arena_set previous-arena))))))))
+
+(define (macro-hygiene-produced-note-id!
+  [expr-bases : i64]
+  [expr-id : i64]
+  [shared-path? : bool]) : unit
+  (if (or
+    (< expr-id macro-hygiene-produced-floor)
+    (>= expr-id macro-hygiene-produced-limit))
+    unit
+    (let
+      [index : i64 (- expr-id macro-hygiene-produced-floor)]
+      [old : i64 (array-ref macro-hygiene-produced-refcounts index)]
+      [next : i64
+        (if shared-path?
+          2
+          (if (= old 0)
+            1
+            2))]
+      (if (= old next)
+        unit
+        (begin
+          (array-set! macro-hygiene-produced-refcounts index next)
+          (macro-hygiene-produced-note-children!
+            expr-bases
+            (ast-expr-segment-bases-get expr-bases expr-id)
+            (= next 2)))))))
+
+(define (macro-hygiene-produced-note-expr-list!
+  [expr-bases : i64]
+  [exprs : AstExprList]
+  [shared-path? : bool]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (struct-get (& exprs) len))
+      (begin
+        (macro-hygiene-produced-note-id!
+          expr-bases
+          (ast-expr-list-get (& exprs) index 0)
+          shared-path?)
+        (set! index (+ index 1))))))
+
+(define (macro-hygiene-produced-note-let-bindings!
+  [expr-bases : i64]
+  [bindings : AstLetBindingList]
+  [shared-path? : bool]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast-let-binding-list-len (& bindings)))
+      (begin
+        (match (ast-let-binding-list-get
+          (& bindings)
+          index
+          (ast-let-binding-fallback))
+          [(AstLetBinding.Binding _ _ init-box)
+            (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)])
+        (set! index (+ index 1))))))
+
+(define (macro-hygiene-produced-note-arms!
+  [expr-bases : i64]
+  [arms : AstMatchArmList]
+  [shared-path? : bool]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (struct-get (& arms) len))
+      (begin
+        (match (ast-match-arm-list-get (& arms) index (ast-match-arm-fallback))
+          [(AstMatchArm.Arm _ body-box)
+            (macro-hygiene-produced-note-id! expr-bases body-box shared-path?)])
+        (set! index (+ index 1))))))
+
+(define (macro-hygiene-produced-note-resource-bindings!
+  [expr-bases : i64]
+  [bindings : AstResourceBindingList]
+  [shared-path? : bool]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast-resource-binding-list-len (& bindings)))
+      (begin
+        (match (ast-resource-binding-list-get
+          (& bindings)
+          index
+          (ast-resource-binding-fallback))
+          [(AstResourceBinding.Binding _ init-box cleanup-box _)
+            (begin
+              (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)
+              (macro-hygiene-produced-note-id!
+                expr-bases
+                cleanup-box
+                shared-path?))])
+        (set! index (+ index 1))))))
+
+(define (macro-hygiene-produced-note-children!
+  [expr-bases : i64]
+  [expr : AstExpr]
+  [shared-path? : bool]) : unit
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.Binary _ left-box right-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases left-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases right-box shared-path?))]
+    [(AstExpr.Unary _ inner-box)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.Call func-box args)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases func-box shared-path?)
+        (macro-hygiene-produced-note-expr-list! expr-bases args shared-path?))]
+    [(AstExpr.BracketClause items)
+      (macro-hygiene-produced-note-expr-list! expr-bases items shared-path?)]
+    [(AstExpr.If cond-box then-box else-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases cond-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases then-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases else-box shared-path?))]
+    [(AstExpr.Let payload)
+      (match (box-get payload)
+        [(AstLet.Let bindings body-box)
+          (begin
+            (macro-hygiene-produced-note-let-bindings!
+              expr-bases
+              bindings
+              shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))])]
+    [(AstExpr.Lambda payload)
+      (match (box-get payload)
+        [(AstLambda.Lambda _ _ body-box)
+          (macro-hygiene-produced-note-id! expr-bases body-box shared-path?)])]
+    [(AstExpr.Tuple exprs)
+      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+    [(AstExpr.TupleRef tuple-box _)
+      (macro-hygiene-produced-note-id! expr-bases tuple-box shared-path?)]
+    [(AstExpr.Array exprs)
+      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+    [(AstExpr.DynArray exprs)
+      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+    [(AstExpr.MakeArray _ len-box)
+      (macro-hygiene-produced-note-id! expr-bases len-box shared-path?)]
+    [(AstExpr.ArrayRef array-box index-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?))]
+    [(AstExpr.ArraySet array-box index-box value-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases live-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?))]
+    [(AstExpr.ArrayPush array-box value-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+    [(AstExpr.StringRef string-box index-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases string-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases index-box shared-path?))]
+    [(AstExpr.While cond-box body-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases cond-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))]
+    [(AstExpr.Begin exprs)
+      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+    [(AstExpr.Unsafe exprs)
+      (macro-hygiene-produced-note-expr-list! expr-bases exprs shared-path?)]
+    [(AstExpr.Set _ value-box)
+      (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)]
+    [(AstExpr.Ann inner-box _)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.Cast inner-box _)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.Borrow _ _ place-box)
+      (macro-hygiene-produced-note-id! expr-bases place-box shared-path?)]
+    [(AstExpr.Match payload)
+      (match (box-get payload)
+        [(AstMatch.Match scrutinee-box arms)
+          (begin
+            (macro-hygiene-produced-note-id!
+              expr-bases
+              scrutinee-box
+              shared-path?)
+            (macro-hygiene-produced-note-arms! expr-bases arms shared-path?))])]
+    [(AstExpr.Foreach payload)
+      (match (box-get payload)
+        [(AstForeach.Foreach _ _ start-box end-box body-box)
+          (begin
+            (macro-hygiene-produced-note-id! expr-bases start-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases end-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))])]
+    [(AstExpr.SpmdReduce payload)
+      (match (box-get payload)
+        [(AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
+          (begin
+            (macro-hygiene-produced-note-id! expr-bases start-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases end-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))])]
+    [(AstExpr.SpmdScan payload)
+      (match (box-get payload)
+        [(AstSpmdScan.Scan
+            _
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            value-box
+            body-box)
+          (begin
+            (macro-hygiene-produced-note-id! expr-bases start-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases end-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases init-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)
+            (macro-hygiene-produced-note-id! expr-bases body-box shared-path?))])]
+    [(AstExpr.SpmdBroadcast value-box lane-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases lane-box shared-path?))]
+    [(AstExpr.SpmdShuffle value-box lane-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases lane-box shared-path?))]
+    [(AstExpr.StructGet receiver-box _)
+      (macro-hygiene-produced-note-id! expr-bases receiver-box shared-path?)]
+    [(AstExpr.StructSet receiver-box _ value-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases receiver-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+    [(AstExpr.WithRegion _ body)
+      (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?)]
+    [(AstExpr.WithEscape scratch-box body)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases scratch-box shared-path?)
+        (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?))]
+    [(AstExpr.WithScratch body)
+      (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?)]
+    [(AstExpr.InArena arena-box body)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases arena-box shared-path?)
+        (macro-hygiene-produced-note-expr-list! expr-bases body shared-path?))]
+    [(AstExpr.WithResource payload)
+      (match (box-get payload)
+        [(AstWithResource.WithResource bindings body)
+          (begin
+            (macro-hygiene-produced-note-resource-bindings!
+              expr-bases
+              bindings
+              shared-path?)
+            (macro-hygiene-produced-note-expr-list!
+              expr-bases
+              body
+              shared-path?))])]
+    [(AstExpr.Box inner-box)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.BoxGet inner-box)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.BoxTake inner-box)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.BoxSet inner-box value-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+    [(AstExpr.Comptime inner-box)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    ;; Quote payloads intentionally stay opaque to this hygiene walker.
+    [(AstExpr.Try inner-box)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.Return inner-box)
+      (macro-hygiene-produced-note-id! expr-bases inner-box shared-path?)]
+    [(AstExpr.PtrNullCheck ptr-box)
+      (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)]
+    [(AstExpr.PtrAddrOf place-box)
+      (macro-hygiene-produced-note-id! expr-bases place-box shared-path?)]
+    [(AstExpr.PtrRead ptr-box)
+      (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)]
+    [(AstExpr.PtrWrite ptr-box value-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases value-box shared-path?))]
+    [(AstExpr.PtrOffset ptr-box offset-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases offset-box shared-path?))]
+    [(AstExpr.PtrCast ptr-box _)
+      (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)]
+    [(AstExpr.PtrToInt ptr-box)
+      (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)]
+    [(AstExpr.IntToPtr value-box _)
+      (macro-hygiene-produced-note-id! expr-bases value-box shared-path?)]
+    [(AstExpr.StringData string-box)
+      (macro-hygiene-produced-note-id! expr-bases string-box shared-path?)]
+    [(AstExpr.StringFromBytes ptr-box len-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases ptr-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases len-box shared-path?))]
+    [(AstExpr.ArrayData array-box)
+      (macro-hygiene-produced-note-id! expr-bases array-box shared-path?)]
+    [(AstExpr.CpuIdEax leaf-box subleaf-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases leaf-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases subleaf-box shared-path?))]
+    [(AstExpr.CpuIdEbx leaf-box subleaf-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases leaf-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases subleaf-box shared-path?))]
+    [(AstExpr.CpuIdEcx leaf-box subleaf-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases leaf-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases subleaf-box shared-path?))]
+    [(AstExpr.CpuIdEdx leaf-box subleaf-box)
+      (begin
+        (macro-hygiene-produced-note-id! expr-bases leaf-box shared-path?)
+        (macro-hygiene-produced-note-id! expr-bases subleaf-box shared-path?))]
+    [(AstExpr.Xgetbv index-box)
+      (macro-hygiene-produced-note-id! expr-bases index-box shared-path?)]
+    [(AstExpr.Syscall args)
+      (macro-hygiene-produced-note-expr-list! expr-bases args shared-path?)]
+    [_ unit]))
+
+(define (macro-hygiene-produced-prepare! [expr-bases : i64] [root-id : i64]) : unit
+  (begin
+    (set! macro-hygiene-produced-limit (ast-node-pool-len))
+    (if (or
+      (< macro-hygiene-produced-floor 0)
+      (> macro-hygiene-produced-floor macro-hygiene-produced-limit))
+      (set! macro-hygiene-produced-active false)
+      (let
+        [needed : i64
+          (- macro-hygiene-produced-limit macro-hygiene-produced-floor)]
+        [index : i64 0]
+        (begin
+          (macro-hygiene-produced-refcounts-ensure! needed)
+          (while (< index needed)
+            (begin
+              (array-set! macro-hygiene-produced-refcounts index 0)
+              (set! index (+ index 1))))
+          (set! macro-hygiene-produced-active true)
+          (macro-hygiene-produced-note-id! expr-bases root-id false))))))
+
+(define (macro-hygiene-produced-owned? [expr-id : i64]) : bool
+  (and
+    macro-hygiene-produced-active
+    (>= expr-id macro-hygiene-produced-floor)
+    (< expr-id macro-hygiene-produced-limit)
+    (=
+      (array-ref
+        macro-hygiene-produced-refcounts
+        (- expr-id macro-hygiene-produced-floor))
+      1)))
 
 (define (macro-hygiene-expr-list
   [expr-bases : i64]
@@ -65590,9 +66284,7 @@
         out
         (macro-hygiene-expr
           expr-bases
-          (ast-expr-segment-bases-get
-            expr-bases
-            (ast-expr-list-get exprs index 0))
+          (ast-expr-list-get exprs index 0)
           env
           macro-name
           depth))
@@ -65623,9 +66315,7 @@
               (ast-expr-list-get (& exprs) index 0)
               (macro-hygiene-expr
                 expr-bases
-                (ast-expr-segment-bases-get
-                  expr-bases
-                  (ast-expr-list-get (& exprs) index 0))
+                (ast-expr-list-get (& exprs) index 0)
                 env
                 macro-name
                 depth)))
@@ -65980,9 +66670,8 @@
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
-          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
           [ninit : i64
-            (macro-hygiene-expr expr-bases init env macro-name depth)]
+            (macro-hygiene-expr expr-bases init-box env macro-name depth)]
           [nmaybe-ty : AstMaybeType
             (macro-hygiene-maybe-type maybe-ty env macro-name)]
           (match (macro-hygiene-bind-name-id env macro-name depth name)
@@ -66037,13 +66726,10 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
-          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
-          [cleanup : AstExpr
-            (ast-expr-segment-bases-get expr-bases cleanup-box)]
           [ninit : i64
-            (macro-hygiene-expr expr-bases init env macro-name depth)]
+            (macro-hygiene-expr expr-bases init-box env macro-name depth)]
           [ncleanup : i64
-            (macro-hygiene-expr expr-bases cleanup env macro-name depth)]
+            (macro-hygiene-expr expr-bases cleanup-box env macro-name depth)]
           (match (macro-hygiene-bind-name-id env macro-name depth name)
             [(MacroHygieneName.Name renamed-id next-env)
               (begin
@@ -66104,7 +66790,7 @@
                   npattern
                   (macro-hygiene-expr
                     expr-bases
-                    (ast-expr-segment-bases-get expr-bases body-box)
+                    body-box
                     arm-env
                     macro-name
                     depth)))
@@ -66117,21 +66803,64 @@
                 depth
                 out))])])))
 
-;; Profile shim: attribute time/allocation to the hygiene rebuild as a
-;; whole. The walker recurses through this entry, so the region helpers are
-;; depth-guarded and only the outermost activation accumulates.
+;; Profile shim and copy-on-write commit. The inner walker still constructs one
+;; replacement node so its exhaustive syntax logic stays shared with captured
+;; syntax. For an owned node, immediately move that replacement into the
+;; transformer's original slot and rewind the one-node append.
 (define (macro-hygiene-expr
   [expr-bases : i64]
-  [expr : AstExpr]
+  [expr-id : i64]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
   [depth : i64]) : i64
   (begin
     (cfg compile-profile (compiler-tc-walk-hygiene-start!))
     (let
+      [expr : AstExpr (ast-expr-segment-bases-get expr-bases expr-id)]
       [result : i64
         (macro-hygiene-expr-inner expr-bases expr env macro-name depth)]
+      [reuse? : bool
+        (and
+          (macro-hygiene-produced-owned? expr-id)
+          (= (+ result 1) (ast-node-pool-len)))]
+      [out : i64
+        (if reuse?
+          (let
+            [replacement : AstExpr (ast-node-get result)]
+            (begin
+              (ast-node-set! expr-id replacement)
+              (ast-node-pool-truncate! result)
+              expr-id))
+          result)]
       (begin
+        (cfg
+          compile-profile
+          (if reuse?
+            (set!
+              compiler-tc-walk-hygiene-nodes-reused
+              (+ compiler-tc-walk-hygiene-nodes-reused 1))
+            (set!
+              compiler-tc-walk-hygiene-nodes-copied
+              (+ compiler-tc-walk-hygiene-nodes-copied 1))))
+        (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
+        out))))
+
+;; Include ownership discovery in the hygiene profile lane, then disable the
+;; transient side table before produced-node expansion starts.
+(define (macro-hygiene-produced-expr
+  [expr-bases : i64]
+  [expr-id : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]) : i64
+  (begin
+    (cfg compile-profile (compiler-tc-walk-hygiene-start!))
+    (macro-hygiene-produced-prepare! expr-bases expr-id)
+    (let
+      [result : i64
+        (macro-hygiene-expr expr-bases expr-id env macro-name depth)]
+      (begin
+        (set! macro-hygiene-produced-active false)
         (cfg compile-profile (compiler-tc-walk-hygiene-finish!))
         result))))
 
@@ -66144,7 +66873,7 @@
   (match expr
     [(AstExpr.Spanned inner-box span)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-spanned
           (macro-hygiene-expr expr-bases inner env macro-name depth)
           span))]
@@ -66153,15 +66882,15 @@
         (AstExpr.Var (macro-hygiene-rename-var-id env macro-name name)))]
     [(AstExpr.Binary op left-box right-box)
       (let
-        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
-        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        [left : i64 left-box]
+        [right : i64 right-box]
         (ast-expr-binary
           op
           (macro-hygiene-expr expr-bases left env macro-name depth)
           (macro-hygiene-expr expr-bases right env macro-name depth)))]
     [(AstExpr.Unary op inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-unary
           op
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
@@ -66171,7 +66900,7 @@
         [call-env : MacroHygieneEnv
           (macro-hygiene-output-call-env expr-bases func (& args) env)]
         (ast-expr-call
-          (macro-hygiene-expr expr-bases func env macro-name depth)
+          (macro-hygiene-expr expr-bases func-box env macro-name depth)
           (match (ast-expr-unspan func)
             [(AstExpr.Var name-id)
               (if (=
@@ -66201,11 +66930,9 @@
         (macro-hygiene-expr-list expr-bases items env macro-name depth))]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
-        [then-branch : AstExpr
-          (ast-expr-segment-bases-get expr-bases then-branch-box)]
-        [else-branch : AstExpr
-          (ast-expr-segment-bases-get expr-bases else-branch-box)]
+        [cond : i64 cond-box]
+        [then-branch : i64 then-branch-box]
+        [else-branch : i64 else-branch-box]
         (ast-expr-if
           (macro-hygiene-expr expr-bases cond env macro-name depth)
           (macro-hygiene-expr expr-bases then-branch env macro-name depth)
@@ -66214,7 +66941,7 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
-            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            [body : i64 body-box]
             (match (macro-hygiene-let-bindings
               expr-bases
               bindings
@@ -66229,7 +66956,7 @@
       (match (box-get lambda-box)
         [(AstLambda.Lambda params maybe-ret body-box)
           (let
-            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            [body : i64 body-box]
             (match (macro-hygiene-param-list params env macro-name depth)
               [(MacroHygieneParams.Params nparams body-env)
                 (ast-expr-lambda
@@ -66242,8 +66969,7 @@
           (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
     [(AstExpr.TupleRef tuple-expr-box index)
       (let
-        [tuple-expr : AstExpr
-          (ast-expr-segment-bases-get expr-bases tuple-expr-box)]
+        [tuple-expr : i64 tuple-expr-box]
         (ast-expr-tuple-ref
           (macro-hygiene-expr expr-bases tuple-expr env macro-name depth)
           index))]
@@ -66257,53 +66983,53 @@
           (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
     [(AstExpr.MakeArray ty len-box)
       (let
-        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        [len : i64 len-box]
         (ast-expr-make-array
           (macro-hygiene-type ty env macro-name)
           (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
-        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
-        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [array : i64 array-box]
+        [index : i64 index-box]
         (ast-expr-array-ref
           (macro-hygiene-expr expr-bases array env macro-name depth)
           (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
-        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
-        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
-        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [array : i64 array-box]
+        [index : i64 index-box]
+        [value : i64 value-box]
         (ast-expr-array-set
           (macro-hygiene-expr expr-bases array env macro-name depth)
           (macro-hygiene-expr expr-bases index env macro-name depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(AstExpr.ArrayTake array-box live-box index-box)
       (let
-        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
-        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
-        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [array : i64 array-box]
+        [live : i64 live-box]
+        [index : i64 index-box]
         (ast-expr-array-take
           (macro-hygiene-expr expr-bases array env macro-name depth)
           (macro-hygiene-expr expr-bases live env macro-name depth)
           (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
-        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
-        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [array : i64 array-box]
+        [value : i64 value-box]
         (ast-expr-array-push
           (macro-hygiene-expr expr-bases array env macro-name depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(AstExpr.StringRef text-box index-box)
       (let
-        [text : AstExpr (ast-expr-segment-bases-get expr-bases text-box)]
-        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [text : i64 text-box]
+        [index : i64 index-box]
         (ast-expr-string-ref
           (macro-hygiene-expr expr-bases text env macro-name depth)
           (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(AstExpr.While cond-box body-box)
       (let
-        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        [cond : i64 cond-box]
+        [body : i64 body-box]
         (ast-expr-while
           (macro-hygiene-expr expr-bases cond env macro-name depth)
           (macro-hygiene-expr expr-bases body env macro-name depth)))]
@@ -66317,25 +67043,25 @@
           (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
     [(AstExpr.Set name rhs-box)
       (let
-        [rhs : AstExpr (ast-expr-segment-bases-get expr-bases rhs-box)]
+        [rhs : i64 rhs-box]
         (ast-expr-set-id
           (macro-hygiene-rename-var-id env macro-name name)
           (macro-hygiene-expr expr-bases rhs env macro-name depth)))]
     [(AstExpr.Ann inner-box ty)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-ann
           (macro-hygiene-expr expr-bases inner env macro-name depth)
           (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.Cast inner-box ty)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-cast
           (macro-hygiene-expr expr-bases inner env macro-name depth)
           (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.Borrow mutable lifetime place-box)
       (let
-        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        [place : i64 place-box]
         (ast-expr-borrow
           mutable
           (macro-hygiene-borrow-lifetime lifetime env macro-name)
@@ -66344,7 +67070,7 @@
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
-            [scrut : AstExpr (ast-expr-segment-bases-get expr-bases scrut-box)]
+            [scrut : i64 scrut-box]
             (ast-expr-match
               (macro-hygiene-expr expr-bases scrut env macro-name depth)
               (macro-hygiene-arm-list expr-bases arms env macro-name depth)))])]
@@ -66352,9 +67078,9 @@
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
           (let
-            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
-            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
-            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            [start : i64 start-box]
+            [end : i64 end-box]
+            [body : i64 body-box]
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast-expr-foreach-id
@@ -66374,10 +67100,10 @@
             init-box
             value-box)
           (let
-            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
-            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
-            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
-            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [start : i64 start-box]
+            [end : i64 end-box]
+            [init : i64 init-box]
+            [value : i64 value-box]
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast-expr-spmd-reduce-id
@@ -66407,11 +67133,11 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
-            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
-            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
-            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
-            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            [start : i64 start-box]
+            [end : i64 end-box]
+            [init : i64 init-box]
+            [value : i64 value-box]
+            [body : i64 body-box]
             (match (macro-hygiene-bind-name-id env macro-name depth index)
               [(MacroHygieneName.Name nindex-id value-env)
                 (match (macro-hygiene-bind-name-id
@@ -66443,28 +67169,28 @@
                         depth))])]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
-        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        [value : i64 value-box]
+        [lane : i64 lane-box]
         (ast-expr-spmd-broadcast
           (macro-hygiene-expr expr-bases value env macro-name depth)
           (macro-hygiene-expr expr-bases lane env macro-name depth)))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
-        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        [value : i64 value-box]
+        [lane : i64 lane-box]
         (ast-expr-spmd-shuffle
           (macro-hygiene-expr expr-bases value env macro-name depth)
           (macro-hygiene-expr expr-bases lane env macro-name depth)))]
     [(AstExpr.StructGet inner-box field)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-struct-get-id
           (macro-hygiene-expr expr-bases inner env macro-name depth)
           field))]
     [(AstExpr.StructSet inner-box field value-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
-        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [inner : i64 inner-box]
+        [value : i64 value-box]
         (ast-expr-struct-set-id
           (macro-hygiene-expr expr-bases inner env macro-name depth)
           field
@@ -66483,7 +67209,7 @@
                 depth)))])]
     [(AstExpr.WithEscape scratch-box body)
       (let
-        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
+        [scratch : i64 scratch-box]
         (ast-expr-with-escape
           (macro-hygiene-expr expr-bases scratch env macro-name depth)
           (macro-hygiene-expr-list expr-bases body env macro-name depth)))]
@@ -66492,7 +67218,7 @@
         (macro-hygiene-expr-list expr-bases body env macro-name depth))]
     [(AstExpr.InArena arena-box body)
       (let
-        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
+        [arena : i64 arena-box]
         (ast-expr-in-arena
           (macro-hygiene-expr expr-bases arena env macro-name depth)
           (macro-hygiene-expr-list expr-bases body env macro-name depth)))]
@@ -66519,23 +67245,23 @@
                         depth)))))])])]
     [(AstExpr.Box inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-box
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.BoxGet inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-box-get
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.BoxTake inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-box-take
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
-        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [inner : i64 inner-box]
+        [value : i64 value-box]
         (ast-expr-box-set
           (macro-hygiene-expr expr-bases inner env macro-name depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
@@ -66546,82 +67272,82 @@
       (ast-expr-init-maybe (macro-hygiene-maybe-type maybe-ty env macro-name))]
     [(AstExpr.Comptime inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-comptime
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.Return inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-return
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.Try inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-try
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.PtrNull ty)
       (ast-node-push (AstExpr.PtrNull (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.PtrNullCheck ptr-box)
       (let
-        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [ptr : i64 ptr-box]
         (ast-expr-ptr-null-check
           (macro-hygiene-expr expr-bases ptr env macro-name depth)))]
     [(AstExpr.PtrAddrOf place-box)
       (let
-        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        [place : i64 place-box]
         (ast-expr-ptr-addr-of-id
           (macro-hygiene-expr expr-bases place env macro-name depth)))]
     [(AstExpr.PtrRead ptr-box)
       (let
-        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [ptr : i64 ptr-box]
         (ast-expr-ptr-read
           (macro-hygiene-expr expr-bases ptr env macro-name depth)))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
-        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
-        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [ptr : i64 ptr-box]
+        [value : i64 value-box]
         (ast-expr-ptr-write
           (macro-hygiene-expr expr-bases ptr env macro-name depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
-        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
-        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
+        [ptr : i64 ptr-box]
+        [offset : i64 offset-box]
         (ast-expr-ptr-offset
           (macro-hygiene-expr expr-bases ptr env macro-name depth)
           (macro-hygiene-expr expr-bases offset env macro-name depth)))]
     [(AstExpr.PtrCast ptr-box ty)
       (let
-        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [ptr : i64 ptr-box]
         (ast-expr-ptr-cast
           (macro-hygiene-expr expr-bases ptr env macro-name depth)
           (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.PtrToInt ptr-box)
       (let
-        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [ptr : i64 ptr-box]
         (ast-expr-ptr-to-int
           (macro-hygiene-expr expr-bases ptr env macro-name depth)))]
     [(AstExpr.IntToPtr value-box ty)
       (let
-        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [value : i64 value-box]
         (ast-expr-int-to-ptr
           (macro-hygiene-expr expr-bases value env macro-name depth)
           (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.StringData inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-string-data
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
-        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
-        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        [ptr : i64 ptr-box]
+        [len : i64 len-box]
         (ast-expr-string-from-bytes
           (macro-hygiene-expr expr-bases ptr env macro-name depth)
           (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(AstExpr.ArrayData inner-box)
       (let
-        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [inner : i64 inner-box]
         (ast-expr-array-data
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
     [(AstExpr.BinaryData bytes) (ast-node-push (AstExpr.BinaryData bytes))]
@@ -66629,35 +67355,35 @@
     [(AstExpr.SpmdProgramCount) (ast-expr-spmd-program-count)]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        [leaf : i64 leaf-box]
+        [subleaf : i64 subleaf-box]
         (ast-expr-cpuid-eax
           (macro-hygiene-expr expr-bases leaf env macro-name depth)
           (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        [leaf : i64 leaf-box]
+        [subleaf : i64 subleaf-box]
         (ast-expr-cpuid-ebx
           (macro-hygiene-expr expr-bases leaf env macro-name depth)
           (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        [leaf : i64 leaf-box]
+        [subleaf : i64 subleaf-box]
         (ast-expr-cpuid-ecx
           (macro-hygiene-expr expr-bases leaf env macro-name depth)
           (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
-        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
-        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        [leaf : i64 leaf-box]
+        [subleaf : i64 subleaf-box]
         (ast-expr-cpuid-edx
           (macro-hygiene-expr expr-bases leaf env macro-name depth)
           (macro-hygiene-expr expr-bases subleaf env macro-name depth)))]
     [(AstExpr.Xgetbv index-box)
       (let
-        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [index : i64 index-box]
         (ast-expr-xgetbv
           (macro-hygiene-expr expr-bases index env macro-name depth)))]
     [(AstExpr.Syscall args)
@@ -69860,6 +70586,7 @@
           ;; earlier expansion cannot leak either marker into this result.
           (ctfe-result-hygiene-free-reset!)
           (ctfe-result-macro-provenance-reset!)
+          (macro-hygiene-produced-eval-start! env)
           (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
           (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (let
@@ -69893,6 +70620,7 @@
                 (macro-note-stdlib-tlci-route fallback-module macro-name)
                 (ctfe-result-hygiene-free-reset!)
                 (ctfe-result-macro-provenance-reset!)
+                (macro-hygiene-produced-eval-start! env)
                 (cfg compile-profile (compiler-tc-macro-profile-start))
                 (match (ctfe-eval-node
                   body
@@ -70504,16 +71232,23 @@
                         (+ depth 1)
                         (if (= expanded (ctfe-result-hygiene-free-node-id))
                           expanded
-                          (macro-hygiene-expr
-                            expr-bases
-                            (ast-expr-segment-bases-get expr-bases expanded)
-                            MacroHygieneEnv.Nil
-                            (MacroHygieneContext
-                              macro-name-id
-                              definition-module-id
-                              declaration-id
-                              (tc-context-symbols ctx))
-                            (+ depth 1))))]
+                          (begin
+                            (macro-hygiene-env-root-begin!)
+                            (let
+                              [out : i64
+                                (macro-hygiene-produced-expr
+                                  expr-bases
+                                  expanded
+                                  (macro-hygiene-env-empty)
+                                  (MacroHygieneContext
+                                    macro-name-id
+                                    definition-module-id
+                                    declaration-id
+                                    (tc-context-symbols ctx))
+                                  (+ depth 1))]
+                              (begin
+                                (macro-hygiene-env-root-finish!)
+                                out)))))]
                     (begin
                       (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                       rewalk-result)))
@@ -70541,16 +71276,23 @@
                         (+ depth 1)
                         (if (= expanded (ctfe-result-hygiene-free-node-id))
                           expanded
-                          (macro-hygiene-expr
-                            expr-bases
-                            (ast-expr-segment-bases-get expr-bases expanded)
-                            MacroHygieneEnv.Nil
-                            (MacroHygieneContext
-                              macro-name-id
-                              definition-module-id
-                              declaration-id
-                              (tc-context-symbols ctx))
-                            (+ depth 1))))]
+                          (begin
+                            (macro-hygiene-env-root-begin!)
+                            (let
+                              [out : i64
+                                (macro-hygiene-produced-expr
+                                  expr-bases
+                                  expanded
+                                  (macro-hygiene-env-empty)
+                                  (MacroHygieneContext
+                                    macro-name-id
+                                    definition-module-id
+                                    declaration-id
+                                    (tc-context-symbols ctx))
+                                  (+ depth 1))]
+                              (begin
+                                (macro-hygiene-env-root-finish!)
+                                out)))))]
                     (begin
                       (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                       rewalk-result)))

@@ -34,6 +34,11 @@ src/compiler_backend.tl	compiler-backend-emit-windows-seh-set-rbp	object-format	
 src/compiler_backend.tl	compiler-backend-emit-save-win64-xmm-callee-regs	abi	compiler-backend-target-windows[?]	1	The Win64 XMM save walk is skipped entirely for non-Windows targets.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-prologue-tail	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH stack allocation, nonvolatile XMM saves, and prologue terminators.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-endproc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH procedure terminators.
+src/compiler_backend.tl	compiler-backend-debug-file-directives	object-format	compiler-backend-target-(linux|windows)[?]	2	Debug builds select DWARF file directives on Linux and CodeView file checksums on Windows.
+src/compiler_backend.tl	compiler-backend-debug-prefix	object-format	compiler-backend-target-windows[?]	1	Windows debug assembly requires the CodeView section signature.
+src/compiler_backend.tl	compiler-backend-debug-location-directive	object-format	compiler-backend-target-windows[?]	1	Per-instruction source locations use CodeView syntax on Windows and DWARF syntax otherwise.
+src/compiler_backend.tl	compiler-backend-debug-function-end-label	object-format	compiler-backend-target-windows[?]	1	CodeView line subsections reference a Windows-only end label.
+src/compiler_backend.tl	compiler-backend-debug-trailer	object-format	compiler-backend-target-(linux|windows)[?]	2	Debug trailers select DWARF metadata on Linux and CodeView metadata on Windows.
 src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-call stack adjustment is explicitly zero for both pre-reserved target frames.
 src/compiler_backend.tl	compiler-backend-varargs-pre-call	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 varargs setup are different ABIs.
 src/compiler_backend.tl	compiler-backend-atomic-ptr-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's first integer argument register.
@@ -45,7 +50,9 @@ src/compiler_backend.tl	compiler-backend-emit-syscall	runtime	compiler-backend-t
 src/compiler_backend.tl	compiler-backend-emit-inline-fast-alloc	runtime	compiler-backend-target-windows[?]	2	Windows register choices and incrementally committed arena bounds differ in the inline allocator fast path.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	entry	compiler-backend-target-windows[?]	1	Windows CRT passes argc and argv in Win64 registers.
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	entry	compiler-backend-target-linux[?]	1	Linux CRT passes argc, argv, and envp in System V registers.
-src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	9	Function emission selects target entry capture, FPO eligibility/prologue, object-format suffixes, and Win64 sweep metadata.
+src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	12	Function emission selects target entry capture, FPO eligibility/prologue, debug locations, object-format suffixes, and Win64 sweep metadata.
+src/compiler_backend.tl	compiler-backend-emit-function-entry	object-format	compiler-backend-target-linux[?]	2	Linux debug builds wrap function bodies in CFI start/end directives.
+src/compiler_backend.tl	compiler-backend-emit-closure-entry-adapter	object-format	compiler-backend-target-linux[?]	1	Linux debug builds wrap closure adapters in CFI start/end directives.
 src/compiler_backend.tl	compiler-backend-object-call-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object call lowering reserves target ABI shadow and stack argument space.
 src/compiler_backend.tl	compiler-backend-object-call-arg-moves	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object stack argument moves differ between System V and Win64.
 src/compiler_backend.tl	compiler-backend-object-param-spills	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object callee parameter spills differ for target stack arguments.

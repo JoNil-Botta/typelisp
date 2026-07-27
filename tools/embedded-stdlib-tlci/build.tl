@@ -279,13 +279,25 @@
                     embedded-stdlib-tlci-build-error
                     "\n"))
                 1)
-              (embedded-native-write
-                output
-                build-hash
-                (string.eq target "windows")
-                rodata
-                (svec.to-array (& names))
-                (& captures)))))
+              (let
+                [name-count : i64 (svec.len (& names))]
+                [name-array (make-array String name-count)]
+                [name-index : i64 0]
+                (begin
+                  (while (< name-index name-count)
+                    (begin
+                      (array-set!
+                        name-array
+                        name-index
+                        (svec.get (& names) name-index ""))
+                      (set! name-index (+ name-index 1))))
+                  (embedded-native-write
+                    output
+                    build-hash
+                    (string.eq target "windows")
+                    rodata
+                    name-array
+                    (& captures)))))))
         (begin
           (io.print-error
             (str-cat "embedded stdlib tlci: invalid host target: " target "\n"))

@@ -555,6 +555,28 @@
             stdlib-roots)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
+            [(or (string.eq current "--debug") (string.eq current "-g"))
+              (begin
+                (compiler-debug-info-set-enabled! true)
+                (build-parse-options
+                  (+ idx 1)
+                  count
+                  source
+                  has-source
+                  output
+                  has-output
+                  manifest
+                  has-manifest
+                  target
+                  has-target
+                  mode
+                  profile
+                  has-profile
+                  opt-level
+                  has-opt-level
+                  lock-policy
+                  stdlib-lines
+                  stdlib-roots))]
             [(string.eq current "-o")
               (if (>= (+ idx 1) count)
                 (ResultBuildConfig.Err "build: -o requires a value")
@@ -903,6 +925,22 @@
             resolved-deps)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
+            [(or (string.eq current "--debug") (string.eq current "-g"))
+              (begin
+                (compiler-debug-info-set-enabled! true)
+                (build-package-worker-parse-options
+                  (+ idx 1)
+                  count
+                  manifest-path
+                  has-manifest
+                  target
+                  mode
+                  profile
+                  opt-level
+                  has-opt-level
+                  lock-policy
+                  stdlib-roots
+                  resolved-deps))]
             [(string.eq current "--manifest-path")
               (if (>= (+ idx 1) count)
                 (ResultBuildPackageWorkerConfig.Err
@@ -3585,8 +3623,14 @@
   [names : (&mut names cli_svec.Vec)]
   [captures : TlciNativeMacroCaptures]) : BuildPackageTlciMacroCollector
   (let
-    [catalog : (Array String) (cli_svec.to-array names)]
+    [count : i64 (cli_svec.len names)]
+    [catalog (make-array String count)]
+    [index : i64 0]
     (begin
+      (while (< index count)
+        (begin
+          (array-set! catalog index (cli_svec.get names index ""))
+          (set! index (+ index 1))))
       (build-package-tlci-sort-macro-catalog! (&mut catalog))
       (BuildPackageTlciMacroCollector catalog captures))))
 
@@ -4554,8 +4598,12 @@
         args5
         "--opt-level"
         (string.int->string opt-level))]
+    [debug-args : process.ProcessStringList
+      (if (compiler-debug-info-enabled?)
+        (source-tool-args-append args6 "--debug")
+        args6)]
     [args7 : process.ProcessStringList
-      (build-package-lock-policy-arg args6 lock-policy)]
+      (build-package-lock-policy-arg debug-args lock-policy)]
     [args8 : process.ProcessStringList
       (build-package-worker-append-resolved-deps args7 resolved-deps 0)]
     (build-package-worker-append-stdlib-roots args8 stdlib-roots)))
@@ -5547,6 +5595,7 @@
   (ManifestPath)
   (Locked)
   (UpdateLock)
+  (Debug)
   (Other))
 
 (define (build-cli-option-rest6 [current : String]) : BuildCliOption
@@ -5598,9 +5647,11 @@
     (build-cli-option-rest1 current)))
 
 (define (build-cli-option [current : String]) : BuildCliOption
-  (if (string.eq current "-o")
-    (BuildCliOption.Output)
-    (build-cli-option-rest0 current)))
+  (cond
+    [(string.eq current "-o") (BuildCliOption.Output)]
+    [(or (string.eq current "--debug") (string.eq current "-g"))
+      (BuildCliOption.Debug)]
+    [else (build-cli-option-rest0 current)]))
 
 (define (build-args-have-source? [idx : i64] [count : i64]) : bool
   (if (>= idx count)
@@ -5615,6 +5666,7 @@
         [(BuildCliOption.Release) (build-args-have-source? (+ idx 1) count)]
         [(BuildCliOption.Locked) (build-args-have-source? (+ idx 1) count)]
         [(BuildCliOption.UpdateLock) (build-args-have-source? (+ idx 1) count)]
+        [(BuildCliOption.Debug) (build-args-have-source? (+ idx 1) count)]
         [_ (build-args-have-source? (+ idx 2) count)]))))
 
 (define (build-cli-parse-common-option
@@ -5739,6 +5791,21 @@
             link-inputs)]
         [(cli_option.CliCommonOption.NotCommon)
           (match (build-cli-option current)
+            [(BuildCliOption.Debug)
+              (begin
+                (compiler-debug-info-set-enabled! true)
+                (build-cli-parse-options
+                  (+ idx 1)
+                  count
+                  source
+                  has-source
+                  output
+                  has-output
+                  target
+                  mode
+                  stdlib-roots
+                  opt-level
+                  link-inputs))]
             [(BuildCliOption.Output)
               (if (>= (+ idx 1) count)
                 (ResultBuildCliConfig.Err "build: -o requires a value")
@@ -5939,11 +6006,15 @@
   [start : i64]
   [count : i64]
   [producer-identity : String]) : i64
-  (cond
-    [(and (> count start) (string.eq (io.arg start) "--package-worker"))
-      (build-package-worker-run-from (+ start 1) count producer-identity)]
-    [(and (> count start) (string.eq (io.arg start) "--package-doctest-worker"))
-      (build-package-doctest-worker-run-from (+ start 1) count)]
-    [(and (> count start) (string.eq (io.arg start) "--direct"))
-      (build-direct-from (+ start 1) count producer-identity)]
-    [else (build-direct-from start count producer-identity)]))
+  (begin
+    (compiler-debug-info-set-enabled! false)
+    (cond
+      [(and (> count start) (string.eq (io.arg start) "--package-worker"))
+        (build-package-worker-run-from (+ start 1) count producer-identity)]
+      [(and
+          (> count start)
+          (string.eq (io.arg start) "--package-doctest-worker"))
+        (build-package-doctest-worker-run-from (+ start 1) count)]
+      [(and (> count start) (string.eq (io.arg start) "--direct"))
+        (build-direct-from (+ start 1) count producer-identity)]
+      [else (build-direct-from start count producer-identity)])))

@@ -3991,8 +3991,10 @@ Runtime-sized SPMD inputs and outputs need not be spelled as unsized
 `(Array T)` parameters: vector/slice-style sources and mutable destinations
 borrow storage instead of copying collections. Generated vector
 `slots`/`slots-mut` accessors and generated full-slice `slots` fields may be
-borrowed before a `foreach` body; the body then uses ordinary
-`array-ref`/`array-set!` over the borrowed backing arrays.
+borrowed into inferred local bindings before a `foreach` body; callers do not
+name either the compatibility `(Array T)` spelling or the compiler-private
+dynamic backing type. The body then uses ordinary `array-ref`/`array-set!`
+over those borrowed buffers.
 
 Uniform and varying rules:
 

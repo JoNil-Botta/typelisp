@@ -67,12 +67,11 @@
         "struct vector reverse mutates first slot")
       (let
         [mapped : pvec.Vec (pvec.map (& v) pair-swap)]
-        [snapshot : (Array Pair) (pvec.to-array (& mapped))]
         (begin
           (test.assert-i64-eq
-            (pair-score (array-ref snapshot 0))
+            (pair-score (pvec.get (& mapped) 0 (Pair 0 0)))
             32
-            "struct vector map snapshots aggregate")
+            "struct vector map returns aggregate")
           (match (pvec.pop (&mut v))
             [(pvec.Pop.Ok value)
               (begin

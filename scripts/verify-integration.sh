@@ -18,9 +18,11 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-integration.sh [--self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --validate-manifest-only]
+usage: scripts/verify-integration.sh [--self-test-batch-observability | --self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --validate-manifest-only]
 
 Runs manifest-driven native integration tests.
+--self-test-batch-observability exercises the batch sentinel selection and
+per-chunk timing row without invoking a compiler or native toolchain.
 --self-test-empty-compile-diagnostic exercises the compile-failure diagnostic
 helper without invoking a compiler or native toolchain.
 --self-test-signal-notice-capture exercises Linux signal exit and shell-notice
@@ -29,12 +31,18 @@ capture without invoking a compiler or native toolchain.
 EOF
 }
 
+SELF_TEST_BATCH_OBSERVABILITY=0
 SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=0
 SELF_TEST_SIGNAL_NOTICE_CAPTURE=0
 SELF_TEST_WITHOUT_COMPILER=0
 VALIDATE_MANIFEST_ONLY=0
 case "${1:-}" in
     "")
+        ;;
+    --self-test-batch-observability)
+        SELF_TEST_BATCH_OBSERVABILITY=1
+        SELF_TEST_WITHOUT_COMPILER=1
+        shift
         ;;
     --self-test-empty-compile-diagnostic)
         SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=1
@@ -178,6 +186,40 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
+
+# Compile one batch chunk. The timing row deliberately describes the actual
+# compiler process rather than attributing its elapsed time to individual
+# cases, which would turn a measurement into a derived estimate (#5793).
+integration_batch_run_chunk() {
+    _chunk_list=$1
+    _chunk_label=$2
+    shift 2
+    INTEGRATION_BATCH_CHUNKS=$((INTEGRATION_BATCH_CHUNKS + 1))
+    _chunk_stdout="$WORKDIR/batch-$_chunk_label.stdout"
+    _chunk_stderr="$WORKDIR/batch-$_chunk_label.stderr"
+    set +e
+    ci_timing_run "batch-$_chunk_label" compile \
+        "$COMPILER" compile --batch "$_chunk_list" "$@" \
+        > "$_chunk_stdout" 2> "$_chunk_stderr"
+    _chunk_rc=$?
+    set -e
+    if [ "$_chunk_rc" -eq 0 ]; then
+        return 0
+    fi
+    INTEGRATION_BATCH_FAILED_CHUNKS=$((INTEGRATION_BATCH_FAILED_CHUNKS + 1))
+    echo "[integration] batch chunk $_chunk_label exited $_chunk_rc;" \
+        "replaying its entries standalone" >&2
+    sed 's/^/  /' "$_chunk_stderr" >&2 || true
+    while IFS='|' read -r _batch_src _batch_asm; do
+        [ -n "$_batch_asm" ] || continue
+        rm -f "$_batch_asm"
+    done < "$_chunk_list"
+    return 0
+}
+
+integration_batch_sentinel_entry() {
+    sed -n '$p' "$1"
+}
 
 WINDOWS_RUNNER_WIN=
 WINDOWS_LEGACY_RUNNER_WIN=
@@ -1136,6 +1178,65 @@ EOF
     printf '%s\n' "verify-integration signal notice capture self-test passed"
 }
 
+run_batch_observability_self_test() {
+    _dir="$WORKDIR/batch-observability-self-test"
+    rm -rf "$_dir"
+    mkdir -p "$_dir"
+    _chunk="$_dir/chunk.list"
+    _fake_compiler="$_dir/fake-typelisp"
+    _timing="$_dir/timing.tsv"
+    cat > "$_chunk" <<'EOF'
+first.tl|first.s
+middle.tl|middle.s
+last.tl|last.s
+EOF
+    cat > "$_fake_compiler" <<'EOF'
+#!/bin/sh
+[ "$1" = compile ] && [ "$2" = --batch ] && [ -s "$3" ]
+EOF
+    chmod +x "$_fake_compiler"
+
+    _entry=$(integration_batch_sentinel_entry "$_chunk")
+    if [ "$_entry" != "last.tl|last.s" ]; then
+        echo "FAIL: batch sentinel selected '$_entry', expected the last chunk entry" >&2
+        exit 1
+    fi
+
+    WORKDIR=$_dir
+    COMPILER=$_fake_compiler
+    INTEGRATION_BATCH_CHUNKS=0
+    INTEGRATION_BATCH_FAILED_CHUNKS=0
+    TYPELISP_CI_TIMING=1
+    TYPELISP_CI_TIMING_GATE=batch-observability-self-test
+    export TYPELISP_CI_TIMING TYPELISP_CI_TIMING_GATE
+    ci_timing_init "$_timing" "$HOST_OS"
+    integration_batch_run_chunk "$_chunk" embedded-1 --stdlib-root "$ROOT/src"
+
+    if ! awk -F '\t' '
+        $1 == "batch-observability-self-test" &&
+        $2 == "batch-embedded-1" &&
+        $3 == "compile" &&
+        $4 ~ /^[0-9]+$/ &&
+        $5 == 0 { found = 1 }
+        END { exit !found }
+    ' "$_timing"; then
+        echo "FAIL: batch compile timing row missing or malformed" >&2
+        cat "$_timing" >&2
+        exit 1
+    fi
+    if [ "$INTEGRATION_BATCH_CHUNKS" -ne 1 ] ||
+        [ "$INTEGRATION_BATCH_FAILED_CHUNKS" -ne 0 ]; then
+        echo "FAIL: batch chunk counters changed during observability self-test" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "verify-integration batch observability self-test passed"
+}
+
+if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
+    run_batch_observability_self_test
+    exit 0
+fi
 if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 1 ]; then
     run_empty_compile_diagnostic_self_test
     exit 0
@@ -2393,34 +2494,6 @@ INTEGRATION_BATCH_FAILED_CHUNKS=0
 INTEGRATION_BATCHED_CASES=0
 INTEGRATION_STANDALONE_COMPILES=0
 
-# Compile one chunk. On failure, drop its outputs so the case loop recompiles
-# them standalone and reports per-case diagnostics.
-integration_batch_run_chunk() {
-    _chunk_list=$1
-    _chunk_label=$2
-    shift 2
-    INTEGRATION_BATCH_CHUNKS=$((INTEGRATION_BATCH_CHUNKS + 1))
-    _chunk_stdout="$WORKDIR/batch-$_chunk_label.stdout"
-    _chunk_stderr="$WORKDIR/batch-$_chunk_label.stderr"
-    set +e
-    "$COMPILER" compile --batch "$_chunk_list" "$@" \
-        > "$_chunk_stdout" 2> "$_chunk_stderr"
-    _chunk_rc=$?
-    set -e
-    if [ "$_chunk_rc" -eq 0 ]; then
-        return 0
-    fi
-    INTEGRATION_BATCH_FAILED_CHUNKS=$((INTEGRATION_BATCH_FAILED_CHUNKS + 1))
-    echo "[integration] batch chunk $_chunk_label exited $_chunk_rc;" \
-        "replaying its entries standalone" >&2
-    sed 's/^/  /' "$_chunk_stderr" >&2 || true
-    while IFS='|' read -r _batch_src _batch_asm; do
-        [ -n "$_batch_asm" ] || continue
-        rm -f "$_batch_asm"
-    done < "$_chunk_list"
-    return 0
-}
-
 # Stage sources and emit one chunk list per group. Staging repeats what the case
 # loop does; both are plain file copies, so running them twice is idempotent.
 integration_batch_precompile() {
@@ -2496,9 +2569,12 @@ fi
 integration_batch_sentinel() {
     [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
     for _group in embedded stage-stdlib; do
-        _list="$WORKDIR/batch-$_group.list"
+        _list="$WORKDIR/batch-$_group-1.list"
         [ -s "$_list" ] || continue
-        _entry=$(sed -n '1p' "$_list")
+        # The final entry has the most warmed-session predecessors available in
+        # a chunk. Selecting it exercises state contamination while retaining
+        # the original one-standalone-compile-per-group cost (#5793).
+        _entry=$(integration_batch_sentinel_entry "$_list")
         _sent_src=${_entry%%|*}
         _sent_asm=${_entry#*|}
         [ -s "$_sent_asm" ] || continue

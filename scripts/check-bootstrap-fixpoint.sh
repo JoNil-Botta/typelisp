@@ -205,6 +205,9 @@ STAGE4_OBJ="$WORKDIR/stage4.$OBJ_EXT"
 STAGE4_BIN="$WORKDIR/stage4$BIN_EXT"
 STAGE1_CLI_SRC="$WORKDIR/stage1_cli_smoke.tl"
 STAGE1_CLI_ASM="$WORKDIR/stage1_cli_smoke.s"
+STAGE1_CLI_DEBUG_ASM="$WORKDIR/stage1_cli_debug.s"
+STAGE1_CLI_DEBUG_SHORT_ASM="$WORKDIR/stage1_cli_debug_short.s"
+STAGE1_CLI_DEBUG_OBJ="$WORKDIR/stage1_cli_debug.$OBJ_EXT"
 STAGE1_CLI_DIRECT_ASM="$WORKDIR/stage1_cli_direct.s"
 STAGE1_CLI_IR="$WORKDIR/stage1_cli_smoke.ir"
 
@@ -250,6 +253,54 @@ check_stage1_compile_cli() {
         exit 1
     }
     assert_contains "$STAGE1_CLI_ASM" "main:"
+    if grep -Eq '\.(loc|cv_loc|cfi_startproc)' "$STAGE1_CLI_ASM"; then
+        echo "stage1 compile emitted debug directives without --debug" >&2
+        exit 1
+    fi
+
+    run_stage1_cli_capture \
+        stage1-compile-debug \
+        "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" \
+        -o "$STAGE1_CLI_DEBUG_ASM" \
+        --debug \
+        --target "$BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --backend-mode scalar \
+        --opt-level 2 \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/src"
+    run_stage1_cli_capture \
+        stage1-compile-debug-short \
+        "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" \
+        -o "$STAGE1_CLI_DEBUG_SHORT_ASM" \
+        -g \
+        --target "$BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --backend-mode scalar \
+        --opt-level 2 \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/src"
+    cmp "$STAGE1_CLI_DEBUG_ASM" "$STAGE1_CLI_DEBUG_SHORT_ASM"
+    if [ "$HOST_OS" = windows ]; then
+        assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cv_file "
+        assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cv_loc "
+        assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cv_filechecksums"
+        assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cv_linetable "
+        "$TYPELISP_WINDOWS_CLANG_POSIX" \
+            --target=x86_64-pc-windows-msvc \
+            -c "$STAGE1_CLI_DEBUG_ASM" \
+            -o "$STAGE1_CLI_DEBUG_OBJ"
+    else
+        assert_contains "$STAGE1_CLI_DEBUG_ASM" ".file "
+        assert_contains "$STAGE1_CLI_DEBUG_ASM" ".loc "
+        assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cfi_startproc"
+        assert_contains "$STAGE1_CLI_DEBUG_ASM" ".cfi_endproc"
+        as "$STAGE1_CLI_DEBUG_ASM" -o "$STAGE1_CLI_DEBUG_OBJ"
+        readelf --debug-dump=decodedline "$STAGE1_CLI_DEBUG_OBJ" |
+            grep -qF "stage1_cli_smoke.tl"
+        readelf --debug-dump=frames "$STAGE1_CLI_DEBUG_OBJ" |
+            grep -qF "DW_CFA_def_cfa_register"
+    fi
 
     run_stage1_cli_capture \
         stage1-compile-emit-ir \

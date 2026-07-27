@@ -1,7 +1,7 @@
 ;; SPMD vector/slice surface migration (#3578): public APIs take generated
 ;; vectors and borrowed slices, while the SPMD body borrows their backing storage
-;; before using varying lane indexes. This keeps public dynamic `(Array T)` out
-;; of the user-facing function signatures.
+;; before using varying lane indexes. The local backing-borrow types infer, so
+;; callers name neither public dynamic `(Array T)` nor the private buffer type.
 (import stdlib.vector)
 (import stdlib.vector_slice)
 (import (vector.vector i64) as i64v)
@@ -21,9 +21,9 @@
   [out : (&mut out i64v.Vec)]
   [n : i64]) : unit
   (let
-    [a-slots : (& a (Array i64)) (i64v.slots a)]
-    [b-slots : (& b (Array i64)) (i64v.slots b)]
-    [out-slots : (&mut out (Array i64)) (i64v.slots-mut out)]
+    [a-slots (i64v.slots a)]
+    [b-slots (i64v.slots b)]
+    [out-slots (i64v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
       (array-set! out-slots i (+ (array-ref a-slots i) (array-ref b-slots i))))))
@@ -34,9 +34,9 @@
   [out : (i64s.MutSlice out)]
   [n : i64]) : unit
   (let
-    [a-slots : (& a (Array i64)) (struct-get a slots)]
-    [b-slots : (& b (Array i64)) (struct-get b slots)]
-    [out-slots : (&mut out (Array i64)) (struct-get out slots)]
+    [a-slots (struct-get a slots)]
+    [b-slots (struct-get b slots)]
+    [out-slots (struct-get out slots)]
     (foreach
       ([i : i64 0 n])
       (array-set! out-slots i (+ (array-ref a-slots i) (array-ref b-slots i))))))

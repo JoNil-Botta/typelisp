@@ -599,7 +599,9 @@ lint suppression at their declaration.
 
 `typelisp lint` includes staged migration rules such as
 `--deprecated-string-concat`, `--redundant-function-name`, and
-`--prefer-dotted-field`. `--name-case` enforces those naming conventions.
+`--prefer-dotted-field`. `--legacy-path-import` reports compatibility-only
+string-path imports with their dotted replacements, and `--name-case` enforces
+those naming conventions.
 Dead-code lint treats library packages as external API roots and reports
 unreachable declarations in `bin` packages.
 

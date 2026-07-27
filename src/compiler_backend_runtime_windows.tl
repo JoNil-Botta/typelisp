@@ -1314,6 +1314,10 @@ tl_thread_entry_ptr:
 
 ")
 
+;; This is a standalone private runtime function body with its own Win64-local
+;; volatile-register plan. Its XMM0-XMM3 uses cannot overlap allocator-assigned
+;; homes in a compiler-emitted user function: the only boundary is the call,
+;; whose ABI regmask already clobbers all four registers.
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
 tl_memcpy:

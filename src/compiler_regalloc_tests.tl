@@ -681,6 +681,93 @@
 
 (cfg
   test
+  (define (compiler-reg-low-xmm-splat-boundary-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (compiler-ir-test-symbol "low_xmm_splat_boundary")
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "value" (compiler-reg-f64-ty) 0)
+        CompilerIrParamList.Nil)
+      (AstType.Unit)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Splat 1 (CompilerIrValue.I64 7) 4 (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Store
+                (compiler-ir-test-symbol "low_xmm_splat_sink")
+                (CompilerIrValue.Var 0)
+                (compiler-reg-f64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-low-xmm-vector-clobber-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (compiler-ir-test-symbol "low_xmm_vector_clobber")
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "value" (compiler-reg-f64-ty) 0)
+        CompilerIrParamList.Nil)
+      (AstType.Unit)
+      4
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Splat 1 (CompilerIrValue.I64 3) 4 (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Splat 2 (CompilerIrValue.I64 5) 4 (AstType.I64))
+              (compiler-ir-instr-cons
+                (ir-instr-vector-bin-op
+                  3
+                  (CompilerIrBinOp.Mul)
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.Var 2)
+                  4
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Store
+                    (compiler-ir-test-symbol "low_xmm_vector_sink")
+                    (CompilerIrValue.Var 0)
+                    (compiler-reg-f64-ty))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                    CompilerIrInstrList.Nil))))))
+        CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-low-xmm-vector-boundaries-ok?) : bool
+    (match (compiler-reg-plan-function-scalar
+      (compiler-reg-low-xmm-splat-boundary-function))
+      [(CompilerRegPlan.Plan splat-assignments _ _ _ _ _)
+        (match (compiler-reg-plan-function-scalar
+          (compiler-reg-low-xmm-vector-clobber-function))
+          [(CompilerRegPlan.Plan clobber-assignments _ _ _ _ _)
+            (and
+              (cfg
+                scratch-vreg
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup splat-assignments 0)
+                  "%xmm0")
+                (not
+                  (compiler-reg-location-any-register?
+                    (compiler-reg-assignment-lookup splat-assignments 0))))
+              (not
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup clobber-assignments 0)
+                  "%xmm0"))
+              (not
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup clobber-assignments 0)
+                  "%xmm1")))])])))
+
+(cfg
+  test
   (define (compiler-reg-mixed-float-call-arg-function) : CompilerIrFunction
     (let
       [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
@@ -1464,12 +1551,22 @@
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 1))
           (not (compiler-live-set-contains? ineligible 2))
-          (not
-            (compiler-reg-location-any-register?
-              (compiler-reg-assignment-lookup assignments 0)))
-          (not
-            (compiler-reg-location-any-register?
-              (compiler-reg-assignment-lookup assignments 1)))
+          (cfg
+            scratch-vreg
+            (and
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-lookup assignments 0)
+                "%xmm0")
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-lookup assignments 1)
+                "%xmm1"))
+            (and
+              (not
+                (compiler-reg-location-any-register?
+                  (compiler-reg-assignment-lookup assignments 0)))
+              (not
+                (compiler-reg-location-any-register?
+                  (compiler-reg-assignment-lookup assignments 1)))))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
             "%xmm2"))])))
@@ -1487,10 +1584,10 @@
           (not (compiler-live-set-contains? ineligible 2))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%xmm6")
+            (cfg scratch-vreg "%xmm0" "%xmm6"))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%xmm7")
+            (cfg scratch-vreg "%xmm1" "%xmm7"))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
             "%xmm2"))])))
@@ -1508,8 +1605,18 @@
           (not (compiler-live-set-contains? ineligible 2))
           (not (compiler-live-set-contains? ineligible 3))
           (compiler-reg-unassigned? assignments 0)
-          (compiler-reg-unassigned? assignments 1)
-          (compiler-reg-unassigned? assignments 2)
+          (cfg
+            scratch-vreg
+            (and
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-lookup assignments 1)
+                "%xmm0")
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-lookup assignments 2)
+                "%xmm1"))
+            (and
+              (compiler-reg-unassigned? assignments 1)
+              (compiler-reg-unassigned? assignments 2)))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 3)
             "%xmm2"))])))
@@ -1527,7 +1634,12 @@
           (not (compiler-live-set-contains? ineligible 2))
           (not (compiler-live-set-contains? ineligible 3))
           (compiler-reg-unassigned? assignments 0)
-          (compiler-reg-unassigned? assignments 1)
+          (cfg
+            scratch-vreg
+            (compiler-reg-location-register?
+              (compiler-reg-assignment-lookup assignments 1)
+              "%xmm1")
+            (compiler-reg-unassigned? assignments 1))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
             "%xmm2")
@@ -5052,8 +5164,10 @@
   (test
     regalloc-xmm-abi-pools
     (test.assert-true
-      (compiler-reg-xmm-clobbers-ok?)
-      "ABI metadata derives XMM2-XMM15 scalar/vector pools")))
+      (and
+        (compiler-reg-xmm-clobbers-ok?)
+        (compiler-reg-low-xmm-vector-boundaries-ok?))
+      "ABI pools admit scalar XMM0/XMM1 while vector scratch boundaries stay explicit")))
 
 (cfg
   test

@@ -795,11 +795,16 @@
   (compiler-reg-string-list-count
     (compiler-reg-callee-saved-integer-registers-for-abi abi)))
 
-;; XMM0/XMM1 remain ABI argument/result registers and backend arithmetic/
-;; instruction-selection scratch. #4919 owns admitting them after those uses
-;; are migrated. Every other XMM-family register is allocator-owned: volatile
+;; Under scratch-vreg, every XMM-family register is allocator-owned. Volatile
 ;; registers form the prefix and ABI-nonvolatile registers form the suffix, so
 ;; the greedy clobber constraint can restrict call-spanning values to the suffix.
+;; ABI-fixed argument/result uses and instruction-selection temporaries are
+;; represented by preferences, clobber points, or bounded scratch requirements.
+;; The default-off path retains XMM0/XMM1 as reserved backend scratch until the
+;; scratch-vreg cutover.
+(define (compiler-reg-low-xmm-allocatable?) : bool
+  (cfg scratch-vreg true false))
+
 (define (compiler-reg-xmm-class-register [reg : String] [vector : bool]) : String
   (if vector
     (string.append
@@ -824,7 +829,7 @@
           (+ idx 1)
           end
           vector)]
-      (if (< (compiler-reg-xmm-family-index reg) 2)
+      (if (and (not (compiler-reg-low-xmm-allocatable?)) (< idx 2))
         tail
         (compiler-reg-string-cons
           (compiler-reg-xmm-class-register reg vector)
@@ -861,9 +866,9 @@
   [abi : CompilerRegTargetAbi]) : CompilerRegStringList
   (match abi
     [(CompilerRegTargetAbi.Linux)
-      ;; Preserve the established scratch-disjoint vector preference, then use
-      ;; XMM2-XMM5 as overflow capacity. SysV marks the entire bank volatile, so
-      ;; this reorder does not change the call-clobber boundary.
+      ;; Preserve the established high-register vector preference, then use
+      ;; XMM2-XMM5 as overflow capacity. XMM0/XMM1 stay out of the vector class
+      ;; until every vector lowering has explicit scratch.
       (compiler-reg-string-list-append
         (compiler-reg-xmm-caller-registers-for-abi-range
           abi
@@ -872,10 +877,9 @@
           true)
         (compiler-reg-xmm-caller-registers-for-abi-range abi 2 6 true))]
     [(CompilerRegTargetAbi.Windows)
-      ;; Win64 must keep its four volatile allocator homes before the
-      ;; XMM6-XMM15 nonvolatile suffix used by call-spanning values.
+      ;; Keep XMM2-XMM5 as the volatile prefix before XMM6-XMM15.
       (compiler-reg-string-list-append
-        (compiler-reg-xmm-caller-registers-for-abi-from abi 0 true)
+        (compiler-reg-xmm-caller-registers-for-abi-range abi 2 6 true)
         (compiler-reg-xmm-callee-registers-for-abi-from abi 0 true))]))
 
 (define compiler-reg-linux-xmm-registers : CompilerRegStringList
@@ -930,6 +934,14 @@
       compiler-reg-windows-vector-callee-registers]))
 
 (define (compiler-reg-xmm-caller-register-count-for-abi
+  [abi : CompilerRegTargetAbi]) : i64
+  (-
+    (compiler-abi-caller-saved-xmm-register-count abi)
+    (if (compiler-reg-low-xmm-allocatable?)
+      0
+      2)))
+
+(define (compiler-reg-vector-caller-register-count-for-abi
   [abi : CompilerRegTargetAbi]) : i64
   (- (compiler-abi-caller-saved-xmm-register-count abi) 2))
 
@@ -4154,6 +4166,7 @@
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
+  [low-xmm-points : CompilerLiveI64Set]
   [var : i64]
   [reg : String]) : bool
   ;; GAP2b-v2: the kind-3 (any-switch-refuses-all-pins) clause is REMOVED. The
@@ -4168,7 +4181,14 @@
     (or
       (not (string.eq reg "%rcx"))
       (not
-        (compiler-reg-param-pin-spans-clobber? interval-index shift-points var)))))
+        (compiler-reg-param-pin-spans-clobber? interval-index shift-points var)))
+    (or
+      (and (not (string.eq reg "%xmm0")) (not (string.eq reg "%xmm1")))
+      (not
+        (compiler-reg-param-pin-spans-clobber?
+          interval-index
+          low-xmm-points
+          var)))))
 
 (define (compiler-reg-param-pin-safe?
   [assignments : CompilerRegAssignmentTable]
@@ -4205,7 +4225,8 @@
   [pins-ok? : bool]
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
-  [shift-points : CompilerLiveI64Set]) : CompilerRegParamAssignPlan
+  [shift-points : CompilerLiveI64Set]
+  [low-xmm-points : CompilerLiveI64Set]) : CompilerRegParamAssignPlan
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil)
       (CompilerRegParamAssignPlan.Plan assignments ineligible blocked)]
@@ -4224,7 +4245,8 @@
         pins-ok?
         call-points
         div-points
-        shift-points)]
+        shift-points
+        low-xmm-points)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)
@@ -4270,6 +4292,7 @@
                     call-points
                     div-points
                     shift-points
+                    low-xmm-points
                     var-id
                     home)
                   (compiler-reg-param-pin-safe?
@@ -4295,7 +4318,8 @@
                     tail-pins-ok?
                     call-points
                     div-points
-                    shift-points)
+                    shift-points
+                    low-xmm-points)
                   ;; Pin-unsafe scalar param: integer and float scalar params
                   ;; are greedy-eligible -- leave it out of
                   ;; ineligible/blocked so the greedy may home it callee-saved.
@@ -4313,7 +4337,8 @@
                     tail-pins-ok?
                     call-points
                     div-points
-                    shift-points))]
+                    shift-points
+                    low-xmm-points))]
               [(CompilerRegMaybeString.No)
                 ;; No ABI pin available (skipped arg register, stack-passed
                 ;; position, post-group position, or non-pinnable type). A
@@ -4336,7 +4361,8 @@
                     tail-pins-ok?
                     call-points
                     div-points
-                    shift-points)
+                    shift-points
+                    low-xmm-points)
                   (compiler-reg-param-assign-walk
                     type-segment-bases
                     abi
@@ -4351,7 +4377,8 @@
                     tail-pins-ok?
                     call-points
                     div-points
-                    shift-points))]))])]))
+                    shift-points
+                    low-xmm-points))]))])]))
 
 (define (compiler-reg-param-assign-plan
   [type-segment-bases : i64]
@@ -4389,7 +4416,11 @@
                 (compiler-live-set-empty)
                 (compiler-reg-clobber-kind-points type-segment-bases func 0))
               (compiler-reg-clobber-kind-points type-segment-bases func 1)
-              (compiler-reg-clobber-kind-points type-segment-bases func 2)))]
+              (compiler-reg-clobber-kind-points type-segment-bases func 2)
+              (cfg
+                scratch-vreg
+                (compiler-reg-clobber-kind-points type-segment-bases func 5)
+                (compiler-live-set-empty))))]
         [(CompilerIrParamList.Cons _ _)
           (let
             [assignments : CompilerRegAssignmentTable
@@ -4424,7 +4455,11 @@
                 (compiler-live-set-empty)
                 (compiler-reg-clobber-kind-points type-segment-bases func 0))
               (compiler-reg-clobber-kind-points type-segment-bases func 1)
-              (compiler-reg-clobber-kind-points type-segment-bases func 2)))])]))
+              (compiler-reg-clobber-kind-points type-segment-bases func 2)
+              (cfg
+                scratch-vreg
+                (compiler-reg-clobber-kind-points type-segment-bases func 5)
+                (compiler-live-set-empty))))])]))
 
 (define (compiler-reg-ineligible-instr
   [instr : CompilerIrInstr]
@@ -8173,9 +8208,23 @@
     ;; that emitter is fixed).
     [(CompilerIrInstr.Switch _ _ _ _) (= kind 3)]
     [_
-      (if (= kind 0)
-        (compiler-reg-backend-clobber-point-instr? type-segment-bases instr)
-        false)]))
+      (cond
+        [(= kind 0)
+          (compiler-reg-backend-clobber-point-instr? type-segment-bases instr)]
+        ;; kind 5 = vector lowering that may still use XMM0/XMM1 family
+        ;; spellings internally. The scalar allocator treats only those two
+        ;; physical homes as clobbered; the vector pool remains XMM2+.
+        [(= kind 5)
+          (match instr
+            [(CompilerIrInstr.VectorBinOp _) true]
+            [(CompilerIrInstr.VectorCompare _) true]
+            [(CompilerIrInstr.MaskNot _ _ _) true]
+            [(CompilerIrInstr.Select _) true]
+            [(CompilerIrInstr.PredicatedLoad _) true]
+            [(CompilerIrInstr.VectorShuffle _) true]
+            [(CompilerIrInstr.TailMask _ _ _ _) true]
+            [_ false])]
+        [else false])]))
 
 (define (compiler-reg-clobber-kind-points-seq
   [type-segment-bases : i64]
@@ -16666,10 +16715,7 @@
           callee-regs
           regs)]
       [scratch-forbidden : CompilerRegStringList
-        (if (and
-          (>= unspillable-from 0)
-          (>= var unspillable-from)
-          (< var (array-length scratch-excluded)))
+        (if (and (>= var 0) (< var (array-length scratch-excluded)))
           (array-ref scratch-excluded var)
           CompilerRegStringList.Nil)]
       [forbidden : CompilerRegStringList
@@ -17461,6 +17507,34 @@
         (array-ref ends var))
       true)))
 
+(define (compiler-reg-low-xmm-forbidden-registers) : CompilerRegStringList
+  (compiler-reg-string-cons
+    "%xmm0"
+    (compiler-reg-string-cons "%xmm1" CompilerRegStringList.Nil)))
+
+(define (compiler-reg-low-xmm-exclusions
+  [interval-index : CompilerRegIntervalIndex]
+  [clobber-points : CompilerLiveI64Set]) : (Array CompilerRegStringList)
+  (let
+    [vars : i64 (array-length (struct-get interval-index starts))]
+    [out : (Array CompilerRegStringList)
+      (array.make-array CompilerRegStringList vars)]
+    [i : i64 0]
+    (begin
+      (while (< i vars)
+        (begin
+          (array-set!
+            out
+            i
+            (if (compiler-reg-greedy-var-spans-clobber?
+              interval-index
+              clobber-points
+              i)
+              (compiler-reg-low-xmm-forbidden-registers)
+              CompilerRegStringList.Nil))
+          (set! i (+ i 1))))
+      out)))
+
 ;; Integer call-argument registers by position. "" past the ABI register args
 ;; (the rest are stack-passed and get no physical preference).
 (define (compiler-reg-abi-arg-reg [abi : CompilerRegTargetAbi] [pos : i64]) : String
@@ -17793,8 +17867,8 @@
 
 ;; Float call arguments use independent XMM ordinals on SysV and shared argument
 ;; positions on Win64. Record only preferences that exist in the allocator's XMM
-;; pool (currently XMM2+); XMM0/XMM1 remain unavailable until the backend scratch
-;; migration tracked by #4919 lands.
+;; pool. Under scratch-vreg, XMM0/XMM1 are ordinary volatile homes as well as
+;; leading ABI argument registers, so these preferences eliminate their moves.
 ;; `is-float` is supplied by the caller. Every caller already needs the same
 ;; classification to advance the argument-bank indices, and recomputing it here
 ;; walked the sorted var-type list a second time for the same value.
@@ -19432,7 +19506,8 @@
   [eff-index : CompilerRegIntervalIndex]
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
-  [shift-points : CompilerLiveI64Set]) : unit
+  [shift-points : CompilerLiveI64Set]
+  [low-xmm-points : CompilerLiveI64Set]) : unit
   (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) unit]
     [(CompilerIrParamList.Array seq)
@@ -19443,7 +19518,8 @@
         eff-index
         call-points
         div-points
-        shift-points)]
+        shift-points
+        low-xmm-points)]
     [(CompilerIrParamList.Cons param rest)
       (begin
         (match param
@@ -19466,6 +19542,7 @@
                           call-points
                           div-points
                           shift-points
+                          low-xmm-points
                           var-id
                           home))
                         unit
@@ -19483,7 +19560,8 @@
           eff-index
           call-points
           div-points
-          shift-points))]))
+          shift-points
+          low-xmm-points))]))
 
 (define (compiler-reg-param-pins-demote!
   [func : CompilerIrFunction]
@@ -19492,7 +19570,8 @@
   [eff-index : CompilerRegIntervalIndex]
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
-  [shift-points : CompilerLiveI64Set]) : unit
+  [shift-points : CompilerLiveI64Set]
+  [low-xmm-points : CompilerLiveI64Set]) : unit
   (match func
     [(CompilerIrFunction.Function _ params _ _ _)
       (compiler-reg-param-pins-demote-walk!
@@ -19502,7 +19581,8 @@
         eff-index
         call-points
         div-points
-        shift-points)]))
+        shift-points
+        low-xmm-points)]))
 
 (define (compiler-reg-plan-from
   [type-segment-bases : i64]
@@ -19604,6 +19684,15 @@
     ;; only real call instructions restrict float/vector candidates to the ABI
     ;; nonvolatile suffix.
     [xmm-call-points : CompilerLiveI64Set (compiler-reg-call-points func)]
+    ;; Compiler-emitted vector lowering still contains a bounded set of
+    ;; XMM0/XMM1-family temporaries. Make that ownership explicit to the scalar
+    ;; greedy while scratch-vreg admits those homes; values not crossing one of
+    ;; these points remain free to use the low ABI registers.
+    [low-xmm-clobber-points : CompilerLiveI64Set
+      (cfg
+        scratch-vreg
+        (compiler-reg-clobber-kind-points type-segment-bases func 5)
+        (compiler-live-set-empty))]
     ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
     ;; identical value and may coalesce even when their live segments overlap.
     ;; Vars spanning a modeled caller-clobber point stay out of the same-value
@@ -19683,6 +19772,11 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-merged-root-index coalesce interval-index)
         interval-index)]
+    [low-xmm-exclusions : (Array CompilerRegStringList)
+      (cfg
+        scratch-vreg
+        (compiler-reg-low-xmm-exclusions eff-index low-xmm-clobber-points)
+        (array.make-array CompilerRegStringList 0))]
     ;; `div-points` / `shift-points` (kinds 1 and 2) are the sets bound above;
     ;; the GAP3c pin demotion below and the greedy share that one computation.
     ;; GAP3c: validate every ABI pin against its coalesce-class hull now that
@@ -19699,7 +19793,8 @@
           eff-index
           clobber-points
           div-points
-          shift-points)
+          shift-points
+          low-xmm-clobber-points)
         unit)]
     ;; Only scalar opt2 builds the targeted five-pseudo model. When the exact
     ;; literal SafeDiv/SafeMod shape is absent, the builder returns the original
@@ -20020,10 +20115,10 @@
       ;; float -> XMM allocation: the unified greedy over the ABI XMM bank.
       ;; A clobber-spanning float starts at the ABI callee-saved suffix: none on
       ;; SysV (so it spills), XMM6-XMM15 on Win64. Non-spanning floats may use the
-      ;; whole XMM2-XMM15 pool. Reuse the coalesced-class spill weights and copy
+      ;; whole configured XMM pool. Reuse the coalesced-class spill weights and copy
       ;; hints so float pressure is ordered by actual use density and moves bias
       ;; toward an already assigned neighbour, matching the integer greedy.
-      (compiler-reg-greedy-state
+      (compiler-reg-greedy-state-with-scratch-exclusions
         (compiler-reg-candidates eff-intervals type-info eff-blocked true)
         (compiler-reg-xmm-registers-for-abi abi)
         integer-call-assignments
@@ -20038,7 +20133,8 @@
         shift-points
         (compiler-reg-xmm-callee-registers-for-abi abi)
         (compiler-reg-xmm-caller-register-count-for-abi abi)
-        -1)]
+        -1
+        low-xmm-exclusions)]
     [scalar-assignments : CompilerRegAssignmentTable
       (match scalar-state
         [(CompilerRegAssignState.State _ assignments) assignments])]
@@ -20113,7 +20209,7 @@
           div-points
           shift-points
           (compiler-reg-vector-callee-registers-for-abi abi)
-          (compiler-reg-xmm-caller-register-count-for-abi abi)
+          (compiler-reg-vector-caller-register-count-for-abi abi)
           -1))]
     [vector-assignments : CompilerRegAssignmentTable
       (match vector-state
@@ -23352,6 +23448,8 @@
   (VectorPrefixCarry)
   (VectorPrefixBits)
   (VectorPrefixValue)
+  (VectorPrefixWork0)
+  (VectorPrefixWork1)
   (VectorReduceAccumulator)
   (VectorReduceScratch)
   (FloatCastValueXmm)
@@ -24064,9 +24162,19 @@
               (compiler-reg-scratch-value-integer-immediate? index))
               1
               2)])]
-      ;; Horizontal AVX2/AVX-512 reductions need an accumulator plus a sibling
-      ;; XMM temporary at the same instruction point.
-      [(CompilerIrInstr.VectorPrefix _) 2]
+      ;; Numeric and AVX2-bool prefixes need a carry/materialization slot, a
+      ;; destination staging slot, and two simultaneous XMM work registers.
+      ;; AVX-512 bool prefixes operate in the mask/GP banks and need only their
+      ;; carry and prefix-bit GP slots.
+      [(CompilerIrInstr.VectorPrefix payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorPrefixPayload.Payload _ _ _ _ lanes elem-ty)
+            (match elem-ty
+              [(AstType.Bool)
+                (if (> lanes 32)
+                  2
+                  4)]
+              [_ 4])])]
       [(CompilerIrInstr.VectorReduce _ _ _ _ _) 2]
       [_ 0])
     0))
@@ -25402,7 +25510,9 @@
               (cond
                 [(= ordinal 0) (CompilerRegScratchRole.VectorPrefixCarry)]
                 [avx512-bool? (CompilerRegScratchRole.VectorPrefixBits)]
-                [else (CompilerRegScratchRole.VectorPrefixValue)])
+                [(= ordinal 1) (CompilerRegScratchRole.VectorPrefixValue)]
+                [(= ordinal 2) (CompilerRegScratchRole.VectorPrefixWork0)]
+                [else (CompilerRegScratchRole.VectorPrefixWork1)])
               (if (or (= ordinal 0) avx512-bool?)
                 (compiler-reg-scratch-memory-constraint assignments instr)
                 (compiler-reg-scratch-xmm-constraint assignments instr))
@@ -26788,17 +26898,21 @@
 (define (compiler-reg-scratch-register-array [abi : CompilerRegTargetAbi]) : (Array
     String)
   (let
-    ;; XMM0/XMM1 are fixed ABI scratch homes but deliberately absent from the
-    ;; allocatable XMM pool. Include them in this post-pass inverse index so
-    ;; fixed and ordinary scratch constraints share the same O(words) lookup.
-    [registers : CompilerRegStringList
-      (compiler-reg-string-list-append
-        (compiler-reg-greedy-integer-pool-for-abi (CompilerRegTargetAbi.Linux))
+    ;; Fixed ABI roles must remain addressable by the inverse index even while
+    ;; the default-off scratch-vreg experiment keeps XMM0/XMM1 out of the
+    ;; ordinary allocator pool.
+    [xmm-registers : CompilerRegStringList
+      (if (compiler-reg-low-xmm-allocatable?)
+        (compiler-reg-xmm-registers-for-abi abi)
         (compiler-reg-string-cons
           "%xmm0"
           (compiler-reg-string-cons
             "%xmm1"
             (compiler-reg-xmm-registers-for-abi abi))))]
+    [registers : CompilerRegStringList
+      (compiler-reg-string-list-append
+        (compiler-reg-greedy-integer-pool-for-abi (CompilerRegTargetAbi.Linux))
+        xmm-registers)]
     [out : (Array String)
       (array.make-array String (compiler-reg-string-list-count registers))]
     (begin
@@ -28933,7 +29047,7 @@
             (CompilerRegTargetAbi.Windows)
             (CompilerRegScratchClass.Xmm))
           CompilerRegStringList.Nil)
-        "%xmm2"))))
+        (cfg scratch-vreg "%xmm0" "%xmm2")))))
 
 (define (compiler-reg-scratch-callee-saved-registers-ok?) : bool
   (and
@@ -30569,10 +30683,10 @@
         (= (compiler-reg-assignment-count assignments) 2)
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 0)
-          "%xmm2")
+          (cfg scratch-vreg "%xmm0" "%xmm2"))
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 1)
-          "%xmm2"))]))
+          (cfg scratch-vreg "%xmm0" "%xmm2")))]))
 
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
@@ -30602,19 +30716,19 @@
         (= (compiler-reg-spill-count assignments) 0)
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 0)
-          "%xmm2")
+          (cfg scratch-vreg "%xmm0" "%xmm2"))
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 1)
-          "%xmm3")
+          (cfg scratch-vreg "%xmm1" "%xmm3"))
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 2)
-          "%xmm4")
+          (cfg scratch-vreg "%xmm2" "%xmm4"))
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 3)
-          "%xmm5")
+          (cfg scratch-vreg "%xmm3" "%xmm5"))
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 4)
-          "%xmm6"))]))
+          (cfg scratch-vreg "%xmm4" "%xmm6")))]))
 
 ;; SIMD plan (#perf): an integer value live across a call now keeps a callee-saved
 ;; register home (the SIMD integer pool is the 5 callee-saved registers, which the
@@ -30680,7 +30794,7 @@
         (compiler-reg-unassigned? assignments 1)
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 2)
-          "%xmm2"))]))
+          (cfg scratch-vreg "%xmm0" "%xmm2")))]))
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
@@ -30702,7 +30816,7 @@
         (compiler-reg-unassigned? assignments 0)
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 2)
-          "%xmm2"))]))
+          (cfg scratch-vreg "%xmm0" "%xmm2")))]))
 
 (define (compiler-reg-ineligible-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
@@ -30725,7 +30839,7 @@
           (and
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 1)
-              "%xmm2")
+              (cfg scratch-vreg "%xmm0" "%xmm2"))
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 5)
               "%r12")
@@ -32080,17 +32194,23 @@
       (compiler-reg-win64-callee-saved-xmm-registers)]
     [pool-ok : bool
       (and
-        (= (compiler-reg-string-list-count sysv-pool) 14)
-        (= (compiler-reg-string-list-count win-pool) 14)
+        (= (compiler-reg-string-list-count sysv-pool) (cfg scratch-vreg 16 14))
+        (= (compiler-reg-string-list-count win-pool) (cfg scratch-vreg 16 14))
         (= (compiler-reg-string-list-count win-vector-pool) 14)
         (=
           (compiler-reg-xmm-caller-register-count-for-abi
             CompilerRegTargetAbi.Linux)
-          14)
+          (cfg scratch-vreg 16 14))
         (=
           (compiler-reg-xmm-caller-register-count-for-abi
             CompilerRegTargetAbi.Windows)
-          4)
+          (cfg scratch-vreg 6 4))
+        (=
+          (compiler-reg-string-list-contains? sysv-pool "%xmm0")
+          (compiler-reg-low-xmm-allocatable?))
+        (=
+          (compiler-reg-string-list-contains? sysv-pool "%xmm1")
+          (compiler-reg-low-xmm-allocatable?))
         (compiler-reg-string-list-contains? sysv-pool "%xmm2")
         (compiler-reg-string-list-contains? sysv-pool "%xmm15")
         (compiler-reg-string-list-contains? win-pool "%xmm2")
@@ -32098,8 +32218,6 @@
         (compiler-reg-string-list-contains? win-pool "%xmm15")
         (compiler-reg-string-list-contains? win-vector-pool "%vec2")
         (compiler-reg-string-list-contains? win-vector-pool "%vec15")
-        (not (compiler-reg-string-list-contains? sysv-pool "%xmm0"))
-        (not (compiler-reg-string-list-contains? sysv-pool "%xmm1"))
         (not (compiler-reg-string-list-contains? win-vector-pool "%vec0"))
         (not (compiler-reg-string-list-contains? win-vector-pool "%vec1")))]
     [sysv-ok : bool
@@ -32151,7 +32269,9 @@
         (if vector
           (compiler-reg-vector-callee-registers-for-abi abi)
           (compiler-reg-xmm-callee-registers-for-abi abi))
-        (compiler-reg-xmm-caller-register-count-for-abi abi)
+        (if vector
+          (compiler-reg-vector-caller-register-count-for-abi abi)
+          (compiler-reg-xmm-caller-register-count-for-abi abi))
         -1)]
     (match state
       [(CompilerRegAssignState.State _ assignments)
@@ -32199,7 +32319,7 @@
         "%vec6")
       (compiler-reg-location-register?
         (compiler-reg-assignment-lookup sysv-leaf 0)
-        "%xmm2"))))
+        (cfg scratch-vreg "%xmm0" "%xmm2")))))
 
 (define (compiler-reg-xmm-shared-greedy-bank-ok?) : bool
   (let

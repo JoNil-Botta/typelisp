@@ -1459,12 +1459,27 @@
   (roots lint_svec.Vec))
 
 (define (selfhost-lint-package-dead-cfgs) : sym_i64_env.SymI64Env
-  ;; Package reachability models the supported test and scratch-vreg build
-  ;; configurations. Keep this list explicit: arbitrary caller cfgs must stay
-  ;; inactive rather than turning conditional implementation details into API.
+  ;; Package reachability models the configurations built by the shipped
+  ;; bootstrap and the repository's compiler instrumentation gates. Keep this
+  ;; list explicit: arbitrary caller cfgs must stay inactive rather than
+  ;; turning conditional implementation details into API.
   (compiler-cfg-enable
-    (compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
-    "scratch-vreg"))
+    (compiler-cfg-enable
+      (compiler-cfg-enable
+        (compiler-cfg-enable
+          (compiler-cfg-enable
+            (compiler-cfg-enable
+              (compiler-cfg-enable
+                (compiler-cfg-enable
+                  (compiler-cfg-enable (selfhost-lint-language-cfgs) "test")
+                  "scratch-vreg")
+                "embedded-stdlib-tlci")
+              "compiler-build-identity")
+            "compile-profile")
+          "compile-profile-summary")
+        "regalloc-census")
+      "scavenge-census")
+    "scavenge-self-check"))
 
 (define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (Array
     SelfhostLintDeadDecl)
@@ -4600,9 +4615,21 @@ end
 
 (define (selfhost-lint-package-dead-cfg-source) : String
   "(define (main) : i64
-  (cfg scratch-vreg (scratch-vreg-helper) 42))
+  (+ (cfg scratch-vreg (scratch-vreg-helper) 40)
+     (+ (cfg embedded-stdlib-tlci (embedded-helper) 1)
+        (cfg compile-profile (profile-helper) 1))))
 (cfg scratch-vreg
   (define (scratch-vreg-helper) : i64 7))
+(cfg scratch-vreg
+  (define (scratch-vreg-unused) : i64 8))
+(cfg embedded-stdlib-tlci
+  (define (embedded-helper) : i64 1))
+(cfg embedded-stdlib-tlci
+  (define (embedded-unused) : i64 2))
+(cfg compile-profile
+  (define (profile-helper) : i64 1))
+(cfg compile-profile
+  (define (profile-unused) : i64 2))
 (cfg lint-fixture-experimental
   (define (experimental-helper) : i64 9))
 (define (ordinary-unused) : i64 0)")
@@ -5414,9 +5441,11 @@ end
       ;; The explicit API and its dependency stay live. The prefix-colliding
       ;; declaration and the unrelated sibling remain dead.
       [(not (= explicit-root-count 2)) 63]
-      ;; scratch-vreg reaches its helper, while the inactive experimental cfg
-      ;; stays absent and the ordinary bin-local declaration remains dead.
-      [(not (= cfg-bin-count 1)) 61]
+      ;; Supported scratch, embedded-TLCI, and profile cfgs reach their live
+      ;; helpers and retain one dead declaration each. The inactive
+      ;; experimental cfg stays absent; the ordinary bin-local declaration is
+      ;; also dead.
+      [(not (= cfg-bin-count 4)) 61]
       [(not (selfhost-lint-package-dead-import-closure-fixture-ok?)) 58]
       [(not (= qualified-left-count 1)) 59]
       [(not (= qualified-right-count 0)) 60]

@@ -12,9 +12,6 @@
 (define (fmt-eq? [left : String] [right : String]) : bool
   (string.eq left right))
 
-(define (fmt-cat [left : String] [right : String]) : String
-  (string.append left right))
-
 (define (fmt-cat3 [left : String] [middle : String] [right : String]) : String
   (string.concat3 left middle right))
 
@@ -27,16 +24,8 @@
   (Nest i64 (Box Doc))
   (Group (Box Doc)))
 
-(defenum RenderedDoc
-  (Rendered String i64))
-
 (define (doc-empty) : Doc
   (Doc.Empty))
-
-(define (doc-empty? [doc : Doc]) : bool
-  (match doc
-    [(Doc.Empty) true]
-    [_ false]))
 
 (define (doc-text [text : String]) : Doc
   (Doc.Text text))
@@ -99,17 +88,6 @@
 (define (fits-flat [doc : Doc] [remaining : i64]) : bool
   (<= (flat-width-capped doc 0 remaining) remaining))
 
-(define (rendered-text [result : RenderedDoc]) : String
-  (match result
-    [(RenderedDoc.Rendered text _) text]))
-
-(define (rendered-col [result : RenderedDoc]) : i64
-  (match result
-    [(RenderedDoc.Rendered _ col) col]))
-
-(define (render-newline [indent : i64]) : RenderedDoc
-  (RenderedDoc.Rendered (fmt-cat "\n" (fmt_buf.spaces indent)) indent))
-
 ;; Render `doc` by appending into `buf` in place, returning the resulting column.
 ;; The buffer is owned by `render-doc-width` and threaded by reference, so the
 ;; renderer no longer allocates a fresh `TextBuf` (and a wrapping `RenderState`)
@@ -152,33 +130,6 @@
       (if (fits-flat (box-get inner) (- width col))
         (render-doc-into (box-get inner) width indent col true buf)
         (render-doc-into (box-get inner) width indent col false buf))]))
-
-(define (render-doc-in
-  [doc : Doc]
-  [width : i64]
-  [indent : i64]
-  [col : i64]
-  [flat : bool]) : RenderedDoc
-  (match doc
-    [(Doc.Empty) (RenderedDoc.Rendered "" col)]
-    [(Doc.Text text) (RenderedDoc.Rendered text (+ col (fmt-len text)))]
-    [(Doc.SoftLine)
-      (if flat
-        (RenderedDoc.Rendered " " (+ col 1))
-        (render-newline indent))]
-    [(Doc.HardLine) (render-newline indent)]
-    [(Doc.Concat left right)
-      (match (render-doc-in (box-get left) width indent col flat)
-        [(RenderedDoc.Rendered left-text left-col)
-          (match (render-doc-in (box-get right) width indent left-col flat)
-            [(RenderedDoc.Rendered right-text right-col)
-              (RenderedDoc.Rendered (fmt-cat left-text right-text) right-col)])])]
-    [(Doc.Nest extra inner)
-      (render-doc-in (box-get inner) width (+ indent extra) col flat)]
-    [(Doc.Group inner)
-      (if (fits-flat (box-get inner) (- width col))
-        (render-doc-in (box-get inner) width indent col true)
-        (render-doc-in (box-get inner) width indent col false))]))
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
   (let

@@ -270,15 +270,6 @@
             [(ResultFormatParsedCst.Err err)
               (ResultFormatParsedCstList.Err err)]))])))
 
-(define (fmt-parse-seq
-  [stream : FormatTokenStream]
-  [idx : i64]
-  [stop-tag : i64]) : FormatParsedCstList
-  (match (fmt-parse-seq-result stream idx stop-tag)
-    [(ResultFormatParsedCstList.Ok parsed) parsed]
-    [(ResultFormatParsedCstList.Err err)
-      (io.panic (format-source-error-message err))]))
-
 (define (fmt-parse-one-result [stream : FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
   (let
     [tok : FormatToken (format-token-at stream idx)]
@@ -331,12 +322,6 @@
         (ResultFormatParsedCst.Ok
           (FormatParsedCst.Parsed (FormatCst.Atom tok) (+ idx 1)))])))
 
-(define (fmt-parse-one [stream : FormatTokenStream] [idx : i64]) : FormatParsedCst
-  (match (fmt-parse-one-result stream idx)
-    [(ResultFormatParsedCst.Ok parsed) parsed]
-    [(ResultFormatParsedCst.Err err)
-      (io.panic (format-source-error-message err))]))
-
 (define (parse-format-tokens-result [stream : FormatTokenStream]) : ResultFormatCst
   (match (fmt-parse-seq-result stream 0 0)
     [(ResultFormatParsedCstList.Ok parsed)
@@ -344,11 +329,6 @@
         [(FormatParsedCstList.ParsedList items _)
           (ResultFormatCst.Ok (FormatCst.Forms (box items)))])]
     [(ResultFormatParsedCstList.Err err) (ResultFormatCst.Err err)]))
-
-(define (parse-format-tokens [stream : FormatTokenStream]) : FormatCst
-  (match (parse-format-tokens-result stream)
-    [(ResultFormatCst.Ok tree) tree]
-    [(ResultFormatCst.Err err) (io.panic (format-source-error-message err))]))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
   (match (format-lex-result src)

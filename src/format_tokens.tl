@@ -413,15 +413,6 @@
             "format lexer: malformed integer literal"))
         (result_fmt_i64.Ok end)))))
 
-(define (fmt-scan-prefixed-number-end
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : i64
-  (match (fmt-scan-prefixed-number-end-result src data start n)
-    [(result_fmt_i64.Ok end) end]
-    [(result_fmt_i64.Err err) (io.panic (format-source-error-message err))]))
-
 (define (fmt-scan-decimal-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
@@ -453,15 +444,6 @@
   (if (fmt-number-prefixed? data start n)
     (fmt-scan-prefixed-number-end-result src data start n)
     (result_fmt_i64.Ok (fmt-scan-decimal-number-end data start n))))
-
-(define (fmt-scan-number-end
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : i64
-  (match (fmt-scan-number-end-result src data start n)
-    [(result_fmt_i64.Ok end) end]
-    [(result_fmt_i64.Err err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -524,15 +506,6 @@
                 (- start 1)
                 "format lexer: unterminated string literal")))))
       (result_fmt_i64.Ok j))))
-
-(define (fmt-scan-string-end
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : i64
-  (match (fmt-scan-string-end-result src data start n)
-    [(result_fmt_i64.Ok end) end]
-    [(result_fmt_i64.Err err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-apostrophe-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -634,14 +607,6 @@
 ;; three bytes, with slack for short inputs and the trailing `FmtEnd`.
 (define (fmt-token-capacity-estimate [n : i64]) : i64
   (+ (/ n 3) 16))
-
-(define (format-empty-token-stream) : FormatTokenStream
-  (let
-    [tokens : (Array FormatToken) (make-array FormatToken 1)]
-    [starts : (Array i64) (make-array i64 1)]
-    (begin
-      (fmt-store-token tokens starts 0 0 (FormatToken.End))
-      (FormatTokenStream "" tokens starts 1))))
 
 (define (format-lex-result [src : String]) : ResultFormatTokenStream
   (let

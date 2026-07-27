@@ -63,26 +63,6 @@
   (Ok doc_module_vec.Vec)
   (Err String))
 
-(define (doc-import-form-list-contains-from?
-  [forms : (& forms doc_import_form_vec.Vec)]
-  [form : String]
-  [index : i64]
-  [count : i64]) : bool
-  (if (>= index count)
-    false
-    (if (string.eq (doc_import_form_vec.get forms index "") form)
-      true
-      (doc-import-form-list-contains-from? forms form (+ index 1) count))))
-
-(define (doc-import-form-list-contains?
-  [forms : (& forms doc_import_form_vec.Vec)]
-  [form : String]) : bool
-  (doc-import-form-list-contains-from?
-    forms
-    form
-    0
-    (doc_import_form_vec.len forms)))
-
 (define (doc-import-form-list-mut-contains-from?
   [forms : (&mut forms doc_import_form_vec.Vec)]
   [form : String]
@@ -1183,14 +1163,6 @@
             [(ResultCompilerLoadWithPaths.Err diag)
               (ResultDocExpandedModules.Err
                 (compiler-diagnostic-render (box-get diag)))])))]))
-
-(define (doc-expanded-generated-modules-from-source-docs-default
-  [source-path : String]
-  [docs : doc_extract.DocExtraction]) : ResultDocExpandedModules
-  (doc-expanded-generated-modules-from-source-docs
-    source-path
-    docs
-    (doc_svec.new)))
 
 (define (doc-expand-smoke-source) : String
   "(module doc.generated.fixture)

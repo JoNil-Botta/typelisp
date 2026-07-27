@@ -2207,23 +2207,22 @@
   (len i64))
 
 (define (tltest-cfg-env-count [cfgs : sym_i64_env.SymI64Env]) : i64
-  (match cfgs
-    [(sym_i64_env.SymI64Nil) 0]
-    [(sym_i64_env.SymI64Bind _ _ rest)
-      (+ 1 (tltest-cfg-env-count (box-get rest)))]))
+  (match (sym_i64_env.sym-i64-view cfgs)
+    [(sym_i64_env.SymI64ViewNil) 0]
+    [(sym_i64_env.SymI64ViewBind _ _ rest) (+ 1 (tltest-cfg-env-count rest))]))
 
 (define (tltest-cfg-names-fill!
   [cfgs : sym_i64_env.SymI64Env]
   [slots : (Array String)]
   [values : (Array i64)]
   [index : i64]) : unit
-  (match cfgs
-    [(sym_i64_env.SymI64Nil) unit]
-    [(sym_i64_env.SymI64Bind key value rest)
+  (match (sym_i64_env.sym-i64-view cfgs)
+    [(sym_i64_env.SymI64ViewNil) unit]
+    [(sym_i64_env.SymI64ViewBind key value rest)
       (begin
         (array-set! slots index (compiler-cfg-name key))
         (array-set! values index value)
-        (tltest-cfg-names-fill! (box-get rest) slots values (+ index 1)))]))
+        (tltest-cfg-names-fill! rest slots values (+ index 1)))]))
 
 (define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
   (let

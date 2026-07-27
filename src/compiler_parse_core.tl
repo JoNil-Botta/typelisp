@@ -942,12 +942,12 @@
     [cursor : sym_i64_env.SymI64Env dispatch]
     (begin
       (while true
-        (match cursor
-          [(sym_i64_env.SymI64Nil) (return 0)]
-          [(sym_i64_env.SymI64Bind name-id value rest)
+        (match (sym_i64_env.sym-i64-view cursor)
+          [(sym_i64_env.SymI64ViewNil) (return 0)]
+          [(sym_i64_env.SymI64ViewBind name-id value rest)
             (if (= name-id marker-id)
               (return value)
-              (set! cursor (box-get rest)))]))
+              (set! cursor rest))]))
       0)))
 
 (define (compiler-parse-state-cfgs
@@ -1802,9 +1802,9 @@
               control
               compiler-parse-state-control-ready)
             0)))
-        (match cursor
-          [(sym_i64_env.SymI64Nil) (set! done true)]
-          [(sym_i64_env.SymI64Bind name-id tag rest)
+        (match (sym_i64_env.sym-i64-view cursor)
+          [(sym_i64_env.SymI64ViewNil) (set! done true)]
+          [(sym_i64_env.SymI64ViewBind name-id tag rest)
             (begin
               (if (and
                 (>= name-id 0)
@@ -1817,7 +1817,7 @@
               (if (or
                 (< name-id 0)
                 (compiler-parse-dispatch-index-insert! control name-id tag))
-                (set! cursor (box-get rest))
+                (set! cursor rest)
                 (compiler-parse-raw-i64-set!
                   control
                   compiler-parse-state-control-ready
@@ -1848,14 +1848,14 @@
   [dispatch : sym_i64_env.SymI64Env]) : i64
   (let
     [invocation-control : i64
-      (match dispatch
-        [(sym_i64_env.SymI64Bind name-id value _)
+      (match (sym_i64_env.sym-i64-view dispatch)
+        [(sym_i64_env.SymI64ViewBind name-id value _)
           (if (= name-id compiler-parse-invocation-marker-id)
             (compiler-parse-raw-i64-ref
               value
               compiler-parse-invocation-control-slot)
             0)]
-        [(sym_i64_env.SymI64Nil) 0])]
+        [(sym_i64_env.SymI64ViewNil) 0])]
     [cursor : sym_i64_env.SymI64Env dispatch]
     [control : i64 0]
     [marker-id : i64 -1]
@@ -1867,9 +1867,9 @@
       ;; retained for derived and custom test environments.
       (when (not (= invocation-control 0)) (return invocation-control))
       (while (or (= control 0) (< marker-id 0))
-        (match cursor
-          [(sym_i64_env.SymI64Nil) (return 0)]
-          [(sym_i64_env.SymI64Bind name-id tag rest)
+        (match (sym_i64_env.sym-i64-view cursor)
+          [(sym_i64_env.SymI64ViewNil) (return 0)]
+          [(sym_i64_env.SymI64ViewBind name-id tag rest)
             (begin
               (if (= name-id compiler-parse-state-marker-id)
                 (set! control tag)
@@ -1879,7 +1879,7 @@
                   (set! marker-id name-id)
                   (set! marker-tag tag))
                 unit)
-              (set! cursor (box-get rest)))]))
+              (set! cursor rest))]))
       (if (and
         (not (= control 0))
         (= marker-tag (compiler-parse-tag-decl-defdispatch))
@@ -13707,13 +13707,13 @@
     [done : bool false]
     (begin
       (while (and ok (not done))
-        (match cursor
-          [(sym_i64_env.SymI64Nil) (set! done true)]
-          [(sym_i64_env.SymI64Bind name-id tag rest)
+        (match (sym_i64_env.sym-i64-view cursor)
+          [(sym_i64_env.SymI64ViewNil) (set! done true)]
+          [(sym_i64_env.SymI64ViewBind name-id tag rest)
             (if (or
               (< name-id 0)
               (= (compiler-parse-dispatch-index-lookup-id control name-id) tag))
-              (set! cursor (box-get rest))
+              (set! cursor rest)
               (set! ok false))]))
       (and ok done))))
 

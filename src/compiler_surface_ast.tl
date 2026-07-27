@@ -1126,12 +1126,12 @@
     [count : i64 0]
     (begin
       (while true
-        (match cursor
-          [(sym_i64_env.SymI64Nil) (return count)]
-          [(sym_i64_env.SymI64Bind _ _ rest)
+        (match (sym_i64_env.sym-i64-view cursor)
+          [(sym_i64_env.SymI64ViewNil) (return count)]
+          [(sym_i64_env.SymI64ViewBind _ _ rest)
             (begin
               (set! count (+ count 1))
-              (set! cursor (box-get rest)))]))
+              (set! cursor rest))]))
       count)))
 
 (define (surface-ast-write-paths!
@@ -1211,17 +1211,17 @@
     [cursor : sym_i64_env.SymI64Env seen]
     (begin
       (while true
-        (match cursor
-          [(sym_i64_env.SymI64Nil)
+        (match (sym_i64_env.sym-i64-view cursor)
+          [(sym_i64_env.SymI64ViewNil)
             (begin
               (surface-ast-write-i64! out 0)
               (return unit))]
-          [(sym_i64_env.SymI64Bind key value rest)
+          [(sym_i64_env.SymI64ViewBind key value rest)
             (begin
               (surface-ast-write-i64! out 1)
               (surface-ast-write-name! out context key)
               (surface-ast-write-i64! out value)
-              (set! cursor (box-get rest)))]))
+              (set! cursor rest))]))
       unit)))
 
 (define (surface-ast-read-seen! [reader : SurfaceAstReader]) : sym_i64_env.SymI64Env

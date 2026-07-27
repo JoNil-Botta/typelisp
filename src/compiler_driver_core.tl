@@ -2233,15 +2233,15 @@
       [cursor : sym_i64_env.SymI64Env left]
       (begin
         (while true
-          (match cursor
-            [(sym_i64_env.SymI64Nil) (return true)]
-            [(sym_i64_env.SymI64Bind key value rest)
+          (match (sym_i64_env.sym-i64-view cursor)
+            [(sym_i64_env.SymI64ViewNil) (return true)]
+            [(sym_i64_env.SymI64ViewBind key value rest)
               (if (= key compiler-parse-state-marker-id)
-                (set! cursor (box-get rest))
+                (set! cursor rest)
                 (if (and
                   (sym_i64_env.sym-i64-contains-id right key)
                   (= value (sym_i64_env.sym-i64-lookup-id-or right key -1)))
-                  (set! cursor (box-get rest))
+                  (set! cursor rest)
                   (return false)))]))
         false))))
 

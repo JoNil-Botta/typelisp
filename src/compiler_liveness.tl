@@ -341,11 +341,6 @@
                   (CompilerLiveI64Set out)))
               left)))))))
 
-(define (compiler-live-set-union-into
-  [left : CompilerLiveI64Set]
-  [right : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (compiler-live-set-union left right))
-
 (define (compiler-live-set-minus
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
@@ -636,9 +631,6 @@
         ok
         (and ok (compiler-live-set-eq? deduplicated (compiler-live-set2 31 66))))
       ok)))
-
-(define (compiler-live-label-set-empty) : CompilerLiveLabelSet
-  CompilerLiveLabelSet.Nil)
 
 (define (compiler-live-label-set-contains?
   [set : CompilerLiveLabelSet]
@@ -1023,14 +1015,6 @@
     (compiler-live-set-empty)
     (compiler-live-set-empty)))
 
-(define (compiler-live-instr-list-last [instrs : CompilerIrInstrList]) : CompilerLiveMaybeInstr
-  (match instrs
-    [(CompilerIrInstrList.Nil) CompilerLiveMaybeInstr.No]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (box-get rest)
-        [(CompilerIrInstrList.Nil) (CompilerLiveMaybeInstr.Some instr)]
-        [_ (compiler-live-instr-list-last (box-get rest))])]))
-
 (define (compiler-live-instr-seq-last [instrs : CompilerIrInstrSeq]) : CompilerLiveMaybeInstr
   (if (compiler-ir-instr-seq-empty? instrs)
     CompilerLiveMaybeInstr.No
@@ -1207,16 +1191,6 @@
       (compiler-live-predecessor-fill! successors out next 0)
       out)))
 
-(define (compiler-live-graph-find-block
-  [graph : CompilerLiveBlockGraph]
-  [label : i64]) : CompilerLiveMaybeBlock
-  (let
-    [slot : i64
-      (compiler-live-label-id-map-get (& (struct-get graph ids)) label)]
-    (if (>= slot 0)
-      (CompilerLiveMaybeBlock.Some (array-ref (struct-get graph blocks) slot))
-      CompilerLiveMaybeBlock.No)))
-
 (define (compiler-live-successor-live-out-graph-loop
   [items : (Array i64)]
   [graph : CompilerLiveBlockGraph]
@@ -1310,27 +1284,6 @@
         (array-set! pending (array-ref items i) true)
         (set! i (+ i 1))))))
 
-(define (compiler-live-graph-update! [graph : CompilerLiveBlockGraph]) : bool
-  (let
-    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
-    [count : i64 (array-length blocks)]
-    [index : i64 (- count 1)]
-    [changed : bool false]
-    (begin
-      (while (>= index 0)
-        (let
-          [block : CompilerLiveBlock (array-ref blocks index)]
-          [updated : CompilerLiveBlock
-            (compiler-live-recompute-block-graph block graph index)]
-          (begin
-            (if (compiler-live-block-liveness-eq? block updated)
-              unit
-              (begin
-                (array-set! blocks index updated)
-                (set! changed true)))
-            (set! index (- index 1)))))
-      changed)))
-
 (define (compiler-live-before-instr
   [live-after : CompilerLiveI64Set]
   [instr : CompilerIrInstr]) : CompilerLiveI64Set
@@ -1381,53 +1334,6 @@
           (struct-get block live-out)
           (struct-get block successors)
           (struct-get scan instr-after)))]))
-
-(define (compiler-live-fill-instr-after-graph-cons!
-  [ir-blocks : CompilerIrBlockList]
-  [blocks : (Array CompilerLiveBlock)]
-  [index : i64]) : unit
-  (match ir-blocks
-    [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Cons ir-block rest)
-      (if (>= index (array-length blocks))
-        unit
-        (begin
-          (array-set!
-            blocks
-            index
-            (compiler-live-fill-instr-after-block
-              ir-block
-              (array-ref blocks index)))
-          (compiler-live-fill-instr-after-graph-cons!
-            (box-get rest)
-            blocks
-            (+ index 1))))]
-    [(CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64
-          (compiler-live-set-min
-            (compiler-ir-block-seq-count seq)
-            (- (array-length blocks) index))]
-        (while (< i count)
-          (let
-            [slot : i64 (+ index i)]
-            (begin
-              (array-set!
-                blocks
-                slot
-                (compiler-live-fill-instr-after-block
-                  (compiler-ir-block-seq-ref seq i)
-                  (array-ref blocks slot)))
-              (set! i (+ i 1))))))]))
-
-(define (compiler-live-fill-instr-after-graph!
-  [ir-blocks : CompilerIrBlockList]
-  [graph : CompilerLiveBlockGraph]) : unit
-  (compiler-live-fill-instr-after-graph-cons!
-    ir-blocks
-    (struct-get graph blocks)
-    0))
 
 (define (compiler-live-analyze-function [func : CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
@@ -1550,29 +1456,6 @@
           [_ unit])
         (set! i (+ i 1))))))
 
-(define (compiler-live-phi-out-build!
-  [blocks : CompilerIrBlockList]
-  [ids : (& ids live_label_map.Map)]
-  [phi-out : (Array CompilerLiveI64Set)]) : unit
-  (match blocks
-    [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Cons block rest)
-      (begin
-        (match block
-          [(CompilerIrBlock.Block _ instrs)
-            (compiler-live-phi-out-add-seq! instrs ids phi-out)])
-        (compiler-live-phi-out-build! (box-get rest) ids phi-out))]
-    [(CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64 (compiler-ir-block-seq-count seq)]
-        (while (< i count)
-          (begin
-            (match (compiler-ir-block-seq-ref seq i)
-              [(CompilerIrBlock.Block _ instrs)
-                (compiler-live-phi-out-add-seq! instrs ids phi-out)])
-            (set! i (+ i 1)))))]))
-
 (define (compiler-live-recompute-block-graph-ep
   [block : CompilerLiveBlock]
   [graph : CompilerLiveBlockGraph]
@@ -1599,29 +1482,6 @@
       live-out
       (struct-get block successors)
       (struct-get block instr-after))))
-
-(define (compiler-live-graph-update-ep!
-  [graph : CompilerLiveBlockGraph]
-  [phi-out : (Array CompilerLiveI64Set)]) : bool
-  (let
-    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
-    [count : i64 (array-length blocks)]
-    [index : i64 (- count 1)]
-    [changed : bool false]
-    (begin
-      (while (>= index 0)
-        (let
-          [block : CompilerLiveBlock (array-ref blocks index)]
-          [updated : CompilerLiveBlock
-            (compiler-live-recompute-block-graph-ep block graph index phi-out)]
-          (begin
-            (if (compiler-live-block-liveness-eq? block updated)
-              unit
-              (begin
-                (array-set! blocks index updated)
-                (set! changed true)))
-            (set! index (- index 1)))))
-      changed)))
 
 (define (compiler-live-fixpoint-ep
   [graph : CompilerLiveBlockGraph]
@@ -1704,45 +1564,6 @@
             (struct-get block successors)
             (CompilerLiveInstrSetVec items))))]))
 
-(define (compiler-live-fill-instr-after-graph-ep-cons!
-  [ir-blocks : CompilerIrBlockList]
-  [blocks : (Array CompilerLiveBlock)]
-  [index : i64]) : unit
-  (match ir-blocks
-    [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Cons ir-block rest)
-      (if (>= index (array-length blocks))
-        unit
-        (begin
-          (array-set!
-            blocks
-            index
-            (compiler-live-fill-instr-after-block-ep
-              ir-block
-              (array-ref blocks index)))
-          (compiler-live-fill-instr-after-graph-ep-cons!
-            (box-get rest)
-            blocks
-            (+ index 1))))]
-    [(CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64
-          (compiler-live-set-min
-            (compiler-ir-block-seq-count seq)
-            (- (array-length blocks) index))]
-        (while (< i count)
-          (let
-            [slot : i64 (+ index i)]
-            (begin
-              (array-set!
-                blocks
-                slot
-                (compiler-live-fill-instr-after-block-ep
-                  (compiler-ir-block-seq-ref seq i)
-                  (array-ref blocks slot)))
-              (set! i (+ i 1))))))]))
-
 (define (compiler-live-fill-instr-after-graph-ep-seq!
   [ir-blocks : CompilerIrBlockSeq]
   [blocks : (Array CompilerLiveBlock)]) : unit
@@ -1800,17 +1621,6 @@
                 (struct-get graph ids)
                 (struct-get graph blocks))))))]))
 
-(define (compiler-live-function-block-count
-  [liveness : CompilerFunctionLiveness]) : i64
-  (match liveness
-    [(CompilerFunctionLiveness.Liveness _ blocks) (array-length blocks)]))
-
-(define (compiler-live-function-block-ref
-  [liveness : CompilerFunctionLiveness]
-  [index : i64]) : CompilerLiveBlock
-  (match liveness
-    [(CompilerFunctionLiveness.Liveness _ blocks) (array-ref blocks index)]))
-
 (define (compiler-live-function-block-index
   [liveness : CompilerFunctionLiveness]
   [label : i64]) : i64
@@ -1828,9 +1638,6 @@
         (if (>= index 0)
           (CompilerLiveMaybeBlock.Some (array-ref blocks index))
           CompilerLiveMaybeBlock.No))]))
-
-(define (compiler-live-block-label [block : CompilerLiveBlock]) : i64
-  (struct-get block label))
 
 (define (compiler-live-block-uses [block : CompilerLiveBlock]) : CompilerLiveI64Set
   (struct-get block uses))

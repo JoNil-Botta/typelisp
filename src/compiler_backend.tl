@@ -920,9 +920,6 @@
   [rest : BackendFloatList]) : BackendFloatList
   (BackendFloatList.Cons ty bits (box rest)))
 
-(define (compiler-backend-empty-string-list) : BackendStringSeq
-  (BackendStringSeq (array.make-array String 0) 0))
-
 (define (compiler-backend-empty-label-seq) : BackendSymbolSeq
   (BackendSymbolSeq (array.make-array i64 0) 0))
 
@@ -12035,16 +12032,6 @@
                 "backend: expected "
                 (string.append (compiler-backend-float-type-name ty) " value")))))])))
 
-(define (compiler-backend-emit-load-f64-value-with-plan
-  [assignments : CompilerRegAssignmentList]
-  [value : CompilerIrValue]
-  [reg : String]) : ResultCompilerBackend
-  (compiler-backend-emit-load-float-value-with-plan
-    assignments
-    value
-    (AstType.F64)
-    reg))
-
 (define (compiler-backend-float-value-register
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]) : String
@@ -15063,17 +15050,6 @@
                 "    jne 1f\n    call tl_div_abort\n1:\n"))))))
     ""))
 
-(define (compiler-backend-div-overflow-guard-asm
-  [type-segment-bases : i64]
-  [ty : AstType]
-  [divisor-reg : String]) : String
-  (compiler-backend-div-overflow-guard-asm-with-plan
-    type-segment-bases
-    ty
-    divisor-reg
-    ""
-    ""))
-
 (define (compiler-backend-divmod-guard-asm-with-plan
   [type-segment-bases : i64]
   [ty : AstType]
@@ -15152,19 +15128,6 @@
       ty
       want-remainder
       divisor-reg)))
-
-(define (compiler-backend-binop-divmod-asm
-  [type-segment-bases : i64]
-  [ty : AstType]
-  [want-remainder : bool]
-  [divisor-reg : String]) : String
-  (compiler-backend-binop-divmod-asm-with-plan
-    type-segment-bases
-    ty
-    want-remainder
-    divisor-reg
-    ""
-    ""))
 
 (define (compiler-backend-emit-load-u64-absolute [n : u64] [reg : String]) : String
   (compiler-backend-emit-load-i64-absolute (cast n : i64) reg))
@@ -15520,17 +15483,6 @@
 ;; hoist or the recorded value does not match the magic this expansion computed
 ;; (defensive: a mismatch means the plan and the emitter disagree -- fall back
 ;; to the in-place load rather than read a wrong constant).
-(define (compiler-backend-magic-home-reg
-  [hoist : CompilerBackendConstHoistHome]
-  [magic : u64]) : String
-  (match hoist
-    [(CompilerBackendNoConstHoistHome) ""]
-    [(CompilerBackendConstHoistHomeReg reg expect wide?)
-      (if (and (not wide?) (= expect (cast magic : i64)))
-        reg
-        "")]
-    [(CompilerBackendConstHoistHomeFrame _ _) ""]))
-
 ;; The validated magic operand may be a register or a frame home. A mismatch is
 ;; deliberately empty so the site falls back to ordinary materialization.
 (define (compiler-backend-magic-home-operand
@@ -17752,22 +17704,6 @@
           mask
           hoist)))))
 
-(define (compiler-backend-binop-literal-divmod-asm-dst
-  [type-segment-bases : i64]
-  [op : CompilerIrBinOp]
-  [rhs : CompilerIrValue]
-  [ty : AstType]
-  [dst : i64]) : CompilerBackendMaybeAsm
-  (compiler-backend-binop-literal-divmod-asm-dst-with-plan
-    type-segment-bases
-    op
-    rhs
-    ty
-    dst
-    ""
-    ""
-    ""))
-
 ;; Same, but at the current emit point (no dst -- tail-return position). The magic
 ;; register is scavenged at the return point, so a pooled %r8 live across the fused
 ;; return is not clobbered by the constant-divmod sequence.
@@ -17846,20 +17782,6 @@
           dividend
           mask
           hoist)))))
-
-(define (compiler-backend-binop-literal-divmod-asm-here
-  [type-segment-bases : i64]
-  [op : CompilerIrBinOp]
-  [rhs : CompilerIrValue]
-  [ty : AstType]) : CompilerBackendMaybeAsm
-  (compiler-backend-binop-literal-divmod-asm-here-with-plan
-    type-segment-bases
-    op
-    rhs
-    ty
-    ""
-    ""
-    ""))
 
 (define (compiler-backend-shift-count-width
   [type-segment-bases : i64]
@@ -18068,21 +17990,6 @@
           ty
           lhs
           rhs-reg)])))
-
-(define (compiler-backend-binop-asm
-  [type-segment-bases : i64]
-  [op : CompilerIrBinOp]
-  [ty : AstType]
-  [rhs-reg : String]
-  [staging-reg : String]) : String
-  (compiler-backend-binop-asm-with-plan
-    type-segment-bases
-    op
-    ty
-    rhs-reg
-    staging-reg
-    ""
-    ""))
 
 (define (compiler-backend-binop-test-zero-asm
   [type-segment-bases : i64]
@@ -22143,29 +22050,6 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])))))
 
-(define (compiler-backend-emit-load-compare-branch
-  [assignments : CompilerRegAssignmentList]
-  [function : String]
-  [ptr : CompilerIrValue]
-  [op : CompilerIrBinOp]
-  [rhs : CompilerIrValue]
-  [ty : AstType]
-  [true-label : i64]
-  [false-label : i64]
-  [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
-  (compiler-backend-emit-load-compare-branch-with-plan
-    assignments
-    function
-    ptr
-    op
-    rhs
-    ty
-    true-label
-    false-label
-    fallthrough
-    ""
-    ""))
-
 (define (compiler-backend-emit-gep-load-compare-branch-with-plan
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
@@ -22308,35 +22192,6 @@
               (compiler-diagnostic-at-start
                 ""
                 "backend: non-immediate fused gep load compare branch")))]))))
-
-(define (compiler-backend-emit-gep-load-compare-branch
-  [type-segment-bases : i64]
-  [assignments : CompilerRegAssignmentList]
-  [function : String]
-  [base : CompilerIrValue]
-  [offset : CompilerIrValue]
-  [elem-ty : AstType]
-  [op : CompilerIrBinOp]
-  [rhs : CompilerIrValue]
-  [ty : AstType]
-  [true-label : i64]
-  [false-label : i64]
-  [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
-  (compiler-backend-emit-gep-load-compare-branch-with-plan
-    type-segment-bases
-    assignments
-    function
-    base
-    offset
-    elem-ty
-    op
-    rhs
-    ty
-    true-label
-    false-label
-    fallthrough
-    ""
-    ""))
 
 (define (compiler-backend-bounds-length-operand
   [assignments : CompilerRegAssignmentList]
@@ -32327,36 +32182,6 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-branch-with-phi-copies
-  [type-segment-bases : i64]
-  [assignments : CompilerRegAssignmentList]
-  [function : String]
-  [blocks : CompilerIrBlockList]
-  [current-label : i64]
-  [cond : CompilerIrValue]
-  [true-label : i64]
-  [false-label : i64]
-  [fallthrough : CompilerBackendMaybeLabel]
-  [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
-  (compiler-backend-emit-branch-with-phi-copies-with-plan
-    type-segment-bases
-    assignments
-    function
-    blocks
-    current-label
-    cond
-    true-label
-    false-label
-    fallthrough
-    program-index
-    vars
-    ""
-    planned-cycle
-    planned-stage))
-
 (define (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
@@ -32606,43 +32431,6 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-load-compare-branch-with-phi-copies
-  [type-segment-bases : i64]
-  [assignments : CompilerRegAssignmentList]
-  [function : String]
-  [blocks : CompilerIrBlockList]
-  [current-label : i64]
-  [ptr : CompilerIrValue]
-  [op : CompilerIrBinOp]
-  [rhs : CompilerIrValue]
-  [ty : AstType]
-  [true-label : i64]
-  [false-label : i64]
-  [fallthrough : CompilerBackendMaybeLabel]
-  [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
-  (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
-    type-segment-bases
-    assignments
-    function
-    blocks
-    current-label
-    ptr
-    op
-    rhs
-    ty
-    true-label
-    false-label
-    fallthrough
-    program-index
-    vars
-    ""
-    ""
-    planned-cycle
-    planned-stage))
-
 (define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
@@ -32755,47 +32543,6 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
-
-(define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies
-  [type-segment-bases : i64]
-  [assignments : CompilerRegAssignmentList]
-  [function : String]
-  [blocks : CompilerIrBlockList]
-  [current-label : i64]
-  [base : CompilerIrValue]
-  [offset : CompilerIrValue]
-  [elem-ty : AstType]
-  [op : CompilerIrBinOp]
-  [rhs : CompilerIrValue]
-  [ty : AstType]
-  [true-label : i64]
-  [false-label : i64]
-  [fallthrough : CompilerBackendMaybeLabel]
-  [program-index : CompilerBackendProgramIndex]
-  [vars : i64]
-  [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
-  (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
-    type-segment-bases
-    assignments
-    function
-    blocks
-    current-label
-    base
-    offset
-    elem-ty
-    op
-    rhs
-    ty
-    true-label
-    false-label
-    fallthrough
-    program-index
-    vars
-    ""
-    ""
-    planned-cycle
-    planned-stage))
 
 (define (compiler-backend-tail-call-return-normalize
   [type-segment-bases : i64]
@@ -45211,23 +44958,6 @@
 
 (cfg
   scavenge-self-check
-  (define (compiler-backend-scavenge-free-at-point?
-    [starts : (Array i64)]
-    [ends : (Array i64)]
-    [assignment-index : CompilerRegAssignmentIndex]
-    [vars : i64]
-    [point : i64]
-    [reg : String]) : bool
-    (compiler-reg-assignment-index-register-free-at-point?
-      starts
-      ends
-      assignment-index
-      vars
-      point
-      reg)))
-
-(cfg
-  scavenge-self-check
   (define (compiler-backend-scavenge-free-for-instr?
     [starts : (Array i64)]
     [ends : (Array i64)]
@@ -52597,9 +52327,6 @@
         buf
         program-index)]))
 
-(define (compiler-backend-global-init-name [global-name : String]) : String
-  (string.append "__global_init_" global-name))
-
 (define (compiler-backend-global-init-call
   [type-segment-bases : i64]
   [name : i64]
@@ -58297,22 +58024,6 @@
                 (set! same false))
               (set! i (+ i 1))))
           same)))))
-
-(define (compiler-backend-peephole-range-contains?
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]
-  [needle : String]) : bool
-  (let
-    [len : i64 (string.string-length needle)]
-    [i : i64 start]
-    [found : bool false]
-    (begin
-      (while (and (not found) (<= (+ i len) end))
-        (if (compiler-backend-peephole-range-eq? data i (+ i len) needle)
-          (set! found true)
-          (set! i (+ i 1))))
-      found)))
 
 (define (compiler-backend-peephole-register-range?
   [data : (Ptr u8)]

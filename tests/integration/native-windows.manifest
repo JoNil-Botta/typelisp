@@ -99,6 +99,7 @@ handle_param_pin|tests/integration/handle_param_pin.tl|42|-|-|stdlib/io.tl
 param_pin_interval|tests/integration/param_pin_interval.tl|42|-|-|stdlib/io.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
 licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 loadcse_alias|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl stdlib/array.tl

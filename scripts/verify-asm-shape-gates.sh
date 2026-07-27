@@ -227,6 +227,25 @@ check_divmagic_hoist() {
     assert_regex_count_at_least "$_digitsum" '^[[:space:]]+imulq \$10, %r[a-z0-9]+, %r[a-z0-9]+$' 1 divmagic-digitsum
 }
 
+check_lftr_counter_retire() {
+    _asm=$(compile_gate lftr_counter_retire tests/integration/lftr_counter_retire.tl)
+    _body=$(function_body "$_asm" _tl_lftr_counter_retire_walk)
+    # LFTR: induction turns `(array-ref prog i)` into a 16-byte-stride pointer
+    # phi, after which `i` only feeds its own increment and the exit test. The
+    # accumulator folds by register add/imul, so an `add $1` in this body could
+    # only be that retired index. The exit test moves onto the pointer, which
+    # keeps exactly one bump per iteration.
+    assert_not_matches "$_body" '^[[:space:]]+addq \$1, %r[a-z0-9]+$' lftr-counter-retire
+    assert_regex_count_eq "$_body" '^[[:space:]]+leaq 16\(%r[a-z0-9]+\), %r[a-z0-9]+$' 1 lftr-counter-retire
+    assert_regex_count_eq "$_body" '^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$' 1 lftr-counter-retire
+    # The end address is materialised once in the preheader by scaling the
+    # length by the element stride (shift or imul, allocator's choice).
+    assert_matches "$_body" '^[[:space:]]+(shlq \$4, %r[a-z0-9]+|imulq \$16, %r[a-z0-9]+, %r[a-z0-9]+)$' lftr-counter-retire
+    # Retirement requires the counter to carry no bounds check: the loop must
+    # reach LFTR already check-free, not versioned around one.
+    assert_not_contains "$_body" 'call tl_oob_abort' lftr-counter-retire
+}
+
 check_fallthrough_jmp_chain() {
     for _target in linux-x86_64 windows-x86_64; do
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
@@ -545,6 +564,7 @@ check_stdlib_math_sqrt() {
 }
 
 check_divmagic_hoist
+check_lftr_counter_retire
 check_fallthrough_jmp_chain
 check_wide_const_hoist
 check_group_pair_home

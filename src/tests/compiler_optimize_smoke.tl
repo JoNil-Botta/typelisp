@@ -2091,6 +2091,10 @@
       (compiler-optimize-induction-self-test)
       42)
     (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-lftr-self-test"
+      (compiler-optimize-lftr-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
       "compiler-optimize-unroll-self-test"
       (compiler-optimize-unroll-self-test)
       42)

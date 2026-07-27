@@ -20505,6 +20505,962 @@
         (opt-cfg-context-build blocks)
         func)]))
 
+;; --- linear-function test replacement (LFTR) -------------------------------
+;;
+;; The induction slice above strength-reduces a loop's derived addresses into
+;; pointer phis. That regularly leaves the original i64 counter phi with
+;; nothing left to do but feed its own latch increment and the loop's exit
+;; compare, and that residue still costs an `add` plus a loop-live register on
+;; every iteration.
+;;
+;; LFTR retires such a counter. When the counter phi's uses across the WHOLE
+;; function are exactly its `+ 1` latch increment, the copy hop that carries
+;; the increment back into the phi, the exit compare, and instructions that are
+;; already dead, the exit test is rewritten onto a derived pointer phi of the
+;; same loop and the counter's phi/increment/copy are deleted outright.
+;;
+;; The residue is a phi <-> add <-> mov CYCLE. The pipeline's use-count DCE
+;; sweep retires dead chains, not cycles, so this pass deletes the retired
+;; instructions itself instead of leaving them for a cleanup that never comes.
+;;
+;; Shape (both latch compare forms are handled):
+;;
+;;   preheader: p0 = <pointer seed>        end = gep p0, (bound - seed) * K
+;;   header:    i  = phi [seed, ph], [i2, latch]
+;;              p  = phi [p0, ph],   [p2, latch]
+;;   latch:     i2 = i + 1                 (deleted, with i and the copy)
+;;              p2 = gep p, K
+;;              c  = lt i,  bound  ->      c = lt p,  end        (form A)
+;;              c  = lt i2, bound  ->      c = lt p2, end        (form B)
+;;
+;; Correctness. Both phis take their preheader value on the same edge and are
+;; advanced unconditionally on the same latch edge, the counter by exactly + 1
+;; and the pointer by exactly K elements, so at every header entry
+;; `p = p0 + (i - seed) * K` elements. That map is strictly increasing, so
+;; `i < bound` <=> `p < p0 + (bound - seed) * K` as long as the right-hand
+;; address does not wrap.
+;;
+;; No-wrap: eligibility requires the counter to carry NO bounds check. A bounds
+;; check reads the counter and is neither the increment nor the compare, so its
+;; presence rejects the loop. Every indexed access built from this counter was
+;; therefore already proven in range, which bounds the exit test's `bound` by
+;; the element count of the SAME allocation the pointer walks, and
+;; `p0 + (bound - seed) * K` is then at most one past that allocation's last
+;; element. Addresses stay below 2^47 on both supported targets, so the
+;; rewritten compare keeps the original signed i64 predicate and remains
+;; order-equivalent to the index compare it replaces.
+;;
+;; Pipeline position: after bce_version and unroll. Both key their own rewrites
+;; on the counter phi -- the per-edge bounds proofs read the counter's seed and
+;; step, and the counted-loop unroll shape matches on the counter's phi/next
+;; pair -- so retiring it before them would silently remove their input.
+;; Running here leaves both untouched and hands the retired form to
+;; affine-fold/GVN and the backend.
+(defenum OptLftrMaybeInstr
+  (No)
+  (Some CompilerIrInstr))
+
+;; Counter phi var, `i + 1` destination var, the phi's latch-input var (equal
+;; to the increment when SSA renaming left no copy hop), constant seed.
+(defenum OptLftrCounter
+  (Counter i64 i64 i64 i64))
+
+(defenum OptLftrMaybeCounter
+  (No)
+  (Some OptLftrCounter))
+
+;; Pointer phi var, its preheader seed var, the latch `gep phi, K` destination
+;; var, the gep's element type, the element step K, and that gep's index inside
+;; the latch block (form B needs the step to precede the compare).
+(defenum OptLftrPointer
+  (Pointer i64 i64 i64 AstType i64 i64))
+
+(defenum OptLftrMaybePointer
+  (No)
+  (Some OptLftrPointer))
+
+;; Compare destination, operand type, compare op, bound value, and whether the
+;; compare reads the increment (form B) instead of the phi (form A).
+(defenum OptLftrTest
+  (Test i64 AstType CompilerIrBinOp CompilerIrValue bool))
+
+(defenum OptLftrMaybeTestSite
+  (No)
+  ;; test, the block label holding it, its index inside that block
+  (Some OptLftrTest i64 i64))
+
+;; Kill count, kill vars, rewritten compare destination, rewritten compare,
+;; preheader label, preheader instructions, new frame.
+(defenum OptLftrPlan
+  (Plan i64 (Array i64) i64 CompilerIrInstr i64 CompilerIrInstrList i64))
+
+(defenum OptLftrMaybePlan
+  (No)
+  (Some OptLftrPlan))
+
+(defenum OptLftrApplyResult
+  (Result CompilerIrBlockList i64 bool))
+
+;; Retiring the counter deletes its phi, its increment, its copy hop, and any
+;; already-dead readers. Three fixed slots plus a small dead-reader budget keeps
+;; the census bounded; a loop with more dead readers than this is left alone.
+(define (opt-lftr-kill-cap) : i64
+  8)
+
+(define (opt-lftr-kill-fixed) : i64
+  3)
+
+(define (opt-lftr-plan-frame [plan : OptLftrPlan]) : i64
+  (match plan
+    [(OptLftrPlan.Plan _ _ _ _ _ _ frame) frame]))
+
+(define (opt-lftr-def-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : OptLftrMaybeInstr
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptLftrMaybeInstr.No)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst)
+          (if (= dst var)
+            (OptLftrMaybeInstr.Some instr)
+            (opt-lftr-def-instr-seq-from instrs (+ index 1) var))]
+        [(option_i64.None) (opt-lftr-def-instr-seq-from instrs (+ index 1) var)]))))
+
+(define (opt-lftr-def-instr-blocks [blocks : CompilerIrBlockList] [var : i64]) : OptLftrMaybeInstr
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptLftrMaybeInstr.No)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (match (opt-lftr-def-instr-seq-from instrs 0 var)
+            [(OptLftrMaybeInstr.Some instr) (OptLftrMaybeInstr.Some instr)]
+            [(OptLftrMaybeInstr.No)
+              (opt-lftr-def-instr-blocks (box-get rest) var)])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lftr-def-instr-blocks (compiler-ir-block-seq-to-list seq) var)]))
+
+;; The index of `var`'s definition inside one block, or -1 when it is not
+;; defined there.
+(define (opt-lftr-def-index-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
+      [(option_i64.Some dst)
+        (if (= dst var)
+          index
+          (opt-lftr-def-index-seq-from instrs (+ index 1) var))]
+      [(option_i64.None) (opt-lftr-def-index-seq-from instrs (+ index 1) var)])))
+
+(define (opt-lftr-value-is-var? [value : CompilerIrValue] [var : i64]) : bool
+  (match value
+    [(CompilerIrValue.Var id) (= id var)]
+    [_ false]))
+
+;; `i + 1` in either operand order.
+(define (opt-lftr-unit-increment? [instr : CompilerIrInstr] [phi-var : i64]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (and
+        (opt-induction-i64-type? ty)
+        (match op
+          [(CompilerIrBinOp.Add) true]
+          [_ false])
+        (if (opt-lftr-value-is-var? lhs phi-var)
+          (match rhs
+            [(CompilerIrValue.I64 step) (= step 1)]
+            [_ false])
+          (and
+            (opt-lftr-value-is-var? rhs phi-var)
+            (match lhs
+              [(CompilerIrValue.I64 step) (= step 1)]
+              [_ false]))))]
+    [_ false]))
+
+;; The source var of `dst = mov src`, or -1.
+(define (opt-lftr-mov-source [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.Mov _ src ty)
+      (if (opt-induction-i64-type? ty)
+        (match src
+          [(CompilerIrValue.Var var) var]
+          [_ (- 0 1)])
+        (- 0 1))]
+    [_ (- 0 1)]))
+
+;; The phi's latch input is either the increment itself or a single copy hop
+;; away from it. Deeper chains are rejected: the retirement deletes every
+;; instruction it names, so the named set has to be closed.
+(define (opt-lftr-counter-resolve
+  [body-blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [seed : i64]
+  [back : i64]) : OptLftrMaybeCounter
+  (match (opt-lftr-def-instr-blocks body-blocks back)
+    [(OptLftrMaybeInstr.No) (OptLftrMaybeCounter.No)]
+    [(OptLftrMaybeInstr.Some instr)
+      (if (opt-lftr-unit-increment? instr phi-var)
+        (OptLftrMaybeCounter.Some
+          (OptLftrCounter.Counter phi-var back back seed))
+        (let
+          [source : i64 (opt-lftr-mov-source instr)]
+          (if (< source 0)
+            (OptLftrMaybeCounter.No)
+            (match (opt-lftr-def-instr-blocks body-blocks source)
+              [(OptLftrMaybeInstr.No) (OptLftrMaybeCounter.No)]
+              [(OptLftrMaybeInstr.Some source-instr)
+                (if (opt-lftr-unit-increment? source-instr phi-var)
+                  (OptLftrMaybeCounter.Some
+                    (OptLftrCounter.Counter phi-var source back seed))
+                  (OptLftrMaybeCounter.No))]))))]))
+
+(define (opt-lftr-counter-from-phi
+  [body-blocks : CompilerIrBlockList]
+  [preheader : i64]
+  [latch : i64]
+  [instr : CompilerIrInstr]) : OptLftrMaybeCounter
+  (match instr
+    [(CompilerIrInstr.Phi phi-var inputs ty)
+      (if (opt-induction-i64-type? ty)
+        (match (opt-induction-phi-inputs inputs preheader latch)
+          [(OptInductionPhiInputs.Some start back)
+            (match start
+              [(CompilerIrValue.I64 seed)
+                (if (opt-induction-small-const? seed)
+                  (opt-lftr-counter-resolve body-blocks phi-var seed back)
+                  (OptLftrMaybeCounter.No))]
+              [_ (OptLftrMaybeCounter.No)])]
+          [(OptInductionPhiInputs.No) (OptLftrMaybeCounter.No)])
+        (OptLftrMaybeCounter.No))]
+    [_ (OptLftrMaybeCounter.No)]))
+
+(define (opt-lftr-find-counter-seq-from
+  [body-blocks : CompilerIrBlockList]
+  [preheader : i64]
+  [latch : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptLftrMaybeCounter
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptLftrMaybeCounter.No)
+    (match (opt-lftr-counter-from-phi
+      body-blocks
+      preheader
+      latch
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptLftrMaybeCounter.Some counter) (OptLftrMaybeCounter.Some counter)]
+      [(OptLftrMaybeCounter.No)
+        (opt-lftr-find-counter-seq-from
+          body-blocks
+          preheader
+          latch
+          instrs
+          (+ index 1))])))
+
+;; A pointer induction phi of the same loop: seeded from the preheader and
+;; advanced by a constant, strictly positive element step in the latch.
+(define (opt-lftr-pointer-from-phi
+  [type-segment-bases : i64]
+  [latch-instrs : CompilerIrInstrSeq]
+  [preheader : i64]
+  [latch : i64]
+  [counter-phi : i64]
+  [instr : CompilerIrInstr]) : OptLftrMaybePointer
+  (match instr
+    [(CompilerIrInstr.Phi phi-var inputs ty)
+      (if (and (not (= phi-var counter-phi)) (opt-induction-i64-type? ty))
+        (match (opt-induction-phi-inputs inputs preheader latch)
+          [(OptInductionPhiInputs.Some start next-var)
+            (match start
+              [(CompilerIrValue.Var seed-var)
+                (let
+                  [step-index : i64
+                    (opt-lftr-def-index-seq-from latch-instrs 0 next-var)]
+                  (if (< step-index 0)
+                    (OptLftrMaybePointer.No)
+                    (match (compiler-ir-instr-seq-ref latch-instrs step-index)
+                      [(CompilerIrInstr.Gep _ base offset gep-ty)
+                        (if (opt-lftr-value-is-var? base phi-var)
+                          (match offset
+                            [(CompilerIrValue.I64 step)
+                              (if (and
+                                (> step 0)
+                                (opt-induction-small-const? step)
+                                (>
+                                  (opt-load-loc-type-size
+                                    type-segment-bases
+                                    gep-ty)
+                                  0))
+                                (OptLftrMaybePointer.Some
+                                  (OptLftrPointer.Pointer
+                                    phi-var
+                                    seed-var
+                                    next-var
+                                    gep-ty
+                                    step
+                                    step-index))
+                                (OptLftrMaybePointer.No))]
+                            [_ (OptLftrMaybePointer.No)])
+                          (OptLftrMaybePointer.No))]
+                      [_ (OptLftrMaybePointer.No)])))]
+              [_ (OptLftrMaybePointer.No)])]
+          [(OptInductionPhiInputs.No) (OptLftrMaybePointer.No)])
+        (OptLftrMaybePointer.No))]
+    [_ (OptLftrMaybePointer.No)]))
+
+(define (opt-lftr-find-pointer-seq-from
+  [type-segment-bases : i64]
+  [latch-instrs : CompilerIrInstrSeq]
+  [preheader : i64]
+  [latch : i64]
+  [counter-phi : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptLftrMaybePointer
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptLftrMaybePointer.No)
+    (match (opt-lftr-pointer-from-phi
+      type-segment-bases
+      latch-instrs
+      preheader
+      latch
+      counter-phi
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptLftrMaybePointer.Some pointer) (OptLftrMaybePointer.Some pointer)]
+      [(OptLftrMaybePointer.No)
+        (opt-lftr-find-pointer-seq-from
+          type-segment-bases
+          latch-instrs
+          preheader
+          latch
+          counter-phi
+          instrs
+          (+ index 1))])))
+
+;; Only the two ordering predicates that a strictly increasing index-to-address
+;; map preserves in both directions are admitted here.
+(define (opt-lftr-order-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Lt) true]
+    [(CompilerIrBinOp.Le) true]
+    [_ false]))
+
+;; The bound is re-used as an operand of the preheader's end-address
+;; arithmetic, so only the scalar forms that arithmetic accepts qualify.
+(define (opt-lftr-bound-value? [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.I64 _) true]
+    [(CompilerIrValue.Var _) true]
+    [_ false]))
+
+(define (opt-lftr-test-from-instr
+  [loop-defs : opt_i64_i64_map.Map]
+  [phi-var : i64]
+  [next-var : i64]
+  [instr : CompilerIrInstr]) : OptLftrMaybeTestSite
+  (match instr
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (if (and
+        (opt-induction-i64-type? ty)
+        (opt-lftr-order-op? op)
+        (opt-lftr-bound-value? rhs)
+        (opt-induction-value-base-invariant? loop-defs rhs))
+        (if (opt-lftr-value-is-var? lhs phi-var)
+          (OptLftrMaybeTestSite.Some (OptLftrTest.Test dst ty op rhs false) 0 0)
+          (if (opt-lftr-value-is-var? lhs next-var)
+            (OptLftrMaybeTestSite.Some
+              (OptLftrTest.Test dst ty op rhs true)
+              0
+              0)
+            (OptLftrMaybeTestSite.No)))
+        (OptLftrMaybeTestSite.No))]
+    [_ (OptLftrMaybeTestSite.No)]))
+
+(define (opt-lftr-find-test-seq-from
+  [loop-defs : opt_i64_i64_map.Map]
+  [phi-var : i64]
+  [next-var : i64]
+  [label : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptLftrMaybeTestSite
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptLftrMaybeTestSite.No)
+    (match (opt-lftr-test-from-instr
+      loop-defs
+      phi-var
+      next-var
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptLftrMaybeTestSite.Some test _ _)
+        (OptLftrMaybeTestSite.Some test label index)]
+      [(OptLftrMaybeTestSite.No)
+        (opt-lftr-find-test-seq-from
+          loop-defs
+          phi-var
+          next-var
+          label
+          instrs
+          (+ index 1))])))
+
+(define (opt-lftr-find-test-blocks
+  [loop-defs : opt_i64_i64_map.Map]
+  [phi-var : i64]
+  [next-var : i64]
+  [blocks : CompilerIrBlockList]) : OptLftrMaybeTestSite
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptLftrMaybeTestSite.No)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (match (opt-lftr-find-test-seq-from
+            loop-defs
+            phi-var
+            next-var
+            label
+            instrs
+            0)
+            [(OptLftrMaybeTestSite.Some test site-label site-index)
+              (OptLftrMaybeTestSite.Some test site-label site-index)]
+            [(OptLftrMaybeTestSite.No)
+              (opt-lftr-find-test-blocks
+                loop-defs
+                phi-var
+                next-var
+                (box-get rest))])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lftr-find-test-blocks
+        loop-defs
+        phi-var
+        next-var
+        (compiler-ir-block-seq-to-list seq))]))
+
+;; Pure, destination-only instructions whose result is unused: the census may
+;; treat these as non-uses because the retirement deletes them too.
+(define (opt-lftr-dead-removable?
+  [uses : (Array i64)]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov dst _ _) (not (opt-used-array-contains uses dst))]
+    [(CompilerIrInstr.Cast dst _ _ _) (not (opt-used-array-contains uses dst))]
+    [(CompilerIrInstr.Bitcast dst _ _ _)
+      (not (opt-used-array-contains uses dst))]
+    [(CompilerIrInstr.Gep dst _ _ _) (not (opt-used-array-contains uses dst))]
+    [(CompilerIrInstr.BinOp dst op _ _ _)
+      (and (not (opt-binop-traps? op)) (not (opt-used-array-contains uses dst)))]
+    [(CompilerIrInstr.UnOp dst _ _ _) (not (opt-used-array-contains uses dst))]
+    [_ false]))
+
+(define (opt-lftr-in-kills-from?
+  [kills : (Array i64)]
+  [count : i64]
+  [index : i64]
+  [var : i64]) : bool
+  (if (>= index count)
+    false
+    (if (= (array-ref kills index) var)
+      true
+      (opt-lftr-in-kills-from? kills count (+ index 1) var))))
+
+(define (opt-lftr-in-kills? [plan : OptLftrPlan] [var : i64]) : bool
+  (match plan
+    [(OptLftrPlan.Plan count kills _ _ _ _ _)
+      (opt-lftr-in-kills-from? kills count 0 var)]))
+
+;; The scratch array accumulates per-instruction use counts monotonically, so a
+;; strict increase on any of the three retiring vars identifies the instruction
+;; as a reader without a per-instruction map allocation.
+(define (opt-lftr-reads-kill?
+  [scratch : (Array i64)]
+  [kills : (Array i64)]
+  [before-phi : i64]
+  [before-next : i64]
+  [before-back : i64]) : bool
+  (or
+    (> (array-ref scratch (array-ref kills 0)) before-phi)
+    (> (array-ref scratch (array-ref kills 1)) before-next)
+    (> (array-ref scratch (array-ref kills 2)) before-back)))
+
+(define (opt-lftr-census-instr
+  [uses : (Array i64)]
+  [scratch : (Array i64)]
+  [kills : (Array i64)]
+  [count : (Array i64)]
+  [compare-dst : i64]
+  [instr : CompilerIrInstr]) : bool
+  (let
+    [before-phi : i64 (array-ref scratch (array-ref kills 0))]
+    [before-next : i64 (array-ref scratch (array-ref kills 1))]
+    [before-back : i64 (array-ref scratch (array-ref kills 2))]
+    [_collect : unit (opt-collect-instr-uses-array scratch instr)]
+    (if (not
+      (opt-lftr-reads-kill? scratch kills before-phi before-next before-back))
+      true
+      (match (opt-instr-def-var instr)
+        [(option_i64.None) false]
+        [(option_i64.Some dst)
+          (cond
+            [(opt-lftr-in-kills-from? kills (opt-lftr-kill-fixed) 0 dst) true]
+            [(= dst compare-dst) true]
+            [(and
+                (opt-lftr-dead-removable? uses instr)
+                (< (array-ref count 0) (opt-lftr-kill-cap)))
+              (begin
+                (array-set! kills (array-ref count 0) dst)
+                (array-set! count 0 (+ (array-ref count 0) 1))
+                true)]
+            [else false])]))))
+
+(define (opt-lftr-census-seq-from
+  [uses : (Array i64)]
+  [scratch : (Array i64)]
+  [kills : (Array i64)]
+  [count : (Array i64)]
+  [compare-dst : i64]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (and
+      (opt-lftr-census-instr
+        uses
+        scratch
+        kills
+        count
+        compare-dst
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-lftr-census-seq-from
+        uses
+        scratch
+        kills
+        count
+        compare-dst
+        instrs
+        (+ index 1)))))
+
+(define (opt-lftr-census-blocks
+  [uses : (Array i64)]
+  [scratch : (Array i64)]
+  [kills : (Array i64)]
+  [count : (Array i64)]
+  [compare-dst : i64]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (and
+            (opt-lftr-census-seq-from
+              uses
+              scratch
+              kills
+              count
+              compare-dst
+              instrs
+              0)
+            (opt-lftr-census-blocks
+              uses
+              scratch
+              kills
+              count
+              compare-dst
+              (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lftr-census-blocks
+        uses
+        scratch
+        kills
+        count
+        compare-dst
+        (compiler-ir-block-seq-to-list seq))]))
+
+;; `end = p0 + (bound - seed) * K` elements. A literal bound folds to a single
+;; gep; a variable bound pays the subtract only for a nonzero seed and the
+;; multiply only for a multi-element step.
+(define (opt-lftr-end-instrs
+  [pointer : OptLftrPointer]
+  [seed : i64]
+  [bound : CompilerIrValue]
+  [frame : i64]) : CompilerIrInstrList
+  (match pointer
+    [(OptLftrPointer.Pointer _ seed-var _ gep-ty step _)
+      (let
+        [sub-var : i64 frame]
+        [mul-var : i64 (+ frame 1)]
+        [end-var : i64 (+ frame 2)]
+        (match bound
+          [(CompilerIrValue.I64 limit)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                end-var
+                (CompilerIrValue.Var seed-var)
+                (CompilerIrValue.I64 (* (- limit seed) step))
+                gep-ty)
+              (CompilerIrInstrList.Nil))]
+          [_
+            (let
+              [offset-instrs : CompilerIrInstrList
+                (if (= seed 0)
+                  (CompilerIrInstrList.Nil)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      sub-var
+                      (CompilerIrBinOp.Sub)
+                      bound
+                      (CompilerIrValue.I64 seed)
+                      (AstType.I64))
+                    (CompilerIrInstrList.Nil)))]
+              [offset-value : CompilerIrValue
+                (if (= seed 0)
+                  bound
+                  (CompilerIrValue.Var sub-var))]
+              [scaled-instrs : CompilerIrInstrList
+                (if (= step 1)
+                  offset-instrs
+                  (opt-aggregate-instr-list-append
+                    offset-instrs
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        mul-var
+                        (CompilerIrBinOp.Mul)
+                        offset-value
+                        (CompilerIrValue.I64 step)
+                        (AstType.I64))
+                      (CompilerIrInstrList.Nil))))]
+              [scaled-value : CompilerIrValue
+                (if (= step 1)
+                  offset-value
+                  (CompilerIrValue.Var mul-var))]
+              (opt-aggregate-instr-list-append
+                scaled-instrs
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    end-var
+                    (CompilerIrValue.Var seed-var)
+                    scaled-value
+                    gep-ty)
+                  (CompilerIrInstrList.Nil))))]))]))
+
+;; A literal bound is materialised as one folded gep displacement, so keep the
+;; folded product inside the pass's ordinary small-constant window.
+(define (opt-lftr-literal-bound-ok?
+  [seed : i64]
+  [step : i64]
+  [bound : CompilerIrValue]) : bool
+  (match bound
+    [(CompilerIrValue.I64 limit)
+      (and
+        (opt-induction-small-const? limit)
+        (opt-induction-small-const? (* (- limit seed) step)))]
+    [_ true]))
+
+;; The census indexes its use arrays by the retiring vars directly, so a var id
+;; outside the function's frame would read past them. Frames are authoritative
+;; for well-formed IR; this keeps a malformed one fail-closed instead of
+;; trapping.
+(define (opt-lftr-frame-var? [frame : i64] [var : i64]) : bool
+  (and (>= var 0) (< var frame)))
+
+(define (opt-lftr-build-plan
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [preheader : i64]
+  [counter : OptLftrCounter]
+  [pointer : OptLftrPointer]
+  [test : OptLftrTest]) : OptLftrMaybePlan
+  (match counter
+    [(OptLftrCounter.Counter phi-var next-var back-var seed)
+      (match pointer
+        [(OptLftrPointer.Pointer pointer-phi _ pointer-next _ step _)
+          (match test
+            [(OptLftrTest.Test compare-dst compare-ty op bound reads-next?)
+              (if (not
+                (and
+                  (opt-lftr-literal-bound-ok? seed step bound)
+                  (opt-lftr-frame-var? frame phi-var)
+                  (opt-lftr-frame-var? frame next-var)
+                  (opt-lftr-frame-var? frame back-var)))
+                (OptLftrMaybePlan.No)
+                (let
+                  [kills : (Array i64)
+                    (array.make-array i64 (opt-lftr-kill-cap))]
+                  [count : (Array i64) (array.make-array i64 1)]
+                  [uses : (Array i64)
+                    (opt-collect-blocks-uses-array frame blocks)]
+                  [scratch : (Array i64) (opt-used-array-new frame)]
+                  [_seed-kills : unit
+                    (begin
+                      (array-set! kills 0 phi-var)
+                      (array-set! kills 1 next-var)
+                      (array-set! kills 2 back-var)
+                      (array-set! count 0 (opt-lftr-kill-fixed)))]
+                  (if (not
+                    (opt-lftr-census-blocks
+                      uses
+                      scratch
+                      kills
+                      count
+                      compare-dst
+                      blocks))
+                    (OptLftrMaybePlan.No)
+                    (OptLftrMaybePlan.Some
+                      (OptLftrPlan.Plan
+                        (array-ref count 0)
+                        kills
+                        compare-dst
+                        (CompilerIrInstr.BinOp
+                          compare-dst
+                          op
+                          (CompilerIrValue.Var
+                            (if reads-next?
+                              pointer-next
+                              pointer-phi))
+                          (CompilerIrValue.Var (+ frame 2))
+                          compare-ty)
+                        preheader
+                        (opt-lftr-end-instrs pointer seed bound frame)
+                        (+ frame 3))))))])])]))
+
+;; Form B compares the incremented counter, so the pointer's advanced value has
+;; to be the one the compare reads: it must be defined in the same latch block,
+;; ahead of the compare. Form A reads the header phi, which dominates the whole
+;; body.
+(define (opt-lftr-test-site-ok?
+  [pointer : OptLftrPointer]
+  [test : OptLftrTest]
+  [latch : i64]
+  [site-label : i64]
+  [site-index : i64]) : bool
+  (match test
+    [(OptLftrTest.Test _ _ _ _ reads-next?)
+      (if (not reads-next?)
+        true
+        (match pointer
+          [(OptLftrPointer.Pointer _ _ _ _ _ step-index)
+            (and (= site-label latch) (< step-index site-index))]))]))
+
+(define (opt-lftr-plan
+  [type-segment-bases : i64]
+  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loop : OptNaturalLoop]
+  [preheader : i64]) : OptLftrMaybePlan
+  (let
+    [header : i64 (opt-natural-loop-header loop)]
+    [latch : i64 (opt-natural-loop-latch loop)]
+    (match (opt-cfg-find-block body-blocks header)
+      [(OptMaybeBlock.No) (OptLftrMaybePlan.No)]
+      [(OptMaybeBlock.Some header-block)
+        (match (opt-cfg-find-block body-blocks latch)
+          [(OptMaybeBlock.No) (OptLftrMaybePlan.No)]
+          [(OptMaybeBlock.Some latch-block)
+            (match header-block
+              [(CompilerIrBlock.Block _ header-instrs)
+                (match latch-block
+                  [(CompilerIrBlock.Block _ latch-instrs)
+                    (match (opt-lftr-find-counter-seq-from
+                      body-blocks
+                      preheader
+                      latch
+                      header-instrs
+                      0)
+                      [(OptLftrMaybeCounter.No) (OptLftrMaybePlan.No)]
+                      [(OptLftrMaybeCounter.Some counter)
+                        (match counter
+                          [(OptLftrCounter.Counter phi-var next-var _ _)
+                            (match (opt-lftr-find-pointer-seq-from
+                              type-segment-bases
+                              latch-instrs
+                              preheader
+                              latch
+                              phi-var
+                              header-instrs
+                              0)
+                              [(OptLftrMaybePointer.No) (OptLftrMaybePlan.No)]
+                              [(OptLftrMaybePointer.Some pointer)
+                                (match (opt-lftr-find-test-blocks
+                                  (opt-licm-collect-defs-blocks
+                                    body-blocks
+                                    (opt_i64_i64_map.with-capacity
+                                      (opt-licm-body-map-capacity body-blocks)))
+                                  phi-var
+                                  next-var
+                                  body-blocks)
+                                  [(OptLftrMaybeTestSite.No)
+                                    (OptLftrMaybePlan.No)]
+                                  [(OptLftrMaybeTestSite.Some
+                                      test
+                                      site-label
+                                      site-index)
+                                    (if (opt-lftr-test-site-ok?
+                                      pointer
+                                      test
+                                      latch
+                                      site-label
+                                      site-index)
+                                      (opt-lftr-build-plan
+                                        blocks
+                                        frame
+                                        preheader
+                                        counter
+                                        pointer
+                                        test)
+                                      (OptLftrMaybePlan.No))])])])])])])])])))
+
+(define (opt-lftr-rewrite-instr [plan : OptLftrPlan] [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match plan
+    [(OptLftrPlan.Plan _ _ compare-dst compare _ _ _)
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst)
+          (if (= dst compare-dst)
+            compare
+            instr)]
+        [(option_i64.None) instr])]))
+
+(define (opt-lftr-rewrite-instr-seq-from
+  [plan : OptLftrPlan]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [rest : CompilerIrInstrList
+        (opt-lftr-rewrite-instr-seq-from plan instrs (+ index 1))]
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst)
+          (if (opt-lftr-in-kills? plan dst)
+            rest
+            (compiler-ir-instr-cons (opt-lftr-rewrite-instr plan instr) rest))]
+        [(option_i64.None) (compiler-ir-instr-cons instr rest)]))))
+
+(define (opt-lftr-rewrite-blocks
+  [plan : OptLftrPlan]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (match plan
+            [(OptLftrPlan.Plan _ _ _ _ preheader end-instrs _)
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  label
+                  (if (= label preheader)
+                    (opt-licm-insert-before-terminator
+                      end-instrs
+                      (opt-lftr-rewrite-instr-seq-from plan instrs 0))
+                    (opt-lftr-rewrite-instr-seq-from plan instrs 0)))
+                (opt-lftr-rewrite-blocks plan (box-get rest)))])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lftr-rewrite-blocks plan (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-lftr-apply-loop
+  [type-segment-bases : i64]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loop : OptNaturalLoop]) : OptLftrApplyResult
+  (match (opt-natural-loop-preheader loop)
+    [(OptLoopPreheader.No) (OptLftrApplyResult.Result blocks frame false)]
+    [(OptLoopPreheader.Some preheader)
+      (let
+        [body-blocks : CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks loop blocks)]
+        ;; Same fail-closed body gate the induction slice uses: the retirement
+        ;; keeps a loop-live `end` where the counter used to be, so the loops
+        ;; whose recurrences that pass declines are declined here too.
+        (if (opt-induction-loop-blocked? body-blocks)
+          (OptLftrApplyResult.Result blocks frame false)
+          (match (opt-lftr-plan
+            type-segment-bases
+            blocks
+            body-blocks
+            frame
+            loop
+            preheader)
+            [(OptLftrMaybePlan.No)
+              (OptLftrApplyResult.Result blocks frame false)]
+            [(OptLftrMaybePlan.Some plan)
+              (OptLftrApplyResult.Result
+                (opt-lftr-rewrite-blocks plan blocks)
+                (opt-lftr-plan-frame plan)
+                true)])))]))
+
+(define (opt-lftr-apply-loops
+  [type-segment-bases : i64]
+  [loops : OptNaturalLoopList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [changed : bool]) : OptLftrApplyResult
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptLftrApplyResult.Result blocks frame changed)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-lftr-apply-loop type-segment-bases blocks frame loop)
+        [(OptLftrApplyResult.Result next-blocks next-frame loop-changed)
+          (opt-lftr-apply-loops
+            type-segment-bases
+            (box-get rest)
+            next-blocks
+            next-frame
+            (or changed loop-changed))])]))
+
+(define (opt-lftr-function-with-context-result
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+  (match (opt-verify-gate verified? func context)
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result func context)]
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(CompilerIrFunction.Function name params ret-ty frame blocks)
+          (match (opt-lftr-apply-loops
+            type-segment-bases
+            (opt-cfg-natural-loops-with-context blocks context)
+            blocks
+            frame
+            false)
+            [(OptLftrApplyResult.Result next-blocks next-frame changed)
+              (if (not changed)
+                (OptFunctionCtxResult.Result func context)
+                (let
+                  [next : CompilerIrFunction
+                    (CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      next-frame
+                      next-blocks)]
+                  ;; The rewrite only edits instructions, but the deleted phi
+                  ;; changes the header's phi prefix, so build one fresh context
+                  ;; for the rewritten blocks, reuse it for the post-pass
+                  ;; verify, and hand it to the next pass.
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      (OptFunctionCtxResult.Result next next-context)]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      (OptFunctionCtxResult.Result func context)])))])])]))
+
+(define (opt-lftr-function
+  [type-segment-bases : i64]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (match (opt-lftr-function-with-context-result
+        type-segment-bases
+        (opt-cfg-context-build blocks)
+        false
+        func)
+        [(OptFunctionCtxResult.Result next _) next])]))
+
 ;; Branch folding can leave both source blocks reachable while removing only
 ;; one source-to-phi edge. Filter against the destination's actual reachable
 ;; predecessor set, not global reachability alone, so neither stale edges from
@@ -44191,7 +45147,39 @@
                             name
                             _t-unroll)
                           unit)]
-                      [unroll-frame : i64 (opt-function-frame unrolled)]
+                      ;; Linear-function test replacement runs here, after
+                      ;; bce_version and unroll: both key their rewrites on the
+                      ;; counter phi this pass retires, so it has to see their
+                      ;; output rather than take their input away. The retired
+                      ;; form is handed straight to affine-fold/GVN below.
+                      [_t-lftr : i64 (cfg compile-profile (profile.now-ms) 0)]
+                      [lftr-result : OptFunctionCtxResult
+                        (if run-loop?
+                          (opt-lftr-function-with-context-result
+                            type-segment-bases
+                            unroll-context
+                            loop-cluster-verified?
+                            unrolled)
+                          unroll-result)]
+                      [lftr : CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "lftr"
+                          (match lftr-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
+                      [lftr-context : OptCfgContext
+                        (match lftr-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
+                      [_p-lftr : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (struct-get summaries profile-state)
+                            "lftr"
+                            name
+                            _t-lftr)
+                          unit)]
+                      [unroll-frame : i64 (opt-function-frame lftr)]
                       ;; Affine chain folding must see the unroller's output
                       ;; INSIDE the same pipeline iteration: a lowered while
                       ;; loop spends iteration 1 on SSA+rotation and unrolls in
@@ -44201,8 +45189,8 @@
                       ;; unroll context stays valid for the passes below.
                       [unroll-blocks : CompilerIrBlockList
                         (opt-affine-fold-blocks
-                          (opt-function-frame unrolled)
-                          (opt-function-blocks unrolled))]
+                          (opt-function-frame lftr)
+                          (opt-function-blocks lftr))]
                       ;; Cross-block global value numbering + copy propagation
                       ;; runs after local GVN/SCCP/CFG/LICM cleanup, on
                       ;; the post-stack-promotion frame so its slots stay
@@ -44221,7 +45209,7 @@
                           (if run-heavy?
                             (opt-global-value-number-function-with-context
                               type-segment-bases
-                              unroll-context
+                              lftr-context
                               loop-cluster-verified?
                               (CompilerIrFunction.Function
                                 name
@@ -44270,7 +45258,7 @@
                           (if run-heavy?
                             (opt-divrem-safety-blocks-with-context
                               type-segment-bases
-                              unroll-context
+                              lftr-context
                               params
                               const-div-blocks)
                             const-div-blocks))]

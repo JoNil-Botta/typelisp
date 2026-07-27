@@ -17421,6 +17421,323 @@
         72]
       [else 42])))
 
+;; --- linear-function test replacement fixtures ------------------------------
+;;
+;; entry (preheader: pointer seed) -> loop (header: pointer phi, counter phi,
+;; a load off the pointer) -> body (latch: `i + 1`, its copy, the pointer's
+;; constant-stride gep, the exit compare) -> exit. In the eligible modes the
+;; counter's only readers are its own increment and that compare, so the test
+;; moves onto the pointer phi and the counter retires.
+(define (opt-lftr-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (opt-lftr-function
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-induction-test-function blocks)))
+
+(define (opt-lftr-entry-block) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "entry")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        4
+        (CompilerIrValue.Var 2)
+        (CompilerIrValue.I64 0)
+        (AstType.U8))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump (compiler-ir-label "loop"))
+        (CompilerIrInstrList.Nil)))))
+
+(define (opt-lftr-header-block) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "loop")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        9
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.Var 4)
+          (compiler-ir-label "entry")
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 8)
+            (compiler-ir-label "body")
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Phi
+          3
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.I64 0)
+            (compiler-ir-label "entry")
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 7)
+              (compiler-ir-label "body")
+              (CompilerIrPhiInputList.Nil)))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 10 (CompilerIrValue.Var 9) (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump (compiler-ir-label "body"))
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-lftr-body-block
+  [prefix : CompilerIrInstrList]
+  [stride : CompilerIrValue]
+  [extra : CompilerIrInstrList]
+  [compare-lhs : CompilerIrValue]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "body")
+    (opt-aggregate-instr-list-append
+      prefix
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          6
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 7 (CompilerIrValue.Var 6) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep 8 (CompilerIrValue.Var 9) stride (AstType.U8))
+            (opt-aggregate-instr-list-append
+              extra
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  11
+                  (CompilerIrBinOp.Lt)
+                  compare-lhs
+                  (CompilerIrValue.Var 1)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var 11)
+                    (compiler-ir-label "loop")
+                    (compiler-ir-label "exit"))
+                  (CompilerIrInstrList.Nil))))))))))
+
+(define (opt-lftr-exit-block [result : CompilerIrValue]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "exit")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Return (CompilerIrMaybeValue.Some result))
+      (CompilerIrInstrList.Nil))))
+
+(define (opt-lftr-blocks
+  [prefix : CompilerIrInstrList]
+  [stride : CompilerIrValue]
+  [extra : CompilerIrInstrList]
+  [compare-lhs : CompilerIrValue]
+  [result : CompilerIrValue]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-lftr-entry-block)
+    (compiler-ir-block-cons
+      (opt-lftr-header-block)
+      (compiler-ir-block-cons
+        (opt-lftr-body-block prefix stride extra compare-lhs)
+        (compiler-ir-block-cons
+          (opt-lftr-exit-block result)
+          (CompilerIrBlockList.Nil))))))
+
+;; `cmp i + 1, n`: the rotated latch form the bytecode dispatch loop uses.
+(define (opt-lftr-next-form-blocks) : CompilerIrBlockList
+  (opt-lftr-blocks
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.I64 16)
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.Var 6)
+    (CompilerIrValue.Var 9)))
+
+;; `cmp i, n`: the unrotated latch form.
+(define (opt-lftr-phi-form-blocks) : CompilerIrBlockList
+  (opt-lftr-blocks
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.I64 16)
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.Var 3)
+    (CompilerIrValue.Var 9)))
+
+;; A unit stride keeps the preheader bound to a single gep (no multiply).
+(define (opt-lftr-unit-stride-blocks) : CompilerIrBlockList
+  (opt-lftr-blocks
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.I64 1)
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.Var 6)
+    (CompilerIrValue.Var 9)))
+
+;; A live reader other than the increment and the compare: not retirable.
+(define (opt-lftr-extra-use-blocks) : CompilerIrBlockList
+  (opt-lftr-blocks
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.I64 16)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        13
+        (CompilerIrBinOp.Mul)
+        (CompilerIrValue.Var 3)
+        (CompilerIrValue.I64 5)
+        (AstType.I64))
+      (CompilerIrInstrList.Nil))
+    (CompilerIrValue.Var 6)
+    (CompilerIrValue.Var 13)))
+
+;; The pointer phi advances by a loop-varying amount, so no order-equivalent
+;; end address exists: not retirable.
+(define (opt-lftr-var-stride-blocks) : CompilerIrBlockList
+  (opt-lftr-blocks
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Mov 12 (CompilerIrValue.Var 1) (AstType.I64))
+      (CompilerIrInstrList.Nil))
+    (CompilerIrValue.Var 12)
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.Var 6)
+    (CompilerIrValue.Var 9)))
+
+;; A surviving bounds check reads the counter, so the trip count is NOT yet
+;; known to be inside the walked allocation: the no-wrap precondition for the
+;; preheader end address fails and the loop is left alone.
+(define (opt-lftr-bounds-check-blocks) : CompilerIrBlockList
+  (opt-lftr-blocks
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BoundsCheck
+        (CompilerIrValue.Var 3)
+        (CompilerIrValue.Var 1)
+        (compiler-ir-label "bounds_ok.0"))
+      (CompilerIrInstrList.Nil))
+    (CompilerIrValue.I64 16)
+    (CompilerIrInstrList.Nil)
+    (CompilerIrValue.Var 6)
+    (CompilerIrValue.Var 9)))
+
+(define (opt-lftr-def-count-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
+        [(option_i64.Some dst)
+          (if (= dst var)
+            1
+            0)]
+        [(option_i64.None) 0])
+      (opt-lftr-def-count-seq instrs (+ index 1) var))))
+
+(define (opt-lftr-def-count-blocks [blocks : CompilerIrBlockList] [var : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-lftr-def-count-seq instrs 0 var)
+            (opt-lftr-def-count-blocks (box-get rest) var))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lftr-def-count-blocks (compiler-ir-block-seq-to-list seq) var)]))
+
+;; The var operand of the BinOp defining `dst`: side 0 = lhs, 1 = rhs. -1 when
+;; there is no such def or the operand is not a var.
+(define (opt-lftr-binop-operand-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]
+  [side : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp binop-dst _ lhs rhs _)
+        (if (= binop-dst dst)
+          (match (if (= side 0)
+            lhs
+            rhs)
+            [(CompilerIrValue.Var var) var]
+            [_ (- 0 1)])
+          (opt-lftr-binop-operand-seq instrs (+ index 1) dst side))]
+      [_ (opt-lftr-binop-operand-seq instrs (+ index 1) dst side)])))
+
+(define (opt-lftr-binop-operand-blocks
+  [blocks : CompilerIrBlockList]
+  [dst : i64]
+  [side : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) (- 0 1)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [found : i64 (opt-lftr-binop-operand-seq instrs 0 dst side)]
+            (if (>= found 0)
+              found
+              (opt-lftr-binop-operand-blocks (box-get rest) dst side)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-lftr-binop-operand-blocks
+        (compiler-ir-block-seq-to-list seq)
+        dst
+        side)]))
+
+(define (compiler-optimize-lftr-self-test) : i64
+  (let
+    [next-func : CompilerIrFunction
+      (opt-lftr-optimized-function (opt-lftr-next-form-blocks))]
+    [next-blocks : CompilerIrBlockList (opt-function-blocks next-func)]
+    [phi-func : CompilerIrFunction
+      (opt-lftr-optimized-function (opt-lftr-phi-form-blocks))]
+    [phi-blocks : CompilerIrBlockList (opt-function-blocks phi-func)]
+    [unit-func : CompilerIrFunction
+      (opt-lftr-optimized-function (opt-lftr-unit-stride-blocks))]
+    [unit-blocks : CompilerIrBlockList (opt-function-blocks unit-func)]
+    [extra-func : CompilerIrFunction
+      (opt-lftr-optimized-function (opt-lftr-extra-use-blocks))]
+    [extra-blocks : CompilerIrBlockList (opt-function-blocks extra-func)]
+    [var-stride-func : CompilerIrFunction
+      (opt-lftr-optimized-function (opt-lftr-var-stride-blocks))]
+    [var-stride-blocks : CompilerIrBlockList
+      (opt-function-blocks var-stride-func)]
+    [bounds-func : CompilerIrFunction
+      (opt-lftr-optimized-function (opt-lftr-bounds-check-blocks))]
+    [bounds-blocks : CompilerIrBlockList (opt-function-blocks bounds-func)]
+    (cond
+      ;; `cmp i + 1, n` retires onto the pointer's advanced value.
+      [(not (opt-verify-ok? (opt-verify-function next-func))) 1]
+      [(not (= (opt-function-frame next-func) 35)) 2]
+      [(not (= (opt-count-phi-blocks next-blocks) 1)) 3]
+      [(not (= (opt-lftr-def-count-blocks next-blocks 3) 0)) 4]
+      [(not (= (opt-lftr-def-count-blocks next-blocks 6) 0)) 5]
+      [(not (= (opt-lftr-def-count-blocks next-blocks 7) 0)) 6]
+      [(not (= (opt-lftr-binop-operand-blocks next-blocks 11 0) 8)) 7]
+      [(not (= (opt-lftr-binop-operand-blocks next-blocks 11 1) 34)) 8]
+      ;; end = seed + n * 16, so a multiply plus the gep land in the preheader.
+      [(not (= (opt-lftr-def-count-blocks next-blocks 33) 1)) 9]
+      [(not (= (opt-lftr-def-count-blocks next-blocks 34) 1)) 10]
+      ;; `cmp i, n` retires onto the pointer phi itself.
+      [(not (opt-verify-ok? (opt-verify-function phi-func))) 11]
+      [(not (= (opt-function-frame phi-func) 35)) 12]
+      [(not (= (opt-count-phi-blocks phi-blocks) 1)) 13]
+      [(not (= (opt-lftr-def-count-blocks phi-blocks 3) 0)) 14]
+      [(not (= (opt-lftr-binop-operand-blocks phi-blocks 11 0) 9)) 15]
+      [(not (= (opt-lftr-binop-operand-blocks phi-blocks 11 1) 34)) 16]
+      ;; A unit element step needs no scaling multiply.
+      [(not (opt-verify-ok? (opt-verify-function unit-func))) 17]
+      [(not (= (opt-count-phi-blocks unit-blocks) 1)) 18]
+      [(not (= (opt-lftr-def-count-blocks unit-blocks 33) 0)) 19]
+      [(not (= (opt-lftr-def-count-blocks unit-blocks 34) 1)) 20]
+      ;; A second live reader of the counter blocks the retirement.
+      [(not (opt-verify-ok? (opt-verify-function extra-func))) 21]
+      [(not (= (opt-function-frame extra-func) 32)) 22]
+      [(not (= (opt-count-phi-blocks extra-blocks) 2)) 23]
+      [(not (= (opt-lftr-def-count-blocks extra-blocks 3) 1)) 24]
+      [(not (= (opt-lftr-binop-operand-blocks extra-blocks 11 0) 6)) 25]
+      ;; A loop-varying pointer step blocks it too.
+      [(not (opt-verify-ok? (opt-verify-function var-stride-func))) 26]
+      [(not (= (opt-function-frame var-stride-func) 32)) 27]
+      [(not (= (opt-count-phi-blocks var-stride-blocks) 2)) 28]
+      [(not (= (opt-lftr-def-count-blocks var-stride-blocks 3) 1)) 29]
+      ;; And so does a bounds check still reading the counter.
+      [(not (opt-verify-ok? (opt-verify-function bounds-func))) 30]
+      [(not (= (opt-function-frame bounds-func) 32)) 31]
+      [(not (= (opt-count-phi-blocks bounds-blocks) 2)) 32]
+      [(not (= (opt-lftr-def-count-blocks bounds-blocks 3) 1)) 33]
+      [else 42])))
+
 (define (opt-unroll-test-params) : CompilerIrParamList
   (compiler-ir-param-cons
     (CompilerIrParam.Param "n" (AstType.I64) 0)

@@ -196,10 +196,6 @@
     (doc-site-expand-nav-entry "grow")
     (doc-site-expand-nav-entry "push")
     (doc-site-expand-nav-entry "pop")
-    (doc-site-expand-nav-entry "from-array")
-    (doc-site-expand-nav-entry "to-array")
-    (doc-site-expand-nav-entry "extend-from")
-    (doc-site-expand-nav-entry "extend")
     (doc-site-expand-nav-entry "reverse-range!")
     (doc-site-expand-nav-entry "reverse!")
     (doc-site-expand-nav-entry "fold-from")
@@ -222,10 +218,10 @@
       "defstruct"
       "Vec"
       (str_cat.str-cat
-        "(defstruct Vec\n  (slots (Array "
+        "(defstruct Vec\n  (slots (__tl_dyn-array "
         type-name
         "))\n  (len i64))")
-      "")
+      "Backing storage is compiler-private; callers use Vec helpers.")
     (doc-site-expand-item
       "defenum"
       "Pop"
@@ -235,18 +231,18 @@
       "define-function"
       "slots"
       (str_cat.str-cat
-        "(define (slots [v : (& v Vec)]) : (& v (Array "
+        "(define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array "
         type-name
         ")) ...)")
-      "")
+      "SPMD backing borrow. Let-bind it without a caller-authored type annotation.")
     (doc-site-expand-item
       "define-function"
       "slots-mut"
       (str_cat.str-cat
-        "(define (slots-mut [v : (&mut v Vec)]) : (&mut v (Array "
+        "(define (slots-mut [v : (&mut v Vec)]) : (&mut v (__tl_dyn-array "
         type-name
         ")) ...)")
-      "")
+      "Mutable SPMD backing borrow. Let-bind it without a caller-authored type annotation.")
     (doc-site-expand-item
       "define-function"
       "len"
@@ -305,12 +301,12 @@
       "define-function"
       "copy-range!"
       (str_cat.str-cat
-        "(define (copy-range! [dst : (&mut dst (Array "
+        "(define (copy-range! [dst : (&mut dst (__tl_dyn-array "
         type-name
-        "))] [src : (& src (Array "
+        "))] [src : (& src (__tl_dyn-array "
         type-name
         "))] [index : i64] [count : i64]) : unit ...)")
-      "")
+      "Generated implementation helper.")
     (doc-site-expand-item
       "define-function"
       "grow"
@@ -331,44 +327,12 @@
       "")
     (doc-site-expand-item
       "define-function"
-      "from-array"
-      (str_cat.str-cat
-        "(define (from-array [src : (& src (Array "
-        type-name
-        "))] [count : i64]) : Vec ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "to-array"
-      (str_cat.str-cat
-        "(define (to-array [v : (& v Vec)]) : (Array "
-        type-name
-        ") ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "extend-from"
-      (str_cat.str-cat
-        "(define (extend-from [v : (&mut v Vec)] [src : (& src (Array "
-        type-name
-        "))] [index : i64] [count : i64]) : unit ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "extend"
-      (str_cat.str-cat
-        "(define (extend [v : (&mut v Vec)] [src : (& src (Array "
-        type-name
-        "))] [count : i64]) : unit ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
       "reverse-range!"
       (str_cat.str-cat
-        "(define (reverse-range! [items : (&mut items (Array "
+        "(define (reverse-range! [items : (&mut items (__tl_dyn-array "
         type-name
         "))] [lo : i64] [hi : i64]) : unit ...)")
-      "")
+      "Generated implementation helper.")
     (doc-site-expand-item
       "define-function"
       "reverse!"

@@ -1964,8 +1964,17 @@
                 (&mut captures))
               (producer-test-add-decls-capture! (&mut names) (&mut captures))
               (let
-                [name-array : (Array String)
-                  (producer_test_svec.to-array (& names))]
+                [name-count : i64 (producer_test_svec.len (& names))]
+                [name-array (make-array String name-count)]
+                [name-index : i64 0]
+                [_copy-names : unit
+                  (while (< name-index name-count)
+                    (begin
+                      (array-set!
+                        name-array
+                        name-index
+                        (producer_test_svec.get (& names) name-index ""))
+                      (set! name-index (+ name-index 1))))]
                 (match (embedded-native-emit-package
                   (tlci-metadata-emit
                     (tlci-make-metadata "v1" "package" "0.1.0"))

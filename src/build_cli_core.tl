@@ -3585,8 +3585,14 @@
   [names : (&mut names cli_svec.Vec)]
   [captures : TlciNativeMacroCaptures]) : BuildPackageTlciMacroCollector
   (let
-    [catalog : (Array String) (cli_svec.to-array names)]
+    [count : i64 (cli_svec.len names)]
+    [catalog (make-array String count)]
+    [index : i64 0]
     (begin
+      (while (< index count)
+        (begin
+          (array-set! catalog index (cli_svec.get names index ""))
+          (set! index (+ index 1))))
       (build-package-tlci-sort-macro-catalog! (&mut catalog))
       (BuildPackageTlciMacroCollector catalog captures))))
 

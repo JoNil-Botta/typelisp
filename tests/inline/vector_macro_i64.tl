@@ -64,17 +64,18 @@
 (test
   vector-macro-i64-derived-helpers
   (let
-    [src : (Array i64) (make-array i64 3)]
+    [v : ivec.Vec (ivec.with-capacity 5)]
     (begin
-      (array-set! src 0 4)
-      (array-set! src 1 5)
-      (array-set! src 2 6)
+      (ivec.push (&mut v) 4)
+      (ivec.push (&mut v) 5)
+      (ivec.push (&mut v) 6)
+      (ivec.push (&mut v) 4)
+      (ivec.push (&mut v) 5)
+      (ivec.reverse! (&mut v))
       (let
-        [v : ivec.Vec (ivec.from-array (& src) 3)]
+        [mapped : ivec.Vec (ivec.map (& v) vector-macro-i64-triple)]
         (begin
-          (ivec.extend (&mut v) (& src) 2)
-          (ivec.reverse! (&mut v))
-          (test.assert-i64-eq (ivec.len (& v)) 5 "extend mutates vector length")
+          (test.assert-i64-eq (ivec.len (& v)) 5 "push builds vector length")
           (test.assert-i64-eq
             (ivec.get (& v) 0 -1)
             5
@@ -87,31 +88,21 @@
             (ivec.fold (& v) 0 vector-macro-i64-add)
             24
             "fold sees all live values")
-          (let
-            [mapped : ivec.Vec (ivec.map (& v) vector-macro-i64-triple)]
-            [snapshot : (Array i64) (ivec.to-array (& mapped))]
-            (begin
-              (test.assert-i64-eq
-                (ivec.len (& mapped))
-                5
-                "map preserves length")
-              (test.assert-i64-eq
-                (array-ref snapshot 0)
-                15
-                "to-array snapshots mapped first")
-              (test.assert-true
-                (ivec.contains? (& mapped) 18)
-                "contains? finds scalar")
-              (match (ivec.pop (&mut v))
-                [(ivec.Pop.Ok value)
-                  (begin
-                    (test.assert-i64-eq value 4 "pop returns last value")
-                    (test.assert-i64-eq
-                      (ivec.len (& v))
-                      4
-                      "pop shrinks in place"))]
-                [ivec.Pop.Empty
-                  (test.assert-true false "pop should return a value")]))))))))
+          (test.assert-i64-eq (ivec.len (& mapped)) 5 "map preserves length")
+          (test.assert-i64-eq
+            (ivec.get (& mapped) 0 -1)
+            15
+            "map returns transformed first")
+          (test.assert-true
+            (ivec.contains? (& mapped) 18)
+            "contains? finds scalar")
+          (match (ivec.pop (&mut v))
+            [(ivec.Pop.Ok value)
+              (begin
+                (test.assert-i64-eq value 4 "pop returns last value")
+                (test.assert-i64-eq (ivec.len (& v)) 4 "pop shrinks in place"))]
+            [ivec.Pop.Empty
+              (test.assert-true false "pop should return a value")]))))))
 
 (test
   vector-macro-string-alias

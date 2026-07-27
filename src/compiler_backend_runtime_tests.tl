@@ -18,10 +18,12 @@
     false
     false
     false
+    false
     false))
 
 (define (compiler-backend-runtime-test-full-features) : runtime_common.CompilerBackendRuntimeFeatures
   (runtime_common.CompilerBackendRuntimeFeatures
+    true
     true
     true
     true
@@ -122,6 +124,78 @@
         (not
           (compiler-backend-runtime-test-contains?
             (& linux-min-functions)
+            "tl_arena_debug"))
+        "minimal Linux functions omit arena debug guards")
+      (test.assert-true
+        (not
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            "tl_arena_debug"))
+        "minimal Windows functions omit arena debug guards")
+      (test.assert-true
+        (not
+          (compiler-backend-runtime-test-contains?
+            (& linux-min-data)
+            ".L_tl_arena_debug_roots"))
+        "minimal Linux data omits the arena debug registry")
+      (test.assert-true
+        (not
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-data)
+            ".L_tl_arena_debug_roots"))
+        "minimal Windows data omits the arena debug registry")
+      (test.assert-true
+        (string.eq
+          (runtime_linux.compiler-backend-runtime-linux-arena-functions-base
+            false)
+          (runtime_linux.compiler-backend-runtime-linux-arena-functions
+            false
+            false))
+        "disabled Linux arena debug leaves arena assembly byte-identical")
+      (test.assert-true
+        (string.eq
+          (runtime_linux.compiler-backend-runtime-region-reset-functions-base
+            false)
+          (runtime_linux.compiler-backend-runtime-region-reset-functions
+            false
+            false))
+        "disabled Linux arena debug leaves reset assembly byte-identical")
+      (test.assert-true
+        (string.eq
+          (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base
+            false)
+          (runtime_linux.compiler-backend-runtime-linux-alloc-functions
+            false
+            false))
+        "disabled Linux arena debug leaves allocator assembly byte-identical")
+      (test.assert-true
+        (string.eq
+          (runtime_windows.compiler-backend-runtime-windows-arena-functions-base
+            false)
+          (runtime_windows.compiler-backend-runtime-windows-arena-functions
+            false
+            false))
+        "disabled Windows arena debug leaves arena assembly byte-identical")
+      (test.assert-true
+        (string.eq
+          (runtime_windows.compiler-backend-runtime-windows-region-reset-functions-base
+            false)
+          (runtime_windows.compiler-backend-runtime-windows-region-reset-functions
+            false
+            false))
+        "disabled Windows arena debug leaves reset assembly byte-identical")
+      (test.assert-true
+        (string.eq
+          (runtime_windows.compiler-backend-runtime-windows-alloc-functions-base
+            false)
+          (runtime_windows.compiler-backend-runtime-windows-alloc-functions
+            false
+            false))
+        "disabled Windows arena debug leaves allocator assembly byte-identical")
+      (test.assert-true
+        (not
+          (compiler-backend-runtime-test-contains?
+            (& linux-min-functions)
             ".globl tl_alloc"))
         "minimal Linux functions omit optional allocation")
       (test.assert-true
@@ -155,6 +229,60 @@
           (& windows-full-functions)
           "%gs:0x28")
         "Windows functions use the TEB arena slot")
+      (cfg
+        (any compiler-arena-debug test)
+        (begin
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& linux-full-functions)
+              ".globl tl_arena_debug_protect_never_reset")
+            "debug Linux runtime emits the protect operation")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& windows-full-functions)
+              ".globl tl_arena_debug_assert_pool_install")
+            "debug Windows runtime emits the pool-install assertion")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& linux-full-functions)
+              "call .L_tl_arena_debug_register_root")
+            "debug Linux arena creation registers roots")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& windows-full-functions)
+              "call .L_tl_arena_debug_unregister_root")
+            "debug Windows destruction unregisters roots")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& linux-full-functions)
+              "orq $8, 48(%rdi)")
+            "debug protection uses a flag separate from atomic state")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& linux-full-data)
+              ".L_tl_arena_debug_roots")
+            "debug Linux data emits the root registry")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& windows-full-data)
+              ".L_tl_arena_debug_roots")
+            "debug Windows data emits the root registry")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& linux-full-functions)
+              "jnz tl_arena_debug_destroy_abort")
+            "debug Linux destroy fails before release")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& windows-full-functions)
+              "call tl_arena_debug_reset_abort")
+            "debug Windows reset fails through the stable operation abort")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
+              (& linux-full-functions)
+              "lock cmpxchgq %rcx, 48(%r9)")
+            "debug mode preserves the atomic 1/3 lock protocol"))
+        unit)
       (test.assert-true
         (string.eq linux-externs "")
         "Linux leaf has no backend runtime extern set")

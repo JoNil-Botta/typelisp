@@ -13557,7 +13557,7 @@
           false
           false
           false
-          (CompilerBackendRuntimeTailPlan false false))
+          (CompilerBackendRuntimeTailPlan false false false))
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
@@ -13813,7 +13813,7 @@
     true
     true
     true
-    (CompilerBackendRuntimeTailPlan true true)))
+    (CompilerBackendRuntimeTailPlan true true false)))
 
 ;; Test fixtures start from readable spellings, then exercise only the backend's
 ;; ID-native runtime inventory. Production never performs this conversion.
@@ -14256,6 +14256,64 @@
           (compiler-backend-test-plan-provides? plan "tl_region_reset"))]
       [(ResultBackendRuntimePlan.Err _) false])))
 
+(define (compiler-backend-arena-debug-runtime-plan-ok?) : bool
+  (let
+    [protect-id : i64
+      cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset]
+    [local-protect-id : i64
+      (ci.intern "compiler-arena-debug-plan-local-protect")]
+    [functions : CompilerIrFunctionList
+      (compiler-ir-function-cons
+        (CompilerIrFunction.Function
+          (ci.intern "arena-debug-plan-test")
+          CompilerIrParamList.Nil
+          (AstType.Unit)
+          1
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (compiler-ir-label "entry")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  0
+                  local-protect-id
+                  (CompilerIrCallArgs.One (CompilerIrValue.I64 1))
+                  (AstType.Unit))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil)))
+            CompilerIrBlockList.Nil))
+        CompilerIrFunctionList.Nil)]
+    [externs : CompilerIrExternList
+      (compiler-ir-extern-cons
+        (CompilerIrExtern.Extern
+          local-protect-id
+          local-protect-id
+          "compiler-arena-debug-plan-local-protect"
+          (ast-ty-func
+            (ast-type-cons (AstType.I64) (ast-type-list-new))
+            (AstType.Unit))
+          (AstExternAbi.C)
+          protect-id
+          (ast-extern-link-input-list-new)
+          false)
+        CompilerIrExternList.Nil)]
+    (match (compiler-backend-runtime-plan-for functions externs)
+      [(ResultBackendRuntimePlan.Ok plan)
+        (let
+          [features : runtime_common.CompilerBackendRuntimeFeatures
+            (compiler-backend-runtime-features plan)]
+          (and
+            (compiler-backend-runtime-tail-arena-debug?
+              (compiler-backend-runtime-plan-tail plan))
+            (runtime_common.compiler-backend-runtime-features-arena-debug?
+              (& features))
+            (compiler-backend-plan-provides-id? plan protect-id)
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)
+            (compiler-backend-runtime-helper-core-id? protect-id)))]
+      [(ResultBackendRuntimePlan.Err _) false])))
+
 (define (compiler-backend-runtime-prelude-test-function [name : String]) : CompilerIrFunction
   (CompilerIrFunction.Function
     (ci.intern name)
@@ -14314,7 +14372,8 @@
       (compiler-backend-runtime-helper-owner-id-ok?)
       (compiler-backend-runtime-plan-id-lookup-only-ok?)
       (compiler-backend-runtime-prelude-validation-plan-ok?)
-      (compiler-backend-region-extern-runtime-plan-ok?))))
+      (compiler-backend-region-extern-runtime-plan-ok?)
+      (compiler-backend-arena-debug-runtime-plan-ok?))))
 
 (define (compiler-backend-runtime-memchr-functions-ok?) : bool
   (let

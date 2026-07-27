@@ -35,6 +35,10 @@
   -1)
 (define compiler-builtin-id-tl-arena-poison-enable : i64
   -1)
+(define compiler-builtin-id-tl-arena-debug-protect-never-reset : i64
+  -1)
+(define compiler-builtin-id-tl-arena-debug-assert-pool-install : i64
+  -1)
 (define compiler-builtin-id-tl-thread-entry-ptr : i64
   -1)
 (define compiler-builtin-id-tl-thread-init : i64
@@ -793,7 +797,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 313)]
+    [ids : (Array i64) (make-array i64 315)]
     [ctfe-ids : (Array i64) (make-array i64 280)]
     [i : i64 0]
     (begin
@@ -801,7 +805,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 313)
+      (while (< i 315)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1252,6 +1256,14 @@
     (state-set! state 310 compiler-builtin-id-tl-arena-make-small)
     (state-set! state 311 compiler-builtin-id-fix-LetBinding)
     (state-set! state 312 compiler-builtin-id-fix-LetBindingList)
+    (state-set!
+      state
+      313
+      compiler-builtin-id-tl-arena-debug-protect-never-reset)
+    (state-set!
+      state
+      314
+      compiler-builtin-id-tl-arena-debug-assert-pool-install)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1652,6 +1664,12 @@
     (set! compiler-builtin-id-tl-stdin-eof-label (state-ref state 308))
     (set! compiler-builtin-id-tl-flush-stdout-label (state-ref state 309))
     (set! compiler-builtin-id-tl-arena-make-small (state-ref state 310))
+    (set!
+      compiler-builtin-id-tl-arena-debug-protect-never-reset
+      (state-ref state 313))
+    (set!
+      compiler-builtin-id-tl-arena-debug-assert-pool-install
+      (state-ref state 314))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -2050,6 +2068,16 @@
     (set!
       compiler-builtin-id-tl-arena-poison-enable
       (compiler-builtin-resolve-name insert-missing "tl_arena_poison_enable"))
+    (set!
+      compiler-builtin-id-tl-arena-debug-protect-never-reset
+      (compiler-builtin-resolve-name
+        insert-missing
+        "tl_arena_debug_protect_never_reset"))
+    (set!
+      compiler-builtin-id-tl-arena-debug-assert-pool-install
+      (compiler-builtin-resolve-name
+        insert-missing
+        "tl_arena_debug_assert_pool_install"))
     (set!
       compiler-builtin-id-tl-thread-entry-ptr
       (compiler-builtin-resolve-name insert-missing "tl_thread_entry_ptr"))
@@ -3336,7 +3364,19 @@
         compiler-builtin-id-tl-arena-destroy
         compiler-builtin-id-tl-arena-poison-enable
         compiler-builtin-id-tl-thread-entry-ptr
-        compiler-builtin-id-tl-thread-init))))
+        compiler-builtin-id-tl-thread-init)
+      (compiler-builtin-id-any2?
+        name-id
+        compiler-builtin-id-tl-arena-debug-protect-never-reset
+        compiler-builtin-id-tl-arena-debug-assert-pool-install))))
+
+(define (compiler-builtin-backend-runtime-arena-debug-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-tl-arena-debug-protect-never-reset
+      compiler-builtin-id-tl-arena-debug-assert-pool-install)))
 
 (define (compiler-builtin-backend-runtime-atomic-id? [name-id : i64]) : bool
   (begin

@@ -194,6 +194,41 @@
       (os-write 2 data len)
       unit)))
 
+;: Debug-only never-reset arena diagnostics. The backend guard reaches these
+;: fixed exports only when `compiler-arena-debug` is enabled, so default builds
+;: carry neither the messages nor the failure paths.
+(cfg
+  compiler-arena-debug
+  (define (arena-debug-protect-abort)
+    (:export-symbol "tl_arena_debug_protect_abort") : never
+    (begin
+      (abort-write "tl: invalid never-reset arena protection\n")
+      (os-exit 134))))
+
+(cfg
+  compiler-arena-debug
+  (define (arena-debug-reset-abort)
+    (:export-symbol "tl_arena_debug_reset_abort") : never
+    (begin
+      (abort-write "tl: never-reset arena reset\n")
+      (os-exit 134))))
+
+(cfg
+  compiler-arena-debug
+  (define (arena-debug-destroy-abort)
+    (:export-symbol "tl_arena_debug_destroy_abort") : never
+    (begin
+      (abort-write "tl: never-reset arena destroy\n")
+      (os-exit 134))))
+
+(cfg
+  compiler-arena-debug
+  (define (arena-debug-pool-install-abort)
+    (:export-symbol "tl_arena_debug_pool_install_abort") : never
+    (begin
+      (abort-write "tl: never-reset arena pool install\n")
+      (os-exit 134))))
+
 ;: Write one non-negative integer without constructing a String. The digit
 ;: bytes come from static storage and recursion uses only the native stack, so
 ;: this stays safe when the current arena is null or exhausted.

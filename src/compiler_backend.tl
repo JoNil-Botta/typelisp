@@ -529,7 +529,8 @@
 
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
-  (tlci-macro-entry bool))
+  (tlci-macro-entry bool)
+  (arena-debug bool))
 
 (defenum CompilerBackendRuntimeHelperOwner
   (Unknown)
@@ -599,6 +600,10 @@
 (define (compiler-backend-runtime-tail-tlci-macro-entry?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail tlci-macro-entry))
+
+(define (compiler-backend-runtime-tail-arena-debug?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail arena-debug))
 
 (define (compiler-backend-runtime-plan-tail [plan : CompilerBackendRuntimePlan]) : CompilerBackendRuntimeTailPlan
   (match plan
@@ -52934,14 +52939,38 @@
         index
         (compiler-ir-extern-seq-to-list seq))]))
 
+(define (compiler-backend-runtime-index-arena-debug-call-links
+  [index : CompilerBackendRuntimeIndex]
+  [externs : CompilerIrExternList]) : CompilerBackendRuntimeIndex
+  (match externs
+    [(CompilerIrExternList.Nil) index]
+    [(CompilerIrExternList.Cons item rest)
+      (match item
+        [(CompilerIrExtern.Extern name-id source-name-id _ _ _ link-symbol _ _)
+          (compiler-backend-runtime-index-arena-debug-call-links
+            (if (and
+              (cbi.compiler-builtin-backend-runtime-arena-debug-id? link-symbol)
+              (or
+                (compiler-backend-runtime-index-calls? index name-id)
+                (compiler-backend-runtime-index-calls? index source-name-id)))
+              (compiler-backend-runtime-index-add-call index link-symbol)
+              index)
+            (box-get rest))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-runtime-index-arena-debug-call-links
+        index
+        (compiler-ir-extern-seq-to-list seq))]))
+
 (define (compiler-backend-runtime-index
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : CompilerBackendRuntimeIndex
-  (compiler-backend-runtime-index-functions
-    (compiler-backend-runtime-index-externs
-      (compiler-backend-runtime-index-empty)
-      externs)
-    functions))
+  (compiler-backend-runtime-index-arena-debug-call-links
+    (compiler-backend-runtime-index-functions
+      (compiler-backend-runtime-index-externs
+        (compiler-backend-runtime-index-empty)
+        externs)
+      functions)
+    externs))
 
 (define (compiler-backend-runtime-helper-core-id? [name-id : i64]) : bool
   ;; The allocator/arena/TLS substrate is irreducible backend core runtime.
@@ -53010,23 +53039,29 @@
         region-mark
         region-reset
         provides-tail)
-      (backend-or8
-        (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
+      (or
+        (backend-or8
+          (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
+          (and
+            region-mark
+            (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
+          (and
+            region-reset
+            (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
+          (and
+            substring
+            (cbi.compiler-builtin-backend-tl-substring-id? name-id))
+          (and str-view (cbi.compiler-builtin-backend-tl-str-view-id? name-id))
+          (and concat (cbi.compiler-builtin-backend-runtime-concat-id? name-id))
+          (and
+            provides-int-to-string
+            (cbi.compiler-builtin-backend-tl-int-to-string-id? name-id))
+          (and
+            (compiler-backend-runtime-tail-profile? provides-tail)
+            (cbi.compiler-builtin-backend-runtime-profile-id? name-id)))
         (and
-          region-mark
-          (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
-        (and
-          region-reset
-          (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
-        (and substring (cbi.compiler-builtin-backend-tl-substring-id? name-id))
-        (and str-view (cbi.compiler-builtin-backend-tl-str-view-id? name-id))
-        (and concat (cbi.compiler-builtin-backend-runtime-concat-id? name-id))
-        (and
-          provides-int-to-string
-          (cbi.compiler-builtin-backend-tl-int-to-string-id? name-id))
-        (and
-          (compiler-backend-runtime-tail-profile? provides-tail)
-          (cbi.compiler-builtin-backend-runtime-profile-id? name-id)))]))
+          (compiler-backend-runtime-tail-arena-debug? provides-tail)
+          (cbi.compiler-builtin-backend-runtime-arena-debug-id? name-id)))]))
 
 (define (compiler-backend-runtime-plan-with-index-for
   [functions : CompilerIrFunctionList]
@@ -53192,6 +53227,14 @@
       (compiler-backend-runtime-index-calls?
         index
         cbi.compiler-builtin-id-tl-profile-alloc-reset-peak)]
+    [calls-arena-debug-protect : bool
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)]
+    [calls-arena-debug-pool-install : bool
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)]
     ;; Prelude string helpers keep fixed export symbols for validation and call
     ;; spelling, but their TypeLisp bodies expose allocator calls directly in
     ;; the runtime index. The plan therefore retains only these symbol facts;
@@ -53227,6 +53270,8 @@
         (and
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
+    [needs-arena-debug : bool
+      (or calls-arena-debug-protect calls-arena-debug-pool-install)]
     [needs-tlci-macro-entry : bool
       (let
         [call-id : i64 (struct-get index tlci-macro-entry-call-id)]
@@ -53243,7 +53288,10 @@
           needs-int-to-string
           needs-region-mark
           needs-region-reset
-          (CompilerBackendRuntimeTailPlan needs-profile needs-tlci-macro-entry))
+          (CompilerBackendRuntimeTailPlan
+            needs-profile
+            needs-tlci-macro-entry
+            needs-arena-debug))
         index))))
 
 (define (compiler-backend-runtime-plan-for
@@ -53396,6 +53444,7 @@
             alloc
             region-mark
             region-reset
+            (compiler-backend-runtime-tail-arena-debug? tail-plan)
             (compiler-backend-runtime-tail-profile? tail-plan)
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
@@ -56705,7 +56754,7 @@
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringSeq
   (let
     [symbols : BackendStringSeq
-      (BackendStringSeq (array.make-array String 13) 0)]
+      (BackendStringSeq (array.make-array String 15) 0)]
     (begin
       (compiler-backend-string-push! (&mut symbols) "tl_alloc")
       (compiler-backend-string-push! (&mut symbols) "tl_arena_current")
@@ -56720,6 +56769,12 @@
       (compiler-backend-string-push! (&mut symbols) "tl_memchr")
       (compiler-backend-string-push! (&mut symbols) "tl_tlci_call_macro_entry")
       (compiler-backend-string-push! (&mut symbols) "tl_tlci_call_image_entry")
+      (compiler-backend-string-push!
+        (&mut symbols)
+        "tl_arena_debug_protect_never_reset")
+      (compiler-backend-string-push!
+        (&mut symbols)
+        "tl_arena_debug_assert_pool_install")
       symbols)))
 
 (define (compiler-backend-object-runtime-symbol-provided?
@@ -56776,6 +56831,14 @@
         (compiler-backend-plan-provides-id?
           plan
           cbi.compiler-builtin-id-tl-arena-current)]
+      [(string.eq name "tl_arena_debug_protect_never_reset")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)]
+      [(string.eq name "tl_arena_debug_assert_pool_install")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)]
       [else false])))
 
 (define (compiler-backend-object-runtime-symbol-provided-id?

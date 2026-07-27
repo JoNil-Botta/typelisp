@@ -689,29 +689,6 @@
         (format-rules-layout-hard-line emit width indent out flat limit buf)
         out))))
 
-(define (format-rules-layout-list-tail
-  [previous-comment : bool]
-  [items : FormatCstList]
-  [emit : bool]
-  [width : i64]
-  [indent : i64]
-  [col : i64]
-  [flat : bool]
-  [limit : i64]
-  [buf : FmtRenderBuf]) : i64
-  (format-rules-layout-list-tail-dense
-    previous-comment
-    (struct-get items slots)
-    (struct-get items start)
-    (struct-get items len)
-    emit
-    width
-    indent
-    col
-    flat
-    limit
-    buf))
-
 (define (format-rules-layout-list-items-dense
   [slots : (Array FormatCst)]
   [start : i64]
@@ -2460,14 +2437,8 @@
       (ResultFormatString.Ok (format-rules-render-cst-width tree width))]
     [(ResultFormatCst.Err err) (ResultFormatString.Err err)]))
 
-(define (format-rules-render [node : FormatCst]) : String
-  (format-rules-render-cst-width node (format-width)))
-
 (define (format-rules-render-width [node : FormatCst] [width : i64]) : String
   (format-rules-render-cst-width node width))
-
-(define (format-rules-render-source [src : String]) : String
-  (format-rules-render-source-width src (format-width)))
 
 (define (format-rules-render-source-width [src : String] [width : i64]) : String
   (match (format-rules-render-source-width-result src width)

@@ -13622,9 +13622,41 @@
                                             final-blocks
                                             vars
                                             final-vars
+                                            ;; ROUND ORDER, NOT UNWIND ORDER
+                                            ;; (#5927). Each fuel round rewrites
+                                            ;; the PREVIOUS round's blocks, so the
+                                            ;; rounds are a SEQUENCE of plan edits
+                                            ;; and the last edit for a var must
+                                            ;; win. This round contributes
+                                            ;; `split-assignments`; the deeper
+                                            ;; rounds contribute
+                                            ;; `rest-assignments`, and merge's
+                                            ;; FIRST argument overwrites the
+                                            ;; second. Merging this round's edits
+                                            ;; last resurrected an assignment a
+                                            ;; LATER round had deliberately
+                                            ;; overridden: the eviction pick
+                                            ;; re-spills the single region
+                                            ;; occupant of the register it takes,
+                                            ;; and when that occupant is an
+                                            ;; earlier round's own region var, the
+                                            ;; re-spill was dropped and BOTH region
+                                            ;; vars kept the same physical register
+                                            ;; across the same loop -- the second
+                                            ;; region var's preheader INTO copy
+                                            ;; then clobbered the first's only def
+                                            ;; (a loop bound reaching the back-edge
+                                            ;; compare, silently miscompiled).
+                                            ;; Deeper-round edits therefore go in
+                                            ;; as `extra` so they win.
                                             (compiler-reg-assignment-list-merge
-                                              split-assignments
-                                              rest-assignments)
+                                              rest-assignments
+                                              split-assignments)
+                                            ;; Types stay in unwind order: every
+                                            ;; round types exactly one FRESH var
+                                            ;; id, so no round ever overrides
+                                            ;; another's entry and the merge
+                                            ;; direction cannot change the map.
                                             (compiler-reg-var-type-list-merge
                                               split-types
                                               rest-types))

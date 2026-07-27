@@ -132,9 +132,6 @@
 (define (read-symbol-text-for-id [id : i64]) : String
   (ci.intern-str id))
 
-(define (read-token-symbol-text [tok : token.Token]) : String
-  (read-symbol-text-for-id (token.sym-id tok)))
-
 (define (sp-node-pool-len) : i64
   sp-node-pool-count)
 
@@ -381,11 +378,12 @@
 ;;   token.Token.Sym s -> Sexpr.Sym s            a symbol atom
 ;;   token.Token.Str s -> Sexpr.Str s            a string-literal atom (`"..."`)
 ;;   token.Token.Char c -> Sexpr.Char c          a character-literal atom (`'x'`)
-;;   token.Token.LParen -> read-list             consume '(' then read a list to its ')'
+;;   token.Token.LParen -> read-list-result      consume '(' then read a list to its ')'
 ;;   token.Token.RParen -> error                 a stray ')' with no opening '(' is malformed
 ;;   token.Token.End -> error                    end of stream where a form was expected
-;; A grammar violation returns a recoverable `ErrSexpr String`; the compatibility
-;; wrappers below still panic for callers that have not moved to `read-result`.
+;; A grammar violation returns a recoverable `ErrSexpr String`; the public
+;; `read` wrapper below still panics for callers that have not moved to
+;; `read-result`.
 (define (read-form-spanned-result
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : ResultSpannedSexpr
@@ -623,16 +621,6 @@
     (token.tag-rbracket)
     "reader: unterminated list (missing ']')"))
 
-(define (read-form [toks : (Array token.Token)] [cur : (Array i64)]) : Sexpr
-  (match (read-form-result toks cur)
-    [(ResultSexpr.Ok form) form]
-    [(ResultSexpr.Err message) (io.panic message)]))
-
-(define (read-list [toks : (Array token.Token)] [cur : (Array i64)]) : Sexpr
-  (match (read-list-result toks cur)
-    [(ResultSexpr.Ok list) list]
-    [(ResultSexpr.Err message) (io.panic message)]))
-
 ;; read: the public entry point. Read a single top-level form from the front of
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
 ;; tokens after the first form are ignored here, as a top-level `read` returns
@@ -650,11 +638,6 @@
     (begin
       (array-set! cur 0 0)
       (read-form-spanned-result toks cur))))
-
-(define (read-spanned [toks : (Array token.SpannedToken)]) : SpannedSexpr
-  (match (read-spanned-result toks)
-    [(ResultSpannedSexpr.Ok form) form]
-    [(ResultSpannedSexpr.Err err) (io.panic (token.source-error-message err))]))
 
 (define (read-symbol-id-preservation-ok?) : bool
   (match (lexer.lex-spanned-result "(alpha alpha)")

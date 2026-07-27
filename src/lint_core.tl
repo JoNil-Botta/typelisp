@@ -7714,21 +7714,6 @@
                 (set! ok false)))
             ok))))))
 
-(define (lint-source-find-prefix-from
-  [source : String]
-  [needle : String]
-  [idx : i64]) : i64
-  (let
-    [source-len : i64 (string.string-length source)]
-    [found : i64 (- 0 1)]
-    [i : i64 idx]
-    (begin
-      (while (and (< found 0) (< i source-len))
-        (if (lint-source-prefix-at? source i needle)
-          (set! found i)
-          (set! i (+ i 1))))
-      found)))
-
 (define (lint-source-find-prefix-backward-from
   [source : String]
   [needle : String]
@@ -11668,22 +11653,6 @@
         (if deprecated-string-concat
           (lint-deprecated-string-concat-scan source with-decls)
           with-decls))]))
-
-(define (lint-program-with-source
-  [source : String]
-  [program : AstProgram]
-  [threshold : i64]) : LintFindings
-  (lint-program-with-source-options source program threshold false false))
-
-;: Run all lint rules over `program`, returning the collected findings.
-(define (lint-program [program : AstProgram] [threshold : i64]) : LintFindings
-  (lint-program-with-source "" program threshold))
-
-(define (lint-program-with-deprecated-string-concat
-  [source : String]
-  [program : AstProgram]
-  [threshold : i64]) : LintFindings
-  (lint-program-with-source-options source program threshold true false))
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning

@@ -187,13 +187,13 @@
               intern-active-structural-lefts-address
               cached-index)
             left-id)
-            (if (=
-              (intern-active-i64-ref
-                intern-active-structural-rights-address
-                cached-index)
-              right-id)
-              (return cached-raw)
-              unit)
+            (when
+              (=
+                (intern-active-i64-ref
+                  intern-active-structural-rights-address
+                  cached-index)
+                right-id)
+              (return cached-raw))
             unit))
         unit)
       (let
@@ -273,13 +273,13 @@
                 intern-active-structural-middles-address
                 cached-index)
               middle-id)
-              (if (=
-                (intern-active-i64-ref
-                  intern-active-structural-rights-address
-                  cached-index)
-                right-id)
-                (return cached-raw)
-                unit)
+              (when
+                (=
+                  (intern-active-i64-ref
+                    intern-active-structural-rights-address
+                    cached-index)
+                  right-id)
+                (return cached-raw))
               unit)
             unit))
         unit)

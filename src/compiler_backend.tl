@@ -44781,7 +44781,16 @@
               ctx.global-types
               ctx.assignments
               dst
-              src
+              (box-get rest)))
+            (match (compiler-backend-emit-binop-to-rax
+              ctx.type-segment-bases
+              ctx.types
+              ctx.global-types
+              ctx.assignments
+              dst
+              op
+              lhs
+              rhs
               ty
               false
               (compiler-backend-scratch-plan-register-ahead
@@ -44934,9 +44943,12 @@
                           not-dst)
                         (compiler-backend-branch-uses-var? not-src dst))
                         (match (box-get after-branch)
-                          [(CompilerIrInstrList.Nil)
-                            (match maybe
-                              [(CompilerIrMaybeValue.Some value)
+                          [(CompilerIrInstrList.Cons branch after-not-branch)
+                            (match branch
+                              [(CompilerIrInstr.Branch
+                                  cond
+                                  true-label
+                                  false-label)
                                 (if (compiler-backend-branch-uses-var?
                                   cond
                                   not-dst)

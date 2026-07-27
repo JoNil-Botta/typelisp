@@ -165,7 +165,7 @@ for mode in scalar avx2 avx512; do
 
         run_typelisp "$CASE_DIR/bounds.tl" "$mode" gather-reduce-oob
         if [ "$status" -ne 134 ] ||
-            ! grep -F -- "tl: array index out of bounds" "$stderr" >/dev/null; then
+            ! grep -F -- "array index out of bounds" "$stderr" >/dev/null; then
             echo "perfbench_gathers: TypeLisp $mode gather bounds trap failed (exit $status)" >&2
             sed 's/^/  /' "$stderr" >&2 || true
             exit 1

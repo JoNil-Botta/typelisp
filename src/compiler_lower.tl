@@ -11118,11 +11118,12 @@
               tail-param-end)))])
     (lower-state-emit state instr)))
 
-;; Array-address helpers emit their BoundsCheck before the final GEP/load and do
+;; Bounds-check helpers emit their BoundsCheck before the final GEP/load and do
 ;; not otherwise carry the source expression. Immediately after such a helper
-;; returns, its most recently allocated label is the unique `bounds_ok` key.
-(define (lower-state-record-latest-bounds-check-at-expr
+;; returns, its most recently allocated label is the unique LABEL-PREFIX key.
+(define (lower-state-record-latest-bounds-check-named-at-expr
   [state : LowerState]
+  [label-prefix : String]
   [expr : AstExpr]) : LowerState
   (match (lower-ast-expr-span expr)
     [(CompilerMaybeSourceSpan.No) state]
@@ -11148,7 +11149,7 @@
             [bounds-label : i64
               (compiler-ir-label
                 (str_cat.str-cat
-                  "bounds_ok."
+                  (str_cat.str-cat label-prefix ".")
                   (string.int->string (- next-label 1))))]
             [next-spans : CompilerSourceSpans
               (compiler-source-spans-insert-instr-located
@@ -11176,6 +11177,11 @@
               address-taken
               tail-param-start
               tail-param-end))])]))
+
+(define (lower-state-record-latest-bounds-check-at-expr
+  [state : LowerState]
+  [expr : AstExpr]) : LowerState
+  (lower-state-record-latest-bounds-check-named-at-expr state "bounds_ok" expr))
 
 (define (lower-state-finish-block [state : LowerState] [next-label : i64]) : LowerState
   (match state
@@ -23112,7 +23118,7 @@
       (let
         [str : AstExpr (lower-context-expr-get ctx str-box)]
         [index : AstExpr (lower-context-expr-get ctx index-box)]
-        (lower-string-ref ctx state env type-env str index))]
+        (lower-string-ref ctx state env type-env str index origin))]
     [(AstExpr.StructGet receiver-box field)
       (let
         [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -24889,7 +24895,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [str : AstExpr]
-  [index : AstExpr]) : ResultLowerExpr
+  [index : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
   (match (lower-expr ctx state env type-env str)
     [(ResultLowerExpr.Ok lowered-str)
       (match lowered-str
@@ -24912,10 +24919,23 @@
                       index-ty
                       (AstType.I64))
                       [(LowerExpr.Expr index-i-state index-value _)
-                        (lower-string-ref-load
+                        (match (lower-string-ref-load
                           index-i-state
                           str-value
-                          index-value)])])]
+                          index-value)
+                          [(ResultLowerExpr.Ok loaded)
+                            (match loaded
+                              [(LowerExpr.Expr loaded-state value ty)
+                                (ResultLowerExpr.Ok
+                                  (LowerExpr.Expr
+                                    (lower-state-record-latest-bounds-check-named-at-expr
+                                      loaded-state
+                                      "str_bounds_ok"
+                                      origin)
+                                    value
+                                    ty))])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])])])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])
             (ResultLowerExpr.Err
               (box
@@ -27816,7 +27836,7 @@
         (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
       [index : AstExpr
         (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
-      (lower-string-ref ctx state env type-env str index))
+      (lower-string-ref ctx state env type-env str index origin))
     (lower-direct-call-id
       ctx
       state
@@ -31764,6 +31784,7 @@
   [ctx : TcContext]
   [state : LowerState]
   [arr : AstExpr]
+  [origin : AstExpr]
   [arr-value : CompilerIrValue]
   [idx-value : CompilerIrValue]
   [idx-ty : AstType]
@@ -31784,7 +31805,9 @@
             (LowerExpr.Expr
               (lower-array-elem-store-state
                 ctx
-                addr-state
+                (lower-state-record-latest-bounds-check-at-expr
+                  addr-state
+                  origin)
                 elem-ptr
                 value-ir
                 elem-ir-ty)
@@ -31802,12 +31825,19 @@
         [(LowerExpr.Expr addr-state elem-ptr _)
           (if (= (lower-type-size ctx elem-ir-ty) 0)
             (ResultLowerExpr.Ok
-              (LowerExpr.Expr addr-state CompilerIrValue.Unit (AstType.Unit)))
+              (LowerExpr.Expr
+                (lower-state-record-latest-bounds-check-at-expr
+                  addr-state
+                  origin)
+                CompilerIrValue.Unit
+                (AstType.Unit)))
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
                 (lower-array-elem-store-state
                   ctx
-                  addr-state
+                  (lower-state-record-latest-bounds-check-at-expr
+                    addr-state
+                    origin)
                   elem-ptr
                   value-ir
                   elem-ir-ty)
@@ -31824,6 +31854,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]
+  [origin : AstExpr]
   [arr-value : CompilerIrValue]
   [idx-value : CompilerIrValue]
   [idx-ty : AstType]
@@ -31845,7 +31876,7 @@
           [(LowerExpr.Expr addr-state elem-ptr _)
             (lower-direct-store-rhs-into
               ctx
-              addr-state
+              (lower-state-record-latest-bounds-check-at-expr addr-state origin)
               env
               type-env
               elem-ptr
@@ -31864,7 +31895,7 @@
           [(LowerExpr.Expr addr-state elem-ptr _)
             (lower-direct-store-rhs-into
               ctx
-              addr-state
+              (lower-state-record-latest-bounds-check-at-expr addr-state origin)
               env
               type-env
               elem-ptr
@@ -32641,6 +32672,7 @@
                                       env
                                       type-env
                                       arr
+                                      index
                                       arr-value
                                       idx-value
                                       idx-value-ty
@@ -32675,6 +32707,7 @@
                                                   ctx
                                                   value-state
                                                   arr
+                                                  index
                                                   arr-value
                                                   idx-value
                                                   idx-value-ty

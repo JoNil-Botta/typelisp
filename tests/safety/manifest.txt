@@ -10,13 +10,13 @@ integer_wrap_cast_defined|run-exit|tests/safety/integer_wrap_cast_defined.tl|42|
 float_literal_signed_zero_defined|run-exit|tests/safety/float_literal_signed_zero_defined.tl|42|-
 
 # Integer division/modulo and invalid shift counts trap deterministically.
-division_by_zero_trap|run-trap|tests/safety/division_by_zero_trap.tl|135|tl: integer division or remainder error
-shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|tl: shift count out of range
+division_by_zero_trap|run-trap|tests/safety/division_by_zero_trap.tl|135|integer division or remainder error: dividend=1 divisor=0
+shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|shift count out of range: count=-1 width=64
 
 # Array/string/generated collection bounds trap rather than reading invalid memory.
-array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|tl: array index out of bounds
-array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|tl: array index out of bounds
-string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|tl: array index out of bounds
+array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
 byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|134|tl: array index out of bounds
 
@@ -92,7 +92,7 @@ queue_bang_rvalue_reject|check-fail|tests/safety/queue_bang_rvalue_reject.tl|-|b
 set_bang_rvalue_reject|check-fail|tests/safety/set_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
-hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|tl: array index out of bounds
+hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& same str), found (& right str)
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`

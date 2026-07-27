@@ -1004,14 +1004,12 @@ fi
 # whole family, so the next step costs a one-number edit instead of the
 # archaeology that took (#5764).
 #
-# Current headroom, used against capacity: expr macro_expand
-# 2800228/2818048 after #5847 replaced the shared numeric callback dispatcher
-# with direct per-name host functions. Transformer-owned hygiene nodes still
-# reuse their CTFE slots instead of retaining a second complete expression
-# tree. The
-# compiler-state isolation work in
-# #5751 moved expr typecheck across its next boundary at 1639597/1703936;
-# type macro_expand 20018/20480, type typecheck 5887/6144. All four sit within a
+# Current headroom, used against capacity on the exact #5980 merge probe:
+# expr macro_expand 2819383/2883584, expr typecheck 1678684/1703936,
+# type macro_expand 20538/21504, and type typecheck 5980/6144. #5980 added the
+# LSP code-action source and transcript coverage. Transformer-owned hygiene
+# nodes still reuse their CTFE slots instead of retaining a second complete
+# expression tree. All four sit within a
 # few percent of their next step, so expect these to move. #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
 # crossing, which is the normal case this shape is meant to make cheap.
@@ -1046,13 +1044,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 43 65536 40 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 44 65536 40 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 26 65536 40 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 20 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 21 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool typecheck 6 1024 24 \

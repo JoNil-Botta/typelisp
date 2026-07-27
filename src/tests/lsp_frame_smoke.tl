@@ -882,6 +882,10 @@
     [slots : (Array LintFinding) (make-array LintFinding 2)]
     [request-range : json.Json
       (lsp-json-object2 "start" (lsp-position 2 3) "end" (lsp-position 2 4))]
+    [cursor-range : json.Json
+      (lsp-json-object2 "start" (lsp-position 2 3) "end" (lsp-position 2 3))]
+    [adjacent-range : json.Json
+      (lsp-json-object2 "start" (lsp-position 2 2) "end" (lsp-position 2 3))]
     [far-range : json.Json
       (lsp-json-object2 "start" (lsp-position 1 1) "end" (lsp-position 1 2))]
     [diagnostic : json.Json (lsp-lint-finding-diagnostic text 3 0 finding)]
@@ -908,6 +912,24 @@
             0)
             [(LspJsonValue.Found _) true]
             [(LspJsonValue.Missing) false])
+          (match (lsp-code-action-find-diagnostic-from
+            diagnostics
+            cursor-range
+            3
+            "lint"
+            0
+            0)
+            [(LspJsonValue.Found _) true]
+            [(LspJsonValue.Missing) false])
+          (match (lsp-code-action-find-diagnostic-from
+            diagnostics
+            adjacent-range
+            3
+            "lint"
+            0
+            0)
+            [(LspJsonValue.Found _) false]
+            [(LspJsonValue.Missing) true])
           (match (lsp-code-action-find-diagnostic-from
             diagnostics
             request-range

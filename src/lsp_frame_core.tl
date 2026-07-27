@@ -2106,14 +2106,8 @@
 ;; current overlay, then uses that token to associate the client's diagnostic
 ;; with structured data. It never parses a rendered diagnostic message.
 ;; --------------------------------------------------------------------------
-(define (lsp-code-action-position-before-or-equal?
-  [left-line : i64]
-  [left-char : i64]
-  [right-line : i64]
-  [right-char : i64]) : bool
-  (or
-    (< left-line right-line)
-    (and (= left-line right-line) (<= left-char right-char))))
+(define (lsp-code-action-position-key [line : i64] [character : i64]) : i64
+  (+ (* line 2147483648) character))
 
 (define (lsp-code-action-range-field
   [range : json.Json]
@@ -2138,25 +2132,43 @@
       (lsp-code-action-range-field right "start" "character")]
     [right-end-line : i64 (lsp-code-action-range-field right "end" "line")]
     [right-end-char : i64 (lsp-code-action-range-field right "end" "character")]
-    (and
-      (>= left-start-line 0)
-      (>= left-start-char 0)
-      (>= left-end-line 0)
-      (>= left-end-char 0)
-      (>= right-start-line 0)
-      (>= right-start-char 0)
-      (>= right-end-line 0)
-      (>= right-end-char 0)
-      (lsp-code-action-position-before-or-equal?
-        left-start-line
-        left-start-char
-        right-end-line
-        right-end-char)
-      (lsp-code-action-position-before-or-equal?
-        right-start-line
-        right-start-char
-        left-end-line
-        left-end-char))))
+    (if (or
+      (< left-start-line 0)
+      (< left-start-char 0)
+      (< left-end-line 0)
+      (< left-end-char 0)
+      (< right-start-line 0)
+      (< right-start-char 0)
+      (< right-end-line 0)
+      (< right-end-char 0)
+      (> left-start-line 2147483647)
+      (> left-start-char 2147483647)
+      (> left-end-line 2147483647)
+      (> left-end-char 2147483647)
+      (> right-start-line 2147483647)
+      (> right-start-char 2147483647)
+      (> right-end-line 2147483647)
+      (> right-end-char 2147483647))
+      false
+      (let
+        [left-start : i64
+          (lsp-code-action-position-key left-start-line left-start-char)]
+        [left-end : i64
+          (lsp-code-action-position-key left-end-line left-end-char)]
+        [right-start : i64
+          (lsp-code-action-position-key right-start-line right-start-char)]
+        [right-end : i64
+          (lsp-code-action-position-key right-end-line right-end-char)]
+        (and
+          (<= left-start left-end)
+          (<= right-start right-end)
+          (if (= left-start left-end)
+            (if (= right-start right-end)
+              (= left-start right-start)
+              (and (<= right-start left-start) (< left-start right-end)))
+            (if (= right-start right-end)
+              (and (<= left-start right-start) (< right-start left-end))
+              (and (< left-start right-end) (< right-start left-end)))))))))
 
 (define (lsp-code-action-array-has-quickfix?
   [items : json.JsonSeq]

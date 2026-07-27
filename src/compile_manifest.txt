@@ -619,9 +619,9 @@ contains|_tl_doc_test_scan_doc_block:
 contains|_tl_doc_test_supported_item_declaration_question:
 contains|_tl_doc_test_run_source:
 contains|_tl_doc_test_run_source_with_roots:
-contains|_tl_doc_test_check_example:
+contains|_tl_doc_test_check_example_with_roots:
 contains|_tl_doc_test_typecheck_source_with_roots:
-contains|_tl_doc_test_run_examples:
+contains|_tl_doc_test_run_examples_with_roots:
 contains|_tl_doc_test_errors_to_failures:
 contains|_tl_doc_test_run_failure_render:
 contains|_tl_doc_test_run_smoke:
@@ -696,7 +696,7 @@ end
 
 case|selfhost_read|src/read.tl|assembly|skip|direct
 contains|_tl_read:
-contains|_tl_read_form:
+contains|_tl_read_form_result:
 contains|_tl_read_list_result:
 contains|reader: unexpected end of input
 end

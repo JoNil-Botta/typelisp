@@ -254,6 +254,17 @@
           [_ false]))]
     [_ false]))
 
+(define (comptime-host-smoke-result-string-expr?
+  [pools : AstNodePoolContext]
+  [expected : String]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Literal (AstLiteral.String string-id))
+          (string.eq (intern-str string-id) expected)]
+        [_ false])]
+    [_ false]))
+
 (define (comptime-host-smoke-result-struct-get?
   [pools : AstNodePoolContext]
   [target : i64]) : bool
@@ -418,6 +429,30 @@
               0)
             (comptime-host-smoke-commit-result!)
             (comptime-host-smoke-result-name? "beta")
+            (comptime-host-smoke-consume-test-result!)
+            ;; `expr-string` accepts the reflected Name just like interpreted
+            ;; `ctfe-eval-string-arg`; serialize uses this exact chain for
+            ;; generated object keys.
+            (=
+              (comptime-host-smoke-invoke
+                tlci-host-callback-op-push-operand
+                0
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
+                tlci-host-callback-op-struct-field-name
+                0
+                0)
+              0)
+            (=
+              (comptime-host-smoke-invoke
+                tlci-host-callback-op-expr-string-from-value
+                0
+                0)
+              0)
+            (comptime-host-smoke-commit-result!)
+            (comptime-host-smoke-result-string-expr? pools "alpha")
             (comptime-host-smoke-consume-test-result!)
             ;; Interpreted String arguments accept reflected Name values too:
             ;; this exact `"." + field-name` shape is used by struct hashing.

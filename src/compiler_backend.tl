@@ -3545,6 +3545,10 @@
     [(CompilerIrVectorReduceOp.Min)
       (match elem-ty
         [(AstType.I64) "vpminsq"]
+        [(AstType.I16) "vpminsw"]
+        [(AstType.U16) "vpminuw"]
+        [(AstType.I8) "vpminsb"]
+        [(AstType.U8) "vpminub"]
         [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)])]
     [(CompilerIrVectorReduceOp.Max)
       (match elem-ty
@@ -13033,6 +13037,92 @@
       elem-ty
       lanes)))
 
+(define (compiler-backend-vector-reduce-byte-shift-asm
+  [mnemonic : String]
+  [bytes : i64]
+  [acc-xmm : String]
+  [scratch-xmm : String]) : String
+  (str-cat
+    "    vpsrldq $"
+    (string.int->string bytes)
+    ", "
+    acc-xmm
+    ", "
+    scratch-xmm
+    "\n    "
+    mnemonic
+    " "
+    scratch-xmm
+    ", "
+    acc-xmm
+    ", "
+    acc-xmm
+    "\n"))
+
+(define (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+  [mnemonic : String]
+  [zmm : String]
+  [ymm : String]
+  [elem-ty : AstType]
+  [acc-xmm : String]
+  [acc-ymm : String]
+  [scratch-xmm : String]) : String
+  (str-cat
+    "    vextracti64x4 $1, "
+    zmm
+    ", "
+    acc-ymm
+    "\n    "
+    mnemonic
+    " "
+    acc-ymm
+    ", "
+    ymm
+    ", "
+    acc-ymm
+    "\n    vextracti128 $1, "
+    acc-ymm
+    ", "
+    scratch-xmm
+    "\n    "
+    mnemonic
+    " "
+    scratch-xmm
+    ", "
+    acc-xmm
+    ", "
+    acc-xmm
+    "\n"
+    (compiler-backend-vector-reduce-byte-shift-asm
+      mnemonic
+      8
+      acc-xmm
+      scratch-xmm)
+    (compiler-backend-vector-reduce-byte-shift-asm
+      mnemonic
+      4
+      acc-xmm
+      scratch-xmm)
+    (compiler-backend-vector-reduce-byte-shift-asm
+      mnemonic
+      2
+      acc-xmm
+      scratch-xmm)
+    (match elem-ty
+      [(AstType.I8)
+        (compiler-backend-vector-reduce-byte-shift-asm
+          mnemonic
+          1
+          acc-xmm
+          scratch-xmm)]
+      [(AstType.U8)
+        (compiler-backend-vector-reduce-byte-shift-asm
+          mnemonic
+          1
+          acc-xmm
+          scratch-xmm)]
+      [_ ""])))
+
 (define (compiler-backend-avx512-vector-reduce-horizontal-asm
   [mnemonic : String]
   [zmm : String]
@@ -13262,6 +13352,42 @@
           acc-xmm
           "\n"
           ""))]
+    [(AstType.I16)
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
+    [(AstType.U16)
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
+    [(AstType.I8)
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
+    [(AstType.U8)
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
     [_ ""]))
 
 (define (compiler-backend-emit-avx512-vector-reduce

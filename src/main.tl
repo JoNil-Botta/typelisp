@@ -104,6 +104,7 @@ Common Command Options:
     --manifest-path <file>         Package manifest path
     --stdlib-root <dir>            Search root for stdlib/... imports
     --opt-level <0|1|2>            Select optimizer level
+    --debug, -g                    Emit source line and unwind debug information
     --cfg <name>                   Enable a compile-time cfg predicate name
 
 Environment:
@@ -114,8 +115,8 @@ Run `typelisp <command> --help` for command-specific usage.
 
 (define (cli-build-help-text) : String
   "Usage:
-    typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
-    typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+    typelisp build <file.tl> [-o <exe>] [--debug|-g] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
+    typelisp build [--manifest-path <typelisp.pkg>] [--debug|-g] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
 
 Summary:
     Build a source file or package artifact.
@@ -128,6 +129,7 @@ Options:
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Override package optimizer level (release 2, dev 0)
+    --debug, -g                    Emit line tables and linker debug information
     --locked                       Require matching typelisp.lock; do not rewrite
     --update-lock                  Refresh remote pins and rewrite typelisp.lock
     --link-lib <name>              Link a named native library for source builds
@@ -152,8 +154,8 @@ Options:
 
 (define (cli-run-help-text) : String
   "Usage:
-    typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
-    typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [-- args...]
+    typelisp run <file.tl> [--debug|-g] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
+    typelisp run [--manifest-path <typelisp.pkg>] [--debug|-g] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [-- args...]
 
 Summary:
     Compile, link, and run a source file or package binary.
@@ -167,6 +169,7 @@ Options:
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level
+    --debug, -g                    Emit line tables and linker debug information
     --stdlib-root <dir>            Search root for stdlib/... imports
     --cfg <name>                   Enable a compile-time cfg predicate name for source runs
     --link-lib <name>              Link a named native library for source runs
@@ -264,9 +267,9 @@ Options:
 
 (define (cli-compile-help-text) : String
   "Usage:
-    typelisp compile <file.tl> [-o <file>] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
-    typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
-    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile <file.tl> [-o <file>] [--debug|-g] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
+    typelisp compile --batch <input-output-list> [--debug|-g] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
 
 Summary:
     Generate assembly, an IR summary, or a deterministic textual IR dump.
@@ -284,6 +287,7 @@ Options:
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level
+    --debug, -g                    Emit source line and unwind debug information
     --profile-allocations          Report compiler arena ownership by phase
     --stdlib-root <dir>            Search root for stdlib/... imports
     --cfg <name>                   Enable a compile-time cfg predicate name

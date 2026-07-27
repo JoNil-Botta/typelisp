@@ -264,7 +264,9 @@
     CompilerIrInstrBuilder
     CompilerIrBlockBuilder
     CompilerIrFunctionBuilder
-    String
+    ;; Exact interned IR function identity. Derive display text only where
+    ;; needed; re-interning that text can select a different provenance ID.
+    i64
     (Box CompilerSourceSpans)
     LowerNameCache
     LowerTypeCache
@@ -610,6 +612,8 @@
   (Ok CompilerIrProgram CompilerSourceSpans)
   (Err (Box CompilerDiagnostic)))
 
+(define lower-current-source-path-id : i64
+  0)
 (define lower-checked-dest-pools-active : bool
   false)
 (define lower-checked-dest-pools-committed : bool
@@ -10761,7 +10765,8 @@
 
 (define (lower-state-current-function [state : LowerState]) : String
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ function _ _ _ _ _ _ _) function]))
+    [(LowerState.State _ _ _ _ _ _ _ function _ _ _ _ _ _ _)
+      (compiler-ir-symbol-text function)]))
 
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
@@ -10977,9 +10982,10 @@
         tail-param-start
         tail-param-end)
       (let
+        [function-text : String (compiler-ir-symbol-text function)]
         [lambda-name : String
           (string.append
-            (string.append (string.append "__tl_lambda_" function) "_")
+            (string.append (string.append "__tl_lambda_" function-text) "_")
             (string.int->string next-lambda))]
         [lambda-id : i64 (ci.intern-generated-name lambda-name)]
         (LowerLambdaName.Name
@@ -11043,11 +11049,56 @@
 (define (lower-state-emit-at-expr
   [state : LowerState]
   [instr : CompilerIrInstr]
-  [_expr : AstExpr]) : LowerState
-  ;; Per-instruction spans are allocated inside per-function scratch arenas and
-  ;; are not escaped by `lower-function-escaping`; function-level spans are
-  ;; recorded separately after escape.
-  (lower-state-emit state instr))
+  [expr : AstExpr]) : LowerState
+  (if (compiler-debug-info-enabled?)
+    (match state
+      [(LowerState.State
+          next-var
+          next-label
+          next-lambda
+          current-label
+          current-instrs
+          blocks
+          functions
+          function
+          spans
+          names
+          type-cache
+          mode
+          address-taken
+          tail-param-start
+          tail-param-end)
+        (let
+          [next-instrs : CompilerIrInstrBuilder current-instrs]
+          [next-spans : CompilerSourceSpans
+            (match (lower-ast-expr-span expr)
+              [(CompilerMaybeSourceSpan.Some span)
+                (compiler-source-spans-insert-instr-located
+                  (box-get spans)
+                  function
+                  instr
+                  lower-current-source-path-id
+                  span)]
+              [(CompilerMaybeSourceSpan.No) (box-get spans)])]
+          (begin
+            (compiler-ir-instr-builder-push! (&mut next-instrs) instr)
+            (LowerState.State
+              next-var
+              next-label
+              next-lambda
+              current-label
+              next-instrs
+              blocks
+              functions
+              function
+              (box next-spans)
+              names
+              type-cache
+              mode
+              address-taken
+              tail-param-start
+              tail-param-end)))])
+    (lower-state-emit state instr)))
 
 (define (lower-state-finish-block [state : LowerState] [next-label : i64]) : LowerState
   (match state
@@ -17474,7 +17525,6 @@
         (if sret-needed
           param-count
           (- 0 1))]
-      [logical-name-text : String (compiler-ir-symbol-text logical-name)]
       [function-spans : CompilerSourceSpans
         (lower-record-function-span
           spans
@@ -17491,7 +17541,7 @@
           (compiler-ir-instr-builder-new)
           (compiler-ir-block-builder-new)
           (compiler-ir-function-builder-new)
-          logical-name-text
+          logical-name
           (box function-spans)
           names
           type-cache
@@ -48429,7 +48479,6 @@
         source-param-count
         (+ source-param-count 1))]
     [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-    [hidden-name-text : String (compiler-ir-symbol-text hidden-name)]
     [function-spans : CompilerSourceSpans
       (lower-record-function-span
         spans
@@ -48444,7 +48493,7 @@
         (compiler-ir-instr-builder-new)
         (compiler-ir-block-builder-new)
         (compiler-ir-function-builder-new)
-        hidden-name-text
+        hidden-name
         (box function-spans)
         names
         type-cache
@@ -48551,7 +48600,6 @@
   (let
     [param-count : i64 (+ 1 (lower-param-count params))]
     [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-    [hidden-name-text : String (compiler-ir-symbol-text hidden-name)]
     [function-spans : CompilerSourceSpans
       (lower-record-function-span
         spans
@@ -48566,7 +48614,7 @@
         (compiler-ir-instr-builder-new)
         (compiler-ir-block-builder-new)
         (compiler-ir-function-builder-new)
-        hidden-name-text
+        hidden-name
         (box function-spans)
         names
         type-cache
@@ -54762,7 +54810,7 @@
           (compiler-ir-instr-builder-new)
           (compiler-ir-block-builder-new)
           (compiler-ir-function-builder-new)
-          logical-name-text
+          logical-name
           (box function-spans)
           names
           type-cache
@@ -54859,7 +54907,13 @@
   [body : AstExpr]) : CompilerSourceSpans
   (match (lower-ast-expr-direct-span body)
     [(CompilerMaybeSourceSpan.Some span)
-      (compiler-source-spans-insert spans name span)]
+      (if (compiler-debug-info-enabled?)
+        (compiler-source-spans-insert-located
+          spans
+          name
+          lower-current-source-path-id
+          span)
+        (compiler-source-spans-insert spans name span))]
     [(CompilerMaybeSourceSpan.No) spans]))
 
 ;; Reusable per-function lowering scratch arena. Lowering one function
@@ -55052,7 +55106,7 @@
           spans
           names
           mode)
-          [(ResultLowerFunction.Ok fns _function-spans)
+          [(ResultLowerFunction.Ok fns function-spans)
             (let
               [scratch-head : i64 (arena.tl_arena_current)]
               [escaped-fns : CompilerIrFunctionList
@@ -55071,10 +55125,12 @@
                   (lower-spmd-inline-empty-helper-stack))
                 (let
                   [escaped-spans : CompilerSourceSpans
-                    (lower-record-function-span
-                      spans
-                      (compiler-ir-symbol-typed-id logical-name)
-                      body)]
+                    (if (compiler-debug-info-enabled?)
+                      (compiler-source-spans-append-new spans function-spans)
+                      (lower-record-function-span
+                        spans
+                        (compiler-ir-symbol-typed-id logical-name)
+                        body))]
                   [new-enclosing : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
@@ -56587,6 +56643,12 @@
                   logical-module-id)]
               [rest-paths : AstDeclPathList (ast-decl-path-list-tail cur-paths)]
               [_advance-paths : unit (set! cur-paths rest-paths)]
+              [_source-path : unit
+                (set!
+                  lower-current-source-path-id
+                  (if (compiler-debug-info-enabled?)
+                    (compiler-load-source-path-id decl-path)
+                    0))]
               (match (ast-decl-unwrapped decl)
                 [(AstDecl.ModuleBody _ _) (set! cur-decls rest)]
                 [(AstDecl.Def decl-meta name _ expr-box)

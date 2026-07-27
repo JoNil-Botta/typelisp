@@ -1450,7 +1450,6 @@
         [present : (Array i64) (array.make-array i64 vars)]
         [types : (Array AstType) (array.make-array AstType vars)]
         (begin
-          (compiler-reg-fill-i64-array present 0)
           (compiler-reg-param-types-array! params present types)
           (compiler-reg-block-list-types-array! blocks present types)
           (CompilerRegVarTypes present types)))]))
@@ -2082,9 +2081,6 @@
         [defs : (Array i64) (array.make-array i64 vars)]
         [uses : (Array i64) (array.make-array i64 vars)]
         (begin
-          (compiler-reg-fill-i64-array anchors 0)
-          (compiler-reg-fill-i64-array defs 0)
-          (compiler-reg-fill-i64-array uses 0)
           (compiler-reg-destructive-mark-move-vars!
             (compiler-reg-function-moves func false)
             anchors)
@@ -2152,6 +2148,9 @@
           (set! index (+ index 1))))
       out)))
 
+;; For a NON-zero `value`, or for an array being *re*-initialised. `make-array`
+;; of an i64 array already hands back zeroed memory, so a `... 0` fill directly
+;; after the allocation repeats the allocator's work with a scalar loop.
 (define (compiler-reg-fill-i64-array [items : (Array i64)] [value : i64]) : unit
   (let
     [index : i64 0]
@@ -2271,7 +2270,6 @@
     [items : (Array CompilerRegLocation)
       (array.make-array CompilerRegLocation vars)]
     (begin
-      (compiler-reg-fill-i64-array present 0)
       (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (compiler-reg-assignment-index-fill! assignments present items)
       (CompilerRegAssignmentIndex present items))))
@@ -2298,7 +2296,6 @@
     [items : (Array CompilerRegLocation)
       (array.make-array CompilerRegLocation n)]
     (begin
-      (compiler-reg-fill-i64-array present 0)
       (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (CompilerRegAssignmentTable present items))))
 
@@ -3572,7 +3569,6 @@
       (let
         [mask : (Array i64) (array.make-array i64 vars)]
         (begin
-          (compiler-reg-fill-i64-array mask 0)
           (compiler-reg-phi-touched-safe-blocks!
             blocks
             liveness
@@ -6668,7 +6664,6 @@
       (let
         [counts : (Array i64) (array.make-array i64 vars)]
         (begin
-          (compiler-reg-fill-i64-array counts 0)
           (compiler-reg-param-count-defs! params counts)
           (compiler-reg-count-block-defs! blocks counts)
           counts))]))
@@ -6799,7 +6794,6 @@
         [parents : (Array i64) (array.make-array i64 vars)]
         [index : i64 0]
         (begin
-          (compiler-reg-fill-i64-array phi-defs 0)
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
           (while (< index vars)
             (begin
@@ -6823,7 +6817,6 @@
     [eligible : (Array i64) (array.make-array i64 (array-length starts))]
     [var : i64 0]
     (begin
-      (compiler-reg-fill-i64-array eligible 0)
       (while (< var (array-length starts))
         (begin
           (if (and
@@ -7218,9 +7211,7 @@
         [def-off : (Array i64) (array.make-array i64 (+ vars 1))]
         [index : i64 0]
         (begin
-          (compiler-reg-fill-i64-array phi-defs 0)
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
-          (compiler-reg-fill-i64-array bucket 0)
           (compiler-reg-count-block-defs! blocks bucket)
           (array-set! def-off 0 0)
           (while (< index vars)
@@ -8952,7 +8943,6 @@
         (reg_label_i64_map.with-capacity (compiler-reg-bits-map-capacity count))
         0)]
     (begin
-      (compiler-reg-fill-i64-array depths 0)
       (compiler-reg-fill-i64-array loop-ends (- 0 1))
       (compiler-reg-loop-depth-record-blocks! blocks ids loop-ends 0)
       (compiler-reg-loop-depths-from-ends! loop-ends depths 0)
@@ -9308,7 +9298,6 @@
     [vals : (Array CompilerIrValue) (array.make-array CompilerIrValue vars)]
     [v : i64 0]
     (begin
-      (compiler-reg-fill-i64-array flags 0)
       (compiler-reg-remat-init-vals! vals vars)
       (match func
         [(CompilerIrFunction.Function _ _ _ _ blocks)
@@ -9563,7 +9552,6 @@
         [counts : (Array i64) (array.make-array i64 vars)]
         [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
         (begin
-          (compiler-reg-fill-i64-array counts 0)
           (compiler-reg-ref-counts-blocks-weighted! counts blocks depths 0)
           counts))]))
 
@@ -9580,8 +9568,6 @@
         [allow-invariant-loads : bool
           (compiler-reg-remat-invariant-loads-ok? func)]
         (begin
-          (compiler-reg-fill-i64-array raw 0)
-          (compiler-reg-fill-i64-array def-status 0)
           (compiler-reg-ref-counts-blocks-weighted-remat!
             raw
             def-status
@@ -9707,7 +9693,6 @@
   (let
     [pred-counts : (Array i64) (array.make-array i64 (array-length blocks))]
     (begin
-      (compiler-reg-fill-i64-array pred-counts 0)
       (compiler-reg-edge-copy-count-preds-blocks! liveness blocks pred-counts 0)
       pred-counts)))
 
@@ -15907,8 +15892,6 @@
     [order : (Array i64) (array.make-array i64 an)]
     [v : i64 0]
     (begin
-      (compiler-reg-fill-i64-array root-has-remat 0)
-      (compiler-reg-fill-i64-array cand 0)
       (while (< v (array-length remat-cands))
         (begin
           (if (= (array-ref remat-cands v) 1)
@@ -17269,7 +17252,6 @@
     [out : (Array i64) (array.make-array i64 vars)]
     [v : i64 0]
     (begin
-      (compiler-reg-fill-i64-array out 0)
       (while (< v vars)
         (begin
           (if (< v (array-length ref-counts))
@@ -18597,8 +18579,6 @@
     [occupancy : CompilerRegGreedyOccupancy
       (compiler-reg-greedy-occupancy-make assignments reg-arr rcount)]
     (begin
-      (compiler-reg-fill-i64-array pending 0)
-      (compiler-reg-fill-i64-array evict-count 0)
       ;; Scratch pseudos have no stack home. Mark them at the eviction cascade
       ;; cap so a placed pseudo can evict/requeue a real value but can never be
       ;; evicted itself. Fixed rax/rdx roles remain precolored in the table;
@@ -23513,7 +23493,6 @@
     [present : (Array i64) (array.make-array i64 vars)]
     [items : (Array AstType) (array.make-array AstType vars)]
     (begin
-      (compiler-reg-fill-i64-array present 0)
       (compiler-reg-color-scatter-types remap present items types)
       (CompilerRegVarTypeList.Array (CompilerRegVarTypes present items)))))
 
@@ -23573,7 +23552,6 @@
     [items : (Array CompilerRegLocation)
       (array.make-array CompilerRegLocation vars)]
     (begin
-      (compiler-reg-fill-i64-array present 0)
       (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (compiler-reg-color-scatter-assignments remap present items assignments)
       (compiler-reg-assignment-arrays-to-list
@@ -24502,7 +24480,6 @@
                   (array-set! slot-ends i (- 0 1))
                   (set! i (+ i 1))))
               (set! i 0)
-              (compiler-reg-fill-i64-array references 0)
               (while (< i vars)
                 (begin
                   (array-set! colorable i false)
@@ -26416,7 +26393,6 @@
     [present : (Array i64) (array.make-array i64 vars)]
     [items : (Array AstType) (array.make-array AstType vars)]
     (begin
-      (compiler-reg-fill-i64-array present 0)
       (compiler-reg-types-from-list-fill! types present items)
       (CompilerRegVarTypes present items))))
 
@@ -28703,8 +28679,6 @@
             (begin
               (compiler-reg-fill-i64-array starts -1)
               (compiler-reg-fill-i64-array ends -1)
-              (compiler-reg-fill-i64-array present 0)
-              (compiler-reg-fill-i64-array scratch-weights 0)
               (compiler-reg-fill-interval-seq-array! segments 0)
               (compiler-reg-copy-i64-array!
                 starts
@@ -28767,7 +28741,6 @@
       [r : i64 0]
       [v : i64 scratch-base]
       (begin
-        (compiler-reg-fill-i64-array out 0)
         (compiler-reg-copy-i64-array! out weights 0)
         (while (< r (array-length raw-weights))
           (begin
@@ -29298,9 +29271,6 @@
                     (begin
                       (compiler-reg-fill-i64-array starts -1)
                       (compiler-reg-fill-i64-array ends -1)
-                      (compiler-reg-fill-i64-array present 0)
-                      (compiler-reg-fill-i64-array firsts 0)
-                      (compiler-reg-fill-i64-array slot-counts 0)
                       (compiler-reg-fill-interval-seq-array! segments 0)
                       (compiler-reg-copy-i64-array!
                         starts
@@ -29369,7 +29339,6 @@
                         [scratch-ref-counts : (Array i64)
                           (array.make-array i64 out-vars)]
                         (begin
-                          (compiler-reg-fill-i64-array scratch-ref-counts 0)
                           ;; Constraint-aware, non-evicting assignment: every
                           ;; synthetic interval and all previously assigned homes
                           ;; are visible before a register is selected.  Failure
@@ -33664,7 +33633,6 @@
     [types : (Array AstType) (array.make-array AstType vars)]
     [index : i64 0]
     (begin
-      (compiler-reg-fill-i64-array present 0)
       (while (< index vars)
         (begin
           (array-set! present index 1)

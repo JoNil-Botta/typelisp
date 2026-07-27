@@ -618,17 +618,6 @@
       TestMode.Run
       (TestMaybeString.No))))
 
-(define (tltest-decls-onto
-  [items : (Array AstDecl)]
-  [index : i64]
-  [out : AstDeclList]) : AstDeclList
-  (if (< index 0)
-    out
-    (tltest-decls-onto
-      items
-      (- index 1)
-      (ast-decl-list-prepend-builder (array-ref items index) out))))
-
 (define (tltest-decl-list-count [items : AstDeclList]) : i64
   (let
     [cur : AstDeclList items]

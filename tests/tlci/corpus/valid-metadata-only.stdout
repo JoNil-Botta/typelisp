@@ -1,10 +1,10 @@
 tlci image
 format-version: 2
 host-arch: x86_64 (1)
-callback-abi-version: 1
-producer-compiler-identity: tlci-v1-corpus
-content-hash: 996449910
-file-size: 0
+callback-abi-version: 2
+producer-compiler-identity: tlci-v2-corpus
+content-hash: 2142539760
+file-size: 286
 metadata-version: v1
 package-name: corpus.empty
 package-version: 1.0.0
@@ -16,3 +16,4 @@ sections:
   fixups: offset=0 records=0 bytes=0
   entries: offset=0 records=0 bytes=0
   symbols: offset=0 records=0 bytes=0
+  imports: offset=0 records=0 bytes=0

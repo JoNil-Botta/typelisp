@@ -700,25 +700,6 @@
             with-redundant)]
         (selfhost-lint-filter-derived-origins source with-prefer))]))
 
-(define (selfhost-lint-program-findings-with-options
-  [source : String]
-  [program : AstProgram]
-  [deprecated-string-concat : bool]
-  [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : LintFindings
-  (selfhost-lint-program-findings-with-all-options
-    source
-    program
-    deprecated-string-concat
-    redundant-function-name
-    prefer-dotted-field
-    false))
-
-(define (selfhost-lint-program-findings
-  [source : String]
-  [program : AstProgram]) : LintFindings
-  (selfhost-lint-program-findings-with-options source program false false false))
-
 (define (selfhost-lint-findings-append-from
   [src : LintFindings]
   [index : i64]
@@ -854,12 +835,6 @@
 
 (define (selfhost-lint-unused-unsafe-surface-required-total) : i64
   selfhost-lint-unused-unsafe-surface-required-count)
-
-(define (selfhost-lint-unused-unsafe-surface-unused-total) : i64
-  selfhost-lint-unused-unsafe-surface-unused-count)
-
-(define (selfhost-lint-unused-unsafe-surface-unknown-total) : i64
-  selfhost-lint-unused-unsafe-surface-unknown-count)
 
 (define (selfhost-lint-unused-unsafe-surface-classified-total) : i64
   (+
@@ -1469,7 +1444,7 @@
   ;; turning conditional implementation details into API.
   (compiler-cfg-enable
     (compiler-cfg-enable
-      (compiler-cfg-enable
+      (compiler-cfg-union
         (compiler-cfg-enable
           (compiler-cfg-enable
             (compiler-cfg-enable
@@ -4685,7 +4660,9 @@ end
   "(define (main) : i64
   (+ (cfg scratch-vreg (scratch-vreg-helper) 40)
      (+ (cfg embedded-stdlib-tlci (embedded-helper) 1)
-        (cfg compile-profile (profile-mode-helper) 1))))
+        (cfg compile-profile
+          (profile-mode-helper)
+          (ordinary-mode-helper)))))
 (cfg scratch-vreg
   (define (scratch-vreg-helper) : i64 7))
 (cfg scratch-vreg
@@ -4707,6 +4684,7 @@ end
   (define (profile-unused) : i64 2))
 (cfg lint-fixture-experimental
   (define (experimental-helper) : i64 9))
+(define (ordinary-mode-helper) : i64 1)
 (define (ordinary-unused) : i64 0)")
 
 (define (selfhost-lint-package-dead-qualified-left-source) : String
@@ -5537,6 +5515,8 @@ end
         "pkg/cfg.tl"
         cfg-source
         cfg-bin-decls)]
+    [ordinary-mode-index : i64
+      (selfhost-lint-dead-decls-index-of cfg-bin-decls "ordinary-mode-helper")]
     [qualified-import-decls : SelfhostLintDeadDecls
       (selfhost-lint-package-dead-qualified-import-fixture-decls)]
     [qualified-left-count : i64
@@ -5577,10 +5557,18 @@ end
       ;; declaration and the unrelated sibling remain dead.
       [(not (= explicit-root-count 2)) 63]
       ;; Supported scratch, embedded-TLCI, and profile cfgs reach their live
-      ;; helpers and retain one dead declaration each. The inactive
-      ;; experimental cfg stays absent; the ordinary bin-local declaration is
-      ;; also dead.
+      ;; helpers and retain one dead declaration each. The ordinary
+      ;; compile-profile fallback also stays live. The inactive experimental
+      ;; cfg stays absent; the unrelated ordinary bin-local declaration is
+      ;; still dead.
       [(not (= cfg-bin-count 4)) 61]
+      [(or
+          (< ordinary-mode-index 0)
+          (not
+            (struct-get
+              (selfhost-lint-dead-decls-ref cfg-bin-decls ordinary-mode-index)
+              root)))
+        66]
       [(not (selfhost-lint-package-dead-import-closure-fixture-ok?)) 58]
       [(not (= qualified-left-count 1)) 59]
       [(not (= qualified-right-count 0)) 60]

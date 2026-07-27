@@ -44,6 +44,16 @@ Summary:
     (string.int->string (* count record-size))
     "\n"))
 
+(define (tlci-inspect-import-line [offset : i64] [count : i64] [bytes : i64]) : String
+  (str_cat.str-cat
+    "  imports: offset="
+    (string.int->string offset)
+    " records="
+    (string.int->string count)
+    " bytes="
+    (string.int->string bytes)
+    "\n"))
+
 (define (tlci-inspect-spmd-specializations [items : TlciSpmdSpecializationList]) : String
   (match items
     [(TlciSpmdSpecializationList.Nil) ""]
@@ -110,7 +120,7 @@ Summary:
       (string.int->string (tlci-read-u64 bytes 48))
       "\n"
       "file-size: "
-      (string.int->string (tlci-read-u64 bytes 152))
+      (string.int->string (tlci-read-u64 bytes 168))
       "\n"
       "metadata-version: "
       (struct-get metadata version)
@@ -153,7 +163,11 @@ Summary:
         "symbols"
         (tlci-read-u64 bytes 136)
         (tlci-read-u64 bytes 144)
-        tlci-section-symbol-record-size))))
+        tlci-section-symbol-record-size)
+      (tlci-inspect-import-line
+        (tlci-read-u64 bytes 152)
+        (tlci-read-u64 bytes 160)
+        (array-length (struct-get image imports))))))
 
 (define (tlci-inspect-error [path : String] [message : String]) : String
   (str_cat.str-cat "inspect: " path ": " message "\n"))

@@ -602,9 +602,99 @@
   ;; timing/summary table.
   (profile-state profile_state.CompilerProfileState))
 
+(defenum CompilerBackendDebugFileIndex
+  (No)
+  (Files (Array i64) (Array i64) i64))
+
 (defstruct CompilerBackendSourceSpanIndex
   (entries backend_i64_i64_map.Map)
-  (values (Array CompilerMaybeSourceSpan)))
+  (values (Array CompilerMaybeSourceSpan))
+  (debug-files CompilerBackendDebugFileIndex))
+
+(define (compiler-backend-debug-file-add!
+  [numbers : (Array i64)]
+  [paths : (Array i64)]
+  [count : i64]
+  [path-id : i64]) : i64
+  (if (or
+    (<= path-id 0)
+    (>= path-id (array-length numbers))
+    (> (array-ref numbers path-id) 0))
+    count
+    (begin
+      (array-set! numbers path-id (+ count 1))
+      (array-set! paths count path-id)
+      (+ count 1))))
+
+(define (compiler-backend-debug-files-from-function-entries
+  [entries : CompilerSourceSpansEntryList]
+  [index : i64]
+  [numbers : (Array i64)]
+  [paths : (Array i64)]
+  [count : i64]) : i64
+  (if (>= index (struct-get entries len))
+    count
+    (match (array-ref (struct-get entries slots) index)
+      [(CompilerSourceSpansEntry.Entry _ path-id _)
+        (compiler-backend-debug-files-from-function-entries
+          entries
+          (+ index 1)
+          numbers
+          paths
+          (compiler-backend-debug-file-add! numbers paths count path-id))])))
+
+(define (compiler-backend-debug-files-from-instr-entries
+  [entries : CompilerSourceSpansInstrEntryList]
+  [index : i64]
+  [numbers : (Array i64)]
+  [paths : (Array i64)]
+  [count : i64]) : i64
+  (if (>= index (struct-get entries len))
+    count
+    (match (array-ref (struct-get entries slots) index)
+      [(CompilerSourceSpansInstrEntry.Entry _ path-id _)
+        (compiler-backend-debug-files-from-instr-entries
+          entries
+          (+ index 1)
+          numbers
+          paths
+          (compiler-backend-debug-file-add! numbers paths count path-id))])))
+
+(define (compiler-backend-debug-file-index-build [spans : CompilerSourceSpans]) : CompilerBackendDebugFileIndex
+  (if (compiler-debug-info-enabled?)
+    (match spans
+      [(CompilerSourceSpans.Spans entries instr-entries _)
+        (let
+          [capacity : i64
+            (+ (struct-get entries len) (struct-get instr-entries len))]
+          [numbers : (Array i64) (array.make-array i64 (ci.intern-capacity))]
+          [paths : (Array i64) (array.make-array i64 capacity)]
+          [function-count : i64
+            (compiler-backend-debug-files-from-function-entries
+              entries
+              0
+              numbers
+              paths
+              0)]
+          [count : i64
+            (compiler-backend-debug-files-from-instr-entries
+              instr-entries
+              0
+              numbers
+              paths
+              function-count)]
+          (CompilerBackendDebugFileIndex.Files numbers paths count))])
+    (CompilerBackendDebugFileIndex.No)))
+
+(define (compiler-backend-debug-file-number
+  [index : CompilerBackendSourceSpanIndex]
+  [path-id : i64]) : i64
+  (match (struct-get index debug-files)
+    [(CompilerBackendDebugFileIndex.No) 0]
+    [(CompilerBackendDebugFileIndex.Files numbers _ _)
+      (if (or (<= path-id 0) (>= path-id (array-length numbers)))
+        0
+        (array-ref numbers path-id))]))
 
 (define (compiler-backend-runtime-tail-profile?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
@@ -796,6 +886,7 @@
   (externs CompilerIrExternList)
   (program-index CompilerBackendProgramIndex)
   (spans CompilerSourceSpans)
+  (span-index CompilerBackendSourceSpanIndex)
   (func-diag CompilerDiagnostic)
   (use-counts (Array i64)))
 
@@ -1418,7 +1509,7 @@
   (if (< index 0)
     map
     (match (array-ref slots index)
-      [(CompilerSourceSpansEntry.Entry name span)
+      [(CompilerSourceSpansEntry.Entry name _ span)
         (if (backend_i64_i64_map.contains?
           (& map)
           (compiler-ir-symbol-id-value name))
@@ -1453,7 +1544,8 @@
               entries
               (backend_i64_i64_map.with-capacity (+ (* count 2) 16))
               values)
-            values)))]))
+            values
+            (compiler-backend-debug-file-index-build spans))))]))
 
 (define (compiler-backend-source-span-index-lookup
   [index : CompilerBackendSourceSpanIndex]
@@ -9954,25 +10046,28 @@
   [frame : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
-  (string.append
+  (str_cat.str-cat
     (compiler-backend-emit-windows-seh-proc target symbol)
-    (string.append
-      symbol
-      (string.append
-        ":\n    pushq %rbp\n"
-        (string.append
-          (compiler-backend-emit-windows-seh-push-rbp target)
-          (string.append
-            "    movq %rsp, %rbp\n"
-            (string.append
-              (compiler-backend-emit-windows-seh-set-rbp target)
-              (string.append
-                (compiler-backend-emit-stack-sub target frame)
-                (compiler-backend-emit-windows-seh-prologue-tail
-                  target
-                  assignments
-                  vars
-                  frame)))))))))
+    symbol
+    (if (and
+      (compiler-debug-info-enabled?)
+      (compiler-backend-target-linux? target))
+      ":\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n"
+      ":\n    pushq %rbp\n")
+    (compiler-backend-emit-windows-seh-push-rbp target)
+    "    movq %rsp, %rbp\n"
+    (if (and
+      (compiler-debug-info-enabled?)
+      (compiler-backend-target-linux? target))
+      "    .cfi_def_cfa_register %rbp\n"
+      "")
+    (compiler-backend-emit-windows-seh-set-rbp target)
+    (compiler-backend-emit-stack-sub target frame)
+    (compiler-backend-emit-windows-seh-prologue-tail
+      target
+      assignments
+      vars
+      frame)))
 
 ;; M-G3 stage 2: frame-pointer-omission prologue (Linux text path only; the
 ;; body was proven rsp-constant and fully rebased by compiler-backend-rsp-
@@ -11936,6 +12031,222 @@
             unit)
           (text_buf.render buf))
         text))))
+
+(define (compiler-backend-debug-file-directives
+  [target : CompilerBackendTarget]
+  [index : CompilerBackendSourceSpanIndex]) : String
+  (if (not (compiler-debug-info-enabled?))
+    ""
+    (match (struct-get index debug-files)
+      [(CompilerBackendDebugFileIndex.No) ""]
+      [(CompilerBackendDebugFileIndex.Files _ paths count)
+        (let
+          [path-index : i64 0]
+          [buf : text_buf.TextBuf (text_buf.empty)]
+          (begin
+            (while (< path-index count)
+              (let
+                [path-id : i64 (array-ref paths path-index)]
+                [path : String
+                  (compiler-backend-escape-string
+                    (if (compiler-backend-target-linux? target)
+                      (string.replace (ci.intern-str path-id) "\\" "/")
+                      (ci.intern-str path-id)))]
+                [file-number : String (string.int->string (+ path-index 1))]
+                (begin
+                  (set!
+                    buf
+                    (text_buf.append
+                      buf
+                      (if (compiler-backend-target-windows? target)
+                        (str_cat.str-cat
+                          "    .cv_file "
+                          file-number
+                          " \""
+                          path
+                          "\"\n")
+                        (str_cat.str-cat
+                          "    .file "
+                          file-number
+                          " \""
+                          path
+                          "\"\n"))))
+                  (set! path-index (+ path-index 1)))))
+            (text_buf.render buf)))])))
+
+(define (compiler-backend-debug-cv-functions
+  [functions : CompilerIrFunctionList]
+  [program-index : CompilerBackendProgramIndex]
+  [line-tables : bool]) : String
+  (match functions
+    [(CompilerIrFunctionList.Nil) ""]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (match (compiler-backend-index-function-slot program-index name)
+            [(backend_i64_i64_map.LookupFound function-id)
+              (str_cat.str-cat
+                (if line-tables
+                  (str_cat.str-cat
+                    "    .cv_linetable "
+                    (string.int->string function-id)
+                    ", "
+                    (compiler-backend-function-symbol-index program-index name)
+                    ", .Lcv_func_end_"
+                    (string.int->string function-id))
+                  (str_cat.str-cat
+                    "    .cv_func_id "
+                    (string.int->string function-id)))
+                "\n"
+                (compiler-backend-debug-cv-functions
+                  (box-get rest)
+                  program-index
+                  line-tables))]
+            [(backend_i64_i64_map.LookupMissing)
+              (compiler-backend-debug-cv-functions
+                (box-get rest)
+                program-index
+                line-tables)])])]
+    [(CompilerIrFunctionList.Array seq)
+      (compiler-backend-debug-cv-functions
+        (compiler-ir-function-seq-to-list seq)
+        program-index
+        line-tables)]))
+
+(define (compiler-backend-debug-prefix
+  [target : CompilerBackendTarget]
+  [functions : CompilerIrFunctionList]
+  [program-index : CompilerBackendProgramIndex]
+  [span-index : CompilerBackendSourceSpanIndex]) : String
+  (if (not (compiler-debug-info-enabled?))
+    ""
+    (if (compiler-backend-target-windows? target)
+      (str_cat.str-cat
+        "    .section .debug$S,\"dr\"\n"
+        "    .long 4\n"
+        "    .cv_stringtable\n"
+        (compiler-backend-debug-file-directives target span-index)
+        (compiler-backend-debug-cv-functions functions program-index false)
+        "    .text\n")
+      (compiler-backend-debug-file-directives target span-index))))
+
+(define (compiler-backend-debug-location-directive
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [function : i64]
+  [location : CompilerMaybeSourceLocation]) : String
+  (if (not (compiler-debug-info-enabled?))
+    ""
+    (match location
+      [(CompilerMaybeSourceLocation.No) ""]
+      [(CompilerMaybeSourceLocation.Some (CompilerSourceLocation path-id span))
+        (let
+          [file-number : i64
+            (compiler-backend-debug-file-number span-index path-id)]
+          [line : i64 (ast-source-span-start-line span)]
+          [column : i64 (ast-source-span-start-col span)]
+          (if (or (<= file-number 0) (<= line 0))
+            ""
+            (if (compiler-backend-target-windows? target)
+              (match (compiler-backend-index-function-slot
+                program-index
+                function)
+                [(backend_i64_i64_map.LookupFound function-id)
+                  (str_cat.str-cat
+                    "    .cv_loc "
+                    (string.int->string function-id)
+                    " "
+                    (string.int->string file-number)
+                    " "
+                    (string.int->string line)
+                    " "
+                    (string.int->string column)
+                    "\n")]
+                [(backend_i64_i64_map.LookupMissing) ""])
+              (str_cat.str-cat
+                "    .loc "
+                (string.int->string file-number)
+                " "
+                (string.int->string line)
+                " "
+                (string.int->string column)
+                "\n"))))])))
+
+(define (compiler-backend-debug-function-location
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [spans : CompilerSourceSpans]
+  [function : i64]) : String
+  (if (not (compiler-debug-info-enabled?))
+    ""
+    (compiler-backend-debug-location-directive
+      target
+      program-index
+      span-index
+      function
+      (compiler-source-spans-lookup-location
+        spans
+        (compiler-ir-symbol-typed-id function)))))
+
+(define (compiler-backend-debug-instr-location
+  [ctx : CompilerBackendEmissionContext]
+  [instr : CompilerIrInstr]) : String
+  (if (not (compiler-debug-info-enabled?))
+    ""
+    (match (compiler-source-spans-lookup-instr-location
+      ctx.spans
+      ctx.source-function
+      instr)
+      [(CompilerMaybeSourceLocation.Some location)
+        (compiler-backend-debug-location-directive
+          ctx.target
+          ctx.program-index
+          ctx.span-index
+          ctx.source-function
+          (CompilerMaybeSourceLocation.Some location))]
+      [(CompilerMaybeSourceLocation.No)
+        (compiler-backend-debug-function-location
+          ctx.target
+          ctx.program-index
+          ctx.span-index
+          ctx.spans
+          ctx.source-function)])))
+
+(define (compiler-backend-debug-function-end-label
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [function : i64]) : String
+  (if (and
+    (compiler-debug-info-enabled?)
+    (compiler-backend-target-windows? target))
+    (match (compiler-backend-index-function-slot program-index function)
+      [(backend_i64_i64_map.LookupFound function-id)
+        (str_cat.str-cat
+          ".Lcv_func_end_"
+          (string.int->string function-id)
+          ":\n")]
+      [(backend_i64_i64_map.LookupMissing) ""])
+    ""))
+
+(define (compiler-backend-debug-trailer
+  [target : CompilerBackendTarget]
+  [functions : CompilerIrFunctionList]
+  [program-index : CompilerBackendProgramIndex]) : String
+  (if (and
+    (compiler-debug-info-enabled?)
+    (compiler-backend-target-windows? target))
+    (str_cat.str-cat
+      "    .section .debug$S,\"dr\"\n"
+      "    .cv_filechecksums\n"
+      (compiler-backend-debug-cv-functions functions program-index true)
+      "    .text\n")
+    (if (and
+      (compiler-debug-info-enabled?)
+      (compiler-backend-target-linux? target))
+      "    .section .text.typelisp_runtime,\"ax\"\n"
+      "")))
 
 (define (compiler-backend-string-label-suffix [text : String]) : String
   (let
@@ -38132,6 +38443,14 @@
         (compiler-backend-call-leading-arg-uses-var? args rax-var)]
       [_ false])))
 
+(define (compiler-backend-append-located-instr
+  [buf : text_buf.TextBuf]
+  [location : String]
+  [head : String]) : text_buf.TextBuf
+  ;; A .loc/.cv_loc directive is metadata, not an instruction. Keep the
+  ;; emergency save/restore pending until the executable head is appended.
+  (compiler-backend-emergency-append (text_buf.append buf location) head))
+
 (define (compiler-backend-emit-instrs-after-emitted
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -38140,7 +38459,11 @@
   [head : String]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (let
-    [next-buf : TextBuf (compiler-backend-emergency-append buf head)]
+    [next-buf : TextBuf
+      (compiler-backend-append-located-instr
+        buf
+        (compiler-backend-debug-instr-location ctx instr)
+        head)]
     (match instr
       [(CompilerIrInstr.Call dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
@@ -43802,6 +44125,7 @@
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
   (match block
@@ -43826,6 +44150,7 @@
             externs
             program-index
             spans
+            span-index
             func-diag
             use-counts)
           fallthrough
@@ -43882,6 +44207,7 @@
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
@@ -43913,6 +44239,7 @@
           externs
           program-index
           spans
+          span-index
           func-diag
           use-counts)
           [(ResultCompilerBackend.Ok head)
@@ -43934,6 +44261,7 @@
               externs
               program-index
               spans
+              span-index
               func-diag
               use-counts
               (text_buf.append buf (compiler-backend-emergency-wrap head)))]
@@ -43957,6 +44285,7 @@
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
@@ -43987,6 +44316,7 @@
           externs
           program-index
           spans
+          span-index
           func-diag
           use-counts)
           [(ResultCompilerBackend.Ok head)
@@ -44007,6 +44337,7 @@
               externs
               program-index
               spans
+              span-index
               func-diag
               use-counts
               (text_buf.append buf (compiler-backend-emergency-wrap head)))]
@@ -44031,6 +44362,7 @@
         externs
         program-index
         spans
+        span-index
         func-diag
         use-counts
         buf)]))
@@ -44052,6 +44384,7 @@
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
   (compiler-backend-emit-blocks-into
@@ -44071,6 +44404,7 @@
     externs
     program-index
     spans
+    span-index
     func-diag
     use-counts
     (text_buf.empty)))
@@ -50095,6 +50429,10 @@
               ""))]
         [shrinkwrap-candidate? : bool
           (and
+            (not
+              (and
+                (compiler-debug-info-enabled?)
+                (compiler-backend-target-linux? target)))
             shrinkwrap-state-admissible?
             (not (= shrinkwrap-saving-label (compiler-ir-label-none)))
             (not (string.eq shrinkwrap-bare-label ""))
@@ -50318,6 +50656,7 @@
                     externs
                     program-index
                     spans
+                    span-index
                     func-diag
                     use-counts)
                     [(ResultCompilerBackend.Ok body)
@@ -50488,6 +50827,10 @@
                           ;; functions and odd-push XMM functions remain FPO.
                           [fpo-attempt : bool
                             (and
+                              (not
+                                (and
+                                  (compiler-debug-info-enabled?)
+                                  (compiler-backend-target-linux? target)))
                               fpo-target
                               (or
                                 (not
@@ -50701,6 +51044,12 @@
                                     ".globl "
                                     symbol
                                     "\n"
+                                    (compiler-backend-debug-function-location
+                                      target
+                                      program-index
+                                      span-index
+                                      spans
+                                      name)
                                     (if shrinkwrap-active?
                                       (str_cat.str-cat symbol ":\n" "")
                                       selected-prologue)
@@ -50713,6 +51062,15 @@
                                     ;; bytes the assembler will.
                                     (compiler-backend-drop-fallthrough-jumps
                                       emitted-body)
+                                    (compiler-backend-debug-function-end-label
+                                      target
+                                      program-index
+                                      name)
+                                    (if (and
+                                      (compiler-debug-info-enabled?)
+                                      (compiler-backend-target-linux? target))
+                                      "    .cfi_endproc\n"
+                                      "")
                                     (compiler-backend-emit-windows-seh-endproc
                                       target)
                                     "\n")))))))]
@@ -51539,7 +51897,14 @@
                             (string.append
                               (compiler-backend-emit-call-space-add call-space)
                               (string.append
-                                "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
+                                (str_cat.str-cat
+                                  "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
+                                  (if (and
+                                    (compiler-debug-info-enabled?)
+                                    (compiler-backend-target-linux? target))
+                                    "    .cfi_endproc\n"
+                                    "")
+                                  "")
                                 (string.append
                                   (compiler-backend-emit-windows-seh-endproc
                                     target)
@@ -52750,11 +53115,7 @@
     (struct-get index defines)
     (struct-get index externs)
     (struct-get index calls)
-    (if (or
-      (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
-      (string.eq
-        (compiler-ir-symbol-text link-id)
-        "tl_comptime_host_invoke_set"))
+    (if (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
       call-id
       (struct-get index tlci-macro-entry-call-id))))
 
@@ -53848,7 +54209,7 @@
       (cfg compile-profile (compiler-backend-profile-finish "collect"))
       (cfg compile-profile (compiler-backend-profile-start))
       (let
-        [prefix-buf : text_buf.TextBuf
+        [base-prefix-buf : text_buf.TextBuf
           (compiler-backend-emit-program-prefix-buffer
             target
             entry-functions
@@ -53867,6 +54228,14 @@
             globals-buf
             emit-entry
             crt-entry)]
+        [prefix-buf : text_buf.TextBuf
+          (text_buf.append
+            base-prefix-buf
+            (compiler-backend-debug-prefix
+              target
+              entry-functions
+              program-index
+              span-index))]
         [function-input : text_buf.TextBuf
           (if (compiler-backend-assembly-stream-active?)
             (begin
@@ -53913,7 +54282,12 @@
                   externs
                   plan
                   program-index
-                  with-functions)
+                  (text_buf.append
+                    with-functions
+                    (compiler-backend-debug-trailer
+                      target
+                      entry-functions
+                      program-index)))
                   [(ResultCompilerBackendBuffer.Ok with-adapters)
                     (begin
                       (cfg
@@ -56760,15 +57134,6 @@
       [(string.eq name "tl_memchr") true]
       [(string.eq name "tl_tlci_call_image_entry") true]
       [(string.eq name "tl_tlci_call_macro_entry")
-        (compiler-backend-runtime-tail-tlci-macro-entry?
-          (compiler-backend-runtime-plan-tail plan))]
-      [(string.eq name "tl_comptime_host_invoke_set")
-        (compiler-backend-runtime-tail-tlci-macro-entry?
-          (compiler-backend-runtime-plan-tail plan))]
-      [(string.eq name "tl_comptime_host_invoke_entry_ptr")
-        (compiler-backend-runtime-tail-tlci-macro-entry?
-          (compiler-backend-runtime-plan-tail plan))]
-      [(string.eq name "tl_comptime_host_invoke_fn")
         (compiler-backend-runtime-tail-tlci-macro-entry?
           (compiler-backend-runtime-plan-tail plan))]
       [(string.eq name "tl_shift_abort")

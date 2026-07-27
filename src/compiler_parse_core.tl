@@ -991,20 +991,20 @@
       (ci.intern-str (ci.intern-macro-global-source-name-id name-id))]
     [(ci.intern-composite-pair-id? name-id)
       (string.append
-        (ci.intern-str (ci.intern-composite-pair-left-id name-id))
+        (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
         (string.append
           "/"
-          (ci.intern-str (ci.intern-composite-pair-right-id name-id))))]
+          (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))]
     [(ci.intern-composite-triple-id? name-id)
       (string.append
-        (ci.intern-str (ci.intern-composite-triple-left-id name-id))
+        (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
         (string.append
           "/"
           (string.append
-            (ci.intern-str (ci.intern-composite-triple-middle-id name-id))
+            (ci.intern-str (ci.intern-composite-middle-id-unchecked name-id))
             (string.append
               "."
-              (ci.intern-str (ci.intern-composite-triple-right-id name-id))))))]
+              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))))]
     [else (ci.intern-str name-id)]))
 
 (define (compiler-cfg-key-id [name-id : i64]) : i64

@@ -47,34 +47,25 @@
 ;; id. Rendering must decode the latter instead of indexing the intern pool with
 ;; the composite value.
 (define (ast-nominal-name-id-display [name-id : i64]) : String
-  (let
-    [stride : i64 (ci.intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    [triple-offset : i64 (+ stride stride2)]
-    (cond
-      [(and
-          (>= name-id triple-offset)
-          (< name-id (+ triple-offset (* stride2 stride))))
-        (let
-          [raw : i64 (- name-id triple-offset)]
-          [module-id : i64 (/ raw stride2)]
-          [enum-id : i64 (% (/ raw stride) stride)]
-          [variant-id : i64 (% raw stride)]
+  (cond
+    [(ci.intern-composite-triple-id? name-id)
+      (string.append
+        (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
+        (string.append
+          "/"
           (string.append
-            (ci.intern-str module-id)
+            (ci.intern-str (ci.intern-composite-middle-id-unchecked name-id))
             (string.append
-              "/"
-              (string.append
-                (ci.intern-str enum-id)
-                (string.append "." (ci.intern-str variant-id))))))]
-      [(and (>= name-id stride) (< name-id (+ stride stride2)))
-        (let
-          [raw : i64 (- name-id stride)]
-          (string.append
-            (ci.intern-str (/ raw stride))
-            (string.append "/" (ci.intern-str (% raw stride)))))]
-      [(and (>= name-id 0) (< name-id stride)) (ci.intern-str name-id)]
-      [else "<structural-nominal>"])))
+              "."
+              (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))))]
+    [(ci.intern-composite-pair-id? name-id)
+      (string.append
+        (ci.intern-str (ci.intern-composite-left-id-unchecked name-id))
+        (string.append
+          "/"
+          (ci.intern-str (ci.intern-composite-right-id-unchecked name-id))))]
+    [(ci.intern-renderable-id? name-id) (ci.intern-str name-id)]
+    [else "<structural-nominal>"]))
 
 (defstruct AstSourceSpan
   (start-line i32)

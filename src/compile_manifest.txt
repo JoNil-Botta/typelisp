@@ -620,9 +620,9 @@ contains|_tl_doc_test_scan_doc_block:
 contains|_tl_doc_test_supported_item_declaration_question:
 contains|_tl_doc_test_run_source:
 contains|_tl_doc_test_run_source_with_roots:
-contains|_tl_doc_test_check_example:
+contains|_tl_doc_test_check_example_with_roots:
 contains|_tl_doc_test_typecheck_source_with_roots:
-contains|_tl_doc_test_run_examples:
+contains|_tl_doc_test_run_examples_with_roots:
 contains|_tl_doc_test_errors_to_failures:
 contains|_tl_doc_test_run_failure_render:
 contains|_tl_doc_test_run_smoke:
@@ -697,14 +697,14 @@ end
 
 case|selfhost_read|src/read.tl|assembly|skip|direct
 contains|_tl_read:
-contains|_tl_read_form:
+contains|_tl_read_form_result:
 contains|_tl_read_list_result:
 contains|reader: unexpected end of input
 end
 
 decision|src/compiler_tlci_native_producer.tl|normal-backend transformer program generation for tlci native package images (#5213 pivot): captures checked macro sources, desugars eligible bodies (splice templates, array intrinsics, literals, match-on-type-kind) into host-callback entry functions, and maps compiled entries by the compact function-symbol contract; shared by the embedded stdlib image tool and staged for package builds
 decision|src/compiler_tlci_native_image.tl|native-region layout for normal-backend object images (#5213 pivot): renders sections with the ELF encoder, resolves internal relocations in place, assigns loader-bound GOT slots for extern value imports, and records base-relative fixups; main-less helper staged for tlci packaging and loader import binding
-decision|src/tlci_core.tl|tlci v1 container and v1/v2 metadata parse/emit helpers (#2651/#2655/#4869/#2754/#4996): main-less helper module with inline tests, executable smoke coverage, backward-compatible package identity metadata, validated stable-order SPMD-callable specialization records, inspect-command parsing, deterministic multi-entry package image assembly, and the focused code-bearing native macro proof image; package SPMD metadata production/consumption and general macro-source body lowering remain staged
+decision|src/tlci_core.tl|tlci v2 named-import container and independently versioned v1/v2 metadata parse/emit helpers (#2651/#2655/#4869/#2754/#4996/#5847): main-less helper module with inline tests, executable smoke coverage, package identity metadata, validated stable-order SPMD-callable specialization records, inspect-command parsing, deterministic multi-entry package image assembly, and code-bearing named host import validation; package SPMD metadata production/consumption and general macro-source body lowering remain staged
 decision|src/compiler_surface_binary.tl|nominal-free binary primitives for relocatable compiler surface sections (#5519/#5522): keeps section codecs independent of the tlci container nominal universe while preserving the shared byte format
 decision|src/compiler_surface_identity.tl|package-agnostic relocatable identity schema and hydration (#5519/#5522): keys images by package/module set/source hash/compiler build/config and structurally replays source, generated, qualified, dotted, and nominal identities into the active interner
 decision|src/compiler_surface_ast_codec_core.tl|portable frontend AST scalar/list/type codec primitives (#5519/#5522): serializes dense image-local pool references and relocatable identity references without arena handles or pointers

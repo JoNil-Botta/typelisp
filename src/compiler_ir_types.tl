@@ -4666,7 +4666,8 @@
 ;;
 ;; mirroring the Rust pipeline's `SourceSpans`. It maps an IR function's name
 ;;
-;; (including generated global-init functions) to the `AstSourceSpan` of the
+;; (including generated global-init functions) to the source path id and
+;; `AstSourceSpan` of the
 ;;
 ;; source construct that produced it, so backend diagnostics can report a real
 ;;
@@ -4676,8 +4677,25 @@
 ;; rendering is reserved for diagnostics. Entries
 ;;
 ;; are appended in lowering order and lookup scans newest-to-oldest.
+(define compiler-debug-info-enabled : bool
+  false)
+
+(define (compiler-debug-info-set-enabled! [enabled : bool]) : unit
+  (set! compiler-debug-info-enabled enabled))
+
+(define (compiler-debug-info-enabled?) : bool
+  compiler-debug-info-enabled)
+
+(defstruct CompilerSourceLocation
+  (path-id i64)
+  (span AstSourceSpan))
+
+(defenum CompilerMaybeSourceLocation
+  (No)
+  (Some CompilerSourceLocation))
+
 (defenum CompilerSourceSpansEntry
-  (Entry CompilerIrSymbolId AstSourceSpan))
+  (Entry CompilerIrSymbolId i64 AstSourceSpan))
 
 (defstruct CompilerSourceSpansEntryList
   (slots (Array CompilerSourceSpansEntry))
@@ -4694,7 +4712,7 @@
   (Store i64 i64))
 
 (defenum CompilerSourceSpansInstrEntry
-  (Entry CompilerSourceSpansInstrKey AstSourceSpan))
+  (Entry CompilerSourceSpansInstrKey i64 AstSourceSpan))
 
 (defstruct CompilerSourceSpansInstrEntryList
   (slots (Array CompilerSourceSpansInstrEntry))
@@ -4706,6 +4724,13 @@
 (defenum CompilerMaybeSourceSpan
   (No)
   (Some AstSourceSpan))
+
+(define (compiler-maybe-source-location-span
+  [location : CompilerMaybeSourceLocation]) : CompilerMaybeSourceSpan
+  (match location
+    [(CompilerMaybeSourceLocation.No) (CompilerMaybeSourceSpan.No)]
+    [(CompilerMaybeSourceLocation.Some found)
+      (CompilerMaybeSourceSpan.Some (struct-get found span))]))
 
 (define (compiler-source-spans-entry-list-empty) : CompilerSourceSpansEntryList
   (CompilerSourceSpansEntryList (make-array CompilerSourceSpansEntry 0) 0))
@@ -4845,12 +4870,36 @@
   (if (< index 0)
     (CompilerMaybeSourceSpan.No)
     (match (array-ref slots index)
-      [(CompilerSourceSpansInstrEntry.Entry entry-key span)
+      [(CompilerSourceSpansInstrEntry.Entry entry-key _ span)
         (if (compiler-source-spans-instr-key-eq? entry-key key)
           (CompilerMaybeSourceSpan.Some span)
           (compiler-source-spans-instr-entry-array-lookup slots (- index 1) key))])))
 
+(define (compiler-source-spans-instr-entry-array-lookup-location
+  [slots : (Array CompilerSourceSpansInstrEntry)]
+  [index : i64]
+  [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
+  (if (< index 0)
+    (CompilerMaybeSourceLocation.No)
+    (match (array-ref slots index)
+      [(CompilerSourceSpansInstrEntry.Entry entry-key path-id span)
+        (if (compiler-source-spans-instr-key-eq? entry-key key)
+          (CompilerMaybeSourceLocation.Some
+            (CompilerSourceLocation path-id span))
+          (compiler-source-spans-instr-entry-array-lookup-location
+            slots
+            (- index 1)
+            key))])))
+
 (define (compiler-source-spans-instr-entry-list-lookup
+  [entries : CompilerSourceSpansInstrEntryList]
+  [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
+  (compiler-source-spans-instr-entry-array-lookup-location
+    (struct-get entries slots)
+    (- (struct-get entries len) 1)
+    key))
+
+(define (compiler-source-spans-instr-entry-list-lookup-span
   [entries : CompilerSourceSpansInstrEntryList]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceSpan
   (compiler-source-spans-instr-entry-array-lookup
@@ -4870,7 +4919,21 @@
       (CompilerSourceSpans.Spans
         (compiler-source-spans-entry-list-append
           entries
-          (CompilerSourceSpansEntry.Entry name span))
+          (CompilerSourceSpansEntry.Entry name 0 span))
+        instr-entries
+        instr-count)]))
+
+(define (compiler-source-spans-insert-located
+  [spans : CompilerSourceSpans]
+  [name : CompilerIrSymbolId]
+  [path-id : i64]
+  [span : AstSourceSpan]) : CompilerSourceSpans
+  (match spans
+    [(CompilerSourceSpans.Spans entries instr-entries instr-count)
+      (CompilerSourceSpans.Spans
+        (compiler-source-spans-entry-list-append
+          entries
+          (CompilerSourceSpansEntry.Entry name path-id span))
         instr-entries
         instr-count)]))
 
@@ -4881,10 +4944,26 @@
   (if (< index 0)
     (CompilerMaybeSourceSpan.No)
     (match (array-ref slots index)
-      [(CompilerSourceSpansEntry.Entry entry-name span)
+      [(CompilerSourceSpansEntry.Entry entry-name _ span)
         (if (compiler-ir-symbol-id-eq? entry-name name)
           (CompilerMaybeSourceSpan.Some span)
           (compiler-source-spans-entry-array-lookup slots (- index 1) name))])))
+
+(define (compiler-source-spans-entry-array-lookup-location
+  [slots : (Array CompilerSourceSpansEntry)]
+  [index : i64]
+  [name : CompilerIrSymbolId]) : CompilerMaybeSourceLocation
+  (if (< index 0)
+    (CompilerMaybeSourceLocation.No)
+    (match (array-ref slots index)
+      [(CompilerSourceSpansEntry.Entry entry-name path-id span)
+        (if (compiler-ir-symbol-id-eq? entry-name name)
+          (CompilerMaybeSourceLocation.Some
+            (CompilerSourceLocation path-id span))
+          (compiler-source-spans-entry-array-lookup-location
+            slots
+            (- index 1)
+            name))])))
 
 (define (compiler-source-spans-entry-list-lookup
   [entries : CompilerSourceSpansEntryList]
@@ -4893,6 +4972,16 @@
     (struct-get entries slots)
     (- (struct-get entries len) 1)
     name))
+
+(define (compiler-source-spans-lookup-location
+  [spans : CompilerSourceSpans]
+  [name : CompilerIrSymbolId]) : CompilerMaybeSourceLocation
+  (match spans
+    [(CompilerSourceSpans.Spans entries _ _)
+      (compiler-source-spans-entry-array-lookup-location
+        (struct-get entries slots)
+        (- (struct-get entries len) 1)
+        name)]))
 
 (define (compiler-source-spans-lookup
   [spans : CompilerSourceSpans]
@@ -4911,10 +5000,31 @@
         entries
         (compiler-source-spans-instr-entry-list-append
           instr-entries
-          (CompilerSourceSpansInstrEntry.Entry key span))
+          (CompilerSourceSpansInstrEntry.Entry key 0 span))
+        (+ instr-count 1))]))
+
+(define (compiler-source-spans-insert-instr-entry-located
+  [spans : CompilerSourceSpans]
+  [key : CompilerSourceSpansInstrKey]
+  [path-id : i64]
+  [span : AstSourceSpan]) : CompilerSourceSpans
+  (match spans
+    [(CompilerSourceSpans.Spans entries instr-entries instr-count)
+      (CompilerSourceSpans.Spans
+        entries
+        (compiler-source-spans-instr-entry-list-append
+          instr-entries
+          (CompilerSourceSpansInstrEntry.Entry key path-id span))
         (+ instr-count 1))]))
 
 (define (compiler-source-spans-insert-instr
+  [spans : CompilerSourceSpans]
+  [function : i64]
+  [instr : CompilerIrInstr]
+  [span : AstSourceSpan]) : CompilerSourceSpans
+  (compiler-source-spans-insert-instr-unlocated spans function instr span))
+
+(define (compiler-source-spans-insert-instr-unlocated
   [spans : CompilerSourceSpans]
   [function : i64]
   [instr : CompilerIrInstr]
@@ -5140,10 +5250,35 @@
         span)]
     [_ spans]))
 
-(define (compiler-source-spans-lookup-instr
+(define (compiler-source-spans-insert-instr-located
   [spans : CompilerSourceSpans]
   [function : i64]
-  [instr : CompilerIrInstr]) : CompilerMaybeSourceSpan
+  [instr : CompilerIrInstr]
+  [path-id : i64]
+  [span : AstSourceSpan]) : CompilerSourceSpans
+  (let
+    [before : i64 (compiler-source-spans-instr-count spans)]
+    [inserted : CompilerSourceSpans
+      (compiler-source-spans-insert-instr-unlocated spans function instr span)]
+    (if (> (compiler-source-spans-instr-count inserted) before)
+      (match inserted
+        [(CompilerSourceSpans.Spans _ instr-entries _)
+          (match (array-ref
+            (struct-get instr-entries slots)
+            (- (struct-get instr-entries len) 1))
+            [(CompilerSourceSpansInstrEntry.Entry key _ _)
+              (begin
+                (array-set!
+                  (struct-get instr-entries slots)
+                  (- (struct-get instr-entries len) 1)
+                  (CompilerSourceSpansInstrEntry.Entry key path-id span))
+                inserted)])])
+      inserted)))
+
+(define (compiler-source-spans-lookup-instr-location
+  [spans : CompilerSourceSpans]
+  [function : i64]
+  [instr : CompilerIrInstr]) : CompilerMaybeSourceLocation
   (match spans
     [(CompilerSourceSpans.Spans _ instr-entries _)
       (match instr
@@ -5296,16 +5431,17 @@
         [(CompilerIrInstr.CallCAbiStoreResult payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _)
-              (CompilerMaybeSourceSpan.No)])]
+              (CompilerMaybeSourceLocation.No)])]
         [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
-              (CompilerMaybeSourceSpan.No)])]
+              (CompilerMaybeSourceLocation.No)])]
         [(CompilerIrInstr.SpmdCall payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
               (match result
-                [(CompilerIrSpmdCallResult.Unit) (CompilerMaybeSourceSpan.No)]
+                [(CompilerIrSpmdCallResult.Unit)
+                  (CompilerMaybeSourceLocation.No)]
                 [(CompilerIrSpmdCallResult.Value dst _ _)
                   (compiler-source-spans-instr-entry-list-lookup
                     instr-entries
@@ -5319,7 +5455,8 @@
             instr-entries
             (CompilerSourceSpansInstrKey.Value function dst))]
         ;; Tail-indirect is control flow and does not define a destination value.
-        [(CompilerIrInstr.TailCallIndirect _ _ _) (CompilerMaybeSourceSpan.No)]
+        [(CompilerIrInstr.TailCallIndirect _ _ _)
+          (CompilerMaybeSourceLocation.No)]
         [(CompilerIrInstr.Store name _ _)
           (compiler-source-spans-instr-entry-list-lookup
             instr-entries
@@ -5328,7 +5465,14 @@
           (compiler-source-spans-instr-entry-list-lookup
             instr-entries
             (CompilerSourceSpansInstrKey.Value function dst))]
-        [_ (CompilerMaybeSourceSpan.No)])]))
+        [_ (CompilerMaybeSourceLocation.No)])]))
+
+(define (compiler-source-spans-lookup-instr
+  [spans : CompilerSourceSpans]
+  [function : i64]
+  [instr : CompilerIrInstr]) : CompilerMaybeSourceSpan
+  (compiler-maybe-source-location-span
+    (compiler-source-spans-lookup-instr-location spans function instr)))
 
 (define (compiler-source-spans-count [spans : CompilerSourceSpans]) : i64
   (match spans
@@ -5344,6 +5488,55 @@
   [minimum : i64]) : bool
   (match spans
     [(CompilerSourceSpans.Spans _ _ instr-count) (>= instr-count minimum)]))
+
+(define (compiler-source-spans-append-new
+  [base : CompilerSourceSpans]
+  [complete : CompilerSourceSpans]) : CompilerSourceSpans
+  (match base
+    [(CompilerSourceSpans.Spans base-entries base-instr-entries _)
+      (match complete
+        [(CompilerSourceSpans.Spans complete-entries complete-instr-entries _)
+          (let
+            [entry-index : i64 (struct-get base-entries len)]
+            [instr-index : i64 (struct-get base-instr-entries len)]
+            [out : CompilerSourceSpans base]
+            [complete-entry-slots : (Array CompilerSourceSpansEntry)
+              (struct-get complete-entries slots)]
+            [complete-instr-slots : (Array CompilerSourceSpansInstrEntry)
+              (struct-get complete-instr-entries slots)]
+            (begin
+              (while (< entry-index (struct-get complete-entries len))
+                (match (array-ref complete-entry-slots entry-index)
+                  [(CompilerSourceSpansEntry.Entry name path-id span)
+                    (begin
+                      (set!
+                        out
+                        (if (> path-id 0)
+                          (compiler-source-spans-insert-located
+                            out
+                            name
+                            path-id
+                            span)
+                          (compiler-source-spans-insert out name span)))
+                      (set! entry-index (+ entry-index 1)))]))
+              (while (< instr-index (struct-get complete-instr-entries len))
+                (match (array-ref complete-instr-slots instr-index)
+                  [(CompilerSourceSpansInstrEntry.Entry key path-id span)
+                    (begin
+                      (set!
+                        out
+                        (if (> path-id 0)
+                          (compiler-source-spans-insert-instr-entry-located
+                            out
+                            key
+                            path-id
+                            span)
+                          (compiler-source-spans-insert-instr-entry
+                            out
+                            key
+                            span)))
+                      (set! instr-index (+ instr-index 1)))]))
+              out))])]))
 
 (defenum CompilerIrSummary
   (Summary i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64))
@@ -7098,8 +7291,8 @@
       (compiler-source-spans-entry-list-append
         (compiler-source-spans-entry-list-append
           (compiler-source-spans-entry-list-empty)
-          (CompilerSourceSpansEntry.Entry first span1))
-        (CompilerSourceSpansEntry.Entry second span2))]
+          (CompilerSourceSpansEntry.Entry first 0 span1))
+        (CompilerSourceSpansEntry.Entry second 0 span2))]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert
         (compiler-source-spans-insert (compiler-source-spans-empty) one span1)
@@ -7143,6 +7336,7 @@
               grown-entries
               (CompilerSourceSpansEntry.Entry
                 grow
+                0
                 (if (= i 5)
                   span3
                   span1))))

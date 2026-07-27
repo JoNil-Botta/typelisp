@@ -1378,35 +1378,6 @@
       false)
     false))
 
-(define (doc-test-command-output-message
-  [role : String]
-  [target : CompilerBackendTarget]
-  [command : process.ProcessCommand]
-  [output : process.ProcessOutput]) : String
-  (string.append
-    "Error: "
-    (string.append
-      role
-      (string.append
-        " '"
-        (string.append
-          (process.command-executable command)
-          (string.append
-            "' failed for target "
-            (string.append
-              (source-tool-target-name target)
-              (string.append
-                " with status "
-                (string.append
-                  (string.int->string (process.output-status output))
-                  (string.append
-                    "\nstdout:\n"
-                    (string.append
-                      (process.output-stdout output)
-                      (string.append
-                        "\nstderr:\n"
-                        (process.output-stderr output)))))))))))))
-
 (define (doc-test-assemble-and-link-captured
   [target : CompilerBackendTarget]
   [asm-path : String]
@@ -1655,9 +1626,6 @@
 (define (doc-test-example-virtual-path [path : String] [index : i64]) : String
   (string.append path (string.append ".doctest." (string.int->string index))))
 
-(define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-check-example-with-roots path example (doc_svec.new)))
-
 (define (doc-test-typecheck-example-with-roots-and-cfg
   [path : String]
   [example : DocTestExample]
@@ -1742,23 +1710,6 @@
               index
               (doc-test-unexpected-error-message index (box-get diag)))))])))
 
-(define (doc-test-typecheck-package-example-with-roots
-  [path : String]
-  [example : DocTestExample]
-  [stdlib-roots : doc_svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestMaybeFailure
-  (doc-test-typecheck-package-example-with-roots-and-cfg
-    path
-    example
-    stdlib-roots
-    manifest-dir
-    deps
-    (compiler-check-language-cfgs)))
-
-(define (doc-test-typecheck-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-typecheck-example-with-roots path example (doc_svec.new)))
-
 (define (doc-test-check-example-with-roots
   [path : String]
   [example : DocTestExample]
@@ -1766,12 +1717,6 @@
   (if (doc-test-expectation-run? (doc-test-example-expectation example))
     (doc-test-run-runnable-example-with-roots path example stdlib-roots)
     (doc-test-typecheck-example-with-roots path example stdlib-roots)))
-
-(define (doc-test-run-examples
-  [path : String]
-  [examples : doc_example_vec.Vec]
-  [failures : doc_run_failure_vec.Vec]) : doc_run_failure_vec.Vec
-  (doc-test-run-examples-with-roots path examples failures (doc_svec.new)))
 
 (define (doc-test-run-examples-with-roots-from
   [path : String]
@@ -1839,19 +1784,6 @@
             stdlib-roots
             cfgs)]))))
 
-(define (doc-test-typecheck-examples-with-roots
-  [path : String]
-  [examples : doc_example_vec.Vec]
-  [failures : doc_run_failure_vec.Vec]
-  [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
-  (doc-test-typecheck-examples-with-roots-from
-    path
-    examples
-    0
-    failures
-    stdlib-roots
-    (compiler-check-language-cfgs)))
-
 (define (doc-test-typecheck-examples-with-roots-and-cfg
   [path : String]
   [examples : doc_example_vec.Vec]
@@ -1906,23 +1838,6 @@
             manifest-dir
             deps
             cfgs)]))))
-
-(define (doc-test-typecheck-package-examples-with-roots
-  [path : String]
-  [examples : doc_example_vec.Vec]
-  [failures : doc_run_failure_vec.Vec]
-  [stdlib-roots : doc_svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : doc_run_failure_vec.Vec
-  (doc-test-typecheck-package-examples-with-roots-from
-    path
-    examples
-    0
-    failures
-    stdlib-roots
-    manifest-dir
-    deps
-    (compiler-check-language-cfgs)))
 
 (define (doc-test-typecheck-package-examples-with-roots-and-cfg
   [path : String]
@@ -1994,9 +1909,6 @@
             (doc-test-run-failure-list-empty))
           stdlib-roots))]))
 
-(define (doc-test-run-file [path : String]) : DocTestRunReport
-  (doc-test-run-source path (io.read-file path)))
-
 (define (doc-test-run-file-with-roots
   [path : String]
   [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
@@ -2034,20 +1946,6 @@
           stdlib-roots
           cfgs))]))
 
-(define (doc-test-typecheck-package-source-with-roots
-  [path : String]
-  [source : String]
-  [stdlib-roots : doc_svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestRunReport
-  (doc-test-typecheck-package-source-with-roots-and-cfg
-    path
-    source
-    stdlib-roots
-    manifest-dir
-    deps
-    (compiler-check-language-cfgs)))
-
 (define (doc-test-typecheck-package-source-with-roots-and-cfg
   [path : String]
   [source : String]
@@ -2070,14 +1968,6 @@
           manifest-dir
           deps
           cfgs))]))
-
-(define (doc-test-typecheck-file [path : String]) : DocTestRunReport
-  (doc-test-typecheck-source path (io.read-file path)))
-
-(define (doc-test-typecheck-file-with-roots
-  [path : String]
-  [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
-  (doc-test-typecheck-source-with-roots path (io.read-file path) stdlib-roots))
 
 (define (doc-test-typecheck-file-with-roots-and-cfg
   [path : String]
@@ -3111,6 +3001,9 @@ typecheck: return type mismatch"))]
     (unless
       (source-tool-windows-stack-reserve-smoke-ok?)
       (return (io.panic "source-tool: windows stack reserve smoke regressed")))
+    (unless
+      (source-tool-windows-debug-linker-smoke-ok?)
+      (return (io.panic "source-tool: windows debug linker smoke regressed")))
     (unless
       (source-tool-linux-direct-object-linkability-smoke-ok?)
       (return (io.panic "source-tool: linux direct object smoke regressed")))

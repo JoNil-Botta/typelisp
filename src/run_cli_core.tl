@@ -176,6 +176,20 @@
                 (ResultRunCliConfig.Err (run-cli-unknown-opt-level value)))])]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
+            [(or (string.eq current "--debug") (string.eq current "-g"))
+              (begin
+                (compiler-debug-info-set-enabled! true)
+                (run-cli-parse-options
+                  (+ idx 1)
+                  count
+                  source
+                  target
+                  mode
+                  stdlib-roots
+                  cfgs
+                  runtime-args
+                  opt-level
+                  link-inputs))]
             [(string.eq current "--")
               (ResultRunCliConfig.Ok
                 (RunCliConfig.Config
@@ -501,6 +515,8 @@
 ;; first argument after any subcommand name). The bare form builds and executes
 ;; in-process.
 (define (run-run-from [start : i64] [count : i64] [producer-identity : String]) : i64
-  (if (and (> count start) (string.eq (io.arg start) "--direct"))
-    (run-direct-from (+ start 1) count producer-identity)
-    (run-direct-from start count producer-identity)))
+  (begin
+    (compiler-debug-info-set-enabled! false)
+    (if (and (> count start) (string.eq (io.arg start) "--direct"))
+      (run-direct-from (+ start 1) count producer-identity)
+      (run-direct-from start count producer-identity))))

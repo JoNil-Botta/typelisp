@@ -938,16 +938,6 @@
 (define (source-tool-windows-direct-object-enabled?) : bool
   (source-tool-env-command-set? (source-tool-windows-direct-object-env-name)))
 
-(define (source-tool-windows-direct-object-extern-linkable?
-  [name : String]
-  [kind : cobj.CompilerObjectSymbolKind]) : bool
-  (compiler-windows-coff-extern-linkable? name kind))
-
-(define (source-tool-windows-direct-object-relocation-target-linkable?
-  [symbols : cobj.CompilerObjectSymbolList]
-  [target : String]) : bool
-  (compiler-windows-coff-relocation-target-linkable? symbols target))
-
 (define (source-tool-windows-direct-object-relocations-linkable?
   [symbols : cobj.CompilerObjectSymbolList]
   [relocs : cobj.CompilerObjectRelocationList]) : bool
@@ -1226,25 +1216,30 @@
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  (process.args-cons
-    "/NOLOGO"
-    (process.args-cons
-      obj-path
+  (let
+    [args : process.ProcessStringList
       (process.args-cons
-        (string.append "/OUT:" bin-path)
+        obj-path
         (process.args-cons
-          "/SUBSYSTEM:CONSOLE"
+          (string.append "/OUT:" bin-path)
           (process.args-cons
-            "/ENTRY:_tl_start"
+            "/SUBSYSTEM:CONSOLE"
             (process.args-cons
-              "/NODEFAULTLIB"
+              "/ENTRY:_tl_start"
               (process.args-cons
-                "/DYNAMICBASE:NO"
+                "/NODEFAULTLIB"
                 (process.args-cons
-                  (source-tool-windows-stack-reserve-arg)
-                  (process.args-append
-                    (source-tool-link-inputs-windows-args link-inputs)
-                    (source-tool-windows-link-libs)))))))))))
+                  "/DYNAMICBASE:NO"
+                  (process.args-cons
+                    (source-tool-windows-stack-reserve-arg)
+                    (process.args-append
+                      (source-tool-link-inputs-windows-args link-inputs)
+                      (source-tool-windows-link-libs)))))))))]
+    (process.args-cons
+      "/NOLOGO"
+      (if (compiler-debug-info-enabled?)
+        (process.args-cons "/DEBUG" args)
+        args))))
 
 (define (source-tool-windows-stack-reserve-smoke-ok?) : bool
   (source-tool-string-list-contains?
@@ -1253,6 +1248,23 @@
       "output.exe"
       (source-tool-link-inputs-empty))
     (source-tool-windows-stack-reserve-arg)))
+
+(define (source-tool-windows-debug-linker-smoke-ok?) : bool
+  (let
+    [previous : bool (compiler-debug-info-enabled?)]
+    [ok : bool false]
+    (begin
+      (compiler-debug-info-set-enabled! true)
+      (set!
+        ok
+        (source-tool-string-list-contains?
+          (source-tool-windows-linker-args
+            "input.obj"
+            "output.exe"
+            (source-tool-link-inputs-empty))
+          "/DEBUG"))
+      (compiler-debug-info-set-enabled! previous)
+      ok)))
 
 (define (source-tool-linux-direct-object-linkability-smoke-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
@@ -1566,6 +1578,7 @@
   [obj-path : String]
   [bin-path : String]) : SourceToolDirectObjectStatus
   (if (and
+    (not (compiler-debug-info-enabled?))
     (source-tool-windows-direct-object-enabled?)
     (compiler-backend-target-windows? target))
     (match (source-tool-emit-windows-coff-object
@@ -1599,6 +1612,7 @@
   [obj-path : String]
   [bin-path : String]) : SourceToolDirectObjectStatus
   (if (and
+    (not (compiler-debug-info-enabled?))
     (source-tool-linux-direct-object-enabled?)
     (compiler-backend-target-linux? target))
     (match (source-tool-emit-linux-elf-object
@@ -1631,6 +1645,7 @@
   [obj-path : String]
   [bin-path : String]) : SourceToolDirectObjectStatus
   (if (and
+    (not (compiler-debug-info-enabled?))
     (source-tool-windows-direct-object-enabled?)
     (compiler-backend-target-windows? target))
     (match (source-tool-emit-lowered-windows-coff-object
@@ -1661,6 +1676,7 @@
   [obj-path : String]
   [bin-path : String]) : SourceToolDirectObjectStatus
   (if (and
+    (not (compiler-debug-info-enabled?))
     (source-tool-linux-direct-object-enabled?)
     (compiler-backend-target-linux? target))
     (match (source-tool-emit-lowered-linux-elf-object

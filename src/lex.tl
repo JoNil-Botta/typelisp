@@ -95,32 +95,6 @@
       [(and (>= code 65) (<= code 70)) (+ 10 (- code 65))]
       [else 0])))
 
-;; `c` is an ASCII letter.
-(define (is-alpha [c : char]) : bool
-  (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
-
-;; `c` is one of TypeLisp's symbol punctuation chars - the non-alphanumeric
-;; characters that may appear in a symbol/operator name:
-;;   `-` `+` `*` `/` `%` `&` `?` `!` `>` `<` `=` `:` `_`
-;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
-;; `token.Token.Sym` rather than as separate operator tokens.
-(define (is-symbol-punct [c : char]) : bool
-  (or
-    (= c '-')
-    (= c '+')
-    (= c '*')
-    (= c '/')
-    (= c '?')
-    (= c '!')
-    (= c '>')
-    (= c '<')
-    (= c '=')
-    (= c '&')
-    (= c ':')
-    (= c '_')
-    (= c '.')
-    (= c '%')))
-
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
 (define (is-symbol-char [c : char]) : bool
@@ -413,11 +387,6 @@
         (result_lex_i64.Ok j)
         (result_lex_i64.Err message)))))
 
-(define (scan-str-end [src : String] [start : i64] [n : i64]) : i64
-  (match (scan-str-end-result src start n)
-    [(result_lex_i64.Ok end) end]
-    [(result_lex_i64.Err message) (io.panic message)]))
-
 (define (string-escape-piece [src : String] [idx : i64]) : String
   (let
     [c : char (string.string-ref src idx)]
@@ -576,18 +545,11 @@
     [(ResultLexCheck.Err err)
       (result_lex_i64.Err (token.source-error-message err))]))
 
-;; Lex `src`, recording each emitted `token.Token` value into `toks` (which must be
-;; large enough to hold every token plus the `token.Token.End` sentinel) and returning the
-;; token count. Compatibility callers use this panic-on-error path through
-;; `lex`; recoverable callers use `lex-into-spanned-result` directly.
-(define (lex-into [src : String] [toks : (Array token.Token)]) : i64
-  (lex-into-spanned src toks (make-array i64 (array-length toks))))
-
 ;; Core scanner. Fills `toks` with the token stream and, in parallel, records
 ;; each token's starting byte index into `starts[count]`. The plain token
-;; path uses this through `lex-into`; `lex-spanned-result` uses a direct scanner
-;; that records line/column positions while tokenizing. Returns the token count
-;; (excluding the trailing `token.Token.End`).
+;; path uses this through `lex-result`; `lex-spanned-result` uses a direct
+;; scanner that records line/column positions while tokenizing. Returns the
+;; token count (excluding the trailing `token.Token.End`).
 (define (lex-into-spanned-result
   [src : String]
   [toks : (Array token.Token)]
@@ -758,14 +720,6 @@
           (array-set! toks count token.Token.End)
           (ResultLexIntoSpanned.Ok count))
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
-
-(define (lex-into-spanned
-  [src : String]
-  [toks : (Array token.Token)]
-  [starts : (Array i64)]) : i64
-  (match (lex-into-spanned-result src toks starts)
-    [(ResultLexIntoSpanned.Ok count) count]
-    [(ResultLexIntoSpanned.Err err) (io.panic (token.source-error-message err))]))
 
 (defenum LexPosition
   (Position i64 i64))
@@ -1218,11 +1172,6 @@
     (match (lex-into-spanned-tokens-result src stoks)
       [(ResultLexIntoSpanned.Ok count) (ResultSpannedTokens.Ok stoks)]
       [(ResultLexIntoSpanned.Err err) (ResultSpannedTokens.Err err)])))
-
-(define (lex-spanned [src : String]) : (Array token.SpannedToken)
-  (match (lex-spanned-result src)
-    [(ResultSpannedTokens.Ok toks) toks]
-    [(ResultSpannedTokens.Err err) (io.panic (token.source-error-message err))]))
 
 (define (lex-percent-symbol-ok?) : bool
   (match (lex-result "(% n 16)")

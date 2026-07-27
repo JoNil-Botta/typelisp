@@ -30,8 +30,8 @@
 ;; - Builtin IDs are ordinary intern IDs installed for the current table.
 ;;   Hygiene, dotted, and module-qualified helpers preserve or explicitly create
 ;;   IDs and their metadata instead of recovering identity from String storage.
-;; - Negative sentinels and packed composite registry/environment keys are not
-;;   intern IDs and must never be passed to `intern-str`.
+;; - Negative sentinels and opaque structural registry/environment handles are
+;;   not intern IDs and must never be passed to `intern-str`.
 ;; - An ID is valid only while its owning `InternCompatState` table and generation
 ;;   are installed. Reset and reset-to-mark invalidate removed source IDs and all
 ;;   generated IDs. Equal numeric IDs in two driver states do not imply equal
@@ -56,6 +56,27 @@
 
 (unsafe
   (extern (tl_region_reset [arg0 : i64]) : unit))
+
+(unsafe
+  (extern (intern-runtime-copy-bytes!
+    [dst : (MutPtr u8)]
+    [src : (Ptr u8)]
+    [count : i64]) : unit (:symbol "tl_memcpy")))
+
+(defmacro (intern-i64-array-address [items : Expr]) : u64
+  `(unsafe
+    (ptr->int (ptr-cast (array-data ,items) : (Ptr u8)))))
+
+(defmacro (intern-active-i64-ref [address : Expr] [index : Expr]) : i64
+  `(unsafe
+    (ptr-read (ptr-offset (int->ptr ,address : (Ptr i64)) ,index))))
+
+(defmacro (intern-active-i64-set!
+  [address : Expr]
+  [index : Expr]
+  [value : Expr]) : unit
+  `(unsafe
+    (ptr-write! (ptr-offset (int->ptr ,address : (MutPtr i64)) ,index) ,value)))
 
 (define (intern-private-string-length [text : String]) : i64
   (__tl_string_length text))
@@ -143,61 +164,157 @@
 (define (intern-capacity) : i64
   131072)
 
-;; Structural compound identities share the interner's fixed stride but are
-;; not entries in the string pool. Keep their encoding at this lowest layer so
-;; parsers, CTFE, and symbol registries can pass the same IDs without recovery.
+;; Structural compound identities are session-owned canonical records, not
+;; entries in the string pool. Keep their compatibility raw-handle adapters at
+;; this lowest layer while typed boundaries migrate outward.
 (define (intern-composite-pair-id [left-id : i64] [right-id : i64]) : i64
-  (+ (intern-capacity) (+ (* left-id (intern-capacity)) right-id)))
-
-(define (intern-composite-pair-id? [id : i64]) : bool
   (let
-    [stride : i64 (intern-capacity)]
-    (and (>= id stride) (< id (+ stride (* stride stride))))))
+    [cache-slot : i64
+      (bit-and
+        (bit-xor right-id (* left-id 6364136223846793005))
+        (- (intern-structural-pair-cache-capacity) 1))]
+    [cached-raw : i64
+      (intern-active-i64-ref
+        intern-active-structural-cache-raws-address
+        cache-slot)]
+    (begin
+      (if (> cached-raw 0)
+        (let
+          [cached-index : i64
+            (- (bit-and cached-raw (intern-structural-key-index-mask)) 1)]
+          (if (=
+            (intern-active-i64-ref
+              intern-active-structural-lefts-address
+              cached-index)
+            left-id)
+            (when
+              (=
+                (intern-active-i64-ref
+                  intern-active-structural-rights-address
+                  cached-index)
+                right-id)
+              (return cached-raw))
+            unit))
+        unit)
+      (let
+        [raw : i64
+          (intern-structural-table-intern
+            intern-structural-table-cell
+            intern-persistent-arena
+            (intern-structural-kind-pair)
+            left-id
+            0
+            right-id)]
+        (begin
+          (intern-active-i64-set!
+            intern-active-structural-cache-raws-address
+            cache-slot
+            raw)
+          (set!
+            intern-active-structural-len
+            (struct-get (array-ref intern-structural-table-cell 0) len))
+          raw)))))
 
-(define (intern-composite-pair-left-id [id : i64]) : i64
-  (/ (- id (intern-capacity)) (intern-capacity)))
+(defmacro (intern-composite-pair-id? [id : Expr]) : bool
+  `(let
+    [structural-id : i64 ,id]
+    (and
+      (> structural-id intern-active-structural-prefix)
+      (<=
+        structural-id
+        (+ intern-active-structural-prefix intern-active-structural-len)))))
 
-(define (intern-composite-pair-right-id [id : i64]) : i64
-  (% (- id (intern-capacity)) (intern-capacity)))
+(defmacro (intern-composite-left-id-unchecked [id : Expr]) : i64
+  `(intern-active-i64-ref
+    intern-active-structural-lefts-address
+    (- (bit-and ,id (intern-structural-key-index-mask)) 1)))
+
+(defmacro (intern-composite-middle-id-unchecked [id : Expr]) : i64
+  `(intern-active-i64-ref
+    intern-active-structural-middles-address
+    (- (bit-and ,id (intern-structural-key-index-mask)) 1)))
+
+(defmacro (intern-composite-right-id-unchecked [id : Expr]) : i64
+  `(intern-active-i64-ref
+    intern-active-structural-rights-address
+    (- (bit-and ,id (intern-structural-key-index-mask)) 1)))
 
 (define (intern-composite-triple-id
   [left-id : i64]
   [middle-id : i64]
   [right-id : i64]) : i64
   (let
-    [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (+
-      (+ stride stride2)
-      (+ (* left-id stride2) (+ (* middle-id stride) right-id)))))
+    [cache-slot : i64
+      (+
+        (intern-structural-pair-cache-capacity)
+        (bit-and
+          (bit-xor
+            right-id
+            (bit-xor
+              (* left-id 6364136223846793005)
+              (* middle-id 1442695040888963407)))
+          (- (intern-structural-triple-cache-capacity) 1)))]
+    [cached-raw : i64
+      (intern-active-i64-ref
+        intern-active-structural-cache-raws-address
+        cache-slot)]
+    (begin
+      (if (> cached-raw 0)
+        (let
+          [cached-index : i64
+            (- (bit-and cached-raw (intern-structural-key-index-mask)) 1)]
+          (if (=
+            (intern-active-i64-ref
+              intern-active-structural-lefts-address
+              cached-index)
+            left-id)
+            (if (=
+              (intern-active-i64-ref
+                intern-active-structural-middles-address
+                cached-index)
+              middle-id)
+              (when
+                (=
+                  (intern-active-i64-ref
+                    intern-active-structural-rights-address
+                    cached-index)
+                  right-id)
+                (return cached-raw))
+              unit)
+            unit))
+        unit)
+      (let
+        [raw : i64
+          (intern-structural-table-intern
+            intern-structural-table-cell
+            intern-persistent-arena
+            (intern-structural-kind-triple)
+            left-id
+            middle-id
+            right-id)]
+        (begin
+          (intern-active-i64-set!
+            intern-active-structural-cache-raws-address
+            cache-slot
+            raw)
+          (set!
+            intern-active-structural-len
+            (struct-get (array-ref intern-structural-table-cell 0) len))
+          raw)))))
 
-(define (intern-composite-triple-id? [id : i64]) : bool
-  (let
-    [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    [offset : i64 (+ stride stride2)]
-    (and (>= id offset) (< id (+ offset (* stride2 stride))))))
+(defmacro (intern-composite-triple-id? [id : Expr]) : bool
+  `(let
+    [structural-id : i64 ,id]
+    [triple-prefix : i64
+      (+ intern-active-structural-prefix (intern-structural-key-kind-stride))]
+    (and
+      (> structural-id triple-prefix)
+      (<= structural-id (+ triple-prefix intern-active-structural-len)))))
 
-(define (intern-composite-triple-left-id [id : i64]) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    [offset : i64 (+ stride stride2)]
-    (/ (- id offset) stride2)))
-
-(define (intern-composite-triple-middle-id [id : i64]) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    [offset : i64 (+ stride stride2)]
-    (% (/ (- id offset) stride) stride)))
-
-(define (intern-composite-triple-right-id [id : i64]) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    [offset : i64 (+ stride stride2)]
-    (% (- id offset) stride)))
+(defmacro (intern-renderable-id? [id : Expr]) : bool
+  `(let
+    [name-id : i64 ,id]
+    (and (>= name-id 0) (< name-id (intern-capacity)))))
 
 ;; Quasiquoted source symbols keep their parsed identity without allocating a
 ;; second intern entry. This range sits above the compiler's other structural
@@ -328,6 +445,8 @@
   1)
 (define intern-next-generation : i64
   1)
+(define intern-next-structural-owner : i64
+  1)
 
 (define (intern-pool-len) : i64
   intern-pool-count)
@@ -350,6 +469,397 @@
     (begin
       (set! intern-next-generation (+ intern-next-generation 1))
       generation)))
+
+(defstruct InternStructuralTable
+  (owner i64)
+  (kinds (Array u8))
+  (lefts (Array i64))
+  (middles (Array i64))
+  (rights (Array i64))
+  (map-slots (Array i64))
+  (structural-cache-raws (Array i64))
+  (len i64))
+
+(define (intern-structural-key-base) : i64
+  4611686018427387904)
+
+(define (intern-structural-key-owner-stride) : i64
+  2147483648)
+
+(define (intern-structural-key-kind-stride) : i64
+  1073741824)
+
+(define (intern-structural-key-index-mask) : i64
+  1073741823)
+
+(define (intern-structural-kind-pair) : i64
+  1)
+
+(define (intern-structural-kind-triple) : i64
+  2)
+
+(define (intern-structural-pair-cache-capacity) : i64
+  131072)
+
+(define (intern-structural-triple-cache-capacity) : i64
+  65536)
+
+(define (intern-structural-cache-capacity) : i64
+  (+
+    (intern-structural-pair-cache-capacity)
+    (intern-structural-triple-cache-capacity)))
+
+(define (intern-structural-owner-allocate!) : i64
+  (let
+    [owner : i64 intern-next-structural-owner]
+    (begin
+      (if (>= owner (intern-structural-key-owner-stride))
+        (tl_oob_abort)
+        unit)
+      (set! intern-next-structural-owner (+ owner 1))
+      owner)))
+
+(define (intern-structural-table-new) : InternStructuralTable
+  (InternStructuralTable
+    (intern-structural-owner-allocate!)
+    (make-array u8 256)
+    (make-array i64 256)
+    (make-array i64 256)
+    (make-array i64 256)
+    (make-array i64 512)
+    (make-array i64 (intern-structural-cache-capacity))
+    0))
+
+(define (intern-structural-table-cell-new-in-arena [arena : i64]) : (Array
+    InternStructuralTable)
+  (let
+    [previous-arena : i64 (tl_arena_current)]
+    (begin
+      (unsafe
+        (tl_arena_set arena))
+      (let
+        [table : InternStructuralTable (intern-structural-table-new)]
+        (begin
+          (unsafe
+            (tl_arena_set previous-arena))
+          (make-array table))))))
+
+(define intern-persistent-arena : i64
+  (tl_arena_make))
+(define intern-persistent-arena-floor-mark : i64
+  0)
+
+;; Structural records have exactly the intern session's lifetime, so they share
+;; its persistent arena instead of reserving another arena per compiler state.
+;; Persistent full/floor resets reinitialize the table before use; logical
+;; intern resets clear and re-owner the retained buffers.
+(define intern-structural-table-cell : (Array InternStructuralTable)
+  (intern-structural-table-cell-new-in-arena intern-persistent-arena))
+(define intern-active-structural-prefix : i64
+  (+
+    (intern-structural-key-base)
+    (*
+      (struct-get (array-ref intern-structural-table-cell 0) owner)
+      (intern-structural-key-owner-stride))))
+(define intern-active-structural-owner : i64
+  (struct-get (array-ref intern-structural-table-cell 0) owner))
+(define intern-active-structural-len : i64
+  0)
+(define intern-active-structural-lefts-address : u64
+  (intern-i64-array-address
+    (struct-get (array-ref intern-structural-table-cell 0) lefts)))
+(define intern-active-structural-middles-address : u64
+  (intern-i64-array-address
+    (struct-get (array-ref intern-structural-table-cell 0) middles)))
+(define intern-active-structural-rights-address : u64
+  (intern-i64-array-address
+    (struct-get (array-ref intern-structural-table-cell 0) rights)))
+(define intern-active-structural-cache-raws-address : u64
+  (intern-i64-array-address
+    (struct-get
+      (array-ref intern-structural-table-cell 0)
+      structural-cache-raws)))
+
+(define (intern-active-structural-sync! [cell : (Array InternStructuralTable)]) : unit
+  (let
+    [table : InternStructuralTable (array-ref cell 0)]
+    (begin
+      (set!
+        intern-active-structural-prefix
+        (+
+          (intern-structural-key-base)
+          (* (struct-get table owner) (intern-structural-key-owner-stride))))
+      (set! intern-active-structural-owner (struct-get table owner))
+      (set! intern-active-structural-len (struct-get table len))
+      (set!
+        intern-active-structural-lefts-address
+        (intern-i64-array-address (struct-get table lefts)))
+      (set!
+        intern-active-structural-middles-address
+        (intern-i64-array-address (struct-get table middles)))
+      (set!
+        intern-active-structural-rights-address
+        (intern-i64-array-address (struct-get table rights)))
+      (set!
+        intern-active-structural-cache-raws-address
+        (intern-i64-array-address (struct-get table structural-cache-raws))))))
+
+(defmacro (intern-structural-raw-for-index
+  [owner : Expr]
+  [kind : Expr]
+  [index : Expr]) : i64
+  `(+
+    (intern-structural-key-base)
+    (+
+      (* ,owner (intern-structural-key-owner-stride))
+      (+ (* (- ,kind 1) (intern-structural-key-kind-stride)) (+ ,index 1)))))
+
+(defmacro (intern-structural-hash
+  [kind : Expr]
+  [left : Expr]
+  [middle : Expr]
+  [right : Expr]) : i64
+  `(bit-xor
+    (* (+ ,kind 1) 6364136223846793005)
+    (bit-xor
+      (* (+ ,left 17) 1442695040888963407)
+      (bit-xor
+        (* (+ ,middle 31) 2862933555777941757)
+        (* (+ ,right 47) 3202034522624059733)))))
+
+(defmacro (intern-structural-table-first-slot
+  [table : Expr]
+  [kind : Expr]
+  [left : Expr]
+  [middle : Expr]
+  [right : Expr]) : i64
+  `(bit-and
+    (intern-structural-hash ,kind ,left ,middle ,right)
+    (- (array-length (struct-get ,table map-slots)) 1)))
+
+(defmacro (intern-structural-table-record-matches?
+  [table : Expr]
+  [index : Expr]
+  [kind : Expr]
+  [left : Expr]
+  [middle : Expr]
+  [right : Expr]) : bool
+  `(and
+    (= (cast (array-ref (struct-get ,table kinds) ,index) : i64) ,kind)
+    (= (array-ref (struct-get ,table lefts) ,index) ,left)
+    (= (array-ref (struct-get ,table middles) ,index) ,middle)
+    (= (array-ref (struct-get ,table rights) ,index) ,right)))
+
+(define (intern-structural-table-map-put-index!
+  [table : InternStructuralTable]
+  [index : i64]) : unit
+  (let
+    [kind : i64 (cast (array-ref (struct-get table kinds) index) : i64)]
+    [left : i64 (array-ref (struct-get table lefts) index)]
+    [middle : i64 (array-ref (struct-get table middles) index)]
+    [right : i64 (array-ref (struct-get table rights) index)]
+    [slots : (Array i64) (struct-get table map-slots)]
+    [slots-address : u64 (intern-i64-array-address slots)]
+    [mask : i64 (- (array-length slots) 1)]
+    [slot : i64
+      (intern-structural-table-first-slot table kind left middle right)]
+    (begin
+      (while (not (= (intern-active-i64-ref slots-address slot) 0))
+        (set! slot (bit-and (+ slot 1) mask)))
+      (intern-active-i64-set! slots-address slot (+ index 1)))))
+
+(defmacro (intern-structural-copy-array!
+  [from : Expr]
+  [to : Expr]
+  [bytes : Expr]) : unit
+  `(unsafe
+    (intern-runtime-copy-bytes!
+      (ptr-cast (array-data ,to) : (MutPtr u8))
+      (ptr-cast (array-data ,from) : (Ptr u8))
+      ,bytes)))
+
+(define (intern-structural-table-grow-records!
+  [cell : (Array InternStructuralTable)]
+  [arena : i64]) : unit
+  (let
+    [table : InternStructuralTable (array-ref cell 0)]
+    [count : i64 (struct-get table len)]
+    [old-capacity : i64 (array-length (struct-get table kinds))]
+    [new-capacity : i64 (* old-capacity 2)]
+    [previous-arena : i64 (tl_arena_current)]
+    (begin
+      (unsafe
+        (tl_arena_set arena))
+      (let
+        [next-kinds : (Array u8) (make-array u8 new-capacity)]
+        [next-lefts : (Array i64) (make-array i64 new-capacity)]
+        [next-middles : (Array i64) (make-array i64 new-capacity)]
+        [next-rights : (Array i64) (make-array i64 new-capacity)]
+        (begin
+          (unsafe
+            (tl_arena_set previous-arena))
+          (intern-structural-copy-array!
+            (struct-get table kinds)
+            next-kinds
+            count)
+          (intern-structural-copy-array!
+            (struct-get table lefts)
+            next-lefts
+            (* count 8))
+          (intern-structural-copy-array!
+            (struct-get table middles)
+            next-middles
+            (* count 8))
+          (intern-structural-copy-array!
+            (struct-get table rights)
+            next-rights
+            (* count 8))
+          (set! (struct-get table kinds) next-kinds)
+          (set! (struct-get table lefts) next-lefts)
+          (set! (struct-get table middles) next-middles)
+          (set! (struct-get table rights) next-rights)
+          (if (= (struct-get table owner) intern-active-structural-owner)
+            (begin
+              (set!
+                intern-active-structural-lefts-address
+                (intern-i64-array-address next-lefts))
+              (set!
+                intern-active-structural-middles-address
+                (intern-i64-array-address next-middles))
+              (set!
+                intern-active-structural-rights-address
+                (intern-i64-array-address next-rights)))
+            unit)
+          (array-set! cell 0 table))))))
+
+(define (intern-structural-table-grow-map!
+  [cell : (Array InternStructuralTable)]
+  [arena : i64]) : unit
+  (let
+    [table : InternStructuralTable (array-ref cell 0)]
+    [new-capacity : i64 (* (array-length (struct-get table map-slots)) 2)]
+    [previous-arena : i64 (tl_arena_current)]
+    (begin
+      (unsafe
+        (tl_arena_set arena))
+      (let
+        [next-slots : (Array i64) (make-array i64 new-capacity)]
+        (begin
+          (unsafe
+            (tl_arena_set previous-arena))
+          (set! (struct-get table map-slots) next-slots)
+          (let
+            [index : i64 0]
+            (while (< index (struct-get table len))
+              (begin
+                (intern-structural-table-map-put-index! table index)
+                (set! index (+ index 1)))))
+          (array-set! cell 0 table))))))
+
+(define (intern-structural-table-intern
+  [cell : (Array InternStructuralTable)]
+  [arena : i64]
+  [kind : i64]
+  [left : i64]
+  [middle : i64]
+  [right : i64]) : i64
+  (let
+    [table : InternStructuralTable (array-ref cell 0)]
+    [slots : (Array i64) (struct-get table map-slots)]
+    [slots-address : u64 (intern-i64-array-address slots)]
+    [mask : i64 (- (array-length slots) 1)]
+    [slot : i64
+      (intern-structural-table-first-slot table kind left middle right)]
+    [searching? : bool true]
+    [found : i64 -1]
+    (begin
+      (while searching?
+        (let
+          [encoded : i64 (intern-active-i64-ref slots-address slot)]
+          (cond
+            [(= encoded 0) (set! searching? false)]
+            [(intern-structural-table-record-matches?
+                table
+                (- encoded 1)
+                kind
+                left
+                middle
+                right)
+              (begin
+                (set! found (- encoded 1))
+                (set! searching? false))]
+            [else (set! slot (bit-and (+ slot 1) mask))])))
+      (if (>= found 0)
+        (intern-structural-raw-for-index (struct-get table owner) kind found)
+        (begin
+          (if (>=
+            (struct-get table len)
+            (array-length (struct-get table kinds)))
+            (intern-structural-table-grow-records! cell arena)
+            unit)
+          (if (>=
+            (* (+ (struct-get table len) 1) 4)
+            (* (array-length (struct-get table map-slots)) 3))
+            (intern-structural-table-grow-map! cell arena)
+            unit)
+          (let
+            [next-table : InternStructuralTable (array-ref cell 0)]
+            [index : i64 (struct-get next-table len)]
+            (begin
+              (if (>= index (intern-structural-key-index-mask))
+                (tl_oob_abort)
+                unit)
+              (array-set! (struct-get next-table kinds) index (cast kind : u8))
+              (array-set! (struct-get next-table lefts) index left)
+              (array-set! (struct-get next-table middles) index middle)
+              (array-set! (struct-get next-table rights) index right)
+              (set! (struct-get next-table len) (+ index 1))
+              (intern-structural-table-map-put-index! next-table index)
+              (array-set! cell 0 next-table)
+              (intern-structural-raw-for-index
+                (struct-get next-table owner)
+                kind
+                index))))))))
+
+(define (intern-structural-table-reset! [cell : (Array InternStructuralTable)]) : unit
+  (let
+    [table : InternStructuralTable (array-ref cell 0)]
+    [slots : (Array i64) (struct-get table map-slots)]
+    [structural-cache-raws : (Array i64)
+      (struct-get table structural-cache-raws)]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length slots))
+        (begin
+          (array-set! slots index 0)
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index (array-length structural-cache-raws))
+        (begin
+          (array-set! structural-cache-raws index 0)
+          (set! index (+ index 1))))
+      (set! (struct-get table owner) (intern-structural-owner-allocate!))
+      (set! (struct-get table len) 0)
+      (array-set! cell 0 table))))
+
+(define (intern-structural-table-reinitialize-in-arena!
+  [cell : (Array InternStructuralTable)]
+  [arena : i64]) : unit
+  (let
+    [previous-arena : i64 (tl_arena_current)]
+    (begin
+      (unsafe
+        (tl_arena_set arena))
+      (let
+        [next : InternStructuralTable (intern-structural-table-new)]
+        (begin
+          (unsafe
+            (tl_arena_set previous-arena))
+          (array-set! cell 0 next))))))
+
+(define (intern-structural-session-reset!
+  [table-cell : (Array InternStructuralTable)]) : unit
+  (intern-structural-table-reset! table-cell))
 
 ;; Bucket IDs use the compact encoded `InternId` representation. The pool owns
 ;; each spelling, so the hash table needs only identity and hash lanes rather
@@ -374,10 +884,6 @@
   -1)
 (define intern-name-cache-ready : bool
   false)
-(define intern-persistent-arena : i64
-  (tl_arena_make))
-(define intern-persistent-arena-floor-mark : i64
-  0)
 
 ;; Capability for rendering an id retained across an intern-state boundary.
 ;; It is captured by the few consumers that outlive the currently installed
@@ -423,7 +929,8 @@
   (map-ready (Array bool))
   (reset-generation (Array i64))
   (persistent-arena (Array i64))
-  (persistent-arena-floor-mark (Array i64)))
+  (persistent-arena-floor-mark (Array i64))
+  (structural-table-cell (Array InternStructuralTable)))
 
 ;; An immutable source-name lookup capability. The arrays are owned by one
 ;; intern state; the cells let resolution reject a capability after that state
@@ -461,15 +968,18 @@
     [generated-next-id : (Array i64) (make-array i64 1)]
     [map-ready : (Array bool) (make-array bool 1)]
     [reset-generation : (Array i64) (make-array i64 1)]
+    [persistent-arena-handle : i64 (tl_arena_make)]
     [persistent-arena : (Array i64) (make-array i64 1)]
     [persistent-arena-floor-mark : (Array i64) (make-array i64 1)]
+    [structural-table-cell : (Array InternStructuralTable)
+      (intern-structural-table-cell-new-in-arena persistent-arena-handle)]
     (begin
       (array-set! table-id 0 (intern-table-id-allocate!))
       (array-set! pool-count 0 0)
       (array-set! generated-next-id 0 (- (intern-capacity) 1))
       (array-set! map-ready 0 false)
       (array-set! reset-generation 0 (intern-generation-allocate!))
-      (array-set! persistent-arena 0 (tl_arena_make))
+      (array-set! persistent-arena 0 persistent-arena-handle)
       (array-set! persistent-arena-floor-mark 0 0)
       (InternCompatState
         table-id
@@ -490,7 +1000,8 @@
         map-ready
         reset-generation
         persistent-arena
-        persistent-arena-floor-mark))))
+        persistent-arena-floor-mark
+        structural-table-cell))))
 
 (define (intern-compat-state-pool-len [state : InternCompatState]) : i64
   (array-ref (struct-get state pool-count) 0))
@@ -545,7 +1056,15 @@
       (unsafe
         (tl_arena_set (intern-compat-state-persistent-arena state))
         (tl_region_reset
-          (intern-compat-state-persistent-arena-floor-mark state))
+          (intern-compat-state-persistent-arena-floor-mark state)))
+      (intern-structural-table-reinitialize-in-arena!
+        (struct-get state structural-table-cell)
+        (intern-compat-state-persistent-arena state))
+      (if (= (intern-active-table-id) (intern-compat-state-table-id state))
+        (intern-active-structural-sync!
+          (struct-get state structural-table-cell))
+        unit)
+      (unsafe
         (tl_arena_set prev-arena)))))
 
 (define (intern-compat-state-persistent-arena-reset!
@@ -567,6 +1086,13 @@
       (if (= prev-arena old-arena)
         (unsafe
           (tl_arena_set new-arena))
+        unit)
+      (intern-structural-table-reinitialize-in-arena!
+        (struct-get state structural-table-cell)
+        new-arena)
+      (if active?
+        (intern-active-structural-sync!
+          (struct-get state structural-table-cell))
         unit)
       (unsafe
         (tl_arena_destroy old-arena))
@@ -650,6 +1176,10 @@
       0
       (array-length (struct-get state map-id-slots)))
     (intern-compat-state-generated-map-clear! state)
+    (intern-structural-session-reset! (struct-get state structural-table-cell))
+    (if (= (intern-active-table-id) (intern-compat-state-table-id state))
+      (intern-active-structural-sync! (struct-get state structural-table-cell))
+      unit)
     (array-set!
       (struct-get state reset-generation)
       0
@@ -665,6 +1195,10 @@
       0
       (array-length (struct-get state map-id-slots)))
     (intern-compat-state-generated-map-clear! state)
+    (intern-structural-session-reset! (struct-get state structural-table-cell))
+    (if (= (intern-active-table-id) (intern-compat-state-table-id state))
+      (intern-active-structural-sync! (struct-get state structural-table-cell))
+      unit)
     (intern-compat-state-map-rebuild-prefix! state 0 mark)
     (array-set!
       (struct-get state reset-generation)
@@ -929,7 +1463,11 @@
         (array-ref (struct-get state persistent-arena) 0))
       (set!
         intern-persistent-arena-floor-mark
-        (array-ref (struct-get state persistent-arena-floor-mark) 0)))))
+        (array-ref (struct-get state persistent-arena-floor-mark) 0))
+      (set!
+        intern-structural-table-cell
+        (struct-get state structural-table-cell))
+      (intern-active-structural-sync! intern-structural-table-cell))))
 
 (define (intern-compat-state-capture-from-globals! [state : InternCompatState]) : unit
   (begin
@@ -960,6 +1498,10 @@
         (unsafe
           (tl_arena_set new-arena))
         unit)
+      (intern-structural-table-reinitialize-in-arena!
+        intern-structural-table-cell
+        new-arena)
+      (intern-active-structural-sync! intern-structural-table-cell)
       (unsafe
         (tl_arena_destroy old-arena))
       (intern-persistent-arena-floor-refresh!))))
@@ -986,7 +1528,12 @@
       (intern-persistent-arena-floor-ensure!)
       (unsafe
         (tl_arena_set intern-persistent-arena)
-        (tl_region_reset intern-persistent-arena-floor-mark)
+        (tl_region_reset intern-persistent-arena-floor-mark))
+      (intern-structural-table-reinitialize-in-arena!
+        intern-structural-table-cell
+        intern-persistent-arena)
+      (intern-active-structural-sync! intern-structural-table-cell)
+      (unsafe
         (tl_arena_set prev-arena)))))
 
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
@@ -1833,6 +2380,8 @@
     (set! intern-generated-next-id (- (intern-capacity) 1))
     (intern-fill-empty 0 (array-length intern-map-id-slots))
     (intern-generated-map-clear! 0)
+    (intern-structural-session-reset! intern-structural-table-cell)
+    (intern-active-structural-sync! intern-structural-table-cell)
     (set! intern-reset-generation (intern-generation-allocate!))
     (set! intern-map-ready true)))
 
@@ -1842,6 +2391,8 @@
     (set! intern-generated-next-id (- (intern-capacity) 1))
     (intern-fill-empty 0 (array-length intern-map-id-slots))
     (intern-generated-map-clear! 0)
+    (intern-structural-session-reset! intern-structural-table-cell)
+    (intern-active-structural-sync! intern-structural-table-cell)
     (intern-map-rebuild-prefix 0 mark)
     (intern-reset-name-cache!)
     (set! intern-reset-generation (intern-generation-allocate!))

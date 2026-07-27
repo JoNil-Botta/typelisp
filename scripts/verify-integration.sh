@@ -1323,6 +1323,11 @@ run_linux_program_fixture() {
 
 run_linux_backend_fixtures() {
     run_linux_program_fixture \
+        regalloc-loop-split-evicted-region-var-opt2 \
+        tests/integration/regalloc_loop_split_evicted_region_var.tl \
+        42 \
+        2
+    run_linux_program_fixture \
         phi-forward-scavenge-live-through-opt2 \
         tests/integration/phi_forward_scavenge_live_through.tl \
         42 \
@@ -1627,6 +1632,11 @@ run_windows_program_fixture() {
 }
 
 run_windows_backend_fixtures() {
+    run_windows_program_fixture \
+        regalloc-loop-split-evicted-region-var-opt2 \
+        tests/integration/regalloc_loop_split_evicted_region_var.tl \
+        42 \
+        2
     run_windows_program_fixture \
         phi-forward-scavenge-live-through-opt2 \
         tests/integration/phi_forward_scavenge_live_through.tl \

@@ -1,0 +1,19 @@
+{
+  "exit": 0,
+  "message_count": 13,
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"codeActionProvider\":{\"codeActionKinds\":[\"quickfix\"]}"},
+    {"raw_contains": "code-action-compiler.tl", "raw_contains": "\"data\":{\"version\":7,\"kind\":\"compiler\",\"index\":0}"},
+    {"jsonpath_id": 2, "raw_contains": "\"title\":\"Replace misspelled name\"", "raw_contains": "\"version\":7", "raw_contains": "\"newText\":\"render-value\"", "raw_contains": "\"start\":{\"line\":4,\"character\":3},\"end\":{\"line\":4,\"character\":15}"},
+    {"jsonpath_id": 3, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 4, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 5, "json_contains": "\"result\":[]"},
+    {"raw_contains": "code-action-no-fix.tl", "raw_contains": "\"code\":\"E0206\"", "raw_contains": "\"data\":{\"version\":2,\"kind\":\"compiler\",\"index\":0}"},
+    {"jsonpath_id": 8, "json_contains": "\"result\":[]"},
+    {"raw_contains": "code-action-lint.tl", "raw_contains": "\"code\":\"single-begin\"", "raw_contains": "\"data\":{\"version\":3,\"kind\":\"lint\",\"index\":0}"},
+    {"jsonpath_id": 6, "raw_contains": "\"title\":\"Suppress single-begin for this form\"", "raw_contains": "\"version\":3", "raw_contains": "\"newText\":\"  ;; lint-allow: single-begin\\n\"", "raw_contains": "\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":0}"},
+    {"raw_contains": "code-action-lint.tl", "raw_contains": "\"diagnostics\":[]"},
+    {"jsonpath_id": 7, "json_contains": "\"result\":[]"}
+  ],
+  "stderr_exact": ""
+}

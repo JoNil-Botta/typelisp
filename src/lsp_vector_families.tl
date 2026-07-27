@@ -25,6 +25,10 @@
   (uri String)
   (path String)
   (text String)
+  ;; LSP's client-owned document version. A negative value means that the
+  ;; source did not arrive from a versioned open/change notification and must
+  ;; not be the target of a versioned WorkspaceEdit.
+  (version i64)
   (diagnostic-uri String)
   (decls lsp_decl_vec.Vec)
   (decls-valid bool)

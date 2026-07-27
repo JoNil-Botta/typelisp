@@ -98,6 +98,14 @@
   (Ok String)
   (Missing))
 
+(defenum LspJsonValue
+  (Found json.Json)
+  (Missing))
+
+(defenum LspCodeActionDocument
+  (Found String String i64)
+  (Missing))
+
 (defenum LspInitializeLanguageConfig
   (Ok target_cfg.CompilerTargetCfg lsp_svec.Vec)
   (Err String))
@@ -825,23 +833,31 @@
                   "completionProvider"
                   (lsp-json-object1 "resolveProvider" (json.JsonBool false))
                   (lsp-json-member
-                    "inlayHintProvider"
-                    (json.JsonBool true)
+                    "codeActionProvider"
+                    (lsp-json-object1
+                      "codeActionKinds"
+                      (lsp-json-array
+                        (lsp-json-list-cons
+                          (json.JsonString "quickfix")
+                          (json.list-empty))))
                     (lsp-json-member
-                      "documentFormattingProvider"
+                      "inlayHintProvider"
                       (json.JsonBool true)
                       (lsp-json-member
-                        "hoverProvider"
+                        "documentFormattingProvider"
                         (json.JsonBool true)
                         (lsp-json-member
-                          "documentLinkProvider"
-                          (lsp-json-object1
-                            "resolveProvider"
-                            (json.JsonBool false))
+                          "hoverProvider"
+                          (json.JsonBool true)
                           (lsp-json-member
-                            "foldingRangeProvider"
-                            (json.JsonBool true)
-                            (json.member-list-empty)))))))))))))
+                            "documentLinkProvider"
+                            (lsp-json-object1
+                              "resolveProvider"
+                              (json.JsonBool false))
+                            (lsp-json-member
+                              "foldingRangeProvider"
+                              (json.JsonBool true)
+                              (json.member-list-empty))))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -850,7 +866,7 @@
       (json.JsonString "selfhost"))))
 
 (define (lsp-document-fallback) : LspDocument
-  (LspDocument "" "" "" "" (lsp_decl_vec.new) false LspCheckCacheInvalid))
+  (LspDocument "" "" "" -1 "" (lsp_decl_vec.new) false LspCheckCacheInvalid))
 
 (define lsp-document-cache-arena : i64
   0)
@@ -884,11 +900,12 @@
 (define lsp-documents-max-capacity : i64
   16)
 
-(define (lsp-documents-set
+(define (lsp-documents-set-versioned
   [docs : lsp_document_vec.Vec]
   [uri : String]
   [path : String]
   [text : String]
+  [version : i64]
   [diagnostic-uri : String]) : lsp_document_vec.Vec
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
@@ -920,6 +937,7 @@
               uri
               path
               text
+              version
               diagnostic-uri
               new-decls
               new-decls-valid
@@ -931,6 +949,7 @@
             uri
             path
             text
+            version
             diagnostic-uri
             (lsp_decl_vec.new)
             false
@@ -946,6 +965,14 @@
           (begin
             (lsp_document_vec.push (&mut docs) doc)
             docs))))))
+
+(define (lsp-documents-set
+  [docs : lsp_document_vec.Vec]
+  [uri : String]
+  [path : String]
+  [text : String]
+  [diagnostic-uri : String]) : lsp_document_vec.Vec
+  (lsp-documents-set-versioned docs uri path text -1 diagnostic-uri))
 
 (define (lsp-documents-set-check-cache
   [docs : lsp_document_vec.Vec]
@@ -965,6 +992,7 @@
               (struct-get doc uri)
               (struct-get doc path)
               (struct-get doc text)
+              (struct-get doc version)
               (struct-get doc diagnostic-uri)
               (struct-get doc decls)
               (struct-get doc decls-valid)
@@ -1029,6 +1057,7 @@
                   (struct-get doc uri)
                   path
                   disk-text
+                  -1
                   (struct-get doc diagnostic-uri)
                   (lsp_decl_vec.new)
                   false
@@ -1414,6 +1443,22 @@
 (define (lsp-diagnostic-message-tail [message : String]) : json.JsonMemberSeq
   (lsp-json-member "message" (json.JsonString message) (json.member-list-empty)))
 
+(define (lsp-diagnostic-data [version : i64] [kind : String] [index : i64]) : json.Json
+  (lsp-json-object3
+    "version"
+    (lsp-json-number version)
+    "kind"
+    (json.JsonString kind)
+    "index"
+    (lsp-json-number index)))
+
+(define (lsp-diagnostic-data-tail
+  [version : i64]
+  [kind : String]
+  [index : i64]
+  [tail : json.JsonMemberSeq]) : json.JsonMemberSeq
+  (lsp-json-member "data" (lsp-diagnostic-data version kind index) tail))
+
 (define (lsp-diagnostic-code-tail [code : String] [tail : json.JsonMemberSeq]) : json.JsonMemberSeq
   (if (string.eq code "")
     tail
@@ -1443,6 +1488,22 @@
     range
     code
     (lsp-diagnostic-message-tail message)))
+
+(define (lsp-diagnostic-with-range-data
+  [range : json.Json]
+  [message : String]
+  [code : String]
+  [version : i64]
+  [kind : String]
+  [index : i64]) : json.Json
+  (lsp-diagnostic-with-range-tail
+    range
+    code
+    (lsp-diagnostic-data-tail
+      version
+      kind
+      index
+      (lsp-diagnostic-message-tail message))))
 
 (define (lsp-diagnostic
   [line : i64]
@@ -1488,6 +1549,23 @@
     message
     code))
 
+(define (lsp-diagnostic-from-byte-position-data
+  [text : String]
+  [line : i64]
+  [col : i64]
+  [message : String]
+  [code : String]
+  [version : i64]
+  [kind : String]
+  [index : i64]) : json.Json
+  (lsp-diagnostic-with-range-data
+    (lsp-one-codepoint-range-from-byte-position text line col)
+    message
+    code
+    version
+    kind
+    index))
+
 (define (lsp-compiler-diagnostic
   [fallback-path : String]
   [fallback-text : String]
@@ -1515,6 +1593,48 @@
             (lsp-json-array
               (lsp-diagnostic-related-information-list path text labels))
             (lsp-diagnostic-message-tail message)))])))
+
+(define (lsp-compiler-diagnostic-kind [diag : CompilerDiagnostic]) : String
+  (if (string.eq
+    (compiler-diagnostic-code-or-empty diag)
+    (compiler-diagnostic-code-parse))
+    "parse"
+    "compiler"))
+
+(define (lsp-compiler-diagnostic-versioned
+  [fallback-path : String]
+  [fallback-text : String]
+  [version : i64]
+  [diag : CompilerDiagnostic]) : json.Json
+  (let
+    [span : CompilerDiagnosticSpan (compiler-diagnostic-primary-span diag)]
+    [path : String (compiler-diagnostic-span-path span)]
+    [text : String
+      (lsp-source-for-compiler-span fallback-path fallback-text span)]
+    [labels : CompilerDiagnosticLabelList
+      (compiler-diagnostic-secondary-spans diag)]
+    [range : json.Json
+      (lsp-range-from-compiler-span fallback-path fallback-text span)]
+    [message : String (compiler-diagnostic-message diag)]
+    [code : String (compiler-diagnostic-code-or-empty diag)]
+    [tail : json.JsonMemberSeq
+      (lsp-diagnostic-data-tail
+        version
+        (lsp-compiler-diagnostic-kind diag)
+        0
+        (lsp-diagnostic-message-tail message))]
+    (match labels
+      [(CompilerDiagnosticLabelNil)
+        (lsp-diagnostic-with-range-tail range code tail)]
+      [(CompilerDiagnosticLabelCons _ _)
+        (lsp-diagnostic-with-range-tail
+          range
+          code
+          (lsp-json-member
+            "relatedInformation"
+            (lsp-json-array
+              (lsp-diagnostic-related-information-list path text labels))
+            tail))])))
 
 (define (lsp-compiler-diagnostic-code-ok?
   [diag : CompilerDiagnostic]
@@ -1691,7 +1811,9 @@
 (define (lsp-lint-diagnostic
   [range : json.Json]
   [message : String]
-  [code : String]) : json.Json
+  [code : String]
+  [version : i64]
+  [index : i64]) : json.Json
   (lsp-json-object
     (lsp-json-member
       "range"
@@ -1708,9 +1830,16 @@
             (lsp-json-member
               "message"
               (json.JsonString message)
-              (json.member-list-empty))))))))
+              (lsp-json-member
+                "data"
+                (lsp-diagnostic-data version "lint" index)
+                (json.member-list-empty)))))))))
 
-(define (lsp-lint-finding-diagnostic [text : String] [finding : LintFinding]) : json.Json
+(define (lsp-lint-finding-diagnostic
+  [text : String]
+  [version : i64]
+  [index : i64]
+  [finding : LintFinding]) : json.Json
   (let
     [span : AstSourceSpan (struct-get finding span)]
     (lsp-lint-diagnostic
@@ -1719,10 +1848,13 @@
         (ast-source-span-start-line span)
         (ast-source-span-start-col span))
       (struct-get finding message)
-      (struct-get finding rule-id))))
+      (struct-get finding rule-id)
+      version
+      index)))
 
 (define (lsp-lint-findings-to-json
   [text : String]
+  [version : i64]
   [findings : LintFindings]
   [i : i64]
   [acc : json.JsonSeq]) : json.JsonSeq
@@ -1731,19 +1863,24 @@
     (let
       [finding : LintFinding (array-ref (lint-findings-slots findings) i)]
       (if (selfhost-lint-suppressed? text finding)
-        (lsp-lint-findings-to-json text findings (+ i 1) acc)
+        (lsp-lint-findings-to-json text version findings (+ i 1) acc)
         (lsp-lint-findings-to-json
           text
+          version
           findings
           (+ i 1)
-          (lsp-json-list-cons (lsp-lint-finding-diagnostic text finding) acc))))))
+          (lsp-json-list-cons
+            (lsp-lint-finding-diagnostic text version i finding)
+            acc))))))
 
 (define (lsp-lint-diagnostics
   [path : String]
   [text : String]
+  [version : i64]
   [stdlib-roots : lsp_svec.Vec]) : json.JsonSeq
   (lsp-lint-findings-to-json
     text
+    version
     (selfhost-lint-source-with-roots-and-cfg
       path
       text
@@ -1756,6 +1893,7 @@
   [uri : String]
   [path : String]
   [text : String]
+  [version : i64]
   [stdlib-roots : lsp_svec.Vec]) : LspAnalyzeResult
   (match (lsp-validate-forms-result text)
     [(LspValidationResult.Invalid line col msg ctx)
@@ -1765,18 +1903,21 @@
           (lsp-publish-diagnostics
             uri
             (lsp-json-list-cons
-              (lsp-diagnostic-from-byte-position
+              (lsp-diagnostic-from-byte-position-data
                 text
                 line
                 col
                 message
-                (compiler-diagnostic-code-parse))
+                (compiler-diagnostic-code-parse)
+                version
+                "parse"
+                0)
               (json.list-empty)))
           (LspAnalyzeResult uri (LspCheckCacheErr message))))]
     [(LspValidationResult.Valid)
       (let
         [lint-diags : json.JsonSeq
-          (lsp-lint-diagnostics path text stdlib-roots)]
+          (lsp-lint-diagnostics path text version stdlib-roots)]
         (match (compiler-check-source-with-roots-and-cfg
           path
           text
@@ -1796,7 +1937,11 @@
                   (lsp-publish-diagnostics
                     uri
                     (lsp-json-list-cons
-                      (lsp-compiler-diagnostic path text (box-get diag))
+                      (lsp-compiler-diagnostic-versioned
+                        path
+                        text
+                        version
+                        (box-get diag))
                       lint-diags))
                   (LspAnalyzeResult uri check-cache))
                 (begin
@@ -1804,7 +1949,11 @@
                   (lsp-publish-diagnostics
                     diag-uri
                     (lsp-json-list-cons
-                      (lsp-compiler-diagnostic path text (box-get diag))
+                      (lsp-compiler-diagnostic-versioned
+                        path
+                        text
+                        version
+                        (box-get diag))
                       (json.list-empty)))
                   (LspAnalyzeResult diag-uri check-cache))))]))]))
 
@@ -1833,11 +1982,12 @@
           [(LspJsonText.Ok uri)
             (let
               [text : String (lsp-json-string-field-default document "text" "")]
+              [version : i64 (lsp-json-int-field-default document "version" -1)]
               (match (lsp-file-uri-to-path uri)
                 [(LspUriPath.Ok path)
                   (let
                     [analysis : LspAnalyzeResult
-                      (lsp-analyze-document uri path text stdlib-roots)]
+                      (lsp-analyze-document uri path text version stdlib-roots)]
                     (begin
                       (lsp-clear-stale-diagnostic
                         docs
@@ -1846,11 +1996,12 @@
                       (let
                         [updated-docs : lsp_document_vec.Vec
                           (lsp-documents-set-check-cache
-                            (lsp-documents-set
+                            (lsp-documents-set-versioned
                               docs
                               uri
                               path
                               text
+                              version
                               (struct-get analysis diagnostic-uri))
                             uri
                             (struct-get analysis check-cache))]
@@ -1872,46 +2023,65 @@
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
-            (match (lsp-first-change-text params)
-              [(LspJsonText.Ok text)
-                (match (lsp-file-uri-to-path uri)
-                  [(LspUriPath.Ok path)
-                    (let
-                      [analysis : LspAnalyzeResult
-                        (lsp-analyze-document uri path text stdlib-roots)]
-                      (begin
-                        (lsp-clear-stale-diagnostic
-                          docs
-                          uri
-                          (struct-get analysis diagnostic-uri))
-                        (let
-                          [updated-docs : lsp_document_vec.Vec
-                            (lsp-documents-set-check-cache
-                              (lsp-documents-set
-                                docs
+            (let
+              [version : i64 (lsp-json-int-field-default document "version" -1)]
+              (match (lsp-first-change-text params)
+                [(LspJsonText.Ok text)
+                  (match (lsp-file-uri-to-path uri)
+                    [(LspUriPath.Ok path)
+                      (let
+                        [analysis : LspAnalyzeResult
+                          (lsp-analyze-document
+                            uri
+                            path
+                            text
+                            version
+                            stdlib-roots)]
+                        (begin
+                          (lsp-clear-stale-diagnostic
+                            docs
+                            uri
+                            (struct-get analysis diagnostic-uri))
+                          (let
+                            [updated-docs : lsp_document_vec.Vec
+                              (lsp-documents-set-check-cache
+                                (lsp-documents-set-versioned
+                                  docs
+                                  uri
+                                  path
+                                  text
+                                  version
+                                  (struct-get analysis diagnostic-uri))
                                 uri
-                                path
-                                text
-                                (struct-get analysis diagnostic-uri))
-                              uri
-                              (struct-get analysis check-cache))]
-                          (LspHandleResult.Continue updated-docs))))]
-                  [(LspUriPath.Err message)
-                    (begin
-                      (lsp-publish-uri-diagnostic uri message)
-                      (LspHandleResult.Continue docs))])]
-              [(LspJsonText.Missing)
-                (match (lsp-documents-lookup docs uri)
-                  [(LspDocumentLookup.Found path text _)
-                    (let
-                      [analysis : LspAnalyzeResult
-                        (lsp-analyze-document uri path text stdlib-roots)]
-                      (LspHandleResult.Continue
-                        (lsp-documents-set-check-cache
-                          docs
-                          uri
-                          (struct-get analysis check-cache))))]
-                  [(LspDocumentLookup.Missing) (LspHandleResult.Continue docs)])])]
+                                (struct-get analysis check-cache))]
+                            (LspHandleResult.Continue updated-docs))))]
+                    [(LspUriPath.Err message)
+                      (begin
+                        (lsp-publish-uri-diagnostic uri message)
+                        (LspHandleResult.Continue docs))])]
+                [(LspJsonText.Missing)
+                  (let
+                    [idx : i64 (lsp-documents-find-index docs uri)]
+                    (if (< idx 0)
+                      (LspHandleResult.Continue docs)
+                      (let
+                        [doc : LspDocument
+                          (lsp_document_vec.get
+                            (& docs)
+                            idx
+                            (lsp-document-fallback))]
+                        [analysis : LspAnalyzeResult
+                          (lsp-analyze-document
+                            uri
+                            (struct-get doc path)
+                            (struct-get doc text)
+                            (struct-get doc version)
+                            stdlib-roots)]
+                        (LspHandleResult.Continue
+                          (lsp-documents-set-check-cache
+                            docs
+                            uri
+                            (struct-get analysis check-cache))))))]))]
           [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
       [(json.JsonMissing) (LspHandleResult.Continue docs)])))
 
@@ -1927,6 +2097,716 @@
               (LspHandleResult.Continue (lsp-documents-remove docs uri)))]
           [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
       [(json.JsonMissing) (LspHandleResult.Continue docs)])))
+
+;; --------------------------------------------------------------------------
+;; Quick fixes (textDocument/codeAction).
+;;
+;; Diagnostics carry only an opaque source-version/kind/index token. The
+;; provider recomputes the compiler diagnostic and lint findings from the
+;; current overlay, then uses that token to associate the client's diagnostic
+;; with structured data. It never parses a rendered diagnostic message.
+;; --------------------------------------------------------------------------
+(define (lsp-code-action-position-before-or-equal?
+  [left-line : i64]
+  [left-char : i64]
+  [right-line : i64]
+  [right-char : i64]) : bool
+  (or
+    (< left-line right-line)
+    (and (= left-line right-line) (<= left-char right-char))))
+
+(define (lsp-code-action-range-field
+  [range : json.Json]
+  [endpoint : String]
+  [coordinate : String]) : i64
+  (match (json.object-get range (& endpoint))
+    [(json.JsonFound position)
+      (lsp-json-int-field-default position coordinate -1)]
+    [(json.JsonMissing) -1]))
+
+(define (lsp-code-action-ranges-intersect?
+  [left : json.Json]
+  [right : json.Json]) : bool
+  (let
+    [left-start-line : i64 (lsp-code-action-range-field left "start" "line")]
+    [left-start-char : i64
+      (lsp-code-action-range-field left "start" "character")]
+    [left-end-line : i64 (lsp-code-action-range-field left "end" "line")]
+    [left-end-char : i64 (lsp-code-action-range-field left "end" "character")]
+    [right-start-line : i64 (lsp-code-action-range-field right "start" "line")]
+    [right-start-char : i64
+      (lsp-code-action-range-field right "start" "character")]
+    [right-end-line : i64 (lsp-code-action-range-field right "end" "line")]
+    [right-end-char : i64 (lsp-code-action-range-field right "end" "character")]
+    (and
+      (>= left-start-line 0)
+      (>= left-start-char 0)
+      (>= left-end-line 0)
+      (>= left-end-char 0)
+      (>= right-start-line 0)
+      (>= right-start-char 0)
+      (>= right-end-line 0)
+      (>= right-end-char 0)
+      (lsp-code-action-position-before-or-equal?
+        left-start-line
+        left-start-char
+        right-end-line
+        right-end-char)
+      (lsp-code-action-position-before-or-equal?
+        right-start-line
+        right-start-char
+        left-end-line
+        left-end-char))))
+
+(define (lsp-code-action-array-has-quickfix?
+  [items : json.JsonSeq]
+  [index : i64]) : bool
+  (if (>= index (json.list-count items))
+    false
+    (match (json.list-get-index items index)
+      [(json.JsonFound item)
+        (match item
+          [(json.JsonString kind)
+            (if (string.eq kind "quickfix")
+              true
+              (lsp-code-action-array-has-quickfix? items (+ index 1)))]
+          [_ (lsp-code-action-array-has-quickfix? items (+ index 1))])]
+      [(json.JsonMissing) false])))
+
+(define (lsp-code-action-kind-requested? [context : json.Json]) : bool
+  (let
+    [only-key : String "only"]
+    (match (json.object-get context (& only-key))
+      [(json.JsonMissing) true]
+      [(json.JsonFound only)
+        (match only
+          [(json.JsonArray items)
+            (lsp-code-action-array-has-quickfix? (box-get items) 0)]
+          [_ false])])))
+
+(define (lsp-code-action-data-matches?
+  [diagnostic : json.Json]
+  [version : i64]
+  [kind : String]
+  [index : i64]) : bool
+  (let
+    [data-key : String "data"]
+    (match (json.object-get diagnostic (& data-key))
+      [(json.JsonMissing) false]
+      [(json.JsonFound data)
+        (and
+          (= (lsp-json-int-field-default data "version" -1) version)
+          (= (lsp-json-int-field-default data "index" -1) index)
+          (string.eq (lsp-json-string-field-default data "kind" "") kind))])))
+
+(define (lsp-code-action-context-has-kind-from?
+  [items : json.JsonSeq]
+  [request-range : json.Json]
+  [version : i64]
+  [kind : String]
+  [index : i64]) : bool
+  (if (>= index (json.list-count items))
+    false
+    (match (json.list-get-index items index)
+      [(json.JsonMissing) false]
+      [(json.JsonFound diagnostic)
+        (let
+          [data-key : String "data"]
+          [range-key : String "range"]
+          (match (json.object-get diagnostic (& data-key))
+            [(json.JsonMissing)
+              (lsp-code-action-context-has-kind-from?
+                items
+                request-range
+                version
+                kind
+                (+ index 1))]
+            [(json.JsonFound data)
+              (match (json.object-get diagnostic (& range-key))
+                [(json.JsonMissing)
+                  (lsp-code-action-context-has-kind-from?
+                    items
+                    request-range
+                    version
+                    kind
+                    (+ index 1))]
+                [(json.JsonFound diagnostic-range)
+                  (if (and
+                    (= (lsp-json-int-field-default data "version" -1) version)
+                    (>= (lsp-json-int-field-default data "index" -1) 0)
+                    (string.eq
+                      (lsp-json-string-field-default data "kind" "")
+                      kind)
+                    (lsp-code-action-ranges-intersect?
+                      request-range
+                      diagnostic-range))
+                    true
+                    (lsp-code-action-context-has-kind-from?
+                      items
+                      request-range
+                      version
+                      kind
+                      (+ index 1)))])]))])))
+
+(define (lsp-code-action-find-diagnostic-from
+  [items : json.JsonSeq]
+  [request-range : json.Json]
+  [version : i64]
+  [kind : String]
+  [wanted-index : i64]
+  [index : i64]) : LspJsonValue
+  (if (>= index (json.list-count items))
+    LspJsonValue.Missing
+    (match (json.list-get-index items index)
+      [(json.JsonMissing) LspJsonValue.Missing]
+      [(json.JsonFound diagnostic)
+        (let
+          [range-key : String "range"]
+          (match (json.object-get diagnostic (& range-key))
+            [(json.JsonFound diagnostic-range)
+              (if (and
+                (lsp-code-action-data-matches?
+                  diagnostic
+                  version
+                  kind
+                  wanted-index)
+                (lsp-code-action-ranges-intersect?
+                  request-range
+                  diagnostic-range))
+                (LspJsonValue.Found diagnostic)
+                (lsp-code-action-find-diagnostic-from
+                  items
+                  request-range
+                  version
+                  kind
+                  wanted-index
+                  (+ index 1)))]
+            [(json.JsonMissing)
+              (lsp-code-action-find-diagnostic-from
+                items
+                request-range
+                version
+                kind
+                wanted-index
+                (+ index 1))]))])))
+
+(define (lsp-code-action-context-diagnostics [context : json.Json]) : json.JsonSeq
+  (let
+    [key : String "diagnostics"]
+    (match (json.object-get context (& key))
+      [(json.JsonFound value)
+        (match value
+          [(json.JsonArray items) (box-get items)]
+          [_ (json.list-empty)])]
+      [(json.JsonMissing) (json.list-empty)])))
+
+(define (lsp-code-action-request-range [params : json.Json]) : LspJsonValue
+  (let
+    [key : String "range"]
+    (match (json.object-get params (& key))
+      [(json.JsonFound range) (LspJsonValue.Found range)]
+      [(json.JsonMissing) LspJsonValue.Missing])))
+
+(define (lsp-code-action-path [path : String] [fallback-path : String]) : String
+  (let
+    [selected : String
+      (if (string.eq path "")
+        fallback-path
+        path)]
+    (fs.path-normalize (& selected))))
+
+(define (lsp-code-action-document-for-path
+  [docs : lsp_document_vec.Vec]
+  [path : String]) : LspCodeActionDocument
+  (let
+    [wanted : String (fs.path-normalize (& path))]
+    [index : i64 0]
+    [result : LspCodeActionDocument LspCodeActionDocument.Missing]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< index (lsp_document_vec.len (& docs))))
+        (let
+          [doc : LspDocument
+            (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+          [candidate : String (fs.path-normalize (& (struct-get doc path)))]
+          (if (string.eq candidate wanted)
+            (begin
+              (set!
+                result
+                (LspCodeActionDocument.Found
+                  (struct-get doc uri)
+                  (struct-get doc text)
+                  (struct-get doc version)))
+              (set! done true))
+            (set! index (+ index 1)))))
+      result)))
+
+(define (lsp-code-action-all-edits-open?
+  [docs : lsp_document_vec.Vec]
+  [fallback-path : String]
+  [edits : CompilerDiagnosticTextEditSeq]) : bool
+  (let
+    [slots : (Array CompilerDiagnosticTextEdit) (struct-get edits slots)]
+    [count : i64 (struct-get edits len)]
+    [index : i64 0]
+    [ok : bool (> count 0)]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [edit : CompilerDiagnosticTextEdit (array-ref slots index)]
+          [span : CompilerDiagnosticSpan
+            (compiler-diagnostic-text-edit-span edit)]
+          [path : String
+            (lsp-code-action-path
+              (compiler-diagnostic-span-path span)
+              fallback-path)]
+          (match (lsp-code-action-document-for-path docs path)
+            [(LspCodeActionDocument.Found _ _ version)
+              (if (>= version 0)
+                (set! index (+ index 1))
+                (set! ok false))]
+            [(LspCodeActionDocument.Missing) (set! ok false)])))
+      ok)))
+
+(define (lsp-code-action-text-edit
+  [path : String]
+  [text : String]
+  [edit : CompilerDiagnosticTextEdit]) : json.Json
+  (let
+    [span : CompilerDiagnosticSpan (compiler-diagnostic-text-edit-span edit)]
+    ;; Force conversion through the open overlay even when the diagnostic used
+    ;; a different but equivalent spelling of this path.
+    [overlay-span : CompilerDiagnosticSpan
+      (CompilerDiagnosticSpan
+        path
+        (compiler-diagnostic-span-start-line span)
+        (compiler-diagnostic-span-start-col span)
+        (compiler-diagnostic-span-end-line span)
+        (compiler-diagnostic-span-end-col span))]
+    (lsp-json-object2
+      "range"
+      (lsp-range-from-compiler-span path text overlay-span)
+      "newText"
+      (json.JsonString (compiler-diagnostic-text-edit-replacement edit)))))
+
+(define (lsp-code-action-edits-for-path
+  [edits : CompilerDiagnosticTextEditSeq]
+  [fallback-path : String]
+  [path : String]
+  [text : String]
+  [index : i64]
+  [acc : json.JsonSeq]) : json.JsonSeq
+  (if (>= index (struct-get edits len))
+    acc
+    (let
+      [edit : CompilerDiagnosticTextEdit
+        (array-ref (struct-get edits slots) index)]
+      [span : CompilerDiagnosticSpan (compiler-diagnostic-text-edit-span edit)]
+      [edit-path : String
+        (lsp-code-action-path
+          (compiler-diagnostic-span-path span)
+          fallback-path)]
+      [next : json.JsonSeq
+        (if (string.eq edit-path path)
+          (lsp-json-list-cons (lsp-code-action-text-edit path text edit) acc)
+          acc)]
+      (lsp-code-action-edits-for-path
+        edits
+        fallback-path
+        path
+        text
+        (+ index 1)
+        next))))
+
+(define (lsp-code-action-document-edit
+  [uri : String]
+  [version : i64]
+  [edits : json.JsonSeq]) : json.Json
+  (lsp-json-object2
+    "textDocument"
+    (lsp-json-object2
+      "uri"
+      (json.JsonString uri)
+      "version"
+      (lsp-json-number version))
+    "edits"
+    (lsp-json-array edits)))
+
+(define (lsp-code-action-document-changes-from
+  [docs : lsp_document_vec.Vec]
+  [fallback-path : String]
+  [edits : CompilerDiagnosticTextEditSeq]
+  [index : i64]
+  [acc : json.JsonSeq]) : json.JsonSeq
+  (if (>= index (lsp_document_vec.len (& docs)))
+    acc
+    (let
+      [doc : LspDocument
+        (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+      [path : String (fs.path-normalize (& (struct-get doc path)))]
+      [document-edits : json.JsonSeq
+        (lsp-code-action-edits-for-path
+          edits
+          fallback-path
+          path
+          (struct-get doc text)
+          0
+          (json.list-empty))]
+      [next : json.JsonSeq
+        (if (> (json.list-count document-edits) 0)
+          (lsp-json-list-cons
+            (lsp-code-action-document-edit
+              (struct-get doc uri)
+              (struct-get doc version)
+              document-edits)
+            acc)
+          acc)]
+      (lsp-code-action-document-changes-from
+        docs
+        fallback-path
+        edits
+        (+ index 1)
+        next))))
+
+(define (lsp-code-action-workspace-edit
+  [docs : lsp_document_vec.Vec]
+  [fallback-path : String]
+  [edits : CompilerDiagnosticTextEditSeq]) : json.Json
+  (lsp-json-object1
+    "documentChanges"
+    (lsp-json-array
+      (lsp-code-action-document-changes-from
+        docs
+        fallback-path
+        edits
+        0
+        (json.list-empty)))))
+
+(define (lsp-code-action
+  [title : String]
+  [diagnostic : json.Json]
+  [edit : json.Json]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      "title"
+      (json.JsonString title)
+      (lsp-json-member
+        "kind"
+        (json.JsonString "quickfix")
+        (lsp-json-member
+          "diagnostics"
+          (lsp-json-array (lsp-json-list-cons diagnostic (json.list-empty)))
+          (lsp-json-member
+            "isPreferred"
+            (json.JsonBool true)
+            (lsp-json-member "edit" edit (json.member-list-empty))))))))
+
+(define (lsp-code-action-compiler-fixes-from
+  [docs : lsp_document_vec.Vec]
+  [fallback-path : String]
+  [diagnostic : json.Json]
+  [fixes : CompilerDiagnosticFixSeq]
+  [index : i64]
+  [acc : json.JsonSeq]) : json.JsonSeq
+  (if (>= index (struct-get fixes len))
+    acc
+    (let
+      [fix : CompilerDiagnosticFix (array-ref (struct-get fixes slots) index)]
+      [edits : CompilerDiagnosticTextEditSeq
+        (compiler-diagnostic-fix-edits fix)]
+      [machine-applicable : bool
+        (match (compiler-diagnostic-fix-applicability fix)
+          [CompilerDiagnosticMachineApplicable true]
+          [_ false])]
+      [next : json.JsonSeq
+        (if (and
+          machine-applicable
+          (lsp-code-action-all-edits-open? docs fallback-path edits))
+          (lsp-json-list-cons
+            (lsp-code-action
+              (compiler-diagnostic-fix-title fix)
+              diagnostic
+              (lsp-code-action-workspace-edit docs fallback-path edits))
+            acc)
+          acc)]
+      (lsp-code-action-compiler-fixes-from
+        docs
+        fallback-path
+        diagnostic
+        fixes
+        (+ index 1)
+        next))))
+
+(define (lsp-code-action-compiler
+  [docs : lsp_document_vec.Vec]
+  [uri : String]
+  [path : String]
+  [text : String]
+  [version : i64]
+  [request-range : json.Json]
+  [context-diagnostics : json.JsonSeq]
+  [stdlib-roots : lsp_svec.Vec]
+  [acc : json.JsonSeq]) : json.JsonSeq
+  (match (compiler-check-source-with-roots-and-cfg
+    path
+    text
+    stdlib-roots
+    (lsp-language-cfgs))
+    [(ResultCompilerCheck.Ok _) acc]
+    [(ResultCompilerCheck.Err diagnostic-box)
+      (let
+        [diagnostic : CompilerDiagnostic (box-get diagnostic-box)]
+        [diagnostic-uri : String (lsp-diagnostic-uri uri path diagnostic)]
+        [diagnostic-kind : String (lsp-compiler-diagnostic-kind diagnostic)]
+        (if (not (string.eq diagnostic-uri uri))
+          acc
+          (match (lsp-code-action-find-diagnostic-from
+            context-diagnostics
+            request-range
+            version
+            diagnostic-kind
+            0
+            0)
+            [(LspJsonValue.Missing) acc]
+            [(LspJsonValue.Found context-diagnostic)
+              (lsp-code-action-compiler-fixes-from
+                docs
+                path
+                context-diagnostic
+                (compiler-diagnostic-fixes diagnostic)
+                0
+                acc)])))]))
+
+(define (lsp-code-action-leading-indent [text : String] [line : i64]) : String
+  (let
+    [start : i64 (selfhost-lint-line-start-index text line)]
+    [length : i64 (string.string-length text)]
+    [end : i64 start]
+    (begin
+      (while (and
+        (< end length)
+        (or
+          (= (string.string-ref text end) ' ')
+          (= (string.string-ref text end) '\t')))
+        (set! end (+ end 1)))
+      (string.substring text start (- end start)))))
+
+(define (lsp-code-action-newline [text : String]) : String
+  (let
+    [crlf : String "\r\n"]
+    (if (string.contains (& text) (& crlf))
+      crlf
+      "\n")))
+
+(define (lsp-code-action-lint-duplicate-before?
+  [findings : LintFindings]
+  [finding : LintFinding]
+  [index : i64]) : bool
+  (let
+    [wanted-span : AstSourceSpan (struct-get finding span)]
+    [wanted-line : i64 (ast-source-span-start-line wanted-span)]
+    [wanted-rule : String (struct-get finding rule-id)]
+    [cursor : i64 0]
+    [duplicate : bool false]
+    (begin
+      (while (and (not duplicate) (< cursor index))
+        (let
+          [earlier : LintFinding (lint-findings-ref findings cursor)]
+          [earlier-span : AstSourceSpan (struct-get earlier span)]
+          (if (and
+            (= (ast-source-span-start-line earlier-span) wanted-line)
+            (string.eq (struct-get earlier rule-id) wanted-rule))
+            (set! duplicate true)
+            (set! cursor (+ cursor 1)))))
+      duplicate)))
+
+(define (lsp-code-action-lint-edit
+  [uri : String]
+  [version : i64]
+  [text : String]
+  [finding : LintFinding]) : json.Json
+  (let
+    [span : AstSourceSpan (struct-get finding span)]
+    [line : i64 (ast-source-span-start-line span)]
+    [indent : String (lsp-code-action-leading-indent text line)]
+    [replacement : String
+      (lsp-str4
+        indent
+        ";; lint-allow: "
+        (struct-get finding rule-id)
+        (lsp-code-action-newline text))]
+    [edit : json.Json
+      (lsp-json-object2
+        "range"
+        (lsp-json-object2
+          "start"
+          (lsp-position line 1)
+          "end"
+          (lsp-position line 1))
+        "newText"
+        (json.JsonString replacement))]
+    (lsp-json-object1
+      "documentChanges"
+      (lsp-json-array
+        (lsp-json-list-cons
+          (lsp-code-action-document-edit
+            uri
+            version
+            (lsp-json-list-cons edit (json.list-empty)))
+          (json.list-empty))))))
+
+(define (lsp-code-action-lint-from
+  [uri : String]
+  [text : String]
+  [version : i64]
+  [findings : LintFindings]
+  [request-range : json.Json]
+  [context-diagnostics : json.JsonSeq]
+  [index : i64]
+  [acc : json.JsonSeq]) : json.JsonSeq
+  (if (>= index (lint-findings-count findings))
+    acc
+    (let
+      [finding : LintFinding (lint-findings-ref findings index)]
+      [next : json.JsonSeq
+        (if (or
+          (selfhost-lint-suppressed? text finding)
+          (lsp-code-action-lint-duplicate-before? findings finding index))
+          acc
+          (match (lsp-code-action-find-diagnostic-from
+            context-diagnostics
+            request-range
+            version
+            "lint"
+            index
+            0)
+            [(LspJsonValue.Missing) acc]
+            [(LspJsonValue.Found diagnostic)
+              (lsp-json-list-cons
+                (lsp-code-action
+                  (lsp-str3
+                    "Suppress "
+                    (struct-get finding rule-id)
+                    " for this form")
+                  diagnostic
+                  (lsp-code-action-lint-edit uri version text finding))
+                acc)]))]
+      (lsp-code-action-lint-from
+        uri
+        text
+        version
+        findings
+        request-range
+        context-diagnostics
+        (+ index 1)
+        next))))
+
+(define (lsp-code-action-respond
+  [id : json.Json]
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]
+  [stdlib-roots : lsp_svec.Vec]) : unit
+  (let
+    [text-document-key : String "textDocument"]
+    [context-key : String "context"]
+    (match (json.object-get params (& text-document-key))
+      [(json.JsonMissing)
+        (lsp-write-response id (lsp-json-array (json.list-empty)))]
+      [(json.JsonFound text-document)
+        (match (lsp-json-string-field text-document "uri")
+          [(LspJsonText.Missing)
+            (lsp-write-response id (lsp-json-array (json.list-empty)))]
+          [(LspJsonText.Ok uri)
+            (let
+              [document-index : i64 (lsp-documents-find-index docs uri)]
+              (if (< document-index 0)
+                (lsp-write-response id (lsp-json-array (json.list-empty)))
+                (match (json.object-get params (& context-key))
+                  [(json.JsonMissing)
+                    (lsp-write-response id (lsp-json-array (json.list-empty)))]
+                  [(json.JsonFound context)
+                    (match (lsp-code-action-request-range params)
+                      [(LspJsonValue.Missing)
+                        (lsp-write-response
+                          id
+                          (lsp-json-array (json.list-empty)))]
+                      [(LspJsonValue.Found request-range)
+                        (let
+                          [doc : LspDocument
+                            (lsp_document_vec.get
+                              (& docs)
+                              document-index
+                              (lsp-document-fallback))]
+                          [version : i64 (struct-get doc version)]
+                          (if (or
+                            (< version 0)
+                            (not (lsp-code-action-kind-requested? context)))
+                            (lsp-write-response
+                              id
+                              (lsp-json-array (json.list-empty)))
+                            (let
+                              [context-diagnostics : json.JsonSeq
+                                (lsp-code-action-context-diagnostics context)]
+                              [has-compiler : bool
+                                (or
+                                  (lsp-code-action-context-has-kind-from?
+                                    context-diagnostics
+                                    request-range
+                                    version
+                                    "compiler"
+                                    0)
+                                  (lsp-code-action-context-has-kind-from?
+                                    context-diagnostics
+                                    request-range
+                                    version
+                                    "parse"
+                                    0))]
+                              [has-lint : bool
+                                (lsp-code-action-context-has-kind-from?
+                                  context-diagnostics
+                                  request-range
+                                  version
+                                  "lint"
+                                  0)]
+                              [compiler-actions : json.JsonSeq
+                                (if has-compiler
+                                  (lsp-code-action-compiler
+                                    docs
+                                    uri
+                                    (struct-get doc path)
+                                    (struct-get doc text)
+                                    version
+                                    request-range
+                                    context-diagnostics
+                                    stdlib-roots
+                                    (json.list-empty))
+                                  (json.list-empty))]
+                              [findings : LintFindings
+                                (if has-lint
+                                  (selfhost-lint-source-with-roots-and-cfg
+                                    (struct-get doc path)
+                                    (struct-get doc text)
+                                    stdlib-roots
+                                    (lsp-language-cfgs))
+                                  (lint-findings-empty))]
+                              [actions : json.JsonSeq
+                                (lsp-code-action-lint-from
+                                  uri
+                                  (struct-get doc text)
+                                  version
+                                  findings
+                                  request-range
+                                  context-diagnostics
+                                  0
+                                  compiler-actions)]
+                              (lsp-write-response id (lsp-json-array actions)))))])])))])])))
+
+(define (lsp-handle-code-action
+  [id : json.Json]
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]
+  [stdlib-roots : lsp_svec.Vec]) : unit
+  (lsp-code-action-respond id params docs stdlib-roots))
 
 ;; --------------------------------------------------------------------------
 ;; Go-to-definition (textDocument/definition).
@@ -4601,6 +5481,7 @@
               uri
               (struct-get doc path)
               text
+              (struct-get doc version)
               (struct-get doc diagnostic-uri)
               scanned
               true
@@ -6835,6 +7716,25 @@
                     (set! result (lsp-did-close params docs))]
                   [(json.JsonMissing)
                     (set! result (LspHandleResult.Continue docs))])))
+            unit)
+          (if (and (not handled) (string.eq method "textDocument/codeAction"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json.object-get message (& id-key))
+                  [(json.JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json.object-get message (& params-key))
+                        [(json.JsonFound params)
+                          (lsp-handle-code-action id params docs stdlib-roots)]
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array (json.list-empty)))]))]
+                  [(json.JsonMissing) unit]))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.eq method "textDocument/definition"))
             (begin

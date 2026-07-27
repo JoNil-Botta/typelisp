@@ -164,11 +164,12 @@ An intern ID belongs to one installed `InternCompatState` table and generation.
 generated IDs. A driver must install the ID's owner before lookup or rendering.
 The same numeric ID may mean different text in two driver states.
 
-Negative missing/sentinel values and packed composite symbol keys are not intern
-IDs. They may key registries and environments as `i64`, but must not be passed to
-`intern-str`. String-taking AST constructors remain compatibility boundaries for
-synthetic callers until those callers have an explicit owner-state ID; parser-only
-and ID-first constructors should not recover an ID from String storage.
+Negative missing/sentinel values and opaque structural symbol handles are not
+intern IDs. They may key registries and environments through legacy `i64`
+adapters, but must not be passed to `intern-str`. String-taking AST constructors
+remain compatibility boundaries for synthetic callers until those callers have
+an explicit owner-state ID; parser-only and ID-first constructors should not
+recover an ID from String storage.
 
 `compiler_intern.tl` self-tests own reset cases,
 `compiler_intern_state_isolation.tl` owns explicit worker-state isolation, and

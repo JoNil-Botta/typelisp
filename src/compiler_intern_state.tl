@@ -5,6 +5,12 @@
 ;; duplicating that interner or installing it into the process-global state.
 (import compiler_intern as ci)
 
+(defstruct InternStructuralKey
+  (value i64))
+
+(defmacro (intern-state-structural-key-raw [key : Expr]) : i64
+  `(struct-get ,key value))
+
 (defstruct InternState
   (compat ci.InternCompatState))
 
@@ -31,6 +37,133 @@
 
 (define (intern-state-str [state : InternState] [id : i64]) : String
   (ci.intern-compat-state-str (struct-get state compat) id))
+
+(define (intern-state-structural-key
+  [state : InternState]
+  [kind : i64]
+  [left-id : i64]
+  [middle-id : i64]
+  [right-id : i64]) : InternStructuralKey
+  (let
+    [compat : ci.InternCompatState (struct-get state compat)]
+    [raw : i64
+      (ci.intern-structural-table-intern
+        (struct-get compat structural-table-cell)
+        (ci.intern-compat-state-persistent-arena compat)
+        kind
+        left-id
+        middle-id
+        right-id)]
+    (begin
+      (if (=
+        (ci.intern-active-table-id)
+        (ci.intern-compat-state-table-id compat))
+        (ci.intern-active-structural-sync!
+          (struct-get compat structural-table-cell))
+        unit)
+      (InternStructuralKey raw))))
+
+(define (intern-state-composite-pair-key
+  [state : InternState]
+  [left-id : i64]
+  [right-id : i64]) : InternStructuralKey
+  (intern-state-structural-key
+    state
+    (ci.intern-structural-kind-pair)
+    left-id
+    0
+    right-id))
+
+(define (intern-state-composite-triple-key
+  [state : InternState]
+  [left-id : i64]
+  [middle-id : i64]
+  [right-id : i64]) : InternStructuralKey
+  (intern-state-structural-key
+    state
+    (ci.intern-structural-kind-triple)
+    left-id
+    middle-id
+    right-id))
+
+(define (intern-state-structural-key-owned?
+  [state : InternState]
+  [key : InternStructuralKey]) : bool
+  (let
+    [table : ci.InternStructuralTable
+      (array-ref (struct-get (struct-get state compat) structural-table-cell) 0)]
+    [raw : i64 (intern-state-structural-key-raw key)]
+    [encoded-index : i64 (bit-and raw (ci.intern-structural-key-index-mask))]
+    (and
+      (>= raw (ci.intern-structural-key-base))
+      (> encoded-index 0)
+      (=
+        (/
+          (- raw (ci.intern-structural-key-base))
+          (ci.intern-structural-key-owner-stride))
+        (struct-get table owner))
+      (<= encoded-index (struct-get table len)))))
+
+(define (intern-state-structural-key-index [key : InternStructuralKey]) : i64
+  (-
+    (bit-and
+      (intern-state-structural-key-raw key)
+      (ci.intern-structural-key-index-mask))
+    1))
+
+(define (intern-state-structural-key-left
+  [state : InternState]
+  [key : InternStructuralKey]) : i64
+  (if (intern-state-structural-key-owned? state key)
+    (array-ref
+      (struct-get
+        (array-ref
+          (struct-get (struct-get state compat) structural-table-cell)
+          0)
+        lefts)
+      (intern-state-structural-key-index key))
+    (ci.tl_oob_abort)))
+
+(define (intern-state-structural-key-middle
+  [state : InternState]
+  [key : InternStructuralKey]) : i64
+  (if (intern-state-structural-key-owned? state key)
+    (array-ref
+      (struct-get
+        (array-ref
+          (struct-get (struct-get state compat) structural-table-cell)
+          0)
+        middles)
+      (intern-state-structural-key-index key))
+    (ci.tl_oob_abort)))
+
+(define (intern-state-structural-key-right
+  [state : InternState]
+  [key : InternStructuralKey]) : i64
+  (if (intern-state-structural-key-owned? state key)
+    (array-ref
+      (struct-get
+        (array-ref
+          (struct-get (struct-get state compat) structural-table-cell)
+          0)
+        rights)
+      (intern-state-structural-key-index key))
+    (ci.tl_oob_abort)))
+
+(define (intern-state-structural-record-count [state : InternState]) : i64
+  (struct-get
+    (array-ref (struct-get (struct-get state compat) structural-table-cell) 0)
+    len))
+
+(define (intern-state-structural-allocated-bytes [state : InternState]) : i64
+  (let
+    [table : ci.InternStructuralTable
+      (array-ref (struct-get (struct-get state compat) structural-table-cell) 0)]
+    [records : i64 (array-length (struct-get table kinds))]
+    [map-capacity : i64 (array-length (struct-get table map-slots))]
+    [cache-capacity : i64
+      (array-length (struct-get table structural-cache-raws))]
+    (+ (+ (* records 25) (* map-capacity 8)) (* cache-capacity 8))))
 
 (define (intern-state-qualified? [state : InternState] [id : i64]) : bool
   (ci.intern-compat-state-qualified? (struct-get state compat) id))
@@ -83,11 +216,69 @@
     [_b-drop : i64 (intern-state-intern state-b "drop")]
     [a-generation : i64 (intern-state-generation state-a)]
     [b-generation : i64 (intern-state-generation state-b)]
+    [a-pair : InternStructuralKey
+      (intern-state-composite-pair-key state-a 131073 262147)]
+    [a-pair-again : InternStructuralKey
+      (intern-state-composite-pair-key state-a 131073 262147)]
+    [b-pair : InternStructuralKey
+      (intern-state-composite-pair-key state-b 131073 262147)]
     [ok : bool true]
     (begin
       (unless (= a-alpha 0) (set! ok false))
       (unless (= b-bravo 0) (set! ok false))
       (unless (= b-alpha 1) (set! ok false))
+      (unless
+        (=
+          (intern-state-structural-key-raw a-pair)
+          (intern-state-structural-key-raw a-pair-again))
+        (set! ok false))
+      (unless
+        (= (intern-state-structural-record-count state-a) 1)
+        (set! ok false))
+      (unless
+        (= (intern-state-structural-record-count state-b) 1)
+        (set! ok false))
+      (unless
+        (intern-state-structural-key-owned? state-a a-pair)
+        (set! ok false))
+      (unless
+        (not (intern-state-structural-key-owned? state-b a-pair))
+        (set! ok false))
+      (unless
+        (intern-state-structural-key-owned? state-b b-pair)
+        (set! ok false))
+      (unless
+        (= (intern-state-structural-key-left state-a a-pair) 131073)
+        (set! ok false))
+      (unless
+        (= (intern-state-structural-key-right state-a a-pair) 262147)
+        (set! ok false))
+      (let
+        [index : i64 0]
+        (while (< index 700)
+          (let
+            [key : InternStructuralKey
+              (intern-state-composite-triple-key
+                state-a
+                (+ 131073 index)
+                (+ 262147 index)
+                (+ 524309 index))]
+            (begin
+              (unless
+                (intern-state-structural-key-owned? state-a key)
+                (set! ok false))
+              (unless
+                (=
+                  (intern-state-structural-key-middle state-a key)
+                  (+ 262147 index))
+                (set! ok false))
+              (set! index (+ index 1))))))
+      (unless
+        (= (intern-state-structural-record-count state-a) 701)
+        (set! ok false))
+      (unless
+        (> (intern-state-structural-allocated-bytes state-a) 0)
+        (set! ok false))
       (unless
         (intern-state-qualified-metadata-case-ok?
           state-a
@@ -98,6 +289,12 @@
           "name")
         (set! ok false))
       (intern-state-reset! state-a)
+      (unless
+        (not (intern-state-structural-key-owned? state-a a-pair))
+        (set! ok false))
+      (unless
+        (= (intern-state-structural-record-count state-a) 0)
+        (set! ok false))
       (unless
         (not (= (intern-state-generation state-a) a-generation))
         (set! ok false))

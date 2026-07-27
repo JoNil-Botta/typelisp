@@ -123,7 +123,7 @@
   (line i64)
   (col i64))
 
-;; Folding-range scan position: 1-based line, 1-based UTF-16 column, and
+;; Folding-range scan position: 1-based line, 1-based negotiated column, and
 ;; whether anything other than whitespace has been seen on the current line.
 (defstruct LspFoldCursor
   (line i64)
@@ -584,11 +584,14 @@
   (target_cfg.compiler-target-cfg-host))
 (define lsp-language-cfg-names : lsp_svec.Vec
   (lsp_svec.new))
+(define lsp-position-encoding-utf8 : bool
+  false)
 
 (define (lsp-language-config-reset!) : unit
   (begin
     (set! lsp-language-target (target_cfg.compiler-target-cfg-host))
-    (set! lsp-language-cfg-names (lsp_svec.new))))
+    (set! lsp-language-cfg-names (lsp_svec.new))
+    (set! lsp-position-encoding-utf8 false)))
 
 (define (lsp-language-config-install!
   [target : target_cfg.CompilerTargetCfg]
@@ -601,6 +604,64 @@
   (target_cfg.compiler-target-cfgs-with-names
     lsp-language-target
     lsp-language-cfg-names))
+
+(define (lsp-position-encoding-name) : String
+  (if lsp-position-encoding-utf8
+    "utf-8"
+    "utf-16"))
+
+(define (lsp-position-encoding-use-utf16!) : unit
+  (set! lsp-position-encoding-utf8 false))
+
+(define (lsp-position-encoding-use-utf8!) : unit
+  (set! lsp-position-encoding-utf8 true))
+
+(define (lsp-position-encodings-offer-utf8? [items : json.JsonSeq]) : bool
+  (let
+    [i : i64 0]
+    [n : i64 (json.list-count items)]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (begin
+          (match (json.list-get-index items i)
+            [(json.JsonFound entry)
+              (match entry
+                [(json.JsonString name)
+                  (if (string.eq name "utf-8")
+                    (set! found true)
+                    unit)]
+                [_ unit])]
+            [(json.JsonMissing) unit])
+          (set! i (+ i 1))))
+      found)))
+
+;; LSP 3.17 defaults to UTF-16. TypeLisp also supports UTF-8 positions and
+;; selects them whenever the client explicitly offers that encoding.
+(define (lsp-initialize-position-encoding-utf8? [message : json.Json]) : bool
+  (let
+    [params-key : String "params"]
+    [capabilities-key : String "capabilities"]
+    [general-key : String "general"]
+    [encodings-key : String "positionEncodings"]
+    (match (json.object-get message (& params-key))
+      [(json.JsonFound params)
+        (match (json.object-get params (& capabilities-key))
+          [(json.JsonFound capabilities)
+            (match (json.object-get capabilities (& general-key))
+              [(json.JsonFound general)
+                (match (json.object-get general (& encodings-key))
+                  [(json.JsonFound encodings)
+                    (match encodings
+                      [(json.JsonArray items)
+                        (if (lsp-position-encodings-offer-utf8? (box-get items))
+                          true
+                          false)]
+                      [_ false])]
+                  [(json.JsonMissing) false])]
+              [(json.JsonMissing) false])]
+          [(json.JsonMissing) false])]
+      [(json.JsonMissing) false])))
 
 (define (lsp-initialize-cfg-names [options : json.Json]) : LspInitializeLanguageConfig
   (let
@@ -742,42 +803,45 @@
     "capabilities"
     (lsp-json-object
       (lsp-json-member
-        "textDocumentSync"
-        (lsp-json-object2
-          "openClose"
-          (json.JsonBool true)
-          "change"
-          (lsp-json-number 1))
+        "positionEncoding"
+        (json.JsonString (lsp-position-encoding-name))
         (lsp-json-member
-          "definitionProvider"
-          (json.JsonBool true)
+          "textDocumentSync"
+          (lsp-json-object2
+            "openClose"
+            (json.JsonBool true)
+            "change"
+            (lsp-json-number 1))
           (lsp-json-member
-            "documentSymbolProvider"
+            "definitionProvider"
             (json.JsonBool true)
             (lsp-json-member
-              "documentHighlightProvider"
+              "documentSymbolProvider"
               (json.JsonBool true)
               (lsp-json-member
-                "completionProvider"
-                (lsp-json-object1 "resolveProvider" (json.JsonBool false))
+                "documentHighlightProvider"
+                (json.JsonBool true)
                 (lsp-json-member
-                  "inlayHintProvider"
-                  (json.JsonBool true)
+                  "completionProvider"
+                  (lsp-json-object1 "resolveProvider" (json.JsonBool false))
                   (lsp-json-member
-                    "documentFormattingProvider"
+                    "inlayHintProvider"
                     (json.JsonBool true)
                     (lsp-json-member
-                      "hoverProvider"
+                      "documentFormattingProvider"
                       (json.JsonBool true)
                       (lsp-json-member
-                        "documentLinkProvider"
-                        (lsp-json-object1
-                          "resolveProvider"
-                          (json.JsonBool false))
+                        "hoverProvider"
+                        (json.JsonBool true)
                         (lsp-json-member
-                          "foldingRangeProvider"
-                          (json.JsonBool true)
-                          (json.member-list-empty))))))))))))
+                          "documentLinkProvider"
+                          (lsp-json-object1
+                            "resolveProvider"
+                            (json.JsonBool false))
+                          (lsp-json-member
+                            "foldingRangeProvider"
+                            (json.JsonBool true)
+                            (json.member-list-empty)))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -1253,8 +1317,36 @@
     "end"
     (lsp-position line (+ col 1))))
 
-(define (lsp-range-from-compiler-span [span : CompilerDiagnosticSpan]) : json.Json
+(define (lsp-source-for-compiler-span
+  [fallback-path : String]
+  [fallback-text : String]
+  [span : CompilerDiagnosticSpan]) : String
   (let
+    [path : String (compiler-diagnostic-span-path span)]
+    (if (or (string.eq path "") (string.eq path fallback-path))
+      fallback-text
+      (io.read-file-or (& path) ""))))
+
+(define (lsp-position-from-byte-line-col
+  [text : String]
+  [line : i64]
+  [col : i64]) : json.Json
+  (let
+    [offset : i64
+      (lsp-offset-at-byte-position
+        text
+        (lsp-zero-based line)
+        (lsp-zero-based col))]
+    [lc : LspLineCol (lsp-line-col-at-offset text offset)]
+    (lsp-position (struct-get lc line) (struct-get lc col))))
+
+(define (lsp-range-from-compiler-span
+  [fallback-path : String]
+  [fallback-text : String]
+  [span : CompilerDiagnosticSpan]) : json.Json
+  (let
+    [text : String
+      (lsp-source-for-compiler-span fallback-path fallback-text span)]
     [start-line : i64 (compiler-diagnostic-span-start-line span)]
     [start-col : i64 (compiler-diagnostic-span-start-col span)]
     [raw-end-line : i64 (compiler-diagnostic-span-end-line span)]
@@ -1269,9 +1361,9 @@
         raw-end-col)]
     (lsp-json-object2
       "start"
-      (lsp-position start-line start-col)
+      (lsp-position-from-byte-line-col text start-line start-col)
       "end"
-      (lsp-position safe-end-line safe-end-col))))
+      (lsp-position-from-byte-line-col text safe-end-line safe-end-col))))
 
 (define (lsp-diagnostic-related-uri
   [fallback-path : String]
@@ -1290,6 +1382,7 @@
 
 (define (lsp-diagnostic-related-information
   [fallback-path : String]
+  [fallback-text : String]
   [entry : CompilerDiagnosticLabel]) : json.Json
   (let
     [span : CompilerDiagnosticSpan (struct-get entry span)]
@@ -1299,20 +1392,24 @@
         "uri"
         (json.JsonString (lsp-diagnostic-related-uri fallback-path span))
         "range"
-        (lsp-range-from-compiler-span span))
+        (lsp-range-from-compiler-span fallback-path fallback-text span))
       "message"
       (json.JsonString
         (lsp-diagnostic-related-message (struct-get entry label))))))
 
 (define (lsp-diagnostic-related-information-list
   [fallback-path : String]
+  [fallback-text : String]
   [labels : CompilerDiagnosticLabelList]) : json.JsonSeq
   (match labels
     [(CompilerDiagnosticLabelNil) (json.list-empty)]
     [(CompilerDiagnosticLabelCons entry rest)
       (lsp-json-list-cons
-        (lsp-diagnostic-related-information fallback-path entry)
-        (lsp-diagnostic-related-information-list fallback-path (box-get rest)))]))
+        (lsp-diagnostic-related-information fallback-path fallback-text entry)
+        (lsp-diagnostic-related-information-list
+          fallback-path
+          fallback-text
+          (box-get rest)))]))
 
 (define (lsp-diagnostic-message-tail [message : String]) : json.JsonMemberSeq
   (lsp-json-member "message" (json.JsonString message) (json.member-list-empty)))
@@ -1354,13 +1451,56 @@
   [code : String]) : json.Json
   (lsp-diagnostic-with-range (lsp-range line col) message code))
 
-(define (lsp-compiler-diagnostic [diag : CompilerDiagnostic]) : json.Json
+(define (lsp-one-codepoint-range-from-byte-position
+  [text : String]
+  [line : i64]
+  [col : i64]) : json.Json
+  (let
+    [n : i64 (string.string-length text)]
+    [start : i64
+      (lsp-offset-at-byte-position
+        text
+        (lsp-zero-based line)
+        (lsp-zero-based col))]
+    [end : i64
+      (if (< start n)
+        (+ start 1)
+        start)]
+    (begin
+      (while (and
+        (< end n)
+        (lsp-utf8-continuation-byte? (string.string-ref text end)))
+        (set! end (+ end 1)))
+      (lsp-json-object2
+        "start"
+        (lsp-offset-position-json text start)
+        "end"
+        (lsp-offset-position-json text end)))))
+
+(define (lsp-diagnostic-from-byte-position
+  [text : String]
+  [line : i64]
+  [col : i64]
+  [message : String]
+  [code : String]) : json.Json
+  (lsp-diagnostic-with-range
+    (lsp-one-codepoint-range-from-byte-position text line col)
+    message
+    code))
+
+(define (lsp-compiler-diagnostic
+  [fallback-path : String]
+  [fallback-text : String]
+  [diag : CompilerDiagnostic]) : json.Json
   (let
     [span : CompilerDiagnosticSpan (compiler-diagnostic-primary-span diag)]
     [path : String (compiler-diagnostic-span-path span)]
+    [text : String
+      (lsp-source-for-compiler-span fallback-path fallback-text span)]
     [labels : CompilerDiagnosticLabelList
       (compiler-diagnostic-secondary-spans diag)]
-    [range : json.Json (lsp-range-from-compiler-span span)]
+    [range : json.Json
+      (lsp-range-from-compiler-span fallback-path fallback-text span)]
     [message : String (compiler-diagnostic-message diag)]
     [code : String (compiler-diagnostic-code-or-empty diag)]
     (match labels
@@ -1373,18 +1513,18 @@
           (lsp-json-member
             "relatedInformation"
             (lsp-json-array
-              (lsp-diagnostic-related-information-list path labels))
+              (lsp-diagnostic-related-information-list path text labels))
             (lsp-diagnostic-message-tail message)))])))
 
 (define (lsp-compiler-diagnostic-code-ok?
   [diag : CompilerDiagnostic]
   [want : String]) : bool
-  (match (lsp-json-string-field (lsp-compiler-diagnostic diag) "code")
+  (match (lsp-json-string-field (lsp-compiler-diagnostic "" "" diag) "code")
     [(LspJsonText.Ok code) (string.eq code want)]
     [(LspJsonText.Missing) false]))
 
 (define (lsp-compiler-diagnostic-uncoded-ok? [diag : CompilerDiagnostic]) : bool
-  (match (lsp-json-string-field (lsp-compiler-diagnostic diag) "code")
+  (match (lsp-json-string-field (lsp-compiler-diagnostic "" "" diag) "code")
     [(LspJsonText.Ok _) false]
     [(LspJsonText.Missing) true]))
 
@@ -1402,7 +1542,9 @@
             "E7777")
           (CompilerDiagnosticSpan "" 4 5 4 8)
           (CompilerDiagnosticSomeString "borrow remains live"))]
-      [rendered : String (json.stringify (lsp-compiler-diagnostic diag))]
+      [source : String "\n  abcdefghij\n\n    abcdefghij"]
+      [rendered : String
+        (json.stringify (lsp-compiler-diagnostic "primary.tl" source diag))]
       [related-key : String "\"relatedInformation\""]
       [related-message : String "\"message\":\"borrow remains live\""]
       [related-uri-prefix : String "\"uri\":\"file:///"]
@@ -1547,14 +1689,13 @@
 ;; derived-origin (macro-expanded) filtering match the `typelisp lint` CLI.
 ;; --------------------------------------------------------------------------
 (define (lsp-lint-diagnostic
-  [line : i64]
-  [col : i64]
+  [range : json.Json]
   [message : String]
   [code : String]) : json.Json
   (lsp-json-object
     (lsp-json-member
       "range"
-      (lsp-range line col)
+      range
       (lsp-json-member
         "severity"
         (lsp-json-number 2)
@@ -1569,12 +1710,14 @@
               (json.JsonString message)
               (json.member-list-empty))))))))
 
-(define (lsp-lint-finding-diagnostic [finding : LintFinding]) : json.Json
+(define (lsp-lint-finding-diagnostic [text : String] [finding : LintFinding]) : json.Json
   (let
     [span : AstSourceSpan (struct-get finding span)]
     (lsp-lint-diagnostic
-      (ast-source-span-start-line span)
-      (ast-source-span-start-col span)
+      (lsp-one-codepoint-range-from-byte-position
+        text
+        (ast-source-span-start-line span)
+        (ast-source-span-start-col span))
       (struct-get finding message)
       (struct-get finding rule-id))))
 
@@ -1593,7 +1736,7 @@
           text
           findings
           (+ i 1)
-          (lsp-json-list-cons (lsp-lint-finding-diagnostic finding) acc))))))
+          (lsp-json-list-cons (lsp-lint-finding-diagnostic text finding) acc))))))
 
 (define (lsp-lint-diagnostics
   [path : String]
@@ -1622,7 +1765,12 @@
           (lsp-publish-diagnostics
             uri
             (lsp-json-list-cons
-              (lsp-diagnostic line col message (compiler-diagnostic-code-parse))
+              (lsp-diagnostic-from-byte-position
+                text
+                line
+                col
+                message
+                (compiler-diagnostic-code-parse))
               (json.list-empty)))
           (LspAnalyzeResult uri (LspCheckCacheErr message))))]
     [(LspValidationResult.Valid)
@@ -1648,7 +1796,7 @@
                   (lsp-publish-diagnostics
                     uri
                     (lsp-json-list-cons
-                      (lsp-compiler-diagnostic (box-get diag))
+                      (lsp-compiler-diagnostic path text (box-get diag))
                       lint-diags))
                   (LspAnalyzeResult uri check-cache))
                 (begin
@@ -1656,7 +1804,7 @@
                   (lsp-publish-diagnostics
                     diag-uri
                     (lsp-json-list-cons
-                      (lsp-compiler-diagnostic (box-get diag))
+                      (lsp-compiler-diagnostic path text (box-get diag))
                       (json.list-empty)))
                   (LspAnalyzeResult diag-uri check-cache))))]))]))
 
@@ -1895,6 +2043,22 @@
               (set! start (- start 1)))
             (string.substring text start (- end start))))))))
 
+(define (lsp-symbol-start-at-offset [text : String] [off : i64]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    [start : i64 off]
+    (if (or
+      (< off 0)
+      (>= off n)
+      (not (lsp-ident-char? (string.string-ref text off))))
+      off
+      (begin
+        (while (and
+          (> start 0)
+          (lsp-ident-char? (string.string-ref text (- start 1))))
+          (set! start (- start 1)))
+        start))))
+
 ;; Base name of a possibly module-qualified symbol (`core/cond` -> `cond`,
 ;; `core.cond` -> `cond`).
 (define (lsp-symbol-base [s : String]) : String
@@ -1935,8 +2099,42 @@
         (string.substring s 0 k)
         ""))))
 
-;; Byte offset of a 0-based (line, character) position, clamped to the line.
-(define (lsp-offset-at-position [text : String] [line0 : i64] [char0 : i64]) : i64
+;; A UTF-8 continuation byte contributes no additional UTF-16 code units.
+(define (lsp-utf8-continuation-byte? [c : char]) : bool
+  (= (bit-and (cast c : i64) 192) 128))
+
+;; Negotiated LSP character units contributed by one UTF-8 byte. In UTF-16,
+;; a four-byte lead spans a surrogate pair and continuation bytes add nothing.
+(define (lsp-position-units-for-byte [c : char]) : i64
+  (if lsp-position-encoding-utf8
+    1
+    (let
+      [b : i64 (cast c : i64)]
+      (cond [(lsp-utf8-continuation-byte? c) 0] [(>= b 240) 2] [else 1]))))
+
+(define (lsp-string-position-units [text : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string.string-length text)]
+    [units : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            units
+            (+ units (lsp-position-units-for-byte (string.string-ref text i))))
+          (set! i (+ i 1))))
+      units)))
+
+(define (lsp-using-utf16-positions?) : bool
+  (not lsp-position-encoding-utf8))
+
+;; Byte offset of a byte-counted 0-based (line, column), clamped to the line.
+;; Compiler, reader, and AST spans use this convention internally.
+(define (lsp-offset-at-byte-position
+  [text : String]
+  [line0 : i64]
+  [char0 : i64]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -1958,8 +2156,57 @@
           (set! col (+ col 1))))
       i)))
 
-;; 1-based line/column of a byte offset.
+;; Byte offset of a negotiated 0-based LSP position, clamped to the line.
+(define (lsp-offset-at-position [text : String] [line0 : i64] [char0 : i64]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    [i : i64 0]
+    [ln : i64 0]
+    [col : i64 0]
+    (begin
+      (while (and (< i n) (< ln line0))
+        (begin
+          (if (= (string.string-ref text i) '\n')
+            (set! ln (+ ln 1))
+            unit)
+          (set! i (+ i 1))))
+      (while (and
+        (< i n)
+        (not (= (string.string-ref text i) '\n'))
+        (or
+          (< col char0)
+          (and
+            (lsp-using-utf16-positions?)
+            (lsp-utf8-continuation-byte? (string.string-ref text i)))))
+        (begin
+          (set!
+            col
+            (+ col (lsp-position-units-for-byte (string.string-ref text i))))
+          (set! i (+ i 1))))
+      i)))
+
+;; 1-based negotiated LSP line/column of a byte offset.
 (define (lsp-line-col-at-offset [text : String] [off : i64]) : LspLineCol
+  (let
+    [n : i64 (string.string-length text)]
+    [i : i64 0]
+    [line : i64 1]
+    [col : i64 1]
+    (begin
+      (while (and (< i n) (< i off))
+        (begin
+          (if (= (string.string-ref text i) '\n')
+            (begin
+              (set! line (+ line 1))
+              (set! col 1))
+            (set!
+              col
+              (+ col (lsp-position-units-for-byte (string.string-ref text i)))))
+          (set! i (+ i 1))))
+      (LspLineCol line col))))
+
+;; 1-based byte-counted line/column of a byte offset.
+(define (lsp-byte-line-col-at-offset [text : String] [off : i64]) : LspLineCol
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -2006,7 +2253,9 @@
               (begin
                 (set! line (+ line 1))
                 (set! col 1))
-              (set! col (+ col 1)))
+              (set!
+                col
+                (+ col (lsp-position-units-for-byte (string.string-ref text i)))))
             (set! i (+ i 1))))
         (set! (struct-get cache offset) off)
         (set! (struct-get cache line) line)
@@ -2153,7 +2402,7 @@
       uri
       (struct-get lc line)
       (struct-get lc col)
-      (string.string-length needle))))
+      (lsp-string-position-units needle))))
 
 (define (lsp-find-definition-in-docs
   [docs : lsp_document_vec.Vec]
@@ -2995,16 +3244,27 @@
       (lsp-json-int-field-default endpoint "line" fallback)]
     [(json.JsonMissing) fallback]))
 
-(define (lsp-inlay-hint-json [line : i64] [col : i64] [ty : String]) : json.Json
-  (lsp-json-object4
-    "position"
-    (lsp-position line col)
-    "label"
-    (json.JsonString (string.append ": " ty))
-    "kind"
-    (lsp-json-number 1)
-    "paddingRight"
-    (json.JsonBool true)))
+(define (lsp-inlay-hint-json
+  [text : String]
+  [line : i64]
+  [col : i64]
+  [ty : String]) : json.Json
+  (let
+    [offset : i64
+      (lsp-offset-at-byte-position
+        text
+        (lsp-zero-based line)
+        (lsp-zero-based col))]
+    [lc : LspLineCol (lsp-line-col-at-offset text offset)]
+    (lsp-json-object4
+      "position"
+      (lsp-position (struct-get lc line) (struct-get lc col))
+      "label"
+      (json.JsonString (string.append ": " ty))
+      "kind"
+      (lsp-json-number 1)
+      "paddingRight"
+      (json.JsonBool true))))
 
 (define (lsp-inlay-build [text : String] [start-line : i64] [end-line : i64]) : json.JsonSeq
   (let
@@ -3017,7 +3277,7 @@
           [line1 : i64 (tc-inlay-hint-line-at i)]
           [col1 : i64 (tc-inlay-hint-col-at i)]
           [line0 : i64 (- line1 1)]
-          [off : i64 (lsp-offset-at-position text line0 (- col1 1))]
+          [off : i64 (lsp-offset-at-byte-position text line0 (- col1 1))]
           (begin
             (if (and
               (>= line0 start-line)
@@ -3028,7 +3288,11 @@
               (set!
                 acc
                 (lsp-json-list-cons
-                  (lsp-inlay-hint-json line1 col1 (tc-inlay-hint-type-at i))
+                  (lsp-inlay-hint-json
+                    text
+                    line1
+                    col1
+                    (tc-inlay-hint-type-at i))
                   acc))
               unit)
             (set! i (+ i 1)))))
@@ -3616,9 +3880,9 @@
 
 (define (lsp-hover-result
   [markdown : String]
-  [line : i64]
-  [col : i64]
-  [len : i64]) : json.Json
+  [text : String]
+  [start : i64]
+  [end : i64]) : json.Json
   (lsp-json-object2
     "contents"
     (lsp-json-object2
@@ -3627,11 +3891,7 @@
       "value"
       (json.JsonString markdown))
     "range"
-    (lsp-json-object2
-      "start"
-      (lsp-position line col)
-      "end"
-      (lsp-position line (+ col len)))))
+    (lsp-offset-range-json text start end)))
 
 ;; Within a defenum's body [start, end), the form of the variant named `needle`
 ;; (e.g. "(OkCleanConfig CleanConfig)"), or "" if no variant matches.
@@ -3987,6 +4247,8 @@
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
         [sym : String (lsp-symbol-at-offset text off)]
+        [sym-start : i64 (lsp-symbol-start-at-offset text off)]
+        [sym-end : i64 (+ sym-start (string.string-length sym))]
         (if (string.eq sym "")
           (lsp-write-response id json.JsonNull)
           (if (not (string.eq (lsp-symbol-qualifier sym) ""))
@@ -3998,9 +4260,9 @@
                     (lsp-hover-markdown
                       (lsp-define-header def-text form-off)
                       (lsp-doc-comments-above def-text form-off))
-                    line0
-                    char0
-                    (string.string-length sym)))]
+                    text
+                    sym-start
+                    sym-end))]
               [(LspDefSource.Missing) (lsp-write-response id json.JsonNull)])
             (let
               [needle : String (lsp-symbol-base sym)]
@@ -4013,17 +4275,13 @@
                     (lsp-hover-markdown
                       (string.append needle (string.append " : " bind-type))
                       "")
-                    line0
-                    char0
-                    (string.string-length sym)))
+                    text
+                    sym-start
+                    sym-end))
                 (if (not (string.eq builtin ""))
                   (lsp-write-response
                     id
-                    (lsp-hover-result
-                      builtin
-                      line0
-                      char0
-                      (string.string-length sym)))
+                    (lsp-hover-result builtin text sym-start sym-end))
                   (match (lsp-hover-resolve
                     docs
                     uri
@@ -4038,9 +4296,9 @@
                           (lsp-hover-markdown
                             (lsp-define-header def-text form-off)
                             (lsp-doc-comments-above def-text form-off))
-                          line0
-                          char0
-                          (string.string-length sym)))]
+                          text
+                          sym-start
+                          sym-end))]
                     [(LspDefSource.Missing)
                       (match (lsp-resolve-variant
                         docs
@@ -4058,9 +4316,9 @@
                                 (string.append
                                   "Variant of `"
                                   (string.append enum-name "`.")))
-                              line0
-                              char0
-                              (string.string-length sym)))]
+                              text
+                              sym-start
+                              sym-end))]
                         [(LspVariantHit.Missing)
                           (lsp-write-response id json.JsonNull)])])))))))]
     [(LspDocumentLookup.Missing) (lsp-write-response id json.JsonNull)]))
@@ -4274,7 +4532,7 @@
                             name
                             (struct-get name-lc line)
                             (struct-get name-lc col)
-                            (string.string-length name)
+                            (lsp-string-position-units name)
                             (struct-get form-start-lc line)
                             (struct-get form-start-lc col)
                             (struct-get form-end-lc line)
@@ -5678,7 +5936,7 @@
               (- hint-col col1))]
           [dist : i64 (+ (* d-line 1000) d-col)]
           [off : i64
-            (lsp-offset-at-position text (- hint-line 1) (- hint-col 1))]
+            (lsp-offset-at-byte-position text (- hint-line 1) (- hint-col 1))]
           [belongs-to-document : bool
             (or
               (lsp-inlay-valid-binding? text off)
@@ -5711,8 +5969,11 @@
             (let
               [line0 : i64 (lsp-json-int-field-default position "line" 0)]
               [char0 : i64 (lsp-json-int-field-default position "character" 0)]
-              [line1 : i64 (+ line0 1)]
-              [col1 : i64 (+ char0 1)]
+              [position-off : i64 (lsp-offset-at-position text line0 char0)]
+              [byte-lc : LspLineCol
+                (lsp-byte-line-col-at-offset text position-off)]
+              [line1 : i64 (struct-get byte-lc line)]
+              [col1 : i64 (struct-get byte-lc col)]
               (begin
                 (tc-inlay-hints-enable!)
                 (match (compiler-check-source-with-roots-and-cfg
@@ -5853,6 +6114,7 @@
   (let
     [n : i64 (string.string-length text)]
     [name-len : i64 (string.string-length name)]
+    [name-units : i64 (lsp-string-position-units name)]
     [i : i64 0]
     [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
     [acc : json.JsonSeq (json.list-empty)]
@@ -5881,7 +6143,7 @@
                           (lsp-document-highlight
                             (struct-get lc line)
                             (struct-get lc col)
-                            name-len)
+                            name-units)
                           acc)))
                     unit)
                   (set! i end)))]
@@ -5951,9 +6213,7 @@
 ;; only moves forward. Nesting is expressed through `parent`, so no separate
 ;; delimiter stack is needed and deep nesting costs no host recursion.
 ;;
-;; Characters are UTF-16 code units, the LSP default position encoding. The
-;; older position-producing paths in this server still report byte columns;
-;; converging them behind a negotiated encoding is tracked by #5623.
+;; Character columns use the position encoding negotiated at initialization.
 ;; --------------------------------------------------------------------------
 (define lsp-fold-kind-region : i64
   0)
@@ -5962,14 +6222,6 @@
 
 (define (lsp-fold-range-fallback) : LspFoldRange
   (LspFoldRange 0 0 0 0 lsp-fold-kind-region -1 false))
-
-;; UTF-16 code units contributed by one UTF-8 byte: continuation bytes add
-;; nothing, a 4-byte lead byte spans a surrogate pair, and every other byte is
-;; one unit. Summing this over a line yields the LSP column directly.
-(define (lsp-fold-utf16-units [c : char]) : i64
-  (let
-    [b : i64 (cast c : i64)]
-    (cond [(= (bit-and b 192) 128) 0] [(>= b 240) 2] [else 1])))
 
 ;; Advance the cursor across `[from, to)`. Used for spans the lexical skips
 ;; consume in one step (comments, strings, character literals), which may cross
@@ -5993,7 +6245,7 @@
             (begin
               (set!
                 (struct-get cursor col)
-                (+ (struct-get cursor col) (lsp-fold-utf16-units c)))
+                (+ (struct-get cursor col) (lsp-position-units-for-byte c)))
               (if (lsp-ws? c)
                 unit
                 (set! (struct-get cursor code) true))))
@@ -6157,7 +6409,7 @@
               (begin
                 (set!
                   (struct-get cursor col)
-                  (+ (struct-get cursor col) (lsp-fold-utf16-units c)))
+                  (+ (struct-get cursor col) (lsp-position-units-for-byte c)))
                 (if (lsp-ws? c)
                   unit
                   (set! (struct-get cursor code) true))
@@ -6522,6 +6774,9 @@
                       [(LspInitializeLanguageConfig.Ok target cfg-names)
                         (begin
                           (lsp-language-config-install! target cfg-names)
+                          (set!
+                            lsp-position-encoding-utf8
+                            (lsp-initialize-position-encoding-utf8? message))
                           (lsp-write-response id (lsp-initialize-result)))]
                       [(LspInitializeLanguageConfig.Err config-error)
                         (lsp-write-error id -32602 config-error)])]

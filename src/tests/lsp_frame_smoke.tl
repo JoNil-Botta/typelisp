@@ -693,6 +693,105 @@
       (lsp-transcript-result-contains? result found)
       (lsp-transcript-result-contains? result empty))))
 
+(define (lsp-position-encoding-negotiation-smoke-ok?) : bool
+  (let
+    [missing : String
+      "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}"]
+    [offered : String
+      "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-16\",\"utf-8\"]}}}}"]
+    [unsupported : String
+      "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"general\":{\"positionEncodings\":[\"utf-32\"]}}}}"]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [default-result : LspTranscriptResult
+      (lsp-transcript-run
+        (string.append
+          (lsp-transcript-frame missing)
+          (lsp-transcript-frame exit)))]
+    [utf8-result : LspTranscriptResult
+      (lsp-transcript-run
+        (string.append
+          (lsp-transcript-frame offered)
+          (lsp-transcript-frame exit)))]
+    [fallback-result : LspTranscriptResult
+      (lsp-transcript-run
+        (string.append
+          (lsp-transcript-frame unsupported)
+          (lsp-transcript-frame exit)))]
+    [utf16 : String "\"positionEncoding\":\"utf-16\""]
+    [utf8 : String "\"positionEncoding\":\"utf-8\""]
+    (and
+      (lsp-transcript-result-contains? default-result utf16)
+      (lsp-transcript-result-contains? utf8-result utf8)
+      (lsp-transcript-result-contains? fallback-result utf16))))
+
+(define (lsp-position-encoding-conversion-smoke-ok?) : bool
+  (let
+    [source : String "aλ€𝄞z"]
+    [cache : LspLineColCache (LspLineColCache -1 1 1)]
+    [utf16-ok : bool false]
+    [utf8-ok : bool false]
+    (begin
+      (lsp-position-encoding-use-utf16!)
+      (let
+        [after-two : LspLineCol (lsp-line-col-at-offset source 3)]
+        [after-three : LspLineCol
+          (lsp-line-col-cache-at-offset! cache source 6)]
+        [after-four : LspLineCol
+          (lsp-line-col-cache-at-offset! cache source 10)]
+        (set!
+          utf16-ok
+          (and
+            (= (lsp-offset-at-position source 0 2) 3)
+            (= (lsp-offset-at-position source 0 3) 6)
+            (= (lsp-offset-at-position source 0 4) 10)
+            (= (lsp-offset-at-position source 0 5) 10)
+            (= (struct-get after-two col) 3)
+            (= (struct-get after-three col) 4)
+            (= (struct-get after-four col) 6))))
+      (lsp-position-encoding-use-utf8!)
+      (set! cache (LspLineColCache -1 1 1))
+      (let
+        [after-two : LspLineCol (lsp-line-col-at-offset source 3)]
+        [after-three : LspLineCol
+          (lsp-line-col-cache-at-offset! cache source 6)]
+        [after-four : LspLineCol
+          (lsp-line-col-cache-at-offset! cache source 10)]
+        (set!
+          utf8-ok
+          (and
+            (= (lsp-offset-at-position source 0 3) 3)
+            (= (lsp-offset-at-position source 0 6) 6)
+            (= (lsp-offset-at-position source 0 10) 10)
+            (= (struct-get after-two col) 4)
+            (= (struct-get after-three col) 7)
+            (= (struct-get after-four col) 11))))
+      (lsp-position-encoding-use-utf16!)
+      (and utf16-ok utf8-ok))))
+
+(define (lsp-position-encoding-diagnostic-smoke-ok?) : bool
+  (let
+    [source : String "λ€𝄞x"]
+    [span : CompilerDiagnosticSpan (CompilerDiagnosticSpan "" 1 10 1 11)]
+    [utf16-want : String
+      "\"start\":{\"line\":0,\"character\":4},\"end\":{\"line\":0,\"character\":5}"]
+    [utf8-want : String
+      "\"start\":{\"line\":0,\"character\":9},\"end\":{\"line\":0,\"character\":10}"]
+    [utf16-rendered : String ""]
+    [utf8-rendered : String ""]
+    (begin
+      (lsp-position-encoding-use-utf16!)
+      (set!
+        utf16-rendered
+        (json.stringify (lsp-range-from-compiler-span "" source span)))
+      (lsp-position-encoding-use-utf8!)
+      (set!
+        utf8-rendered
+        (json.stringify (lsp-range-from-compiler-span "" source span)))
+      (lsp-position-encoding-use-utf16!)
+      (and
+        (string.contains (& utf16-rendered) (& utf16-want))
+        (string.contains (& utf8-rendered) (& utf8-want))))))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -719,6 +818,9 @@
         (unless (lsp-folding-range-utf16-smoke-ok?) (return 27))
         (unless (lsp-folding-range-scale-smoke-ok?) (return 28))
         (unless (lsp-folding-range-transcript-smoke-ok?) (return 29))
+        (unless (lsp-position-encoding-negotiation-smoke-ok?) (return 30))
+        (unless (lsp-position-encoding-conversion-smoke-ok?) (return 31))
+        (unless (lsp-position-encoding-diagnostic-smoke-ok?) (return 32))
         (unless (lsp-transcript-framing-smoke-ok?) (return 18))
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))

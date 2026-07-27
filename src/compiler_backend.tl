@@ -9,6 +9,7 @@
 (import "compiler_abi.tl")
 (import "compiler_regalloc.tl")
 (import compiler_parallel_move as pmove)
+(import compiler_profile_state as profile_state)
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
@@ -60,18 +61,24 @@
 
 (cfg
   compile-profile-summary
-  (define (compiler-backend-profile-summary-reset!) : unit
+  (define (compiler-backend-profile-summary-reset!
+    [state : profile_state.CompilerProfileState]) : unit
+    ;; Optimizer and backend rows share one job table. The driver performs the
+    ;; single reset before either phase begins.
     unit))
 
 (cfg
   compile-profile-summary
-  (define (compiler-backend-profile-summary-emit) : unit
+  (define (compiler-backend-profile-summary-emit
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
       (cps.compiler-profile-summary-emit
+        state
         cps.compiler-profile-summary-backend-function
         "backend"
         "function")
       (cps.compiler-profile-summary-emit
+        state
         cps.compiler-profile-summary-backend-module
         "backend"
         "module"))))
@@ -125,6 +132,7 @@
 (cfg
   compile-profile
   (define (compiler-backend-profile-detail-finish
+    [state : profile_state.CompilerProfileState]
     [phase : String]
     [name : String]) : unit
     (let
@@ -135,10 +143,12 @@
         (if (string.eq phase "function")
           (begin
             (cps.compiler-profile-summary-note!
+              state
               cps.compiler-profile-summary-backend-function
               name
               elapsed)
             (cps.compiler-profile-summary-note-module!
+              state
               cps.compiler-profile-summary-backend-module
               name
               elapsed))
@@ -587,7 +597,10 @@
   (group-word-class-masks backend_string_i64_map.Map)
   ;; Explicit type-reader handle for this backend job. It is snapshotted from
   ;; the job's pools once and then travels with the already-ubiquitous index.
-  (type-segment-bases i64))
+  (type-segment-bases i64)
+  ;; Profile hooks share this job-owned handle instead of selecting a global
+  ;; timing/summary table.
+  (profile-state profile_state.CompilerProfileState))
 
 (defenum CompilerBackendDebugFileIndex
   (No)
@@ -27188,10 +27201,11 @@
     [(CompilerBackendCollectState.GroupClassMasks out _) out]
     [_ map]))
 
-(define (compiler-backend-program-index-build
+(define (compiler-backend-program-index-build-with-profile-state
   [type-segment-bases : i64]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : CompilerBackendProgramIndex
+  [externs : CompilerIrExternList]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerBackendProgramIndex
   (let
     [_clear-c-memory-calls : unit (compiler-reg-clear-c-memory-call-names!)]
     [function-count : i64 (compiler-backend-function-list-count functions)]
@@ -27257,7 +27271,18 @@
       extern-provided
       group-word-counts
       group-word-class-masks
-      type-segment-bases)))
+      type-segment-bases
+      profile-state)))
+
+(define (compiler-backend-program-index-build
+  [type-segment-bases : i64]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : CompilerBackendProgramIndex
+  (compiler-backend-program-index-build-with-profile-state
+    type-segment-bases
+    functions
+    externs
+    (profile_state.compiler-profile-state-new)))
 
 ;; Machine-word count for a value's type -- 2 (or more) for a
 ;; register-group aggregate constructed somewhere in the program, else 1.
@@ -51315,6 +51340,7 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
+                  (struct-get program-index profile-state)
                   "function"
                   (compiler-backend-profile-function-name func)))
               (compiler-backend-emit-functions-buffer-raw-into
@@ -51339,6 +51365,7 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
+                  (struct-get program-index profile-state)
                   "function"
                   (compiler-backend-profile-function-name func)))
               (ResultCompilerBackendBuffer.Err message))]))]
@@ -51407,6 +51434,7 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
+                  (struct-get program-index profile-state)
                   "function"
                   (compiler-backend-profile-function-name func)))
               (compiler-backend-emit-function-seq-buffer-into
@@ -51432,6 +51460,7 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
+                  (struct-get program-index profile-state)
                   "function"
                   (compiler-backend-profile-function-name func)))
               (ResultCompilerBackendBuffer.Err message))])))))
@@ -51484,6 +51513,7 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-detail-finish
+                    (struct-get program-index profile-state)
                     "function"
                     (compiler-backend-profile-function-name func)))
                 (compiler-backend-assembly-stream-process-string!
@@ -51513,6 +51543,7 @@
                 (cfg
                   compile-profile
                   (compiler-backend-profile-detail-finish
+                    (struct-get program-index profile-state)
                     "function"
                     (compiler-backend-profile-function-name func)))
                 (unsafe
@@ -51585,6 +51616,7 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
+                  (struct-get program-index profile-state)
                   "function"
                   (compiler-backend-profile-function-name func)))
               (compiler-backend-assembly-stream-process-string!
@@ -51615,6 +51647,7 @@
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
+                  (struct-get program-index profile-state)
                   "function"
                   (compiler-backend-profile-function-name func)))
               (unsafe
@@ -54258,7 +54291,8 @@
                   (compiler-backend-profile-finish "functions"))
                 (cfg
                   compile-profile-summary
-                  (compiler-backend-profile-summary-emit))
+                  (compiler-backend-profile-summary-emit
+                    (struct-get program-index profile-state)))
                 (cfg compile-profile (compiler-backend-profile-start))
                 (match (compiler-backend-emit-closure-entry-adapters-buffer-into
                   type-segment-bases
@@ -54374,10 +54408,11 @@
                   (compiler-backend-profile-finish "functions"))
                 (cfg
                   compile-profile-summary
-                  (compiler-backend-profile-summary-emit))
+                  (compiler-backend-profile-summary-emit
+                    (struct-get program-index profile-state)))
                 (ResultCompilerBackendBuffer.Err message))]))))))
 
-(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state
   [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -54385,7 +54420,8 @@
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]
-  [pic-emit? : bool]) : ResultCompilerBackendBuffer
+  [pic-emit? : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
   (begin
     (compiler-backend-user-symbol-cache-reset!)
     (compiler-backend-peephole-carry-safe-reset!)
@@ -54438,10 +54474,11 @@
                       functions
                       emit-entry)]
                   [program-index : CompilerBackendProgramIndex
-                    (compiler-backend-program-index-build
+                    (compiler-backend-program-index-build-with-profile-state
                       type-segment-bases
                       entry-functions
-                      externs)]
+                      externs
+                      profile-state)]
                   (begin
                     (cfg
                       compile-profile
@@ -54494,6 +54531,26 @@
           (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
           (ResultCompilerBackendBuffer.Err
             (box (compiler-diagnostic-at-start "" message))))])))
+
+(define (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [pic-emit? : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state
+    type-segment-bases
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    pic-emit?
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
   [program : CompilerIrProgram]
@@ -57259,14 +57316,15 @@
       emit-entry
       crt-entry)))
 
-(define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
+(define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
   [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [_spans : CompilerSourceSpans]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendObject
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendObject
   (begin
     (compiler-backend-user-symbol-cache-reset!)
     (match (compiler-backend-runtime-plan program)
@@ -57279,10 +57337,11 @@
                   functions
                   emit-entry)]
               [program-index : CompilerBackendProgramIndex
-                (compiler-backend-program-index-build
+                (compiler-backend-program-index-build-with-profile-state
                   type-segment-bases
                   entry-functions
-                  externs)]
+                  externs
+                  profile-state)]
               ;; Object lowering performs the same aggregate group discovery as
               ;; assembly lowering. Install this image's maps before that walk:
               ;; a prior batch entry may have left arena-owned maps in the
@@ -57326,6 +57385,24 @@
         (ResultCompilerBackendObject.Err
           (box (compiler-diagnostic-at-start "" message)))])))
 
+(define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendObject
+  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
+    type-segment-bases
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    (profile_state.compiler-profile-state-new)))
+
 (define (compiler-backend-emit-program-object-image-target-with-mode-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -57358,6 +57435,25 @@
     spans
     emit-entry
     crt-entry))
+
+(define (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendObject
+  (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    profile-state))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode
   [program : CompilerIrProgram]
@@ -61136,14 +61232,15 @@
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (text_buf.render (compiler-backend-peephole-asm-buffer asm)))
 
-(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt
+(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state
   [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
   ;; Stream prefix/function/adapter/tail emission through peephole and sweep.
   ;; Each function's raw arena is rewound as soon as its final output chunk is
   ;; copied home, so the backend never retains the program's raw function text.
@@ -61174,7 +61271,7 @@
               (let
                 [emitted : ResultCompilerBackendBuffer
                   (if crt-entry
-                    (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+                    (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state
                       type-segment-bases
                       program
                       target
@@ -61182,8 +61279,9 @@
                       spans
                       emit-entry
                       crt-entry
-                      false)
-                    (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+                      false
+                      profile-state)
+                    (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state
                       type-segment-bases
                       program
                       target
@@ -61191,7 +61289,8 @@
                       spans
                       emit-entry
                       false
-                      false))]
+                      false
+                      profile-state))]
                 (match emitted
                   [(ResultCompilerBackendBuffer.Ok _)
                     (let
@@ -61222,6 +61321,24 @@
                         (arena.destroy peephole-arena))
                       (compiler-backend-clear-scratch-escaped-emit-state!)
                       (ResultCompilerBackendBuffer.Err message))])))))))))
+
+(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state
+    type-segment-bases
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
   [program : CompilerIrProgram]
@@ -61255,6 +61372,25 @@
     spans
     emit-entry
     crt-entry))
+
+(define (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    profile-state))
 
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]
@@ -61291,6 +61427,29 @@
     spans
     emit-entry
     crt-entry)
+    [(ResultCompilerBackendBuffer.Ok buf)
+      (ResultCompilerBackend.Ok (text_buf.render buf))]
+    [(ResultCompilerBackendBuffer.Err message)
+      (ResultCompilerBackend.Err message)]))
+
+(define (compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackend
+  (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
+    pools
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    profile-state)
     [(ResultCompilerBackendBuffer.Ok buf)
       (ResultCompilerBackend.Ok (text_buf.render buf))]
     [(ResultCompilerBackendBuffer.Err message)
@@ -61822,15 +61981,16 @@
     (str_cat.str-cat ".text\n" compiler-backend-pic-image-base-label ":\n")
     (compiler-backend-pic-rewrite-relocs asm (struct-get image relocations))))
 
-(define (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
+(define (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
   [type-segment-bases : i64]
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendPic
-  (match (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendPic
+  (match (compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state
     type-segment-bases
     program
     target
@@ -61838,16 +61998,18 @@
     spans
     emit-entry
     crt-entry
-    true)
+    true
+    profile-state)
     [(ResultCompilerBackendBuffer.Ok buf)
-      (match (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt
+      (match (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
         type-segment-bases
         program
         target
         mode
         spans
         emit-entry
-        crt-entry)
+        crt-entry
+        profile-state)
         [(ResultCompilerBackendObject.Ok image)
           (if (compiler-backend-pic-symbols-have-extern?
             (struct-get image symbols))
@@ -61873,6 +62035,24 @@
         [(ResultCompilerBackendObject.Err diag)
           (ResultCompilerBackendPic.Err diag)])]
     [(ResultCompilerBackendBuffer.Err diag) (ResultCompilerBackendPic.Err diag)]))
+
+(define (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt
+  [type-segment-bases : i64]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendPic
+  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
+    type-segment-bases
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-backend-emit-program-pic-target-with-mode-and-crt
   [program : CompilerIrProgram]
@@ -61906,6 +62086,25 @@
     spans
     emit-entry
     crt-entry))
+
+(define (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state
+  [pools : AstNodePoolContext]
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendPic
+  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state
+    (ast-node-pool-context-type-segment-bases pools)
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry
+    profile-state))
 
 (define (compiler-backend-emit-program-pic-target-with-mode
   [program : CompilerIrProgram]

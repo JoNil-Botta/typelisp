@@ -5,6 +5,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as windows_coff_svec)
 (import compiler_object as cobj)
+(import compiler_profile_state as profile_state)
 (import "compiler_object_coff.tl")
 (import "compiler_driver_core.tl")
 (import sym_i64_env)
@@ -126,17 +127,19 @@
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [mode : CompilerBackendMode]
-  [category : String]) : ResultCompilerWindowsBatchArtifact
+  [category : String]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (begin
     (cfg compile-profile (compiler-driver-profile-start-phase))
-    (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt
+    (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
       pools
       program
       (CompilerBackendTarget.Windows)
       mode
       spans
       true
-      false)
+      false
+      profile-state)
       [(ResultCompilerBackendBuffer.Ok asm)
         (begin
           (cfg
@@ -160,7 +163,8 @@
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [mode : CompilerBackendMode]
-  [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
+  [force-assembly : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (if force-assembly
     (compiler-windows-batch-emit-assembly
       pools
@@ -168,17 +172,19 @@
       program
       spans
       mode
-      "forced-assembly")
+      "forced-assembly"
+      profile-state)
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
-      (match (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt
+      (match (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
         pools
         program
         (CompilerBackendTarget.Windows)
         mode
         spans
         true
-        false)
+        false
+        profile-state)
         [(ResultCompilerBackendObject.Ok image)
           (begin
             (cfg
@@ -219,7 +225,8 @@
                   program
                   spans
                   mode
-                  category)]))]
+                  category
+                  profile-state)]))]
         [(ResultCompilerBackendObject.Err diag)
           (begin
             (cfg
@@ -237,7 +244,8 @@
   [spans : CompilerSourceSpans]
   [mode : CompilerBackendMode]
   [opt-level : i64]
-  [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
+  [force-assembly : bool]
+  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (if (ast-node-pool-context-type-exhausted? pools)
     (ResultCompilerWindowsBatchArtifact.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -245,11 +253,12 @@
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
-      (match (optimize-program-with-spans-and-pools-and-level
+      (match (optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
         program
         spans
-        opt-level)
+        opt-level
+        profile-state)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
@@ -269,7 +278,8 @@
                   optimized
                   optimized-spans
                   mode
-                  force-assembly))))]))))
+                  force-assembly
+                  profile-state))))]))))
 
 (define (compiler-windows-batch-emit-lowered-result
   [input-path : String]
@@ -278,7 +288,7 @@
   [opt-level : i64]
   [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (match lowered
-    [(ResultCompilerDriverLowered.Ok program spans pools)
+    [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
       (let
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -301,7 +311,8 @@
               emit-spans
               mode
               opt-level
-              force-assembly))]
+              force-assembly
+              profile-state))]
         (begin
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
@@ -323,7 +334,10 @@
   [cfgs : sym_i64_env.SymI64Env]
   [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (begin
-    (cfg compile-profile (compiler-driver-profile-start-total))
+    (cfg
+      compile-profile
+      (compiler-driver-profile-start-total
+        (compiler-driver-state-profile state)))
     (let
       [target : CompilerBackendTarget (CompilerBackendTarget.Windows)]
       [lowered : ResultCompilerDriverLowered

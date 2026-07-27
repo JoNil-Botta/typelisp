@@ -18200,6 +18200,29 @@
 ;; total-enum marker and must remain unversioned by the profitability gate.
 ;; Variants 6-9 cover late pairing; 10 lets the smaller affine value escape
 ;; through a phi so the paired rewrite must fail verification and roll back.
+;; Variants 11-12 route the first check's index through a reinterpret cast.
+;;
+;; Frame size shared by every variant: vars 0-13 are spelled out below, so the
+;; passes allocate their replacement values from 14 up.
+(define opt-bce-mb-test-frame : i64
+  14)
+
+;; Variant thresholds. Every variant from 4 up terminates the header with a
+;; switch, from 5 up marks that switch as the late total-enum dispatch, from 6
+;; up gives "then" the adjacent affine check pair, and from 11 up feeds the
+;; first of those checks through a reinterpret cast.
+(define (opt-bce-mb-test-switch-variant? [variant : i64]) : bool
+  (>= variant 4))
+
+(define (opt-bce-mb-test-total-enum-variant? [variant : i64]) : bool
+  (>= variant 5))
+
+(define (opt-bce-mb-test-pair-variant? [variant : i64]) : bool
+  (>= variant 6))
+
+(define (opt-bce-mb-test-cast-variant? [variant : i64]) : bool
+  (>= variant 11))
+
 (define (opt-bce-mb-test-header-block [variant : i64]) : CompilerIrBlock
   (compiler-ir-block
     (compiler-ir-label "body")
@@ -18238,14 +18261,7 @@
               (CompilerIrValue.I64 4)
               (AstType.Bool))
             (compiler-ir-instr-cons
-              (if (or
-                (= variant 4)
-                (= variant 5)
-                (= variant 6)
-                (= variant 7)
-                (= variant 8)
-                (= variant 9)
-                (= variant 10))
+              (if (opt-bce-mb-test-switch-variant? variant)
                 (CompilerIrInstr.Switch
                   (CompilerIrValue.Var 5)
                   0
@@ -18256,13 +18272,7 @@
                       1
                       (compiler-ir-label "then")
                       CompilerIrSwitchCaseList.Nil))
-                  (if (or
-                    (= variant 5)
-                    (= variant 6)
-                    (= variant 7)
-                    (= variant 8)
-                    (= variant 9)
-                    (= variant 10))
+                  (if (opt-bce-mb-test-total-enum-variant? variant)
                     (compiler-ir-label "match_total_enum_default")
                     (compiler-ir-label "match_total_trap")))
                 (CompilerIrInstr.Branch
@@ -18271,13 +18281,64 @@
                   (compiler-ir-label "else")))
               (CompilerIrInstrList.Nil))))))))
 
+;; The bytecode-VM shape: the first check reads a width-64 reinterpret cast of
+;; the affine value rather than the value itself. Variant 11 gives that cast no
+;; other reader, so the paired rewrite strands it and must delete the def;
+;; variant 12 adds a second reader, which keeps the def alive even though the
+;; synthesized min index still reads the cast's source.
+(define (opt-bce-mb-test-cast-then-block [variant : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    (compiler-ir-label "then")
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        6
+        (CompilerIrBinOp.Sub)
+        (CompilerIrValue.Var 4)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Cast
+          11
+          (CompilerIrValue.Var 6)
+          (AstType.I64)
+          (AstType.U64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 11)
+            (CompilerIrValue.Var 1)
+            (compiler-ir-label "mb_pair_ok0"))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              13
+              (CompilerIrBinOp.Sub)
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.I64 2)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BoundsCheck
+                (CompilerIrValue.Var 13)
+                (CompilerIrValue.Var 1)
+                (compiler-ir-label "mb_pair_ok1"))
+              (if (= variant 12)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.StorePtr
+                    (CompilerIrValue.Var 2)
+                    (CompilerIrValue.Var 11)
+                    (AstType.U64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump (compiler-ir-label "merge"))
+                    (CompilerIrInstrList.Nil)))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump (compiler-ir-label "merge"))
+                  (CompilerIrInstrList.Nil))))))))))
+
 (define (opt-bce-mb-test-then-block [variant : i64]) : CompilerIrBlock
-  (if (or
-    (= variant 6)
-    (= variant 7)
-    (= variant 8)
-    (= variant 9)
-    (= variant 10))
+  (if (opt-bce-mb-test-cast-variant? variant)
+    (opt-bce-mb-test-cast-then-block variant)
+    (opt-bce-mb-test-plain-then-block variant)))
+
+(define (opt-bce-mb-test-plain-then-block [variant : i64]) : CompilerIrBlock
+  (if (opt-bce-mb-test-pair-variant? variant)
     ;; Adjacent affine checks on phi-1 / phi-2. Variant 6 is the positive
     ;; total-enum-dispatch case; 7 inserts a store between the checks and 8
     ;; gives the second check a different invariant length.
@@ -18437,13 +18498,7 @@
     ;; Every marked Switch default must name a real final-arm block. The shared
     ;; verifier now checks Switch successors before SSA dominance/use facts.
     [label : i64
-      (if (or
-        (= variant 5)
-        (= variant 6)
-        (= variant 7)
-        (= variant 8)
-        (= variant 9)
-        (= variant 10))
+      (if (opt-bce-mb-test-total-enum-variant? variant)
         (compiler-ir-label "match_total_enum_default")
         (compiler-ir-label "match_total_trap"))]
     (compiler-ir-block
@@ -18483,14 +18538,7 @@
             (opt-bce-mb-test-merge-block variant)
             (compiler-ir-block-cons
               (opt-bce-mb-test-exit-block)
-              (if (or
-                (= variant 4)
-                (= variant 5)
-                (= variant 6)
-                (= variant 7)
-                (= variant 8)
-                (= variant 9)
-                (= variant 10))
+              (if (opt-bce-mb-test-switch-variant? variant)
                 (compiler-ir-block-cons
                   (opt-bce-mb-test-total-trap-block variant)
                   CompilerIrBlockList.Nil)
@@ -18501,7 +18549,7 @@
     (opt-test-symbol "bce_version_mb_fixture")
     (opt-bce-version-test-params)
     (AstType.I64)
-    14
+    opt-bce-mb-test-frame
     blocks))
 
 (define (opt-bce-mb-test-jump-block [label : i64] [target : i64]) : CompilerIrBlock
@@ -18814,6 +18862,53 @@
         [(CompilerIrBlock.Block _ instrs)
           (opt-bce-mb-pair-test-block-uses-length-from? instrs 0 length)])]))
 
+;; The synthesized pair-min subtraction is the only `x - 1` in the rewritten
+;; block whose destination came from the fixture's spare frame (var ids at or
+;; above `opt-bce-mb-test-frame`); the fixture's own `phi-1 - 1` writes var 6.
+(define (opt-bce-mb-pair-test-min-sub-lhs-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrMaybeValue
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrMaybeValue.No)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp dst op lhs rhs _)
+        (match op
+          [(CompilerIrBinOp.Sub)
+            (if (and
+              (>= dst opt-bce-mb-test-frame)
+              (opt-value-eq rhs (CompilerIrValue.I64 1)))
+              (CompilerIrMaybeValue.Some lhs)
+              (opt-bce-mb-pair-test-min-sub-lhs-from instrs (+ index 1)))]
+          [_ (opt-bce-mb-pair-test-min-sub-lhs-from instrs (+ index 1))])]
+      [_ (opt-bce-mb-pair-test-min-sub-lhs-from instrs (+ index 1))])))
+
+(define (opt-bce-mb-pair-test-min-sub-lhs [blocks : CompilerIrBlockList]) : CompilerIrMaybeValue
+  (match (opt-cfg-find-block blocks (compiler-ir-label "then"))
+    [(OptMaybeBlock.No) (CompilerIrMaybeValue.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-pair-test-min-sub-lhs-from instrs 0)])]))
+
+(define (opt-bce-mb-pair-test-block-casts-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.Cast _ _ _ _) 1]
+        [_ 0])
+      (opt-bce-mb-pair-test-block-casts-from instrs (+ index 1)))))
+
+(define (opt-bce-mb-pair-test-block-casts [blocks : CompilerIrBlockList]) : i64
+  (match (opt-cfg-find-block blocks (compiler-ir-label "then"))
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-pair-test-block-casts-from instrs 0)])]))
+
 ;; Positive: the sp-1/sp-2 pair combines after the optimizer fixpoint, in the
 ;; existing total-enum loop. Its preheader owns len>=1 and the saturated len-1
 ;; used by the single replacement check. No blocks or loop versions are made.
@@ -18848,6 +18943,16 @@
         (ast-node-pool-reader-type-segment-bases)
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 10)))]
     [rollback-out : CompilerIrBlockList (opt-function-blocks rollback)]
+    [cast-dead : CompilerIrFunction
+      (opt-late-bounds-pair-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 11)))]
+    [cast-dead-out : CompilerIrBlockList (opt-function-blocks cast-dead)]
+    [cast-live : CompilerIrFunction
+      (opt-late-bounds-pair-function
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 12)))]
+    [cast-live-out : CompilerIrBlockList (opt-function-blocks cast-live)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function positive))) 1]
       [(not (= (compiler-ir-block-list-count positive-out) 7)) 2]
@@ -18918,6 +19023,44 @@
           [(OptBceMbAffinePair.Some first-smaller) first-smaller]
           [(OptBceMbAffinePair.No) true])
         23]
+      ;; The bytecode-VM shape. The pair still forms through the reinterpret
+      ;; cast, but the min index must read the cast's SOURCE (var 6), not the
+      ;; cast destination (var 11) -- reading the cast keeps it alive as a bare
+      ;; register copy and blocks the backend's `lea -1(src)` fold. With no
+      ;; other reader the stranded cast def is deleted outright.
+      [(not (opt-verify-ok? (opt-verify-function cast-dead))) 24]
+      [(not (= (compiler-ir-block-list-count cast-dead-out) 7)) 25]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              cast-dead-out
+              (compiler-ir-label "then"))
+            1))
+        26]
+      [(not (opt-bce-mb-pair-test-guard-has-len-fact? cast-dead-out)) 27]
+      [(match (opt-bce-mb-pair-test-min-sub-lhs cast-dead-out)
+          [(CompilerIrMaybeValue.Some lhs)
+            (not (opt-value-eq lhs (CompilerIrValue.Var 6)))]
+          [(CompilerIrMaybeValue.No) true])
+        28]
+      [(not (= (opt-bce-mb-pair-test-block-casts cast-dead-out) 0)) 29]
+      ;; A second reader keeps the cast def alive; only the dead-def cleanup is
+      ;; withheld, and the min index still reads through the cast.
+      [(not (opt-verify-ok? (opt-verify-function cast-live))) 30]
+      [(not (= (compiler-ir-block-list-count cast-live-out) 7)) 31]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              cast-live-out
+              (compiler-ir-label "then"))
+            1))
+        32]
+      [(match (opt-bce-mb-pair-test-min-sub-lhs cast-live-out)
+          [(CompilerIrMaybeValue.Some lhs)
+            (not (opt-value-eq lhs (CompilerIrValue.Var 6)))]
+          [(CompilerIrMaybeValue.No) true])
+        33]
+      [(not (= (opt-bce-mb-pair-test-block-casts cast-live-out) 1)) 34]
       [else 42])))
 
 (define (compiler-optimize-bce-version-mb-negative-self-test) : i64

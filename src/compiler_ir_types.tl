@@ -94,6 +94,17 @@
 ;; still stores that raw i64, avoiding a heap object for every name occurrence.
 ;; Typed boundaries use this one-word handle so packed structural keys and
 ;; missing-value sentinels cannot be rendered accidentally.
+;;
+;; The one-word representation is pinned by
+;; `compiler-backend-source-span-symbol-provenance-ok?` in
+;; `compiler_backend_tests.tl`, not here: `size-of` needs a `(type T)` literal,
+;; and a `(type T)` literal anywhere in a compiled program sets the parse
+;; state's type-literal flag, which makes the driver defer the whole
+;; source-pool/frontend release at the macro handoff
+;; (`defer-source-destroy?` in `compiler_driver_core.tl`). In a module that is
+;; part of `main.tl`'s closure that costs the self-compile ~214MB of peak live
+;; memory (#5872), so layout assertions for compiler types belong in the
+;; test-only modules outside that closure.
 (defstruct CompilerIrSymbolId
   (value i64))
 
@@ -7146,7 +7157,6 @@
                 span1)))
           (set! i (+ i 1))))
       (and
-        (= (comptime (size-of (type CompilerIrSymbolId))) 8)
         (= (compiler-source-spans-entry-list-count entries) 2)
         (= (compiler-source-spans-count spans) 2)
         (= (compiler-source-spans-entry-list-count grown-entries) 6)

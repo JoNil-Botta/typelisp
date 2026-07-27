@@ -36647,6 +36647,14 @@
   (Nil)
   (Cons i64 i64 i64 (Box OptLateBoundsPairSubst)))
 
+;; Defs the walk deletes outright rather than renaming. The substituted second
+;; chain keeps a replacement value, so its readers survive under a new name; a
+;; reinterpret cast that fed only the replaced first check has no reader left at
+;; all once the synthesized subtraction reads the cast's source instead.
+(defenum OptLateBoundsPairDrop
+  (Nil)
+  (Cons i64 (Box OptLateBoundsPairDrop)))
+
 (define (opt-late-bounds-pair-selected-length?
   [selected : CompilerIrMaybeValue]
   [length : CompilerIrValue]) : bool
@@ -36802,6 +36810,44 @@
         (= dst resolved)
         (opt-late-bounds-pair-subst-def? (box-get rest) dst))]))
 
+(define (opt-late-bounds-pair-drop? [drops : OptLateBoundsPairDrop] [dst : i64]) : bool
+  (match drops
+    [(OptLateBoundsPairDrop.Nil) false]
+    [(OptLateBoundsPairDrop.Cons var rest)
+      (or (= dst var) (opt-late-bounds-pair-drop? (box-get rest) dst))]))
+
+;; The first check's index operand is often a width-64 reinterpret cast of the
+;; real counter. i64 and u64 share their representation, so the pair-min
+;; subtraction may read the cast's source and let the backend fold `src - 1`
+;; into one lea instead of staging the copy the cast lowers to. Bounded like the
+;; other resolve helpers; any pending substitution applies at every step.
+(define (opt-late-bounds-pair-cast-src
+  [body-blocks : CompilerIrBlockList]
+  [env : OptCopyEnv]
+  [value : CompilerIrValue]
+  [fuel : i64]) : CompilerIrValue
+  (if (<= fuel 0)
+    value
+    (match value
+      [(CompilerIrValue.Var var)
+        (match (opt-bce-mb-find-def body-blocks var)
+          [(OptBceMbMaybeInstr.No) value]
+          [(OptBceMbMaybeInstr.Some instr)
+            (match instr
+              [(CompilerIrInstr.Cast _ src from-ty to-ty)
+                (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+                  (match src
+                    [(CompilerIrValue.Var _)
+                      (opt-late-bounds-pair-cast-src
+                        body-blocks
+                        env
+                        (opt-copy-resolve env src)
+                        (- fuel 1))]
+                    [_ value])
+                  value)]
+              [_ value])])]
+      [_ value])))
+
 ;; Emit a single check at the first trap point. When the later operand is the
 ;; smaller one, materialize `first - 1` there, substitute it for the later
 ;; affine def chain, and drop that dead chain in the same walk. The combined
@@ -36814,6 +36860,7 @@
   [plans : OptLateBoundsPairPlan]
   [short-length : CompilerIrValue]
   [substs : OptLateBoundsPairSubst]
+  [drops : OptLateBoundsPairDrop]
   [cell : (Array i64)]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
@@ -36830,6 +36877,7 @@
             plans
             short-length
             substs
+            drops
             cell)]
         [(OptLateBoundsPairAt.First first-smaller second-value)
           (match instr
@@ -36848,6 +36896,7 @@
                     plans
                     short-length
                     substs
+                    drops
                     cell))
                 (match second-value
                   [(CompilerIrValue.Var raw)
@@ -36864,7 +36913,11 @@
                         (CompilerIrInstr.BinOp
                           smaller
                           (CompilerIrBinOp.Sub)
-                          (opt-copy-resolve env first-index)
+                          (opt-late-bounds-pair-cast-src
+                            body-blocks
+                            env
+                            (opt-copy-resolve env first-index)
+                            4)
                           (CompilerIrValue.I64 1)
                           (AstType.I64))
                         (compiler-ir-instr-cons
@@ -36880,6 +36933,7 @@
                             plans
                             short-length
                             next-substs
+                            drops
                             cell))))]
                   [_
                     (compiler-ir-instr-cons
@@ -36895,6 +36949,7 @@
                         plans
                         short-length
                         substs
+                        drops
                         cell))]))]
             [_
               (compiler-ir-instr-cons
@@ -36907,11 +36962,16 @@
                   plans
                   short-length
                   substs
+                  drops
                   cell))])]
         [(OptLateBoundsPairAt.No)
           (let
             [dst : i64 (compiler-ir-instr-loop-dst-or instr (- 0 1))]
-            (if (and (>= dst 0) (opt-late-bounds-pair-subst-def? substs dst))
+            (if (and
+              (>= dst 0)
+              (or
+                (opt-late-bounds-pair-subst-def? substs dst)
+                (opt-late-bounds-pair-drop? drops dst)))
               (opt-late-bounds-pair-rewrite-instrs
                 label
                 instrs
@@ -36920,6 +36980,7 @@
                 plans
                 short-length
                 substs
+                drops
                 cell)
               (compiler-ir-instr-cons
                 (opt-copy-subst-instr env instr)
@@ -36931,6 +36992,7 @@
                   plans
                   short-length
                   substs
+                  drops
                   cell))))]))))
 
 ;; `len - zext(len >= 1)` is `len - 1` on the guarded path and zero when
@@ -37018,6 +37080,7 @@
   [rewritten-preheader : CompilerIrBlock]
   [plans : OptLateBoundsPairPlan]
   [short-length : CompilerIrValue]
+  [drops : OptLateBoundsPairDrop]
   [cell : (Array i64)]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -37037,6 +37100,7 @@
                   plans
                   short-length
                   (OptLateBoundsPairSubst.Nil)
+                  drops
                   cell)))
             (opt-late-bounds-pair-rewrite-blocks
               (box-get rest)
@@ -37045,6 +37109,7 @@
               rewritten-preheader
               plans
               short-length
+              drops
               cell))])]
     [(CompilerIrBlockList.Array seq)
       (opt-late-bounds-pair-rewrite-blocks
@@ -37054,7 +37119,76 @@
         rewritten-preheader
         plans
         short-length
+        drops
         cell)]))
+
+(define (opt-late-bounds-pair-use-count [uses : (Array i64)] [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length uses)))
+    (- 0 1)
+    (array-ref uses var)))
+
+(define (opt-late-bounds-pair-reinterpret-def?
+  [body-blocks : CompilerIrBlockList]
+  [var : i64]) : bool
+  (match (opt-bce-mb-find-def body-blocks var)
+    [(OptBceMbMaybeInstr.No) false]
+    [(OptBceMbMaybeInstr.Some instr)
+      (match instr
+        [(CompilerIrInstr.Cast _ src from-ty to-ty)
+          (and
+            (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+            (match src
+              [(CompilerIrValue.Var _) true]
+              [_ false]))]
+        [_ false])]))
+
+(define (opt-late-bounds-pair-check-index
+  [body-blocks : CompilerIrBlockList]
+  [label : i64]
+  [index : i64]) : CompilerIrMaybeValue
+  (match (opt-cfg-find-block body-blocks label)
+    [(OptMaybeBlock.No) (CompilerIrMaybeValue.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (or (< index 0) (>= index (compiler-ir-instr-seq-count instrs)))
+            (CompilerIrMaybeValue.No)
+            (match (compiler-ir-instr-seq-ref instrs index)
+              [(CompilerIrInstr.BoundsCheck first-index _ _)
+                (CompilerIrMaybeValue.Some first-index)]
+              [_ (CompilerIrMaybeValue.No)]))])]))
+
+;; Nothing re-runs DCE after this pass, so a cast left with no reader still
+;; lowers to a register copy. Collect the casts the rewrite strands: only the
+;; `first-smaller = false` plans replace their first check, and only a cast
+;; whose whole-function use census is exactly that one check is provably dead
+;; afterwards. Any other reader keeps the def -- the subtraction still reads
+;; through the cast, it just does not get to delete it.
+(define (opt-late-bounds-pair-dead-casts
+  [body-blocks : CompilerIrBlockList]
+  [uses : (Array i64)]
+  [plans : OptLateBoundsPairPlan]
+  [acc : OptLateBoundsPairDrop]) : OptLateBoundsPairDrop
+  (match plans
+    [(OptLateBoundsPairPlan.Nil) acc]
+    [(OptLateBoundsPairPlan.Cons label first _ first-smaller _ rest)
+      (opt-late-bounds-pair-dead-casts
+        body-blocks
+        uses
+        (box-get rest)
+        (if first-smaller
+          acc
+          (match (opt-late-bounds-pair-check-index body-blocks label first)
+            [(CompilerIrMaybeValue.No) acc]
+            [(CompilerIrMaybeValue.Some first-index)
+              (match first-index
+                [(CompilerIrValue.Var var)
+                  (if (and
+                    (opt-late-bounds-pair-reinterpret-def? body-blocks var)
+                    (= (opt-late-bounds-pair-use-count uses var) 1))
+                    (OptLateBoundsPairDrop.Cons var (box acc))
+                    acc)]
+                [_ acc])])))]))
 
 (define (opt-late-bounds-pair-try-loop
   [blocks : CompilerIrBlockList]
@@ -37092,51 +37226,60 @@
                   (match (opt-cfg-find-block blocks preheader-label)
                     [(OptMaybeBlock.No) (OptLateBoundsPairResult.No)]
                     [(OptMaybeBlock.Some preheader)
-                      (match (opt-late-bounds-pair-const-short-length length)
-                        [(CompilerIrMaybeValue.Some const-short-length)
-                          (let
-                            [cell : (Array i64) (array.make-array i64 1)]
-                            [_cell : unit (array-set! cell 0 frame)]
-                            (OptLateBoundsPairResult.Some
-                              (opt-late-bounds-pair-rewrite-blocks
-                                blocks
-                                body-blocks
-                                preheader-label
+                      (let
+                        [drops : OptLateBoundsPairDrop
+                          (opt-late-bounds-pair-dead-casts
+                            body-blocks
+                            (opt-collect-blocks-uses-array frame blocks)
+                            (struct-get collected plans)
+                            (OptLateBoundsPairDrop.Nil))]
+                        (match (opt-late-bounds-pair-const-short-length length)
+                          [(CompilerIrMaybeValue.Some const-short-length)
+                            (let
+                              [cell : (Array i64) (array.make-array i64 1)]
+                              [_cell : unit (array-set! cell 0 frame)]
+                              (OptLateBoundsPairResult.Some
+                                (opt-late-bounds-pair-rewrite-blocks
+                                  blocks
+                                  body-blocks
+                                  preheader-label
+                                  preheader
+                                  (struct-get collected plans)
+                                  const-short-length
+                                  drops
+                                  cell)
+                                (array-ref cell 0)))]
+                          [(CompilerIrMaybeValue.No)
+                            (let
+                              [cell : (Array i64) (array.make-array i64 1)]
+                              [_cell : unit (array-set! cell 0 frame)]
+                              [nonempty : i64 (opt-bce-version-alloc-var cell)]
+                              [nonempty-i64 : i64
+                                (opt-bce-version-alloc-var cell)]
+                              [short-length : i64
+                                (opt-bce-version-alloc-var cell)]
+                              (match (opt-late-bounds-pair-preheader
                                 preheader
-                                (struct-get collected plans)
-                                const-short-length
-                                cell)
-                              (array-ref cell 0)))]
-                        [(CompilerIrMaybeValue.No)
-                          (let
-                            [cell : (Array i64) (array.make-array i64 1)]
-                            [_cell : unit (array-set! cell 0 frame)]
-                            [nonempty : i64 (opt-bce-version-alloc-var cell)]
-                            [nonempty-i64 : i64
-                              (opt-bce-version-alloc-var cell)]
-                            [short-length : i64
-                              (opt-bce-version-alloc-var cell)]
-                            (match (opt-late-bounds-pair-preheader
-                              preheader
-                              (opt-natural-loop-header loop)
-                              length
-                              nonempty
-                              nonempty-i64
-                              short-length)
-                              [(OptLateBoundsPairPreheader.No)
-                                (OptLateBoundsPairResult.No)]
-                              [(OptLateBoundsPairPreheader.Some
-                                  rewritten-preheader)
-                                (OptLateBoundsPairResult.Some
-                                  (opt-late-bounds-pair-rewrite-blocks
-                                    blocks
-                                    body-blocks
-                                    preheader-label
-                                    rewritten-preheader
-                                    (struct-get collected plans)
-                                    (CompilerIrValue.Var short-length)
-                                    cell)
-                                  (array-ref cell 0))]))])])])))]))))
+                                (opt-natural-loop-header loop)
+                                length
+                                nonempty
+                                nonempty-i64
+                                short-length)
+                                [(OptLateBoundsPairPreheader.No)
+                                  (OptLateBoundsPairResult.No)]
+                                [(OptLateBoundsPairPreheader.Some
+                                    rewritten-preheader)
+                                  (OptLateBoundsPairResult.Some
+                                    (opt-late-bounds-pair-rewrite-blocks
+                                      blocks
+                                      body-blocks
+                                      preheader-label
+                                      rewritten-preheader
+                                      (struct-get collected plans)
+                                      (CompilerIrValue.Var short-length)
+                                      drops
+                                      cell)
+                                    (array-ref cell 0))]))]))])])))]))))
 
 ;; A literal length needs no preheader arithmetic: `length - (length >= 1)` is a
 ;; compile-time constant, so the paired check takes it as an immediate and the

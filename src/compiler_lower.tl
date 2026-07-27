@@ -3311,8 +3311,64 @@
               false]
             [else true]))))))
 
+;; --- proven-canonical path memo ---------------------------------------
+;; lower-normalize-path returns its argument unchanged when the path is
+;; already canonical, and that is what every module path of a normal compile
+;; is: an opt1 self-compile asked 676,802 times and took the rewriting branch
+;; 35 times. The asks come one per declaration per lowering walk over the
+;; program's ~150 distinct module paths, so lower-path-canonical? kept
+;; re-reading the same strings byte by byte -- 693M Ir, 1.3% of the compile.
+;; Remembering which path strings are already proven canonical answers the
+;; repeats with a length compare instead of a scan.
+;;
+;; Two slots, because both decl-level callers (lower-decl-entry-path? and
+;; lower-module-id) normalize the fixed entry path and the current decl path
+;; back to back, and the pair only changes at a module boundary. A remembered
+;; path is only ever used as a comparison key -- lower-normalize-path returns
+;; the caller's own argument on a hit -- so nothing here extends a String's
+;; lifetime past the call that supplied it, and lower-reset-file-state! drops
+;; the keys with the rest of the per-file lowering state.
+(define lower-canonical-path-count : i64
+  0)
+(define lower-canonical-path-recent : String
+  "")
+(define lower-canonical-path-prior : String
+  "")
+
+(define (lower-canonical-path-memo-reset!) : unit
+  (begin
+    (set! lower-canonical-path-count 0)
+    (set! lower-canonical-path-recent "")
+    (set! lower-canonical-path-prior "")))
+
+(define (lower-canonical-path-remembered? [path : String]) : bool
+  (if (and
+    (>= lower-canonical-path-count 1)
+    (string.eq lower-canonical-path-recent path))
+    true
+    (and
+      (>= lower-canonical-path-count 2)
+      (string.eq lower-canonical-path-prior path))))
+
+(define (lower-canonical-path-remember! [path : String]) : unit
+  (begin
+    (set! lower-canonical-path-prior lower-canonical-path-recent)
+    (set! lower-canonical-path-recent path)
+    (if (< lower-canonical-path-count 2)
+      (set! lower-canonical-path-count (+ lower-canonical-path-count 1))
+      unit)))
+
+(define (lower-path-known-canonical? [path : String]) : bool
+  (if (lower-canonical-path-remembered? path)
+    true
+    (if (lower-path-canonical? path)
+      (begin
+        (lower-canonical-path-remember! path)
+        true)
+      false)))
+
 (define (lower-normalize-path [path : String]) : String
-  (if (lower-path-canonical? path)
+  (if (lower-path-known-canonical? path)
     path
     (let
       [n : i64 (string.string-length path)]
@@ -5309,6 +5365,7 @@
 
 (define (lower-reset-file-state!) : unit
   (begin
+    (lower-canonical-path-memo-reset!)
     (set! lower-entry-main-module-active false)
     (set! lower-entry-main-module "")
     (set! lower-entry-main-module-id cbi.compiler-builtin-id-fix-empty)

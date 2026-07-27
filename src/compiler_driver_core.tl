@@ -57,8 +57,6 @@
   0)
 (define compiler-driver-pending-frontend-return-arena : i64
   0)
-(define compiler-driver-pending-intern-state : (Array ci.InternCompatState)
-  (array.make-array ci.InternCompatState 0))
 
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
@@ -107,16 +105,6 @@
         (tc-prefix-snapshot-cache-state-new)
         pool-arena-cell
         surface-arena))))
-
-(define (compiler-driver-state-new-from-pools
-  [expr-pool : AstExprNodePoolState]
-  [type-pool : AstTypeNodePoolState]) : CompilerDriverState
-  (compiler-driver-state-new-from-pools-and-arena expr-pool type-pool 0))
-
-(define (compiler-driver-state-new) : CompilerDriverState
-  (compiler-driver-state-new-from-pools
-    (ast-expr-node-pool-state-create 1)
-    (ast-type-node-pool-state-create 1)))
 
 ;; State-owned pools allocate fixed-size segments on demand. One expression
 ;; segment covers tiny programs while self-host-sized compiles append segments
@@ -176,12 +164,6 @@
 (define (compiler-driver-state-session-cache-enabled?
   [state : CompilerDriverState]) : bool
   (compiler-load-session-state-cache-enabled? (struct-get state load-session)))
-
-(define (compiler-driver-state-session-cache-enable
-  [state : CompilerDriverState]) : CompilerDriverState
-  (begin
-    (compiler-load-session-state-cache-enable! (struct-get state load-session))
-    state))
 
 (define (compiler-driver-state-typecheck-prefix-cache
   [state : CompilerDriverState]) : TcPrefixSnapshotCacheState
@@ -614,13 +596,6 @@
   (compiler-lower-arena-state-install!
     (array-ref (struct-get state lower-arenas) 0)))
 
-;; Legacy/test capture paired with `compiler-driver-state-install-pools!`.
-(define (compiler-driver-state-capture-active-pools!
-  [state : CompilerDriverState]) : unit
-  (begin
-    (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
-    (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
-
 ;; Legacy/test capture paired with `compiler-driver-state-install-interns!`.
 (define (compiler-driver-state-capture-active-interns!
   [state : CompilerDriverState]) : unit
@@ -631,43 +606,17 @@
   (ci.intern-compat-state-generation
     (array-ref (struct-get state intern-state) 0)))
 
-(define (compiler-driver-state-intern-pool-len [state : CompilerDriverState]) : i64
-  (ci.intern-compat-state-pool-len
-    (array-ref (struct-get state intern-state) 0)))
-
 (define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
   (array-ref (struct-get state intern-state) 0))
-
-(define (compiler-driver-state-intern-table-id [state : CompilerDriverState]) : i64
-  (ci.intern-compat-state-table-id
-    (array-ref (struct-get state intern-state) 0)))
-
-(define (compiler-driver-state-intern-persistent-arena
-  [state : CompilerDriverState]) : i64
-  (ci.intern-compat-state-persistent-arena
-    (array-ref (struct-get state intern-state) 0)))
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
   (cbi.state-capture-from-globals! (array-ref (struct-get state builtin-ids) 0)))
 
-(define (compiler-driver-state-builtin-generation [state : CompilerDriverState]) : i64
-  (cbi.state-generation (array-ref (struct-get state builtin-ids) 0)))
-
-(define (compiler-driver-state-builtin-ids-data-addr
-  [state : CompilerDriverState]) : i64
-  (cbi.state-ids-data-addr (array-ref (struct-get state builtin-ids) 0)))
-
 (define (compiler-driver-state-reset-builtins! [state : CompilerDriverState]) : unit
   (begin
     (cbi.state-reset! (array-ref (struct-get state builtin-ids) 0))
     (compiler-driver-state-install-builtins! state)))
-
-(define (compiler-driver-builtin-typecheck-string-length-id? [name-id : i64]) : bool
-  (cbi.compiler-builtin-typecheck-string-length-id? name-id))
-
-(define (compiler-driver-builtin-typecheck-array-length-id? [name-id : i64]) : bool
-  (cbi.compiler-builtin-typecheck-array-length-id? name-id))
 
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
@@ -765,22 +714,6 @@
   [pools : AstNodePoolContext]) : unit
   (compiler-load-session-state-runtime-prelude-cache-store-with-pools
     load-state
-    key
-    decls
-    paths
-    modules
-    seen
-    pools))
-
-(define (compiler-driver-runtime-prelude-cache-store-with-pools
-  [key : CompilerLoadPreludeCacheKey]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]
-  [seen : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
-  (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
-    compiler-load-active-session-state
     key
     decls
     paths
@@ -958,10 +891,6 @@
 (cfg
   compile-profile
   (define compiler-driver-profile-prelude-hydrations : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-driver-profile-best-peak : i64
     0))
 (cfg
   compile-profile
@@ -1580,27 +1509,6 @@
                           (compiler-diagnostic-with-path
                             (box-get diag)
                             input-path))))]))))]))))
-
-(define (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
-  [input-path : String]
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [mode : CompilerBackendMode]
-  [opt-level : i64]
-  [emit-entry : bool]) : ResultCompilerDriverBuffer
-  (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
-    (ast-node-pool-reader-context-current)
-    input-path
-    program
-    spans
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    false))
 
 (define (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
   [pools : AstNodePoolContext]
@@ -2540,18 +2448,6 @@
             cold)))]
     loaded))
 
-(define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
-  [key : CompilerLoadPreludeCacheKey]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (compiler-driver-load-runtime-prelude-cache-miss-with-state-and-pools
-    compiler-load-active-session-state
-    key
-    stdlib-roots
-    cfgs
-    pools))
-
 (define (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
   [load-state : CompilerLoadSessionState]
   [stdlib-roots : svec.Vec]
@@ -2642,16 +2538,6 @@
     pools
     0))
 
-(define (compiler-driver-load-runtime-prelude-with-pools
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (compiler-driver-load-runtime-prelude-with-state-and-pools
-    compiler-load-active-session-state
-    stdlib-roots
-    cfgs
-    pools))
-
 (define (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
   [load-state : CompilerLoadSessionState]
   [input-path : String]
@@ -2711,32 +2597,6 @@
               (ResultCompilerLoadWithPaths.Err diag)]))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (ResultCompilerLoadWithPaths.Err diag)])))
-
-(define (compiler-driver-load-file-with-runtime-with-state-and-pools
-  [load-state : CompilerLoadSessionState]
-  [input-path : String]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
-    load-state
-    input-path
-    stdlib-roots
-    cfgs
-    pools
-    0))
-
-(define (compiler-driver-load-file-with-runtime-with-pools
-  [input-path : String]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (compiler-driver-load-file-with-runtime-with-state-and-pools
-    compiler-load-active-session-state
-    input-path
-    stdlib-roots
-    cfgs
-    pools))
 
 (define (compiler-driver-load-source-with-runtime-with-state-and-pools
   [load-state : CompilerLoadSessionState]
@@ -3179,22 +3039,6 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (compiler-driver-allocation-profile-snapshot! "load")
           (ResultCompilerDriverLowered.Err diag))])))
-
-(define (compiler-driver-load-and-lower-escaping-with-state
-  [state : CompilerDriverState]
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.Vec]
-  [mode : CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
-  (compiler-driver-load-and-lower-escaping-with-state-and-retirement
-    state
-    input-path
-    target
-    stdlib-roots
-    mode
-    cfgs
-    false))
 
 (define (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
   [state : CompilerDriverState]

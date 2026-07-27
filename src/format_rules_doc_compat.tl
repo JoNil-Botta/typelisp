@@ -501,9 +501,6 @@
       (format-rules-delimited-doc "[" (box-get items) "]")]
     [(FormatCst.Forms items) (format-rules-forms-doc (box-get items))]))
 
-(define (format-rules-source-doc [src : String]) : fmt_doc.Doc
-  (format-rules-cst-doc (parse-format-source src)))
-
 (define (format-rules-streaming-matches-doc? [src : String] [width : i64]) : bool
   (let
     [tree : FormatCst (parse-format-source src)]

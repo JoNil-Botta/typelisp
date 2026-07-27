@@ -114,10 +114,6 @@
   (Ok CompilerPkgDep)
   (Err String))
 
-(defenum ResultBuildPkgDepList
-  (Ok CompilerPkgDepList)
-  (Err String))
-
 (defstruct BuildGitDependency
   (remote String)
   (pin-kind String)
@@ -234,8 +230,6 @@
   (Ok BuildProfile)
   (Err String))
 
-(define build-default-opt-level : i64
-  1)
 (define build-package-release-opt-level : i64
   2)
 (define build-package-visit-visiting : i64

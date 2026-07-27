@@ -938,16 +938,6 @@
 (define (source-tool-windows-direct-object-enabled?) : bool
   (source-tool-env-command-set? (source-tool-windows-direct-object-env-name)))
 
-(define (source-tool-windows-direct-object-extern-linkable?
-  [name : String]
-  [kind : cobj.CompilerObjectSymbolKind]) : bool
-  (compiler-windows-coff-extern-linkable? name kind))
-
-(define (source-tool-windows-direct-object-relocation-target-linkable?
-  [symbols : cobj.CompilerObjectSymbolList]
-  [target : String]) : bool
-  (compiler-windows-coff-relocation-target-linkable? symbols target))
-
 (define (source-tool-windows-direct-object-relocations-linkable?
   [symbols : cobj.CompilerObjectSymbolList]
   [relocs : cobj.CompilerObjectRelocationList]) : bool

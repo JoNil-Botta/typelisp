@@ -8443,7 +8443,6 @@
       (set!
         targets-known
         (opt-cfg-index-fill-rows! blocks generation succ-rows pred-rows 0))
-      (opt-cfg-fill-bool! reachable count false)
       (opt-cfg-fill-i64! postorder count (- 0 1))
       (opt-cfg-fill-i64! rpo count (- 0 1))
       (opt-cfg-fill-i64! rpo-num count (- 0 1))
@@ -9800,16 +9799,15 @@
               unit)])
         (opt-var-defs-index-fill! items (box-get rest)))]))
 
+;; `OptMaybeVarDef.No` is the fieldless tag-0 variant, so its representation is
+;; all-zero bytes and `make-array` already produces it for every slot -- see
+;; `lower-make-array-zero-fill-enum-supported?`. Re-writing `.No` over the whole
+;; array with a scalar loop only repeats what the allocation just did.
 (define (opt-var-defs-index [defs : OptVarDefList]) : (Array OptMaybeVarDef)
   (let
     [count : i64 (+ (opt-var-defs-max-id defs (- 0 1)) 1)]
     [items : (Array OptMaybeVarDef) (array.make-array OptMaybeVarDef count)]
-    [i : i64 0]
     (begin
-      (while (< i count)
-        (begin
-          (array-set! items i (OptMaybeVarDef.No))
-          (set! i (+ i 1))))
       (opt-var-defs-index-fill! items defs)
       items)))
 
@@ -22257,8 +22255,6 @@
                               [refs : (Array i64) (opt-used-array-new frame)]
                               [visited : (Array bool)
                                 (array.make-array bool frame)]
-                              [_visited : unit
-                                (opt-cfg-fill-bool! visited frame false)]
                               [collected? : bool
                                 (opt-bool-branch-chain-collect-value!
                                   type-segment-bases
@@ -45361,7 +45357,11 @@
           [_p-ctor-fwd : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-pass-finish "ctor_fwd" name _t-ctor-fwd)
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "ctor_fwd"
+                name
+                _t-ctor-fwd)
               unit)]
           [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
           [promoted : CompilerIrFunction
@@ -46352,7 +46352,11 @@
         [_p-ctor-fwd : unit
           (cfg
             compile-profile
-            (compiler-opt-profile-pass-finish "ctor_fwd" name _t-ctor-fwd)
+            (compiler-opt-profile-pass-finish
+              (struct-get summaries profile-state)
+              "ctor_fwd"
+              name
+              _t-ctor-fwd)
             unit)]
         [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
         [promoted : CompilerIrFunction
@@ -47849,7 +47853,6 @@
     (begin
       (opt-cfg-fill-i64! indices count (- 0 1))
       (opt-cfg-fill-i64! lowlink count (- 0 1))
-      (opt-cfg-fill-bool! on-stack count false)
       (opt-cfg-fill-i64! scc-of count (- 0 1))
       (opt-cfg-fill-i64! order-scratch count (- 0 1))
       (while (< root count)
@@ -51694,7 +51697,6 @@
     [order-index : i64 0]
     [offset : i64 0]
     (begin
-      (opt-cfg-fill-i64! counts scc-count 0)
       (while (< slot slot-count)
         (let
           [scc-id : i64 (array-ref scc-of slot)]
@@ -60687,7 +60689,6 @@
       (begin
         (opt-cfg-index-refresh-blocks! index blocks)
         (opt-load-state-array-fill-empty! exit-states count)
-        (opt-cfg-fill-bool! processed count false)
         (opt-gvn-block-results-fill-empty! out 0)
         (opt-load-gvn-process-rpo
           type-segment-bases

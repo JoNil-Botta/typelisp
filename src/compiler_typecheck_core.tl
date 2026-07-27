@@ -11146,22 +11146,13 @@
   (if (or
     (tc-env-key-has-name-id? name-id)
     (macro-hygiene-global-id? name-id)
-    (tc-structural-local-name-id? name-id))
+    (tc-structural-local-name-id? name-id)
+    (compiler-composite-pair-key-id? name-id)
+    (compiler-composite-triple-key-id? name-id))
     (tc-hygiene-name-text-id name-id)
-    (let
-      [capacity : i64 (intern-capacity)]
-      [pair-limit : i64 (+ capacity (* capacity capacity))]
-      (if (and (>= name-id capacity) (< name-id pair-limit))
-        (let
-          [packed : i64 (- name-id capacity)]
-          [module-id : i64 (/ packed capacity)]
-          [base-id : i64 (% packed capacity)]
-          (compiler-symbol-module-key
-            (intern-str module-id)
-            (intern-str base-id)))
-        (string.append
-          "<structural-id:"
-          (string.append (string.int->string name-id) ">"))))))
+    (string.append
+      "<structural-id:"
+      (string.append (string.int->string name-id) ">"))))
 
 (define (tc-env-key-name-text [name-id : i64]) : String
   (if (or

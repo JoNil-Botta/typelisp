@@ -250,9 +250,9 @@
 
 (define (compiler-symbol-map-first-slot [key : i64] [capacity : i64]) : i64
   (let
-    ;; Pair and triple keys use 17-bit lanes. Fold every lane into the low bits
-    ;; before the power-of-two mask so equal field/variant ids in different
-    ;; owners do not form one long linear-probe cluster.
+    ;; Opaque structural handles and direct name IDs are both session-stable
+    ;; integers. Fold high owner bits before the power-of-two mask so adjacent
+    ;; record slots do not form one long linear-probe cluster.
     [folded : i64 (bit-xor key (bit-xor (shr key 17) (shr key 34)))]
     (bit-and (* folded 6364136223846793005) (- capacity 1))))
 
@@ -674,10 +674,10 @@
   (intern-composite-pair-id? key-id))
 
 (define (compiler-composite-pair-left-id [key-id : i64]) : i64
-  (intern-composite-pair-left-id key-id))
+  (intern-composite-left-id-unchecked key-id))
 
 (define (compiler-composite-pair-right-id [key-id : i64]) : i64
-  (intern-composite-pair-right-id key-id))
+  (intern-composite-right-id-unchecked key-id))
 
 (define (compiler-composite-triple-key-id
   [left-id : i64]
@@ -689,13 +689,13 @@
   (intern-composite-triple-id? key-id))
 
 (define (compiler-composite-triple-left-id [key-id : i64]) : i64
-  (intern-composite-triple-left-id key-id))
+  (intern-composite-left-id-unchecked key-id))
 
 (define (compiler-composite-triple-middle-id [key-id : i64]) : i64
-  (intern-composite-triple-middle-id key-id))
+  (intern-composite-middle-id-unchecked key-id))
 
 (define (compiler-composite-triple-right-id [key-id : i64]) : i64
-  (intern-composite-triple-right-id key-id))
+  (intern-composite-right-id-unchecked key-id))
 
 (define (compiler-struct-field-key-id-by-id
   [struct-name-id : i64]
@@ -706,7 +706,7 @@
         (compiler-composite-pair-left-id struct-name-id)
         (compiler-composite-pair-right-id struct-name-id)
         field-name-id)]
-    [(>= struct-name-id (intern-capacity))
+    [(not (intern-renderable-id? struct-name-id))
       (compiler-composite-pair-key-id struct-name-id field-name-id)]
     [(intern-qualified? struct-name-id)
       (compiler-composite-triple-key-id
@@ -755,14 +755,13 @@
           (compiler-enum-qualified-variant-name
             (intern-str (compiler-composite-pair-left-id name-id))
             (intern-str (compiler-composite-pair-right-id name-id)))]
-        [(and (>= name-id 0) (< name-id (intern-capacity)))
-          (intern-str name-id)]
+        [(intern-renderable-id? name-id) (intern-str name-id)]
         [else "<structural-symbol>"])]
     (if (or
       (compiler-composite-triple-key-id? name-id)
       (compiler-symbol-root-module-id? module-id))
       name
-      (if (and (>= module-id 0) (< module-id (intern-capacity)))
+      (if (intern-renderable-id? module-id)
         (compiler-symbol-module-key (intern-str module-id) name)
         name))))
 
@@ -779,12 +778,12 @@
 (define (compiler-symbol-module-key-id-by-id [module-id : i64] [name-id : i64]) : i64
   (cond
     [(compiler-symbol-root-module-id? module-id) name-id]
-    [(and
-        (>= name-id 0)
-        (< name-id (intern-capacity))
+    [(intern-renderable-id? name-id)
+      (if (and
         (intern-qualified? name-id)
         (= (intern-qualified-module-id name-id) module-id))
-      (compiler-symbol-name-id-key name-id)]
+        (compiler-symbol-name-id-key name-id)
+        (compiler-composite-pair-key-id module-id name-id))]
     [(compiler-composite-pair-key-id? name-id)
       (compiler-composite-triple-key-id
         module-id
@@ -793,7 +792,7 @@
     [else (compiler-composite-pair-key-id module-id name-id)]))
 
 (define (compiler-symbol-name-id-key [name-id : i64]) : i64
-  (if (or (< name-id 0) (>= name-id (intern-capacity)))
+  (if (not (intern-renderable-id? name-id))
     name-id
     (if (intern-qualified? name-id)
       (let
@@ -807,7 +806,7 @@
 (define (compiler-symbol-dotted-variant-key-id-in-module
   [name-id : i64]
   [default-module-id : i64]) : option_i64.Option
-  (if (or (< name-id 0) (>= name-id (intern-capacity)))
+  (if (not (intern-renderable-id? name-id))
     option_i64.None
     (let
       [base-id : i64
@@ -5210,8 +5209,8 @@
   (let
     [map : CompilerSymbolMap (compiler-symbol-map-empty)]
     [direct-id : i64 7]
-    [structural-a : i64 (intern-capacity)]
-    [structural-b : i64 (+ (intern-capacity) 65536)]
+    [structural-a : i64 (compiler-composite-pair-key-id 131073 262147)]
+    [structural-b : i64 (compiler-composite-pair-key-id 131074 262148)]
     (begin
       (compiler-symbol-map-bind-id! (&mut map) direct-id 101)
       (compiler-symbol-map-bind-id! (&mut map) structural-a 201)

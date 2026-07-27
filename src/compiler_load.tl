@@ -3294,9 +3294,7 @@
 (define (compiler-load-seen-path-key-id
   [source-path-id : i64]
   [context-module-id : i64]) : i64
-  (+
-    (intern-capacity)
-    (+ (* source-path-id (intern-capacity)) context-module-id)))
+  (intern-composite-pair-id source-path-id context-module-id))
 
 (define (compiler-load-strip-tl-extension [path : String]) : String
   (let
@@ -3646,7 +3644,7 @@
 (define (compiler-load-dotted-import-alias-key
   [module-id : i64]
   [alias-id : i64]) : i64
-  (+ (intern-capacity) (+ (* module-id (intern-capacity)) alias-id)))
+  (intern-composite-pair-id module-id alias-id))
 
 (define (compiler-load-duplicate-dotted-import-alias-loop
   [decls : AstDeclList]
@@ -4224,11 +4222,7 @@
 
 (define (compiler-load-lazy-tail-after-prefix-id [name : i64] [alias : i64]) : i64
   (unless
-    (and
-      (>= name 0)
-      (< name (intern-capacity))
-      (>= alias 0)
-      (< alias (intern-capacity)))
+    (and (intern-renderable-id? name) (intern-renderable-id? alias))
     (return -1))
   (if (intern-qualified? name)
     (if (= (intern-qualified-module-id name) alias)

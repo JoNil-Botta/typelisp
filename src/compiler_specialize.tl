@@ -890,9 +890,7 @@
 (define (gen-registry-name-key-id [module-id : i64] [name-id : i64]) : i64
   (if (< module-id 0)
     name-id
-    (+
-      (spec_ci.intern-capacity)
-      (+ (* module-id (spec_ci.intern-capacity)) name-id))))
+    (spec_ci.intern-composite-pair-id module-id name-id)))
 
 (define (gen-registry-lookup-slot
   [registry : GenRegistry]

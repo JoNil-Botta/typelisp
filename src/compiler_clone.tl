@@ -48,11 +48,11 @@
   (ci.intern-composite-pair-id? key-id))
 
 (define (clone-name-key-module-id [key-id : i64]) : i64
-  (ci.intern-composite-pair-left-id key-id))
+  (ci.intern-composite-left-id-unchecked key-id))
 
 (define (clone-name-key-base-id [key-id : i64]) : i64
   (if (clone-name-key-qualified? key-id)
-    (ci.intern-composite-pair-right-id key-id)
+    (ci.intern-composite-right-id-unchecked key-id)
     key-id))
 
 ;; Preserve the old canonicalization rules without allocating or interning a
@@ -65,19 +65,13 @@
         (ci.intern-composite-triple-id? name-id)
         (ci.intern-macro-global-structural-id? name-id))
       name-id]
-    [(and
-        (>= name-id 0)
-        (< name-id (ci.intern-capacity))
-        (ci.intern-qualified? name-id))
+    [(and (ci.intern-renderable-id? name-id) (ci.intern-qualified? name-id))
       (clone-name-pair-key-id
         (ci.intern-qualified-module-id name-id)
         (ci.intern-qualified-base-id name-id))]
     [(or
         (clone-module-id-root? module-id)
-        (and
-          (>= name-id 0)
-          (< name-id (ci.intern-capacity))
-          (ci.intern-dotted? name-id)))
+        (and (ci.intern-renderable-id? name-id) (ci.intern-dotted? name-id)))
       name-id]
     [else (clone-name-pair-key-id module-id name-id)]))
 
@@ -89,7 +83,7 @@
     (string.append
       (ci.intern-str (clone-name-key-module-id key-id))
       (string.append "/" (ci.intern-str (clone-name-key-base-id key-id))))
-    (if (and (>= key-id 0) (< key-id (ci.intern-capacity)))
+    (if (ci.intern-renderable-id? key-id)
       (ci.intern-str key-id)
       "<structural-name>")))
 
@@ -160,10 +154,7 @@
   [names : CloneNameSet]
   [module-id : i64]
   [name-id : i64]) : i64
-  (if (and
-    (>= name-id 0)
-    (< name-id (ci.intern-capacity))
-    (ci.intern-dotted? name-id))
+  (if (and (ci.intern-renderable-id? name-id) (ci.intern-dotted? name-id))
     (let
       [aliases : clone_id_map.Map (struct-get names aliases)]
       [alias-id : i64 (ci.intern-leading-dot-id name-id)]
@@ -267,7 +258,7 @@
   (not
     (or
       (clone-module-id-root? module-id)
-      (>= name-id (ci.intern-capacity))
+      (not (ci.intern-renderable-id? name-id))
       (and (>= name-id 0) (ci.intern-qualified? name-id))
       (and (>= name-id 0) (ci.intern-dotted? name-id)))))
 

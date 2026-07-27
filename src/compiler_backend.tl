@@ -20550,6 +20550,86 @@
     (not (string.eq reg "%rax"))
     (not (string.eq reg "%rdx"))))
 
+;; May the SRC-shaped expansion DESTROY `home` from this instruction onward?
+;;
+;; Only the REMAINDER shape writes SRC: it ends `subq product, SRC`
+;; (compiler-backend-signed-remainder-from-src, and the power-of-two twin), so
+;; SRC is written, not merely read. Every quotient shape reads SRC and leaves the
+;; result in %rax/%rdx, so a quotient may keep electing the dividend's own home
+;; on the value fact alone -- `want-remainder?` false short-circuits to true and
+;; that codegen is untouched.
+;;
+;; For a remainder, electing the dividend's own home as SRC needs a stronger
+;; fact than "this VALUE is dead after here": it needs "this REGISTER carries
+;; nothing after here".
+;;
+;; Those two facts come apart exactly where #5982 bit. A loop-carried value and
+;; the header phi that reads it back are separate vars sharing one coalesced
+;; home: the body's definition has its own interval, which ends at its last use
+;; INSIDE the body, while the phi's interval spans the loop. When that last use
+;; is the `%` itself, value-live-after-here? correctly reports the definition
+;; dead -- and the expansion then subtracted into the register the next
+;; iteration still reads, silently corrupting the induction state.
+;;
+;; The register-level fact is the one the scavenger already keys on, so ask the
+;; same interval/assignment index it does rather than introduce a new analysis.
+;; `dst-home` is exempt: when the destination lives in this register the
+;; expansion writes exactly where the result belongs, and dst's own interval
+;; opening here must not veto its own home.
+;; Does `home` still CARRY a value one step past this instruction -- one this
+;; instruction is not itself producing?
+;;
+;; Interval points advance by 2 per instruction and a definition lands on the
+;; odd half-step, so `starts[v] == point + 1` identifies exactly the vars THIS
+;; instruction defines. Those are what the expansion is producing (including a
+;; coalesced alias of the result that is not `dst` itself), so they are not
+;; obstacles. Anything else still live at `point + 1` is a value the register is
+;; required to be holding, and the register-level index is the allocator's own
+;; word on that -- the same interval/assignment data the scavenger consults, so
+;; own-SRC selection now agrees with what a scavenge at this point would allow.
+(define (compiler-backend-divmod-home-carried-after?
+  [home : String]
+  [point : i64]) : bool
+  (let
+    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [vars : i64 compiler-backend-scavenge-ctx-vars]
+    [after : i64 (+ point 1)]
+    [v : i64 0]
+    [carried : bool false]
+    (begin
+      (while (and (< v vars) (not carried))
+        (begin
+          (if (and
+            ;; live-at-point? bounds-checks `v`, so the starts read below is in
+            ;; range only because `and` short-circuits on its result.
+            (compiler-reg-var-live-at-point? starts ends v after)
+            (not (= (array-ref starts v) after))
+            (compiler-reg-assignment-index-var-uses-register?
+              compiler-backend-scavenge-ctx-assignment-index
+              v
+              home))
+            (set! carried true)
+            unit)
+          (set! v (+ v 1))))
+      carried)))
+
+(define (compiler-backend-divmod-src-home-safe?
+  [want-remainder? : bool]
+  [home : String]
+  [dst-home : String]) : bool
+  (or
+    (not want-remainder?)
+    (string.eq home dst-home)
+    (not
+      (compiler-backend-divmod-home-carried-after?
+        home
+        (*
+          2
+          (-
+            compiler-backend-emit-instr-post-base
+            compiler-backend-emit-current-count))))))
+
 ;; Register-aware entry for ordinary BinOp emission.  A dead non-fixed LHS home
 ;; is SRC directly.  Otherwise the destination home, when available, is the
 ;; natural one-copy SRC; only a fixed/memory/live dividend needs a scavenged
@@ -20597,7 +20677,11 @@
         (compiler-backend-divmod-src-register? lhs-home)
         (not (string.eq lhs-home magic))
         (not (string.eq lhs-home hoist-reg))
-        (not lhs-live-after))]
+        (not lhs-live-after)
+        (compiler-backend-divmod-src-home-safe?
+          (compiler-backend-binop-wants-remainder? op)
+          lhs-home
+          dst-home))]
     [dst-src? : bool
       (and
         (not own-src?)
@@ -20684,7 +20768,13 @@
     [own-src? : bool
       (and
         (compiler-backend-divmod-src-register? lhs-home)
-        (not (compiler-backend-value-live-after-here? lhs)))]
+        (not (compiler-backend-value-live-after-here? lhs))
+        ;; No destination register on this path (the result stays in %rax), so
+        ;; nothing is exempt from the register-level check.
+        (compiler-backend-divmod-src-home-safe?
+          (compiler-backend-binop-wants-remainder? op)
+          lhs-home
+          ""))]
     [src : String
       (if own-src?
         lhs-home
@@ -39956,6 +40046,7 @@
                 hoist-reg
                 planned-src
                 false
+                (compiler-backend-binop-wants-remainder? div-op)
                 alu-dst)]
             [div-dst-home : String
               (compiler-backend-var-register-home ctx.assignments div-dst)]
@@ -42323,6 +42414,7 @@
   [hoist-reg : String]
   [planned-src : String]
   [allow-own : bool]
+  [want-remainder? : bool]
   [scavenge-dst : i64]) : String
   (let
     [lhs-home : String
@@ -42334,7 +42426,11 @@
         (compiler-backend-divmod-src-register? lhs-home)
         (not (string.eq lhs-home magic))
         (not (string.eq lhs-home hoist-reg))
-        (not (compiler-backend-value-live-after-here? lhs)))]
+        (not (compiler-backend-value-live-after-here? lhs))
+        (compiler-backend-divmod-src-home-safe?
+          want-remainder?
+          lhs-home
+          dst-home))]
     [dst-src? : bool
       (and
         (not own-src?)
@@ -42948,6 +43044,7 @@
                                 0
                                 3)
                               true
+                              (compiler-backend-binop-wants-remainder? div-op)
                               div-dst)]
                           (if (compiler-backend-divmod-direct-gep-store-clobber-safe?
                             ctx.assignments
@@ -43041,6 +43138,7 @@
                         1
                         3)
                       false
+                      (compiler-backend-binop-wants-remainder? div-op)
                       producer-dst)]
                   (CompilerBackendMaybeDivmodPolish.Some
                     (compiler-backend-emit-steered-producer-divmod-rest

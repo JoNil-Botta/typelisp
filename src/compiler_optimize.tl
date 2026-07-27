@@ -44832,13 +44832,8 @@
                   ptr-var)]
               (and
                 (> width 0)
-                (and
-                  (>= offset 0)
-                  (opt-ctor-fwd-ranges-disjoint?
-                    offset
-                    width
-                    dest-off
-                    dest-size))))]
+                (>= offset 0)
+                (opt-ctor-fwd-ranges-disjoint? offset width dest-off dest-size)))]
           [_ false])]
       [_
         (match (compiler-ir-instr-effect instr)
@@ -45036,21 +45031,22 @@
     (begin
       (while (and ok (< i copy-index))
         (begin
-          (if (>=
-            (opt-ctor-fwd-gep-offset (compiler-ir-instr-seq-ref instrs i) temp)
-            0)
-            unit
-            (if (opt-ctor-fwd-store-into-temp? instrs addr-index i temp)
-              unit
-              (if (opt-ctor-fwd-window-instr-ok?
+          (unless
+            (or
+              (>=
+                (opt-ctor-fwd-gep-offset
+                  (compiler-ir-instr-seq-ref instrs i)
+                  temp)
+                0)
+              (opt-ctor-fwd-store-into-temp? instrs addr-index i temp)
+              (opt-ctor-fwd-window-instr-ok?
                 instrs
                 addr-index
                 i
                 dest-base
                 dest-off
-                size)
-                unit
-                (set! ok false))))
+                size))
+            (set! ok false))
           (set! i (+ i 1))))
       ok)))
 
@@ -45111,7 +45107,8 @@
             (compiler-ir-instr-seq-ref instrs addr-index)))]
       (if (or
         (< addr-index 0)
-        (or (< slot 0) (not (= (opt-ctor-fwd-use-count uses slot) 1))))
+        (< slot 0)
+        (not (= (opt-ctor-fwd-use-count uses slot) 1)))
         false
         (match (opt-ctor-fwd-resolve-dest instrs copy-index dest-value)
           [(OptCtorFwdDest.NoDest) false]

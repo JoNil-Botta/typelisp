@@ -367,6 +367,54 @@
         (write-file fallback-path contents)
         fallback-path))))
 
+(define (compiler-driver-smoke-write-module-macro-diagnostic-fixture) : String
+  (let
+    [path : String "target/compiler_driver_module_macro_diagnostic_fixture.tl"]
+    [fallback-path : String
+      "compiler_driver_module_macro_diagnostic_fixture.tl"]
+    [contents : String
+      "(defmacro (gennum [T : type (:kind i64 u8)]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (comptime.string-append \"generated.gennum.\" (type-key T)))]
+    `(begin
+      (module ,module-name)
+      (define (big) : ,T 300))))
+
+(import (gennum u8) as n8)
+
+(define (main) : i64 (cast (n8.big) : i64))"]
+    (if (compiler-driver-pic-smoke-write-fixture-at? path contents)
+      path
+      (begin
+        (write-file fallback-path contents)
+        fallback-path))))
+
+(define (compiler-driver-smoke-module-macro-diagnostic-ok?) : bool
+  (match (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
+    (compiler-driver-smoke-write-module-macro-diagnostic-fixture)
+    (CompilerBackendTarget.Linux)
+    true
+    (compiler-driver-pic-smoke-roots)
+    (compiler-optimize-default-level)
+    (CompilerBackendMode.Scalar)
+    (compiler-cfg-empty)
+    true)
+    [(ResultCompilerDriver.Ok _) false]
+    [(ResultCompilerDriver.Err diag)
+      (let
+        [rendered : String (compiler-diagnostic-render (box-get diag))]
+        (and
+          (compiler-driver-pic-smoke-contains?
+            rendered
+            "integer literal 300 does not fit expected type u8")
+          (compiler-driver-pic-smoke-contains?
+            rendered
+            "generated identity: :gennum(type_u8)")
+          (compiler-driver-pic-smoke-contains?
+            rendered
+            "generated declaration: big from gennum")))]))
+
 (define (compiler-driver-reader-context-smoke-write-fixture) : String
   (let
     [path : String "target/compiler_driver_reader_context_fixture.tl"]
@@ -662,6 +710,7 @@
         (CompilerBackendTarget.Windows))
       (return 2))
     (unless (compiler-driver-pic-smoke-extern-reject-ok?) (return 3))
+    (unless (compiler-driver-smoke-module-macro-diagnostic-ok?) (return 7))
     (unless
       (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?)
       (return 4))

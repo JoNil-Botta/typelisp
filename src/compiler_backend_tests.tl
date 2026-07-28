@@ -28328,7 +28328,7 @@
           (not
             (compiler-backend-callee-needs-save?
               CompilerRegAssignmentList.Nil
-              "%rbx"))
+              compiler-reg-id-rbx))
           (= compiler-reg-early-exit-prefix-count 2)
           (match rewritten
             [(CompilerIrFunction.Function _ _ _ _ blocks)

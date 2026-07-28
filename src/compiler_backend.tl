@@ -30274,16 +30274,9 @@
     [(CompilerIrInstr.Call _ _ _ _) true]
     [(CompilerIrInstr.CallIndirect _ _ _ _) true]
     [(CompilerIrInstr.CallIndirectC _ _ _ _) true]
-    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _) true])]
-    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
-          true])]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _) true])]
+    [(CompilerIrInstr.CallCAbiStoreResult _) true]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+    [(CompilerIrInstr.SpmdCall _) true]
     [(CompilerIrInstr.TailCall _ _ _) true]
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
@@ -30314,23 +30307,20 @@
         [(CompilerIrInstr.CallIndirectC _ _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
         [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-          (match (box-get payload-box)
-            [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ name args _)
-              (+
-                (compiler-backend-windows-stack-arg-space
-                  type-segment-bases
-                  args
-                  (compiler-backend-call-param-types-index name program-index)
-                  program-index)
-                16)])]
-        [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-          (match (box-get payload-box)
-            [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
-                _
-                _
+          (let
+            [name (struct-get (box-get payload-box) name)]
+            [args (struct-get (box-get payload-box) args)]
+            (+
+              (compiler-backend-windows-stack-arg-space
+                type-segment-bases
                 args
-                _)
-              (+ (compiler-backend-windows-closure-stack-arg-space args) 16)])]
+                (compiler-backend-call-param-types-index name program-index)
+                program-index)
+              16))]
+        [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+          (let
+            [args (struct-get (box-get payload-box) args)]
+            (+ (compiler-backend-windows-closure-stack-arg-space args) 16))]
         [(CompilerIrInstr.TailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
         [_ 0])]
@@ -30362,28 +30352,25 @@
         ;; prologue frame. The emission uses the same layout query for the
         ;; base-save offset, so no per-call %rsp dip is needed.
         [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-          (match (box-get payload-box)
-            [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ name args _)
-              (+
-                (compiler-backend-call-stack-arg-space
-                  type-segment-bases
-                  target
-                  args
-                  (compiler-backend-call-param-types-index name program-index)
-                  true
-                  program-index)
-                16)])]
-        [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-          (match (box-get payload-box)
-            [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
-                _
-                _
+          (let
+            [name (struct-get (box-get payload-box) name)]
+            [args (struct-get (box-get payload-box) args)]
+            (+
+              (compiler-backend-call-stack-arg-space
+                type-segment-bases
+                target
                 args
-                _)
-              (+
-                (compiler-backend-round-up-16
-                  (* (compiler-backend-call-args-count args) 16))
-                16)])]
+                (compiler-backend-call-param-types-index name program-index)
+                true
+                program-index)
+              16))]
+        [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+          (let
+            [args (struct-get (box-get payload-box) args)]
+            (+
+              (compiler-backend-round-up-16
+                (* (compiler-backend-call-args-count args) 16))
+              16))]
         [(CompilerIrInstr.TailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
         [_ 0])]))
@@ -38296,46 +38283,44 @@
           planned-scratch1
           instr-diag)]
       [(CompilerIrInstr.VectorBinOp payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrVectorBinOpPayload.Payload
-              dst
-              op
-              lhs
-              rhs
-              lanes
-              elem-ty)
-            (compiler-backend-emit-vector-binop
-              ctx.type-segment-bases
-              ctx.assignments
-              dst
-              op
-              lhs
-              rhs
-              lanes
-              elem-ty
-              instr-diag)])]
+        (let
+          [dst (struct-get (box-get payload-box) dst)]
+          [op (struct-get (box-get payload-box) op)]
+          [lhs (struct-get (box-get payload-box) lhs)]
+          [rhs (struct-get (box-get payload-box) rhs)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-vector-binop
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            op
+            lhs
+            rhs
+            lanes
+            elem-ty
+            instr-diag))]
       [(CompilerIrInstr.VectorPrefix payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrVectorPrefixPayload.Payload
-              dst
-              op
-              src
-              carry
-              lanes
-              elem-ty)
-            (compiler-backend-emit-vector-prefix
-              ctx.assignments
-              dst
-              op
-              src
-              carry
-              lanes
-              elem-ty
-              planned-scratch0
-              planned-scratch1
-              planned-scratch2
-              planned-scratch3
-              instr-diag)])]
+        (let
+          [dst (struct-get (box-get payload-box) dst)]
+          [op (struct-get (box-get payload-box) op)]
+          [src (struct-get (box-get payload-box) src)]
+          [carry (struct-get (box-get payload-box) carry)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-vector-prefix
+            ctx.assignments
+            dst
+            op
+            src
+            carry
+            lanes
+            elem-ty
+            planned-scratch0
+            planned-scratch1
+            planned-scratch2
+            planned-scratch3
+            instr-diag))]
       [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
         (compiler-backend-emit-vector-reduce
           ctx.type-segment-bases
@@ -38349,24 +38334,23 @@
           planned-scratch1
           instr-diag)]
       [(CompilerIrInstr.VectorCompare payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrVectorComparePayload.Payload
-              dst
-              op
-              lhs
-              rhs
-              lanes
-              elem-ty)
-            (compiler-backend-emit-vector-compare
-              ctx.type-segment-bases
-              ctx.assignments
-              dst
-              op
-              lhs
-              rhs
-              lanes
-              elem-ty
-              instr-diag)])]
+        (let
+          [dst (struct-get (box-get payload-box) dst)]
+          [op (struct-get (box-get payload-box) op)]
+          [lhs (struct-get (box-get payload-box) lhs)]
+          [rhs (struct-get (box-get payload-box) rhs)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-vector-compare
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            op
+            lhs
+            rhs
+            lanes
+            elem-ty
+            instr-diag))]
       [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
         (compiler-backend-emit-mask-binop
           ctx.type-segment-bases
@@ -38395,27 +38379,26 @@
           lanes
           instr-diag)]
       [(CompilerIrInstr.Select payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrSelectPayload.Payload
-              dst
-              mask
-              on-true
-              on-false
-              lanes
-              elem-ty)
-            (compiler-backend-emit-select
-              ctx.type-segment-bases
-              ctx.assignments
-              dst
-              mask
-              on-true
-              on-false
-              lanes
-              elem-ty
-              planned-scratch0
-              planned-scratch1
-              planned-scratch2
-              instr-diag)])]
+        (let
+          [dst (struct-get (box-get payload-box) dst)]
+          [mask (struct-get (box-get payload-box) mask)]
+          [on-true (struct-get (box-get payload-box) on-true)]
+          [on-false (struct-get (box-get payload-box) on-false)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-select
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            mask
+            on-true
+            on-false
+            lanes
+            elem-ty
+            planned-scratch0
+            planned-scratch1
+            planned-scratch2
+            instr-diag))]
       [(CompilerIrInstr.VectorLoad dst base index lanes elem-ty)
         (compiler-backend-emit-vector-load
           ctx.type-segment-bases
@@ -38429,121 +38412,116 @@
           planned-scratch1
           instr-diag)]
       [(CompilerIrInstr.VectorStore payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrVectorStorePayload.Payload
-              base
-              index
-              value
-              lanes
-              elem-ty)
-            (compiler-backend-emit-vector-store
-              ctx.type-segment-bases
-              ctx.assignments
-              base
-              index
-              value
-              lanes
-              elem-ty
-              planned-scratch0
-              planned-scratch1
-              instr-diag)])]
+        (let
+          [base (struct-get (box-get payload-box) base)]
+          [index (struct-get (box-get payload-box) index)]
+          [value (struct-get (box-get payload-box) value)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-vector-store
+            ctx.type-segment-bases
+            ctx.assignments
+            base
+            index
+            value
+            lanes
+            elem-ty
+            planned-scratch0
+            planned-scratch1
+            instr-diag))]
       [(CompilerIrInstr.PredicatedStore payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrPredicatedStorePayload.Payload
-              base
-              index
-              value
-              mask
-              lanes
-              elem-ty)
-            (compiler-backend-emit-predicated-store
-              ctx.type-segment-bases
-              ctx.function
-              ctx.current-label
-              ctx.assignments
-              base
-              index
-              value
-              mask
-              lanes
-              elem-ty
-              planned-scratch0
-              planned-scratch1
-              instr-diag)])]
+        (let
+          [base (struct-get (box-get payload-box) base)]
+          [index (struct-get (box-get payload-box) index)]
+          [value (struct-get (box-get payload-box) value)]
+          [mask (struct-get (box-get payload-box) mask)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-predicated-store
+            ctx.type-segment-bases
+            ctx.function
+            ctx.current-label
+            ctx.assignments
+            base
+            index
+            value
+            mask
+            lanes
+            elem-ty
+            planned-scratch0
+            planned-scratch1
+            instr-diag))]
       [(CompilerIrInstr.PredicatedLoad payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrPredicatedLoadPayload.Payload
-              dst
-              base
-              index
-              mask
-              lanes
-              elem-ty)
-            (compiler-backend-emit-predicated-load
-              ctx.type-segment-bases
-              ctx.function
-              ctx.current-label
-              ctx.assignments
-              dst
-              base
-              index
-              mask
-              lanes
-              elem-ty
-              planned-scratch0
-              planned-scratch1
-              instr-diag)])]
+        (let
+          [dst (struct-get (box-get payload-box) dst)]
+          [base (struct-get (box-get payload-box) base)]
+          [index (struct-get (box-get payload-box) index)]
+          [mask (struct-get (box-get payload-box) mask)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-predicated-load
+            ctx.type-segment-bases
+            ctx.function
+            ctx.current-label
+            ctx.assignments
+            dst
+            base
+            index
+            mask
+            lanes
+            elem-ty
+            planned-scratch0
+            planned-scratch1
+            instr-diag))]
       [(CompilerIrInstr.GatherLoad payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrGatherLoadPayload.Payload
-              dst
-              base
-              index-base
-              index
-              lane-offset
-              lanes
-              elem-ty)
-            (compiler-backend-emit-gather-load
-              ctx.type-segment-bases
-              ctx.assignments
-              dst
-              base
-              index-base
-              index
-              lane-offset
-              lanes
-              elem-ty
-              planned-scratch0
-              planned-scratch1
-              instr-diag)])]
+        (let
+          [dst (struct-get (box-get payload-box) dst)]
+          [base (struct-get (box-get payload-box) base)]
+          [index-base (struct-get (box-get payload-box) index-base)]
+          [index (struct-get (box-get payload-box) index)]
+          [lane-offset (struct-get (box-get payload-box) lane-offset)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-gather-load
+            ctx.type-segment-bases
+            ctx.assignments
+            dst
+            base
+            index-base
+            index
+            lane-offset
+            lanes
+            elem-ty
+            planned-scratch0
+            planned-scratch1
+            instr-diag))]
       [(CompilerIrInstr.VectorShuffle payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrVectorShufflePayload.Payload
-              dst
-              source
-              selector-low
-              selector-high
-              active-lanes
-              lanes
-              elem-ty)
-            (compiler-backend-emit-vector-shuffle
-              ctx.type-segment-bases
-              ctx.target
-              ctx.function
-              ctx.current-label
-              ctx.assignments
-              dst
-              source
-              selector-low
-              selector-high
-              active-lanes
-              lanes
-              elem-ty
-              planned-scratch0
-              planned-scratch1
-              ctx.plan
-              ctx.program-index
-              instr-diag)])]
+        (let
+          [dst (struct-get (box-get payload-box) dst)]
+          [source (struct-get (box-get payload-box) source)]
+          [selector-low (struct-get (box-get payload-box) selector-low)]
+          [selector-high (struct-get (box-get payload-box) selector-high)]
+          [active-lanes (struct-get (box-get payload-box) active-lanes)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [elem-ty (struct-get (box-get payload-box) ty)]
+          (compiler-backend-emit-vector-shuffle
+            ctx.type-segment-bases
+            ctx.target
+            ctx.function
+            ctx.current-label
+            ctx.assignments
+            dst
+            source
+            selector-low
+            selector-high
+            active-lanes
+            lanes
+            elem-ty
+            planned-scratch0
+            planned-scratch1
+            ctx.plan
+            ctx.program-index
+            instr-diag))]
       [(CompilerIrInstr.TailMask dst index len lanes)
         (compiler-backend-emit-tail-mask
           ctx.type-segment-bases
@@ -38586,28 +38564,27 @@
       [(CompilerIrInstr.Syscall dst args)
         (compiler-backend-emit-syscall ctx.target ctx.assignments dst args)]
       [(CompilerIrInstr.SpmdCall payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrSpmdCallPayload.Payload
-              name
-              backend
-              lanes
-              active-mask
-              args
-              result)
-            (compiler-backend-emit-spmd-call
-              ctx.type-segment-bases
-              ctx.target
-              name
-              backend
-              lanes
-              active-mask
-              args
-              result
-              ctx.assignments
-              ctx.plan
-              ctx.program-index
-              ctx.vars
-              instr-diag)])]
+        (let
+          [name (struct-get (box-get payload-box) callee)]
+          [backend (struct-get (box-get payload-box) backend)]
+          [lanes (struct-get (box-get payload-box) lanes)]
+          [active-mask (struct-get (box-get payload-box) active-mask)]
+          [args (struct-get (box-get payload-box) args)]
+          [result (struct-get (box-get payload-box) result)]
+          (compiler-backend-emit-spmd-call
+            ctx.type-segment-bases
+            ctx.target
+            name
+            backend
+            lanes
+            active-mask
+            args
+            result
+            ctx.assignments
+            ctx.plan
+            ctx.program-index
+            ctx.vars
+            instr-diag))]
       [(CompilerIrInstr.Call dst name args ty)
         (match (compiler-backend-emit-direct-call-with-arg-assignments
           ctx.type-segment-bases
@@ -38677,52 +38654,50 @@
           ctx.vars
           instr-diag)]
       [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrCallCAbiStoreResultPayload.Payload
-              base
-              name
-              args
-              slots)
-            (compiler-backend-emit-c-abi-store-result-call
-              ctx.type-segment-bases
-              ctx.target
-              base
-              name
-              args
-              slots
-              ctx.assignments
-              planned-scratch0
-              planned-scratch1
-              ctx.types
-              ctx.global-types
-              ctx.plan
-              ctx.externs
-              ctx.program-index
-              ctx.vars
-              instr-diag)])]
+        (let
+          [base (struct-get (box-get payload-box) base)]
+          [name (struct-get (box-get payload-box) name)]
+          [args (struct-get (box-get payload-box) args)]
+          [slots (struct-get (box-get payload-box) slots)]
+          (compiler-backend-emit-c-abi-store-result-call
+            ctx.type-segment-bases
+            ctx.target
+            base
+            name
+            args
+            slots
+            ctx.assignments
+            planned-scratch0
+            planned-scratch1
+            ctx.types
+            ctx.global-types
+            ctx.plan
+            ctx.externs
+            ctx.program-index
+            ctx.vars
+            instr-diag))]
       [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
-              base
-              func
-              args
-              slots)
-            (compiler-backend-emit-indirect-c-abi-store-result-call
-              ctx.type-segment-bases
-              ctx.target
-              base
-              func
-              args
-              slots
-              ctx.assignments
-              planned-scratch0
-              planned-scratch1
-              ctx.types
-              ctx.functions
-              ctx.externs
-              ctx.program-index
-              ctx.vars
-              instr-diag)])]
+        (let
+          [base (struct-get (box-get payload-box) base)]
+          [func (struct-get (box-get payload-box) callee)]
+          [args (struct-get (box-get payload-box) args)]
+          [slots (struct-get (box-get payload-box) slots)]
+          (compiler-backend-emit-indirect-c-abi-store-result-call
+            ctx.type-segment-bases
+            ctx.target
+            base
+            func
+            args
+            slots
+            ctx.assignments
+            planned-scratch0
+            planned-scratch1
+            ctx.types
+            ctx.functions
+            ctx.externs
+            ctx.program-index
+            ctx.vars
+            instr-diag))]
       [(CompilerIrInstr.TailCall name args ty)
         (match (compiler-backend-emit-tail-call
           ctx.type-segment-bases
@@ -39152,25 +39127,28 @@
     [(CompilerIrInstr.Splat _ value _ _)
       (compiler-backend-count-value-use counts value)]
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
-          (begin
-            (compiler-backend-count-value-use counts lhs)
-            (compiler-backend-count-value-use counts rhs))])]
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (begin
+          (compiler-backend-count-value-use counts lhs)
+          (compiler-backend-count-value-use counts rhs)))]
     [(CompilerIrInstr.VectorPrefix payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
-          (begin
-            (compiler-backend-count-value-use counts src)
-            (compiler-backend-count-value-use counts carry))])]
+      (let
+        [src (struct-get (box-get payload-box) src)]
+        [carry (struct-get (box-get payload-box) carry)]
+        (begin
+          (compiler-backend-count-value-use counts src)
+          (compiler-backend-count-value-use counts carry)))]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-backend-count-value-use counts src)]
     [(CompilerIrInstr.VectorCompare payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
-          (begin
-            (compiler-backend-count-value-use counts lhs)
-            (compiler-backend-count-value-use counts rhs))])]
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (begin
+          (compiler-backend-count-value-use counts lhs)
+          (compiler-backend-count-value-use counts rhs)))]
     [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (begin
         (compiler-backend-count-value-use counts lhs)
@@ -39180,76 +39158,70 @@
     [(CompilerIrInstr.MaskReduce _ _ src _)
       (compiler-backend-count-value-use counts src)]
     [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload _ mask on-true on-false _ _)
-          (begin
-            (compiler-backend-count-value-use counts mask)
-            (compiler-backend-count-value-use counts on-true)
-            (compiler-backend-count-value-use counts on-false))])]
+      (let
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        (begin
+          (compiler-backend-count-value-use counts mask)
+          (compiler-backend-count-value-use counts on-true)
+          (compiler-backend-count-value-use counts on-false)))]
     [(CompilerIrInstr.VectorLoad _ base index _ _)
       (begin
         (compiler-backend-count-value-use counts base)
         (compiler-backend-count-value-use counts index))]
     [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
-          (begin
-            (compiler-backend-count-value-use counts base)
-            (compiler-backend-count-value-use counts index)
-            (compiler-backend-count-value-use counts value))])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        (begin
+          (compiler-backend-count-value-use counts base)
+          (compiler-backend-count-value-use counts index)
+          (compiler-backend-count-value-use counts value)))]
     [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload
-            base
-            index
-            value
-            mask
-            _
-            _)
-          (begin
-            (compiler-backend-count-value-use counts base)
-            (compiler-backend-count-value-use counts index)
-            (compiler-backend-count-value-use counts value)
-            (compiler-backend-count-value-use counts mask))])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (begin
+          (compiler-backend-count-value-use counts base)
+          (compiler-backend-count-value-use counts index)
+          (compiler-backend-count-value-use counts value)
+          (compiler-backend-count-value-use counts mask)))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
-          (begin
-            (compiler-backend-count-value-use counts base)
-            (compiler-backend-count-value-use counts index)
-            (compiler-backend-count-value-use counts mask))])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (begin
+          (compiler-backend-count-value-use counts base)
+          (compiler-backend-count-value-use counts index)
+          (compiler-backend-count-value-use counts mask)))]
     [(CompilerIrInstr.GatherLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload
-            _
-            base
-            index-base
-            index
-            _
-            _
-            _)
-          (begin
-            (compiler-backend-count-value-use counts base)
-            (compiler-backend-count-value-use counts index-base)
-            (compiler-backend-count-value-use counts index))])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index-base (struct-get (box-get payload-box) index-base)]
+        [index (struct-get (box-get payload-box) index)]
+        (begin
+          (compiler-backend-count-value-use counts base)
+          (compiler-backend-count-value-use counts index-base)
+          (compiler-backend-count-value-use counts index)))]
     [(CompilerIrInstr.VectorShuffle payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorShufflePayload.Payload
-            _
-            source
-            selector-low
-            selector-high
-            active-lanes
-            _
-            _)
-          (begin
-            (compiler-backend-count-value-use counts source)
-            (compiler-backend-count-value-use counts selector-low)
-            (match selector-high
-              [(CompilerIrMaybeValue.Some value)
-                (compiler-backend-count-value-use counts value)]
-              [(CompilerIrMaybeValue.No) unit])
-            (compiler-backend-count-value-use counts active-lanes))])]
+      (let
+        [source (struct-get (box-get payload-box) source)]
+        [selector-low (struct-get (box-get payload-box) selector-low)]
+        [selector-high (struct-get (box-get payload-box) selector-high)]
+        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        (begin
+          (compiler-backend-count-value-use counts source)
+          (compiler-backend-count-value-use counts selector-low)
+          (match selector-high
+            [(CompilerIrMaybeValue.Some value)
+              (compiler-backend-count-value-use counts value)]
+            [(CompilerIrMaybeValue.No) unit])
+          (compiler-backend-count-value-use counts active-lanes)))]
     [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (compiler-backend-count-value-use counts index)
@@ -39276,28 +39248,28 @@
         (compiler-backend-count-value-use counts callee)
         (compiler-backend-count-call-args-uses counts args))]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
-          (begin
-            (compiler-backend-count-value-use counts base)
-            (compiler-backend-count-call-args-uses counts args))])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [args (struct-get (box-get payload-box) args)]
+        (begin
+          (compiler-backend-count-value-use counts base)
+          (compiler-backend-count-call-args-uses counts args)))]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
-            base
-            callee
-            args
-            _)
-          (begin
-            (compiler-backend-count-value-use counts base)
-            (compiler-backend-count-value-use counts callee)
-            (compiler-backend-count-call-args-uses counts args))])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [callee (struct-get (box-get payload-box) callee)]
+        [args (struct-get (box-get payload-box) args)]
+        (begin
+          (compiler-backend-count-value-use counts base)
+          (compiler-backend-count-value-use counts callee)
+          (compiler-backend-count-call-args-uses counts args)))]
     [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
-          (begin
-            (compiler-backend-count-value-use counts active-mask)
-            (compiler-backend-count-spmd-call-args-uses counts args))])]
+      (let
+        [active-mask (struct-get (box-get payload-box) active-mask)]
+        [args (struct-get (box-get payload-box) args)]
+        (begin
+          (compiler-backend-count-value-use counts active-mask)
+          (compiler-backend-count-spmd-call-args-uses counts args)))]
     [(CompilerIrInstr.TailCall _ args _)
       (compiler-backend-count-call-args-uses counts args)]
     [(CompilerIrInstr.TailCallIndirect callee args _)
@@ -44198,74 +44170,73 @@
       [after-binop : i64 (+ cursor 1)]
       (match next
         [(CompilerIrInstr.VectorBinOp payload-box)
-          (match (box-get payload-box)
-            [(CompilerIrInstrVectorBinOpPayload.Payload
-                bin-dst
-                op
-                lhs
-                rhs
-                bin-lanes
-                bin-elem-ty)
-              (if (compiler-backend-vector-load-binop-foldable?
-                ctx.type-segment-bases
-                ctx.use-counts
+          (let
+            [bin-dst (struct-get (box-get payload-box) dst)]
+            [op (struct-get (box-get payload-box) op)]
+            [lhs (struct-get (box-get payload-box) lhs)]
+            [rhs (struct-get (box-get payload-box) rhs)]
+            [bin-lanes (struct-get (box-get payload-box) lanes)]
+            [bin-elem-ty (struct-get (box-get payload-box) ty)]
+            (if (compiler-backend-vector-load-binop-foldable?
+              ctx.type-segment-bases
+              ctx.use-counts
+              load-dst
+              lanes
+              elem-ty
+              op
+              lhs
+              rhs
+              bin-lanes
+              bin-elem-ty)
+              (match (compiler-backend-vector-load-binop-fold-value
                 load-dst
-                lanes
-                elem-ty
                 op
                 lhs
-                rhs
-                bin-lanes
-                bin-elem-ty)
-                (match (compiler-backend-vector-load-binop-fold-value
-                  load-dst
-                  op
-                  lhs
-                  rhs)
-                  [(CompilerBackendVectorMemFold.Some reg-value)
-                    (compiler-backend-emit-fused-result-rest
-                      ctx
-                      fallthrough
-                      (compiler-backend-emit-vector-binop-memory-source
-                        ctx.type-segment-bases
-                        ctx.assignments
-                        bin-dst
-                        op
-                        reg-value
-                        base
-                        index
-                        bin-lanes
-                        bin-elem-ty
-                        (compiler-backend-scratch-plan-register-here
-                          (compiler-backend-runtime-plan-scratch ctx.plan)
-                          0)
-                        (compiler-backend-scratch-plan-register-here
-                          (compiler-backend-runtime-plan-scratch ctx.plan)
-                          1)
-                        (compiler-backend-instr-diagnostic
-                          ctx.spans
-                          ctx.source-function
-                          next
-                          ctx.func-diag
-                          ""))
-                      instrs
-                      after-binop
-                      out)]
-                  [(CompilerBackendVectorMemFold.No)
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      instrs
-                      cursor
-                      out)])
-                (compiler-backend-emit-instrs-normal
-                  ctx
-                  fallthrough
-                  instr
-                  instrs
-                  cursor
-                  out))])]
+                rhs)
+                [(CompilerBackendVectorMemFold.Some reg-value)
+                  (compiler-backend-emit-fused-result-rest
+                    ctx
+                    fallthrough
+                    (compiler-backend-emit-vector-binop-memory-source
+                      ctx.type-segment-bases
+                      ctx.assignments
+                      bin-dst
+                      op
+                      reg-value
+                      base
+                      index
+                      bin-lanes
+                      bin-elem-ty
+                      (compiler-backend-scratch-plan-register-here
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        0)
+                      (compiler-backend-scratch-plan-register-here
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        1)
+                      (compiler-backend-instr-diagnostic
+                        ctx.spans
+                        ctx.source-function
+                        next
+                        ctx.func-diag
+                        ""))
+                    instrs
+                    after-binop
+                    out)]
+                [(CompilerBackendVectorMemFold.No)
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    instrs
+                    cursor
+                    out)])
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                instrs
+                cursor
+                out)))]
         [_
           (compiler-backend-emit-instrs-normal
             ctx
@@ -54123,29 +54094,29 @@
         (compiler-backend-collect-value-collections collections func)
         args)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
-          (compiler-backend-collect-call-args-collections
-            (compiler-backend-collect-value-collections collections base)
-            args)])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [args (struct-get (box-get payload-box) args)]
+        (compiler-backend-collect-call-args-collections
+          (compiler-backend-collect-value-collections collections base)
+          args))]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
-            base
-            func
-            args
-            _)
-          (compiler-backend-collect-call-args-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections base)
-              func)
-            args)])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [func (struct-get (box-get payload-box) callee)]
+        [args (struct-get (box-get payload-box) args)]
+        (compiler-backend-collect-call-args-collections
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections base)
+            func)
+          args))]
     [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
-          (compiler-backend-collect-spmd-call-args-collections
-            (compiler-backend-collect-value-collections collections active-mask)
-            args)])]
+      (let
+        [active-mask (struct-get (box-get payload-box) active-mask)]
+        [args (struct-get (box-get payload-box) args)]
+        (compiler-backend-collect-spmd-call-args-collections
+          (compiler-backend-collect-value-collections collections active-mask)
+          args))]
     [(CompilerIrInstr.TailCall _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
     [(CompilerIrInstr.Store _ value _)
@@ -54181,25 +54152,28 @@
     [(CompilerIrInstr.Splat _ value _ _)
       (compiler-backend-collect-value-collections collections value)]
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections lhs)
-            rhs)])]
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections lhs)
+          rhs))]
     [(CompilerIrInstr.VectorPrefix payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections src)
-            carry)])]
+      (let
+        [src (struct-get (box-get payload-box) src)]
+        [carry (struct-get (box-get payload-box) carry)]
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections src)
+          carry))]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
     [(CompilerIrInstr.VectorCompare payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections lhs)
-            rhs)])]
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections lhs)
+          rhs))]
     [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
@@ -54209,89 +54183,85 @@
     [(CompilerIrInstr.MaskReduce _ _ src _)
       (compiler-backend-collect-value-collections collections src)]
     [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload _ mask on-true on-false _ _)
+      (let
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections mask)
-              on-true)
-            on-false)])]
+            (compiler-backend-collect-value-collections collections mask)
+            on-true)
+          on-false))]
     [(CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections base)
         index)]
     [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections base)
-              index)
-            value)])]
+            (compiler-backend-collect-value-collections collections base)
+            index)
+          value))]
     [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload
-            base
-            index
-            value
-            mask
-            _
-            _)
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections
-                (compiler-backend-collect-value-collections collections base)
-                index)
-              value)
-            mask)])]
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections
               (compiler-backend-collect-value-collections collections base)
               index)
-            mask)])]
+            value)
+          mask))]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections base)
+            index)
+          mask))]
     [(CompilerIrInstr.GatherLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload
-            _
-            base
-            index-base
-            index
-            lane-offset
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index-base (struct-get (box-get payload-box) index-base)]
+        [index (struct-get (box-get payload-box) index)]
+        [lane-offset (struct-get (box-get payload-box) lane-offset)]
+        [lanes (struct-get (box-get payload-box) lanes)]
+        [elem-ty (struct-get (box-get payload-box) ty)]
+        [values : CompilerBackendProgramCollections
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections collections base)
+              index-base)
+            index)]
+        (if lane-offset
+          (compiler-backend-collect-lane-offset-gather-collections
+            values
             lanes
             elem-ty)
-          (let
-            [values : CompilerBackendProgramCollections
-              (compiler-backend-collect-value-collections
-                (compiler-backend-collect-value-collections
-                  (compiler-backend-collect-value-collections collections base)
-                  index-base)
-                index)]
-            (if lane-offset
-              (compiler-backend-collect-lane-offset-gather-collections
-                values
-                lanes
-                elem-ty)
-              values))])]
+          values))]
     [(CompilerIrInstr.VectorShuffle payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorShufflePayload.Payload
-            _
-            source
-            selector-low
-            selector-high
-            active-lanes
-            _
-            _)
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-maybe-value-collections
-              (compiler-backend-collect-value-collections
-                (compiler-backend-collect-value-collections collections source)
-                selector-low)
-              selector-high)
-            active-lanes)])]
+      (let
+        [source (struct-get (box-get payload-box) source)]
+        [selector-low (struct-get (box-get payload-box) selector-low)]
+        [selector-high (struct-get (box-get payload-box) selector-high)]
+        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-maybe-value-collections
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections collections source)
+              selector-low)
+            selector-high)
+          active-lanes))]
     [(CompilerIrInstr.TailMask _ index length lanes)
       (let
         [values : CompilerBackendProgramCollections
@@ -55006,9 +54976,9 @@
     [(CompilerIrInstr.Call _ call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ call-name _ _)
-          (compiler-backend-runtime-index-add-call index call-name)])]
+      (let
+        [call-name (struct-get (box-get payload-box) name)]
+        (compiler-backend-runtime-index-add-call index call-name))]
     [(CompilerIrInstr.TailCall call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
     [_ index]))
@@ -58023,32 +57993,31 @@
           dst
           "%rax"))]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base name args _)
-          (let
-            [call-target : String
-              (compiler-backend-call-symbol-index name plan program-index)]
-            (compiler-backend-object-direct-call
-              (compiler-backend-object-value-ref parts function base)
-              target
-              function
-              call-target
-              args))])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [name (struct-get (box-get payload-box) name)]
+        [args (struct-get (box-get payload-box) args)]
+        [call-target : String
+          (compiler-backend-call-symbol-index name plan program-index)]
+        (compiler-backend-object-direct-call
+          (compiler-backend-object-value-ref parts function base)
+          target
+          function
+          call-target
+          args))]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
-            base
-            callee
-            args
-            _)
-          (compiler-backend-object-call-args
-            (compiler-backend-object-value-ref
-              (compiler-backend-object-value-ref parts function base)
-              function
-              callee)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [callee (struct-get (box-get payload-box) callee)]
+        [args (struct-get (box-get payload-box) args)]
+        (compiler-backend-object-call-args
+          (compiler-backend-object-value-ref
+            (compiler-backend-object-value-ref parts function base)
             function
-            args
-            0)])]
+            callee)
+          function
+          args
+          0))]
     [(CompilerIrInstr.TailCall name args _)
       (let
         [call-target : String
@@ -58253,43 +58222,49 @@
     [(CompilerIrInstr.Splat _ value _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function value elem-ty)]
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ elem-ty)
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        [elem-ty (struct-get (box-get payload-box) ty)]
+        (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref-with-type
-            (compiler-backend-object-value-ref-with-type
-              parts
-              function
-              lhs
-              elem-ty)
+            parts
             function
-            rhs
-            elem-ty)])]
+            lhs
+            elem-ty)
+          function
+          rhs
+          elem-ty))]
     [(CompilerIrInstr.VectorPrefix payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ elem-ty)
+      (let
+        [src (struct-get (box-get payload-box) src)]
+        [carry (struct-get (box-get payload-box) carry)]
+        [elem-ty (struct-get (box-get payload-box) ty)]
+        (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref-with-type
-            (compiler-backend-object-value-ref-with-type
-              parts
-              function
-              src
-              elem-ty)
+            parts
             function
-            carry
-            elem-ty)])]
+            src
+            elem-ty)
+          function
+          carry
+          elem-ty))]
     [(CompilerIrInstr.VectorReduce _ _ src _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function src elem-ty)]
     [(CompilerIrInstr.VectorCompare payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ elem-ty)
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        [elem-ty (struct-get (box-get payload-box) ty)]
+        (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref-with-type
-            (compiler-backend-object-value-ref-with-type
-              parts
-              function
-              lhs
-              elem-ty)
+            parts
             function
-            rhs
-            elem-ty)])]
+            lhs
+            elem-ty)
+          function
+          rhs
+          elem-ty))]
     [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function lhs)
@@ -58300,39 +58275,57 @@
     [(CompilerIrInstr.MaskReduce _ _ src _)
       (compiler-backend-object-value-ref parts function src)]
     [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        [lanes (struct-get (box-get payload-box) lanes)]
+        [ty (struct-get (box-get payload-box) ty)]
+        (if (= lanes 0)
+          (compiler-backend-object-scalar-select
+            parts
+            function
             dst
             mask
             on-true
-            on-false
-            lanes
-            ty)
-          (if (= lanes 0)
-            (compiler-backend-object-scalar-select
-              parts
-              function
-              dst
-              mask
-              on-true
-              on-false)
+            on-false)
+          (compiler-backend-object-value-ref-with-type
             (compiler-backend-object-value-ref-with-type
-              (compiler-backend-object-value-ref-with-type
-                (compiler-backend-object-value-ref parts function mask)
-                function
-                on-true
-                ty)
+              (compiler-backend-object-value-ref parts function mask)
               function
-              on-false
-              ty))])]
+              on-true
+              ty)
+            function
+            on-false
+            ty)))]
     [(CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function base)
         function
         index)]
     [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload base index value _ elem-ty)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        [elem-ty (struct-get (box-get payload-box) ty)]
+        (compiler-backend-object-value-ref-with-type
+          (compiler-backend-object-value-ref
+            (compiler-backend-object-value-ref parts function base)
+            function
+            index)
+          function
+          value
+          elem-ty))]
+    [(CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        [mask (struct-get (box-get payload-box) mask)]
+        [elem-ty (struct-get (box-get payload-box) ty)]
+        (compiler-backend-object-value-ref
           (compiler-backend-object-value-ref-with-type
             (compiler-backend-object-value-ref
               (compiler-backend-object-value-ref parts function base)
@@ -58340,80 +58333,55 @@
               index)
             function
             value
-            elem-ty)])]
-    [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload
-            base
-            index
-            value
-            mask
-            _
             elem-ty)
+          function
+          mask))]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (compiler-backend-object-value-ref
+          (compiler-backend-object-value-ref
+            (compiler-backend-object-value-ref parts function base)
+            function
+            index)
+          function
+          mask))]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index-base (struct-get (box-get payload-box) index-base)]
+        [index (struct-get (box-get payload-box) index)]
+        (compiler-backend-object-value-ref
+          (compiler-backend-object-value-ref
+            (compiler-backend-object-value-ref parts function base)
+            function
+            index-base)
+          function
+          index))]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (let
+        [source (struct-get (box-get payload-box) source)]
+        [selector-low (struct-get (box-get payload-box) selector-low)]
+        [selector-high (struct-get (box-get payload-box) selector-high)]
+        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        [elem-ty (struct-get (box-get payload-box) ty)]
+        [with-low : object_target.CompilerBackendObjectTargetParts
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref-with-type
-              (compiler-backend-object-value-ref
-                (compiler-backend-object-value-ref parts function base)
-                function
-                index)
+              parts
               function
-              value
+              source
               elem-ty)
             function
-            mask)])]
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
-          (compiler-backend-object-value-ref
-            (compiler-backend-object-value-ref
-              (compiler-backend-object-value-ref parts function base)
-              function
-              index)
-            function
-            mask)])]
-    [(CompilerIrInstr.GatherLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload
-            _
-            base
-            index-base
-            index
-            _
-            _
-            _)
-          (compiler-backend-object-value-ref
-            (compiler-backend-object-value-ref
-              (compiler-backend-object-value-ref parts function base)
-              function
-              index-base)
-            function
-            index)])]
-    [(CompilerIrInstr.VectorShuffle payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorShufflePayload.Payload
-            _
-            source
-            selector-low
-            selector-high
-            active-lanes
-            _
-            elem-ty)
-          (let
-            [with-low : object_target.CompilerBackendObjectTargetParts
-              (compiler-backend-object-value-ref
-                (compiler-backend-object-value-ref-with-type
-                  parts
-                  function
-                  source
-                  elem-ty)
-                function
-                selector-low)]
-            [with-high : object_target.CompilerBackendObjectTargetParts
-              (match selector-high
-                [(CompilerIrMaybeValue.Some value)
-                  (compiler-backend-object-value-ref with-low function value)]
-                [(CompilerIrMaybeValue.No) with-low])]
-            (compiler-backend-object-value-ref with-high function active-lanes))])]
+            selector-low)]
+        [with-high : object_target.CompilerBackendObjectTargetParts
+          (match selector-high
+            [(CompilerIrMaybeValue.Some value)
+              (compiler-backend-object-value-ref with-low function value)]
+            [(CompilerIrMaybeValue.No) with-low])]
+        (compiler-backend-object-value-ref with-high function active-lanes))]
     [(CompilerIrInstr.TailMask _ index length _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function index)
@@ -58429,12 +58397,13 @@
     [(CompilerIrInstr.Syscall _ args)
       (compiler-backend-object-call-args parts function args 0)]
     [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
-          (compiler-backend-object-spmd-call-args
-            (compiler-backend-object-value-ref parts function active-mask)
-            function
-            args)])]
+      (let
+        [active-mask (struct-get (box-get payload-box) active-mask)]
+        [args (struct-get (box-get payload-box) args)]
+        (compiler-backend-object-spmd-call-args
+          (compiler-backend-object-value-ref parts function active-mask)
+          function
+          args))]
     [(CompilerIrInstr.Pack dst words _)
       (compiler-backend-object-pack-to-var parts function dst words)]
     [(CompilerIrInstr.Word dst src index _)

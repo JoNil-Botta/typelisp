@@ -2254,9 +2254,7 @@
     [(CompilerIrInstrList.Cons instr rest)
       (+
         (match instr
-          [(CompilerIrInstr.VectorBinOp payload-box)
-            (match (box-get payload-box)
-              [(CompilerIrInstrVectorBinOpPayload.Payload _ _ _ _ _ _) 1])]
+          [(CompilerIrInstr.VectorBinOp _) 1]
           [_ 0])
         (opt-count-vector-binop-instrs (box-get rest)))]))
 
@@ -2276,13 +2274,14 @@
     [(CompilerIrInstrList.Cons instr rest)
       (match instr
         [(CompilerIrInstr.VectorBinOp payload-box)
-          (match (box-get payload-box)
-            [(CompilerIrInstrVectorBinOpPayload.Payload d _ lhs _ _ _)
-              (if (= d dst)
-                (match lhs
-                  [(CompilerIrValue.Var id) id]
-                  [_ (- 0 1)])
-                (opt-vector-binop-lhs-var (box-get rest) dst))])]
+          (let
+            [d (struct-get (box-get payload-box) dst)]
+            [lhs (struct-get (box-get payload-box) lhs)]
+            (if (= d dst)
+              (match lhs
+                [(CompilerIrValue.Var id) id]
+                [_ (- 0 1)])
+              (opt-vector-binop-lhs-var (box-get rest) dst)))]
         [_ (opt-vector-binop-lhs-var (box-get rest) dst)])]))
 
 (define (opt-mask-binop-lhs-var [instrs : CompilerIrInstrList] [dst : i64]) : i64

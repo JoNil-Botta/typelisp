@@ -24549,7 +24549,7 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.CallCAbiStoreResult
           (box
-            (CompilerIrInstrCallCAbiStoreResultPayload.Payload
+            (CompilerIrInstrCallCAbiStoreResultPayload
               (CompilerIrValue.Var 0)
               (ci.intern "foreign")
               (CompilerIrCallArgs.Nil)

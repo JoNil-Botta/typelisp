@@ -2561,11 +2561,11 @@
     (+
       (match (compiler-ir-instr-seq-ref instrs index)
         [(CompilerIrInstr.Select payload-box)
-          (match (box-get payload-box)
-            [(CompilerIrInstrSelectPayload.Payload _ _ _ _ lanes _)
-              (if (= lanes 0)
-                1
-                0)])]
+          (let
+            [lanes (struct-get (box-get payload-box) lanes)]
+            (if (= lanes 0)
+              1
+              0))]
         [_ 0])
       (smoke-c27-count-scalar-selects-instrs instrs (+ index 1)))))
 

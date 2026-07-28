@@ -1357,6 +1357,7 @@
         (profile.alloc-live))
       (profile.compile-wide-peak-start!)
       (ci.intern-profile-reset!)
+      (ctfe-env-profile-reset!)
       (cfg
         compile-profile-summary
         (begin
@@ -1399,6 +1400,16 @@
     (io.print-error
       (string.append
         "compile-profile|intern."
+        (string.append
+          name
+          (string.append (compiler-driver-profile-field value) "|0|0|0\n"))))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-ctfe-env-line [name : String] [value : i64]) : unit
+    (io.print-error
+      (string.append
+        "compile-profile|ctfe_env."
         (string.append
           name
           (string.append (compiler-driver-profile-field value) "|0|0|0\n"))))))
@@ -1464,7 +1475,31 @@
           (ci.intern-profile-slice-hit-value))
         (compiler-driver-profile-intern-line
           "slice_misses"
-          (ci.intern-profile-slice-miss-value))))))
+          (ci.intern-profile-slice-miss-value))
+        (compiler-driver-profile-ctfe-env-line
+          "binding_appends"
+          (ctfe-env-profile-binding-appends-value))
+        (compiler-driver-profile-ctfe-env-line
+          "value_lookups"
+          (ctfe-env-profile-value-lookups-value))
+        (compiler-driver-profile-ctfe-env-line
+          "type_lookups"
+          (ctfe-env-profile-type-lookups-value))
+        (compiler-driver-profile-ctfe-env-line
+          "lookup_steps"
+          (ctfe-env-profile-lookup-steps-value))
+        (compiler-driver-profile-ctfe-env-line
+          "local_set_calls"
+          (ctfe-env-profile-local-set-calls-value))
+        (compiler-driver-profile-ctfe-env-line
+          "local_set_steps"
+          (ctfe-env-profile-local-set-steps-value))
+        (compiler-driver-profile-ctfe-env-line
+          "arena_roots"
+          (ctfe-env-profile-arena-roots-value))
+        (compiler-driver-profile-ctfe-env-line
+          "arena_grows"
+          (ctfe-env-profile-arena-grows-value))))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]

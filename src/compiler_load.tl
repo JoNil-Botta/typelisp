@@ -118,11 +118,12 @@
   (default-alias CompilerLoadSurfaceMaybeString)
   (span AstSourceSpan))
 
-(defenum CompilerLoadSurfaceImportList
-  (CompilerLoadSurfaceImportNil)
-  (CompilerLoadSurfaceImportCons
-    CompilerLoadSurfaceImport
-    (Box CompilerLoadSurfaceImportList)))
+(defstruct CompilerLoadSurfaceImportList
+  ;; Surface builders count first and retain a right-sized array in source
+  ;; order. `len` stays explicit so consumers never derive logical shape from
+  ;; a boxed tail.
+  (slots (Array CompilerLoadSurfaceImport))
+  (len i64))
 
 (defenum CompilerLoadSurfaceMacroResultKind
   (CompilerLoadSurfaceMacroExpr)
@@ -198,19 +199,25 @@
   (was-unsafe bool)
   (span AstSourceSpan))
 
-(defenum CompilerLoadSurfaceDeclList
-  (CompilerLoadSurfaceDeclNil)
-  (CompilerLoadSurfaceDeclCons
-    CompilerLoadSurfaceDecl
-    (Box CompilerLoadSurfaceDeclList)))
+(defstruct CompilerLoadSurfaceDeclList
+  ;; Declarations are stored in source order, including declarations flattened
+  ;; from nested module bodies.
+  (slots (Array CompilerLoadSurfaceDecl))
+  (len i64))
 
 (defstruct CompilerLoadSurfaceBuild
-  (imports CompilerLoadSurfaceImportList)
-  (decls CompilerLoadSurfaceDeclList)
+  (import-slots (Array CompilerLoadSurfaceImport))
+  (import-len i64)
+  (decl-slots (Array CompilerLoadSurfaceDecl))
+  (decl-len i64)
   (has-tests bool)
   (has-export-metadata bool)
   (has-generated-decls bool)
   (has-decl-emitting-macro bool))
+
+(defstruct CompilerLoadSurfaceCounts
+  (imports i64)
+  (decls i64))
 
 (defstruct CompilerLoadSurfaceSummary
   ;; `module-id` is the load/dedup identity. Moduleless legacy path imports can
@@ -233,11 +240,53 @@
   (has-decl-emitting-macro bool)
   (lazy-policy CompilerLoadLazyImportPolicy))
 
-(defenum CompilerLoadSurfaceSummaryList
-  (CompilerLoadSurfaceSummaryNil)
-  (CompilerLoadSurfaceSummaryCons
-    CompilerLoadSurfaceSummary
-    (Box CompilerLoadSurfaceSummaryList)))
+(defstruct CompilerLoadSurfaceSummaryList
+  ;; Physical order is oldest-to-newest so recording is amortized O(1).
+  ;; Accessors expose the previous logical newest-to-oldest order.
+  (slots (Array CompilerLoadSurfaceSummary))
+  (len i64))
+
+(define (compiler-load-surface-import-list-empty) : CompilerLoadSurfaceImportList
+  (CompilerLoadSurfaceImportList
+    (array.make-array CompilerLoadSurfaceImport 0)
+    0))
+
+(define (compiler-load-surface-import-list-count
+  [imports : CompilerLoadSurfaceImportList]) : i64
+  (struct-get imports len))
+
+(define (compiler-load-surface-import-list-at
+  [imports : CompilerLoadSurfaceImportList]
+  [index : i64]) : CompilerLoadSurfaceImport
+  (array-ref (struct-get imports slots) index))
+
+(define (compiler-load-surface-decl-list-empty) : CompilerLoadSurfaceDeclList
+  (CompilerLoadSurfaceDeclList (array.make-array CompilerLoadSurfaceDecl 0) 0))
+
+(define (compiler-load-surface-decl-list-count
+  [decls : CompilerLoadSurfaceDeclList]) : i64
+  (struct-get decls len))
+
+(define (compiler-load-surface-decl-list-at
+  [decls : CompilerLoadSurfaceDeclList]
+  [index : i64]) : CompilerLoadSurfaceDecl
+  (array-ref (struct-get decls slots) index))
+
+(define (compiler-load-surface-summary-list-empty) : CompilerLoadSurfaceSummaryList
+  (CompilerLoadSurfaceSummaryList
+    (array.make-array CompilerLoadSurfaceSummary 0)
+    0))
+
+(define (compiler-load-surface-summary-list-count
+  [summaries : CompilerLoadSurfaceSummaryList]) : i64
+  (struct-get summaries len))
+
+(define (compiler-load-surface-summary-list-at
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [index : i64]) : CompilerLoadSurfaceSummary
+  (array-ref
+    (struct-get summaries slots)
+    (- (- (struct-get summaries len) index) 1)))
 
 (defenum ResultCompilerLoadSurfaceSummary
   (Ok CompilerLoadSurfaceSummary)
@@ -440,7 +489,7 @@
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
   (let
     [surface-summaries : (Array CompilerLoadSurfaceSummaryList)
-      (make-array (CompilerLoadSurfaceSummaryNil))]
+      (make-array (compiler-load-surface-summary-list-empty))]
     [surface-summary-load-depth : (Array i64)
       (compiler-load-session-state-i64-cell 0)]
     [lazy-import-skip-record-count : (Array i64)
@@ -3739,7 +3788,7 @@
     (array-set!
       (struct-get state surface-summaries)
       0
-      (CompilerLoadSurfaceSummaryNil))
+      (compiler-load-surface-summary-list-empty))
     (array-set! (struct-get state lazy-import-skip-record-count) 0 0)))
 
 (define (compiler-load-surface-summaries-reset!) : unit
@@ -3801,14 +3850,44 @@
 (define (compiler-load-surface-summary-source-active?
   [summaries : CompilerLoadSurfaceSummaryList]
   [source-path-id : i64]) : bool
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) false]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (or
-        (= (struct-get summary source-path-id) source-path-id)
-        (compiler-load-surface-summary-source-active?
-          (box-get rest)
-          source-path-id))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-summary-list-count summaries))
+        (if (=
+          (struct-get
+            (compiler-load-surface-summary-list-at summaries index)
+            source-path-id)
+          source-path-id)
+          (return true)
+          (set! index (+ index 1))))
+      false)))
+
+(define (compiler-load-surface-summary-list-record
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [summary : CompilerLoadSurfaceSummary]) : CompilerLoadSurfaceSummaryList
+  (let
+    [len : i64 (compiler-load-surface-summary-list-count summaries)]
+    [slots : (Array CompilerLoadSurfaceSummary) (struct-get summaries slots)]
+    (begin
+      (if (< len (array-length slots))
+        unit
+        (let
+          [capacity : i64
+            (if (= (array-length slots) 0)
+              1
+              (* (array-length slots) 2))]
+          [bigger : (Array CompilerLoadSurfaceSummary)
+            (array.make-array CompilerLoadSurfaceSummary capacity)]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (array-set! bigger index (array-ref slots index))
+                (set! index (+ index 1))))
+            (set! slots bigger))))
+      (array-set! slots len summary)
+      (CompilerLoadSurfaceSummaryList slots (+ len 1)))))
 
 (define (compiler-load-session-state-record-surface-summary!
   [state : CompilerLoadSessionState]
@@ -3820,9 +3899,9 @@
     (array-set!
       (struct-get state surface-summaries)
       0
-      (CompilerLoadSurfaceSummaryCons
-        summary
-        (box (compiler-load-session-state-surface-summaries state))))))
+      (compiler-load-surface-summary-list-record
+        (compiler-load-session-state-surface-summaries state)
+        summary))))
 
 (define (compiler-load-record-surface-summary!
   [summary : CompilerLoadSurfaceSummary]) : unit
@@ -3833,14 +3912,17 @@
 (define (compiler-load-surface-summary-find-source-in
   [summaries : CompilerLoadSurfaceSummaryList]
   [source-path-id : i64]) : CompilerLoadMaybeSurfaceSummary
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) (CompilerLoadNoSurfaceSummary)]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (if (= (struct-get summary source-path-id) source-path-id)
-        (CompilerLoadSomeSurfaceSummary summary)
-        (compiler-load-surface-summary-find-source-in
-          (box-get rest)
-          source-path-id))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-summary-list-count summaries))
+        (let
+          [summary : CompilerLoadSurfaceSummary
+            (compiler-load-surface-summary-list-at summaries index)]
+          (if (= (struct-get summary source-path-id) source-path-id)
+            (return (CompilerLoadSomeSurfaceSummary summary))
+            (set! index (+ index 1)))))
+      (CompilerLoadNoSurfaceSummary))))
 
 (define (compiler-load-session-state-surface-summary-find-source
   [state : CompilerLoadSessionState]
@@ -3857,12 +3939,17 @@
 (define (compiler-load-surface-summary-find-module-in
   [summaries : CompilerLoadSurfaceSummaryList]
   [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) (CompilerLoadNoSurfaceSummary)]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (if (= (struct-get summary module-id) module-id)
-        (CompilerLoadSomeSurfaceSummary summary)
-        (compiler-load-surface-summary-find-module-in (box-get rest) module-id))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-summary-list-count summaries))
+        (let
+          [summary : CompilerLoadSurfaceSummary
+            (compiler-load-surface-summary-list-at summaries index)]
+          (if (= (struct-get summary module-id) module-id)
+            (return (CompilerLoadSomeSurfaceSummary summary))
+            (set! index (+ index 1)))))
+      (CompilerLoadNoSurfaceSummary))))
 
 (define (compiler-load-session-state-surface-summary-find-module
   [state : CompilerLoadSessionState]
@@ -3995,19 +4082,43 @@
 (define (compiler-load-surface-summary-remove-source-in
   [summaries : CompilerLoadSurfaceSummaryList]
   [source-path-id : i64]) : CompilerLoadSurfaceSummaryList
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) (CompilerLoadSurfaceSummaryNil)]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (if (= (struct-get summary source-path-id) source-path-id)
-        (compiler-load-surface-summary-remove-source-in
-          (box-get rest)
-          source-path-id)
-        (CompilerLoadSurfaceSummaryCons
-          summary
-          (box
-            (compiler-load-surface-summary-remove-source-in
-              (box-get rest)
-              source-path-id))))]))
+  (let
+    [len : i64 (compiler-load-surface-summary-list-count summaries)]
+    [kept : i64 0]
+    [physical-index : i64 0]
+    (begin
+      (while (< physical-index len)
+        (begin
+          (if (not
+            (=
+              (struct-get
+                (array-ref (struct-get summaries slots) physical-index)
+                source-path-id)
+              source-path-id))
+            (set! kept (+ kept 1))
+            unit)
+          (set! physical-index (+ physical-index 1))))
+      (if (= kept len)
+        summaries
+        (let
+          [slots : (Array CompilerLoadSurfaceSummary)
+            (array.make-array CompilerLoadSurfaceSummary kept)]
+          [read-index : i64 0]
+          [write-index : i64 0]
+          (begin
+            (while (< read-index len)
+              (let
+                [summary : CompilerLoadSurfaceSummary
+                  (array-ref (struct-get summaries slots) read-index)]
+                (begin
+                  (if (not
+                    (= (struct-get summary source-path-id) source-path-id))
+                    (begin
+                      (array-set! slots write-index summary)
+                      (set! write-index (+ write-index 1)))
+                    unit)
+                  (set! read-index (+ read-index 1)))))
+            (CompilerLoadSurfaceSummaryList slots kept)))))))
 
 (define (compiler-load-session-state-surface-summary-remove-source!
   [state : CompilerLoadSessionState]
@@ -4168,12 +4279,15 @@
 
 (define (compiler-load-surface-summary-decls-require-eager?
   [decls : CompilerLoadSurfaceDeclList]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (or
-        (compiler-load-surface-summary-decl-requires-eager? decl)
-        (compiler-load-surface-summary-decls-require-eager? (box-get rest)))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (if (compiler-load-surface-summary-decl-requires-eager?
+          (compiler-load-surface-decl-list-at decls index))
+          (return true)
+          (set! index (+ index 1))))
+      false)))
 
 (define (compiler-load-surface-summary-requires-eager?
   [summary : CompilerLoadSurfaceSummary]) : bool
@@ -4621,12 +4735,16 @@
 (define (compiler-load-lazy-surface-decls-direct-name?
   [decls : CompilerLoadSurfaceDeclList]
   [name : i64]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (or
-        (compiler-load-lazy-surface-decl-direct-name? decl name)
-        (compiler-load-lazy-surface-decls-direct-name? (box-get rest) name))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (if (compiler-load-lazy-surface-decl-direct-name?
+          (compiler-load-surface-decl-list-at decls index)
+          name)
+          (return true)
+          (set! index (+ index 1))))
+      false)))
 
 (define (compiler-load-session-state-lazy-name-demand
   [state : CompilerLoadSessionState]
@@ -4678,14 +4796,18 @@
 
 (define (compiler-load-surface-decls-decl-emitting-only?
   [decls : CompilerLoadSurfaceDeclList]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (and
-        (compiler-load-surface-decl-decl-emitting? decl)
-        (match (box-get rest)
-          [(CompilerLoadSurfaceDeclNil) true]
-          [_ (compiler-load-surface-decls-decl-emitting-only? (box-get rest))]))]))
+  (let
+    [len : i64 (compiler-load-surface-decl-list-count decls)]
+    [index : i64 0]
+    (begin
+      (when (= len 0) (return false))
+      (while (< index len)
+        (if (not
+          (compiler-load-surface-decl-decl-emitting?
+            (compiler-load-surface-decl-list-at decls index)))
+          (return false)
+          (set! index (+ index 1))))
+      true)))
 
 (define (compiler-load-surface-lazy-policy
   [decls : CompilerLoadSurfaceDeclList]
@@ -6585,8 +6707,8 @@
     cbi.compiler-builtin-id-fix-empty
     ""
     ""
-    (CompilerLoadSurfaceImportNil)
-    (CompilerLoadSurfaceDeclNil)
+    (compiler-load-surface-import-list-empty)
+    (compiler-load-surface-decl-list-empty)
     false
     false
     false
@@ -6947,10 +7069,37 @@
           (compiler-load-surface-variant-payload-cleanup? cleanups)
           (compiler-load-surface-variant-list-cleanup-at? variants (+ index 1)))])))
 
-(define (compiler-load-surface-build-empty) : CompilerLoadSurfaceBuild
+(define (compiler-load-surface-counts-add
+  [left : CompilerLoadSurfaceCounts]
+  [right : CompilerLoadSurfaceCounts]) : CompilerLoadSurfaceCounts
+  (CompilerLoadSurfaceCounts
+    (+ (struct-get left imports) (struct-get right imports))
+    (+ (struct-get left decls) (struct-get right decls))))
+
+(define (compiler-load-surface-count-decl [decl : AstDecl]) : CompilerLoadSurfaceCounts
+  (match decl
+    [(AstDecl.Import _ _) (CompilerLoadSurfaceCounts 1 0)]
+    [(AstDecl.Unsafe inner-box)
+      (compiler-load-surface-count-decl (box-get inner-box))]
+    [(AstDecl.ModuleBody _ body-box)
+      (compiler-load-surface-count-decls (box-get body-box))]
+    [(AstDecl.Module _) (CompilerLoadSurfaceCounts 0 0)]
+    [_ (CompilerLoadSurfaceCounts 0 1)]))
+
+(define (compiler-load-surface-count-decls [decls : AstDeclList]) : CompilerLoadSurfaceCounts
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (CompilerLoadSurfaceCounts 0 0)]
+    [(AstDeclListStep.Cons decl rest)
+      (compiler-load-surface-counts-add
+        (compiler-load-surface-count-decl decl)
+        (compiler-load-surface-count-decls rest))]))
+
+(define (compiler-load-surface-build-empty [counts : CompilerLoadSurfaceCounts]) : CompilerLoadSurfaceBuild
   (CompilerLoadSurfaceBuild
-    CompilerLoadSurfaceImportNil
-    CompilerLoadSurfaceDeclNil
+    (array.make-array CompilerLoadSurfaceImport (struct-get counts imports))
+    0
+    (array.make-array CompilerLoadSurfaceDecl (struct-get counts decls))
+    0
     false
     false
     false
@@ -6960,13 +7109,19 @@
   [build : CompilerLoadSurfaceBuild]
   [import-edge : CompilerLoadSurfaceImport]
   [decl-emitting : bool]) : CompilerLoadSurfaceBuild
-  (CompilerLoadSurfaceBuild
-    (CompilerLoadSurfaceImportCons import-edge (box (struct-get build imports)))
-    (struct-get build decls)
-    (struct-get build has-tests)
-    (struct-get build has-export-metadata)
-    (struct-get build has-generated-decls)
-    (or (struct-get build has-decl-emitting-macro) decl-emitting)))
+  (let
+    [index : i64 (struct-get build import-len)]
+    (begin
+      (array-set! (struct-get build import-slots) index import-edge)
+      (CompilerLoadSurfaceBuild
+        (struct-get build import-slots)
+        (+ index 1)
+        (struct-get build decl-slots)
+        (struct-get build decl-len)
+        (struct-get build has-tests)
+        (struct-get build has-export-metadata)
+        (struct-get build has-generated-decls)
+        (or (struct-get build has-decl-emitting-macro) decl-emitting)))))
 
 (define (compiler-load-surface-build-add-decl
   [build : CompilerLoadSurfaceBuild]
@@ -6975,13 +7130,19 @@
   [has-export : bool]
   [has-generated : bool]
   [decl-emitting : bool]) : CompilerLoadSurfaceBuild
-  (CompilerLoadSurfaceBuild
-    (struct-get build imports)
-    (CompilerLoadSurfaceDeclCons decl (box (struct-get build decls)))
-    (or (struct-get build has-tests) has-test)
-    (or (struct-get build has-export-metadata) has-export)
-    (or (struct-get build has-generated-decls) has-generated)
-    (or (struct-get build has-decl-emitting-macro) decl-emitting)))
+  (let
+    [index : i64 (struct-get build decl-len)]
+    (begin
+      (array-set! (struct-get build decl-slots) index decl)
+      (CompilerLoadSurfaceBuild
+        (struct-get build import-slots)
+        (struct-get build import-len)
+        (struct-get build decl-slots)
+        (+ index 1)
+        (or (struct-get build has-tests) has-test)
+        (or (struct-get build has-export-metadata) has-export)
+        (or (struct-get build has-generated-decls) has-generated)
+        (or (struct-get build has-decl-emitting-macro) decl-emitting)))))
 
 (define (compiler-load-surface-build-decl-inner
   [source-path : String]
@@ -7345,24 +7506,24 @@
           [(AstDecl.ModuleBody nested-module body-box)
             (compiler-load-surface-build-decls-into
               source-path
-              nested-module
-              (box-get body-box)
+              module-id
+              rest
               (compiler-load-surface-build-decls-into
                 source-path
-                module-id
-                rest
+                nested-module
+                (box-get body-box)
                 build))]
           [_
-            (compiler-load-surface-build-decl
+            (compiler-load-surface-build-decls-into
               source-path
               module-id
-              decl
-              false
-              false
-              (compiler-load-surface-build-decls-into
+              rest
+              (compiler-load-surface-build-decl
                 source-path
                 module-id
-                rest
+                decl
+                false
+                false
                 build))]))]))
 
 (define (compiler-load-surface-build-decls
@@ -7373,7 +7534,8 @@
     source-path
     module-id
     decls
-    (compiler-load-surface-build-empty)))
+    (compiler-load-surface-build-empty
+      (compiler-load-surface-count-decls decls))))
 
 (define (compiler-load-surface-summary-from-decls
   [path : String]
@@ -7396,14 +7558,20 @@
       source-path-id
       source-path
       (compiler-load-normalize-path root-id)
-      (struct-get build imports)
-      (struct-get build decls)
+      (CompilerLoadSurfaceImportList
+        (struct-get build import-slots)
+        (struct-get build import-len))
+      (CompilerLoadSurfaceDeclList
+        (struct-get build decl-slots)
+        (struct-get build decl-len))
       (struct-get build has-tests)
       (struct-get build has-export-metadata)
       (struct-get build has-generated-decls)
       (struct-get build has-decl-emitting-macro)
       (compiler-load-surface-lazy-policy
-        (struct-get build decls)
+        (CompilerLoadSurfaceDeclList
+          (struct-get build decl-slots)
+          (struct-get build decl-len))
         (struct-get build has-tests)
         (struct-get build has-export-metadata)
         (struct-get build has-generated-decls)
@@ -11761,36 +11929,25 @@
     [(CompilerLoadSurfaceMacroDecls) 3]
     [(CompilerLoadSurfaceMacroOther) 4]))
 
-(define (compiler-load-surface-import-list-count
-  [imports : CompilerLoadSurfaceImportList]) : i64
-  (match imports
-    [(CompilerLoadSurfaceImportNil) 0]
-    [(CompilerLoadSurfaceImportCons _ rest)
-      (+ 1 (compiler-load-surface-import-list-count (box-get rest)))]))
-
-(define (compiler-load-surface-decl-list-count
-  [decls : CompilerLoadSurfaceDeclList]) : i64
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) 0]
-    [(CompilerLoadSurfaceDeclCons _ rest)
-      (+ 1 (compiler-load-surface-decl-list-count (box-get rest)))]))
-
 (define (compiler-load-surface-import-kind-count
   [imports : CompilerLoadSurfaceImportList]
   [kind-code : i64]) : i64
-  (match imports
-    [(CompilerLoadSurfaceImportNil) 0]
-    [(CompilerLoadSurfaceImportCons import-edge rest)
-      (let
-        [rest : CompilerLoadSurfaceImportList (box-get rest)]
-        (+
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-import-list-count imports))
+        (begin
           (if (=
             (compiler-load-surface-import-kind-code
-              (struct-get import-edge kind))
+              (struct-get
+                (compiler-load-surface-import-list-at imports index)
+                kind))
             kind-code)
-            1
-            0)
-          (compiler-load-surface-import-kind-count rest kind-code)))]))
+            (set! count (+ count 1))
+            unit)
+          (set! index (+ index 1))))
+      count)))
 
 (define (compiler-load-surface-import-has?
   [imports : CompilerLoadSurfaceImportList]
@@ -11798,126 +11955,160 @@
   [import-path : String]
   [alias : String]
   [default-alias : String]) : bool
-  (match imports
-    [(CompilerLoadSurfaceImportNil) false]
-    [(CompilerLoadSurfaceImportCons import-edge rest)
-      (if (and
-        (=
-          (compiler-load-surface-import-kind-code (struct-get import-edge kind))
-          kind-code)
-        (string.eq (struct-get import-edge import-path) import-path)
-        (compiler-load-surface-maybe-string-eq?
-          (struct-get import-edge alias)
-          alias)
-        (compiler-load-surface-maybe-string-eq?
-          (struct-get import-edge default-alias)
-          default-alias))
-        true
-        (compiler-load-surface-import-has?
-          (box-get rest)
-          kind-code
-          import-path
-          alias
-          default-alias))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-import-list-count imports))
+        (let
+          [import-edge : CompilerLoadSurfaceImport
+            (compiler-load-surface-import-list-at imports index)]
+          (if (and
+            (=
+              (compiler-load-surface-import-kind-code
+                (struct-get import-edge kind))
+              kind-code)
+            (string.eq (struct-get import-edge import-path) import-path)
+            (compiler-load-surface-maybe-string-eq?
+              (struct-get import-edge alias)
+              alias)
+            (compiler-load-surface-maybe-string-eq?
+              (struct-get import-edge default-alias)
+              default-alias))
+            (return true)
+            (set! index (+ index 1)))))
+      false)))
 
 (define (compiler-load-surface-decl-kind-count
   [decls : CompilerLoadSurfaceDeclList]
   [kind-code : i64]) : i64
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) 0]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (let
-        [rest : CompilerLoadSurfaceDeclList (box-get rest)]
-        (+
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (begin
           (if (=
-            (compiler-load-surface-decl-kind-code (struct-get decl kind))
+            (compiler-load-surface-decl-kind-code
+              (struct-get (compiler-load-surface-decl-list-at decls index) kind))
             kind-code)
-            1
-            0)
-          (compiler-load-surface-decl-kind-count rest kind-code)))]))
+            (set! count (+ count 1))
+            unit)
+          (set! index (+ index 1))))
+      count)))
 
 (define (compiler-load-surface-decl-has?
   [decls : CompilerLoadSurfaceDeclList]
   [kind-code : i64]
   [name : String]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (if (and
-        (=
-          (compiler-load-surface-decl-kind-code (struct-get decl kind))
-          kind-code)
-        (string.eq (intern-str (struct-get decl name)) name))
-        true
-        (compiler-load-surface-decl-has? (box-get rest) kind-code name))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (if (and
+            (=
+              (compiler-load-surface-decl-kind-code (struct-get decl kind))
+              kind-code)
+            (string.eq (intern-str (struct-get decl name)) name))
+            (return true)
+            (set! index (+ index 1)))))
+      false)))
 
 (define (compiler-load-surface-decl-in-module?
   [decls : CompilerLoadSurfaceDeclList]
   [name : String]
   [module : String]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (if (and
-        (string.eq (intern-str (struct-get decl name)) name)
-        (string.eq (intern-str (struct-get decl module)) module))
-        true
-        (compiler-load-surface-decl-in-module? (box-get rest) name module))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (if (and
+            (string.eq (intern-str (struct-get decl name)) name)
+            (string.eq (intern-str (struct-get decl module)) module))
+            (return true)
+            (set! index (+ index 1)))))
+      false)))
 
 (define (compiler-load-surface-decl-generated?
   [decls : CompilerLoadSurfaceDeclList]
   [name : String]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (if (and
-        (string.eq (intern-str (struct-get decl name)) name)
-        (struct-get decl has-generated-meta))
-        true
-        (compiler-load-surface-decl-generated? (box-get rest) name))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (if (and
+            (string.eq (intern-str (struct-get decl name)) name)
+            (struct-get decl has-generated-meta))
+            (return true)
+            (set! index (+ index 1)))))
+      false)))
 
 (define (compiler-load-surface-decl-unsafe?
   [decls : CompilerLoadSurfaceDeclList]
   [name : String]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (if (and
-        (string.eq (intern-str (struct-get decl name)) name)
-        (struct-get decl was-unsafe))
-        true
-        (compiler-load-surface-decl-unsafe? (box-get rest) name))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (if (and
+            (string.eq (intern-str (struct-get decl name)) name)
+            (struct-get decl was-unsafe))
+            (return true)
+            (set! index (+ index 1)))))
+      false)))
 
 (define (compiler-load-surface-decl-cleanup?
   [decls : CompilerLoadSurfaceDeclList]
   [name : String]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (if (and
-        (string.eq (intern-str (struct-get decl name)) name)
-        (struct-get decl has-cleanup))
-        true
-        (compiler-load-surface-decl-cleanup? (box-get rest) name))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (if (and
+            (string.eq (intern-str (struct-get decl name)) name)
+            (struct-get decl has-cleanup))
+            (return true)
+            (set! index (+ index 1)))))
+      false)))
 
 (define (compiler-load-surface-macro-result-count
   [decls : CompilerLoadSurfaceDeclList]
   [result-code : i64]) : i64
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) 0]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (let
-        [rest : CompilerLoadSurfaceDeclList (box-get rest)]
-        (+
-          (if (and
-            (= (compiler-load-surface-decl-kind-code (struct-get decl kind)) 6)
-            (=
-              (compiler-load-surface-macro-result-kind-code
-                (struct-get decl macro-result))
-              result-code))
-            1
-            0)
-          (compiler-load-surface-macro-result-count rest result-code)))]))
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (begin
+            (if (and
+              (=
+                (compiler-load-surface-decl-kind-code (struct-get decl kind))
+                6)
+              (=
+                (compiler-load-surface-macro-result-kind-code
+                  (struct-get decl macro-result))
+                result-code))
+              (set! count (+ count 1))
+              unit)
+            (set! index (+ index 1)))))
+      count)))
 
 (define (compiler-load-surface-summary-smoke-source) : String
   (str_cat.str-cat
@@ -11954,6 +12145,19 @@
       (string.eq (struct-get summary source-path) "src/summary.tl")
       (string.eq (struct-get summary root-id) "src")
       (= (compiler-load-surface-import-list-count imports) 5)
+      (=
+        (array-length (struct-get imports slots))
+        (compiler-load-surface-import-list-count imports))
+      (string.eq
+        (struct-get
+          (compiler-load-surface-import-list-at imports 0)
+          import-path)
+        "dep.tl")
+      (string.eq
+        (struct-get
+          (compiler-load-surface-import-list-at imports 1)
+          import-path)
+        "stdlib.vector")
       (= (compiler-load-surface-import-kind-count imports 1) 2)
       (= (compiler-load-surface-import-kind-count imports 2) 1)
       (= (compiler-load-surface-import-kind-count imports 3) 1)
@@ -11966,6 +12170,21 @@
         "vector")
       (compiler-load-surface-import-has? imports 1 "feature.tl" "feat" "")
       (= (compiler-load-surface-decl-list-count decls) 14)
+      (=
+        (array-length (struct-get decls slots))
+        (compiler-load-surface-decl-list-count decls))
+      (string.eq
+        (intern-str
+          (struct-get (compiler-load-surface-decl-list-at decls 0) name))
+        "value")
+      (string.eq
+        (intern-str
+          (struct-get
+            (compiler-load-surface-decl-list-at
+              decls
+              (- (compiler-load-surface-decl-list-count decls) 1))
+            name))
+        "blob")
       (= (compiler-load-surface-decl-kind-count decls 6) 3)
       (compiler-load-surface-decl-has? decls 1 "value")
       (compiler-load-surface-decl-has? decls 2 "pub")
@@ -15986,8 +16205,8 @@
         alias-b-id
         "state.tl"
         ""
-        (CompilerLoadSurfaceImportNil)
-        (CompilerLoadSurfaceDeclNil)
+        (compiler-load-surface-import-list-empty)
+        (compiler-load-surface-decl-list-empty)
         false
         false
         false
@@ -16447,6 +16666,153 @@
           (compiler-load-lazy-qualified-observer-test-stack-capacity-zero?
             state-b))))))
 
+(define (compiler-load-surface-summary-list-test-summary
+  [module-id : i64]
+  [source-path-id : i64]
+  [source-path : String]) : CompilerLoadSurfaceSummary
+  (CompilerLoadSurfaceSummary
+    module-id
+    module-id
+    true
+    true
+    source-path-id
+    source-path
+    ""
+    (compiler-load-surface-import-list-empty)
+    (compiler-load-surface-decl-list-empty)
+    false
+    false
+    false
+    false
+    (CompilerLoadLazyImportDirect)))
+
+(define (compiler-load-surface-summary-dense-session-ok?) : bool
+  (let
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [module-a : i64 (intern "surface-dense.module-a")]
+    [module-b : i64 (intern "surface-dense.module-b")]
+    [module-peer : i64 (intern "surface-dense.module-peer")]
+    [source-a : i64 (intern "target/surface-dense-a.tl")]
+    [source-b : i64 (intern "target/surface-dense-b.tl")]
+    [source-peer : i64 (intern "target/surface-dense-peer.tl")]
+    [summary-a : CompilerLoadSurfaceSummary
+      (compiler-load-surface-summary-list-test-summary
+        module-a
+        source-a
+        "target/surface-dense-a.tl")]
+    [duplicate-source : CompilerLoadSurfaceSummary
+      (compiler-load-surface-summary-list-test-summary
+        module-b
+        source-a
+        "target/surface-dense-a-duplicate.tl")]
+    [duplicate-module : CompilerLoadSurfaceSummary
+      (compiler-load-surface-summary-list-test-summary
+        module-a
+        source-b
+        "target/surface-dense-b.tl")]
+    [reloaded : CompilerLoadSurfaceSummary
+      (compiler-load-surface-summary-list-test-summary
+        module-b
+        source-b
+        "target/surface-dense-b-reloaded.tl")]
+    [peer : CompilerLoadSurfaceSummary
+      (compiler-load-surface-summary-list-test-summary
+        module-peer
+        source-peer
+        "target/surface-dense-peer.tl")]
+    (begin
+      ;; Interleave independent sessions and prove duplicate-source suppression
+      ;; does not suppress a distinct source with the same module identity.
+      (compiler-load-session-state-record-surface-summary! state-a summary-a)
+      (compiler-load-session-state-record-surface-summary! state-b peer)
+      (compiler-load-session-state-record-surface-summary!
+        state-a
+        duplicate-source)
+      (compiler-load-session-state-record-surface-summary!
+        state-a
+        duplicate-module)
+      (let
+        [before : CompilerLoadSurfaceSummaryList
+          (compiler-load-session-state-surface-summaries state-a)]
+        [before-ok : bool
+          (and
+            (= (compiler-load-surface-summary-list-count before) 2)
+            (>=
+              (array-length (struct-get before slots))
+              (compiler-load-surface-summary-list-count before))
+            (=
+              (struct-get
+                (compiler-load-surface-summary-list-at before 0)
+                source-path-id)
+              source-b)
+            (=
+              (struct-get
+                (compiler-load-surface-summary-list-at before 1)
+                source-path-id)
+              source-a)
+            (match (compiler-load-session-state-surface-summary-find-source
+              state-a
+              source-a)
+              [(CompilerLoadSomeSurfaceSummary summary)
+                (= (struct-get summary module-id) module-a)]
+              [_ false])
+            (match (compiler-load-session-state-surface-summary-find-module
+              state-a
+              module-a)
+              [(CompilerLoadSomeSurfaceSummary summary)
+                (= (struct-get summary source-path-id) source-b)]
+              [_ false]))]
+        [_remove : unit
+          (compiler-load-session-state-surface-summary-remove-source!
+            state-a
+            source-b)]
+        [after-remove-ok : bool
+          (and
+            (=
+              (compiler-load-surface-summary-list-count
+                (compiler-load-session-state-surface-summaries state-a))
+              1)
+            (match (compiler-load-session-state-surface-summary-find-module
+              state-a
+              module-a)
+              [(CompilerLoadSomeSurfaceSummary summary)
+                (= (struct-get summary source-path-id) source-a)]
+              [_ false]))]
+        [_reload : unit
+          (compiler-load-session-state-record-surface-summary! state-a reloaded)]
+        [reload-ok : bool
+          (and
+            (=
+              (compiler-load-surface-summary-list-count
+                (compiler-load-session-state-surface-summaries state-a))
+              2)
+            (match (compiler-load-session-state-surface-summary-find-source
+              state-a
+              source-b)
+              [(CompilerLoadSomeSurfaceSummary summary)
+                (= (struct-get summary module-id) module-b)]
+              [_ false]))]
+        [_reset-a : unit
+          (compiler-load-session-state-surface-summaries-reset! state-a)]
+        [isolation-ok : bool
+          (and
+            (=
+              (compiler-load-surface-summary-list-count
+                (compiler-load-session-state-surface-summaries state-a))
+              0)
+            (=
+              (compiler-load-surface-summary-list-count
+                (compiler-load-session-state-surface-summaries state-b))
+              1)
+            (match (compiler-load-session-state-surface-summary-find-source
+              state-b
+              source-peer)
+              [(CompilerLoadSomeSurfaceSummary summary)
+                (= (struct-get summary module-id) module-peer)]
+              [_ false]))]
+        (and before-ok after-remove-ok reload-ok isolation-ok)))))
+
 (define (compiler-load-self-test) : i64
   (begin
     (unless
@@ -16461,6 +16827,10 @@
       (compiler-load-session-owned-traversal-isolation-ok?)
       (return
         (io.panic "compiler-load: owned traversal isolation smoke mismatch")))
+    (unless
+      (compiler-load-surface-summary-dense-session-ok?)
+      (return
+        (io.panic "compiler-load: dense surface summary session mismatch")))
     (unless
       (compiler-load-lazy-qualified-observer-dense-stack-ok?)
       (return

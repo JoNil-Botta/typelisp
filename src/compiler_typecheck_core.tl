@@ -23336,14 +23336,18 @@
 (define (tc-import-alias-surface-summary-backed-in?
   [summaries : CompilerLoadSurfaceSummaryList]
   [target-module-id : i64]) : bool
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) false]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (or
-        (= (struct-get summary module-id) target-module-id)
-        (tc-import-alias-surface-summary-backed-in?
-          (box-get rest)
-          target-module-id))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-summary-list-count summaries))
+        (if (=
+          (struct-get
+            (compiler-load-surface-summary-list-at summaries index)
+            module-id)
+          target-module-id)
+          (return true)
+          (set! index (+ index 1))))
+      false)))
 
 (define (tc-import-alias-surface-summary-backed? [target-module-id : i64]) : bool
   (tc-import-alias-surface-summary-backed-in?
@@ -64704,22 +64708,38 @@
 (define (macro-collect-surface-decl-names
   [decls : CompilerLoadSurfaceDeclList]
   [acc : TcNameIdList]) : TcNameIdList
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) acc]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (macro-collect-surface-decl-names
-        (box-get rest)
-        (macro-collect-surface-decl-name decl acc))]))
+  (let
+    [index : i64 0]
+    [out : TcNameIdList acc]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (begin
+          (set!
+            out
+            (macro-collect-surface-decl-name
+              (compiler-load-surface-decl-list-at decls index)
+              out))
+          (set! index (+ index 1))))
+      out)))
 
 (define (macro-collect-surface-summary-macro-names
   [summaries : CompilerLoadSurfaceSummaryList]
   [acc : TcNameIdList]) : TcNameIdList
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) acc]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (macro-collect-surface-summary-macro-names
-        (box-get rest)
-        (macro-collect-surface-decl-names (struct-get summary decls) acc))]))
+  (let
+    [index : i64 0]
+    [out : TcNameIdList acc]
+    (begin
+      (while (< index (compiler-load-surface-summary-list-count summaries))
+        (begin
+          (set!
+            out
+            (macro-collect-surface-decl-names
+              (struct-get
+                (compiler-load-surface-summary-list-at summaries index)
+                decls)
+              out))
+          (set! index (+ index 1))))
+      out)))
 
 (define (macro-collect-visible-macro-names [decls : AstDeclList]) : TcNameIdList
   (macro-collect-surface-summary-macro-names
@@ -64780,32 +64800,35 @@
   [decls : CompilerLoadSurfaceDeclList]
   [target-module-id : i64]
   [base-id : i64]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (or
-        (macro-surface-decl-macro-in-module? decl target-module-id base-id)
-        (macro-surface-decls-macro-in-module?
-          (box-get rest)
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (if (macro-surface-decl-macro-in-module?
+          (compiler-load-surface-decl-list-at decls index)
           target-module-id
-          base-id))]))
+          base-id)
+          (return true)
+          (set! index (+ index 1))))
+      false)))
 
 (define (macro-surface-summaries-macro-in-module?
   [summaries : CompilerLoadSurfaceSummaryList]
   [target-module-id : i64]
   [base-id : i64]) : bool
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) false]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (or
-        (macro-surface-decls-macro-in-module?
-          (struct-get summary decls)
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-summary-list-count summaries))
+        (if (macro-surface-decls-macro-in-module?
+          (struct-get
+            (compiler-load-surface-summary-list-at summaries index)
+            decls)
           target-module-id
           base-id)
-        (macro-surface-summaries-macro-in-module?
-          (box-get rest)
-          target-module-id
-          base-id))]))
+          (return true)
+          (set! index (+ index 1))))
+      false)))
 
 (define (macro-surface-macro-in-module?
   [target-module-id : i64]
@@ -64818,30 +64841,37 @@
 (define (macro-surface-decls-module-has-macro?
   [decls : CompilerLoadSurfaceDeclList]
   [target-module-id : i64]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) false]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (or
-        (and
-          (= (struct-get decl module) target-module-id)
-          (match (struct-get decl kind)
-            [(CompilerLoadSurfaceMacro) true]
-            [_ false]))
-        (macro-surface-decls-module-has-macro? (box-get rest) target-module-id))]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (if (and
+            (= (struct-get decl module) target-module-id)
+            (match (struct-get decl kind)
+              [(CompilerLoadSurfaceMacro) true]
+              [_ false]))
+            (return true)
+            (set! index (+ index 1)))))
+      false)))
 
 (define (macro-surface-summaries-module-has-macro?
   [summaries : CompilerLoadSurfaceSummaryList]
   [target-module-id : i64]) : bool
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) false]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (or
-        (macro-surface-decls-module-has-macro?
-          (struct-get summary decls)
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-summary-list-count summaries))
+        (if (macro-surface-decls-module-has-macro?
+          (struct-get
+            (compiler-load-surface-summary-list-at summaries index)
+            decls)
           target-module-id)
-        (macro-surface-summaries-module-has-macro?
-          (box-get rest)
-          target-module-id))]))
+          (return true)
+          (set! index (+ index 1))))
+      false)))
 
 (define (macro-surface-module-has-macro? [target-module-id : i64]) : bool
   (macro-surface-summaries-module-has-macro?
@@ -65010,63 +65040,63 @@
   [decls : CompilerLoadSurfaceDeclList]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) (MacroMaybeDecl.No)]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (match (macro-surface-decl-call-decl-in-module
-        decl
-        target-module-id
-        base-id)
-        [(MacroMaybeDecl.Some
-            macro-name
-            def-module
-            declaration-id
-            params
-            ret
-            body)
-          (MacroMaybeDecl.Some
-            macro-name
-            def-module
-            declaration-id
-            params
-            ret
-            body)]
-        [(MacroMaybeDecl.No)
-          (macro-surface-decls-call-decl-in-module
-            (box-get rest)
-            target-module-id
-            base-id)])]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (match (macro-surface-decl-call-decl-in-module
+          (compiler-load-surface-decl-list-at decls index)
+          target-module-id
+          base-id)
+          [(MacroMaybeDecl.Some
+              macro-name
+              def-module
+              declaration-id
+              params
+              ret
+              body)
+            (return
+              (MacroMaybeDecl.Some
+                macro-name
+                def-module
+                declaration-id
+                params
+                ret
+                body))]
+          [(MacroMaybeDecl.No) (set! index (+ index 1))]))
+      (MacroMaybeDecl.No))))
 
 (define (macro-surface-summaries-call-decl-in-module
   [summaries : CompilerLoadSurfaceSummaryList]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) (MacroMaybeDecl.No)]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (match (macro-surface-decls-call-decl-in-module
-        (struct-get summary decls)
-        target-module-id
-        base-id)
-        [(MacroMaybeDecl.Some
-            macro-name
-            def-module
-            declaration-id
-            params
-            ret
-            body)
-          (MacroMaybeDecl.Some
-            macro-name
-            def-module
-            declaration-id
-            params
-            ret
-            body)]
-        [(MacroMaybeDecl.No)
-          (macro-surface-summaries-call-decl-in-module
-            (box-get rest)
-            target-module-id
-            base-id)])]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-summary-list-count summaries))
+        (match (macro-surface-decls-call-decl-in-module
+          (struct-get
+            (compiler-load-surface-summary-list-at summaries index)
+            decls)
+          target-module-id
+          base-id)
+          [(MacroMaybeDecl.Some
+              macro-name
+              def-module
+              declaration-id
+              params
+              ret
+              body)
+            (return
+              (MacroMaybeDecl.Some
+                macro-name
+                def-module
+                declaration-id
+                params
+                ret
+                body))]
+          [(MacroMaybeDecl.No) (set! index (+ index 1))]))
+      (MacroMaybeDecl.No))))
 
 (define (macro-surface-call-decl-in-module
   [target-module-id : i64]

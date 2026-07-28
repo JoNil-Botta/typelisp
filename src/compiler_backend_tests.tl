@@ -1283,6 +1283,11 @@
 
 (define (compiler-backend-object-image-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
+(extern (unused-foreign-call [arg0 : i64]) : i64 (:symbol \"unused_foreign_exact\"))
+(extern unused-foreign-data (:symbol \"unused_foreign_data\") : i64)
+(extern unused-foreign-fn (:symbol \"unused_foreign_fn\") : (-> i64 i64))
+(extern foreign-data (:symbol \"foreign_data_exact\") : i64)
+(extern foreign-fn (:symbol \"foreign_fn_exact\") : (-> i64 i64))
 (define answer : i64 40)
 (define greeting : String \"hi\")
 (define pi : f64 3.5)
@@ -1297,7 +1302,11 @@
     [items : (Array i64) (make-array i64 1)]
     (begin
       (array-set! items 0 answer)
-      (+ (foreign-call (inc (array-ref items 0))) (+ (float-ok) (float32-ok))))))")
+      (+
+        foreign-data
+        (+
+          (foreign-fn 1)
+          (+ (foreign-call (inc (array-ref items 0))) (+ (float-ok) (float32-ok))))))))")
 
 (define (compiler-backend-coff-real-text-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -1356,6 +1365,16 @@
               (cobj.CompilerObjectSymbolKind.Function)))
           (cobj.compiler-object-symbol-list-contains?
             symbols
+            "foreign_data_exact"
+            (cobj.CompilerObjectSymbolBinding.Extern)
+            (cobj.CompilerObjectSymbolKind.Function))
+          (cobj.compiler-object-symbol-list-contains?
+            symbols
+            "foreign_fn_exact"
+            (cobj.CompilerObjectSymbolBinding.Extern)
+            (cobj.CompilerObjectSymbolKind.Function))
+          (cobj.compiler-object-symbol-list-contains?
+            symbols
             "tl_alloc"
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Runtime))
@@ -1370,6 +1389,24 @@
               "tl_tlci_call_macro_entry"
               (cobj.CompilerObjectSymbolBinding.Local)
               (cobj.CompilerObjectSymbolKind.Runtime)))
+          (not
+            (cobj.compiler-object-symbol-list-contains?
+              symbols
+              "unused_foreign_exact"
+              (cobj.CompilerObjectSymbolBinding.Extern)
+              (cobj.CompilerObjectSymbolKind.Function)))
+          (not
+            (cobj.compiler-object-symbol-list-contains?
+              symbols
+              "unused_foreign_data"
+              (cobj.CompilerObjectSymbolBinding.Extern)
+              (cobj.CompilerObjectSymbolKind.Function)))
+          (not
+            (cobj.compiler-object-symbol-list-contains?
+              symbols
+              "unused_foreign_fn"
+              (cobj.CompilerObjectSymbolBinding.Extern)
+              (cobj.CompilerObjectSymbolKind.Function)))
           (backend-and8
             (cobj.compiler-object-section-contains-label?
               sections

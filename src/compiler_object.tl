@@ -418,6 +418,23 @@
               (set! index (+ index 1)))]))
       found)))
 
+(define (compiler-object-relocation-builder-targets?
+  [builder : CompilerObjectRelocationBuilder]
+  [target : String]) : bool
+  (let
+    [count : i64 (struct-get builder count)]
+    [slots : (Array CompilerObjectRelocation) (struct-get builder slots)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (array-ref slots index)
+          [(CompilerObjectRelocation.Relocation _ _ _ found-target)
+            (if (string.eq found-target target)
+              (set! found true)
+              (set! index (+ index 1)))]))
+      found)))
+
 (define (compiler-object-section-kind-eq?
   [a : CompilerObjectSectionKind]
   [b : CompilerObjectSectionKind]) : bool

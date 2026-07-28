@@ -19310,6 +19310,129 @@
     (compiler-backend-float-bitcast-source-target-ok?
       (CompilerBackendTarget.Windows))))
 
+(define (compiler-backend-literal-float-to-bits-source) : String
+  "(module stdlib.math)
+(define (f64-to-bits [value : f64]) : u64 (__tl_float_to_bits value))
+(define (f32-to-bits [value : f32]) : u32 (__tl_float_to_bits value))
+(defstruct FloatBitsRow
+  (tail-bits u64)
+  (head-bits u64)
+  (scale-bits u32)
+  (offset-bits u32))
+(define (float-bits-row [index : i64]) : FloatBitsRow
+  (if (= index 0)
+    (FloatBitsRow
+      (stdlib.math.f64-to-bits 0.1)
+      (stdlib.math.f64-to-bits 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005)
+      (stdlib.math.f32-to-bits -0.0)
+      (stdlib.math.f32-to-bits
+        0.000000000000000000000000000000000000000000001))
+    (FloatBitsRow
+      (stdlib.math.f64-to-bits -0.1)
+      (stdlib.math.f64-to-bits -0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005)
+      (stdlib.math.f32-to-bits 0.1)
+      (stdlib.math.f32-to-bits
+        -0.000000000000000000000000000000000000000000001))))
+(define (main) : i64
+  (let
+    [first : FloatBitsRow (float-bits-row 0)]
+    [second : FloatBitsRow (float-bits-row 1)]
+    (if (= (struct-get first tail-bits) 0x3fb999999999999a)
+      (if (= (struct-get first head-bits) 0x0000000000000001)
+        (if (= (struct-get first scale-bits) 0x80000000)
+          (if (= (struct-get first offset-bits) 0x00000001)
+            (if (= (struct-get second tail-bits) 0xbfb999999999999a)
+              (if (= (struct-get second head-bits) 0x8000000000000001)
+                (if (= (struct-get second scale-bits) 0x3dcccccd)
+                  (if (= (struct-get second offset-bits) 0x80000001) 42 1)
+                  1)
+                1)
+              1)
+            1)
+          1)
+        1)
+      1)))")
+
+(define (compiler-backend-integer-float-bits-source) : String
+  "(module stdlib.math)
+(define (f64-to-bits [value : f64]) : u64 (__tl_float_to_bits value))
+(define (f32-to-bits [value : f32]) : u32 (__tl_float_to_bits value))
+(defstruct FloatBitsRow
+  (tail-bits u64)
+  (head-bits u64)
+  (scale-bits u32)
+  (offset-bits u32))
+(define (float-bits-row [index : i64]) : FloatBitsRow
+  (if (= index 0)
+    (FloatBitsRow
+      0x3fb999999999999a
+      0x0000000000000001
+      0x80000000
+      0x00000001)
+    (FloatBitsRow
+      0xbfb999999999999a
+      0x8000000000000001
+      0x3dcccccd
+      0x80000001)))
+(define (main) : i64
+  (let
+    [first : FloatBitsRow (float-bits-row 0)]
+    [second : FloatBitsRow (float-bits-row 1)]
+    (if (= (struct-get first tail-bits) 0x3fb999999999999a)
+      (if (= (struct-get first head-bits) 0x0000000000000001)
+        (if (= (struct-get first scale-bits) 0x80000000)
+          (if (= (struct-get first offset-bits) 0x00000001)
+            (if (= (struct-get second tail-bits) 0xbfb999999999999a)
+              (if (= (struct-get second head-bits) 0x8000000000000001)
+                (if (= (struct-get second scale-bits) 0x3dcccccd)
+                  (if (= (struct-get second offset-bits) 0x80000001) 42 1)
+                  1)
+                1)
+              1)
+            1)
+          1)
+        1)
+      1)))")
+
+(define (compiler-backend-literal-float-to-bits-asm-ok?
+  [literal : ResultCompilerBackend]
+  [integer : ResultCompilerBackend]) : bool
+  (match literal
+    [(ResultCompilerBackend.Ok literal-asm)
+      (match integer
+        [(ResultCompilerBackend.Ok integer-asm)
+          (and
+            (string.eq literal-asm integer-asm)
+            (not (compiler-backend-string-contains? literal-asm ".L_tl_f64_"))
+            (not (compiler-backend-string-contains? literal-asm ".L_tl_f32_")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-literal-float-to-bits-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (and
+    (compiler-backend-literal-float-to-bits-asm-ok?
+      (compiler-backend-emit-source-for-target
+        (compiler-backend-literal-float-to-bits-source)
+        target)
+      (compiler-backend-emit-source-for-target
+        (compiler-backend-integer-float-bits-source)
+        target))
+    (compiler-backend-literal-float-to-bits-asm-ok?
+      (compiler-backend-emit-source-opt2-for-target
+        (compiler-backend-literal-float-to-bits-source)
+        target)
+      (compiler-backend-emit-source-opt2-for-target
+        (compiler-backend-integer-float-bits-source)
+        target))))
+
+(define (compiler-backend-literal-float-to-bits-ok?) : bool
+  (and
+    (compiler-backend-literal-float-to-bits-target-ok?
+      (CompilerBackendTarget.Linux))
+    (compiler-backend-literal-float-to-bits-target-ok?
+      (CompilerBackendTarget.Windows))))
+
 (define (compiler-backend-f32-literal-binop-source) : String
   "(define (main) : i64
   (let
@@ -29459,6 +29582,7 @@
         (compiler-backend-float-sqrt-home-ok?)
         (compiler-backend-float-sqrt-source-ok?)
         (compiler-backend-float-bitcast-source-ok?)
+        (compiler-backend-literal-float-to-bits-ok?)
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-spill-float-arith-home-ok?)

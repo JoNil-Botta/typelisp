@@ -7166,6 +7166,55 @@
         (lower-name-cache-resolve-logical-id (& names) mapped-source-id -1))]
     (lower-reach-stdlib-string-concat-logical-id? names logical-id)))
 
+(define (lower-reach-public-float-to-bits-source-id?
+  [names : LowerNameCache]
+  [source-id : i64]) : bool
+  (let
+    [mapped-source-id : i64
+      (macro-hygiene-global-source-name-id-or source-id source-id)]
+    [hygiene-key-id : i64 (tc-env-name-key-id source-id)]
+    [hygiene-logical-id : i64
+      (if (= hygiene-key-id source-id)
+        -1
+        (lower-name-cache-lookup-logical-id (& names) hygiene-key-id -1))]
+    [logical-id : i64
+      (if (>= hygiene-logical-id 0)
+        hygiene-logical-id
+        (lower-name-cache-resolve-logical-id (& names) mapped-source-id -1))]
+    (if (< logical-id 0)
+      false
+      (match (lower-name-cache-lookup-id names logical-id)
+        [(TcMaybeString.Some name) (lower-float-to-bits-public-target? name)]
+        [(TcMaybeString.No) false]))))
+
+(define (lower-reach-float-to-bits-literal-arg?
+  [pools : AstNodePoolContext]
+  [expr : AstExpr]) : bool
+  (match (ast-expr-unspan-with-pools pools expr)
+    [(AstExpr.Literal lit)
+      (match lit
+        [(AstLiteral.Float _) true]
+        [_ false])]
+    [(AstExpr.Ann inner-box _)
+      (match (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools inner-box))
+        [(AstExpr.Literal lit)
+          (match lit
+            [(AstLiteral.Float _) true]
+            [_ false])]
+        [_ false])]
+    [(AstExpr.Cast inner-box _)
+      (match (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools inner-box))
+        [(AstExpr.Literal lit)
+          (match lit
+            [(AstLiteral.Float _) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
 (define (lower-reach-string-concat-call?
   [pools : AstNodePoolContext]
   [names : LowerNameCache]
@@ -7860,10 +7909,22 @@
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
-  [callee : AstExpr]) : LowerReachState
+  [callee : AstExpr]
+  [args : AstExprList]) : LowerReachState
   (match (ast-expr-unspan-with-pools pools callee)
     [(AstExpr.Var name)
-      (lower-reach-add-source-id all-functions names state name)]
+      ;; Literal public-wrapper calls disappear into integer constants during
+      ;; lowering, so do not keep an otherwise-dead wrapper just for that call.
+      (if (and
+        (lower-reach-public-float-to-bits-source-id? names name)
+        (= (struct-get (& args) len) 1)
+        (lower-reach-float-to-bits-literal-arg?
+          pools
+          (ast-node-pool-context-expr-get
+            pools
+            (ast-expr-list-get (& args) 0 0))))
+        state
+        (lower-reach-add-source-id all-functions names state name))]
     [_ (lower-reach-expr pools all-functions names state callee)]))
 
 (define (lower-reach-expr
@@ -7898,7 +7959,7 @@
       (let
         [callee : AstExpr (ast-node-pool-context-expr-get pools callee-box)]
         [callee-state : LowerReachState
-          (lower-reach-call-callee pools all-functions names state callee)]
+          (lower-reach-call-callee pools all-functions names state callee args)]
         [concat-state : LowerReachState
           (match (ast-expr-unspan-with-pools pools callee)
             [(AstExpr.Var name)
@@ -13494,6 +13555,32 @@
             (CompilerIrValue.Var var-id)
             to-ty)]))))
 
+(define (lower-literal-float-to-bits? [from-ty : AstType] [to-ty : AstType]) : bool
+  (match (tc-type-strip-region from-ty)
+    [(AstType.F64)
+      (match (tc-type-strip-region to-ty)
+        [(AstType.U64) true]
+        [_ false])]
+    [(AstType.F32)
+      (match (tc-type-strip-region to-ty)
+        [(AstType.U32) true]
+        [_ false])]
+    [_ false]))
+
+(define (lower-runtime-bitcast-value
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc allocated var-id)
+      (LowerExpr.Expr
+        (lower-state-emit
+          allocated
+          (CompilerIrInstr.Bitcast var-id value from-ty to-ty))
+        (CompilerIrValue.Var var-id)
+        to-ty)]))
+
 (define (lower-bitcast-value
   [state : LowerState]
   [value : CompilerIrValue]
@@ -13501,14 +13588,12 @@
   [to-ty : AstType]) : LowerExpr
   (if (tc-type-eq from-ty to-ty)
     (LowerExpr.Expr state value to-ty)
-    (match (lower-state-alloc-var state)
-      [(LowerAlloc.Alloc allocated var-id)
-        (LowerExpr.Expr
-          (lower-state-emit
-            allocated
-            (CompilerIrInstr.Bitcast var-id value from-ty to-ty))
-          (CompilerIrValue.Var var-id)
-          to-ty)])))
+    (match value
+      [(CompilerIrValue.F64 bits)
+        (if (lower-literal-float-to-bits? from-ty to-ty)
+          (LowerExpr.Expr state (CompilerIrValue.I64 (cast bits : i64)) to-ty)
+          (lower-runtime-bitcast-value state value from-ty to-ty))]
+      [_ (lower-runtime-bitcast-value state value from-ty to-ty)])))
 
 (define (lower-coerce-value
   [state : LowerState]
@@ -13595,6 +13680,20 @@
   (or
     (string.eq name (compiler-symbol-module-key "stdlib.string" "append"))
     (string.eq name (compiler-symbol-module-key "stdlib.string" "concat"))))
+
+(define (lower-float-to-bits-public-target? [name : String]) : bool
+  ;; Public stdlib wrappers are semantically the private bitcast intrinsic.
+  ;; Match their resolved module identity so aliases are eligible while
+  ;; same-shaped user functions remain ordinary calls.
+  (or
+    (string.eq name (compiler-symbol-module-key "stdlib.math" "f64-to-bits"))
+    (string.eq name (compiler-symbol-module-key "stdlib.math" "f32-to-bits"))
+    (string.eq name "math.tl::stdlib.math/f64-to-bits")
+    (string.eq name "math.tl::stdlib.math/f32-to-bits")
+    (string.eq name "stdlib/math.tl::stdlib.math/f64-to-bits")
+    (string.eq name "stdlib/math.tl::stdlib.math/f32-to-bits")
+    (string.eq name "stdlib\\math.tl::stdlib.math/f64-to-bits")
+    (string.eq name "stdlib\\math.tl::stdlib.math/f32-to-bits")))
 
 (define (lower-string-concat-public-source-name? [name : String]) : bool
   ;; These canonical spellings dominate compiler source and must not re-run
@@ -19565,6 +19664,77 @@
           origin
           "lower: __tl_float_sqrt expects exactly one argument")))))
 
+(define (lower-float-literal-to-bits-value
+  [lit : AstLiteral]
+  [from-ty : AstType]
+  [to-ty : AstType]) : LowerMaybeIrValue
+  (match lit
+    [(AstLiteral.Float text)
+      (if (lower-literal-float-to-bits? from-ty to-ty)
+        (LowerMaybeIrValue.Some
+          (CompilerIrValue.I64
+            (cast (lower-float-literal-bits text from-ty) : i64)))
+        (LowerMaybeIrValue.No))]
+    [_ (LowerMaybeIrValue.No)]))
+
+(define (lower-float-bitcast-inner-literal-value
+  [ctx : TcContext]
+  [expr : AstExpr]
+  [from-ty : AstType]
+  [to-ty : AstType]) : LowerMaybeIrValue
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-float-bitcast-inner-literal-value
+        ctx
+        (lower-context-expr-get ctx inner-box)
+        from-ty
+        to-ty)]
+    [(AstExpr.Literal lit)
+      (lower-float-literal-to-bits-value lit from-ty to-ty)]
+    [_ (LowerMaybeIrValue.No)]))
+
+(define (lower-float-bitcast-literal-value
+  [ctx : TcContext]
+  [expr : AstExpr]
+  [to-ty : AstType]) : LowerMaybeIrValue
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-float-bitcast-literal-value
+        ctx
+        (lower-context-expr-get ctx inner-box)
+        to-ty)]
+    [(AstExpr.Ann inner-box from-ty)
+      (lower-float-bitcast-inner-literal-value
+        ctx
+        (lower-context-expr-get ctx inner-box)
+        (tc-type-without-regions (tc-resolve-type ctx from-ty))
+        to-ty)]
+    [(AstExpr.Cast inner-box from-ty)
+      (lower-float-bitcast-inner-literal-value
+        ctx
+        (lower-context-expr-get ctx inner-box)
+        (tc-type-without-regions (tc-resolve-type ctx from-ty))
+        to-ty)]
+    [(AstExpr.Literal lit)
+      (match (tc-type-strip-region to-ty)
+        [(AstType.U32)
+          (lower-float-literal-to-bits-value lit (AstType.F32) to-ty)]
+        [_ (lower-float-literal-to-bits-value lit (AstType.F64) to-ty)])]
+    [_ (LowerMaybeIrValue.No)]))
+
+(define (lower-float-bitcast-literal-call?
+  [ctx : TcContext]
+  [args : AstExprList]
+  [result-ty : AstType]) : bool
+  (if (= (struct-get (& args) len) 1)
+    (match (lower-float-bitcast-literal-value
+      ctx
+      (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))
+      result-ty)
+      [(LowerMaybeIrValue.Some _) true]
+      [(LowerMaybeIrValue.No) false])
+    false))
+
 (define (lower-float-bitcast-call
   [ctx : TcContext]
   [state : LowerState]
@@ -19577,13 +19747,19 @@
     (let
       [arg : AstExpr
         (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
-      (match (lower-expr ctx state env type-env arg)
-        [(ResultLowerExpr.Ok lowered)
-          (match lowered
-            [(LowerExpr.Expr arg-state arg-value arg-ty)
-              (ResultLowerExpr.Ok
-                (lower-bitcast-value arg-state arg-value arg-ty result-ty))])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+      (match (lower-float-bitcast-literal-value ctx arg result-ty)
+        [(LowerMaybeIrValue.Some value)
+          ;; Mirror ordinary integer literal lowering: one integer `Mov`, no
+          ;; float materialization or runtime `Bitcast`.
+          (lower-materialize-at-expr state value result-ty origin)]
+        [(LowerMaybeIrValue.No)
+          (match (lower-expr ctx state env type-env arg)
+            [(ResultLowerExpr.Ok lowered)
+              (match lowered
+                [(LowerExpr.Expr arg-state arg-value arg-ty)
+                  (ResultLowerExpr.Ok
+                    (lower-bitcast-value arg-state arg-value arg-ty result-ty))])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]))
     (ResultLowerExpr.Err
       (box
         (lower-diagnostic-at-expr
@@ -29572,6 +29748,20 @@
                             type-env
                             source-id
                             name
+                            args
+                            result-ty
+                            origin)]
+                        [(and
+                            (lower-float-to-bits-public-target? name)
+                            (lower-float-bitcast-literal-call?
+                              ctx
+                              args
+                              result-ty))
+                          (lower-float-bitcast-call
+                            ctx
+                            state
+                            env
+                            type-env
                             args
                             result-ty
                             origin)]

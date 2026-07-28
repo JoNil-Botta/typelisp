@@ -130,7 +130,7 @@
   [category : String]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
   (begin
-    (cfg compile-profile (compiler-driver-profile-start-phase))
+    (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
     (match (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
       pools
       program
@@ -144,14 +144,18 @@
         (begin
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase "backend.assembly"))
+            (compiler-driver-profile-finish-phase
+              profile-state
+              "backend.assembly"))
           (compiler-driver-allocation-profile-snapshot! "backend.assembly")
           (ResultCompilerWindowsBatchArtifact.Assembly asm category))]
       [(ResultCompilerBackendBuffer.Err diag)
         (begin
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase "backend.assembly"))
+            (compiler-driver-profile-finish-phase
+              profile-state
+              "backend.assembly"))
           (compiler-driver-allocation-profile-snapshot!
             "backend.assembly-error")
           (ResultCompilerWindowsBatchArtifact.Err
@@ -175,7 +179,7 @@
       "forced-assembly"
       profile-state)
     (begin
-      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
         pools
         program
@@ -189,19 +193,24 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "backend.object-image"))
+              (compiler-driver-profile-finish-phase
+                profile-state
+                "backend.object-image"))
             (compiler-driver-allocation-profile-snapshot!
               "backend.object-image")
             (match (compiler-windows-coff-linkability image)
               [(CompilerWindowsCoffLinkability.Linkable)
                 (begin
-                  (cfg compile-profile (compiler-driver-profile-start-phase))
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-start-phase profile-state))
                   (match (compiler-object-coff-render image)
                     [(ResultCompilerObjectCoff.Ok object)
                       (begin
                         (cfg
                           compile-profile
                           (compiler-driver-profile-finish-phase
+                            profile-state
                             "render.coff-object"))
                         (compiler-driver-allocation-profile-snapshot!
                           "render.coff-object")
@@ -211,6 +220,7 @@
                         (cfg
                           compile-profile
                           (compiler-driver-profile-finish-phase
+                            profile-state
                             "render.coff-object"))
                         (ResultCompilerWindowsBatchArtifact.Err
                           (compiler-windows-batch-diagnostic
@@ -231,7 +241,9 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "backend.object-image"))
+              (compiler-driver-profile-finish-phase
+                profile-state
+                "backend.object-image"))
             (compiler-driver-allocation-profile-snapshot!
               "backend.object-image-error")
             (ResultCompilerWindowsBatchArtifact.Err
@@ -252,7 +264,7 @@
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
         program
@@ -263,7 +275,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-allocation-profile-snapshot! "optimize")
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ast-node-pool-context-type-exhausted? pools)

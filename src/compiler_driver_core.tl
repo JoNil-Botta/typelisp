@@ -850,7 +850,10 @@
       ;; compatibility context. The next entry prepares full load capacity
       ;; after this entry's scratch chain is gone.
       (compiler-driver-state-release-owned-pool-arena-if-uncached! state)
-      (compiler-driver-batch-profile-mark! ordinal "owned-pool-release")
+      (compiler-driver-batch-profile-mark!
+        (compiler-driver-state-profile state)
+        ordinal
+        "owned-pool-release")
       (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
       (let
         [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
@@ -866,60 +869,66 @@
           (compiler-driver-state-reset-builtins! state)
           (ctfe-builtin-reset!)
           (compiler-typecheck-reset-file-state!)
-          (compiler-driver-batch-profile-mark! ordinal "intern-session-cleanup")
+          (compiler-driver-batch-profile-mark!
+            (compiler-driver-state-profile state)
+            ordinal
+            "intern-session-cleanup")
           (lower-reset-file-state!)
           (lower-arenas-release!)
-          (compiler-driver-batch-profile-mark! ordinal "lower-cleanup")
+          (compiler-driver-batch-profile-mark!
+            (compiler-driver-state-profile state)
+            ordinal
+            "lower-cleanup")
           (compiler-driver-state-capture-active-transients! state))))))
 
 (cfg
   compile-profile
-  (define compiler-driver-profile-total-start-ms : i64
+  (define compiler-driver-profile-total-start-ms-metric : i64
     0))
 (cfg
   compile-profile
-  (define compiler-driver-profile-total-start-total : i64
-    0))
+  (define compiler-driver-profile-total-start-total-metric : i64
+    1))
 (cfg
   compile-profile
-  (define compiler-driver-profile-total-start-live : i64
-    0))
+  (define compiler-driver-profile-total-start-live-metric : i64
+    2))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-ms : i64
-    0))
+  (define compiler-driver-profile-phase-start-ms-metric : i64
+    3))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-total : i64
-    0))
+  (define compiler-driver-profile-phase-start-total-metric : i64
+    4))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-live : i64
-    0))
+  (define compiler-driver-profile-phase-start-live-metric : i64
+    5))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-intern : i64
-    0))
+  (define compiler-driver-profile-phase-start-intern-metric : i64
+    6))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-intern-slice : i64
-    0))
+  (define compiler-driver-profile-phase-start-intern-slice-metric : i64
+    7))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-intern-generated : i64
-    0))
+  (define compiler-driver-profile-phase-start-intern-generated-metric : i64
+    8))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-intern-render : i64
-    0))
+  (define compiler-driver-profile-phase-start-intern-render-metric : i64
+    9))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-intern-lookup : i64
-    0))
+  (define compiler-driver-profile-phase-start-intern-lookup-metric : i64
+    10))
 (cfg
   compile-profile
-  (define compiler-driver-profile-phase-start-intern-pool-len : i64
-    0))
+  (define compiler-driver-profile-phase-start-intern-pool-len-metric : i64
+    11))
 (cfg
   compile-profile
   (define compiler-driver-profile-prelude-source-pipeline-entries : i64
@@ -930,20 +939,35 @@
     0))
 (cfg
   compile-profile
-  (define compiler-driver-batch-profile-start-ms : i64
-    0))
+  (define compiler-driver-batch-profile-start-ms-metric : i64
+    14))
 (cfg
   compile-profile
-  (define compiler-driver-batch-profile-start-total : i64
-    0))
+  (define compiler-driver-batch-profile-start-total-metric : i64
+    15))
 (cfg
   compile-profile
-  (define compiler-driver-batch-profile-start-live : i64
-    0))
+  (define compiler-driver-batch-profile-start-live-metric : i64
+    16))
 (cfg
   compile-profile
-  (define compiler-driver-batch-profile-best-peak : i64
-    0))
+  (define compiler-driver-batch-profile-best-peak-metric : i64
+    17))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-value
+    [state : profile_state.CompilerProfileState]
+    [metric : i64]) : i64
+    (profile_state.compiler-profile-state-metric-value state metric)))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-set!
+    [state : profile_state.CompilerProfileState]
+    [metric : i64]
+    [value : i64]) : unit
+    (profile_state.compiler-profile-state-metric-set! state metric value)))
 
 (cfg
   compile-profile
@@ -1013,29 +1037,45 @@
 
 (cfg
   compile-profile
-  (define (compiler-driver-batch-profile-reset-baseline!) : unit
+  (define (compiler-driver-batch-profile-reset-baseline!
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
-      (set! compiler-driver-batch-profile-start-ms (profile.now-ms))
-      (set! compiler-driver-batch-profile-start-total (profile.alloc-total))
-      (set! compiler-driver-batch-profile-start-live (profile.alloc-live))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-batch-profile-start-ms-metric
+        (profile.now-ms))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-batch-profile-start-total-metric
+        (profile.alloc-total))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-batch-profile-start-live-metric
+        (profile.alloc-live))
       (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
-  (define (compiler-driver-batch-profile-start-entry! [ordinal : i64]) : unit
+  (define (compiler-driver-batch-profile-start-entry!
+    [state : profile_state.CompilerProfileState]
+    [ordinal : i64]) : unit
     (begin
       (if (= ordinal 0)
         (io.print-error
           "compile-batch-profile|entry_ordinal|marker|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
         unit)
-      (set! compiler-driver-batch-profile-best-peak 0)
-      (compiler-driver-batch-profile-reset-baseline!)
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-batch-profile-best-peak-metric
+        0)
+      (compiler-driver-batch-profile-reset-baseline! state)
       (io.print-error
         (compiler-driver-batch-profile-line ordinal "entry-start" 0 0 0 0)))))
 
 (cfg
   compile-profile
   (define (compiler-driver-batch-profile-mark!
+    [state : profile_state.CompilerProfileState]
     [ordinal : i64]
     [marker : String]) : unit
     (let
@@ -1044,51 +1084,90 @@
       [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
         (compiler-driver-profile-max
-          compiler-driver-batch-profile-best-peak
+          (compiler-driver-profile-value
+            state
+            compiler-driver-batch-profile-best-peak-metric)
           (compiler-driver-profile-nonnegative
-            (- (profile.alloc-peak) compiler-driver-batch-profile-start-live)))]
+            (-
+              (profile.alloc-peak)
+              (compiler-driver-profile-value
+                state
+                compiler-driver-batch-profile-start-live-metric))))]
       (begin
         (io.print-error
           (compiler-driver-batch-profile-line
             ordinal
             marker
-            (- end-ms compiler-driver-batch-profile-start-ms)
-            (- end-total compiler-driver-batch-profile-start-total)
-            (- end-live compiler-driver-batch-profile-start-live)
+            (-
+              end-ms
+              (compiler-driver-profile-value
+                state
+                compiler-driver-batch-profile-start-ms-metric))
+            (-
+              end-total
+              (compiler-driver-profile-value
+                state
+                compiler-driver-batch-profile-start-total-metric))
+            (-
+              end-live
+              (compiler-driver-profile-value
+                state
+                compiler-driver-batch-profile-start-live-metric))
             peak-delta))
-        (set! compiler-driver-batch-profile-best-peak 0)
-        (compiler-driver-batch-profile-reset-baseline!)))))
+        (compiler-driver-profile-set!
+          state
+          compiler-driver-batch-profile-best-peak-metric
+          0)
+        (compiler-driver-batch-profile-reset-baseline! state)))))
 
 (cfg
   compile-profile
-  (define (compiler-driver-profile-start-phase) : unit
+  (define (compiler-driver-profile-start-phase
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
-      (set! compiler-driver-profile-phase-start-ms (profile.now-ms))
-      (set! compiler-driver-profile-phase-start-total (profile.alloc-total))
-      (set! compiler-driver-profile-phase-start-live (profile.alloc-live))
-      (set!
-        compiler-driver-profile-phase-start-intern
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-ms-metric
+        (profile.now-ms))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-total-metric
+        (profile.alloc-total))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-live-metric
+        (profile.alloc-live))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-intern-metric
         (ci.intern-profile-intern-value))
-      (set!
-        compiler-driver-profile-phase-start-intern-slice
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-intern-slice-metric
         (ci.intern-profile-slice-value))
-      (set!
-        compiler-driver-profile-phase-start-intern-generated
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-intern-generated-metric
         (ci.intern-profile-generated-value))
-      (set!
-        compiler-driver-profile-phase-start-intern-render
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-intern-render-metric
         (ci.intern-profile-render-value))
-      (set!
-        compiler-driver-profile-phase-start-intern-lookup
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-intern-lookup-metric
         (ci.intern-profile-lookup-value))
-      (set!
-        compiler-driver-profile-phase-start-intern-pool-len
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-phase-start-intern-pool-len-metric
         (ci.intern-pool-len))
       (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
-  (define (compiler-driver-profile-finish-phase [phase : String]) : unit
+  (define (compiler-driver-profile-finish-phase
+    [state : profile_state.CompilerProfileState]
+    [phase : String]) : unit
     (let
       [end-ms : i64 (profile.now-ms)]
       [end-total : i64 (profile.alloc-total)]
@@ -1102,19 +1181,38 @@
       [end-intern-pool-len : i64 (ci.intern-pool-len)]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
-          (- end-peak compiler-driver-profile-phase-start-live))]
+          (-
+            end-peak
+            (compiler-driver-profile-value
+              state
+              compiler-driver-profile-phase-start-live-metric)))]
       (begin
-        (set!
-          compiler-driver-batch-profile-best-peak
+        (compiler-driver-profile-set!
+          state
+          compiler-driver-batch-profile-best-peak-metric
           (compiler-driver-profile-max
-            compiler-driver-batch-profile-best-peak
+            (compiler-driver-profile-value
+              state
+              compiler-driver-batch-profile-best-peak-metric)
             peak-delta))
         (io.print-error
           (compiler-driver-profile-line
             phase
-            (- end-ms compiler-driver-profile-phase-start-ms)
-            (- end-total compiler-driver-profile-phase-start-total)
-            (- end-live compiler-driver-profile-phase-start-live)
+            (-
+              end-ms
+              (compiler-driver-profile-value
+                state
+                compiler-driver-profile-phase-start-ms-metric))
+            (-
+              end-total
+              (compiler-driver-profile-value
+                state
+                compiler-driver-profile-phase-start-total-metric))
+            (-
+              end-live
+              (compiler-driver-profile-value
+                state
+                compiler-driver-profile-phase-start-live-metric))
             peak-delta))
         (cfg
           compile-profile-summary
@@ -1128,7 +1226,11 @@
                   "|"
                   (string.append
                     (string.int->string
-                      (- end-intern compiler-driver-profile-phase-start-intern))
+                      (-
+                        end-intern
+                        (compiler-driver-profile-value
+                          state
+                          compiler-driver-profile-phase-start-intern-metric)))
                     "\n"))))))
         (cfg
           compile-profile-summary
@@ -1144,7 +1246,9 @@
                     (string.int->string
                       (-
                         end-intern-slice
-                        compiler-driver-profile-phase-start-intern-slice))
+                        (compiler-driver-profile-value
+                          state
+                          compiler-driver-profile-phase-start-intern-slice-metric)))
                     "\n"))))))
         (cfg
           compile-profile-summary
@@ -1160,7 +1264,9 @@
                     (string.int->string
                       (-
                         end-intern-generated
-                        compiler-driver-profile-phase-start-intern-generated))
+                        (compiler-driver-profile-value
+                          state
+                          compiler-driver-profile-phase-start-intern-generated-metric)))
                     "\n"))))))
         (cfg
           compile-profile-summary
@@ -1176,7 +1282,9 @@
                     (string.int->string
                       (-
                         end-intern-render
-                        compiler-driver-profile-phase-start-intern-render))
+                        (compiler-driver-profile-value
+                          state
+                          compiler-driver-profile-phase-start-intern-render-metric)))
                     "\n"))))))
         (cfg
           compile-profile-summary
@@ -1192,7 +1300,9 @@
                     (string.int->string
                       (-
                         end-intern-lookup
-                        compiler-driver-profile-phase-start-intern-lookup))
+                        (compiler-driver-profile-value
+                          state
+                          compiler-driver-profile-phase-start-intern-lookup-metric)))
                     "\n"))))))
         (cfg
           compile-profile-summary
@@ -1208,7 +1318,9 @@
                     (string.int->string
                       (-
                         end-intern-pool-len
-                        compiler-driver-profile-phase-start-intern-pool-len))
+                        (compiler-driver-profile-value
+                          state
+                          compiler-driver-profile-phase-start-intern-pool-len-metric)))
                     "\n"))))))
         (cfg
           compile-profile-summary
@@ -1231,9 +1343,18 @@
     (begin
       (set! compiler-driver-profile-prelude-source-pipeline-entries 0)
       (set! compiler-driver-profile-prelude-hydrations 0)
-      (set! compiler-driver-profile-total-start-ms (profile.now-ms))
-      (set! compiler-driver-profile-total-start-total (profile.alloc-total))
-      (set! compiler-driver-profile-total-start-live (profile.alloc-live))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-total-start-ms-metric
+        (profile.now-ms))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-total-start-total-metric
+        (profile.alloc-total))
+      (compiler-driver-profile-set!
+        state
+        compiler-driver-profile-total-start-live-metric
+        (profile.alloc-live))
       (profile.compile-wide-peak-start!)
       (ci.intern-profile-reset!)
       (cfg
@@ -1249,7 +1370,7 @@
         (io.print-error
           "compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls\n")
         unit)
-      (compiler-driver-profile-start-phase))))
+      (compiler-driver-profile-start-phase state))))
 
 (cfg
   compile-profile
@@ -1284,16 +1405,29 @@
 
 (cfg
   compile-profile
-  (define (compiler-driver-profile-finish-total) : unit
+  (define (compiler-driver-profile-finish-total
+    [state : profile_state.CompilerProfileState]) : unit
     (let
       [compile-wide-peak : i64 (profile.compile-wide-peak-finish!)]
       (begin
         (io.print-error
           (compiler-driver-profile-line
             "total"
-            (- (profile.now-ms) compiler-driver-profile-total-start-ms)
-            (- (profile.alloc-total) compiler-driver-profile-total-start-total)
-            (- (profile.alloc-live) compiler-driver-profile-total-start-live)
+            (-
+              (profile.now-ms)
+              (compiler-driver-profile-value
+                state
+                compiler-driver-profile-total-start-ms-metric))
+            (-
+              (profile.alloc-total)
+              (compiler-driver-profile-value
+                state
+                compiler-driver-profile-total-start-total-metric))
+            (-
+              (profile.alloc-live)
+              (compiler-driver-profile-value
+                state
+                compiler-driver-profile-total-start-live-metric))
             compile-wide-peak))
         (compiler-driver-profile-intern-line
           "hash_words"
@@ -1496,7 +1630,7 @@
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
         program
@@ -1507,7 +1641,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriver.Err
@@ -1515,7 +1649,9 @@
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
-                (cfg compile-profile (compiler-driver-profile-start-phase))
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
                   (compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state
                     pools
@@ -1539,13 +1675,17 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
+                        (compiler-driver-profile-finish-phase
+                          profile-state
+                          "backend"))
                       (ResultCompilerDriver.Ok asm))]
                   [(ResultCompilerBackend.Err diag)
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
+                        (compiler-driver-profile-finish-phase
+                          profile-state
+                          "backend"))
                       (ResultCompilerDriver.Err
                         (box
                           (compiler-diagnostic-with-path
@@ -1570,7 +1710,7 @@
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
         program
@@ -1581,7 +1721,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-allocation-profile-snapshot! "optimize")
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ast-node-pool-context-type-exhausted? pools)
@@ -1590,7 +1730,9 @@
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
-                (cfg compile-profile (compiler-driver-profile-start-phase))
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
                   (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state
                     pools
@@ -1614,7 +1756,9 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
+                        (compiler-driver-profile-finish-phase
+                          profile-state
+                          "backend"))
                       (compiler-driver-allocation-profile-snapshot! "backend")
                       (compiler-driver-allocation-profile-backend-output-snapshot!)
                       (ResultCompilerDriverBuffer.Ok asm))]
@@ -1622,7 +1766,9 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
+                        (compiler-driver-profile-finish-phase
+                          profile-state
+                          "backend"))
                       (compiler-driver-allocation-profile-snapshot! "backend")
                       (compiler-driver-allocation-profile-backend-output-snapshot!)
                       (ResultCompilerDriverBuffer.Err
@@ -1649,7 +1795,7 @@
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
         program
@@ -1660,7 +1806,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriverObject.Err
@@ -1668,7 +1814,9 @@
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
-                (cfg compile-profile (compiler-driver-profile-start-phase))
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
                   (compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state
                     pools
@@ -1692,13 +1840,17 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
+                        (compiler-driver-profile-finish-phase
+                          profile-state
+                          "backend"))
                       (ResultCompilerDriverObject.Ok image))]
                   [(ResultCompilerBackendObject.Err diag)
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
+                        (compiler-driver-profile-finish-phase
+                          profile-state
+                          "backend"))
                       (ResultCompilerDriverObject.Err
                         (box
                           (compiler-diagnostic-with-path
@@ -1723,7 +1875,7 @@
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
       (compiler-driver-retire-frontend-arena!)
-      (cfg compile-profile (compiler-driver-profile-start-phase))
+      (cfg compile-profile (compiler-driver-profile-start-phase profile-state))
       (match (optimize-program-with-spans-and-pools-and-level-and-profile-state
         pools
         program
@@ -1734,7 +1886,7 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "optimize"))
+              (compiler-driver-profile-finish-phase profile-state "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriverPic.Err
@@ -1742,7 +1894,9 @@
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
-                (cfg compile-profile (compiler-driver-profile-start-phase))
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-start-phase profile-state))
                 (match (if has-target
                   (compiler-backend-emit-program-pic-target-with-mode-with-pools-and-crt-and-profile-state
                     pools
@@ -1766,13 +1920,17 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
+                        (compiler-driver-profile-finish-phase
+                          profile-state
+                          "backend"))
                       (ResultCompilerDriverPic.Ok output))]
                   [(ResultCompilerBackendPic.Err diag)
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-driver-profile-finish-phase "backend"))
+                        (compiler-driver-profile-finish-phase
+                          profile-state
+                          "backend"))
                       (ResultCompilerDriverPic.Err
                         (box
                           (compiler-diagnostic-with-path
@@ -1984,7 +2142,10 @@
     [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
       (let
         [_profile-program-start : unit
-          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+          (cfg
+            compile-profile
+            (compiler-driver-profile-start-phase profile-state)
+            unit)]
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
             (compiler-ir-clone-program-shell pools program)
@@ -1992,10 +2153,15 @@
         [_profile-program-finish : unit
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase "retain.program")
+            (compiler-driver-profile-finish-phase
+              profile-state
+              "retain.program")
             unit)]
         [_profile-spans-start : unit
-          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+          (cfg
+            compile-profile
+            (compiler-driver-profile-start-phase profile-state)
+            unit)]
         [emit-spans : CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
             (clone spans)
@@ -2003,18 +2169,22 @@
         [_profile-spans-finish : unit
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase "retain.spans")
+            (compiler-driver-profile-finish-phase profile-state "retain.spans")
             unit)]
         [out : ResultCompilerDriver
           (begin
             (ast-node-pool-reader-use! pools)
-            (cfg compile-profile (compiler-driver-profile-start-phase))
+            (cfg
+              compile-profile
+              (compiler-driver-profile-start-phase profile-state))
             (if (>= opt-level 1)
               (compiler-driver-retire-lowered-source-arena!)
               unit)
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "retain.release"))
+              (compiler-driver-profile-finish-phase
+                profile-state
+                "retain.release"))
             (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state
               pools
               input-path
@@ -2051,7 +2221,10 @@
     [(ResultCompilerDriverLowered.Ok program spans pools profile-state)
       (let
         [_profile-program-start : unit
-          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+          (cfg
+            compile-profile
+            (compiler-driver-profile-start-phase profile-state)
+            unit)]
         [emit-program : CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
             (compiler-ir-clone-program-shell pools program)
@@ -2059,10 +2232,15 @@
         [_profile-program-finish : unit
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase "retain.program")
+            (compiler-driver-profile-finish-phase
+              profile-state
+              "retain.program")
             unit)]
         [_profile-spans-start : unit
-          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+          (cfg
+            compile-profile
+            (compiler-driver-profile-start-phase profile-state)
+            unit)]
         [emit-spans : CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
             (clone spans)
@@ -2070,18 +2248,22 @@
         [_profile-spans-finish : unit
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase "retain.spans")
+            (compiler-driver-profile-finish-phase profile-state "retain.spans")
             unit)]
         [out : ResultCompilerDriverBuffer
           (begin
             (ast-node-pool-reader-use! pools)
-            (cfg compile-profile (compiler-driver-profile-start-phase))
+            (cfg
+              compile-profile
+              (compiler-driver-profile-start-phase profile-state))
             (if (>= opt-level 1)
               (compiler-driver-retire-lowered-source-arena!)
               unit)
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase "retain.release"))
+              (compiler-driver-profile-finish-phase
+                profile-state
+                "retain.release"))
             (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt-and-profile-state
               pools
               input-path
@@ -2862,8 +3044,12 @@
   (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
       (begin
-        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-        (cfg compile-profile (compiler-driver-profile-start-phase))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-phase profile-state "load"))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-start-phase profile-state))
         (match (lower-compiler-program-with-decl-paths-mode-cache
           input-path
           (ast-program decls)
@@ -2878,7 +3064,7 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase "lower"))
+                (compiler-driver-profile-finish-phase profile-state "lower"))
               (if (ast-node-pool-reader-type-exhausted?)
                 (ResultCompilerDriverLowered.Err
                   (box
@@ -2892,11 +3078,13 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase "lower"))
+                (compiler-driver-profile-finish-phase profile-state "lower"))
               (ResultCompilerDriverLowered.Err diag))]))]
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
-        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-phase profile-state "load"))
         (ResultCompilerDriverLowered.Err diag))]))
 
 (define (compiler-driver-load-and-lower-escaping
@@ -2923,8 +3111,12 @@
   (match (compiler-driver-load-file-for-pic-image input-path stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
       (begin
-        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-        (cfg compile-profile (compiler-driver-profile-start-phase))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-phase profile-state "load"))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-start-phase profile-state))
         (match (lower-compiler-program-with-decl-paths-mode-cache
           input-path
           (ast-program decls)
@@ -2939,7 +3131,7 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase "lower"))
+                (compiler-driver-profile-finish-phase profile-state "lower"))
               (if (ast-node-pool-reader-type-exhausted?)
                 (ResultCompilerDriverLowered.Err
                   (box
@@ -2953,11 +3145,13 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-driver-profile-finish-phase "lower"))
+                (compiler-driver-profile-finish-phase profile-state "lower"))
               (ResultCompilerDriverLowered.Err diag))]))]
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
-        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-phase profile-state "load"))
         (ResultCompilerDriverLowered.Err diag))]))
 
 (define (compiler-driver-load-and-lower-pic-image
@@ -3016,7 +3210,11 @@
       (compiler-driver-state-surface-arena state))
       [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase
+              (compiler-driver-state-profile state)
+              "load"))
           (cfg compile-profile (compiler-driver-profile-prelude-counters))
           (compiler-driver-allocation-profile-snapshot! "load")
           (compiler-driver-allocation-profile-pool-storage-snapshot!
@@ -3026,7 +3224,10 @@
             compile-profile
             (compiler-lower-profile-pools "source_load" pools)
             unit)
-          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-start-phase
+              (compiler-driver-state-profile state)))
           ;; Parsing initialized builtin IDs for this state's active intern
           ;; table. Preserve that snapshot instead of reinstalling the stale
           ;; pre-parse builtin state; only lowerer arenas need restoration here.
@@ -3160,7 +3361,9 @@
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-driver-profile-finish-phase "lower"))
+                    (compiler-driver-profile-finish-phase
+                      (compiler-driver-state-profile state)
+                      "lower"))
                   (compiler-driver-allocation-profile-pool-storage-snapshot!
                     "macro-detach"
                     result-pools)
@@ -3221,7 +3424,9 @@
                     unit)
                   (cfg
                     compile-profile
-                    (compiler-driver-profile-finish-phase "lower"))
+                    (compiler-driver-profile-finish-phase
+                      (compiler-driver-state-profile state)
+                      "lower"))
                   (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
                     state
                     "lower")
@@ -3229,7 +3434,11 @@
                   (ResultCompilerDriverLowered.Err diag))])))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase
+              (compiler-driver-state-profile state)
+              "load"))
           (compiler-driver-allocation-profile-snapshot! "load")
           (ResultCompilerDriverLowered.Err diag))])))
 
@@ -3257,7 +3466,11 @@
       pools)
       [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase
+              (compiler-driver-state-profile state)
+              "load"))
           (compiler-driver-allocation-profile-pool-storage-snapshot!
             "source-load"
             pools)
@@ -3265,7 +3478,10 @@
             compile-profile
             (compiler-lower-profile-pools "source_load" pools)
             unit)
-          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-start-phase
+              (compiler-driver-state-profile state)))
           (compiler-driver-state-capture-active-builtins! state)
           (compiler-driver-state-install-lower-arenas! state)
           (compiler-driver-state-install-pools! state)
@@ -3387,7 +3603,9 @@
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-driver-profile-finish-phase "lower"))
+                    (compiler-driver-profile-finish-phase
+                      (compiler-driver-state-profile state)
+                      "lower"))
                   (compiler-driver-allocation-profile-pool-storage-snapshot!
                     "macro-detach"
                     result-pools)
@@ -3425,11 +3643,17 @@
                     unit)
                   (cfg
                     compile-profile
-                    (compiler-driver-profile-finish-phase "lower"))
+                    (compiler-driver-profile-finish-phase
+                      (compiler-driver-state-profile state)
+                      "lower"))
                   (ResultCompilerDriverLowered.Err diag))])))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase
+              (compiler-driver-state-profile state)
+              "load"))
           (ResultCompilerDriverLowered.Err diag))])))
 
 (define (compiler-driver-load-and-lower-pic-image-with-state
@@ -4095,26 +4319,36 @@
         [(io.ErrIoString _) (compiler-diagnostic-render-source diag "")]))))
 
 (define (compiler-driver-write-result
+  [profile-state : profile_state.CompilerProfileState]
   [result : ResultCompilerDriver]
   [output-path : String]) : i64
   (match result
     [(ResultCompilerDriver.Ok asm)
       (begin
-        (cfg compile-profile (compiler-driver-profile-start-phase))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-start-phase profile-state))
         (io.write-file output-path asm)
-        (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
-        (cfg compile-profile (compiler-driver-profile-finish-total))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-phase profile-state "write"))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-total profile-state))
         (io.print-string
           (string.append "Wrote " (string.append output-path "\n")))
         0)]
     [(ResultCompilerDriver.Err diag)
       (begin
-        (cfg compile-profile (compiler-driver-profile-finish-total))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-total profile-state))
         (io.print-error
           (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))
 
 (define (compiler-driver-write-buffer-result
+  [profile-state : profile_state.CompilerProfileState]
   [result : ResultCompilerDriverBuffer]
   [output-path : String]) : i64
   (match result
@@ -4122,12 +4356,18 @@
       (let
         [status : i64
           (begin
-            (cfg compile-profile (compiler-driver-profile-start-phase))
+            (cfg
+              compile-profile
+              (compiler-driver-profile-start-phase profile-state))
             (compiler-driver-write-text-buf output-path buf))]
         (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase profile-state "write"))
           (compiler-driver-allocation-profile-snapshot! "write")
-          (cfg compile-profile (compiler-driver-profile-finish-total))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-total profile-state))
           (if (= status 0)
             (begin
               (io.print-string
@@ -4137,7 +4377,9 @@
     [(ResultCompilerDriverBuffer.Err diag)
       (begin
         (compiler-driver-allocation-profile-snapshot! "write-error")
-        (cfg compile-profile (compiler-driver-profile-finish-total))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-total profile-state))
         (io.print-error
           (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))
@@ -4146,6 +4388,7 @@
   (string.append output-path ".fixups"))
 
 (define (compiler-driver-write-pic-result
+  [profile-state : profile_state.CompilerProfileState]
   [result : ResultCompilerDriverPic]
   [output-path : String]) : i64
   (match result
@@ -4153,11 +4396,17 @@
       (let
         [fixups-path : String (compiler-driver-pic-fixups-path output-path)]
         (begin
-          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-start-phase profile-state))
           (io.write-file output-path (struct-get output asm))
           (io.write-file fixups-path (struct-get output fixups))
-          (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
-          (cfg compile-profile (compiler-driver-profile-finish-total))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase profile-state "write"))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-total profile-state))
           (io.print-string
             (string.append "Wrote " (string.append output-path "\n")))
           (io.print-string
@@ -4165,7 +4414,9 @@
           0))]
     [(ResultCompilerDriverPic.Err diag)
       (begin
-        (cfg compile-profile (compiler-driver-profile-finish-total))
+        (cfg
+          compile-profile
+          (compiler-driver-profile-finish-total profile-state))
         (io.print-error
           (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))

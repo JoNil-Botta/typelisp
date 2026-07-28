@@ -1131,25 +1131,37 @@
         true))))
 
 (define (compile-cli-write-result-with-ir-verification
+  [state : CompilerDriverState]
   [result : ResultCompilerDriver]
   [output-path : String]) : i64
   (if (compile-cli-ir-verification-failed?)
     1
-    (compiler-driver-write-result result output-path)))
+    (compiler-driver-write-result
+      (compiler-driver-state-profile state)
+      result
+      output-path)))
 
 (define (compile-cli-write-buffer-result-with-ir-verification
+  [state : CompilerDriverState]
   [result : ResultCompilerDriverBuffer]
   [output-path : String]) : i64
   (if (compile-cli-ir-verification-failed?)
     1
-    (compiler-driver-write-buffer-result result output-path)))
+    (compiler-driver-write-buffer-result
+      (compiler-driver-state-profile state)
+      result
+      output-path)))
 
 (define (compile-cli-write-pic-result-with-ir-verification
+  [state : CompilerDriverState]
   [result : ResultCompilerDriverPic]
   [output-path : String]) : i64
   (if (compile-cli-ir-verification-failed?)
     1
-    (compiler-driver-write-pic-result result output-path)))
+    (compiler-driver-write-pic-result
+      (compiler-driver-state-profile state)
+      result
+      output-path)))
 
 (define (compile-cli-run-compile-file
   [state : CompilerDriverState]
@@ -1228,6 +1240,7 @@
                       unit)
                     (if emit-ir
                       (compile-cli-write-result-with-ir-verification
+                        state
                         (if compile-cli-dump-ir-requested
                           (compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
                             state
@@ -1249,6 +1262,7 @@
                         output-path)
                       (if pic
                         (compile-cli-write-pic-result-with-ir-verification
+                          state
                           (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
                             state
                             input-path
@@ -1260,6 +1274,7 @@
                             emit-cfgs)
                           output-path)
                         (compile-cli-write-buffer-result-with-ir-verification
+                          state
                           (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
                             state
                             input-path
@@ -1282,6 +1297,7 @@
           doctest-status)))))
 
 (define (compile-cli-write-windows-batch-artifact
+  [state : CompilerDriverState]
   [result : ResultCompilerWindowsBatchArtifact]
   [object-path : String]
   [assembly-path : String]) : ResultCompileCliWindowsBatchEntry
@@ -1292,7 +1308,10 @@
         (let
           [write-status : i64
             (begin
-              (cfg compile-profile (compiler-driver-profile-start-phase))
+              (cfg
+                compile-profile
+                (compiler-driver-profile-start-phase
+                  (compiler-driver-state-profile state)))
               (match (io.try-write-file (& object-path) (& object))
                 [(io.OkIoUnit) 0]
                 [(io.ErrIoUnit error)
@@ -1306,9 +1325,16 @@
                         "\n"))
                     1)]))]
           (begin
-            (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase
+                (compiler-driver-state-profile state)
+                "write"))
             (compiler-driver-allocation-profile-snapshot! "write")
-            (cfg compile-profile (compiler-driver-profile-finish-total))
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-total
+                (compiler-driver-state-profile state)))
             (if (= write-status 0)
               (begin
                 (io.print-string
@@ -1322,12 +1348,22 @@
         (let
           [write-status : i64
             (begin
-              (cfg compile-profile (compiler-driver-profile-start-phase))
+              (cfg
+                compile-profile
+                (compiler-driver-profile-start-phase
+                  (compiler-driver-state-profile state)))
               (compiler-driver-write-text-buf assembly-path asm))]
           (begin
-            (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase
+                (compiler-driver-state-profile state)
+                "write"))
             (compiler-driver-allocation-profile-snapshot! "write")
-            (cfg compile-profile (compiler-driver-profile-finish-total))
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-total
+                (compiler-driver-state-profile state)))
             (if (= write-status 0)
               (begin
                 (io.print-string
@@ -1340,7 +1376,10 @@
       [(ResultCompilerWindowsBatchArtifact.Err diag)
         (begin
           (compiler-driver-allocation-profile-snapshot! "write-error")
-          (cfg compile-profile (compiler-driver-profile-finish-total))
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-total
+              (compiler-driver-state-profile state)))
           (io.print-error
             (compiler-driver-render-source-diagnostic (box-get diag)))
           (ResultCompileCliWindowsBatchEntry.Err 1))])))
@@ -1400,6 +1439,7 @@
                   (startup_profile.compiler-startup-profile-mark-compile-driver-start!)
                   unit)
                 (compile-cli-write-windows-batch-artifact
+                  state
                   (compiler-windows-batch-state-emit-file
                     state
                     input-path
@@ -1767,7 +1807,9 @@
       [_profile-start : unit
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-start-entry! ordinal)
+          (compiler-driver-batch-profile-start-entry!
+            (compiler-driver-state-profile state)
+            ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
       [output-path : String (cli_svec.get entries (+ index 1) "")]
@@ -1796,7 +1838,10 @@
       [_profile-emit : unit
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-mark! ordinal "emit-complete")
+          (compiler-driver-batch-profile-mark!
+            (compiler-driver-state-profile state)
+            ordinal
+            "emit-complete")
           unit)]
       ;; The compile grew `scratch` past its first 64 MiB segment; the arena's
       ;; live chain is reachable only from its newest segment (the active arena
@@ -1833,7 +1878,10 @@
         (compiler-driver-allocation-profile-snapshot! "batch-steady")
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-mark! ordinal "scratch-destroy-steady")
+          (compiler-driver-batch-profile-mark!
+            (compiler-driver-state-profile state)
+            ordinal
+            "scratch-destroy-steady")
           unit)
         (if (= status 0)
           (compile-cli-run-batch-entries-from
@@ -1891,7 +1939,9 @@
       [_profile-start : unit
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-start-entry! ordinal)
+          (compiler-driver-batch-profile-start-entry!
+            (compiler-driver-state-profile state)
+            ordinal)
           unit)]
       [input-path : String (cli_svec.get entries index "")]
       [object-path : String (cli_svec.get entries (+ index 1) "")]
@@ -1917,7 +1967,10 @@
       [_profile-emit : unit
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-mark! ordinal "emit-complete")
+          (compiler-driver-batch-profile-mark!
+            (compiler-driver-state-profile state)
+            ordinal
+            "emit-complete")
           unit)]
       [scratch-end : i64 (arena.tl_arena_current)]
       ;; Read the arena-backed result while `scratch` is still mapped. The
@@ -1961,7 +2014,10 @@
         (compiler-driver-allocation-profile-snapshot! "batch-steady")
         (cfg
           compile-profile
-          (compiler-driver-batch-profile-mark! ordinal "scratch-destroy-steady")
+          (compiler-driver-batch-profile-mark!
+            (compiler-driver-state-profile state)
+            ordinal
+            "scratch-destroy-steady")
           unit)
         (if (= status 0)
           (compile-cli-run-windows-batch-entries-from

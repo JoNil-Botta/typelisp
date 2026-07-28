@@ -8881,6 +8881,115 @@
       (opt-inline-bounds-leaf-call-callee)
       CompilerIrFunctionList.Nil)))
 
+(define (opt-inline-bounds-leaf-char-symbol) : i64
+  (opt-test-symbol "bounds_leaf_char_inline"))
+
+(define (opt-inline-bounds-leaf-owned-symbol) : i64
+  (opt-test-symbol "bounds_leaf_owned_inline"))
+
+;; One bounds-leaf shape -- single block, bounds-checked, call-free, two body
+;; instructions -- instantiated at two return types. Every other property the
+;; admission path reads is held fixed, so an outcome difference between the two
+;; instantiations isolates opt-inline-bounds-leaf-return-type?.
+(define (opt-inline-bounds-leaf-typed-callee
+  [name : i64]
+  [ret : AstType]
+  [value : CompilerIrValue]) : CompilerIrFunction
+  (compiler-ir-function-compact-blocks
+    (CompilerIrFunction.Function
+      name
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "idx" (AstType.I64) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "len" (AstType.I64) 1)
+          CompilerIrParamList.Nil))
+      ret
+      3
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (compiler-ir-label "bounds_leaf_typed.ok"))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 2 value ret)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
+
+;; Two ordinary call sites with variable arguments: two references make the
+;; callee non-absorbable and no argument is constant, so the generic has-bounds
+;; policy refuses it and admission can only come from the bounds-leaf path.
+(define (opt-inline-call-bounds-leaf-typed-twice
+  [symbols : OptInlineBoundsTestSymbols]
+  [callee : i64]
+  [ret : AstType]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols main)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 8) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Call
+                2
+                callee
+                (CompilerIrCallArgs.Two
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 1))
+                ret)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  3
+                  callee
+                  (CompilerIrCallArgs.Two
+                    (CompilerIrValue.Var 1)
+                    (CompilerIrValue.Var 0))
+                  ret)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-inline-bounds-leaf-char-functions
+  [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-call-bounds-leaf-typed-twice
+      symbols
+      (opt-inline-bounds-leaf-char-symbol)
+      (AstType.Char))
+    (compiler-ir-function-cons
+      (opt-inline-bounds-leaf-typed-callee
+        (opt-inline-bounds-leaf-char-symbol)
+        (AstType.Char)
+        (CompilerIrValue.Char 'A'))
+      CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-bounds-leaf-owned-functions
+  [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-call-bounds-leaf-typed-twice
+      symbols
+      (opt-inline-bounds-leaf-owned-symbol)
+      (AstType.String))
+    (compiler-ir-function-cons
+      (opt-inline-bounds-leaf-typed-callee
+        (opt-inline-bounds-leaf-owned-symbol)
+        (AstType.String)
+        (CompilerIrValue.String "leaf"))
+      CompilerIrFunctionList.Nil)))
+
 (define (opt-inline-multi-call-caller [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
     (struct-get symbols main)
@@ -9433,6 +9542,39 @@
         2)
       (= (opt-count-direct-call-name leaf-call-instrs "opaque_sink") 0)
       (= (opt-count-bounds-instrs leaf-call-instrs) 0))))
+
+;; The bounds-leaf return-type gate. Both programs run the same bounds-leaf body
+;; from two ordinary call sites with variable arguments, so admission turns only
+;; on the declared return type. `char` is a non-owning scalar that return-to-mov
+;; cloning reproduces exactly, so both call boundaries disappear and both bounds
+;; checks land in the caller. An owned `String` result keeps its call boundary,
+;; because that boundary carries cleanup semantics the expansion does not
+;; reproduce; refusal must also leave the callee's bounds check in the callee
+;; rather than leak a copy into the caller.
+(define (compiler-optimize-inline-bounds-leaf-char-return-ok?) : bool
+  (let
+    [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
+    [char-program : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-bounds-leaf-char-functions symbols)
+        2)]
+    [owned-program : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-bounds-leaf-owned-functions symbols)
+        2)]
+    [char-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs char-program "main")]
+    [owned-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs owned-program "main")]
+    (and
+      (opt-inline-bounds-leaf-return-type? (AstType.Char))
+      (not (opt-inline-bounds-leaf-return-type? (AstType.String)))
+      (= (opt-count-direct-call-name char-instrs "bounds_leaf_char_inline") 0)
+      (= (opt-count-bounds-instrs char-instrs) 2)
+      (= (opt-count-direct-call-name owned-instrs "bounds_leaf_owned_inline") 2)
+      (= (opt-count-bounds-instrs owned-instrs) 0))))
 
 (define (compiler-optimize-inline-multi-call-ok?) : bool
   (let
@@ -11211,6 +11353,9 @@
                     (unless
                       (compiler-optimize-inline-small-bounds-leaf-ok?)
                       (return 55))
+                    (unless
+                      (compiler-optimize-inline-bounds-leaf-char-return-ok?)
+                      (return 56))
                     (unless
                       (compiler-optimize-inline-multi-call-ok?)
                       (return 30))

@@ -48377,15 +48377,20 @@
       (<= body (opt-inline-bounds-leaf-max-body))
       (opt-inline-bounds-leaf-instr-seq-ok-from? seq np 0 (- n 1) false))))
 
-;; Return-to-mov cloning preserves non-owning scalar values. Keep owned String
-;; and aggregate results out of this path; their call boundary carries cleanup
-;; semantics that the bounds-leaf expansion does not reproduce.
+;; Return-to-mov cloning rewrites the callee return into a Mov of the returned
+;; value into the call's destination. That reproduces the call boundary exactly
+;; for the non-owning scalars -- integers, Bool, Char, and Unit. Each is a
+;; single-register value the Mov carries under its own declared type, and none
+;; of them owns storage, so retiring the boundary retires nothing else with it.
+;; Owned String and aggregate results stay out of this path; their call boundary
+;; carries cleanup semantics that the bounds-leaf expansion does not reproduce.
 (define (opt-inline-bounds-leaf-return-type? [ty : AstType]) : bool
   (if (opt-integer-type? ty)
     true
     (match ty
       [(AstType.Unit) true]
       [(AstType.Bool) true]
+      [(AstType.Char) true]
       [_ false])))
 
 (define (opt-inline-bounds-leaf-ok?

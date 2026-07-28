@@ -12703,6 +12703,193 @@
 (define (compiler-backend-bytes-fat-label [text : String]) : String
   (string.append ".L_tl_bin_" (compiler-backend-string-label-suffix text)))
 
+;; Cold runtime-abort provenance for the instruction currently being emitted.
+;; The descriptor itself is placed inline after the non-returning call; the
+;; normal path branches over all argument setup and descriptor bytes.
+(define compiler-backend-abort-site-active : bool
+  false)
+(define compiler-backend-abort-site-counter : i64
+  0)
+(define compiler-backend-abort-site-path : String
+  "")
+(define compiler-backend-abort-site-line : i64
+  0)
+(define compiler-backend-abort-site-column : i64
+  0)
+(define compiler-backend-abort-site-target : CompilerBackendTarget
+  (CompilerBackendTarget.Linux))
+
+(define (compiler-backend-stdlib-io-panic-name? [name : i64]) : bool
+  (let
+    [text : String (ci.intern-str name)]
+    (and
+      (string.eq (compiler-backend-symbol-leaf text) "panic")
+      (or
+        (compiler-backend-string-contains? text "stdlib/io.tl::")
+        (compiler-backend-string-contains? text "stdlib\\io.tl::")
+        (compiler-backend-string-contains? text "stdlib.io/")))))
+
+(define (compiler-backend-runtime-abort-site-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(CompilerIrInstr.BinOp _ op _ _ _)
+      (match op
+        [(CompilerIrBinOp.Div) true]
+        [(CompilerIrBinOp.Mod) true]
+        [(CompilerIrBinOp.Shl) true]
+        [(CompilerIrBinOp.Shr) true]
+        [_ false])]
+    [(CompilerIrInstr.Call _ name _ _)
+      (compiler-backend-stdlib-io-panic-name? name)]
+    [_ false]))
+
+(define (compiler-backend-runtime-abort-site-install!
+  [ctx : CompilerBackendEmissionContext]
+  [instr : CompilerIrInstr]) : unit
+  (begin
+    (set! compiler-backend-abort-site-active false)
+    (when
+      (compiler-backend-runtime-abort-site-instr? instr)
+      (match (compiler-source-spans-lookup-instr-location
+        ctx.spans
+        ctx.source-function
+        instr)
+        [(CompilerMaybeSourceLocation.No) unit]
+        [(CompilerMaybeSourceLocation.Some location)
+          (let
+            [path-id : i64 (struct-get location path-id)]
+            [span : AstSourceSpan (struct-get location span)]
+            (when
+              (> path-id 0)
+              (begin
+                (set! compiler-backend-abort-site-active true)
+                (set! compiler-backend-abort-site-path (ci.intern-str path-id))
+                (set!
+                  compiler-backend-abort-site-line
+                  (ast-source-span-start-line span))
+                (set!
+                  compiler-backend-abort-site-column
+                  (ast-source-span-start-col span))
+                (set! compiler-backend-abort-site-target ctx.target))))]))))
+
+(define (compiler-backend-abort-arg-reg [index : i64]) : String
+  (match compiler-backend-abort-site-target
+    [(CompilerBackendTarget.Linux)
+      (cond [(= index 0) "%rdi"] [(= index 1) "%rsi"] [else "%rdx"])]
+    [(CompilerBackendTarget.Windows)
+      (cond [(= index 0) "%rcx"] [(= index 1) "%rdx"] [else "%r8"])]))
+
+(define (compiler-backend-abort-site-next-label [suffix : String]) : String
+  (begin
+    (set!
+      compiler-backend-abort-site-counter
+      (+ compiler-backend-abort-site-counter 1))
+    (str_cat.str-cat
+      ".L_tl_abort_site_"
+      (string.int->string compiler-backend-abort-site-counter)
+      "_"
+      suffix)))
+
+(define (compiler-backend-abort-site-load-arg0 [label : String]) : String
+  (str_cat.str-cat
+    "    leaq "
+    label
+    "(%rip), "
+    (compiler-backend-abort-arg-reg 0)
+    "\n"))
+
+(define (compiler-backend-abort-site-descriptor-after-call [label : String]) : String
+  (let
+    [end-label : String (string.append label "_end")]
+    (str_cat.str-cat
+      "    jmp "
+      end-label
+      "\n    .balign 8\n"
+      label
+      ":\n    .quad "
+      (compiler-backend-string-data-label compiler-backend-abort-site-path)
+      "\n    .quad "
+      (string.int->string
+        (string.string-length compiler-backend-abort-site-path))
+      "\n    .quad "
+      (string.int->string compiler-backend-abort-site-line)
+      "\n    .quad "
+      (string.int->string compiler-backend-abort-site-column)
+      "\n"
+      end-label
+      ":\n")))
+
+;; SAVE-SECOND runs before SAVE-FIRST. The top of stack is therefore the first
+;; reported value and can be popped straight into ABI argument 1.
+(define (compiler-backend-abort-call-three-asm
+  [symbol : String]
+  [suffix : String]
+  [save-second : String]
+  [save-first : String]
+  [call-space : i64]) : String
+  (let
+    [label : String (compiler-backend-abort-site-next-label suffix)]
+    (str_cat.str-cat
+      save-second
+      save-first
+      (compiler-backend-abort-site-load-arg0 label)
+      "    popq "
+      (compiler-backend-abort-arg-reg 1)
+      "\n    popq "
+      (compiler-backend-abort-arg-reg 2)
+      "\n"
+      (compiler-backend-emit-call-space-sub call-space)
+      "    call "
+      symbol
+      "\n"
+      (compiler-backend-emit-call-space-add call-space)
+      (compiler-backend-abort-site-descriptor-after-call label))))
+
+(define (compiler-backend-abort-normalized-push-asm
+  [type-segment-bases : i64]
+  [ty : AstType]
+  [reg : String]) : String
+  (let
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
+    [src : String (compiler-backend-sized-reg type-segment-bases reg ty)]
+    (if (= size 8)
+      (str_cat.str-cat "    pushq " reg "\n")
+      (str_cat.str-cat
+        "    "
+        (if (compiler-backend-type-signed? ty)
+          (cond [(= size 1) "movsbq"] [(= size 2) "movswq"] [else "movslq"])
+          (cond [(= size 1) "movzbq"] [(= size 2) "movzwq"] [else "movl"]))
+        " "
+        src
+        ", "
+        (if (and (not (compiler-backend-type-signed? ty)) (= size 4))
+          "%r11d"
+          "%r11")
+        "\n    pushq %r11\n"))))
+
+(define (compiler-backend-rewrite-panic-call
+  [asm : String]
+  [call-target : String]) : String
+  (if (not compiler-backend-abort-site-active)
+    asm
+    (let
+      [arg0 : String (compiler-backend-abort-arg-reg 0)]
+      [arg1 : String (compiler-backend-abort-arg-reg 1)]
+      [label : String (compiler-backend-abort-site-next-label "panic")]
+      [needle : String (str_cat.str-cat "    call " call-target "\n")]
+      [replacement : String
+        (str_cat.str-cat
+          "    movq "
+          arg0
+          ", "
+          arg1
+          "\n"
+          (compiler-backend-abort-site-load-arg0 label)
+          "    call tl_panic_at\n")]
+      (string.append
+        (string.replace asm needle replacement)
+        (compiler-backend-abort-site-descriptor-after-call label)))))
+
 (define (compiler-backend-float-label [ty : AstType] [bits : u64]) : String
   (str_cat.str-cat
     ".L_tl_"
@@ -15948,9 +16135,25 @@
   (let
     [rhs : String
       (compiler-backend-sized-reg type-segment-bases divisor-reg ty)]
-    (string.append
+    (str_cat.str-cat
       (compiler-backend-binop-reg-asm type-segment-bases "test" ty rhs rhs)
-      "    jne 1f\n    call tl_div_abort\n1:\n")))
+      (if compiler-backend-abort-site-active
+        (str_cat.str-cat
+          "    jne 1f\n"
+          (compiler-backend-abort-call-three-asm
+            "tl_div_abort_at"
+            "div_zero"
+            (compiler-backend-abort-normalized-push-asm
+              type-segment-bases
+              ty
+              divisor-reg)
+            (compiler-backend-abort-normalized-push-asm
+              type-segment-bases
+              ty
+              "%rax")
+            0)
+          "1:\n")
+        "    jne 1f\n    call tl_div_abort\n1:\n"))))
 
 (define (compiler-backend-div-overflow-guard-asm-with-plan
   [type-segment-bases : i64]
@@ -15985,23 +16188,35 @@
         (compiler-backend-sized-reg type-segment-bases min-full ty)]
       [neg-one-reg : String
         (compiler-backend-sized-reg type-segment-bases neg-full ty)]
-      (string.append
+      (str_cat.str-cat
         (compiler-backend-emit-load-i64-absolute
           (compiler-backend-signed-min-value type-segment-bases ty)
           min-full)
-        (string.append
-          (compiler-backend-binop-cmp-reg-asm type-segment-bases ty min-reg lhs)
-          (string.append
+        (compiler-backend-binop-cmp-reg-asm type-segment-bases ty min-reg lhs)
+        "    jne 1f\n"
+        (compiler-backend-emit-load-i64-absolute (- 0 1) neg-full)
+        (compiler-backend-binop-cmp-reg-asm
+          type-segment-bases
+          ty
+          neg-one-reg
+          rhs)
+        (if compiler-backend-abort-site-active
+          (str_cat.str-cat
             "    jne 1f\n"
-            (string.append
-              (compiler-backend-emit-load-i64-absolute (- 0 1) neg-full)
-              (string.append
-                (compiler-backend-binop-cmp-reg-asm
-                  type-segment-bases
-                  ty
-                  neg-one-reg
-                  rhs)
-                "    jne 1f\n    call tl_div_abort\n1:\n"))))))
+            (compiler-backend-abort-call-three-asm
+              "tl_div_abort_at"
+              "div_overflow"
+              (compiler-backend-abort-normalized-push-asm
+                type-segment-bases
+                ty
+                divisor-reg)
+              (compiler-backend-abort-normalized-push-asm
+                type-segment-bases
+                ty
+                "%rax")
+              0)
+            "1:\n")
+          "    jne 1f\n    call tl_div_abort\n1:\n")))
     ""))
 
 (define (compiler-backend-divmod-guard-asm-with-plan
@@ -18869,21 +19084,43 @@
   [type-segment-bases : i64]
   [ty : AstType]
   [count-reg : String]) : String
-  (string.append
-    (str_cat.str-cat
-      "    testq "
-      count-reg
-      ", "
-      count-reg
-      "\n    jge 1f\n    call tl_shift_abort\n1:\n")
-    (str_cat.str-cat
-      "    cmpq $"
-      (int->string (compiler-backend-shift-count-width type-segment-bases ty))
-      ", "
-      count-reg
-      "\n    jb 1f\n    call tl_shift_abort\n1:\n"
-      ""
-      "")))
+  (let
+    [width : i64 (compiler-backend-shift-count-width type-segment-bases ty)]
+    [negative-abort : String
+      (if compiler-backend-abort-site-active
+        (compiler-backend-abort-call-three-asm
+          "tl_shift_abort_at"
+          "shift_negative"
+          (str_cat.str-cat "    pushq $" (string.int->string width) "\n")
+          (str_cat.str-cat "    pushq " count-reg "\n")
+          0)
+        "    call tl_shift_abort\n")]
+    [large-abort : String
+      (if compiler-backend-abort-site-active
+        (compiler-backend-abort-call-three-asm
+          "tl_shift_abort_at"
+          "shift_large"
+          (str_cat.str-cat "    pushq $" (string.int->string width) "\n")
+          (str_cat.str-cat "    pushq " count-reg "\n")
+          0)
+        "    call tl_shift_abort\n")]
+    (string.append
+      (str_cat.str-cat
+        "    testq "
+        count-reg
+        ", "
+        count-reg
+        "\n    jge 1f\n"
+        negative-abort
+        "1:\n")
+      (str_cat.str-cat
+        "    cmpq $"
+        (int->string width)
+        ", "
+        count-reg
+        "\n    jb 1f\n"
+        large-abort
+        "1:\n"))))
 
 (define (compiler-backend-binop-shift-asm
   [type-segment-bases : i64]
@@ -23364,21 +23601,32 @@
 (define (compiler-backend-bounds-check-tail
   [call-space : i64]
   [ok-symbol : String]
+  [index-operand : String]
+  [length-operand : String]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : String
-  (string.append
-    (compiler-backend-emit-call-space-sub call-space)
-    (str_cat.str-cat
-      "    call "
-      (compiler-backend-call-symbol-index
-        cbi.compiler-builtin-id-tl-oob-abort
-        plan
-        program-index)
-      "\n"
-      (string.append
-        (compiler-backend-emit-call-space-add call-space)
-        (str_cat.str-cat ok-symbol ":\n" "" ""))
-      "")))
+  (if compiler-backend-abort-site-active
+    (string.append
+      (compiler-backend-abort-call-three-asm
+        "tl_oob_abort_at"
+        "bounds"
+        (str_cat.str-cat "    pushq " length-operand "\n")
+        (str_cat.str-cat "    pushq " index-operand "\n")
+        call-space)
+      (str_cat.str-cat ok-symbol ":\n"))
+    (string.append
+      (compiler-backend-emit-call-space-sub call-space)
+      (str_cat.str-cat
+        "    call "
+        (compiler-backend-call-symbol-index
+          cbi.compiler-builtin-id-tl-oob-abort
+          plan
+          program-index)
+        "\n"
+        (string.append
+          (compiler-backend-emit-call-space-add call-space)
+          (str_cat.str-cat ok-symbol ":\n" "" ""))
+        ""))))
 
 (define (compiler-backend-bounds-check-asm
   [index-asm : String]
@@ -23405,6 +23653,8 @@
         (compiler-backend-bounds-check-tail
           call-space
           ok-symbol
+          index-operand
+          length-operand
           plan
           program-index)))))
 
@@ -23438,6 +23688,8 @@
       (compiler-backend-bounds-check-tail
         call-space
         ok-symbol
+        index-imm
+        length-operand
         plan
         program-index))))
 
@@ -37544,6 +37796,8 @@
         instr
         ctx.func-diag
         "")]
+    [_abort-site : unit
+      (compiler-backend-runtime-abort-site-install! ctx instr)]
     [_scratch-plan : CompilerRegScratchPlan
       (cfg
         scratch-vreg
@@ -38139,7 +38393,7 @@
               ctx.vars
               instr-diag)])]
       [(CompilerIrInstr.Call dst name args ty)
-        (compiler-backend-emit-direct-call-with-arg-assignments
+        (match (compiler-backend-emit-direct-call-with-arg-assignments
           ctx.type-segment-bases
           ctx.target
           ctx.function
@@ -38157,7 +38411,21 @@
           ctx.externs
           ctx.program-index
           ctx.vars
-          instr-diag)]
+          instr-diag)
+          [(ResultCompilerBackend.Ok asm)
+            (ResultCompilerBackend.Ok
+              (if (and
+                compiler-backend-abort-site-active
+                (compiler-backend-stdlib-io-panic-name? name))
+                (compiler-backend-rewrite-panic-call
+                  asm
+                  (compiler-backend-call-symbol-index
+                    name
+                    ctx.plan
+                    ctx.program-index))
+                asm))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
       [(CompilerIrInstr.CallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
           ctx.type-segment-bases
@@ -43852,6 +44120,7 @@
                 [(CompilerIrMaybeValue.Some value)
                   (if (and
                     (compiler-backend-branch-uses-var? value dst)
+                    (not (compiler-backend-stdlib-io-panic-name? name))
                     (opt-type-eq ctx.type-segment-bases ty ctx.ret-ty))
                     (compiler-backend-emit-terminator-into
                       (compiler-backend-emit-call-return
@@ -44902,6 +45171,16 @@
                   [(CompilerIrInstrList.Nil) unit])
                 unit)
               (set! compiler-backend-emit-instrs-continue-pending false)
+              ;; Fast and fused emitters can bypass compiler-backend-emit-instr.
+              ;; Install the head instruction's source context at the shared
+              ;; dispatch seam so every abort guard sees the correct site.
+              ;; Fusions that emit a later div/mod instruction still enter
+              ;; compiler-backend-emit-instr for that instruction and replace
+              ;; this state with its exact source location.
+              (match current-instrs
+                [(CompilerIrInstrList.Cons head-instr _)
+                  (compiler-backend-runtime-abort-site-install! ctx head-instr)]
+                [(CompilerIrInstrList.Nil) unit])
               (match current-mode
                 [(CompilerBackendEmitInstrsMode.Normal)
                   (compiler-backend-emit-instrs-divmod-polish-step
@@ -49202,6 +49481,59 @@
       em-hi
       true)))
 
+;; Commit census and sweep state only for the layout that emit-function returns.
+;; Shrink-wrap fallback retries can change the prologue push count and frame
+;; displacement, so a discarded attempt must never enter the ordered sweep
+;; metadata stream.
+(define (compiler-backend-commit-frame-layout!
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [symbol : String]
+  [frame : i64]
+  [push-count : i64]
+  [slot-vars : i64]
+  [outgoing : i64]
+  [fpo-ok : bool]
+  [rebase-ok : bool]
+  [shrinkwrap-active? : bool]) : unit
+  (begin
+    (if fpo-ok
+      (begin
+        (set! compiler-backend-fpo-count (+ compiler-backend-fpo-count 1))
+        (if (> push-count 0)
+          (set!
+            compiler-backend-fpo-push-count
+            (+ compiler-backend-fpo-push-count 1))
+          unit)
+        (if (compiler-backend-plan-uses-reg? assignments "%rbp")
+          (set!
+            compiler-backend-fpo-rbp-plan-count
+            (+ compiler-backend-fpo-rbp-plan-count 1))
+          unit))
+      unit)
+    ;; The sweep's displacement model starts at a function-entry prologue.
+    ;; Keep shrink-wrapped interior prologues conservatively excluded.
+    (cond
+      [shrinkwrap-active? unit]
+      [fpo-ok
+        (compiler-backend-sweep-record-fpo!
+          symbol
+          frame
+          push-count
+          slot-vars
+          compiler-backend-emergency-slot-offset
+          compiler-backend-emergency-used-count
+          outgoing)]
+      [(and (compiler-backend-target-windows? target) rebase-ok)
+        (compiler-backend-sweep-record-win64!
+          symbol
+          frame
+          slot-vars
+          compiler-backend-emergency-slot-offset
+          compiler-backend-emergency-used-count
+          outgoing)]
+      [else unit])))
+
 ;; Append `v` at `count` into a growable i64 scratch array; returns the
 ;; (possibly reallocated) array. The caller advances its own count.
 (define (compiler-backend-sweep-i64-push
@@ -51852,61 +52184,6 @@
                                 false
                                 shrinkwrap-enabled))
                             (let
-                              [_fpo-census : unit
-                                (if fpo-ok
-                                  (begin
-                                    (set!
-                                      compiler-backend-fpo-count
-                                      (+ compiler-backend-fpo-count 1))
-                                    (if (> push-count 0)
-                                      (set!
-                                        compiler-backend-fpo-push-count
-                                        (+ compiler-backend-fpo-push-count 1))
-                                      unit)
-                                    (if (compiler-backend-plan-uses-reg?
-                                      assignments
-                                      "%rbp")
-                                      (set!
-                                        compiler-backend-fpo-rbp-plan-count
-                                        (+
-                                          compiler-backend-fpo-rbp-plan-count
-                                          1))
-                                      unit)
-                                    ;; GAP5: record this FPO function's var-region
-                                    ;; slot span so the post-peephole sweep can
-                                    ;; drop never-read local frame stores. Slots
-                                    ;; are rsp-relative here; keep-rbp functions
-                                    ;; (audit failed) are NOT recorded and stay
-                                    ;; untouched -- conservative by design.
-                                    ;; The dead-store sweep's displacement model
-                                    ;; starts at a function-entry prologue. A
-                                    ;; shrink-wrapped prologue begins at an
-                                    ;; interior label, so leave that optional
-                                    ;; cleanup out rather than enqueue metadata
-                                    ;; that could block later function records.
-                                    (if shrinkwrap-active?
-                                      unit
-                                      (compiler-backend-sweep-record-fpo!
-                                        symbol
-                                        frame
-                                        push-count
-                                        slot-vars
-                                        compiler-backend-emergency-slot-offset
-                                        compiler-backend-emergency-used-count
-                                        outgoing-frame-space)))
-                                  (if (and
-                                    (compiler-backend-target-windows? target)
-                                    rebase-ok)
-                                    (if shrinkwrap-active?
-                                      unit
-                                      (compiler-backend-sweep-record-win64!
-                                        symbol
-                                        frame
-                                        slot-vars
-                                        compiler-backend-emergency-slot-offset
-                                        compiler-backend-emergency-used-count
-                                        outgoing-frame-space))
-                                    unit))]
                               [final-body : String
                                 (if fpo-ok
                                   rebased
@@ -51995,44 +52272,56 @@
                                   crt-entry
                                   allow-rbp
                                   false)
-                                (ResultCompilerBackend.Ok
-                                  (str_cat.str-cat
-                                    (compiler-backend-function-symbol-map-comment
-                                      program-index
-                                      name)
-                                    ".globl "
+                                (begin
+                                  (compiler-backend-commit-frame-layout!
+                                    target
+                                    assignments
                                     symbol
-                                    "\n"
-                                    (compiler-backend-debug-function-location
-                                      target
-                                      program-index
-                                      span-index
-                                      spans
-                                      name)
-                                    (if shrinkwrap-active?
-                                      (str_cat.str-cat symbol ":\n" "")
-                                      selected-prologue)
-                                    ""
-                                    ""
-                                    ;; Last body rewrite: the text is final
-                                    ;; here (prologue spliced, rsp rebased, FPO
-                                    ;; decided) and every text target shares
-                                    ;; this seam, so the scan sees exactly the
-                                    ;; bytes the assembler will.
-                                    (compiler-backend-drop-fallthrough-jumps
-                                      emitted-body)
-                                    (compiler-backend-debug-function-end-label
-                                      target
-                                      program-index
-                                      name)
-                                    (if (and
-                                      (compiler-debug-info-enabled?)
-                                      (compiler-backend-target-linux? target))
-                                      "    .cfi_endproc\n"
-                                      "")
-                                    (compiler-backend-emit-windows-seh-endproc
-                                      target)
-                                    "\n")))))))]
+                                    frame
+                                    push-count
+                                    slot-vars
+                                    outgoing-frame-space
+                                    fpo-ok
+                                    rebase-ok
+                                    shrinkwrap-active?)
+                                  (ResultCompilerBackend.Ok
+                                    (str_cat.str-cat
+                                      (compiler-backend-function-symbol-map-comment
+                                        program-index
+                                        name)
+                                      ".globl "
+                                      symbol
+                                      "\n"
+                                      (compiler-backend-debug-function-location
+                                        target
+                                        program-index
+                                        span-index
+                                        spans
+                                        name)
+                                      (if shrinkwrap-active?
+                                        (str_cat.str-cat symbol ":\n" "")
+                                        selected-prologue)
+                                      ""
+                                      ""
+                                      ;; Last body rewrite: the text is final
+                                      ;; here (prologue spliced, rsp rebased, FPO
+                                      ;; decided) and every text target shares
+                                      ;; this seam, so the scan sees exactly the
+                                      ;; bytes the assembler will.
+                                      (compiler-backend-drop-fallthrough-jumps
+                                        emitted-body)
+                                      (compiler-backend-debug-function-end-label
+                                        target
+                                        program-index
+                                        name)
+                                      (if (and
+                                        (compiler-debug-info-enabled?)
+                                        (compiler-backend-target-linux? target))
+                                        "    .cfi_endproc\n"
+                                        "")
+                                      (compiler-backend-emit-windows-seh-endproc
+                                        target)
+                                      "\n"))))))))]
                     [(ResultCompilerBackend.Err message)
                       (let
                         [_addr-forward-done : unit
@@ -53521,6 +53810,32 @@
           (compiler-backend-program-collections-new)
           globals)
         functions)]))
+
+(define (compiler-backend-collect-source-path-strings
+  [collections : CompilerBackendProgramCollections]
+  [spans : CompilerSourceSpans]) : CompilerBackendProgramCollections
+  (match spans
+    [(CompilerSourceSpans.Spans _ instr-entries _)
+      (let
+        [slots : (Array CompilerSourceSpansInstrEntry)
+          (struct-get instr-entries slots)]
+        [count : i64 (struct-get instr-entries len)]
+        [index : i64 0]
+        [out : CompilerBackendProgramCollections collections]
+        (begin
+          (while (< index count)
+            (begin
+              (match (array-ref slots index)
+                [(CompilerSourceSpansInstrEntry.Entry _ path-id _)
+                  (when
+                    (> path-id 0)
+                    (set!
+                      out
+                      (compiler-backend-program-collections-add-string
+                        out
+                        (ci.intern-str path-id))))])
+              (set! index (+ index 1))))
+          out))]))
 
 (define (compiler-backend-emit-string-entry-into
   [text : String]
@@ -55186,7 +55501,11 @@
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (let
     [collections : CompilerBackendProgramCollections
-      (compiler-backend-collect-program-collections type-segment-bases program)]
+      (compiler-backend-collect-source-path-strings
+        (compiler-backend-collect-program-collections
+          type-segment-bases
+          program)
+        spans)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringSeq
@@ -55438,6 +55757,7 @@
   (begin
     (compiler-backend-user-symbol-cache-reset!)
     (compiler-backend-peephole-carry-safe-reset!)
+    (set! compiler-backend-abort-site-counter 0)
     (compiler-backend-set-absolute-switch-ok!
       (and (not pic-emit?) (not (compiler-backend-target-windows? target))))
     (set! compiler-backend-rsp-rebase-ok-count 0)
@@ -59142,6 +59462,24 @@
     (compiler-backend-peephole-owner-key-unknown)
     (compiler-backend-peephole-owner-key-unknown)))
 
+(define (compiler-backend-peephole-owners-copy
+  [owners : CompilerBackendPeepholeOwners]) : CompilerBackendPeepholeOwners
+  (CompilerBackendPeepholeOwners
+    (struct-get owners rax)
+    (struct-get owners rcx)
+    (struct-get owners rdx)
+    (struct-get owners rbx)
+    (struct-get owners rsi)
+    (struct-get owners rdi)
+    (struct-get owners r8)
+    (struct-get owners r9)
+    (struct-get owners r10)
+    (struct-get owners r11)
+    (struct-get owners r12)
+    (struct-get owners r13)
+    (struct-get owners r14)
+    (struct-get owners r15)))
+
 ;; Dense index 0..13 for the 14 general-purpose registers owned by the register
 ;; allocator, or -1 for anything else (immediates, stack slots, %rbp/%rsp/%rip,
 ;; xmm/untracked registers). Register operands are a fixed tiny set, so classify
@@ -59552,8 +59890,8 @@
             (compiler-backend-peephole-byte-at data (+ i 4))))))))
 
 ;; SCAV2: true iff line [start,end) is `call <F>` where F is a runtime NORETURN
-;; abort helper (tl_oob_abort / tl_shift_abort / tl_div_abort / tl_region_abort /
-;; tl_oom_abort). A noreturn call never returns, so the textual fall-through into
+;; abort helper (including the location-aware `_at` variants). A noreturn call
+;; never returns, so the textual fall-through into
 ;; the next line is DEAD: the owner map is carried unchanged across it, so the
 ;; guard-ok continuation label immediately after it (reached ONLY via the guard's
 ;; own conditional jump, across which the register map is identical) sees the
@@ -59576,8 +59914,24 @@
             (set! e (- e 1)))
           (or
             (compiler-backend-peephole-range-eq? data i e "call tl_oob_abort")
+            (compiler-backend-peephole-range-eq?
+              data
+              i
+              e
+              "call tl_oob_abort_at")
             (compiler-backend-peephole-range-eq? data i e "call tl_shift_abort")
+            (compiler-backend-peephole-range-eq?
+              data
+              i
+              e
+              "call tl_shift_abort_at")
             (compiler-backend-peephole-range-eq? data i e "call tl_div_abort")
+            (compiler-backend-peephole-range-eq?
+              data
+              i
+              e
+              "call tl_div_abort_at")
+            (compiler-backend-peephole-range-eq? data i e "call tl_panic_at")
             (compiler-backend-peephole-range-eq?
               data
               i
@@ -60261,6 +60615,53 @@
         (struct-get line flags)
         compiler-backend-peephole-desc-flag-single-dest)
       0)))
+
+;; A generated guard branches over its cold abort preparation to an `_ok`
+;; continuation. Remember the owner map at that branch so extra value/site
+;; argument setup on the dead textual path cannot force reloads on the real
+;; success path.
+(define (compiler-backend-peephole-desc-guard-ok-branch?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (let
+    [data : (Ptr u8) (struct-get line data)]
+    [start : i64 (compiler-backend-peephole-desc-start line)]
+    [end : i64 (compiler-backend-peephole-desc-end line)]
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
+    [mlen : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
+    (and
+      (> mlen 1)
+      (= (compiler-backend-peephole-byte-at data ms) 106)
+      (not (compiler-backend-peephole-range-eq? data ms (+ ms mlen) "jmp"))
+      (compiler-backend-peephole-range-contains-substr? data start end "_ok")
+      (not
+        (compiler-backend-peephole-range-contains-substr?
+          data
+          start
+          end
+          "_fail")))))
+
+(define (compiler-backend-peephole-desc-guard-ok-label?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (and
+    (compiler-backend-peephole-desc-label? line)
+    (compiler-backend-peephole-label-guard-ok?
+      (struct-get line data)
+      (compiler-backend-peephole-desc-start line)
+      (compiler-backend-peephole-desc-end line))))
+
+(define (compiler-backend-peephole-desc-pushq?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (let
+    [data : (Ptr u8) (struct-get line data)]
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
+    [mlen : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
+    (and
+      (= mlen 5)
+      (= (compiler-backend-peephole-byte-at data ms) 112)
+      (= (compiler-backend-peephole-byte-at data (+ ms 1)) 117)
+      (= (compiler-backend-peephole-byte-at data (+ ms 2)) 115)
+      (= (compiler-backend-peephole-byte-at data (+ ms 3)) 104)
+      (= (compiler-backend-peephole-byte-at data (+ ms 4)) 113))))
 
 (define (compiler-backend-peephole-desc-has-operands?
   [line : CompilerBackendPeepholeLine]) : bool
@@ -62053,6 +62454,9 @@
     [prev-abort? : bool false]
     [owners : CompilerBackendPeepholeOwners
       (compiler-backend-peephole-owners-empty)]
+    [guard-owners-active? : bool false]
+    [guard-owners : CompilerBackendPeepholeOwners
+      (compiler-backend-peephole-owners-empty)]
     [c : i64 0]
     (begin
       (compiler-backend-peephole-owner-global-reset!)
@@ -62134,24 +62538,45 @@
                                 folded-line
                                 line-newline)))]
                         [else
-                          (begin
-                            (let
-                              [emit : CompilerBackendPeepholeEmitRecordResult
-                                (compiler-backend-peephole-emit-line-desc-record
-                                  out
-                                  pending
-                                  owners
-                                  prev-abort?)]
-                              (begin
-                                (set! out (struct-get emit lines))
-                                (set! owners (struct-get emit owners))))
-                            (set!
-                              prev-abort?
-                              (compiler-backend-peephole-desc-noreturn-abort?
-                                pending))
-                            (set!
-                              pending
-                              (compiler-backend-peephole-line-copy line)))]))
+                          (let
+                            [restore-guard-owners? : bool
+                              (and
+                                guard-owners-active?
+                                (compiler-backend-peephole-desc-guard-ok-label?
+                                  pending))]
+                            [emit : CompilerBackendPeepholeEmitRecordResult
+                              (compiler-backend-peephole-emit-line-desc-record
+                                out
+                                pending
+                                (if restore-guard-owners?
+                                  (compiler-backend-peephole-owners-copy
+                                    guard-owners)
+                                  owners)
+                                (or prev-abort? restore-guard-owners?))]
+                            (begin
+                              (set! out (struct-get emit lines))
+                              (set! owners (struct-get emit owners))
+                              (when
+                                restore-guard-owners?
+                                (set! guard-owners-active? false))
+                              (when
+                                (and
+                                  (compiler-backend-peephole-desc-pushq? line)
+                                  (compiler-backend-peephole-desc-guard-ok-branch?
+                                    pending))
+                                (begin
+                                  (set!
+                                    guard-owners
+                                    (compiler-backend-peephole-owners-copy
+                                      owners))
+                                  (set! guard-owners-active? true)))
+                              (set!
+                                prev-abort?
+                                (compiler-backend-peephole-desc-noreturn-abort?
+                                  pending))
+                              (set!
+                                pending
+                                (compiler-backend-peephole-line-copy line))))]))
                     (begin
                       (set! has-pending true)
                       (set!

@@ -270,7 +270,9 @@ stage2_safety_corpus_supported() {
         sed 's/^/  /' "$probe_dir/run.stderr" >&2 || true
         return 1
     fi
-    if ! grep -F "tl: integer division or remainder error" "$probe_dir/run.stderr" >/dev/null; then
+    if ! grep -F \
+        "integer division or remainder error: dividend=1 divisor=0" \
+        "$probe_dir/run.stderr" >/dev/null; then
         echo "[ci-verify] stage2 safety probe missing guarded div-zero stderr" >&2
         sed 's/^/  /' "$probe_dir/run.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/run.stderr" >&2 || true

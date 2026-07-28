@@ -614,6 +614,8 @@
 
 (define lower-current-source-path-id : i64
   0)
+(define lower-current-decl-generated? : bool
+  false)
 (define lower-checked-dest-pools-active : bool
   false)
 (define lower-checked-dest-pools-committed : bool
@@ -11046,11 +11048,31 @@
             tail-param-start
             tail-param-end)))]))
 
+(define (lower-runtime-abort-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(CompilerIrInstr.BinOp _ op _ _ _)
+      (match op
+        [(CompilerIrBinOp.Div) true]
+        [(CompilerIrBinOp.Mod) true]
+        [(CompilerIrBinOp.Shl) true]
+        [(CompilerIrBinOp.Shr) true]
+        [_ false])]
+    [(CompilerIrInstr.Call _ name _ _)
+      (let
+        [text : String (ci.intern-str name)]
+        (or
+          (string.eq text "stdlib/io.tl::stdlib.io/panic")
+          (string.eq text "stdlib\\io.tl::stdlib.io/panic")))]
+    [_ false]))
+
 (define (lower-state-emit-at-expr
   [state : LowerState]
   [instr : CompilerIrInstr]
   [expr : AstExpr]) : LowerState
-  (if (compiler-debug-info-enabled?)
+  (if (or
+    (compiler-debug-info-enabled?)
+    (and (not lower-current-decl-generated?) (lower-runtime-abort-instr? instr)))
     (match state
       [(LowerState.State
           next-var
@@ -11099,6 +11121,73 @@
               tail-param-start
               tail-param-end)))])
     (lower-state-emit state instr)))
+
+;; Bounds-check helpers emit their BoundsCheck before the final GEP/load and do
+;; not otherwise carry the source expression. Immediately after such a helper
+;; returns, its most recently allocated label is the unique LABEL-PREFIX key.
+(define (lower-state-record-latest-bounds-check-named-at-expr
+  [state : LowerState]
+  [label-prefix : String]
+  [expr : AstExpr]) : LowerState
+  (if (and lower-current-decl-generated? (not (compiler-debug-info-enabled?)))
+    state
+    (match (lower-ast-expr-span expr)
+      [(CompilerMaybeSourceSpan.No) state]
+      [(CompilerMaybeSourceSpan.Some span)
+        (match state
+          [(LowerState.State
+              next-var
+              next-label
+              next-lambda
+              current-label
+              current-instrs
+              blocks
+              functions
+              function
+              spans
+              names
+              type-cache
+              mode
+              address-taken
+              tail-param-start
+              tail-param-end)
+            (let
+              [bounds-label : i64
+                (compiler-ir-label
+                  (str_cat.str-cat
+                    (str_cat.str-cat label-prefix ".")
+                    (string.int->string (- next-label 1))))]
+              [next-spans : CompilerSourceSpans
+                (compiler-source-spans-insert-instr-located
+                  (box-get spans)
+                  function
+                  (CompilerIrInstr.BoundsCheck
+                    CompilerIrValue.Unit
+                    CompilerIrValue.Unit
+                    bounds-label)
+                  lower-current-source-path-id
+                  span)]
+              (LowerState.State
+                next-var
+                next-label
+                next-lambda
+                current-label
+                current-instrs
+                blocks
+                functions
+                function
+                (box next-spans)
+                names
+                type-cache
+                mode
+                address-taken
+                tail-param-start
+                tail-param-end))])])))
+
+(define (lower-state-record-latest-bounds-check-at-expr
+  [state : LowerState]
+  [expr : AstExpr]) : LowerState
+  (lower-state-record-latest-bounds-check-named-at-expr state "bounds_ok" expr))
 
 (define (lower-state-finish-block [state : LowerState] [next-label : i64]) : LowerState
   (match state
@@ -14169,7 +14258,9 @@
                                   [(LowerExpr.Expr addr-state elem-ptr _)
                                     (ResultLowerExpr.Ok
                                       (LowerExpr.Expr
-                                        addr-state
+                                        (lower-state-record-latest-bounds-check-at-expr
+                                          addr-state
+                                          origin)
                                         elem-ptr
                                         result-ty))])])]
                           [(ResultLowerExpr.Err message)
@@ -14218,7 +14309,9 @@
                                     [(LowerExpr.Expr addr-state elem-ptr _)
                                       (ResultLowerExpr.Ok
                                         (LowerExpr.Expr
-                                          addr-state
+                                          (lower-state-record-latest-bounds-check-at-expr
+                                            addr-state
+                                            origin)
                                           elem-ptr
                                           result-ty))])])]
                             [(ResultLowerExpr.Err message)
@@ -23031,7 +23124,7 @@
       (let
         [str : AstExpr (lower-context-expr-get ctx str-box)]
         [index : AstExpr (lower-context-expr-get ctx index-box)]
-        (lower-string-ref ctx state env type-env str index))]
+        (lower-string-ref ctx state env type-env str index origin))]
     [(AstExpr.StructGet receiver-box field)
       (let
         [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -24808,7 +24901,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [str : AstExpr]
-  [index : AstExpr]) : ResultLowerExpr
+  [index : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
   (match (lower-expr ctx state env type-env str)
     [(ResultLowerExpr.Ok lowered-str)
       (match lowered-str
@@ -24831,10 +24925,23 @@
                       index-ty
                       (AstType.I64))
                       [(LowerExpr.Expr index-i-state index-value _)
-                        (lower-string-ref-load
+                        (match (lower-string-ref-load
                           index-i-state
                           str-value
-                          index-value)])])]
+                          index-value)
+                          [(ResultLowerExpr.Ok loaded)
+                            (match loaded
+                              [(LowerExpr.Expr loaded-state value ty)
+                                (ResultLowerExpr.Ok
+                                  (LowerExpr.Expr
+                                    (lower-state-record-latest-bounds-check-named-at-expr
+                                      loaded-state
+                                      "str_bounds_ok"
+                                      origin)
+                                    value
+                                    ty))])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])])])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])
             (ResultLowerExpr.Err
               (box
@@ -27735,7 +27842,7 @@
         (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
       [index : AstExpr
         (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
-      (lower-string-ref ctx state env type-env str index))
+      (lower-string-ref ctx state env type-env str index origin))
     (lower-direct-call-id
       ctx
       state
@@ -30212,14 +30319,21 @@
                 [(ResultLowerExpr.Ok idx-lowered)
                   (match idx-lowered
                     [(LowerExpr.Expr idx-state idx-value idx-value-ty)
-                      (ResultLowerExpr.Ok
-                        (lower-array-element-addr
-                          ctx
-                          idx-state
-                          arr-value
-                          idx-value
-                          idx-value-ty
-                          elem-ty))])]
+                      (match (lower-array-element-addr
+                        ctx
+                        idx-state
+                        arr-value
+                        idx-value
+                        idx-value-ty
+                        elem-ty)
+                        [(LowerExpr.Expr addr-state elem-ptr elem-ptr-ty)
+                          (ResultLowerExpr.Ok
+                            (LowerExpr.Expr
+                              (lower-state-record-latest-bounds-check-at-expr
+                                addr-state
+                                index)
+                              elem-ptr
+                              elem-ptr-ty))])])]
                 [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
             [(ResultTcType.Err message)
               (ResultLowerExpr.Err
@@ -31591,7 +31705,9 @@
                                               _)
                                             (lower-array-elem-ref-result
                                               ctx
-                                              addr-state
+                                              (lower-state-record-latest-bounds-check-at-expr
+                                                addr-state
+                                                index)
                                               elem-ptr
                                               elem-ir-ty)])]
                                       [(AstType.Array _ elem-count)
@@ -31612,12 +31728,16 @@
                                               0)
                                               (ResultLowerExpr.Ok
                                                 (LowerExpr.Expr
-                                                  addr-state
+                                                  (lower-state-record-latest-bounds-check-at-expr
+                                                    addr-state
+                                                    index)
                                                   CompilerIrValue.Unit
                                                   elem-ir-ty))
                                               (lower-array-elem-ref-result
                                                 ctx
-                                                addr-state
+                                                (lower-state-record-latest-bounds-check-at-expr
+                                                  addr-state
+                                                  index)
                                                 elem-ptr
                                                 elem-ir-ty))])]
                                       [_
@@ -31670,6 +31790,7 @@
   [ctx : TcContext]
   [state : LowerState]
   [arr : AstExpr]
+  [origin : AstExpr]
   [arr-value : CompilerIrValue]
   [idx-value : CompilerIrValue]
   [idx-ty : AstType]
@@ -31690,7 +31811,9 @@
             (LowerExpr.Expr
               (lower-array-elem-store-state
                 ctx
-                addr-state
+                (lower-state-record-latest-bounds-check-at-expr
+                  addr-state
+                  origin)
                 elem-ptr
                 value-ir
                 elem-ir-ty)
@@ -31708,12 +31831,19 @@
         [(LowerExpr.Expr addr-state elem-ptr _)
           (if (= (lower-type-size ctx elem-ir-ty) 0)
             (ResultLowerExpr.Ok
-              (LowerExpr.Expr addr-state CompilerIrValue.Unit (AstType.Unit)))
+              (LowerExpr.Expr
+                (lower-state-record-latest-bounds-check-at-expr
+                  addr-state
+                  origin)
+                CompilerIrValue.Unit
+                (AstType.Unit)))
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
                 (lower-array-elem-store-state
                   ctx
-                  addr-state
+                  (lower-state-record-latest-bounds-check-at-expr
+                    addr-state
+                    origin)
                   elem-ptr
                   value-ir
                   elem-ir-ty)
@@ -31730,6 +31860,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]
+  [origin : AstExpr]
   [arr-value : CompilerIrValue]
   [idx-value : CompilerIrValue]
   [idx-ty : AstType]
@@ -31751,7 +31882,7 @@
           [(LowerExpr.Expr addr-state elem-ptr _)
             (lower-direct-store-rhs-into
               ctx
-              addr-state
+              (lower-state-record-latest-bounds-check-at-expr addr-state origin)
               env
               type-env
               elem-ptr
@@ -31770,7 +31901,7 @@
           [(LowerExpr.Expr addr-state elem-ptr _)
             (lower-direct-store-rhs-into
               ctx
-              addr-state
+              (lower-state-record-latest-bounds-check-at-expr addr-state origin)
               env
               type-env
               elem-ptr
@@ -32547,6 +32678,7 @@
                                       env
                                       type-env
                                       arr
+                                      index
                                       arr-value
                                       idx-value
                                       idx-value-ty
@@ -32581,6 +32713,7 @@
                                                   ctx
                                                   value-state
                                                   arr
+                                                  index
                                                   arr-value
                                                   idx-value
                                                   idx-value-ty
@@ -55125,12 +55258,7 @@
                   (lower-spmd-inline-empty-helper-stack))
                 (let
                   [escaped-spans : CompilerSourceSpans
-                    (if (compiler-debug-info-enabled?)
-                      (compiler-source-spans-append-new spans function-spans)
-                      (lower-record-function-span
-                        spans
-                        (compiler-ir-symbol-typed-id logical-name)
-                        body))]
+                    (compiler-source-spans-append-new spans function-spans)]
                   [new-enclosing : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
@@ -56646,9 +56774,15 @@
               [_source-path : unit
                 (set!
                   lower-current-source-path-id
-                  (if (compiler-debug-info-enabled?)
+                  (if (> (string.string-length decl-path) 0)
                     (compiler-load-source-path-id decl-path)
                     0))]
+              [_generated-decl : unit
+                (set!
+                  lower-current-decl-generated?
+                  (match (ast-decl-generated-meta decl)
+                    [(AstGeneratedDeclMeta.Some _ _ _ _) true]
+                    [(AstGeneratedDeclMeta.No) false]))]
               (match (ast-decl-unwrapped decl)
                 [(AstDecl.ModuleBody _ _) (set! cur-decls rest)]
                 [(AstDecl.Def decl-meta name _ expr-box)

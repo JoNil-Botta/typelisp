@@ -6369,6 +6369,55 @@
     [got : String (compiler-backend-peephole-asm input)]
     (string.eq got want)))
 
+(define (compiler-backend-peephole-detailed-abort-guard-ok?) : bool
+  (let
+    [input : String
+      "    movq -8(%rbp), %r10
+    cmpq $5, 16(%rbp)
+    ja .Lf0_bounds_ok.1
+    pushq 16(%rbp)
+    pushq $5
+    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    popq %rsi
+    popq %rdx
+    call tl_oob_abort_at
+    jmp .L_tl_abort_site_1_bounds_end
+    .balign 8
+.L_tl_abort_site_1_bounds:
+    .quad .L_tl_str_data
+    .quad 18
+    .quad 4
+    .quad 9
+.L_tl_abort_site_1_bounds_end:
+.Lf0_bounds_ok.1:
+    movq -8(%rbp), %r10
+    movq (%r10), %rax
+"]
+    [want : String
+      "    movq -8(%rbp), %r10
+    cmpq $5, 16(%rbp)
+    ja .Lf0_bounds_ok.1
+    pushq 16(%rbp)
+    pushq $5
+    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    popq %rsi
+    popq %rdx
+    call tl_oob_abort_at
+    jmp .L_tl_abort_site_1_bounds_end
+    .balign 8
+.L_tl_abort_site_1_bounds:
+    .quad .L_tl_str_data
+    .quad 18
+    .quad 4
+    .quad 9
+.L_tl_abort_site_1_bounds_end:
+.Lf0_bounds_ok.1:
+    movq (%r10), %rax
+"]
+    [_carry-safe-reset : unit (compiler-backend-peephole-carry-safe-reset!)]
+    [got : String (compiler-backend-peephole-asm input)]
+    (string.eq got want)))
+
 (define (compiler-backend-deadstore-sweep-win64-rbp-frame-ok?) : bool
   (let
     [input : String
@@ -7465,6 +7514,7 @@
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-peephole-vector-gp-owners-ok?)
+    (compiler-backend-peephole-detailed-abort-guard-ok?)
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
@@ -12072,7 +12122,7 @@
           (and
             (compiler-backend-string-contains? asm opcode)
             (compiler-backend-string-contains? asm extra)
-            (compiler-backend-string-contains? asm "    call tl_oob_abort\n"))]
+            (compiler-backend-string-contains? asm "    call tl_oob_abort"))]
         [(ResultCompilerBackend.Err _) false])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -13624,19 +13674,27 @@
         (ci.intern "main")
         phi
         (compiler-backend-test-span 55 13))]
-    (match (optimize-program-with-spans program spans)
-      [(CompilerOptimizedProgram.Program optimized optimized-spans)
-        (match (compiler-backend-emit-program-linux-with-spans
-          optimized
-          optimized-spans)
-          [(ResultCompilerBackend.Err diag)
-            (and
-              (string.eq
-                (compiler-diagnostic-message (box-get diag))
-                "backend: f64 values are not supported yet")
-              (= (compiler-diagnostic-line (box-get diag)) 55)
-              (= (compiler-diagnostic-col (box-get diag)) 13))]
-          [(ResultCompilerBackend.Ok _) false])])))
+    [previous-debug : bool (compiler-debug-info-enabled?)]
+    [ok : bool
+      (begin
+        ;; Non-abort instruction spans are intentionally a debug-only cost.
+        (compiler-debug-info-set-enabled! true)
+        (match (optimize-program-with-spans program spans)
+          [(CompilerOptimizedProgram.Program optimized optimized-spans)
+            (match (compiler-backend-emit-program-linux-with-spans
+              optimized
+              optimized-spans)
+              [(ResultCompilerBackend.Err diag)
+                (and
+                  (string.eq
+                    (compiler-diagnostic-message (box-get diag))
+                    "backend: f64 values are not supported yet")
+                  (= (compiler-diagnostic-line (box-get diag)) 55)
+                  (= (compiler-diagnostic-col (box-get diag)) 13))]
+              [(ResultCompilerBackend.Ok _) false])]))]
+    (begin
+      (compiler-debug-info-set-enabled! previous-debug)
+      ok)))
 
 (define (compiler-backend-instr-contains?
   [instr : CompilerIrInstr]
@@ -18032,7 +18090,7 @@
     [(ResultCompilerBackend.Err _) false]))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
-;; trap reaches the backend as a `call tl_oob_abort`.
+;; trap reaches the backend as a location-aware `call tl_oob_abort_at`.
 (define (compiler-backend-array-access-source) : String
   "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
 (define (main) : i64 0)")
@@ -18040,7 +18098,7 @@
 (define (compiler-backend-array-access-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-array-access-source))
     [(ResultCompilerBackend.Ok asm)
-      (compiler-backend-string-contains? asm "call tl_oob_abort")]
+      (compiler-backend-string-contains? asm "call tl_oob_abort_at")]
     [(ResultCompilerBackend.Err _) false]))
 
 ;; Fixed-size array set/ref emit-shape coverage. The source takes the
@@ -18065,7 +18123,7 @@
           ;; %r10 (scratch reg choice changed); still a 64-bit cmpq against 3.
           (compiler-backend-string-contains? asm "    cmpq $3, %r10\n")
           (not (compiler-backend-string-contains? asm "    movl $3, %r11d\n"))
-          (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
+          (compiler-backend-string-contains? asm "    call tl_oob_abort_at\n")
           (compiler-backend-string-contains? asm "    movq %r9, (%r10,%r8,8)\n")
           (compiler-backend-string-contains? asm "    movq (%r10,%r8,8), %r9\n")
           (not
@@ -18098,7 +18156,7 @@
       (and
         (compiler-backend-string-contains? asm "main:\n")
         (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
-        (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
+        (compiler-backend-string-contains? asm "    call tl_oob_abort_at\n")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ResultCompilerBackend.Err _) false]))
@@ -20350,19 +20408,23 @@
 (define (compiler-backend-scalar-div-mod-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-scalar-div-mod-source))
     [(ResultCompilerBackend.Ok asm)
-      (backend-and8
-        (compiler-backend-string-contains?
-          asm
-          "    testq %r8, %r8\n    jne 1f\n    call tl_div_abort\n1:\n")
-        (compiler-backend-string-contains?
-          asm
-          "    cmpq %r10, %rax\n    jne 1f\n")
-        (compiler-backend-string-contains?
-          asm
-          "    cmpq %r9, %r8\n    jne 1f\n    call tl_div_abort\n1:\n")
-        (compiler-backend-string-contains? asm "    cqto\n")
-        (compiler-backend-string-contains? asm "    idivq %r8\n")
-        (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
+      (and
+        (backend-and8
+          (compiler-backend-string-contains?
+            asm
+            "    testq %r8, %r8\n    jne 1f\n")
+          (compiler-backend-string-contains? asm "    call tl_div_abort_at\n")
+          (compiler-backend-string-contains?
+            asm
+            "    cmpq %r10, %rax\n    jne 1f\n")
+          (compiler-backend-string-contains?
+            asm
+            "    cmpq %r9, %r8\n    jne 1f\n")
+          (compiler-backend-string-contains? asm "    cqto\n")
+          (compiler-backend-string-contains? asm "    idivq %r8\n")
+          (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
+          (compiler-backend-string-contains? asm "    .quad 46\n"))
+        (not (compiler-backend-string-contains? asm "    call tl_div_abort\n"))
         (not (compiler-backend-string-contains? asm ".globl tl_div_abort\n"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -20956,16 +21018,19 @@
         (compiler-backend-string-contains? asm "    movq $-1,")
         (compiler-backend-string-contains?
           asm
-          "    testq %r8, %r8\n    jge 1f\n    call tl_shift_abort\n1:\n")
-        (compiler-backend-string-contains?
-          asm
-          "    cmpq $64, %r8\n    jb 1f\n    call tl_shift_abort\n1:\n")
-        (compiler-backend-string-contains? asm "    call tl_shift_abort\n")
+          "    testq %r8, %r8\n    jge 1f\n")
+        (compiler-backend-string-contains? asm "    cmpq $64, %r8\n    jb 1f\n")
+        (compiler-backend-string-contains? asm "    call tl_shift_abort_at\n")
         (not (compiler-backend-string-contains? asm ".globl tl_shift_abort\n"))
         (not (compiler-backend-string-contains? asm ".L_tl_shift_msg:"))
         (not (compiler-backend-string-contains? asm "    shlq $-1, %rax\n"))
-        (not
-          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+        (and
+          (not
+            (compiler-backend-string-contains? asm "    call tl_shift_abort\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))))]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-narrow-binop-types

@@ -116,7 +116,7 @@ compile_source_for_case() {
 
     case "$name" in
         sym_i64_env)
-            input_dir="$out_dir/.inputs/$name"
+            input_dir="$WORKDIR/.inputs/$name"
             rm -rf "$input_dir"
             mkdir -p "$input_dir"
             cp "$source" "$input_dir/sym_i64_env.tl"
@@ -219,7 +219,7 @@ compare_outputs() {
     [ ! -f "$failed_marker" ]
 }
 
-rm -rf "$RUN1" "$RUN2"
+rm -rf "$RUN1" "$RUN2" "$WORKDIR/.inputs"
 mkdir -p "$RUN1" "$RUN2"
 
 compile_pass run1 "$RUN1"

@@ -1057,19 +1057,71 @@
             (opt-test-symbol "main")
             tail))])))
 
+(define (compiler-optimize-runtime-abort-span-filter-ok?) : bool
+  (let
+    [div : CompilerIrInstr
+      (CompilerIrInstr.BinOp
+        1
+        (CompilerIrBinOp.Div)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 2)
+        (AstType.I64))]
+    [add : CompilerIrInstr
+      (CompilerIrInstr.BinOp
+        2
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 2)
+        (AstType.I64))]
+    [bounds : CompilerIrInstr
+      (CompilerIrInstr.BoundsCheck
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 2)
+        19)]
+    [previous-debug : bool (compiler-debug-info-enabled?)]
+    [ok : bool
+      (begin
+        (compiler-debug-info-set-enabled! false)
+        (and
+          (match (opt-remap-spans-instr-key 7 div)
+            [(OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value 7 1))
+              true]
+            [_ false])
+          (match (opt-remap-spans-instr-key 7 bounds)
+            [(OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Bounds 7 19))
+              true]
+            [_ false])
+          (match (opt-remap-spans-instr-key 7 add)
+            [(OptRemapSpanKey.NoKey) true]
+            [_ false])))]
+    (begin
+      (compiler-debug-info-set-enabled! previous-debug)
+      ok)))
+
 (define (compiler-optimize-spans-self-test) : i64
-  (if (and
-    (compiler-optimize-spans-dce-ok?)
-    (compiler-optimize-spans-fold-ok?)
-    (compiler-optimize-spans-cse-ok?)
-    (compiler-optimize-dead-addrof-ok?)
-    (compiler-optimize-spans-inline-callee-ok?)
-    (compiler-optimize-spans-inline-fallback-ok?)
-    (compiler-optimize-spans-inline-multiblock-ok?)
-    (compiler-optimize-spans-non-inline-call-ok?)
-    (compiler-optimize-spans-pack-word-ok?))
-    42
-    1))
+  (let
+    [previous-debug : bool (compiler-debug-info-enabled?)]
+    [ok : bool
+      (begin
+        ;; Full instruction-span remapping is a debug-mode contract. Release
+        ;; builds retain only abort-capable instructions to avoid hot-path cost.
+        (compiler-debug-info-set-enabled! true)
+        (and
+          (compiler-optimize-spans-dce-ok?)
+          (compiler-optimize-spans-fold-ok?)
+          (compiler-optimize-spans-cse-ok?)
+          (compiler-optimize-dead-addrof-ok?)
+          (compiler-optimize-spans-inline-callee-ok?)
+          (compiler-optimize-spans-inline-fallback-ok?)
+          (compiler-optimize-spans-inline-multiblock-ok?)
+          (compiler-optimize-spans-non-inline-call-ok?)
+          (compiler-optimize-spans-pack-word-ok?)
+          (compiler-optimize-runtime-abort-span-filter-ok?)))]
+    (begin
+      (compiler-debug-info-set-enabled! previous-debug)
+      (if ok
+        42
+        1))))
 
 (define (opt-aggregate-test-alloc) : CompilerIrInstr
   (CompilerIrInstr.Call
@@ -10193,52 +10245,59 @@
         caller-name
         caller-call
         (opt-test-span 181 35))]
-    (match (opt-inline-program-functions-with-spans
-      (ast-node-pool-reader-type-segment-bases)
-      (opt-inline-switch-functions-named symbols callee-name)
-      2
-      spans)
-      [(OptInlineSpanProgram.Program optimized optimized-spans)
-        (match (opt-function-list-find optimized "main")
-          [(OptMaybeFunction.Some main)
-            (let
-              [blocks : CompilerIrBlockList (opt-function-blocks main)]
-              (+
-                (if (=
-                  (opt-count-direct-call-name-blocks blocks callee-text)
-                  (if expect-inline?
-                    0
-                    1))
-                  1
-                  0)
-                (+
-                  (if (=
-                    (opt-count-bounds-blocks blocks)
-                    (if expect-inline?
-                      1
-                      0))
-                    2
-                    0)
+    [previous-debug : bool (compiler-debug-info-enabled?)]
+    [code : i64
+      (begin
+        (compiler-debug-info-set-enabled! true)
+        (match (opt-inline-program-functions-with-spans
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-inline-switch-functions-named symbols callee-name)
+          2
+          spans)
+          [(OptInlineSpanProgram.Program optimized optimized-spans)
+            (match (opt-function-list-find optimized "main")
+              [(OptMaybeFunction.Some main)
+                (let
+                  [blocks : CompilerIrBlockList (opt-function-blocks main)]
                   (+
-                    (if (if expect-inline?
-                      (opt-inline-phi-span-ok-blocks?
-                        blocks
-                        optimized-spans
-                        caller-name
-                        171
-                        33)
-                      (opt-span-lookup-ok?
-                        optimized-spans
-                        caller-name
-                        caller-call
-                        181
-                        35))
-                      4
+                    (if (=
+                      (opt-count-direct-call-name-blocks blocks callee-text)
+                      (if expect-inline?
+                        0
+                        1))
+                      1
                       0)
-                    (if (opt-inline-structure-ok? blocks)
-                      8
-                      0)))))]
-          [(OptMaybeFunction.No) 0])])))
+                    (+
+                      (if (=
+                        (opt-count-bounds-blocks blocks)
+                        (if expect-inline?
+                          1
+                          0))
+                        2
+                        0)
+                      (+
+                        (if (if expect-inline?
+                          (opt-inline-phi-span-ok-blocks?
+                            blocks
+                            optimized-spans
+                            caller-name
+                            171
+                            33)
+                          (opt-span-lookup-ok?
+                            optimized-spans
+                            caller-name
+                            caller-call
+                            181
+                            35))
+                          4
+                          0)
+                        (if (opt-inline-structure-ok? blocks)
+                          8
+                          0)))))]
+              [(OptMaybeFunction.No) 0])]))]
+    (begin
+      (compiler-debug-info-set-enabled! previous-debug)
+      code)))
 
 (define (opt-inline-costly-switch-params) : CompilerIrParamList
   (compiler-ir-param-cons

@@ -53,6 +53,43 @@
   (Nil)
   (Bind i64 i64 i64 LowerNameEnv))
 
+(define (lower-name-arena-owner-root [handle : i64]) : i64
+  (if (= handle 0)
+    0
+    (let
+      [root : i64
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+      (if (= root 0)
+        handle
+        root))))
+
+(define (lower-name-arena-owner-current-head [handle : i64]) : i64
+  (let
+    [root : i64 (lower-name-arena-owner-root handle)]
+    (if (= root 0)
+      0
+      (let
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (if (= head 0)
+          root
+          head)))))
+
+(define (lower-name-arena-restore-after-owner-alloc!
+  [previous-arena : i64]
+  [owner : i64]) : unit
+  ;; If the caller was already in this owner, allocation may have advanced its
+  ;; head and that new head must remain active. Otherwise resume the unrelated
+  ;; caller owner at its own current head.
+  (if (=
+    (lower-name-arena-owner-root previous-arena)
+    (lower-name-arena-owner-root owner))
+    unit
+    (unsafe
+      (arena.tl_arena_set (lower-name-arena-owner-current-head previous-arena)))))
+
 (define (lower-name-store-new) : LowerNameStore
   (begin
     (cfg
@@ -64,7 +101,7 @@
       [segments : (Array (Array LowerNameBinding))
         (make-array (Array LowerNameBinding) 4)]
       [first : (Array LowerNameBinding) (make-array LowerNameBinding 16)]
-      [owner : i64 (arena.tl_arena_current)]
+      [owner : i64 (lower-name-arena-owner-root (arena.tl_arena_current))]
       (begin
         (array-set! segments 0 first)
         (LowerNameStore segments 1 0 owner)))))
@@ -93,7 +130,7 @@
           compiler-lower-profile-name-env-store-grows
           (+ compiler-lower-profile-name-env-store-grows 1)))
       (unsafe
-        (arena.tl_arena_set owner))
+        (arena.tl_arena_set (lower-name-arena-owner-current-head owner)))
       (if (< count capacity)
         unit
         (let
@@ -114,8 +151,7 @@
         count
         (make-array LowerNameBinding 16))
       (set! (struct-get store segment-count) (+ count 1))
-      (unsafe
-        (arena.tl_arena_set previous-arena)))))
+      (lower-name-arena-restore-after-owner-alloc! previous-arena owner))))
 
 (define (lower-name-store-ensure-index!
   [store : (&mut store LowerNameStore)]

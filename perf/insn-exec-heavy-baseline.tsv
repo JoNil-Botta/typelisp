@@ -11,6 +11,6 @@ benchmark/c-scalar/spmd_short_tail	5513011981
 benchmark/typelisp/spmd_zip	20893892078
 benchmark/c/spmd_zip	10755056776
 benchmark/c-scalar/spmd_zip	9218460869
-benchmark/typelisp/string_scan	20450000900
+benchmark/typelisp/string_scan	5350000285
 benchmark/c/string_scan	4850001654
 benchmark/c-scalar/string_scan	4850001654

@@ -65,6 +65,10 @@
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
         (compiler-driver-reader-context-smoke-main))]
+    [(string.eq name "driver-typecheck-cache-owner")
+      (if (compiler-driver-typecheck-cache-owner-smoke-ok?)
+        42
+        1)]
     [else 1]))
 
 (define (main) : i64
@@ -107,4 +111,7 @@
       (compiler-smoke-suite-require-child
         "driver-reader-context"
         "compiler smoke suite: compiler_driver_reader_context_smoke failed")
+      (compiler-smoke-suite-require-child
+        "driver-typecheck-cache-owner"
+        "compiler smoke suite: typecheck cache owner isolation failed")
       42)))

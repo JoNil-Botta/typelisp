@@ -71,6 +71,7 @@
   (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
+  (typecheck-state TcJobState)
   (typecheck-prefix-cache TcPrefixSnapshotCacheState)
   (pool-arena (Array i64))
   (surface-arena i64)
@@ -108,6 +109,7 @@
         builtin-cell
         lower-cell
         (compiler-load-session-state-new)
+        (tc-job-state-new)
         (tc-prefix-snapshot-cache-state-new)
         pool-arena-cell
         surface-arena
@@ -178,6 +180,12 @@
 (define (compiler-driver-state-typecheck-prefix-cache
   [state : CompilerDriverState]) : TcPrefixSnapshotCacheState
   (struct-get state typecheck-prefix-cache))
+
+(define (compiler-driver-state-typecheck [state : CompilerDriverState]) : TcJobState
+  (struct-get state typecheck-state))
+
+(define (compiler-driver-state-reset-typecheck! [state : CompilerDriverState]) : unit
+  (tc-job-state-reset-file-state! (compiler-driver-state-typecheck state)))
 
 (define (compiler-driver-state-prefix-cache-enable!
   [state : CompilerDriverState]) : unit
@@ -799,6 +807,7 @@
         (compiler-load-session-state-reset-interns-with-state!
           (struct-get state load-session)
           (array-ref (struct-get state intern-state) 0))
+        (compiler-driver-state-reset-typecheck! state)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
         (compiler-driver-state-reset-builtins! state)
@@ -830,6 +839,7 @@
         (compiler-load-session-state-reset-interns-with-state!
           (struct-get state load-session)
           (array-ref (struct-get state intern-state) 0))
+        (compiler-driver-state-reset-typecheck! state)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
         (compiler-driver-state-reset-builtins! state)
@@ -864,6 +874,7 @@
           (compiler-load-session-state-reset-interns-with-state!
             (struct-get state load-session)
             (array-ref (struct-get state intern-state) 0))
+          (compiler-driver-state-reset-typecheck! state)
           (compiler-typecheck-reset-intern-owned-state!)
           (compiler-driver-state-install-transients! state)
           (compiler-driver-state-reset-builtins! state)
@@ -3338,6 +3349,7 @@
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
                 (struct-get state load-session)
                 (struct-get state typecheck-prefix-cache)
+                (struct-get state typecheck-state)
                 input-path
                 (ast-program decls)
                 (ast-decl-path-list-with-modules paths modules)
@@ -3586,6 +3598,7 @@
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
                 (struct-get state load-session)
                 (struct-get state typecheck-prefix-cache)
+                (struct-get state typecheck-state)
                 input-path
                 (ast-program decls)
                 (ast-decl-path-list-with-modules paths modules)

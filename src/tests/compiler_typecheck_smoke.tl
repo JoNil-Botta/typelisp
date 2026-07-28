@@ -2696,6 +2696,7 @@
       (tc-prefix-snapshot-cache-state-new)]
     [prefix-cache-b : TcPrefixSnapshotCacheState
       (tc-prefix-snapshot-cache-state-new)]
+    [job-state-a : TcJobState (tc-job-state-new)]
     [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]
     [_seed-b : unit
       (begin
@@ -2729,6 +2730,7 @@
           (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
             state-a
             prefix-cache-a
+            job-state-a
             (ast-program decls)
             (ast-decl-path-list-with-modules paths modules)
             roots
@@ -2747,6 +2749,7 @@
           (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
             state-a
             prefix-cache-a
+            job-state-a
             bad-program
             (ast-decl-root-path-cons
               "target/tc_state_controlled_failure.tl"
@@ -3550,6 +3553,149 @@
               (= alias-miss -2)
               (= full-miss -2)
               (= variant-miss -2))))))))
+
+(define (compiler-typecheck-smoke-source-key-cache-state-isolation-ok?) : bool
+  (let
+    [job-a : TcJobState (tc-job-state-new)]
+    [job-b : TcJobState (tc-job-state-new)]
+    [state-a : TcSourceKeyCacheState (tc-job-state-source-key-cache job-a)]
+    [state-b : TcSourceKeyCacheState (tc-job-state-source-key-cache job-b)]
+    [table-a : i64 1001]
+    [table-b : i64 2002]
+    [generation-a : i64 7]
+    [generation-b : i64 11]
+    [registry-b : i64 3003]
+    [module-id : i64 17]
+    [name-id : i64 23]
+    (begin
+      (tc-source-dotted-alias-key-cache-put-for-state!
+        state-a
+        table-a
+        generation-a
+        module-id
+        name-id
+        41)
+      (tc-source-dotted-alias-key-cache-put-for-state!
+        state-b
+        table-b
+        generation-b
+        module-id
+        name-id
+        42)
+      (tc-source-dotted-full-path-key-cache-put-for-state!
+        state-b
+        table-b
+        generation-b
+        module-id
+        name-id
+        43)
+      (tc-source-qualified-variant-key-cache-put-for-state!
+        state-b
+        table-b
+        generation-b
+        registry-b
+        module-id
+        name-id
+        44
+        45)
+      (let
+        [before-reset : bool
+          (and
+            (=
+              (tc-source-dotted-alias-key-cache-get-for-state
+                state-a
+                table-a
+                generation-a
+                module-id
+                name-id)
+              41)
+            (=
+              (tc-source-dotted-alias-key-cache-get-for-state
+                state-b
+                table-b
+                generation-b
+                module-id
+                name-id)
+              42))]
+        (begin
+          (tc-job-state-reset-file-state! job-a)
+          (let
+            [isolated-reset : bool
+              (and
+                (=
+                  (tc-source-dotted-alias-key-cache-get-for-state
+                    state-a
+                    table-a
+                    generation-a
+                    module-id
+                    name-id)
+                  -2)
+                (=
+                  (tc-source-dotted-alias-key-cache-get-for-state
+                    state-b
+                    table-b
+                    generation-b
+                    module-id
+                    name-id)
+                  42)
+                (=
+                  (tc-source-dotted-full-path-key-cache-get-for-state
+                    state-b
+                    table-b
+                    generation-b
+                    module-id
+                    name-id)
+                  43)
+                (=
+                  (tc-source-qualified-variant-key-cache-get-for-state
+                    state-b
+                    table-b
+                    generation-b
+                    registry-b
+                    module-id
+                    name-id)
+                  44)
+                (=
+                  (tc-source-qualified-variant-handle-cache-get-for-state
+                    state-b
+                    table-b
+                    generation-b
+                    registry-b
+                    module-id
+                    name-id)
+                  45))]
+            [wrong-owner-miss : bool
+              (=
+                (tc-source-dotted-alias-key-cache-get-for-state
+                  state-b
+                  table-a
+                  generation-b
+                  module-id
+                  name-id)
+                -2)]
+            (begin
+              (tc-source-dotted-full-path-key-cache-put-for-state!
+                state-b
+                table-b
+                generation-b
+                module-id
+                name-id
+                46)
+              (let
+                [stale-generation-miss : bool
+                  (=
+                    (tc-source-dotted-full-path-key-cache-get-for-state
+                      state-b
+                      table-b
+                      (+ generation-b 1)
+                      module-id
+                      name-id)
+                    -2)]
+                (and
+                  before-reset
+                  isolated-reset
+                  wrong-owner-miss
+                  stale-generation-miss)))))))))
 
 (define (compiler-typecheck-smoke-qualified-enum-variant-precedence-source) : String
   "(module provider.enums)
@@ -4864,6 +5010,9 @@
     (unless
       (compiler-typecheck-smoke-source-name-caches-intern-reset-ok?)
       (io.panic "typecheck: source name cache intern reset smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-source-key-cache-state-isolation-ok?)
+      (io.panic "typecheck: source key cache state isolation smoke failed"))
     (unless
       (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?)
       (io.panic "typecheck: qualified enum variant precedence smoke failed"))

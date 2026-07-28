@@ -675,6 +675,60 @@
       42
       1)))
 
+(define (compiler-driver-typecheck-cache-owner-smoke-ok?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [intern-a : ci.InternCompatState
+      (compiler-driver-state-owned-interns state-a)]
+    [intern-b : ci.InternCompatState
+      (compiler-driver-state-owned-interns state-b)]
+    [cache-a : TcSourceKeyCacheState
+      (tc-job-state-source-key-cache (compiler-driver-state-typecheck state-a))]
+    [cache-b : TcSourceKeyCacheState
+      (tc-job-state-source-key-cache (compiler-driver-state-typecheck state-b))]
+    [module-a : i64
+      (ci.intern-compat-state-intern intern-a "driver-state.cache.module")]
+    [name-a : i64
+      (ci.intern-compat-state-intern intern-a "driver-state.cache.name")]
+    [module-b : i64
+      (ci.intern-compat-state-intern intern-b "driver-state.cache.module")]
+    [name-b : i64
+      (ci.intern-compat-state-intern intern-b "driver-state.cache.name")]
+    (begin
+      (tc-source-dotted-alias-key-cache-put-for-state!
+        cache-a
+        (ci.intern-compat-state-table-id intern-a)
+        (ci.intern-compat-state-generation intern-a)
+        module-a
+        name-a
+        71)
+      (tc-source-dotted-alias-key-cache-put-for-state!
+        cache-b
+        (ci.intern-compat-state-table-id intern-b)
+        (ci.intern-compat-state-generation intern-b)
+        module-b
+        name-b
+        72)
+      (compiler-driver-state-reset-typecheck! state-a)
+      (and
+        (=
+          (tc-source-dotted-alias-key-cache-get-for-state
+            cache-a
+            (ci.intern-compat-state-table-id intern-a)
+            (ci.intern-compat-state-generation intern-a)
+            module-a
+            name-a)
+          -2)
+        (=
+          (tc-source-dotted-alias-key-cache-get-for-state
+            cache-b
+            (ci.intern-compat-state-table-id intern-b)
+            (ci.intern-compat-state-generation intern-b)
+            module-b
+            name-b)
+          72)))))
+
 (define (compiler-driver-pic-smoke-extern-reject-ok?) : bool
   (match (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
     (compiler-driver-pic-smoke-write-extern-fixture)

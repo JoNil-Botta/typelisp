@@ -143,6 +143,10 @@
     (str-cat prefix (compiler-diagnostic-render (box-get diag)))))
 
 (define (prelude-surface-typecheck-facts-specialized
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
+  [source-names : ci.InternSourceNameSessionHandle]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [surface-program : AstProgram]
@@ -160,13 +164,16 @@
       (surface_facts.surface-typecheck-facts-recording-start!
         (arena.tl_arena_current))]
     [checked : ResultCompilerTypecheckChecked
-      (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
+      (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+        load-state
+        prefix-cache
+        job-state
         program
         paths
         roots
         (tc-prefix-default-cache-scope)
         pools
-        (ci.intern-source-name-session-capture-active-handle))]
+        source-names)]
     (match checked
       [(ResultCompilerTypecheckChecked.Err diag)
         (begin
@@ -192,6 +199,10 @@
                 surface-paths)]))])))
 
 (define (prelude-surface-typecheck-facts-expanded
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
+  [source-names : ci.InternSourceNameSessionHandle]
   [expanded : AstProgram]
   [expanded-paths : AstDeclPathList]
   [roots : surface_svec.Vec]
@@ -213,6 +224,10 @@
             diag)]
         [(ResultSpecProgramWithPaths.Ok specialized specialized-paths)
           (prelude-surface-typecheck-facts-specialized
+            load-state
+            prefix-cache
+            job-state
+            source-names
             specialized
             specialized-paths
             expanded
@@ -221,6 +236,10 @@
             roots
             pools)])
       (prelude-surface-typecheck-facts-specialized
+        load-state
+        prefix-cache
+        job-state
+        source-names
         expanded
         expanded-paths
         expanded
@@ -236,34 +255,45 @@
   [roots : surface_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultPreludeSurfaceFacts
-  (match (gen-normalize-program-with-paths-and-pools
-    (ast-program decls)
-    paths
-    ""
-    pools)
-    [(ResultGenProgramWithPaths.Err diag)
-      (prelude-surface-facts-error
-        "prelude surface normalization failed: "
-        diag)]
-    [(ResultGenProgramWithPaths.Ok generated generated-paths)
-      (match (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
-        load-state
-        generated
-        generated-paths
-        pools
-        (ci.intern-source-name-session-capture-active-handle)
-        roots
-        cfgs)
-        [(ResultMacroExpand.Err diag)
-          (prelude-surface-facts-error
-            "prelude surface expansion failed: "
-            diag)]
-        [(ResultMacroExpand.Ok expanded expanded-paths)
-          (prelude-surface-typecheck-facts-expanded
-            expanded
-            expanded-paths
-            roots
-            pools)])]))
+  (let
+    [prefix-cache : TcPrefixSnapshotCacheState
+      (tc-prefix-snapshot-cache-state-new)]
+    [job-state : TcJobState (tc-job-state-new)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-capture-active-handle)]
+    (match (gen-normalize-program-with-paths-and-pools
+      (ast-program decls)
+      paths
+      ""
+      pools)
+      [(ResultGenProgramWithPaths.Err diag)
+        (prelude-surface-facts-error
+          "prelude surface normalization failed: "
+          diag)]
+      [(ResultGenProgramWithPaths.Ok generated generated-paths)
+        (match (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
+          load-state
+          generated
+          generated-paths
+          pools
+          source-names
+          job-state
+          roots
+          cfgs)
+          [(ResultMacroExpand.Err diag)
+            (prelude-surface-facts-error
+              "prelude surface expansion failed: "
+              diag)]
+          [(ResultMacroExpand.Ok expanded expanded-paths)
+            (prelude-surface-typecheck-facts-expanded
+              load-state
+              prefix-cache
+              job-state
+              source-names
+              expanded
+              expanded-paths
+              roots
+              pools)])])))
 
 (define (prelude-surface-pack
   [identity-bytes : (Array u8)]

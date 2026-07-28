@@ -413,7 +413,9 @@ imply destructors or arena resets.
 Safe task threads use generated typed closure modules from
 `stdlib/thread.tl` — for example `(import (thread.handle i64) as
 thread-i64)` with `thread-i64.spawn` / `thread-i64.join` — plus aggregate
-wrappers. The checker validates captured environments and joined results
+wrappers. `thread.spawn-i64-vec` / `thread.join-i64-vec` transfer one owned
+generated `(vector i64)` result through a fresh spanning atomic arena. The
+checker validates captured environments and joined results
 structurally (no traits): references, borrowed views, scoped regions,
 ordinary arenas, raw-pointer ownership claims, and live mutable aliases do
 not cross task-thread boundaries; values cross threads only when owned by an

@@ -1,6 +1,8 @@
 (import stdlib.array)
 (import stdlib.thread)
+(import stdlib.vector)
 (import (thread.handle i64) as thread_i64)
+(import (vector.vector i64) as i64-vec)
 (import stdlib.str_cat)
 (import stdlib.string)
 
@@ -46,10 +48,17 @@
 (define (thread-api-safe-string-run) : i64
   42)
 
-(define (thread-api-array-i64-build [base : i64]) : (Array i64)
-  (make-array base (+ base 10) (+ base 20) (+ base 30)))
+(define (thread-api-i64-vec-build [base : i64]) : i64-vec.Vec
+  (let
+    [items : i64-vec.Vec (i64-vec.with-capacity 4)]
+    (begin
+      (i64-vec.push (&mut items) base)
+      (i64-vec.push (&mut items) (+ base 10))
+      (i64-vec.push (&mut items) (+ base 20))
+      (i64-vec.push (&mut items) (+ base 30))
+      items)))
 
-(define (thread-api-safe-array-i64-run) : i64
+(define (thread-api-safe-i64-vec-run) : i64
   42)
 
 (define (thread-api-safe-box-i64-run) : i64
@@ -72,9 +81,9 @@
       (thread.spawn-string
         (lambda () : String
           (str_cat.str-cat "thread:" (string.int->string (+ base 2)))))
-      (thread.spawn-array-i64
-        (lambda () : (Array i64)
-          (thread-api-array-i64-build 10)))
+      (thread.spawn-i64-vec
+        (lambda () : i64-vec.Vec
+          (thread-api-i64-vec-build 10)))
       (thread.spawn-box-i64
         (lambda () : (Box i64)
           (box 42)))
@@ -158,13 +167,13 @@
   (let
     [safe-code : i64 (thread-api-safe-i64-run)]
     [safe-string-code : i64 (thread-api-safe-string-run)]
-    [safe-array-code : i64 (thread-api-safe-array-i64-run)]
+    [safe-vec-code : i64 (thread-api-safe-i64-vec-run)]
     [safe-box-code : i64 (thread-api-safe-box-i64-run)]
     (cond
       [(< (thread.default-worker-count) 1) 1]
       [(not (= safe-code 42)) safe-code]
       [(not (= safe-string-code 42)) safe-string-code]
-      [(not (= safe-array-code 42)) safe-array-code]
+      [(not (= safe-vec-code 42)) safe-vec-code]
       [(not (= safe-box-code 42)) safe-box-code]
       [(not (thread-api-negative-semaphore-rejected?)) 11]
       [(not (thread-api-large-semaphore-rejected?)) 12]

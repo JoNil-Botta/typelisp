@@ -27853,8 +27853,8 @@
 (define (tc-spawn-string-name? [name : String]) : bool
   (string.eq (tc-thread-source-name-base name) "spawn-string"))
 
-(define (tc-spawn-array-i64-name? [name : String]) : bool
-  (string.eq (tc-thread-source-name-base name) "spawn-array-i64"))
+(define (tc-spawn-i64-vec-name? [name : String]) : bool
+  (string.eq (tc-thread-source-name-base name) "spawn-i64-vec"))
 
 (define (tc-spawn-box-i64-name? [name : String]) : bool
   (string.eq (tc-thread-source-name-base name) "spawn-box-i64"))
@@ -27862,7 +27862,7 @@
 (define (tc-thread-legacy-safe-spawn-base? [base : String]) : bool
   (or
     (string.eq base "spawn-string")
-    (string.eq base "spawn-array-i64")
+    (string.eq base "spawn-i64-vec")
     (string.eq base "spawn-box-i64")))
 
 (define (tc-thread-legacy-safe-spawn-name? [name : String]) : bool
@@ -27874,7 +27874,7 @@
     (or
       (tc-thread-generated-handle-type-name? name)
       (string.eq base "ThreadString")
-      (string.eq base "ThreadArrayI64")
+      (string.eq base "ThreadI64Vec")
       (string.eq base "ThreadBoxI64"))))
 
 (define (tc-thread-spawn-lookup-name
@@ -28055,7 +28055,7 @@
     (or
       (string.eq base "SpawnResult")
       (string.eq base "ThreadStringSpawnResult")
-      (string.eq base "ThreadArrayI64SpawnResult")
+      (string.eq base "ThreadI64VecSpawnResult")
       (string.eq base "ThreadBoxI64SpawnResult"))))
 
 (define (tc-thread-safe-user-type? [ctx : TcContext] [ty : AstType]) : bool
@@ -28105,8 +28105,8 @@
   (cond
     [(tc-spawn-string-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadStringSpawnResult")]
-    [(tc-spawn-array-i64-name? spawn-name)
-      (tc-thread-name-base-eq? result-name "ThreadArrayI64SpawnResult")]
+    [(tc-spawn-i64-vec-name? spawn-name)
+      (tc-thread-name-base-eq? result-name "ThreadI64VecSpawnResult")]
     [(tc-spawn-box-i64-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadBoxI64SpawnResult")]
     [else false]))
@@ -28188,14 +28188,18 @@
               [(AstType.String) true]
               [_ false])]
           [(or
-              (tc-spawn-array-i64-name? source-name)
-              (tc-spawn-array-i64-name? lookup-name))
+              (tc-spawn-i64-vec-name? source-name)
+              (tc-spawn-i64-vec-name? lookup-name))
             (match resolved
-              [(AstType.DynArray elem)
-                (match (tc-type-strip-region
-                  (tc-resolve-type ctx (ty-node-get elem)))
-                  [(AstType.I64) true]
-                  [_ false])]
+              [(AstType.Struct name)
+                (let
+                  [display : String (tc-nominal-name-id-display name)]
+                  (and
+                    (tc-name-qualified? display)
+                    (string.eq
+                      (tc-qualified-name-module display)
+                      "stdlib.vector.generated.i64")
+                    (string.eq (tc-qualified-name-base display) "Vec")))]
               [_ false])]
           [(or
               (tc-spawn-box-i64-name? source-name)
@@ -28981,6 +28985,34 @@
   (match (tc-thread-channel-send-call-name func)
     [(TcMaybeString.Some _)
       (tc-thread-channel-send-function-result? ctx env func)]
+    [(TcMaybeString.No) false]))
+
+(define (tc-thread-safe-spawn-call-signature?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [params : AstTypeList]) : bool
+  (match (tc-thread-safe-spawn-call-name ctx env func)
+    [(TcMaybeString.Some source-name)
+      (let
+        [source-id : i64
+          (macro-hygiene-global-source-name-id-or
+            (tc-expr-var-name-id func)
+            (tc-expr-var-name-id func))]
+        [lookup-name : String
+          (tc-thread-spawn-lookup-name ctx env source-name source-id)]
+        (match (tc-expr ctx env func)
+          [(ResultTcType.Ok fn-ty)
+            (match (tc-type-strip-region fn-ty)
+              [(AstType.Func _ ret-box)
+                (tc-thread-safe-spawn-signature?
+                  ctx
+                  source-name
+                  lookup-name
+                  params
+                  (ty-node-get ret-box))]
+              [_ false])]
+          [(ResultTcType.Err _) false]))]
     [(TcMaybeString.No) false]))
 
 (define (tc-call-function-type-normal
@@ -50944,6 +50976,7 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
+  [transfer-only : bool]
   [bound : TcStringList]
   [seen : TcStringList]
   [remaining : i64]
@@ -50961,6 +50994,7 @@
           locals
           loop-carried
           moved
+          transfer-only
           bound
           seen
           remaining
@@ -50984,6 +51018,7 @@
                 locals
                 loop-carried
                 moved
+                transfer-only
                 bound
                 seen
                 remaining
@@ -50997,6 +51032,7 @@
                 locals
                 loop-carried
                 moved
+                transfer-only
                 bound
                 seen
                 remaining
@@ -51010,6 +51046,7 @@
                 locals
                 loop-carried
                 moved
+                transfer-only
                 bound
                 seen
                 remaining
@@ -51023,6 +51060,7 @@
                 locals
                 loop-carried
                 moved
+                transfer-only
                 bound
                 (tc-string-list-add seen name)
                 (- remaining 1)
@@ -51030,7 +51068,17 @@
             [else
               (match (tc-lookup-id root key)
                 [(ResultTcType.Ok visible-ty)
-                  (if (tc-type-consuming-by-value-now? ctx visible-ty)
+                  (if (if transfer-only
+                    (and
+                      (not (tc-atomic-arena-owner-active-id? root key))
+                      (not (tc-type-consuming-by-value-now? ctx visible-ty))
+                      (match (tc-thread-transfer-classify-type-in-env
+                        ctx
+                        root
+                        visible-ty)
+                        [(TcThreadTransferClass.Transferable) true]
+                        [_ false]))
+                    (tc-type-consuming-by-value-now? ctx visible-ty))
                     (if (or
                       (tc-moved-contains? moved key)
                       (tc-moved-partial? moved key))
@@ -51050,6 +51098,7 @@
                           locals
                           loop-carried
                           (tc-moved-add-origin moved key body)
+                          transfer-only
                           bound
                           (tc-string-list-add seen name)
                           (- remaining 1)
@@ -51062,6 +51111,7 @@
                       locals
                       loop-carried
                       moved
+                      transfer-only
                       bound
                       (tc-string-list-add seen name)
                       (- remaining 1)
@@ -51075,6 +51125,7 @@
                     locals
                     loop-carried
                     moved
+                    transfer-only
                     bound
                     (tc-string-list-add seen name)
                     (- remaining 1)
@@ -51097,6 +51148,30 @@
     locals
     loop-carried
     moved
+    false
+    (tc-param-bound-names params)
+    TcStringList.Nil
+    (tc-moved-len locals)
+    body))
+
+(define (tc-move-check-thread-spawn-transferred-captures
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [params : AstParamList]
+  [body : AstExpr]) : TcMoveResult
+  (tc-move-check-lambda-owner-captures-scan
+    ctx
+    expr-bases
+    env
+    env
+    locals
+    loop-carried
+    moved
+    true
     (tc-param-bound-names params)
     TcStringList.Nil
     (tc-moved-len locals)
@@ -51335,6 +51410,39 @@
       [(TcMaybeString.No) (TcMoveResult.Ok moved)])
     (TcMoveResult.Ok moved)))
 
+(define (tc-move-check-thread-safe-spawn-captures
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]) : TcMoveResult
+  (if (and
+    (tc-thread-safe-spawn-call-signature? ctx env func params)
+    (= (struct-get (& args) len) 1))
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (ast-expr-unspan arg)
+        [(AstExpr.Lambda lambda-box)
+          (match (box-get lambda-box)
+            [(AstLambda.Lambda lambda-params _ body-box)
+              (if (= (ast-param-list-len (& lambda-params)) 0)
+                (tc-move-check-thread-spawn-transferred-captures
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  loop-carried
+                  moved
+                  lambda-params
+                  (ast-expr-segment-bases-get expr-bases body-box))
+                (TcMoveResult.Ok moved))])]
+        [_ (TcMoveResult.Ok moved)]))
+    (TcMoveResult.Ok moved)))
+
 (define (tc-move-check-call-args-with-types
   [ctx : TcContext]
   [expr-bases : i64]
@@ -51367,7 +51475,7 @@
         args
         params)
         [(TcMoveResult.Ok moved-thread)
-          (tc-move-check-safe-arena-call-effects
+          (match (tc-move-check-thread-safe-spawn-captures
             ctx
             expr-bases
             env
@@ -51376,7 +51484,19 @@
             moved-thread
             func
             args
-            call-expr)]
+            params)
+            [(TcMoveResult.Ok moved-spawn)
+              (tc-move-check-safe-arena-call-effects
+                ctx
+                expr-bases
+                env
+                locals
+                loop-carried
+                moved-spawn
+                func
+                args
+                call-expr)]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
         [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(TcMoveResult.Err message) (TcMoveResult.Err message)]))
 

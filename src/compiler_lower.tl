@@ -12032,50 +12032,74 @@
   [fields : TcInlineFieldLayoutList]
   [word-index : i64]
   [current : AstType]) : AstType
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) current]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (lower-register-struct-word-type-fields
-        (box-get rest)
+  (lower-register-struct-word-type-fields-at fields word-index current 0))
+
+(define (lower-register-struct-word-type-fields-at
+  [fields : TcInlineFieldLayoutList]
+  [word-index : i64]
+  [current : AstType]
+  [index : i64]) : AstType
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    current
+    (let
+      [field : TcInlineFieldLayout
+        (tc-inline-field-layout-list-ref fields index)]
+      (lower-register-struct-word-type-fields-at
+        fields
         word-index
         (lower-register-word-type-merge
           current
           (tc-inline-field-layout-type field)
           (tc-inline-field-layout-offset field)
-          word-index))]))
+          word-index)
+        (+ index 1)))))
 
 (define (lower-register-payload-word-type-fields
   [payloads : TcInlinePayloadLayoutList]
   [word-index : i64]
   [current : AstType]) : AstType
-  (match payloads
-    [(TcInlinePayloadLayoutList.Nil) current]
-    [(TcInlinePayloadLayoutList.Cons payload rest)
-      (lower-register-payload-word-type-fields
-        (box-get rest)
+  (lower-register-payload-word-type-fields-at payloads word-index current 0))
+
+(define (lower-register-payload-word-type-fields-at
+  [payloads : TcInlinePayloadLayoutList]
+  [word-index : i64]
+  [current : AstType]
+  [index : i64]) : AstType
+  (if (>= index (tc-inline-payload-layout-list-count payloads))
+    current
+    (let
+      [payload : TcInlinePayloadLayout
+        (tc-inline-payload-layout-list-ref payloads index)]
+      (lower-register-payload-word-type-fields-at
+        payloads
         word-index
         (lower-register-word-type-merge
           current
           (tc-inline-payload-layout-type payload)
           (tc-inline-payload-layout-offset payload)
-          word-index))]))
+          word-index)
+        (+ index 1)))))
 
 (define (lower-register-enum-word-type-variants
   [variants : TcInlineVariantLayoutList]
   [word-index : i64]
   [current : AstType]) : AstType
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) current]
-    [(TcInlineVariantLayoutList.Cons variant rest)
-      (match variant
-        [(TcInlineVariantLayout.Variant _ _ _ payloads)
-          (lower-register-enum-word-type-variants
-            (box-get rest)
-            word-index
-            (lower-register-payload-word-type-fields
-              payloads
-              word-index
-              current))])]))
+  (lower-register-enum-word-type-variants-at variants word-index current 0))
+
+(define (lower-register-enum-word-type-variants-at
+  [variants : TcInlineVariantLayoutList]
+  [word-index : i64]
+  [current : AstType]
+  [index : i64]) : AstType
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    current
+    (match (tc-inline-variant-layout-list-ref variants index)
+      [(TcInlineVariantLayout.Variant _ _ _ payloads)
+        (lower-register-enum-word-type-variants-at
+          variants
+          word-index
+          (lower-register-payload-word-type-fields payloads word-index current)
+          (+ index 1))])))
 
 ;; Register-resident aggregate word type for lowering/backend movement. INTEGER
 ;; words are represented as i64 bit words; SSE eightbytes are represented by f64
@@ -14517,45 +14541,53 @@
   [base : CompilerIrValue]
   [values : CompilerIrValueList]
   [fields : TcReprCFieldLayoutList]) : ResultLowerState
+  (lower-store-repr-c-values-at ctx state base values fields 0))
+
+(define (lower-store-repr-c-values-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [fields : TcReprCFieldLayoutList]
+  [field-index : i64]) : ResultLowerState
   (match values
     [(CompilerIrValueList.Nil)
-      (match fields
-        [(TcReprCFieldLayoutList.Nil) (ResultLowerState.Ok state)]
-        [_
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (= field-index (tc-repr-c-field-layout-list-count fields))
+        (ResultLowerState.Ok state)
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Array seq)
-      (lower-store-repr-c-values
+      (lower-store-repr-c-values-at
         ctx
         state
         base
         (compiler-ir-value-seq-to-list seq)
-        fields)]
+        fields
+        field-index)]
     [(CompilerIrValueList.Cons value rest-values)
-      (match fields
-        [(TcReprCFieldLayoutList.Cons field rest-fields)
-          (match field
-            [(TcReprCFieldLayout.Field _ field-ty offset)
-              (let
-                [stored-state : LowerState
-                  (if (lower-repr-c-inline-field? ctx field-ty)
-                    (lower-copy-bytes
-                      state
-                      base
-                      offset
-                      value
-                      0
-                      (lower-repr-c-field-size ctx field-ty))
-                    (lower-store-at-offset state base offset value field-ty))]
-                (lower-store-repr-c-values
-                  ctx
-                  stored-state
-                  base
-                  (box-get rest-values)
-                  (box-get rest-fields)))])]
-        [(TcReprCFieldLayoutList.Nil)
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
+      (if (>= field-index (tc-repr-c-field-layout-list-count fields))
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (match (tc-repr-c-field-layout-list-ref fields field-index)
+          [(TcReprCFieldLayout.Field _ field-ty offset)
+            (let
+              [stored-state : LowerState
+                (if (lower-repr-c-inline-field? ctx field-ty)
+                  (lower-copy-bytes
+                    state
+                    base
+                    offset
+                    value
+                    0
+                    (lower-repr-c-field-size ctx field-ty))
+                  (lower-store-at-offset state base offset value field-ty))]
+              (lower-store-repr-c-values-at
+                ctx
+                stored-state
+                base
+                (box-get rest-values)
+                fields
+                (+ field-index 1)))]))]))
 
 (define (lower-store-inline-struct-values
   [ctx : TcContext]
@@ -16202,18 +16234,22 @@
 (define (lower-field-info-from-repr-c-list
   [fields : TcReprCFieldLayoutList]
   [field-name : String]) : ResultLowerFieldInfo
-  (match fields
-    [(TcReprCFieldLayoutList.Nil)
-      (ResultLowerFieldInfo.Err
-        (box
-          (lower-diagnostic
-            (string.append "lower: unknown struct field " field-name))))]
-    [(TcReprCFieldLayoutList.Cons field rest)
-      (match field
-        [(TcReprCFieldLayout.Field name ty offset)
-          (if (string.eq name field-name)
-            (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset ty))
-            (lower-field-info-from-repr-c-list (box-get rest) field-name))])]))
+  (lower-field-info-from-repr-c-list-at fields field-name 0))
+
+(define (lower-field-info-from-repr-c-list-at
+  [fields : TcReprCFieldLayoutList]
+  [field-name : String]
+  [index : i64]) : ResultLowerFieldInfo
+  (if (>= index (tc-repr-c-field-layout-list-count fields))
+    (ResultLowerFieldInfo.Err
+      (box
+        (lower-diagnostic
+          (string.append "lower: unknown struct field " field-name))))
+    (match (tc-repr-c-field-layout-list-ref fields index)
+      [(TcReprCFieldLayout.Field name ty offset)
+        (if (string.eq name field-name)
+          (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset ty))
+          (lower-field-info-from-repr-c-list-at fields field-name (+ index 1)))])))
 
 (define (lower-struct-field-info
   [ctx : TcContext]
@@ -25298,14 +25334,20 @@
 (define (lower-c-abi-inline-fields-integer-only?
   [ctx : TcContext]
   [fields : TcInlineFieldLayoutList]) : bool
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) true]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (and
-        (lower-c-abi-integer-field-type?
-          ctx
-          (tc-inline-field-layout-type field))
-        (lower-c-abi-inline-fields-integer-only? ctx (box-get rest)))]))
+  (lower-c-abi-inline-fields-integer-only-at? ctx fields 0))
+
+(define (lower-c-abi-inline-fields-integer-only-at?
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]
+  [index : i64]) : bool
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    true
+    (and
+      (lower-c-abi-integer-field-type?
+        ctx
+        (tc-inline-field-layout-type
+          (tc-inline-field-layout-list-ref fields index)))
+      (lower-c-abi-inline-fields-integer-only-at? ctx fields (+ index 1)))))
 
 (define (lower-c-abi-win64-register-struct-id?
   [ctx : TcContext]
@@ -25332,14 +25374,20 @@
 (define (lower-c-abi-inline-fields-win64-register?
   [ctx : TcContext]
   [fields : TcInlineFieldLayoutList]) : bool
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) true]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (and
-        (lower-c-abi-win64-register-field-type?
-          ctx
-          (tc-inline-field-layout-type field))
-        (lower-c-abi-inline-fields-win64-register? ctx (box-get rest)))]))
+  (lower-c-abi-inline-fields-win64-register-at? ctx fields 0))
+
+(define (lower-c-abi-inline-fields-win64-register-at?
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]
+  [index : i64]) : bool
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    true
+    (and
+      (lower-c-abi-win64-register-field-type?
+        ctx
+        (tc-inline-field-layout-type
+          (tc-inline-field-layout-list-ref fields index)))
+      (lower-c-abi-inline-fields-win64-register-at? ctx fields (+ index 1)))))
 
 (define (lower-c-abi-register-aggregate-fields-ok?
   [ctx : TcContext]
@@ -25496,52 +25544,82 @@
   [fields : TcInlineFieldLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) slots]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (lower-c-abi-sysv-classify-fields
+  (lower-c-abi-sysv-classify-fields-at ctx fields base-offset slots 0))
+
+(define (lower-c-abi-sysv-classify-fields-at
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    slots
+    (let
+      [field : TcInlineFieldLayout
+        (tc-inline-field-layout-list-ref fields index)]
+      (lower-c-abi-sysv-classify-fields-at
         ctx
-        (box-get rest)
+        fields
         base-offset
         (lower-c-abi-sysv-classify-type
           ctx
           (tc-inline-field-layout-type field)
           (+ base-offset (tc-inline-field-layout-offset field))
-          slots))]))
+          slots)
+        (+ index 1)))))
 
 (define (lower-c-abi-sysv-classify-payloads
   [ctx : TcContext]
   [payloads : TcInlinePayloadLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match payloads
-    [(TcInlinePayloadLayoutList.Nil) slots]
-    [(TcInlinePayloadLayoutList.Cons payload rest)
-      (lower-c-abi-sysv-classify-payloads
+  (lower-c-abi-sysv-classify-payloads-at ctx payloads base-offset slots 0))
+
+(define (lower-c-abi-sysv-classify-payloads-at
+  [ctx : TcContext]
+  [payloads : TcInlinePayloadLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc-inline-payload-layout-list-count payloads))
+    slots
+    (let
+      [payload : TcInlinePayloadLayout
+        (tc-inline-payload-layout-list-ref payloads index)]
+      (lower-c-abi-sysv-classify-payloads-at
         ctx
-        (box-get rest)
+        payloads
         base-offset
         (lower-c-abi-sysv-classify-type
           ctx
           (tc-inline-payload-layout-type payload)
           (+ base-offset (tc-inline-payload-layout-offset payload))
-          slots))]))
+          slots)
+        (+ index 1)))))
 
 (define (lower-c-abi-sysv-classify-variants
   [ctx : TcContext]
   [variants : TcInlineVariantLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) slots]
-    [(TcInlineVariantLayoutList.Cons variant rest)
-      (match variant
-        [(TcInlineVariantLayout.Variant _ _ _ payloads)
-          (lower-c-abi-sysv-classify-variants
-            ctx
-            (box-get rest)
-            base-offset
-            (lower-c-abi-sysv-classify-payloads ctx payloads base-offset slots))])]))
+  (lower-c-abi-sysv-classify-variants-at ctx variants base-offset slots 0))
+
+(define (lower-c-abi-sysv-classify-variants-at
+  [ctx : TcContext]
+  [variants : TcInlineVariantLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    slots
+    (match (tc-inline-variant-layout-list-ref variants index)
+      [(TcInlineVariantLayout.Variant _ _ _ payloads)
+        (lower-c-abi-sysv-classify-variants-at
+          ctx
+          variants
+          base-offset
+          (lower-c-abi-sysv-classify-payloads ctx payloads base-offset slots)
+          (+ index 1))])))
 
 (define (lower-c-abi-sysv-classify-layout
   [ctx : TcContext]

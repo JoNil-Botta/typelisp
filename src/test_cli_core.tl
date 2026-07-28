@@ -903,7 +903,8 @@
         (ast-expr-cons
           (ast-node-push (AstExpr.Var (tltest-n-id)))
           (ast-expr-cons
-            (ast-node-push (AstExpr.PtrNull (ast-ty-mut-ptr (AstType.I32))))
+            (ast-node-push
+              (AstExpr.PtrNull (ty-node-push (ast-ty-mut-ptr (AstType.I32)))))
             (ast-expr-cons
               (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
               (ast-expr-list-new))))))))

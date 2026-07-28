@@ -1009,15 +1009,24 @@ fi
 # the whole family, so the next step costs a one-number edit instead of the
 # archaeology that took (#5764).
 #
-# Current headroom, used against capacity on the exact #5980 merge probe:
-# expr macro_expand 2819383/2883584, expr typecheck 1678684/1703936,
-# type macro_expand 20538/21504, and type typecheck 5980/6144. #5980 added the
+# Current headroom, used against capacity, measured directly on Windows after
+# the AstExpr row narrowing landed:
+# expr macro_expand 2859302/2883584, expr typecheck 1694533/1703936,
+# type macro_expand 20702/21504, and type typecheck 6180/7168. #5980 added the
 # LSP code-action source and transcript coverage. Transformer-owned hygiene
 # nodes still reuse their CTFE slots instead of retaining a second complete
 # expression tree. All four sit within a
 # few percent of their next step, so expect these to move. #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
 # crossing, which is the normal case this shape is meant to make cheap.
+#
+# type typecheck DID cross on the AstExpr row narrowing, 6 -> 7 segments. That
+# commit moves nine variants' inline AstType payloads into the type pool, so the
+# types those rows used to carry inline are now interned nodes: measured
+# directly on this host, the same selfhost probe reports 6040 type nodes at the
+# typecheck boundary before the change and 6180 after (+140), and 6144 was the
+# 6-segment capacity. The expr pools grew too (+1838..+2254 nodes) but held
+# their segment counts, which is the sizing this trade was designed to buy.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
@@ -1041,24 +1050,25 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
     # are derived, so a source-size step is a one-number edit and the three
-    # views cannot drift apart. Expr nodes are 40 bytes in segments of 65536;
-    # type nodes are 24 bytes in segments of 1024.
+    # views cannot drift apart. Expr nodes are 32 bytes in segments of 65536
+    # (they were 40 until the AstExpr row moved its inline AstType payloads
+    # behind AstTypeIds); type nodes are 24 bytes in segments of 1024.
     #
     # The type-pool macro_expand boundary is load-bearing beyond sizing: the
     # ordinary scalar `for` macro retains each source binding's produced type
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 44 65536 40 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 44 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 26 65536 40 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 26 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 21 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 6 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 7 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

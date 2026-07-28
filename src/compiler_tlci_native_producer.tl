@@ -1013,8 +1013,9 @@
               "0"
               "0")
             (+ arg-opened 1))))]
-    [(AstExpr.Borrow mutable lifetime place)
+    [(AstExpr.Borrow mutable lifetime-id place)
       (let
+        [lifetime : AstBorrowLifetime (ast-borrow-lifetime-from-id lifetime-id)]
         [place-opened : i64
           (embedded-native-template-ops params place ops ops-count)]
         (if (< place-opened 0)
@@ -1247,7 +1248,7 @@
         ops-count)]
     ;; `(ptr-cast p : T)`: the pointer expression then the type template, the
     ;; same operand order expr-make-array uses. Refs #5605.
-    [(AstExpr.PtrCast ptr-node cast-type)
+    [(AstExpr.PtrCast ptr-node cast-type-id)
       (let
         [ptr-opened : i64
           (embedded-native-template-ops params ptr-node ops ops-count)]
@@ -1255,7 +1256,10 @@
           -1
           (let
             [type-opened : i64
-              (embedded-native-template-type-ops cast-type ops ops-count)]
+              (embedded-native-template-type-ops
+                (ty-node-get cast-type-id)
+                ops
+                ops-count)]
             (if (< type-opened 0)
               -1
               (begin
@@ -1331,7 +1335,7 @@
                     (+ target-opened value-opened 1))))))))]
     ;; `(cast e : T)`: the operand template then the type template, matching
     ;; the interpreted quote's cast reconstruction. Refs #5604.
-    [(AstExpr.Cast value-node ty)
+    [(AstExpr.Cast value-node ty-id)
       (let
         [value-opened : i64
           (embedded-native-template-ops params value-node ops ops-count)]
@@ -1339,7 +1343,10 @@
           -1
           (let
             [type-opened : i64
-              (embedded-native-template-type-ops ty ops ops-count)]
+              (embedded-native-template-type-ops
+                (ty-node-get ty-id)
+                ops
+                ops-count)]
             (if (< type-opened 0)
               -1
               (begin
@@ -1428,9 +1435,12 @@
                   "0"
                   "0")
                 (+ target-opened value-opened 1))))))]
-    [(AstExpr.MakeArray elem-type size-node)
+    [(AstExpr.MakeArray elem-type-id size-node)
       (let
-        [ti : i64 (embedded-stdlib-tlci-type-unquote-param params elem-type)]
+        [ti : i64
+          (embedded-stdlib-tlci-type-unquote-param
+            params
+            (ty-node-get elem-type-id))]
         (if (< ti 0)
           -1
           (begin
@@ -2663,8 +2673,8 @@
         "1"
         "0")]
     [(AstExpr.Var name) (embedded-native-data-local-text (intern-str name))]
-    [(AstExpr.Cast inner ty)
-      (if (embedded-native-data-cast-type? ty)
+    [(AstExpr.Cast inner ty-id)
+      (if (embedded-native-data-cast-type? (ty-node-get ty-id))
         (embedded-native-data-index-text inner)
         "")]
     ;; `(+ i 1)` in an index or literal-builder position stays plain generated
@@ -2782,8 +2792,8 @@
     (if (not (string.eq plain ""))
       (EmbeddedNativeDataValue "" plain 0)
       (match (embedded-stdlib-tlci-unwrap-expr node)
-        [(AstExpr.Cast inner ty)
-          (if (embedded-native-data-cast-type? ty)
+        [(AstExpr.Cast inner ty-id)
+          (if (embedded-native-data-cast-type? (ty-node-get ty-id))
             (embedded-native-data-value params inner)
             (embedded-native-data-value-none))]
         [(AstExpr.If cond-node then-node else-node)

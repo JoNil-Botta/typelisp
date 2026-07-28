@@ -30,7 +30,14 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
-  1)
+  ;; 2: `AstExpr.PtrNull` carries an AstTypeId instead of an inline AstType, so
+  ;; wire tag 57 now writes one i64 index into the serialized type pool rather
+  ;; than an inline type record. The payload is git-hash keyed and fail-closed
+  ;; (`compiler_driver_core.tl` requires TlciProducerIdentityAdmission.ExactMatch
+  ;; and degrades to re-parse), so this is a deployment invariant rather than a
+  ;; format-compatibility one -- but the version still moves whenever the
+  ;; encoding shape does.
+  2)
 
 (define (surface-ast-write-macro-type-kind-list!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]

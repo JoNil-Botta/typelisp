@@ -472,7 +472,11 @@
     [source-make : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
-        (ast.AstExpr.MakeArray (ast.AstType.Ptr source-i64-ty) source-body))]
+        (ast.AstExpr.MakeArray
+          (ast.ast-node-pool-context-type-push
+            source-pools
+            (ast.AstType.Ptr source-i64-ty))
+          source-body))]
     [value-name-id : i64 (ci.intern-generated-name "value")]
     [same-name-id : i64 (ci.intern-generated-name "same")]
     [array-name-id : i64 (ci.intern-generated-name "array")]
@@ -615,7 +619,10 @@
     [borrow-id : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
-        (ast.AstExpr.Borrow false ast.AstBorrowLifetime.Inferred spanned-id))]
+        (ast.AstExpr.Borrow
+          false
+          (ast.ast-borrow-lifetime-to-id ast.AstBorrowLifetime.Inferred)
+          spanned-id))]
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
@@ -632,10 +639,10 @@
                 (match decl
                   [(ast.AstDecl.Def _ _ _ body)
                     (match (ast.ast-node-pool-context-expr-get out-pools body)
-                      [(ast.AstExpr.Borrow mutable lifetime inner)
+                      [(ast.AstExpr.Borrow mutable lifetime-id inner)
                         (and
                           (not mutable)
-                          (match lifetime
+                          (match (ast.ast-borrow-lifetime-from-id lifetime-id)
                             [(ast.AstBorrowLifetime.Inferred) true]
                             [_ false])
                           (match (ast.ast-node-pool-context-expr-get

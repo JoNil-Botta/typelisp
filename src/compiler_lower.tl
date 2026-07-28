@@ -6567,7 +6567,7 @@
         [(ResultLowerAstExprList.Ok rewritten)
           (ResultLowerAstExpr.Ok (AstExpr.Begin rewritten))]
         [(ResultLowerAstExprList.Err diag) (ResultLowerAstExpr.Err diag)])]
-    [(AstExpr.Ann inner-box ty)
+    [(AstExpr.Ann inner-box ty-id)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
@@ -6575,12 +6575,12 @@
             (ResultLowerAstExpr.Ok
               (lower-context-expr-get
                 ctx
-                (ast-expr-ann-with-pools
+                (ast-expr-ann-with-pools-id
                   (tc-context-pools ctx)
                   (lower-context-expr-push ctx rewritten)
-                  ty)))]
+                  ty-id)))]
           [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(AstExpr.Cast inner-box ty)
+    [(AstExpr.Cast inner-box ty-id)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (match (lower-spmd-inline-expr ctx env type-env inner subst shadowed)
@@ -6588,10 +6588,10 @@
             (ResultLowerAstExpr.Ok
               (lower-context-expr-get
                 ctx
-                (ast-expr-cast-with-pools
+                (ast-expr-cast-with-pools-id
                   (tc-context-pools ctx)
                   (lower-context-expr-push ctx rewritten)
-                  ty)))]
+                  ty-id)))]
           [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
@@ -7508,7 +7508,9 @@
             (ast-node-pool-context-expr-push
               pools
               (AstExpr.TypeLiteral
-                (tc-resolve-type ctx (AstType.Var root-key-id))))
+                (ast-node-pool-context-type-push
+                  pools
+                  (tc-resolve-type ctx (AstType.Var root-key-id)))))
             (lower-clone-handoff-type-args ctx pools (box-get rest)))))]))
 
 (define (lower-clone-handoff-request-decl
@@ -9863,10 +9865,14 @@
       (lower-used-types-add-expr-list pools used module values)]
     [(AstExpr.DynArray values)
       (lower-used-types-add-expr-list pools used module values)]
-    [(AstExpr.MakeArray ty len-box)
+    [(AstExpr.MakeArray ty-id len-box)
       (lower-used-types-add-expr-id
         pools
-        (lower-used-types-add-type pools used module ty)
+        (lower-used-types-add-type
+          pools
+          used
+          module
+          (ast-node-pool-context-type-get pools ty-id))
         module
         len-box)]
     [(AstExpr.ArrayRef array-box index-box)
@@ -9919,16 +9925,24 @@
       (lower-used-types-add-expr-list pools used module exprs)]
     [(AstExpr.Set _ value-box)
       (lower-used-types-add-expr-id pools used module value-box)]
-    [(AstExpr.Ann inner-box ty)
+    [(AstExpr.Ann inner-box ty-id)
       (lower-used-types-add-expr-id
         pools
-        (lower-used-types-add-type pools used module ty)
+        (lower-used-types-add-type
+          pools
+          used
+          module
+          (ast-node-pool-context-type-get pools ty-id))
         module
         inner-box)]
-    [(AstExpr.Cast inner-box ty)
+    [(AstExpr.Cast inner-box ty-id)
       (lower-used-types-add-expr-id
         pools
-        (lower-used-types-add-type pools used module ty)
+        (lower-used-types-add-type
+          pools
+          used
+          module
+          (ast-node-pool-context-type-get pools ty-id))
         module
         inner-box)]
     [(AstExpr.Borrow _ _ inner-box)
@@ -10078,9 +10092,18 @@
         (lower-used-types-add-expr-id pools used module inner-box)
         module
         value-box)]
-    [(AstExpr.TypeLiteral ty) (lower-used-types-add-type pools used module ty)]
-    [(AstExpr.Init maybe-ty)
-      (lower-used-types-add-maybe-type pools used module maybe-ty)]
+    [(AstExpr.TypeLiteral ty-id)
+      (lower-used-types-add-type
+        pools
+        used
+        module
+        (ast-node-pool-context-type-get pools ty-id))]
+    [(AstExpr.Init maybe-ty-id)
+      (lower-used-types-add-maybe-type
+        pools
+        used
+        module
+        (ast-maybe-type-from-id-with-pools pools maybe-ty-id))]
     [(AstExpr.Comptime inner-box)
       (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Quote _) used]
@@ -10097,7 +10120,12 @@
       (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Break) used]
     [(AstExpr.Continue) used]
-    [(AstExpr.PtrNull ty) (lower-used-types-add-type pools used module ty)]
+    [(AstExpr.PtrNull ty-id)
+      (lower-used-types-add-type
+        pools
+        used
+        module
+        (ast-node-pool-context-type-get pools ty-id))]
     [(AstExpr.PtrNullCheck value-box)
       (lower-used-types-add-expr-id pools used module value-box)]
     [(AstExpr.PtrAddrOf place-box)
@@ -10116,18 +10144,26 @@
         (lower-used-types-add-expr-id pools used module ptr-box)
         module
         offset-box)]
-    [(AstExpr.PtrCast ptr-box ty)
+    [(AstExpr.PtrCast ptr-box ty-id)
       (lower-used-types-add-expr-id
         pools
-        (lower-used-types-add-type pools used module ty)
+        (lower-used-types-add-type
+          pools
+          used
+          module
+          (ast-node-pool-context-type-get pools ty-id))
         module
         ptr-box)]
     [(AstExpr.PtrToInt ptr-box)
       (lower-used-types-add-expr-id pools used module ptr-box)]
-    [(AstExpr.IntToPtr value-box ty)
+    [(AstExpr.IntToPtr value-box ty-id)
       (lower-used-types-add-expr-id
         pools
-        (lower-used-types-add-type pools used module ty)
+        (lower-used-types-add-type
+          pools
+          used
+          module
+          (ast-node-pool-context-type-get pools ty-id))
         module
         value-box)]
     [(AstExpr.StringData inner-box)
@@ -19729,17 +19765,19 @@
         ctx
         (lower-context-expr-get ctx inner-box)
         to-ty)]
-    [(AstExpr.Ann inner-box from-ty)
+    [(AstExpr.Ann inner-box from-ty-id)
       (lower-float-bitcast-inner-literal-value
         ctx
         (lower-context-expr-get ctx inner-box)
-        (tc-type-without-regions (tc-resolve-type ctx from-ty))
+        (tc-type-without-regions
+          (tc-resolve-type ctx (tc-context-type-get ctx from-ty-id)))
         to-ty)]
-    [(AstExpr.Cast inner-box from-ty)
+    [(AstExpr.Cast inner-box from-ty-id)
       (lower-float-bitcast-inner-literal-value
         ctx
         (lower-context-expr-get ctx inner-box)
-        (tc-type-without-regions (tc-resolve-type ctx from-ty))
+        (tc-type-without-regions
+          (tc-resolve-type ctx (tc-context-type-get ctx from-ty-id)))
         to-ty)]
     [(AstExpr.Literal lit)
       (match (tc-type-strip-region to-ty)
@@ -21996,13 +22034,7 @@
             (AstExpr.Literal (ast-lit-int 0))
             origin)]
         [(AstType.Box elem)
-          (lower-box
-            ctx
-            state
-            env
-            type-env
-            (AstExpr.Init (AstMaybeType.Some (tc-context-type-get ctx elem)))
-            expr-ty)]
+          (lower-box ctx state env type-env (AstExpr.Init elem) expr-ty)]
         [(AstType.Tuple elems)
           (lower-tuple
             ctx
@@ -22873,16 +22905,22 @@
         [(ResultTcType.Ok expr-ty)
           (ResultTcType.Ok (tc-type-without-regions expr-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
+    [(AstExpr.Init maybe-ty-id)
+      (match (ast-maybe-type-from-id-with-pools
+        (tc-context-pools ctx)
+        maybe-ty-id)
         [(AstMaybeType.Some ty)
           (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
         [(AstMaybeType.No)
           (ResultTcType.Err "lower: contextual init requires an expected type")])]
-    [(AstExpr.Ann _ ty)
-      (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
-    [(AstExpr.Cast _ ty)
-      (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExpr.Ann _ ty-id)
+      (ResultTcType.Ok
+        (tc-type-without-regions
+          (tc-resolve-type ctx (tc-context-type-get ctx ty-id))))]
+    [(AstExpr.Cast _ ty-id)
+      (ResultTcType.Ok
+        (tc-type-without-regions
+          (tc-resolve-type ctx (tc-context-type-get ctx ty-id))))]
     [(AstExpr.Unary op inner-box)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
@@ -23201,7 +23239,7 @@
           [(ResultTcType.Err message)
             (ResultLowerExpr.Err
               (box (lower-diagnostic-at-expr origin message)))]))]
-    [(AstExpr.Ann _ ty)
+    [(AstExpr.Ann _ ty-id)
       (lower-expr-with-type
         ctx
         state
@@ -23209,8 +23247,9 @@
         type-env
         expr
         origin
-        (tc-type-without-regions (tc-resolve-type ctx ty)))]
-    [(AstExpr.Cast _ ty)
+        (tc-type-without-regions
+          (tc-resolve-type ctx (tc-context-type-get ctx ty-id))))]
+    [(AstExpr.Cast _ ty-id)
       (lower-expr-with-type
         ctx
         state
@@ -23218,7 +23257,8 @@
         type-env
         expr
         origin
-        (tc-type-without-regions (tc-resolve-type ctx ty)))]
+        (tc-type-without-regions
+          (tc-resolve-type ctx (tc-context-type-get ctx ty-id))))]
     [(AstExpr.Binary op left-box right-box)
       (let
         [left : AstExpr (lower-context-expr-get ctx left-box)]
@@ -23343,8 +23383,10 @@
       (lower-materialize-at-expr state (CompilerIrValue.I64 0) expr-ty origin)]
     [(AstExpr.SpmdProgramCount)
       (lower-materialize-at-expr state (CompilerIrValue.I64 1) expr-ty origin)]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
+    [(AstExpr.Init maybe-ty-id)
+      (match (ast-maybe-type-from-id-with-pools
+        (tc-context-pools ctx)
+        maybe-ty-id)
         [(AstMaybeType.Some ty)
           (lower-init-expr ctx state env type-env ty origin expr-ty)]
         [(AstMaybeType.No)
@@ -23821,10 +23863,17 @@
         [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
         [value : AstExpr (lower-context-expr-get ctx value-box)]
         (lower-struct-set ctx state env type-env receiver field value origin))]
-    [(AstExpr.MakeArray elem-ty len-box)
+    [(AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : AstExpr (lower-context-expr-get ctx len-box)]
-        (lower-make-array ctx state env type-env elem-ty len origin))]
+        (lower-make-array
+          ctx
+          state
+          env
+          type-env
+          (tc-context-type-get ctx elem-ty-id)
+          len
+          origin))]
     [(AstExpr.Array values)
       (lower-array-literal ctx state env type-env values expr-ty origin)]
     [(AstExpr.DynArray values)
@@ -24086,7 +24135,7 @@
           (lower-diagnostic-at-expr
             origin
             "unquote-splicing is only valid inside quasiquote")))]
-    [(AstExpr.TypeLiteral ty)
+    [(AstExpr.TypeLiteral ty-id)
       (ResultLowerExpr.Err
         (box
           (lower-diagnostic-at-expr
@@ -24094,7 +24143,8 @@
             (string.append
               "type value "
               (string.append
-                (tc-type-render (tc-resolve-type ctx ty))
+                (tc-type-render
+                  (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
                 " is compile-time only")))))]
     ;; `(ptr-null : T)` is a pointer-sized zero (pointer ABI size is 8);
     ;; `(ptr-null? p)` is `p == 0` producing a `bool`. No new IR/asm needed.
@@ -24551,8 +24601,10 @@
         origin
         expected-ty
         expected-ty)]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
+    [(AstExpr.Init maybe-ty-id)
+      (match (ast-maybe-type-from-id-with-pools
+        (tc-context-pools ctx)
+        maybe-ty-id)
         [(AstMaybeType.No)
           (lower-init-expr
             ctx
@@ -29089,14 +29141,14 @@
             inner
             result-ty
             origin))]
-      [(AstExpr.Init maybe-ty)
+      [(AstExpr.Init maybe-ty-id)
         (lower-direct-init-into
           ctx
           state
           env
           type-env
           dst
-          maybe-ty
+          (ast-maybe-type-from-id-with-pools (tc-context-pools ctx) maybe-ty-id)
           result-ty
           origin)]
       [(AstExpr.Call func-box args)
@@ -40775,10 +40827,11 @@
           index
           dst-elem
           inner))]
-    [(AstExpr.Cast inner-box cast-ty)
+    [(AstExpr.Cast inner-box cast-ty-id)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        [target-ty : AstType (tc-type-without-regions cast-ty)]
+        [target-ty : AstType
+          (tc-type-without-regions (tc-context-type-get ctx cast-ty-id))]
         (match (lower-simple-vector-map-casted-literal
           ctx
           mode
@@ -50501,11 +50554,12 @@
           lanes
           inner
           expected-ty))]
-    [(AstExpr.Cast inner-box cast-ty)
+    [(AstExpr.Cast inner-box cast-ty-id)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         [resolved-cast : AstType
-          (tc-type-without-regions (tc-resolve-type ctx cast-ty))]
+          (tc-type-without-regions
+            (tc-resolve-type ctx (tc-context-type-get ctx cast-ty-id)))]
         [resolved-expected : AstType
           (tc-type-without-regions (tc-resolve-type ctx expected-ty))]
         (match (lower-simple-vector-map-casted-literal
@@ -55726,10 +55780,14 @@
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-global-value ctx names inner ty))]
-    [(AstExpr.Cast inner-box cast-ty)
+    [(AstExpr.Cast inner-box cast-ty-id)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-global-value ctx names inner cast-ty))]
+        (lower-global-value
+          ctx
+          names
+          inner
+          (tc-context-type-get ctx cast-ty-id)))]
     [(AstExpr.Literal lit)
       (ResultLowerValue.Ok (lower-literal-value-with-type lit ty))]
     [(AstExpr.BinaryData bytes)

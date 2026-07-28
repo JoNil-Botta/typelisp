@@ -1800,10 +1800,10 @@
               [arg : i64 (ast-expr-list-get (& args) 0 -1)]
               (if check-cast
                 (match (ast-node-pool-context-expr-get pools arg)
-                  [(AstExpr.Cast inner ty)
+                  [(AstExpr.Cast inner ty-id)
                     (and
                       (= inner operand)
-                      (match ty
+                      (match (ty-node-get ty-id)
                         [(AstType.I64) true]
                         [_ false]))]
                   [_ false])

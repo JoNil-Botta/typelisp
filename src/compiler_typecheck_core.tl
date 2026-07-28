@@ -18842,8 +18842,10 @@
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.BracketClause items)
       (tc-source-expr-list-policy-ok ctx expr-bases items)]
-    [(AstExpr.TypeLiteral ty) (tc-source-type-policy-ok ctx ty)]
-    [(AstExpr.Init maybe-ty) (tc-source-maybe-type-policy-ok ctx maybe-ty)]
+    [(AstExpr.TypeLiteral ty-id)
+      (tc-source-type-policy-ok ctx (ty-node-get ty-id))]
+    [(AstExpr.Init maybe-ty-id)
+      (tc-source-maybe-type-policy-ok ctx (ast-maybe-type-from-id maybe-ty-id))]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
@@ -18884,10 +18886,10 @@
     [(AstExpr.Array exprs) (tc-source-expr-list-policy-ok ctx expr-bases exprs)]
     [(AstExpr.DynArray exprs)
       (tc-source-expr-list-policy-ok ctx expr-bases exprs)]
-    [(AstExpr.MakeArray elem-ty len-box)
+    [(AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
-        (match (tc-source-type-policy-ok ctx elem-ty)
+        (match (tc-source-type-policy-ok ctx (ty-node-get elem-ty-id))
           [(ResultTcUnit.Ok) (tc-source-expr-policy-ok ctx expr-bases len)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.ArrayRef array-box index-box)
@@ -18929,17 +18931,17 @@
       (let
         [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (tc-source-expr-policy-ok ctx expr-bases value))]
-    [(AstExpr.Ann inner-box ty)
+    [(AstExpr.Ann inner-box ty-id)
       (let
         [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (match (tc-source-expr-policy-ok ctx expr-bases inner)
-          [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx ty)]
+          [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx (ty-node-get ty-id))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstExpr.Cast inner-box ty)
+    [(AstExpr.Cast inner-box ty-id)
       (let
         [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (match (tc-source-expr-policy-ok ctx expr-bases inner)
-          [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx ty)]
+          [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx (ty-node-get ty-id))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.Borrow _ _ place-box)
       (let
@@ -19141,21 +19143,21 @@
         [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
         [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
         (tc-source-expr-pair-policy-ok ctx expr-bases ptr offset))]
-    [(AstExpr.PtrCast ptr-box ty)
+    [(AstExpr.PtrCast ptr-box ty-id)
       (let
         [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
         (match (tc-source-expr-policy-ok ctx expr-bases ptr)
-          [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx ty)]
+          [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx (ty-node-get ty-id))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
         (tc-source-expr-policy-ok ctx expr-bases ptr))]
-    [(AstExpr.IntToPtr value-box ty)
+    [(AstExpr.IntToPtr value-box ty-id)
       (let
         [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
         (match (tc-source-expr-policy-ok ctx expr-bases value)
-          [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx ty)]
+          [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx (ty-node-get ty-id))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.StringData str-box)
       (let
@@ -22806,7 +22808,8 @@
           [(AstMaybeType.No)
             (match (ast-expr-unspan expr)
               [(AstExpr.Literal lit) (ResultTcType.Ok (tc-literal-type lit))]
-              [(AstExpr.Ann _ ty) (ResultTcType.Ok (tc-resolve-type ctx ty))]
+              [(AstExpr.Ann _ ty-id)
+                (ResultTcType.Ok (tc-resolve-type ctx (ty-node-get ty-id)))]
               [_
                 (ResultTcType.Err
                   "typecheck: top-level value requires annotation")])]))]
@@ -22849,7 +22852,8 @@
           [(AstMaybeType.No)
             (match (ast-expr-unspan expr)
               [(AstExpr.Literal lit) (ResultTcType.Ok (tc-literal-type lit))]
-              [(AstExpr.Ann _ ty) (ResultTcType.Ok (tc-resolve-type ctx ty))]
+              [(AstExpr.Ann _ ty-id)
+                (ResultTcType.Ok (tc-resolve-type ctx (ty-node-get ty-id)))]
               [_ (tc-expr ctx env expr)])]))]
     [_ (tc-top-decl-type ctx decl)]))
 
@@ -25022,10 +25026,12 @@
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (tc-with-resource-expr-with-expected ctx env bindings body expected)])]
-    [(AstExpr.Borrow mutable lifetime place-box)
+    [(AstExpr.Borrow mutable lifetime-id place-box)
       (match (tc-normalize-dotted-local-field-node! env place-box)
         [(ResultTcUnit.Ok)
           (let
+            [lifetime : AstBorrowLifetime
+              (ast-borrow-lifetime-from-id lifetime-id)]
             [place : AstExpr (ast-node-get place-box)]
             (if (and mutable allow-mut-by-value-borrow)
               (tc-borrow-expr-with-policy
@@ -25058,8 +25064,8 @@
             (tc-ctfe-value-type-with-expected ctx value expected)]
           [(ResultCtfe.Err diag)
             (ResultTcType.Err (compiler-diagnostic-message (box-get diag)))]))]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
+    [(AstExpr.Init maybe-ty-id)
+      (match (ast-maybe-type-from-id maybe-ty-id)
         [(AstMaybeType.No) (tc-init-expr ctx env expected)]
         [(AstMaybeType.Some ty)
           (match (tc-init-expr ctx env ty)
@@ -44613,22 +44619,24 @@
               [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
               [(ResultTcExprId.Err message) (ResultTcType.Err message)])
             (tc-var-expr-after-local-field-check ctx env name name-text))))]
-    [(AstExpr.TypeLiteral ty)
+    [(AstExpr.TypeLiteral ty-id)
       (ResultTcType.Err
         (string.append
           "type value "
           (string.append
-            (tc-type-render (tc-resolve-type ctx ty))
+            (tc-type-render
+              (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
             " is compile-time only")))]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
+    [(AstExpr.Init maybe-ty-id)
+      (match (ast-maybe-type-from-id maybe-ty-id)
         [(AstMaybeType.Some ty) (tc-init-expr ctx env ty)]
         [(AstMaybeType.No)
           (ResultTcType.Err
             "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")])]
-    [(AstExpr.Ann inner-box ty)
+    [(AstExpr.Ann inner-box ty-id)
       (let
-        [want-ty : AstType (tc-resolve-type ctx ty)]
+        [want-ty : AstType
+          (tc-resolve-type ctx (tc-context-type-get ctx ty-id))]
         (match (tc-expr-with-expected-or-actual-id ctx env inner-box want-ty)
           [(ResultTcType.Ok got)
             (match (tc-expect got want-ty "typecheck: annotation type mismatch")
@@ -44701,10 +44709,11 @@
                 [(ResultTcType.Err message) (ResultTcType.Err message)])))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.DynArray exprs) (tc-expr-dyn-array-literal-infer ctx env exprs)]
-    [(AstExpr.MakeArray elem-ty len-box)
+    [(AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
-        [elem : AstType (tc-resolve-type ctx elem-ty)]
+        [elem : AstType
+          (tc-resolve-type ctx (tc-context-type-get ctx elem-ty-id))]
         (match (tc-expr-with-expected-or-actual-id
           ctx
           env
@@ -44903,11 +44912,12 @@
           [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
           [(ResultTcExprId.Err message) (ResultTcType.Err message)])
         (tc-set-expr-after-local-field-check ctx env name value-box))]
-    [(AstExpr.Cast inner-box ty)
+    [(AstExpr.Cast inner-box ty-id)
       (match (tc-expr-id ctx env inner-box)
         [(ResultTcType.Ok inner-ty)
           (let
-            [target-ty : AstType (tc-resolve-type ctx ty)]
+            [target-ty : AstType
+              (tc-resolve-type ctx (tc-context-type-get ctx ty-id))]
             (if (and (tc-castable-type? inner-ty) (tc-castable-type? target-ty))
               (ResultTcType.Ok target-ty)
               (if (tc-function-to-integer-cast? inner-ty target-ty)
@@ -44917,7 +44927,7 @@
                 (ResultTcType.Err
                   "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [(AstExpr.Borrow mutable lifetime place-box)
+    [(AstExpr.Borrow mutable lifetime-id place-box)
       (match (tc-normalize-dotted-local-field-node! env place-box)
         [(ResultTcUnit.Ok)
           (tc-borrow-expr
@@ -44925,7 +44935,7 @@
             (tc-context-expr-bases ctx)
             env
             mutable
-            lifetime
+            (ast-borrow-lifetime-from-id lifetime-id)
             (ast-node-get place-box))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Unary op inner-box)
@@ -45268,9 +45278,9 @@
         (tc-return-expr ctx env value))]
     [(AstExpr.Break) (tc-loop-control-expr env "break")]
     [(AstExpr.Continue) (tc-loop-control-expr env "continue")]
-    [(AstExpr.PtrNull ty)
+    [(AstExpr.PtrNull ty-id)
       (let
-        [resolved : AstType (tc-resolve-type ctx ty)]
+        [resolved : AstType (tc-resolve-type ctx (ty-node-get ty-id))]
         (match resolved
           [(AstType.Ptr _) (ResultTcType.Ok resolved)]
           [(AstType.MutPtr _) (ResultTcType.Ok resolved)]
@@ -45305,18 +45315,18 @@
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (tc-ptr-offset-expr ctx env ptr offset))]
-    [(AstExpr.PtrCast ptr-box target)
+    [(AstExpr.PtrCast ptr-box target-id)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
-        (tc-ptr-cast-expr ctx env ptr target))]
+        (tc-ptr-cast-expr ctx env ptr (ty-node-get target-id)))]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (tc-ptr-to-int-expr ctx env ptr))]
-    [(AstExpr.IntToPtr value-box target)
+    [(AstExpr.IntToPtr value-box target-id)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (tc-int-to-ptr-expr ctx env value target))]
+        (tc-int-to-ptr-expr ctx env value (ty-node-get target-id)))]
     [(AstExpr.StringData str-box)
       (let
         [str : AstExpr (ast-node-get str-box)]
@@ -47991,9 +48001,11 @@
       (tc-generated-expr-dependent-construct?
         ctx
         (tc-context-expr-get ctx value-id))]
-    [(AstExpr.Ann inner-id ty)
+    [(AstExpr.Ann inner-id ty-id)
       (or
-        (tc-generated-type-dependent-construct? ctx ty)
+        (tc-generated-type-dependent-construct?
+          ctx
+          (tc-context-type-get ctx ty-id))
         (tc-generated-expr-dependent-construct?
           ctx
           (tc-context-expr-get ctx inner-id)))]
@@ -48144,9 +48156,14 @@
         (tc-generated-expr-dependent-construct?
           ctx
           (tc-context-expr-get ctx value-id)))]
-    [(AstExpr.TypeLiteral ty) (tc-generated-type-dependent-construct? ctx ty)]
-    [(AstExpr.Init maybe-ty)
-      (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)]
+    [(AstExpr.TypeLiteral ty-id)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx ty-id))]
+    [(AstExpr.Init maybe-ty-id)
+      (tc-generated-maybe-type-dependent-construct?
+        ctx
+        (ast-maybe-type-from-id-with-pools (tc-context-pools ctx) maybe-ty-id))]
     [(AstExpr.Comptime inner-id)
       (tc-generated-expr-dependent-construct?
         ctx
@@ -48179,7 +48196,10 @@
         (tc-context-expr-get ctx inner-id))]
     [(AstExpr.Break) false]
     [(AstExpr.Continue) false]
-    [(AstExpr.PtrNull ty) (tc-generated-type-dependent-construct? ctx ty)]
+    [(AstExpr.PtrNull ty-id)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx ty-id))]
     [(AstExpr.PtrNullCheck inner-id)
       (tc-generated-expr-dependent-construct?
         ctx
@@ -48208,9 +48228,11 @@
         (tc-generated-expr-dependent-construct?
           ctx
           (tc-context-expr-get ctx offset-id)))]
-    [(AstExpr.PtrCast ptr-id ty)
+    [(AstExpr.PtrCast ptr-id ty-id)
       (or
-        (tc-generated-type-dependent-construct? ctx ty)
+        (tc-generated-type-dependent-construct?
+          ctx
+          (tc-context-type-get ctx ty-id))
         (tc-generated-expr-dependent-construct?
           ctx
           (tc-context-expr-get ctx ptr-id)))]
@@ -48218,9 +48240,11 @@
       (tc-generated-expr-dependent-construct?
         ctx
         (tc-context-expr-get ctx ptr-id))]
-    [(AstExpr.IntToPtr value-id ty)
+    [(AstExpr.IntToPtr value-id ty-id)
       (or
-        (tc-generated-type-dependent-construct? ctx ty)
+        (tc-generated-type-dependent-construct?
+          ctx
+          (tc-context-type-get ctx ty-id))
         (tc-generated-expr-dependent-construct?
           ctx
           (tc-context-expr-get ctx value-id)))]
@@ -62628,15 +62652,17 @@
       (if (and (>= name-id 0) (< name-id (intern-capacity)))
         (intern-str name-id)
         (string.append "<var:" (string.append (string.int->string name-id) ">")))]
-    [(AstExpr.TypeLiteral ty)
-      (match ty
-        [(AstType.Var name-id)
-          (if (and (>= name-id 0) (< name-id (intern-capacity)))
-            (intern-str name-id)
-            (string.append
-              "<type-var:"
-              (string.append (string.int->string name-id) ">")))]
-        [_ (tc-type-render ty)])]
+    [(AstExpr.TypeLiteral ty-id)
+      (let
+        [ty : AstType (ty-node-get ty-id)]
+        (match ty
+          [(AstType.Var name-id)
+            (if (and (>= name-id 0) (< name-id (intern-capacity)))
+              (intern-str name-id)
+              (string.append
+                "<type-var:"
+                (string.append (string.int->string name-id) ">")))]
+          [_ (tc-type-render ty)]))]
     [_ "<expression>"]))
 
 (define (macro-output-origin-name [origin : AstExpr]) : String
@@ -63383,8 +63409,8 @@
               svalue
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(AstExpr.MakeArray ty len-id)
-      (match (macro-type-to-spanned-sexpr ty span origin)
+    [(AstExpr.MakeArray ty-id len-id)
+      (match (macro-type-to-spanned-sexpr (ty-node-get ty-id) span origin)
         [(ResultMacroSexpr.Ok sty)
           (match (macro-child-to-spanned-sexpr len-id span origin)
             [(ResultMacroSexpr.Ok slen)
@@ -63496,10 +63522,10 @@
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(AstExpr.Cast inner-id ty)
+    [(AstExpr.Cast inner-id ty-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
-          (match (macro-type-to-spanned-sexpr ty span origin)
+          (match (macro-type-to-spanned-sexpr (ty-node-get ty-id) span origin)
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form3-id
@@ -63512,10 +63538,10 @@
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(AstExpr.Ann inner-id ty)
+    [(AstExpr.Ann inner-id ty-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
-          (match (macro-type-to-spanned-sexpr ty span origin)
+          (match (macro-type-to-spanned-sexpr (ty-node-get ty-id) span origin)
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form3-id
@@ -63528,7 +63554,7 @@
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(AstExpr.Borrow mutable lifetime place-id)
+    [(AstExpr.Borrow mutable lifetime-id place-id)
       (match (macro-child-to-spanned-sexpr place-id span origin)
         [(ResultMacroSexpr.Ok splace)
           (let
@@ -63536,7 +63562,7 @@
               (if mutable
                 (cbi.compiler-builtin-ctfe-ref 111)
                 (cbi.compiler-builtin-ctfe-ref 110))]
-            (match lifetime
+            (match (ast-borrow-lifetime-from-id lifetime-id)
               [(AstBorrowLifetime.Inferred)
                 (ResultMacroSexpr.Ok (macro-form1-id head-id splace span))]
               [(AstBorrowLifetime.Named name)
@@ -63603,8 +63629,8 @@
               (reader.SpannedSexpr.Int index (string.int->string index) span)
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(AstExpr.Init maybe-ty)
-      (match maybe-ty
+    [(AstExpr.Init maybe-ty-id)
+      (match (ast-maybe-type-from-id maybe-ty-id)
         [(AstMaybeType.No)
           (ResultMacroSexpr.Ok
             (reader.spanned-sexpr-cons
@@ -63623,14 +63649,14 @@
                   sty
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
-    [(AstExpr.TypeLiteral ty)
-      (match (macro-type-to-spanned-sexpr ty span origin)
+    [(AstExpr.TypeLiteral ty-id)
+      (match (macro-type-to-spanned-sexpr (ty-node-get ty-id) span origin)
         [(ResultMacroSexpr.Ok sty)
           (ResultMacroSexpr.Ok
             (macro-form1-id (cbi.compiler-builtin-ctfe-ref 135) sty span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-    [(AstExpr.PtrNull ty)
-      (match (macro-type-to-spanned-sexpr ty span origin)
+    [(AstExpr.PtrNull ty-id)
+      (match (macro-type-to-spanned-sexpr (ty-node-get ty-id) span origin)
         [(ResultMacroSexpr.Ok sty)
           (ResultMacroSexpr.Ok
             (macro-form2-id
@@ -63671,11 +63697,11 @@
         offset-id
         span
         origin)]
-    [(AstExpr.PtrCast ptr-id ty)
+    [(AstExpr.PtrCast ptr-id ty-id)
       (macro-child-type-form3-id
         (cbi.compiler-builtin-ctfe-ref 194)
         ptr-id
-        ty
+        (ty-node-get ty-id)
         span
         origin)]
     [(AstExpr.PtrToInt ptr-id)
@@ -63684,11 +63710,11 @@
         ptr-id
         span
         origin)]
-    [(AstExpr.IntToPtr value-id ty)
+    [(AstExpr.IntToPtr value-id ty-id)
       (macro-child-type-form3-id
         (cbi.compiler-builtin-ctfe-ref 196)
         value-id
-        ty
+        (ty-node-get ty-id)
         span
         origin)]
     [(AstExpr.StringData value-id)
@@ -66587,11 +66613,11 @@
       (ast-node-push
         (AstExpr.DynArray
           (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
-    [(AstExpr.MakeArray ty len-box)
+    [(AstExpr.MakeArray ty-id len-box)
       (let
         [len : i64 len-box]
         (ast-expr-make-array
-          (macro-hygiene-type ty env macro-name)
+          (macro-hygiene-type (ty-node-get ty-id) env macro-name)
           (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
@@ -66653,24 +66679,27 @@
         (ast-expr-set-id
           (macro-hygiene-rename-var-id env macro-name name)
           (macro-hygiene-expr expr-bases rhs env macro-name depth)))]
-    [(AstExpr.Ann inner-box ty)
+    [(AstExpr.Ann inner-box ty-id)
       (let
         [inner : i64 inner-box]
         (ast-expr-ann
           (macro-hygiene-expr expr-bases inner env macro-name depth)
-          (macro-hygiene-type ty env macro-name)))]
-    [(AstExpr.Cast inner-box ty)
+          (macro-hygiene-type (ty-node-get ty-id) env macro-name)))]
+    [(AstExpr.Cast inner-box ty-id)
       (let
         [inner : i64 inner-box]
         (ast-expr-cast
           (macro-hygiene-expr expr-bases inner env macro-name depth)
-          (macro-hygiene-type ty env macro-name)))]
-    [(AstExpr.Borrow mutable lifetime place-box)
+          (macro-hygiene-type (ty-node-get ty-id) env macro-name)))]
+    [(AstExpr.Borrow mutable lifetime-id place-box)
       (let
         [place : i64 place-box]
         (ast-expr-borrow
           mutable
-          (macro-hygiene-borrow-lifetime lifetime env macro-name)
+          (macro-hygiene-borrow-lifetime
+            (ast-borrow-lifetime-from-id lifetime-id)
+            env
+            macro-name)
           (macro-hygiene-expr expr-bases place env macro-name depth)))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
@@ -66871,11 +66900,15 @@
         (ast-expr-box-set
           (macro-hygiene-expr expr-bases inner env macro-name depth)
           (macro-hygiene-expr expr-bases value env macro-name depth)))]
-    [(AstExpr.TypeLiteral ty)
-      (ast-node-push
-        (AstExpr.TypeLiteral (macro-hygiene-type ty env macro-name)))]
-    [(AstExpr.Init maybe-ty)
-      (ast-expr-init-maybe (macro-hygiene-maybe-type maybe-ty env macro-name))]
+    [(AstExpr.TypeLiteral ty-id)
+      (ast-expr-type-literal
+        (macro-hygiene-type (ty-node-get ty-id) env macro-name))]
+    [(AstExpr.Init maybe-ty-id)
+      (ast-expr-init-maybe
+        (macro-hygiene-maybe-type
+          (ast-maybe-type-from-id maybe-ty-id)
+          env
+          macro-name))]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : i64 inner-box]
@@ -66891,8 +66924,10 @@
         [inner : i64 inner-box]
         (ast-expr-try
           (macro-hygiene-expr expr-bases inner env macro-name depth)))]
-    [(AstExpr.PtrNull ty)
-      (ast-node-push (AstExpr.PtrNull (macro-hygiene-type ty env macro-name)))]
+    [(AstExpr.PtrNull ty-id)
+      (ast-node-push
+        (AstExpr.PtrNull
+          (ty-node-push (macro-hygiene-type (ty-node-get ty-id) env macro-name))))]
     [(AstExpr.PtrNullCheck ptr-box)
       (let
         [ptr : i64 ptr-box]
@@ -66922,23 +66957,23 @@
         (ast-expr-ptr-offset
           (macro-hygiene-expr expr-bases ptr env macro-name depth)
           (macro-hygiene-expr expr-bases offset env macro-name depth)))]
-    [(AstExpr.PtrCast ptr-box ty)
+    [(AstExpr.PtrCast ptr-box ty-id)
       (let
         [ptr : i64 ptr-box]
         (ast-expr-ptr-cast
           (macro-hygiene-expr expr-bases ptr env macro-name depth)
-          (macro-hygiene-type ty env macro-name)))]
+          (macro-hygiene-type (ty-node-get ty-id) env macro-name)))]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : i64 ptr-box]
         (ast-expr-ptr-to-int
           (macro-hygiene-expr expr-bases ptr env macro-name depth)))]
-    [(AstExpr.IntToPtr value-box ty)
+    [(AstExpr.IntToPtr value-box ty-id)
       (let
         [value : i64 value-box]
         (ast-expr-int-to-ptr
           (macro-hygiene-expr expr-bases value env macro-name depth)
-          (macro-hygiene-type ty env macro-name)))]
+          (macro-hygiene-type (ty-node-get ty-id) env macro-name)))]
     [(AstExpr.StringData inner-box)
       (let
         [inner : i64 inner-box]
@@ -70370,7 +70405,7 @@
           [(CtfeMaybeValue.Some value)
             (match value
               [(CompilerCtfeValue.Type ty)
-                (ast-node-push (AstExpr.TypeLiteral ty))]
+                (ast-node-push (AstExpr.TypeLiteral (ty-node-push ty)))]
               [_ (ast-node-push expr)])]
           [(CtfeMaybeValue.None) (ast-node-push expr)]))]
     [(AstExpr.Call func-box args)
@@ -71513,10 +71548,10 @@
         [(ResultMacroExprList.Ok nexprs)
           (ResultMacroExpr.Ok (ast-node-push (AstExpr.DynArray nexprs)))]
         [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-    [(AstExpr.MakeArray ty len-box)
+    [(AstExpr.MakeArray ty-id len-box)
       (match (macro-expand-node ctx env decls depth len-box)
         [(ResultMacroExpr.Ok nlen)
-          (ResultMacroExpr.Ok (ast-expr-make-array ty nlen))]
+          (ResultMacroExpr.Ok (ast-expr-make-array-id ty-id nlen))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
@@ -71605,20 +71640,20 @@
             [(ResultMacroExpr.Ok nbody)
               (ResultMacroExpr.Ok (ast-expr-lambda params maybe-ret nbody))]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])])]
-    [(AstExpr.Ann inner-box ty)
+    [(AstExpr.Ann inner-box ty-id)
       (match (macro-expand-node ctx env decls depth inner-box)
         [(ResultMacroExpr.Ok ninner)
-          (ResultMacroExpr.Ok (ast-expr-ann ninner ty))]
+          (ResultMacroExpr.Ok (ast-expr-ann-id ninner ty-id))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-    [(AstExpr.Cast inner-box ty)
+    [(AstExpr.Cast inner-box ty-id)
       (match (macro-expand-node ctx env decls depth inner-box)
         [(ResultMacroExpr.Ok ninner)
-          (ResultMacroExpr.Ok (ast-expr-cast ninner ty))]
+          (ResultMacroExpr.Ok (ast-expr-cast-id ninner ty-id))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-    [(AstExpr.Borrow mutable lifetime place-box)
+    [(AstExpr.Borrow mutable lifetime-id place-box)
       (match (macro-expand-node ctx env decls depth place-box)
         [(ResultMacroExpr.Ok nplace)
-          (ResultMacroExpr.Ok (ast-expr-borrow mutable lifetime nplace))]
+          (ResultMacroExpr.Ok (ast-expr-borrow-id mutable lifetime-id nplace))]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(AstExpr.StructGet inner-box field)
       (match (macro-expand-node ctx env decls depth inner-box)

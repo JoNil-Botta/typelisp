@@ -2033,10 +2033,10 @@
       (selfhost-lint-dead-expr-refs (ast-node-get tuple) refs)]
     [(AstExpr.Array exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
     [(AstExpr.DynArray exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
-    [(AstExpr.MakeArray elem len)
+    [(AstExpr.MakeArray elem-id len)
       (selfhost-lint-dead-expr-refs
         (ast-node-get len)
-        (selfhost-lint-dead-type-refs elem refs))]
+        (selfhost-lint-dead-type-refs (ty-node-get elem-id) refs))]
     [(AstExpr.ArrayRef array index)
       (selfhost-lint-dead-expr-refs
         (ast-node-get index)
@@ -2071,13 +2071,13 @@
       (selfhost-lint-dead-expr-refs
         (ast-node-get value)
         (selfhost-lint-dead-ref-add-id refs target))]
-    [(AstExpr.Ann inner ty)
+    [(AstExpr.Ann inner ty-id)
       (selfhost-lint-dead-type-refs
-        ty
+        (ty-node-get ty-id)
         (selfhost-lint-dead-expr-refs (ast-node-get inner) refs))]
-    [(AstExpr.Cast inner ty)
+    [(AstExpr.Cast inner ty-id)
       (selfhost-lint-dead-type-refs
-        ty
+        (ty-node-get ty-id)
         (selfhost-lint-dead-expr-refs (ast-node-get inner) refs))]
     [(AstExpr.Borrow _ _ place)
       (selfhost-lint-dead-expr-refs (ast-node-get place) refs)]
@@ -2169,8 +2169,12 @@
       (selfhost-lint-dead-expr-refs
         (ast-node-get value)
         (selfhost-lint-dead-expr-refs (ast-node-get inner) refs))]
-    [(AstExpr.TypeLiteral ty) (selfhost-lint-dead-type-refs ty refs)]
-    [(AstExpr.Init maybe-ty) (selfhost-lint-dead-maybe-type-refs maybe-ty refs)]
+    [(AstExpr.TypeLiteral ty-id)
+      (selfhost-lint-dead-type-refs (ty-node-get ty-id) refs)]
+    [(AstExpr.Init maybe-ty-id)
+      (selfhost-lint-dead-maybe-type-refs
+        (ast-maybe-type-from-id maybe-ty-id)
+        refs)]
     [(AstExpr.Comptime inner)
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
     [(AstExpr.Quote inner)
@@ -2189,7 +2193,8 @@
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
     [(AstExpr.Break) refs]
     [(AstExpr.Continue) refs]
-    [(AstExpr.PtrNull ty) (selfhost-lint-dead-type-refs ty refs)]
+    [(AstExpr.PtrNull ty-id)
+      (selfhost-lint-dead-type-refs (ty-node-get ty-id) refs)]
     [(AstExpr.PtrNullCheck inner)
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]
     [(AstExpr.PtrAddrOf place)
@@ -2204,15 +2209,15 @@
       (selfhost-lint-dead-expr-refs
         (ast-node-get offset)
         (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs))]
-    [(AstExpr.PtrCast ptr ty)
+    [(AstExpr.PtrCast ptr ty-id)
       (selfhost-lint-dead-type-refs
-        ty
+        (ty-node-get ty-id)
         (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs))]
     [(AstExpr.PtrToInt ptr)
       (selfhost-lint-dead-expr-refs (ast-node-get ptr) refs)]
-    [(AstExpr.IntToPtr value ty)
+    [(AstExpr.IntToPtr value ty-id)
       (selfhost-lint-dead-type-refs
-        ty
+        (ty-node-get ty-id)
         (selfhost-lint-dead-expr-refs (ast-node-get value) refs))]
     [(AstExpr.StringData inner)
       (selfhost-lint-dead-expr-refs (ast-node-get inner) refs)]

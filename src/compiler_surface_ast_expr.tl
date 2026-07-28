@@ -338,10 +338,10 @@
       (begin
         (surface-ast-write-i64! out 12)
         (surface-ast-write-expr-list! out items))]
-    [(AstExpr.MakeArray ty size)
+    [(AstExpr.MakeArray ty-id size)
       (begin
         (surface-ast-write-i64! out 13)
-        (surface-ast-write-type! out context ty)
+        (surface-ast-write-i64! out ty-id)
         (surface-ast-write-i64! out size))]
     [(AstExpr.ArrayRef target index)
       (begin
@@ -388,21 +388,21 @@
         (surface-ast-write-i64! out 22)
         (surface-ast-write-name! out context name)
         (surface-ast-write-i64! out value))]
-    [(AstExpr.Ann inner ty)
+    [(AstExpr.Ann inner ty-id)
       (begin
         (surface-ast-write-i64! out 23)
         (surface-ast-write-i64! out inner)
-        (surface-ast-write-type! out context ty))]
-    [(AstExpr.Cast inner ty)
+        (surface-ast-write-i64! out ty-id))]
+    [(AstExpr.Cast inner ty-id)
       (begin
         (surface-ast-write-i64! out 24)
         (surface-ast-write-i64! out inner)
-        (surface-ast-write-type! out context ty))]
-    [(AstExpr.Borrow mutable lifetime inner)
+        (surface-ast-write-i64! out ty-id))]
+    [(AstExpr.Borrow mutable lifetime-id inner)
       (begin
         (surface-ast-write-i64! out 25)
         (surface-ast-write-bool! out mutable)
-        (surface-ast-write-borrow-lifetime! out context lifetime)
+        (surface-ast-write-i64! out lifetime-id)
         (surface-ast-write-i64! out inner))]
     [(AstExpr.Match payload)
       (match (box-get payload)
@@ -524,14 +524,14 @@
         (surface-ast-write-i64! out 44)
         (surface-ast-write-i64! out target)
         (surface-ast-write-i64! out value))]
-    [(AstExpr.TypeLiteral ty)
+    [(AstExpr.TypeLiteral ty-id)
       (begin
         (surface-ast-write-i64! out 45)
-        (surface-ast-write-type! out context ty))]
-    [(AstExpr.Init maybe-ty)
+        (surface-ast-write-i64! out ty-id))]
+    [(AstExpr.Init maybe-ty-id)
       (begin
         (surface-ast-write-i64! out 46)
-        (surface-ast-write-maybe-type! out context maybe-ty))]
+        (surface-ast-write-i64! out maybe-ty-id))]
     [(AstExpr.Comptime inner)
       (begin
         (surface-ast-write-i64! out 47)
@@ -566,10 +566,10 @@
         (surface-ast-write-i64! out inner))]
     [(AstExpr.Break) (surface-ast-write-i64! out 55)]
     [(AstExpr.Continue) (surface-ast-write-i64! out 56)]
-    [(AstExpr.PtrNull ty)
+    [(AstExpr.PtrNull ty-id)
       (begin
         (surface-ast-write-i64! out 57)
-        (surface-ast-write-type! out context ty))]
+        (surface-ast-write-i64! out ty-id))]
     [(AstExpr.PtrNullCheck ptr)
       (begin
         (surface-ast-write-i64! out 58)
@@ -592,20 +592,20 @@
         (surface-ast-write-i64! out 62)
         (surface-ast-write-i64! out ptr)
         (surface-ast-write-i64! out offset))]
-    [(AstExpr.PtrCast ptr ty)
+    [(AstExpr.PtrCast ptr ty-id)
       (begin
         (surface-ast-write-i64! out 63)
         (surface-ast-write-i64! out ptr)
-        (surface-ast-write-type! out context ty))]
+        (surface-ast-write-i64! out ty-id))]
     [(AstExpr.PtrToInt ptr)
       (begin
         (surface-ast-write-i64! out 64)
         (surface-ast-write-i64! out ptr))]
-    [(AstExpr.IntToPtr value ty)
+    [(AstExpr.IntToPtr value ty-id)
       (begin
         (surface-ast-write-i64! out 65)
         (surface-ast-write-i64! out value)
-        (surface-ast-write-type! out context ty))]
+        (surface-ast-write-i64! out ty-id))]
     [(AstExpr.StringData value)
       (begin
         (surface-ast-write-i64! out 66)
@@ -705,7 +705,7 @@
       [(= tag 12) (AstExpr.DynArray (surface-ast-read-expr-list! reader))]
       [(= tag 13)
         (AstExpr.MakeArray
-          (surface-ast-read-type! reader)
+          (surface-ast-read-i64! reader)
           (surface-ast-read-i64! reader))]
       [(= tag 14)
         (AstExpr.ArrayRef
@@ -742,15 +742,15 @@
       [(= tag 23)
         (AstExpr.Ann
           (surface-ast-read-i64! reader)
-          (surface-ast-read-type! reader))]
+          (surface-ast-read-i64! reader))]
       [(= tag 24)
         (AstExpr.Cast
           (surface-ast-read-i64! reader)
-          (surface-ast-read-type! reader))]
+          (surface-ast-read-i64! reader))]
       [(= tag 25)
         (AstExpr.Borrow
           (surface-ast-read-bool! reader)
-          (surface-ast-read-borrow-lifetime! reader)
+          (surface-ast-read-i64! reader)
           (surface-ast-read-i64! reader))]
       [(= tag 26)
         (AstExpr.Match
@@ -837,8 +837,8 @@
         (AstExpr.BoxSet
           (surface-ast-read-i64! reader)
           (surface-ast-read-i64! reader))]
-      [(= tag 45) (AstExpr.TypeLiteral (surface-ast-read-type! reader))]
-      [(= tag 46) (AstExpr.Init (surface-ast-read-maybe-type! reader))]
+      [(= tag 45) (AstExpr.TypeLiteral (surface-ast-read-i64! reader))]
+      [(= tag 46) (AstExpr.Init (surface-ast-read-i64! reader))]
       [(= tag 47) (AstExpr.Comptime (surface-ast-read-i64! reader))]
       [(= tag 48) (AstExpr.Quote (surface-ast-read-i64! reader))]
       [(= tag 49) (AstExpr.Quasiquote (surface-ast-read-i64! reader))]
@@ -849,7 +849,7 @@
       [(= tag 54) (AstExpr.Return (surface-ast-read-i64! reader))]
       [(= tag 55) AstExpr.Break]
       [(= tag 56) AstExpr.Continue]
-      [(= tag 57) (AstExpr.PtrNull (surface-ast-read-type! reader))]
+      [(= tag 57) (AstExpr.PtrNull (surface-ast-read-i64! reader))]
       [(= tag 58) (AstExpr.PtrNullCheck (surface-ast-read-i64! reader))]
       [(= tag 59) (AstExpr.PtrAddrOf (surface-ast-read-i64! reader))]
       [(= tag 60) (AstExpr.PtrRead (surface-ast-read-i64! reader))]
@@ -864,12 +864,12 @@
       [(= tag 63)
         (AstExpr.PtrCast
           (surface-ast-read-i64! reader)
-          (surface-ast-read-type! reader))]
+          (surface-ast-read-i64! reader))]
       [(= tag 64) (AstExpr.PtrToInt (surface-ast-read-i64! reader))]
       [(= tag 65)
         (AstExpr.IntToPtr
           (surface-ast-read-i64! reader)
-          (surface-ast-read-type! reader))]
+          (surface-ast-read-i64! reader))]
       [(= tag 66) (AstExpr.StringData (surface-ast-read-i64! reader))]
       [(= tag 67)
         (AstExpr.StringFromBytes

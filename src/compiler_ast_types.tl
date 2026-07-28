@@ -581,7 +581,7 @@
   (TupleRef i64 i64)
   (Array AstExprList)
   (DynArray AstExprList)
-  (MakeArray AstType i64)
+  (MakeArray i64 i64)
   (ArrayRef i64 i64)
   (ArraySet i64 i64 i64)
   ;; Checked move-out from a compatibility dynamic array. The second operand is
@@ -597,9 +597,9 @@
   ;; unsafe-context flag is consumed by later raw-pointer ops).
   (Unsafe AstExprList)
   (Set i64 i64)
-  (Ann i64 AstType)
-  (Cast i64 AstType)
-  (Borrow bool AstBorrowLifetime i64)
+  (Ann i64 i64)
+  (Cast i64 i64)
+  (Borrow bool i64 i64)
   (Match (Box AstMatch))
   (Foreach (Box AstForeach))
   (SpmdReduce (Box AstSpmdReduce))
@@ -620,11 +620,11 @@
   (BoxTake i64)
   (BoxSet i64 i64)
   ;; Compile-time-only type value literal: `(type T)`.
-  (TypeLiteral AstType)
+  (TypeLiteral i64)
   ;; Zero/identity initialization. `(init : T)` carries `AstMaybeType.Some T`;
   ;; contextual `(init)` carries `AstMaybeType.No` until type checking/lowering sees
   ;; an expected type.
-  (Init AstMaybeType)
+  (Init i64)
   ;; Compile-time evaluation form `(comptime expr)`. Parsed and
   ;; type-checked (as the inner expression's type); evaluated by CTFE.
   (Comptime i64)
@@ -655,7 +655,11 @@
   (Continue)
   ;; Null raw-pointer construction `(ptr-null : T)` where `T` is `(Ptr U)` or
   ;; `(MutPtr U)`. Lowers to a pointer-sized zero; type is `T`.
-  (PtrNull AstType)
+  ;; The operand is an AstTypeId into the owning context's type pool, not an
+  ;; inline AstType: an inline AstType is 24 B and would hold the AstExpr row
+  ;; at its 40 B ceiling (see target/r1-design.md 1.1). Resolve it with the
+  ;; reader that matches the pool the node came from.
+  (PtrNull i64)
   ;; Null check `(ptr-null? p)` on a raw pointer. Result is `bool`.
   (PtrNullCheck i64)
   ;; Unsafe raw-pointer operations. The typechecker admits these only
@@ -664,9 +668,9 @@
   (PtrRead i64)
   (PtrWrite i64 i64)
   (PtrOffset i64 i64)
-  (PtrCast i64 AstType)
+  (PtrCast i64 i64)
   (PtrToInt i64)
-  (IntToPtr i64 AstType)
+  (IntToPtr i64 i64)
   ;; Low-level FFI bridge operations used by stdlib. These expose raw backing
   ;; storage and process entry state without synthesizing runtime wrapper calls.
   (StringData i64)
@@ -710,19 +714,73 @@
   65536)
 (define ast-type-node-pool-segment-size : i64
   1024)
+
+;; --- node row strides: the single source of truth ---
+;; `size-of` on an enum type value reports the handle width, not the compiler's
+;; inline enum representation, so the inline row stride has to be stated here
+;; and kept aligned with the compiler's own layout. These two numbers are
+;; load-bearing POINTER ARITHMETIC, not bookkeeping: every unchecked pool load
+;; and store multiplies an id by them, and the biased-base tables subtract a
+;; segment multiple of them from each segment's real data pointer. A value that
+;; disagrees with the compiler's layout produces wrong addresses silently --
+;; memory corruption, not a type error. `ast-node-stride-pinned?` cross-checks
+;; both against the layout the compiler actually gives an array slot.
+;;
+;; These are zero-argument FUNCTIONS, not globals, and that is deliberate --
+;; the other two spellings were tried and both fail:
+;;
+;;   * A literal-initialised global folds to the same immediate, but naming the
+;;     stride that way perturbs the SEED compiler's inliner. Measured:
+;;     `target/stage0/typelisp` then inlines `ty-node-get` into
+;;     `ty-node-shallow-eq?`, moves 32k lines of stage1 assembly, and the
+;;     resulting stage1 segfaults in `tc-move-check-expr`.
+;;   * A `defmacro` does not survive here at all: the macro expander does not
+;;     descend into the operand of `(int->ptr x : (Ptr T))`, which is exactly
+;;     where all thirteen hot multiplies live, so the call reaches typecheck
+;;     unexpanded and fails as an unbound name.
+;;
+;; A zero-arg function inlines and folds to the same immediate the literal
+;; produced, and stage1.s stays byte-identical to the pre-consolidation tree.
+;; See target/r1p1-notes.md 1.3.
+(define (ast-expr-node-bytes) : i64
+  32)
+
+(define (ast-type-node-bytes) : i64
+  24)
+
 (define ast-expr-node-pool-segment-bytes : i64
-  ;; `size-of` on an enum type value reports the handle width, not the
-  ;; compiler's inline enum representation. AstExpr occupies 40 bytes in an
-  ;; array slot after payload boxing; keep this counter aligned with the arena
-  ;; allocation (plus the array's separately profiled 16-byte header).
-  (* 65536 40))
+  ;; Arena allocation per segment, plus the array's separately profiled
+  ;; 16-byte header.
+  (* ast-expr-node-pool-segment-size (ast-expr-node-bytes)))
 (define ast-type-node-pool-segment-bytes : i64
-  ;; AstType occupies 24 bytes in an array slot.
-  (* 1024 24))
+  (* ast-type-node-pool-segment-size (ast-type-node-bytes)))
 (define ast-node-pool-max-segments : i64
   ;; Preserve the former type pool's practical four-million-node ceiling while
   ;; keeping the fixed base table small (32 KiB per pool).
   4096)
+
+;; --- sentinel encodings for the AstExpr row ---
+;; `AstExpr.Init` and `AstExpr.Borrow` used to inline an `AstMaybeType`
+;; (8 + AstType 24 = 32 B) and an `AstBorrowLifetime` (16 B). Both held the
+;; row at its 40 B ceiling. They now carry a single i64 with -1 as the
+;; "absent" encoding, which is safe in both cases: an AstTypeId is a pool
+;; index (>= 0) and a borrow lifetime name is an intern id (>= 0).
+;;
+;; The AstMaybeType twins are pool-aware because the payload is a type; the
+;; borrow-lifetime twins are not, because the payload is a name id that
+;; needs no pool.
+(define ast-maybe-type-id-absent : i64
+  -1)
+
+(define (ast-borrow-lifetime-to-id [lifetime : AstBorrowLifetime]) : i64
+  (match lifetime
+    [(AstBorrowLifetime.Inferred) ast-maybe-type-id-absent]
+    [(AstBorrowLifetime.Named name) name]))
+
+(define (ast-borrow-lifetime-from-id [id : i64]) : AstBorrowLifetime
+  (if (< id 0)
+    (AstBorrowLifetime.Inferred)
+    (AstBorrowLifetime.Named id)))
 
 (define (ast-node-pool-segment-base-table-new) : (Array i64)
   (array.make-array i64 ast-node-pool-max-segments))
@@ -856,7 +914,7 @@
               (shr id 16))))]
       [dest : (MutPtr i64)
         (unsafe
-          (int->ptr (+ biased-base (* id 40)) : (MutPtr i64)))]
+          (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
       [source : (Ptr i64)
         (unsafe
           (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
@@ -866,8 +924,7 @@
             (ptr-write! dest (ptr-read source))
             (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
             (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-            (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
-            (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
+            (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))))
         (set! ast-node-pool-count (+ id 1))
         (ast-node-pool-active-context-capture-expr!)
         id))))
@@ -882,7 +939,8 @@
 ;;
 ;; IDs below `count` prove both indices valid. Avoid two redundant bounds checks
 ;; in this hottest compiler operation, but cast through bytes so pointer offset
-;; uses AstExpr's real 40-byte inline stride rather than pointer-word stride.
+;; uses AstExpr's real inline stride (`ast-expr-node-bytes`) rather than
+;; pointer-word stride.
 ;; Compatibility contexts install their backing state at the context boundary,
 ;; keeping the path branch-free.
 (define (ast-node-get [id : i64]) : AstExpr
@@ -894,7 +952,8 @@
             (int->ptr ast-node-pool-segment-bases : (Ptr i64))
             (shr id 16))))]
     (unsafe
-      (ptr-read (int->ptr (+ biased-base (* id 40)) : (Ptr AstExpr))))))
+      (ptr-read
+        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
 
 ;: Overwrite the node at `id` in the selected AST pool (used when a node is
 ;; rewritten in place).
@@ -910,7 +969,7 @@
               (shr id 16))))]
       [dest : (MutPtr i64)
         (unsafe
-          (int->ptr (+ biased-base (* id 40)) : (MutPtr i64)))]
+          (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
       [source : (Ptr i64)
         (unsafe
           (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
@@ -919,8 +978,7 @@
           (ptr-write! dest (ptr-read source))
           (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
           (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
-          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4))))))))
+          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))))))
 
 ;: Truncate the pool back to `mark` nodes (used to discard nodes from a failed
 ;: parse). Reset to 0 between compiles so a fresh compile reuses its segments.
@@ -1082,7 +1140,7 @@
         (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
     [dest : (MutPtr i64)
       (unsafe
-        (int->ptr (+ biased-base (* id 40)) : (MutPtr i64)))]
+        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
     [source : (Ptr i64)
       (unsafe
         (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
@@ -1092,8 +1150,7 @@
           (ptr-write! dest (ptr-read source))
           (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
           (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
-          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
+          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))))
       (AstExprNodePoolPushOk
         (AstExprNodePoolState
           segment-bases
@@ -1112,7 +1169,8 @@
             (int->ptr (struct-get pool segment-bases) : (Ptr i64))
             (shr id 16))))]
     (unsafe
-      (ptr-read (int->ptr (+ biased-base (* id 40)) : (Ptr AstExpr))))))
+      (ptr-read
+        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
 
 (define (ast-expr-node-pool-state-set!
   [pool : AstExprNodePoolState]
@@ -1127,7 +1185,7 @@
             (shr id 16))))]
     [dest : (MutPtr i64)
       (unsafe
-        (int->ptr (+ biased-base (* id 40)) : (MutPtr i64)))]
+        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
     [source : (Ptr i64)
       (unsafe
         (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
@@ -1137,8 +1195,7 @@
           (ptr-write! dest (ptr-read source))
           (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
           (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
-          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
+          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))))
       pool)))
 
 (define (ast-node-pool-state-capture) : AstExprNodePoolState
@@ -1508,7 +1565,7 @@
     [persistent : AstType (ty-node-persist node)]
     [dest : (MutPtr i64)
       (unsafe
-        (int->ptr (+ biased-base (* id 24)) : (MutPtr i64)))]
+        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64)))]
     [source : (Ptr i64)
       (unsafe
         (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
@@ -1602,7 +1659,8 @@
             (int->ptr (struct-get pool segment-bases) : (Ptr i64))
             (shr id 10))))]
     (unsafe
-      (ptr-read (int->ptr (+ biased-base (* id 24)) : (Ptr AstType))))))
+      (ptr-read
+        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
 
 (define (ast-type-node-pool-state-set!
   [pool : AstTypeNodePoolState]
@@ -1629,7 +1687,7 @@
             (shr id 10))))]
     [dest : (MutPtr i64)
       (unsafe
-        (int->ptr (+ biased-base (* id 24)) : (MutPtr i64)))]
+        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64)))]
     [source : (Ptr i64)
       (unsafe
         (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
@@ -1668,7 +1726,7 @@
       [persistent : AstType (ty-node-persist node)]
       [dest : (MutPtr i64)
         (unsafe
-          (int->ptr (+ biased-base (* id 24)) : (MutPtr i64)))]
+          (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64)))]
       [source : (Ptr i64)
         (unsafe
           (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
@@ -1695,7 +1753,7 @@
 ;; deduplicated when their parent is pushed, which makes shallow field
 ;; equality (child ids included) exact structural equality. A cli.tl compile
 ;; previously pushed >8M nodes for a few thousand distinct types; hash-consing
-;; collapses the pool by orders of magnitude, shrinking both the 40-byte-slot
+;; collapses the pool by orders of magnitude, shrinking both the node-slot
 ;; footprint and the pre-sized pool itself. The dedup table is a fixed
 ;; open-addressing map from node hash to id (+1; 0 = empty), cleared on pool
 ;; truncate/reset. If it ever passes half load, pushes fall back to plain
@@ -2039,7 +2097,7 @@
 ;: Read the type node at `id` from the installed type pool.
 ;;
 ;; As with `ast-node-get`, cast the inner backing store through bytes so the
-;; unchecked load uses AstType's 24-byte inline stride.
+;; unchecked load uses AstType's real inline stride (`ast-type-node-bytes`).
 (define (ty-node-get [id : i64]) : AstType
   (let
     [biased-base : i64
@@ -2049,7 +2107,8 @@
             (int->ptr ty-node-pool-segment-bases : (Ptr i64))
             (shr id 10))))]
     (unsafe
-      (ptr-read (int->ptr (+ biased-base (* id 24)) : (Ptr AstType))))))
+      (ptr-read
+        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
 
 ;; Identity of the current type-node id space: bumped whenever ids may change
 ;; meaning (truncation discards ids; a pool-state install swaps the whole
@@ -2462,7 +2521,8 @@
       (unsafe
         (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
     (unsafe
-      (ptr-read (int->ptr (+ biased-base (* id 40)) : (Ptr AstExpr))))))
+      (ptr-read
+        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
 
 ;; Segment-bases pointer of the context's live expr-pool cell. A grow appends to
 ;; this table in place and never moves it, and a push rewrites the cell without
@@ -2526,7 +2586,8 @@
       (unsafe
         (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
     (unsafe
-      (ptr-read (int->ptr (+ biased-base (* id 24)) : (Ptr AstType))))))
+      (ptr-read
+        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
 
 ;; Segment-bases pointer of the context's live type-pool cell. The cell is
 ;; replaced on every push, so callers may only cache this across pure reads.
@@ -4806,7 +4867,16 @@
   (ast-node-push (AstExpr.TupleRef target index)))
 
 (define (ast-expr-make-array [elem : AstType] [size : i64]) : i64
-  (ast-node-push (AstExpr.MakeArray elem size)))
+  (ast-node-push (AstExpr.MakeArray (ty-node-push elem) size)))
+
+(define (ast-expr-make-array-id [elem-id : i64] [size : i64]) : i64
+  (ast-node-push (AstExpr.MakeArray elem-id size)))
+
+(define (ast-expr-type-literal [ty : AstType]) : i64
+  (ast-node-push (AstExpr.TypeLiteral (ty-node-push ty))))
+
+(define (ast-expr-type-literal-id [ty-id : i64]) : i64
+  (ast-node-push (AstExpr.TypeLiteral ty-id)))
 
 (define (ast-expr-array-ref [target : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.ArrayRef target index)))
@@ -4829,17 +4899,31 @@
 (define (ast-expr-set-id [name : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.Set name value)))
 
+;; The AstType-taking constructors keep their signature and intern the type
+;; themselves, so the ~50 call sites that build a literal type are unchanged.
+;; The `-id` twins below are for walks that already hold an AstTypeId and
+;; would otherwise round-trip it through `ty-node-get`/`ty-node-push`.
 (define (ast-expr-ann [expr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.Ann expr ty)))
+  (ast-node-push (AstExpr.Ann expr (ty-node-push ty))))
+
+(define (ast-expr-ann-id [expr : i64] [ty-id : i64]) : i64
+  (ast-node-push (AstExpr.Ann expr ty-id)))
 
 (define (ast-expr-cast [expr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.Cast expr ty)))
+  (ast-node-push (AstExpr.Cast expr (ty-node-push ty))))
+
+(define (ast-expr-cast-id [expr : i64] [ty-id : i64]) : i64
+  (ast-node-push (AstExpr.Cast expr ty-id)))
 
 (define (ast-expr-borrow
   [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [expr : i64]) : i64
-  (ast-node-push (AstExpr.Borrow mutable lifetime expr)))
+  (ast-node-push
+    (AstExpr.Borrow mutable (ast-borrow-lifetime-to-id lifetime) expr)))
+
+(define (ast-expr-borrow-id [mutable : bool] [lifetime-id : i64] [expr : i64]) : i64
+  (ast-node-push (AstExpr.Borrow mutable lifetime-id expr)))
 
 (define (ast-expr-match [scrutinee : i64] [arms : AstMatchArmList]) : i64
   (ast-node-push (AstExpr.Match (box (AstMatch.Match scrutinee arms)))))
@@ -4933,8 +5017,36 @@
 (define (ast-expr-box-set [target : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.BoxSet target value)))
 
+;: Intern a maybe-type into the installed type pool, `-1` for absent.
+(define (ast-maybe-type-to-id [maybe-ty : AstMaybeType]) : i64
+  (match maybe-ty
+    [(AstMaybeType.No) ast-maybe-type-id-absent]
+    [(AstMaybeType.Some ty) (ty-node-push ty)]))
+
+(define (ast-maybe-type-from-id [id : i64]) : AstMaybeType
+  (if (< id 0)
+    (AstMaybeType.No)
+    (AstMaybeType.Some (ty-node-get id))))
+
+(define (ast-maybe-type-to-id-with-pools
+  [pools : AstNodePoolContext]
+  [maybe-ty : AstMaybeType]) : i64
+  (match maybe-ty
+    [(AstMaybeType.No) ast-maybe-type-id-absent]
+    [(AstMaybeType.Some ty) (ast-node-pool-context-type-push pools ty)]))
+
+(define (ast-maybe-type-from-id-with-pools
+  [pools : AstNodePoolContext]
+  [id : i64]) : AstMaybeType
+  (if (< id 0)
+    (AstMaybeType.No)
+    (AstMaybeType.Some (ast-node-pool-context-type-get pools id))))
+
 (define (ast-expr-init-maybe [maybe-ty : AstMaybeType]) : i64
-  (ast-node-push (AstExpr.Init maybe-ty)))
+  (ast-node-push (AstExpr.Init (ast-maybe-type-to-id maybe-ty))))
+
+(define (ast-expr-init-maybe-id [maybe-ty-id : i64]) : i64
+  (ast-node-push (AstExpr.Init maybe-ty-id)))
 
 (define (ast-expr-init [ty : AstType]) : i64
   (ast-expr-init-maybe (AstMaybeType.Some ty)))
@@ -4982,13 +5094,19 @@
   (ast-node-push (AstExpr.PtrOffset ptr offset)))
 
 (define (ast-expr-ptr-cast [ptr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.PtrCast ptr ty)))
+  (ast-node-push (AstExpr.PtrCast ptr (ty-node-push ty))))
+
+(define (ast-expr-ptr-cast-id [ptr : i64] [ty-id : i64]) : i64
+  (ast-node-push (AstExpr.PtrCast ptr ty-id)))
 
 (define (ast-expr-ptr-to-int [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrToInt ptr)))
 
 (define (ast-expr-int-to-ptr [value : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.IntToPtr value ty)))
+  (ast-node-push (AstExpr.IntToPtr value (ty-node-push ty))))
+
+(define (ast-expr-int-to-ptr-id [value : i64] [ty-id : i64]) : i64
+  (ast-node-push (AstExpr.IntToPtr value ty-id)))
 
 (define (ast-expr-string-data [value : i64]) : i64
   (ast-node-push (AstExpr.StringData value)))
@@ -5081,7 +5199,9 @@
   [pools : AstNodePoolContext]
   [elem : AstType]
   [size : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.MakeArray elem size)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.MakeArray (ast-node-pool-context-type-push pools elem) size)))
 
 (define (ast-expr-dyn-array-with-pools
   [pools : AstNodePoolContext]
@@ -5136,20 +5256,38 @@
   [pools : AstNodePoolContext]
   [expr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Ann expr ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Ann expr (ast-node-pool-context-type-push pools ty))))
+
+(define (ast-expr-ann-with-pools-id
+  [pools : AstNodePoolContext]
+  [expr : i64]
+  [ty-id : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.Ann expr ty-id)))
 
 (define (ast-expr-cast-with-pools
   [pools : AstNodePoolContext]
   [expr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Cast expr ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Cast expr (ast-node-pool-context-type-push pools ty))))
+
+(define (ast-expr-cast-with-pools-id
+  [pools : AstNodePoolContext]
+  [expr : i64]
+  [ty-id : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.Cast expr ty-id)))
 
 (define (ast-expr-borrow-with-pools
   [pools : AstNodePoolContext]
   [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [expr : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Borrow mutable lifetime expr)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Borrow mutable (ast-borrow-lifetime-to-id lifetime) expr)))
 
 (define (ast-expr-match-with-pools
   [pools : AstNodePoolContext]
@@ -5280,7 +5418,9 @@
 (define (ast-expr-init-maybe-with-pools
   [pools : AstNodePoolContext]
   [maybe-ty : AstMaybeType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Init maybe-ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Init (ast-maybe-type-to-id-with-pools pools maybe-ty))))
 
 (define (ast-expr-init-with-pools [pools : AstNodePoolContext] [ty : AstType]) : i64
   (ast-expr-init-maybe-with-pools pools (AstMaybeType.Some ty)))
@@ -5350,7 +5490,9 @@
   [pools : AstNodePoolContext]
   [ptr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.PtrCast ptr ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.PtrCast ptr (ast-node-pool-context-type-push pools ty))))
 
 (define (ast-expr-ptr-to-int-with-pools
   [pools : AstNodePoolContext]
@@ -5361,7 +5503,9 @@
   [pools : AstNodePoolContext]
   [value : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.IntToPtr value ty)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.IntToPtr value (ast-node-pool-context-type-push pools ty))))
 
 (define (ast-expr-string-data-with-pools
   [pools : AstNodePoolContext]
@@ -7126,9 +7270,9 @@
       (AstExpr.Array (ast-compaction-remap-expr-list remap items))]
     [(AstExpr.DynArray items)
       (AstExpr.DynArray (ast-compaction-remap-expr-list remap items))]
-    [(AstExpr.MakeArray elem size)
+    [(AstExpr.MakeArray elem-id size)
       (AstExpr.MakeArray
-        (ast-compaction-remap-type remap elem)
+        (ast-compaction-remap-type-id remap elem-id)
         (ast-compaction-remap-expr-id remap size))]
     [(AstExpr.ArrayRef target index)
       (AstExpr.ArrayRef
@@ -7162,18 +7306,18 @@
       (AstExpr.Unsafe (ast-compaction-remap-expr-list remap exprs))]
     [(AstExpr.Set name value)
       (AstExpr.Set name (ast-compaction-remap-expr-id remap value))]
-    [(AstExpr.Ann inner ty)
+    [(AstExpr.Ann inner ty-id)
       (AstExpr.Ann
         (ast-compaction-remap-expr-id remap inner)
-        (ast-compaction-remap-type remap ty))]
-    [(AstExpr.Cast inner ty)
+        (ast-compaction-remap-type-id remap ty-id))]
+    [(AstExpr.Cast inner ty-id)
       (AstExpr.Cast
         (ast-compaction-remap-expr-id remap inner)
-        (ast-compaction-remap-type remap ty))]
-    [(AstExpr.Borrow mutable lifetime inner)
+        (ast-compaction-remap-type-id remap ty-id))]
+    [(AstExpr.Borrow mutable lifetime-id inner)
       (AstExpr.Borrow
         mutable
-        lifetime
+        lifetime-id
         (ast-compaction-remap-expr-id remap inner))]
     [(AstExpr.Match payload)
       (match (box-get payload)
@@ -7280,10 +7424,13 @@
       (AstExpr.BoxSet
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap value))]
-    [(AstExpr.TypeLiteral ty)
-      (AstExpr.TypeLiteral (ast-compaction-remap-type remap ty))]
-    [(AstExpr.Init maybe-ty)
-      (AstExpr.Init (ast-compaction-remap-maybe-type remap maybe-ty))]
+    [(AstExpr.TypeLiteral ty-id)
+      (AstExpr.TypeLiteral (ast-compaction-remap-type-id remap ty-id))]
+    [(AstExpr.Init maybe-ty-id)
+      (AstExpr.Init
+        (if (< maybe-ty-id 0)
+          maybe-ty-id
+          (ast-compaction-remap-type-id remap maybe-ty-id)))]
     [(AstExpr.Comptime inner)
       (AstExpr.Comptime (ast-compaction-remap-expr-id remap inner))]
     [(AstExpr.Quote inner)
@@ -7302,8 +7449,8 @@
       (AstExpr.Return (ast-compaction-remap-expr-id remap inner))]
     [(AstExpr.Break) AstExpr.Break]
     [(AstExpr.Continue) AstExpr.Continue]
-    [(AstExpr.PtrNull ty)
-      (AstExpr.PtrNull (ast-compaction-remap-type remap ty))]
+    [(AstExpr.PtrNull ty-id)
+      (AstExpr.PtrNull (ast-compaction-remap-type-id remap ty-id))]
     [(AstExpr.PtrNullCheck ptr)
       (AstExpr.PtrNullCheck (ast-compaction-remap-expr-id remap ptr))]
     [(AstExpr.PtrAddrOf place)
@@ -7318,16 +7465,16 @@
       (AstExpr.PtrOffset
         (ast-compaction-remap-expr-id remap ptr)
         (ast-compaction-remap-expr-id remap offset))]
-    [(AstExpr.PtrCast ptr ty)
+    [(AstExpr.PtrCast ptr ty-id)
       (AstExpr.PtrCast
         (ast-compaction-remap-expr-id remap ptr)
-        (ast-compaction-remap-type remap ty))]
+        (ast-compaction-remap-type-id remap ty-id))]
     [(AstExpr.PtrToInt ptr)
       (AstExpr.PtrToInt (ast-compaction-remap-expr-id remap ptr))]
-    [(AstExpr.IntToPtr value ty)
+    [(AstExpr.IntToPtr value ty-id)
       (AstExpr.IntToPtr
         (ast-compaction-remap-expr-id remap value)
-        (ast-compaction-remap-type remap ty))]
+        (ast-compaction-remap-type-id remap ty-id))]
     [(AstExpr.StringData value)
       (AstExpr.StringData (ast-compaction-remap-expr-id remap value))]
     [(AstExpr.StringFromBytes data len)
@@ -8811,6 +8958,68 @@
               (= (struct-get item symbol) 5)))]
         [(AstImportedSpmdMetadata.No) false]))))
 
+;; Pin `ast-expr-node-bytes` / `ast-type-node-bytes` to the compiler's REAL
+;; inline array stride.
+;;
+;; `size-of` on an enum reports the handle width, so the two stride constants
+;; are stated by hand and consumed by unchecked pointer arithmetic in every
+;; pool load and store. If a constant ever disagrees with the layout the
+;; compiler actually gives `(Array AstExpr)` / `(Array AstType)`, every pool
+;; access computes a wrong address and the failure is silent memory
+;; corruption, not a type error.
+;;
+;; The check plays the two representations against each other: `array-set!`
+;; addresses a slot with the compiler's own stride, while the reader below
+;; addresses it as `base + index * <the constant>`. They agree only when the
+;; constant is right. Distinct payloads at both indices mean an off-by-one
+;; stride cannot alias into a passing answer.
+(define (ast-expr-node-stride-pinned?) : bool
+  (let
+    [slots : (Array AstExpr) (array.make-array AstExpr 2)]
+    [_w0 : unit (array-set! slots 0 (AstExpr.Var 0))]
+    [_w1 : unit (array-set! slots 1 (AstExpr.Comptime 987654321))]
+    [base : i64
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (array-data slots) : (Ptr u8))))
+        : i64)]
+    (and
+      (match (unsafe
+        (ptr-read
+          (int->ptr (+ base (* 0 (ast-expr-node-bytes))) : (Ptr AstExpr))))
+        [(AstExpr.Var name) (= name 0)]
+        [_ false])
+      (match (unsafe
+        (ptr-read
+          (int->ptr (+ base (* 1 (ast-expr-node-bytes))) : (Ptr AstExpr))))
+        [(AstExpr.Comptime inner) (= inner 987654321)]
+        [_ false]))))
+
+(define (ast-type-node-stride-pinned?) : bool
+  (let
+    [slots : (Array AstType) (array.make-array AstType 2)]
+    [_w0 : unit (array-set! slots 0 (AstType.I64))]
+    [_w1 : unit (array-set! slots 1 (AstType.Array 123456789 42))]
+    [base : i64
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (array-data slots) : (Ptr u8))))
+        : i64)]
+    (and
+      (match (unsafe
+        (ptr-read
+          (int->ptr (+ base (* 0 (ast-type-node-bytes))) : (Ptr AstType))))
+        [(AstType.I64) true]
+        [_ false])
+      (match (unsafe
+        (ptr-read
+          (int->ptr (+ base (* 1 (ast-type-node-bytes))) : (Ptr AstType))))
+        [(AstType.Array elem count) (and (= elem 123456789) (= count 42))]
+        [_ false]))))
+
+(define (ast-node-stride-pinned?) : bool
+  (and (ast-expr-node-stride-pinned?) (ast-type-node-stride-pinned?)))
+
 (define (compiler-ast-smoke) : i64
   (let
     [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
@@ -8851,6 +9060,7 @@
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
     [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
+    [node-stride-ok? : bool (ast-node-stride-pinned?)]
     [spmd-metadata-clone-ok? : bool (compiler-ast-spmd-metadata-clone-smoke?)]
     [imported-spmd-metadata-clone-ok? : bool
       (compiler-ast-imported-spmd-metadata-clone-smoke?)]
@@ -8868,6 +9078,7 @@
           decl-program-ok?
           type-dedup-ok?
           pool-exhaustion-ok?
+          node-stride-ok?
           spmd-metadata-clone-ok?
           imported-spmd-metadata-clone-ok?)
           (+

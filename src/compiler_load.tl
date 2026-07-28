@@ -5792,11 +5792,11 @@
         alias
         summary
         locals)]
-    [(AstExpr.MakeArray elem length)
+    [(AstExpr.MakeArray elem-id length)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-type-demand
           state
-          elem
+          (ty-node-get elem-id)
           alias
           summary
           locals)
@@ -5911,7 +5911,7 @@
           alias
           summary
           locals))]
-    [(AstExpr.Ann inner ty)
+    [(AstExpr.Ann inner ty-id)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
@@ -5921,11 +5921,11 @@
           locals)
         (compiler-load-session-state-lazy-type-demand
           state
-          ty
+          (ty-node-get ty-id)
           alias
           summary
           locals))]
-    [(AstExpr.Cast inner ty)
+    [(AstExpr.Cast inner ty-id)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
@@ -5935,7 +5935,7 @@
           locals)
         (compiler-load-session-state-lazy-type-demand
           state
-          ty
+          (ty-node-get ty-id)
           alias
           summary
           locals))]
@@ -6221,17 +6221,17 @@
           alias
           summary
           locals))]
-    [(AstExpr.TypeLiteral ty)
+    [(AstExpr.TypeLiteral ty-id)
       (compiler-load-session-state-lazy-type-demand
         state
-        ty
+        (ty-node-get ty-id)
         alias
         summary
         locals)]
-    [(AstExpr.Init maybe-ty)
+    [(AstExpr.Init maybe-ty-id)
       (compiler-load-session-state-lazy-maybe-type-demand
         state
-        maybe-ty
+        (ast-maybe-type-from-id maybe-ty-id)
         alias
         summary
         locals)]
@@ -6301,10 +6301,10 @@
         locals)]
     [(AstExpr.Break) (compiler-load-lazy-alias-demand-none)]
     [(AstExpr.Continue) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.PtrNull ty)
+    [(AstExpr.PtrNull ty-id)
       (compiler-load-session-state-lazy-type-demand
         state
-        ty
+        (ty-node-get ty-id)
         alias
         summary
         locals)]

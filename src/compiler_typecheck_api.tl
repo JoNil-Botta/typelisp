@@ -118,9 +118,12 @@
                                           cache-scope
                                           pools)]
                                       [(ResultSpecProgramWithPaths.Err diag)
-                                        (ResultCompilerTypecheck.Err diag)]))]
+                                        (ResultCompilerTypecheck.Err
+                                          (compiler-diagnostic-list-box-single
+                                            diag))]))]
                                 [(ResultCompilerSymbolsDiagnostic.Err diag)
-                                  (ResultCompilerTypecheck.Err diag)])
+                                  (ResultCompilerTypecheck.Err
+                                    (compiler-diagnostic-list-box-single diag))])
                               (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
                                 load-state
                                 prefix-cache
@@ -130,7 +133,8 @@
                                 cache-scope
                                 pools)))]
                         [(ResultGenProgramWithPaths.Err diag)
-                          (ResultCompilerTypecheck.Err diag)])
+                          (ResultCompilerTypecheck.Err
+                            (compiler-diagnostic-list-box-single diag))])
                       (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
                         load-state
                         prefix-cache
@@ -140,9 +144,11 @@
                         cache-scope
                         pools)))]
                 [(ResultMacroExpand.Err diag)
-                  (ResultCompilerTypecheck.Err diag)])]
+                  (ResultCompilerTypecheck.Err
+                    (compiler-diagnostic-list-box-single diag))])]
             [(ResultGenProgramWithPaths.Err diag)
-              (ResultCompilerTypecheck.Err diag)]))))))
+              (ResultCompilerTypecheck.Err
+                (compiler-diagnostic-list-box-single diag))]))))))
 
 ;; Serial/test adapter for callers migrated to explicit loader state before the
 ;; prefix-cache state seam existed.
@@ -323,9 +329,11 @@
                                           pools)]
                                       [(ResultSpecProgramWithPaths.Err diag)
                                         (ResultCompilerTypecheckChecked.Err
-                                          diag)]))]
+                                          (compiler-diagnostic-list-box-single
+                                            diag))]))]
                                 [(ResultCompilerSymbolsDiagnostic.Err diag)
-                                  (ResultCompilerTypecheckChecked.Err diag)])
+                                  (ResultCompilerTypecheckChecked.Err
+                                    (compiler-diagnostic-list-box-single diag))])
                               (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
                                 load-state
                                 prefix-cache
@@ -335,7 +343,8 @@
                                 cache-scope
                                 pools)))]
                         [(ResultGenProgramWithPaths.Err diag)
-                          (ResultCompilerTypecheckChecked.Err diag)])
+                          (ResultCompilerTypecheckChecked.Err
+                            (compiler-diagnostic-list-box-single diag))])
                       (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
                         load-state
                         prefix-cache
@@ -345,9 +354,11 @@
                         cache-scope
                         pools)))]
                 [(ResultMacroExpand.Err diag)
-                  (ResultCompilerTypecheckChecked.Err diag)])]
+                  (ResultCompilerTypecheckChecked.Err
+                    (compiler-diagnostic-list-box-single diag))])]
             [(ResultGenProgramWithPaths.Err diag)
-              (ResultCompilerTypecheckChecked.Err diag)]))))))
+              (ResultCompilerTypecheckChecked.Err
+                (compiler-diagnostic-list-box-single diag))]))))))
 
 ;; Serial/test adapter for the load-state-only surface.
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools
@@ -518,7 +529,9 @@
                                 (tc-expr ctx top-env expr)]
                               [(ResultCompilerTypecheck.Err diag)
                                 (ResultTcType.Err
-                                  (compiler-diagnostic-message (box-get diag)))])]
+                                  (compiler-diagnostic-message
+                                    (compiler-diagnostic-list-first
+                                      (box-get diag))))])]
                           [(ResultTcEnv.Err message) (ResultTcType.Err message)])]
                       [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                   [(ResultTcSourcePolicyDiagnostic.Err diag)
@@ -545,10 +558,12 @@
                   (ast-program decls)
                   paths)]
               [(ResultCompilerLoadWithPaths.Err diag)
-                (ResultCompilerTypecheck.Err diag)])
+                (ResultCompilerTypecheck.Err
+                  (compiler-diagnostic-list-box-single diag))])
             (typecheck-compiler-program program))]
         [(ResultAstProgramDiagnostic.Err diag)
-          (ResultCompilerTypecheck.Err diag)])]
+          (ResultCompilerTypecheck.Err
+            (compiler-diagnostic-list-box-single diag))])]
     (begin
       (compiler-typecheck-reset-file-state!)
       result)))
@@ -565,7 +580,8 @@
         [(ResultAstProgramDiagnostic.Ok program)
           (typecheck-compiler-program program)]
         [(ResultAstProgramDiagnostic.Err diag)
-          (ResultCompilerTypecheck.Err diag)])]
+          (ResultCompilerTypecheck.Err
+            (compiler-diagnostic-list-box-single diag))])]
     (begin
       (compiler-typecheck-reset-file-state!)
       result)))

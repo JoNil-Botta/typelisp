@@ -245,6 +245,27 @@
   (Ok AstType)
   (Err String))
 
+(define tc-poison-type-name-id : i64
+  -1000000007)
+(define tc-poison-observed : bool
+  false)
+
+(define (tc-poison-type) : AstType
+  (AstType.Var tc-poison-type-name-id))
+
+(define (tc-poison-type? [ty : AstType]) : bool
+  (match ty
+    [(AstType.Var name) (= name tc-poison-type-name-id)]
+    [_ false]))
+
+(define (tc-poison-observation-reset!) : unit
+  (set! tc-poison-observed false))
+
+(define (tc-poison-observation-note! [ty : AstType]) : unit
+  (if (tc-poison-type? ty)
+    (set! tc-poison-observed true)
+    unit))
+
 (defenum TcInferredTypeMatch
   (Compatible AstType)
   (Mismatch AstType))
@@ -1000,11 +1021,11 @@
 
 (defenum ResultCompilerTypecheck
   (Ok CompilerTypecheckSummary)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box CompilerDiagnosticList)))
 
 (defenum ResultCompilerTypecheckChecked
   (Ok CompilerTypecheckSummary TcContext TcTypeEnv AstDeclPathList)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box CompilerDiagnosticList)))
 
 (defenum TcPrefixSnapshotLookup
   (Miss)
@@ -1954,7 +1975,10 @@
     (tc-fn-scratch-arena-release!)
     (tc-decl-scratch-arena-release!)
     (if (ty-node-pool-exhausted?)
-      (ResultCompilerTypecheck.Err (box (tc-ty-node-pool-exhausted-diagnostic)))
+      (ResultCompilerTypecheck.Err
+        (box
+          (compiler-diagnostic-list-single
+            (tc-ty-node-pool-exhausted-diagnostic))))
       result)))
 
 (define (tc-typecheck-checked-result-with-pool-check
@@ -1964,7 +1988,9 @@
     (tc-decl-scratch-arena-release!)
     (if (ty-node-pool-exhausted?)
       (ResultCompilerTypecheckChecked.Err
-        (box (tc-ty-node-pool-exhausted-diagnostic)))
+        (box
+          (compiler-diagnostic-list-single
+            (tc-ty-node-pool-exhausted-diagnostic))))
       result)))
 
 (cfg
@@ -11230,7 +11256,9 @@
                   (set! done true))
                 (set! cur (box-get rest)))]))
         (if found
-          (ResultTcType.Ok found-ty)
+          (begin
+            (tc-poison-observation-note! found-ty)
+            (ResultTcType.Ok found-ty))
           (ResultTcType.Err
             (string.append
               "typecheck: unbound name "
@@ -11270,6 +11298,9 @@
             unit
             (io.panic
               "typecheck: scoped type lookup diverged from persistent env")))
+        (match scoped
+          [(ResultTcType.Ok ty) (tc-poison-observation-note! ty)]
+          [(ResultTcType.Err _) unit])
         scoped))
     (tc-lookup-persistent-id env name-id)))
 
@@ -11372,7 +11403,9 @@
                   (set! done true))
                 (set! cur (box-get rest)))]))
         (if found
-          (ResultTcTypeUnsafe.Ok found-ty found-unsafe)
+          (begin
+            (tc-poison-observation-note! found-ty)
+            (ResultTcTypeUnsafe.Ok found-ty found-unsafe))
           (ResultTcTypeUnsafe.Err
             (string.append
               "typecheck: unbound name "
@@ -11421,6 +11454,9 @@
               (string.append
                 "typecheck: scoped unsafe lookup diverged for "
                 (tc-env-key-display name-id)))))
+        (match scoped
+          [(ResultTcTypeUnsafe.Ok ty _) (tc-poison-observation-note! ty)]
+          [(ResultTcTypeUnsafe.Err _) unit])
         scoped))
     (tc-lookup-unsafe-persistent-id env name-id)))
 
@@ -19478,12 +19514,14 @@
         [_ false])]))
 
 (define (tc-type-eq [a : AstType] [b : AstType]) : bool
-  (match a
-    [(AstType.Region _ inner) (tc-type-eq (ty-node-get inner) b)]
-    [_
-      (match b
-        [(AstType.Region _ inner) (tc-type-eq a (ty-node-get inner))]
-        [_ (tc-type-eq-core a b)])]))
+  (if (or (tc-poison-type? a) (tc-poison-type? b))
+    true
+    (match a
+      [(AstType.Region _ inner) (tc-type-eq (ty-node-get inner) b)]
+      [_
+        (match b
+          [(AstType.Region _ inner) (tc-type-eq a (ty-node-get inner))]
+          [_ (tc-type-eq-core a b)])])))
 
 (define (tc-never-type? [ty : AstType]) : bool
   (match ty
@@ -77888,7 +77926,15 @@
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
-  (tc-check-decls-in-module ctx top-env decls summary ""))
+  (tc-check-decls-with-paths-in-module
+    ctx
+    top-env
+    decls
+    (ast-decl-path-list-new)
+    summary
+    ""
+    cbi.compiler-builtin-id-fix-empty
+    (tc-empty-module-local-env-cache)))
 
 (define (tc-check-decls-in-module
   [ctx : TcContext]
@@ -77945,14 +77991,18 @@
                               (set!
                                 result
                                 (ResultCompilerTypecheck.Err
-                                  (box (tc-decl-diag decl message))))
+                                  (box
+                                    (compiler-diagnostic-list-single
+                                      (tc-decl-diag decl message)))))
                               (set! done true))]))]
                     [(ResultTcEnv.Err message)
                       (begin
                         (set!
                           result
                           (ResultCompilerTypecheck.Err
-                            (box (tc-decl-diag decl message))))
+                            (box
+                              (compiler-diagnostic-list-single
+                                (tc-decl-diag decl message)))))
                         (set! done true))])]))]))
       result)))
 
@@ -78487,6 +78537,56 @@
   [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl ctx top-env decl))
 
+(defenum TcPoisonNameList
+  (Nil)
+  (Cons i64 (Box TcPoisonNameList)))
+
+(defenum TcMaybePoisonName
+  (No)
+  (Some i64))
+
+(define (tc-decl-poison-name [module-id : i64] [decl : AstDecl]) : TcMaybePoisonName
+  (match decl
+    [(AstDecl.Def decl-meta name _ _)
+      (TcMaybePoisonName.Some (tc-module-name-id-by-id module-id name))]
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
+      (TcMaybePoisonName.Some (tc-module-name-id-by-id module-id name))]
+    [(AstDecl.Extern decl-meta name _ _ _)
+      (TcMaybePoisonName.Some (tc-module-name-id-by-id module-id name))]
+    [(AstDecl.DefDispatch decl-meta name _)
+      (TcMaybePoisonName.Some (tc-module-name-id-by-id module-id name))]
+    [(AstDecl.DefStruct decl-meta name _ _ _)
+      (TcMaybePoisonName.Some (tc-module-name-id-by-id module-id name))]
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
+      (TcMaybePoisonName.Some (tc-module-name-id-by-id module-id name))]
+    [(AstDecl.Unsafe inner) (tc-decl-poison-name module-id (box-get inner))]
+    [_ TcMaybePoisonName.No]))
+
+(define (tc-poison-name-list-bind [env : TcTypeEnv] [names : TcPoisonNameList]) : TcTypeEnv
+  (match names
+    [(TcPoisonNameList.Nil) env]
+    [(TcPoisonNameList.Cons name rest)
+      (tc-bind-id
+        (tc-poison-name-list-bind env (box-get rest))
+        name
+        (tc-poison-type))]))
+
+(define (tc-poison-decl-env
+  [env : TcTypeEnv]
+  [module-id : i64]
+  [decl : AstDecl]) : TcTypeEnv
+  (match (tc-decl-poison-name module-id decl)
+    [(TcMaybePoisonName.No) env]
+    [(TcMaybePoisonName.Some name) (tc-bind-id env name (tc-poison-type))]))
+
+(define (tc-poison-name-list-add-decl
+  [names : TcPoisonNameList]
+  [module-id : i64]
+  [decl : AstDecl]) : TcPoisonNameList
+  (match (tc-decl-poison-name module-id decl)
+    [(TcMaybePoisonName.No) names]
+    [(TcMaybePoisonName.Some name) (TcPoisonNameList.Cons name (box names))]))
+
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -78516,7 +78616,8 @@
       [(ResultTcModuleLocalEnv.Err message)
         (begin
           (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
-          (ResultCompilerTypecheck.Err (box (tc-diag-at-start message))))])))
+          (ResultCompilerTypecheck.Err
+            (box (compiler-diagnostic-list-single (tc-diag-at-start message)))))])))
 
 (define (tc-check-decls-with-paths-in-module-env
   [ctx : TcContext]
@@ -78547,12 +78648,16 @@
     [cur-cache : TcModuleLocalEnvCache cache]
     [cur-local-env : TcTypeEnv local-env]
     [cur-global-env : TcTypeEnv global-env]
+    [poison-names : TcPoisonNameList TcPoisonNameList.Nil]
+    [diagnostics : CompilerDiagnosticList CompilerDiagnosticList.Nil]
     [type-module-cache-valid : bool false]
     [type-module-cache-path-owner-id : i64 -1]
     [type-module-cache-id : i64 -1]
     [result : ResultCompilerTypecheck
       (ResultCompilerTypecheck.Err
-        (box (tc-diag-at-start "typecheck: internal decls walk")))]
+        (box
+          (compiler-diagnostic-list-single
+            (tc-diag-at-start "typecheck: internal decls walk"))))]
     [done : bool false]
     (begin
       (while (not done)
@@ -78560,7 +78665,14 @@
           [(AstDeclListStep.Nil)
             (begin
               (cfg compile-profile (compiler-tc-decl-profile-finish))
-              (set! result (ResultCompilerTypecheck.Ok cur-summary))
+              (set!
+                result
+                (match diagnostics
+                  [(CompilerDiagnosticList.Nil)
+                    (ResultCompilerTypecheck.Ok cur-summary)]
+                  [_
+                    (ResultCompilerTypecheck.Err
+                      (box (compiler-diagnostic-list-reverse diagnostics)))]))
               (set! done true))]
           [(AstDeclListStep.Cons decl rest)
             (let
@@ -78610,8 +78722,14 @@
                               (set! cur-cache next-cache)
                               (set!
                                 cur-global-env
-                                (tc-hygiene-global-env next-local-env))
-                              (set! cur-local-env next-local-env-copy))]
+                                (tc-poison-name-list-bind
+                                  (tc-hygiene-global-env next-local-env)
+                                  poison-names))
+                              (set!
+                                cur-local-env
+                                (tc-poison-name-list-bind
+                                  next-local-env-copy
+                                  poison-names)))]
                           [(ResultTcModuleLocalEnv.Err message)
                             (begin
                               (cfg
@@ -78621,11 +78739,14 @@
                                 result
                                 (ResultCompilerTypecheck.Err
                                   (box
-                                    (tc-typecheck-diag-with-rest-path
-                                      (& rest)
-                                      decl
-                                      decl-path
-                                      message))))
+                                    (compiler-diagnostic-list-reverse
+                                      (compiler-diagnostic-list-prepend
+                                        (tc-typecheck-diag-with-rest-path
+                                          (& rest)
+                                          decl
+                                          decl-path
+                                          message)
+                                        diagnostics)))))
                               (set! done true))])]
                       [(ResultTcModuleLocalEnv.Err message)
                         (begin
@@ -78636,11 +78757,14 @@
                             result
                             (ResultCompilerTypecheck.Err
                               (box
-                                (tc-typecheck-diag-with-rest-path
-                                  (& rest)
-                                  decl
-                                  decl-path
-                                  message))))
+                                (compiler-diagnostic-list-reverse
+                                  (compiler-diagnostic-list-prepend
+                                    (tc-typecheck-diag-with-rest-path
+                                      (& rest)
+                                      decl
+                                      decl-path
+                                      message)
+                                    diagnostics)))))
                           (set! done true))]))]
                 [_
                   (if (tc-generated-clone-decl-with-path? decl decl-path)
@@ -78694,6 +78818,7 @@
                           compile-profile
                           (compiler-tc-decl-profile-start-section))
                         (tc-context-capture-active-pools! decl-ctx)
+                        (tc-poison-observation-reset!)
                         (match (tc-check-decl-with-global-env
                           decl-ctx
                           cur-local-env
@@ -78702,27 +78827,71 @@
                           [(ResultTcUnit.Ok)
                             (begin
                               (tc-unused-unsafe-restore-current-path! prev-path)
-                              (cfg
-                                compile-profile
-                                (compiler-tc-decl-profile-record decl-ctx decl))
                               (set! cur-decls rest)
                               (set! cur-paths rest-paths)
-                              (set!
-                                cur-summary
-                                (tc-summary-add-decl cur-summary decl)))]
+                              (if tc-poison-observed
+                                (begin
+                                  (set!
+                                    cur-local-env
+                                    (tc-poison-decl-env
+                                      cur-local-env
+                                      cur-module-id
+                                      decl))
+                                  (set!
+                                    cur-global-env
+                                    (tc-poison-decl-env
+                                      cur-global-env
+                                      cur-module-id
+                                      decl))
+                                  (set!
+                                    poison-names
+                                    (tc-poison-name-list-add-decl
+                                      poison-names
+                                      cur-module-id
+                                      decl)))
+                                (begin
+                                  (cfg
+                                    compile-profile
+                                    (compiler-tc-decl-profile-record
+                                      decl-ctx
+                                      decl))
+                                  (set!
+                                    cur-summary
+                                    (tc-summary-add-decl cur-summary decl)))))]
                           [(ResultTcUnit.Err message)
                             (begin
                               (tc-unused-unsafe-restore-current-path! prev-path)
-                              (set!
-                                result
-                                (ResultCompilerTypecheck.Err
-                                  (box
+                              (if tc-poison-observed
+                                unit
+                                (set!
+                                  diagnostics
+                                  (compiler-diagnostic-list-prepend
                                     (tc-typecheck-diag-with-rest-path
                                       (& rest)
                                       decl
                                       decl-path
-                                      message))))
-                              (set! done true))]))))]))]))
+                                      message)
+                                    diagnostics)))
+                              (set!
+                                cur-local-env
+                                (tc-poison-decl-env
+                                  cur-local-env
+                                  cur-module-id
+                                  decl))
+                              (set!
+                                cur-global-env
+                                (tc-poison-decl-env
+                                  cur-global-env
+                                  cur-module-id
+                                  decl))
+                              (set!
+                                poison-names
+                                (tc-poison-name-list-add-decl
+                                  poison-names
+                                  cur-module-id
+                                  decl))
+                              (set! cur-decls rest)
+                              (set! cur-paths rest-paths))]))))]))]))
       result)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
@@ -78799,16 +78968,23 @@
                                       (ResultCompilerTypecheckChecked.Err diag)])))])]
                         [(ResultTcEnv.Err message)
                           (ResultCompilerTypecheckChecked.Err
-                            (box (tc-diag-at-start message)))])]
+                            (box
+                              (compiler-diagnostic-list-single
+                                (tc-diag-at-start message))))])]
                     [(ResultTcSourcePolicyDiagnostic.Err diag)
-                      (ResultCompilerTypecheckChecked.Err diag)])]
+                      (ResultCompilerTypecheckChecked.Err
+                        (compiler-diagnostic-list-box-single diag))])]
                 [(ResultTcUnit.Err message)
                   (ResultCompilerTypecheckChecked.Err
-                    (box (tc-diag-at-start message)))]))]
+                    (box
+                      (compiler-diagnostic-list-single
+                        (tc-diag-at-start message))))]))]
           [(ResultCompilerRegistriesDiagnostic.Err diag)
-            (ResultCompilerTypecheckChecked.Err diag)])]
+            (ResultCompilerTypecheckChecked.Err
+              (compiler-diagnostic-list-box-single diag))])]
       [(ResultCompilerSymbolsDiagnostic.Err diag)
-        (ResultCompilerTypecheckChecked.Err diag)])))
+        (ResultCompilerTypecheckChecked.Err
+          (compiler-diagnostic-list-box-single diag))])))
 
 ;; Serial/test compatibility adapter. Production jobs pass both explicit state
 ;; values to the entry above.

@@ -2093,7 +2093,7 @@
                         (compiler-driver-render-source-diagnostic
                           (tltest-diagnostic-with-source-fallback
                             source
-                            (box-get diag))))
+                            (compiler-diagnostic-list-first (box-get diag)))))
                       1)]))])))]))
 
 (define (tltest-inline-stdlib-source? [source : String] [roots : cli_svec.Vec]) : bool
@@ -3209,7 +3209,8 @@
       [(ResultCompilerTypecheck.Err diag)
         (begin
           (io.print-error
-            (compiler-driver-render-source-diagnostic (box-get diag)))
+            (compiler-driver-render-source-diagnostic
+              (compiler-diagnostic-list-first (box-get diag))))
           false)])))
 
 (define (tltest-function-base-defined?
@@ -3535,7 +3536,8 @@
       [(ResultCompilerTypecheck.Err diag)
         (begin
           (io.print-error
-            (compiler-driver-render-source-diagnostic (box-get diag)))
+            (compiler-driver-render-source-diagnostic
+              (compiler-diagnostic-list-first (box-get diag))))
           1)])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -3820,7 +3822,8 @@
       [(ResultCompilerTypecheck.Err diag)
         (begin
           (io.print-error
-            (compiler-driver-render-source-diagnostic (box-get diag)))
+            (compiler-driver-render-source-diagnostic
+              (compiler-diagnostic-list-first (box-get diag))))
           1)])))
 
 (define (tltest-no-tests-run
@@ -4169,7 +4172,8 @@
           [(ResultCompilerTypecheck.Err diag)
             (begin
               (io.print-error
-                (compiler-driver-render-source-diagnostic (box-get diag)))
+                (compiler-driver-render-source-diagnostic
+                  (compiler-diagnostic-list-first (box-get diag))))
               (ResultTestPackageTotals.Err 1))]))
       (begin
         (io.print-error (tltest-package-integration-missing-main source))

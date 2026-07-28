@@ -97,6 +97,10 @@
     (begin
       (io.print-error "compile-startup-profile|marker|tick|frequency\n")
       (compiler-startup-profile-print-tick-row!
+        "process.entry"
+        (startup_clock.compiler-startup-clock-process-entry-tick)
+        frequency)
+      (compiler-startup-profile-print-tick-row!
         "globals.start"
         (startup_clock.compiler-startup-clock-globals-start)
         frequency)

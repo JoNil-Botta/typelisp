@@ -19,10 +19,12 @@
     false
     false
     false
+    false
     false))
 
 (define (compiler-backend-runtime-test-full-features) : runtime_common.CompilerBackendRuntimeFeatures
   (runtime_common.CompilerBackendRuntimeFeatures
+    true
     true
     true
     true
@@ -65,6 +67,27 @@
       (test.assert-true
         (compiler-backend-runtime-test-contains? (& linux-min-data) ".tbss")
         "Linux runtime data owns the TLS arena slot")
+      (test.assert-true
+        (not
+          (compiler-backend-runtime-test-contains?
+            (& linux-min-data)
+            ".L_tl_startup_profile_process_entry_tick"))
+        "minimal data omits the process-entry timestamp")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& linux-full-data)
+          ".L_tl_startup_profile_process_entry_tick")
+        "full Linux data emits the process-entry timestamp")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-full-functions)
+          "call QueryPerformanceCounter")
+        "full Windows entry captures QPC before argv setup")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& linux-full-functions)
+          "tl_startup_profile_process_entry_tick:")
+        "full Linux runtime exposes the process-entry timestamp")
       (test.assert-true
         (not
           (compiler-backend-runtime-test-contains? (& windows-min-data) ".tbss"))
@@ -301,4 +324,9 @@
         (compiler-backend-runtime-test-contains?
           (& windows-full-externs)
           ".extern _snprintf")
-        "full Windows externs include float formatting"))))
+        "full Windows externs include float formatting")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-full-externs)
+          ".extern QueryPerformanceCounter")
+        "full Windows externs include the entry clock dependency"))))

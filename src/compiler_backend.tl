@@ -17808,7 +17808,6 @@
   (let
     [masks : (Array i64) (array.make-array i64 instruction-count)]
     (begin
-      (compiler-reg-fill-i64-array masks 0)
       (compiler-backend-scratch-plan-occupancy-fill!
         (struct-get plan items)
         0
@@ -46542,11 +46541,7 @@
     [event-used : i64 0]
     (begin
       (compiler-reg-fill-i64-array heads (- 0 1))
-      (compiler-reg-fill-i64-array event-bits 0)
-      (compiler-reg-fill-i64-array event-deltas 0)
       (compiler-reg-fill-i64-array event-next (- 0 1))
-      (compiler-reg-fill-i64-array out 0)
-      (compiler-reg-fill-i64-array active-counts 0)
       (while (< v vars)
         (begin
           (if (and
@@ -46648,7 +46643,6 @@
     [present : (Array i64) (make-array i64 n)]
     [items : (Array CompilerRegLocation) (make-array CompilerRegLocation n)]
     (begin
-      (compiler-reg-fill-i64-array present 0)
       (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (let
         [plan-mask : i64

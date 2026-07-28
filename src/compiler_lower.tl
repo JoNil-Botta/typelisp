@@ -20306,6 +20306,34 @@
     [(ResultTcInlineAggregateLayout.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
 
+;; TWO-PHASE CONSTRUCTOR LOWERING -- THE ORDER IS LOAD-BEARING (issue #5971).
+;;
+;; Every `-into` path in this family materializes ALL constructor arguments to
+;; values first (`lower-args-as` / `lower-args-as-at` runs to completion) and
+;; only then writes the tag and payload bytes of `dst`. That order is what makes
+;; writing straight into an sret slot or a `set!` place correct WITHOUT any
+;; alias analysis, because of three properties of by-value aggregates:
+;;
+;;   1. a by-value aggregate argument is passed as a bare POINTER, with no
+;;      caller-side copy (the call site moves the address, never the bytes);
+;;   2. passing an aggregate by value does not move it out of the caller: the
+;;      move checker accepts the caller's continued use of it afterwards, and
+;;      only the local binding form is a hard move error;
+;;   3. the callee may WRITE through such a parameter and the caller observes
+;;      it, so "read-only" is not a property of the parameter's type.
+;;
+;; Therefore the hidden sret slot carries NO `noalias` guarantee against the
+;; by-value aggregate arguments of the same call: accumulator threading
+;; (`acc = (f acc x)`, tail recursion) makes a call site's own result slot the
+;; next iteration's argument pointer. Interleaving destination writes with
+;; argument evaluation MISCOMPILES whenever `dst` aliases an argument. That is
+;; not hypothetical: a full destination-forwarding version was implemented here
+;; (-282 `tl_memcpy` call sites) and it broke stage1, bisected to exactly this
+;; reordering inside `tc-name-id-list-add`.
+;;
+;; Destination forwarding belongs in `compiler_optimize.tl`, where the whole
+;; window is visible and the alias side condition can actually be discharged --
+;; see the `ctor_fwd` pass (`opt-ctor-fwd-*`) and its guard.
 (define (lower-construct-struct-inline-into-from-values
   [ctx : TcContext]
   [state : LowerState]
@@ -20635,6 +20663,8 @@
                 "lower: enum constructor result is not enum: "
                 variant-name))))])))
 
+;; Two-phase order (arguments first, destination bytes second) is load-bearing
+;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-enum-with-name-into
   [ctx : TcContext]
   [state : LowerState]
@@ -20682,6 +20712,8 @@
         [(ResultAstTypeList.Err message)
           (ResultLowerState.Err (box (lower-diagnostic message)))])]))
 
+;; Two-phase order (arguments first, destination bytes second) is load-bearing
+;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-enum-with-handle-into
   [ctx : TcContext]
   [state : LowerState]
@@ -20872,6 +20904,8 @@
       [(ResultAstFieldDefList.Err message)
         (ResultLowerExpr.Err (box (lower-diagnostic message)))])))
 
+;; Two-phase order (arguments first, destination bytes second) is load-bearing
+;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-struct-into
   [ctx : TcContext]
   [state : LowerState]

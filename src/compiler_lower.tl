@@ -4539,16 +4539,17 @@
     [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 initial-module-id]
+    ;; Match the backing slot rather than binding the row to a local first: the
+    ;; local materialised a 104 B copy, while a projection match loads the tag
+    ;; and hands the slot straight on (aggregate arguments pass by reference).
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
         (let
-          [decl : AstDecl
-            (array-ref
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index))]
           [decl-path : String (ast-decl-path-list-get (& paths) index "")]
           (begin
-            (match decl
+            (match (array-ref decl-slots (+ decl-offset index))
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
               [_
                 (set!
@@ -4559,7 +4560,7 @@
                     decl-path
                     (intern-str cur-module-id)
                     cur-module-id
-                    decl))])
+                    (array-ref decl-slots (+ decl-offset index))))])
             (set! index (+ index 1)))))
       cur-names)))
 
@@ -7700,23 +7701,36 @@
   [source-decls : AstDeclList]
   [roots : CloneNameList]
   [module-id : i64]) : i64
-  (match (ast-decl-list-step source-decls)
-    [(AstDeclListStep.Nil) -1]
-    [(AstDeclListStep.Cons decl rest)
-      (match (ast-decl-unwrapped decl)
-        [(AstDecl.Module next-module)
-          (lower-clone-handoff-source-conflict-in-module rest roots next-module)]
-        [(AstDecl.DefFn decl-meta name _ _ _ _)
-          (let
-            [root-key-id : i64
-              (lower-clone-handoff-source-helper-root-id name module-id roots)]
-            (if (>= root-key-id 0)
-              root-key-id
-              (lower-clone-handoff-source-conflict-in-module
-                rest
-                roots
-                module-id)))]
-        [_ (lower-clone-handoff-source-conflict-in-module rest roots module-id)])]))
+  ;; Index cursor rather than `ast-decl-list-step`; the first non-negative root
+  ;; key still stops the walk. The wrapper peel stays by value -- it needs owned
+  ;; `Box` storage to walk an `AstDecl.Unsafe` chain -- but it now reads the
+  ;; backing slot instead of a stepped-out 104 B copy.
+  (let
+    [count : i64 (ast-decl-list-len (& source-decls))]
+    [decl-slots : (Array AstDecl) (struct-get source-decls slots)]
+    [decl-offset : i64 (struct-get source-decls offset)]
+    [index : i64 0]
+    [cur-module-id : i64 module-id]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< index count))
+        (begin
+          (match (ast-decl-unwrapped
+            (array-ref decl-slots (+ decl-offset index)))
+            [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(AstDecl.DefFn decl-meta name _ _ _ _)
+              (let
+                [root-key-id : i64
+                  (lower-clone-handoff-source-helper-root-id
+                    name
+                    cur-module-id
+                    roots)]
+                (if (>= root-key-id 0)
+                  (set! found root-key-id)
+                  unit))]
+            [_ unit])
+          (set! index (+ index 1))))
+      found)))
 
 (define (lower-clone-handoff-source-conflict
   [source-decls : AstDeclList]
@@ -10500,30 +10514,42 @@
   [decls : AstDeclList]
   [module : String]
   [used : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) used]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (lower-used-types-add-type-decl-deps-in-module
-              pools
-              rest
-              (intern-str next-module)
-              used)]
-          [_
-            (lower-used-types-add-type-decl-deps-in-module
-              pools
-              rest
-              module
+  ;; Index cursor rather than `ast-decl-list-step`. The predicates and the
+  ;; dependency walk all take `AstDecl` by value, but an aggregate argument is
+  ;; passed by reference, so handing them the backing slot costs nothing where
+  ;; the step copied 104 B and wrote a 144 B result per declaration.
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
+    [index : i64 0]
+    [current-module : String module]
+    [current-used : lower_i64_i64_map.Map used]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref decl-slots (+ decl-offset index))
+            [(AstDecl.Module next-module)
+              (set! current-module (intern-str next-module))]
+            [_
               (if (and
-                (lower-type-decl? decl)
+                (lower-type-decl? (array-ref decl-slots (+ decl-offset index)))
                 (or
-                  (lower-comptime-runtime-skip-module? module)
-                  (lower-type-decl-used? module used decl)))
-                (lower-used-types-add-type-decl-deps pools used module decl)
-                used))]))]))
+                  (lower-comptime-runtime-skip-module? current-module)
+                  (lower-type-decl-used?
+                    current-module
+                    current-used
+                    (array-ref decl-slots (+ decl-offset index)))))
+                (set!
+                  current-used
+                  (lower-used-types-add-type-decl-deps
+                    pools
+                    current-used
+                    current-module
+                    (array-ref decl-slots (+ decl-offset index))))
+                unit)])
+          (set! index (+ index 1))))
+      current-used)))
 
 (define (lower-used-types-expand-fixed
   [pools : AstNodePoolContext]
@@ -57254,39 +57280,44 @@
     [cur-module-id : i64 module-id]
     [name-cache : LowerNameCache (lower-name-cache-from-env names)]
     [cur-out : lower_i64_i64_map.Map out]
+    ;; Feed the wrapper peel the backing slot directly. Binding the row to a
+    ;; local first materialised a 104 B copy that `ast-decl-unwrapped` then
+    ;; copied again; an aggregate argument is passed by reference, so the
+    ;; projection costs nothing.
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
-        (let
-          [decl : AstDecl
-            (array-ref
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index))]
-          (begin
-            (match (ast-decl-unwrapped decl)
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [(AstDecl.DefFn decl-meta name _ _ body-box _)
-                (let
-                  [has-early-return : bool
-                    (match (tc-body-early-exit-fact
-                      (tc-context-body-state ctx)
-                      body-box)
-                      [(TcBodyEarlyExitFact.Known value) value]
-                      [(TcBodyEarlyExitFact.Unknown)
-                        (lower-rvo-node-has-early-return? ctx body-box)])]
-                  (if has-early-return
-                    (let
-                      [key-id : i64
-                        (lower-module-name-key-id-by-id cur-module-id name)]
-                      (lower_i64_i64_map.insert-ref!
-                        (&mut cur-out)
-                        (lower-name-cache-lookup-logical-id
-                          (& name-cache)
-                          key-id
-                          key-id)
-                        1))
-                    unit))]
-              [_ unit])
-            (set! index (+ index 1)))))
+        (begin
+          (match (ast-decl-unwrapped
+            (array-ref decl-slots (+ decl-offset index)))
+            [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(AstDecl.DefFn decl-meta name _ _ body-box _)
+              ;; #6056 threads the per-body typecheck state through the
+              ;; early-exit fact lookup; keep that argument while the walk
+              ;; itself reads the backing slot instead of a stepped-out row.
+              (let
+                [has-early-return : bool
+                  (match (tc-body-early-exit-fact
+                    (tc-context-body-state ctx)
+                    body-box)
+                    [(TcBodyEarlyExitFact.Known value) value]
+                    [(TcBodyEarlyExitFact.Unknown)
+                      (lower-rvo-node-has-early-return? ctx body-box)])]
+                (if has-early-return
+                  (let
+                    [key-id : i64
+                      (lower-module-name-key-id-by-id cur-module-id name)]
+                    (lower_i64_i64_map.insert-ref!
+                      (&mut cur-out)
+                      (lower-name-cache-lookup-logical-id
+                        (& name-cache)
+                        key-id
+                        key-id)
+                      1))
+                  unit))]
+            [_ unit])
+          (set! index (+ index 1))))
       cur-out)))
 
 (define (lower-rvo-early-return-functions-from-decls

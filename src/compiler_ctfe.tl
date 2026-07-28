@@ -1923,63 +1923,62 @@
     [current-module : String module]
     [current-module-id : i64 module-id]
     [current-infos : CtfeReflectInfoList infos]
+    ;; One match on the backing slot instead of a borrowed tag test followed by
+    ;; an `ast-decl-list-ref` re-read: the SRET read copied the whole 104 B row
+    ;; for every declaration that passed the test, and the borrowed test was a
+    ;; second out-of-line call. A match on the slot projection loads the tag and
+    ;; only the fields an arm binds.
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
         (begin
-          (if (match (ast-decl-list-ref-borrowed (& decls) index)
-            [(AstDecl.Module _) true]
-            [(AstDecl.DefStruct decl-meta _ _ _ _) true]
-            [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
-            [(AstDecl.DefEnum decl-meta _ _ _) true]
-            [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
-            [_ false])
-            (match (ast-decl-list-ref decls index)
-              [(AstDecl.Module next-module)
-                (begin
-                  (set! current-module (intern-str next-module))
-                  (set! current-module-id next-module))]
-              [(AstDecl.DefStruct decl-meta name _ cleanup fields)
-                (set!
+          (match (array-ref decl-slots (+ decl-offset index))
+            [(AstDecl.Module next-module)
+              (begin
+                (set! current-module (intern-str next-module))
+                (set! current-module-id next-module))]
+            [(AstDecl.DefStruct decl-meta name _ cleanup fields)
+              (set!
+                current-infos
+                (ctfe-reflections-add-struct
                   current-infos
-                  (ctfe-reflections-add-struct
-                    current-infos
-                    current-module
-                    current-module-id
-                    name
-                    cleanup
-                    fields))]
-              [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
-                (set!
+                  current-module
+                  current-module-id
+                  name
+                  cleanup
+                  fields))]
+            [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
+              (set!
+                current-infos
+                (ctfe-reflections-add-struct
                   current-infos
-                  (ctfe-reflections-add-struct
-                    current-infos
-                    current-module
-                    current-module-id
-                    name
-                    cleanup
-                    fields))]
-              [(AstDecl.DefEnum decl-meta name cleanup variants)
-                (set!
+                  current-module
+                  current-module-id
+                  name
+                  cleanup
+                  fields))]
+            [(AstDecl.DefEnum decl-meta name cleanup variants)
+              (set!
+                current-infos
+                (ctfe-reflections-add-enum
                   current-infos
-                  (ctfe-reflections-add-enum
-                    current-infos
-                    current-module
-                    current-module-id
-                    name
-                    cleanup
-                    variants))]
-              [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
-                (set!
+                  current-module
+                  current-module-id
+                  name
+                  cleanup
+                  variants))]
+            [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
+              (set!
+                current-infos
+                (ctfe-reflections-add-enum
                   current-infos
-                  (ctfe-reflections-add-enum
-                    current-infos
-                    current-module
-                    current-module-id
-                    name
-                    cleanup
-                    variants))]
-              [_ unit])
-            unit)
+                  current-module
+                  current-module-id
+                  name
+                  cleanup
+                  variants))]
+            [_ unit])
           (set! index (+ index 1))))
       current-infos)))
 

@@ -9818,26 +9818,38 @@
             ResultTcUnit.Ok)
           ResultTcUnit.Ok)])))
 
+;; Index cursor rather than `ast-decl-list-step`; the first `Err` still stops
+;; the walk, now through `ok` instead of by not recursing.
 (define (tc-stdlib-check-comptime-declaration-surface-list
   [decls : AstDeclList]
   [module : String]) : ResultTcUnit
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) ResultTcUnit.Ok]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module module-id)
-            (tc-stdlib-check-comptime-declaration-surface-list
-              rest
-              (intern-str module-id))]
-          [_
-            (match (tc-stdlib-check-comptime-declaration-surface-decl
-              module
-              decl)
-              [(ResultTcUnit.Ok)
-                (tc-stdlib-check-comptime-declaration-surface-list rest module)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
+    [index : i64 0]
+    [current-module : String module]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (begin
+          (match (array-ref decl-slots (+ decl-offset index))
+            [(AstDecl.Module module-id)
+              (set! current-module (intern-str module-id))]
+            [_
+              (match (tc-stdlib-check-comptime-declaration-surface-decl
+                current-module
+                (array-ref decl-slots (+ decl-offset index)))
+                [(ResultTcUnit.Ok) unit]
+                [(ResultTcUnit.Err step-message)
+                  (begin
+                    (set! message step-message)
+                    (set! ok false))])])
+          (set! index (+ index 1))))
+      (if ok
+        ResultTcUnit.Ok
+        (ResultTcUnit.Err message)))))
 
 (define (tc-stdlib-check-comptime-declaration-surface [ctx : TcContext]) : ResultTcUnit
   (match (tc-context-program ctx)
@@ -14537,30 +14549,26 @@
     [index : i64 0]
     [current-module : i64 module-id]
     [found : bool false]
+    ;; One match on the backing slot. The old shape tested the tag through a
+    ;; borrow and then re-read the row with `ast-decl-list-ref`, which returns
+    ;; `AstDecl` through an SRET pointer and so copied all 104 B; the projection
+    ;; match loads the tag and only the fields an arm binds.
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (and (not found) (< index count))
         (begin
-          (match (ast-decl-list-ref-borrowed (& decls) index)
-            [(AstDecl.Module _)
-              (match (ast-decl-list-ref decls index)
-                [(AstDecl.Module next-module) (set! current-module next-module)]
-                [_ unit])]
-            [(AstDecl.Import decl-meta _)
-              ;; Copy only module/import declarations whose scalar and String
-              ;; payloads are consumed. All other declarations stay borrowed.
-              (match (ast-decl-list-ref decls index)
-                [(AstDecl.Import
-                    decl-meta
-                    (AstImportSpec.Spec _ _ expected _ _))
-                  (if (= current-module current-module-id)
-                    (match expected
-                      [(AstMaybeModuleName.Some target)
-                        (if (tc-module-identity-id-eq? target target-id)
-                          (set! found true)
-                          unit)]
-                      [(AstMaybeModuleName.No) unit])
-                    unit)]
-                [_ unit])]
+          (match (array-ref decl-slots (+ decl-offset index))
+            [(AstDecl.Module next-module) (set! current-module next-module)]
+            [(AstDecl.Import decl-meta (AstImportSpec.Spec _ _ expected _ _))
+              (if (= current-module current-module-id)
+                (match expected
+                  [(AstMaybeModuleName.Some target)
+                    (if (tc-module-identity-id-eq? target target-id)
+                      (set! found true)
+                      unit)]
+                  [(AstMaybeModuleName.No) unit])
+                unit)]
             [_ unit])
           (set! index (+ index 1))))
       found)))
@@ -23634,50 +23642,47 @@
   [importer-module : i64]
   [import-unqualified : bool]
   [module : i64]) : ResultTcEnv
+  ;; Index cursor rather than `ast-decl-list-step`. Only the module marker and
+  ;; the fallback arm touch the row, and the fallback hands the backing slot to
+  ;; the binder directly, so the step's 104 B copy and 144 B result are gone.
   (let
-    [cur : AstDeclList decls]
     [cur-env : TcTypeEnv env]
     [target-module-id : i64 target-module]
     [cur-module-id : i64 module]
     [message : String ""]
     [ok : bool true]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
+    [index : i64 0]
     (begin
-      (while ok
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) (set! ok false)]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [rest : AstDeclList rest]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! cur-module-id next-module)
-                    (set! cur rest))]
-                [(AstDecl.Import decl-meta _) (set! cur rest)]
-                [(AstDecl.IncludeStr _ _) (set! cur rest)]
-                [(AstDecl.IncludeStrComptime _ _) (set! cur rest)]
-                [(AstDecl.IncludeStrLzss _ _) (set! cur rest)]
-                [(AstDecl.IncludeBin _ _) (set! cur rest)]
-                [(AstDecl.Test _ _ _) (set! cur rest)]
-                [_
-                  (if (= cur-module-id target-module-id)
-                    (match (tc-bind-import-alias-decl-in-module
-                      ctx
-                      cur-env
-                      alias
-                      importer-module
-                      import-unqualified
-                      cur-module-id
-                      decl)
-                      [(ResultTcEnv.Ok next-env)
-                        (begin
-                          (set! cur-env next-env)
-                          (set! cur rest))]
-                      [(ResultTcEnv.Err step-message)
-                        (begin
-                          (set! message step-message)
-                          (set! ok false))])
-                    (set! cur rest))]))]))
+      (while (and ok (< index count))
+        (begin
+          (match (array-ref decl-slots (+ decl-offset index))
+            [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(AstDecl.Import decl-meta _) unit]
+            [(AstDecl.IncludeStr _ _) unit]
+            [(AstDecl.IncludeStrComptime _ _) unit]
+            [(AstDecl.IncludeStrLzss _ _) unit]
+            [(AstDecl.IncludeBin _ _) unit]
+            [(AstDecl.Test _ _ _) unit]
+            [_
+              (if (= cur-module-id target-module-id)
+                (match (tc-bind-import-alias-decl-in-module
+                  ctx
+                  cur-env
+                  alias
+                  importer-module
+                  import-unqualified
+                  cur-module-id
+                  (array-ref decl-slots (+ decl-offset index)))
+                  [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                  [(ResultTcEnv.Err step-message)
+                    (begin
+                      (set! message step-message)
+                      (set! ok false))])
+                unit)])
+          (set! index (+ index 1))))
       (if (string.eq message "")
         (ResultTcEnv.Ok cur-env)
         (ResultTcEnv.Err message)))))
@@ -23756,8 +23761,11 @@
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [module-id : i64]) : ResultTcEnv
+  ;; Index cursor rather than `ast-decl-list-step`. The wrapper peel still runs
+  ;; by value (it needs owned `Box` storage to walk an `AstDecl.Unsafe` chain),
+  ;; but it now reads the backing slot directly instead of a stepped-out copy,
+  ;; so the 104 B row copy and the 144 B step result are gone.
   (let
-    [cur : AstDeclList decls]
     [cur-env : TcTypeEnv env]
     [cur-module-id : i64 module-id]
     [message : String ""]
@@ -23765,71 +23773,62 @@
     [summary-index : TcImportAliasSummaryIndex
       (tc-import-alias-summary-index-build all-decls)]
     [seen-aliases : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
+    [index : i64 0]
     (begin
-      (while ok
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) (set! ok false)]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-unwrapped decl)
-                [(AstDecl.Module next-module)
+      (while (and ok (< index count))
+        (begin
+          (match (ast-decl-unwrapped
+            (array-ref decl-slots (+ decl-offset index)))
+            [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [(AstDecl.Import
+                decl-meta
+                (AstImportSpec.Spec
+                  _
+                  _
+                  (AstMaybeModuleName.Some target-module)
+                  (AstMaybeImportAlias.Some alias)
+                  _))
+              (let
+                [alias-key : i64
+                  (compiler-symbols-import-alias-key-id cur-module-id alias)]
+                [seen-key : i64
+                  (tc-import-alias-materialized-key-id alias-key target-module)]
+                (if (tc-import-alias-materialized? seen-aliases seen-key)
+                  unit
                   (begin
-                    (set! cur-module-id next-module)
-                    (set! cur rest))]
-                [(AstDecl.Import
-                    decl-meta
-                    (AstImportSpec.Spec
-                      _
-                      _
-                      (AstMaybeModuleName.Some target-module)
-                      (AstMaybeImportAlias.Some alias)
-                      _))
-                  (let
-                    [alias-key : i64
-                      (compiler-symbols-import-alias-key-id cur-module-id alias)]
-                    [seen-key : i64
-                      (tc-import-alias-materialized-key-id
+                    (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
+                    (if (= alias cbi.compiler-builtin-id-fix-empty)
+                      (match (tc-bind-import-alias-module-with-index
+                        ctx
+                        summary-index
+                        all-decls
+                        cur-env
+                        target-module
                         alias-key
-                        target-module)]
-                    (if (tc-import-alias-materialized? seen-aliases seen-key)
-                      (set! cur rest)
-                      (begin
-                        (tc_i64_i64_map.insert-ref!
-                          (&mut seen-aliases)
-                          seen-key
-                          1)
-                        (if (= alias cbi.compiler-builtin-id-fix-empty)
-                          (match (tc-bind-import-alias-module-with-index
-                            ctx
-                            summary-index
-                            all-decls
-                            cur-env
-                            target-module
-                            alias-key
-                            cur-module-id
-                            true)
-                            [(ResultTcEnv.Ok next-env)
-                              (begin
-                                (set! cur-env next-env)
-                                (set! cur rest))]
-                            [(ResultTcEnv.Err step-message)
-                              (begin
-                                (set! message step-message)
-                                (set! ok false))])
+                        cur-module-id
+                        true)
+                        [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                        [(ResultTcEnv.Err step-message)
                           (begin
-                            (let
-                              [summary-backed : bool
-                                (tc-import-alias-summary-backed?
-                                  summary-index
-                                  target-module)]
-                              (tc-lazy-import-stub-record!
-                                cur-module-id
-                                alias
-                                target-module
-                                summary-backed))
-                            (set! cur rest))))))]
-                [_ (set! cur rest)]))]))
+                            (set! message step-message)
+                            (set! ok false))])
+                      (begin
+                        (let
+                          [summary-backed : bool
+                            (tc-import-alias-summary-backed?
+                              summary-index
+                              target-module)]
+                          (tc-lazy-import-stub-record!
+                            cur-module-id
+                            alias
+                            target-module
+                            summary-backed))
+                        unit)))))]
+            [_ unit])
+          (set! index (+ index 1))))
       (if (string.eq message "")
         (ResultTcEnv.Ok cur-env)
         (ResultTcEnv.Err message)))))
@@ -30050,18 +30049,31 @@
         [module-id : i64 cbi.compiler-builtin-id-fix-empty]
         [index : i64 0]
         [count : i64 (ast-decl-list-len (& decls))]
+        ;; The row was read by value and then peeled twice more (once inside
+        ;; `-decl-key`, once here) -- three 104 B copies per declaration to read
+        ;; a name id and a module id. The backing slot is matched in place, and
+        ;; the wrapper peel now runs only on an `AstDecl.Unsafe` row.
+        [decl-slots : (Array AstDecl) (struct-get decls slots)]
+        [decl-offset : i64 (struct-get decls offset)]
         (begin
           (while (< index count)
             (let
-              [decl : AstDecl
-                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
-              [key : i64 (tc-clone-root-collection-decl-key module-id decl)]
+              [key : i64
+                (tc-clone-root-collection-decl-key
+                  module-id
+                  (array-ref decl-slots (+ decl-offset index)))]
               (begin
                 (if (>= key 0)
                   (tc_i64_i64_map.insert-ref! (&mut selected) key 1)
                   unit)
-                (match (ast-decl-unwrapped decl)
+                (match (array-ref decl-slots (+ decl-offset index))
                   [(AstDecl.Module next-module) (set! module-id next-module)]
+                  [(AstDecl.Unsafe _)
+                    (match (ast-decl-unwrapped
+                      (array-ref decl-slots (+ decl-offset index)))
+                      [(AstDecl.Module next-module)
+                        (set! module-id next-module)]
+                      [_ unit])]
                   [_ unit])
                 (set! index (+ index 1)))))
           selected))]))
@@ -39132,59 +39144,58 @@
     [current-module : String module]
     [current-module-id : i64 module-id]
     [current-layouts : CtfeLayoutInfoList layouts]
+    ;; One match on the backing slot instead of a borrowed tag test followed by
+    ;; an `ast-decl-list-ref` re-read (a 104 B SRET row copy for every
+    ;; declaration that passed the test, plus a second out-of-line call for the
+    ;; test itself). Every arm here binds only an i64 name, so the projection
+    ;; match loads the tag and one word.
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
         (begin
-          (if (match (ast-decl-list-ref-borrowed (& decls) index)
-            [(AstDecl.Module _) true]
-            [(AstDecl.DefStruct decl-meta _ _ _ _) true]
-            [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
-            [(AstDecl.DefEnum decl-meta _ _ _) true]
-            [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
-            [_ false])
-            (match (ast-decl-list-ref decls index)
-              [(AstDecl.Module next-module)
-                (begin
-                  (set! current-module (intern-str next-module))
-                  (set! current-module-id next-module))]
-              [(AstDecl.DefStruct decl-meta name _ _ _)
-                (set!
+          (match (array-ref decl-slots (+ decl-offset index))
+            [(AstDecl.Module next-module)
+              (begin
+                (set! current-module (intern-str next-module))
+                (set! current-module-id next-module))]
+            [(AstDecl.DefStruct decl-meta name _ _ _)
+              (set!
+                current-layouts
+                (tc-ctfe-layouts-add-struct
+                  ctx
                   current-layouts
-                  (tc-ctfe-layouts-add-struct
-                    ctx
-                    current-layouts
-                    current-module
-                    current-module-id
-                    name))]
-              [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
-                (set!
+                  current-module
+                  current-module-id
+                  name))]
+            [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
+              (set!
+                current-layouts
+                (tc-ctfe-layouts-add-struct
+                  ctx
                   current-layouts
-                  (tc-ctfe-layouts-add-struct
-                    ctx
-                    current-layouts
-                    current-module
-                    current-module-id
-                    name))]
-              [(AstDecl.DefEnum decl-meta name _ _)
-                (set!
+                  current-module
+                  current-module-id
+                  name))]
+            [(AstDecl.DefEnum decl-meta name _ _)
+              (set!
+                current-layouts
+                (tc-ctfe-layouts-add-enum
+                  ctx
                   current-layouts
-                  (tc-ctfe-layouts-add-enum
-                    ctx
-                    current-layouts
-                    current-module
-                    current-module-id
-                    name))]
-              [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
-                (set!
+                  current-module
+                  current-module-id
+                  name))]
+            [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
+              (set!
+                current-layouts
+                (tc-ctfe-layouts-add-enum
+                  ctx
                   current-layouts
-                  (tc-ctfe-layouts-add-enum
-                    ctx
-                    current-layouts
-                    current-module
-                    current-module-id
-                    name))]
-              [_ unit])
-            unit)
+                  current-module
+                  current-module-id
+                  name))]
+            [_ unit])
           (set! index (+ index 1))))
       current-layouts)))
 
@@ -59458,15 +59469,30 @@
         module-id)]
     [_ false]))
 
+;; Index cursor rather than `ast-decl-list-step`. The list is already a flat
+;; array slice, so the step's 104 B row copy and 144 B result exist only to give
+;; the walk a cons shape; the backing slot is handed to the per-declaration
+;; predicate directly, which costs nothing (aggregate arguments are passed by
+;; reference).
 (define (macro-decls-have-unqualified-import-of-module?
   [decls : AstDeclList]
   [module-id : i64]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
-      (or
-        (macro-decl-has-unqualified-import-of-module? decl module-id)
-        (macro-decls-have-unqualified-import-of-module? rest module-id))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-offset : i64 (struct-get decls offset)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (begin
+          (if (macro-decl-has-unqualified-import-of-module?
+            (array-ref decl-slots (+ decl-offset index))
+            module-id)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
 
 ;; Rebase the cached registry across an additive non-module splice that still
 ;; takes the fresh-symbol fallback. Generated modules use the append companion
@@ -60086,11 +60112,16 @@
     [count : i64 (ast-decl-list-len (& items))]
     [index : i64 count]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [item-offset : i64 (struct-get items offset)]
     (begin
       (while (> index 0)
         (begin
           (set! index (- index 1))
-          (ast-decl-list-push (&mut out) (ast-decl-list-ref items index))))
+          ;; `out` is freshly allocated here, so it cannot alias `items`.
+          (ast-decl-list-push-from
+            (&mut out)
+            (& (struct-get items slots))
+            (+ item-offset index))))
       out)))
 
 (define (macro-decl-list-with-prefix-reserve
@@ -60123,11 +60154,13 @@
   (let
     [index : i64 0]
     [count : i64 (ast-decl-list-len items)]
+    [item-offset : i64 (struct-get items offset)]
     (while (< index count)
       (begin
-        (ast-decl-list-push
+        (ast-decl-list-push-from
           out
-          (ast-decl-list-get items index (ast-decl-fallback)))
+          (& (struct-get items slots))
+          (+ item-offset index))
         (set! index (+ index 1))))))
 
 (define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
@@ -60671,6 +60704,16 @@
         (if (< total 1)
           1
           total))]
+    ;; Copy each row array-to-array. `ast-decl-list-ref` returns `AstDecl`
+    ;; through an SRET pointer, so the old shape copied all 104 B into a stack
+    ;; temporary and then copied it again into `slots` -- two row copies and a
+    ;; call per declaration. Reading the backing slot directly leaves one.
+    [prefix-slots : (Array AstDecl) (struct-get prefix-rev slots)]
+    [prefix-offset : i64 (struct-get prefix-rev offset)]
+    [middle-slots : (Array AstDecl) (struct-get middle slots)]
+    [middle-offset : i64 (struct-get middle offset)]
+    [suffix-slots : (Array AstDecl) (struct-get suffix slots)]
+    [suffix-offset : i64 (struct-get suffix offset)]
     [index : i64 0]
     (begin
       (while (< index prefix-count)
@@ -60678,7 +60721,7 @@
           (array-set!
             slots
             (- (- prefix-count 1) index)
-            (ast-decl-list-ref prefix-rev index))
+            (array-ref prefix-slots (+ prefix-offset index)))
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index middle-count)
@@ -60686,7 +60729,7 @@
           (array-set!
             slots
             (+ prefix-count index)
-            (ast-decl-list-ref middle index))
+            (array-ref middle-slots (+ middle-offset index)))
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index suffix-count)
@@ -60694,7 +60737,7 @@
           (array-set!
             slots
             (+ prefix-count (+ middle-count index))
-            (ast-decl-list-ref suffix index))
+            (array-ref suffix-slots (+ suffix-offset index)))
           (set! index (+ index 1))))
       (MacroSpliceDeclView
         (AstDeclList slots 0 total true)

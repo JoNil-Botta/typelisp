@@ -5603,6 +5603,37 @@
         (array-set! (struct-get v slots) index value)
         (set! (struct-get v len) (+ (struct-get v len) 1))))))
 
+;; Append one declaration read straight out of a source slot array.
+;;
+;; `ast-decl-list-get` returns `AstDecl` through an SRET pointer, so the append
+;; loops copied the whole 104 B row into a stack temporary and then copied it
+;; again into the destination -- two row copies and an out-of-line call per
+;; declaration. This copies array-to-array, leaving one.
+;;
+;; A shared `AstDeclList` borrow cannot yield an element by value at all (a
+;; direct aggregate read through a shared vector borrow is not an owned value),
+;; but it can reborrow its `slots` field, which is the form this takes.
+;;
+;; The destination slot is always `offset + len`, i.e. one past the
+;; destination's live range. Callers must not append a list to itself; every
+;; caller in tree appends into a freshly allocated `ast-decl-list-with-capacity`
+;; result.
+(define (ast-decl-list-push-from
+  [v : (&mut v AstDeclList)]
+  [src : (& src (Array AstDecl))]
+  [src-index : i64]) : unit
+  (begin
+    (if (<
+      (struct-get v len)
+      (- (array-length (struct-get v slots)) (struct-get v offset)))
+      unit
+      (ast-decl-list-grow v))
+    (let
+      [index : i64 (+ (struct-get v offset) (struct-get v len))]
+      (begin
+        (array-set! (struct-get v slots) index (array-ref src src-index))
+        (set! (struct-get v len) (+ (struct-get v len) 1))))))
+
 (define (ast-decl-list-tail [items : AstDeclList]) : AstDeclList
   (if (<= (ast-decl-list-len (& items)) 0)
     (ast-decl-list-new)
@@ -5629,9 +5660,10 @@
   (if (>= index (ast-decl-list-len items))
     unit
     (begin
-      (ast-decl-list-push
+      (ast-decl-list-push-from
         out
-        (ast-decl-list-get items index (ast-decl-fallback)))
+        (& (struct-get items slots))
+        (+ (struct-get items offset) index))
       (ast-decl-list-append-from out items (+ index 1)))))
 
 (define (ast-decl-list-prepend-builder [head : AstDecl] [rest : AstDeclList]) : AstDeclList

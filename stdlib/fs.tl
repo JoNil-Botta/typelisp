@@ -261,7 +261,7 @@
 ;: Create an owned path string as a directory and return a host status code.
 (define (mkdir-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io.c-string path)]
+    [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
     [path-ptr : (Ptr u8) (io.array-const-ptr path-bytes)]
     (status-from-result
       (cfg
@@ -278,7 +278,7 @@
 ;: Remove an owned path string as a file and return a host status code.
 (define (remove-file-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io.c-string path)]
+    [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
     [path-ptr : (Ptr u8) (io.array-const-ptr path-bytes)]
     (status-from-result
       (cfg
@@ -295,7 +295,7 @@
 ;: Remove an owned path string as an empty directory and return a host status code.
 (define (remove-dir-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io.c-string path)]
+    [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
     [path-ptr : (Ptr u8) (io.array-const-ptr path-bytes)]
     (status-from-result
       (cfg
@@ -312,8 +312,8 @@
 ;: Rename owned source and destination path strings and return a host status code.
 (define (rename-status-owned [source : String] [destination : String]) : i64
   (let
-    [source-bytes : (Array u8) (io.c-string source)]
-    [destination-bytes : (Array u8) (io.c-string destination)]
+    [source-bytes : (__tl_dyn-array u8) (io.c-string source)]
+    [destination-bytes : (__tl_dyn-array u8) (io.c-string destination)]
     (status-from-result
       (cfg
         windows
@@ -430,7 +430,7 @@
   (not windows)
   (define (linux-open-dir-owned [path : String]) : i64
     (let
-      [path-bytes : (Array u8) (io.c-string path)]
+      [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
       (linux-syscall-openat
         fs-linux-at-fdcwd
         (io.array-const-ptr path-bytes)
@@ -451,7 +451,7 @@
 (cfg
   (not windows)
   (define (linux-read-dir-append-page!
-    [buf : (Array u8)]
+    [buf : (__tl_dyn-array u8)]
     [read-count : i64]
     [out : (&mut out byte_buf_core.ByteBufBuilder)]) : unit
     (let
@@ -478,7 +478,8 @@
       (if (< fd 0)
         ""
         (let
-          [buf : (Array u8) (array.make-array u8 fs-read-dir-buffer-size)]
+          [buf : (__tl_dyn-array u8)
+            (array.make-array u8 fs-read-dir-buffer-size)]
           [out : byte_buf_core.ByteBufBuilder
             (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
           [ok : bool true]
@@ -544,7 +545,7 @@
 ;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
 (cfg
   windows
-  (define (fs-windows-find-data-name [data : (Array u8)]) : (Ptr u8)
+  (define (fs-windows-find-data-name [data : (__tl_dyn-array u8)]) : (Ptr u8)
     (unsafe
       (ptr-cast
         (ptr-offset (io.array-ptr data) fs-windows-find-data-name-offset)
@@ -556,8 +557,9 @@
   (define (fs-windows-read-dir-status [path : String]) : i64
     (let
       [pattern : String (fs-windows-read-dir-pattern path)]
-      [pattern-bytes : (Array u8) (io.c-string pattern)]
-      [data : (Array u8) (array.make-array u8 fs-windows-find-data-size)]
+      [pattern-bytes : (__tl_dyn-array u8) (io.c-string pattern)]
+      [data : (__tl_dyn-array u8)
+        (array.make-array u8 fs-windows-find-data-size)]
       [handle : i64
         (fs-win-find-first-file
           (io.array-const-ptr pattern-bytes)
@@ -574,8 +576,9 @@
   (define (fs-windows-read-dir [path : String]) : String
     (let
       [pattern : String (fs-windows-read-dir-pattern path)]
-      [pattern-bytes : (Array u8) (io.c-string pattern)]
-      [data : (Array u8) (array.make-array u8 fs-windows-find-data-size)]
+      [pattern-bytes : (__tl_dyn-array u8) (io.c-string pattern)]
+      [data : (__tl_dyn-array u8)
+        (array.make-array u8 fs-windows-find-data-size)]
       [out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
       [handle : i64
@@ -722,7 +725,8 @@
   (not windows)
   (define (linux-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
     (let
-      [statbuf : (Array u8) (array.make-array u8 fs-linux-stat-buffer-size)]
+      [statbuf : (__tl_dyn-array u8)
+        (array.make-array u8 fs-linux-stat-buffer-size)]
       [statptr : (MutPtr u8) (io.array-ptr statbuf)]
       [status : i64
         (status-from-result
@@ -786,7 +790,7 @@
   windows
   (define (fs-windows-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
     (let
-      [data : (Array u8)
+      [data : (__tl_dyn-array u8)
         (array.make-array u8 fs-windows-file-attribute-data-size)]
       [dataptr : (MutPtr u8) (io.array-ptr data)]
       [ok : i32 (fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr)]
@@ -811,7 +815,7 @@
 ;: Probe path metadata and return status, kind sentinel, and regular-file size.
 (define (file-metadata-probe-with-links [path : String] [no-follow : bool]) : FsFileMetadataProbe
   (let
-    [path-bytes : (Array u8) (io.c-string path)]
+    [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
     [path-ptr : (Ptr u8) (io.array-const-ptr path-bytes)]
     (cfg
       windows
@@ -865,7 +869,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       io.io-status-name-too-long
       (let
-        [buf : (Array u8) (array.make-array u8 capacity)]
+        [buf : (__tl_dyn-array u8) (array.make-array u8 capacity)]
         [written : i64
           (cast
             (stdlib.fs.fs-windows-get-current-directory
@@ -881,7 +885,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       io.io-status-name-too-long
       (let
-        [buf : (Array u8) (array.make-array u8 capacity)]
+        [buf : (__tl_dyn-array u8) (array.make-array u8 capacity)]
         [result : (Ptr u8)
           (stdlib.fs.linux-syscall-getcwd (io.array-ptr buf) capacity)]
         (if (ptr-null? result)
@@ -901,7 +905,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
-        [buf : (Array u8) (array.make-array u8 capacity)]
+        [buf : (__tl_dyn-array u8) (array.make-array u8 capacity)]
         [written : i64
           (cast
             (stdlib.fs.fs-windows-get-current-directory
@@ -917,7 +921,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
-        [buf : (Array u8) (array.make-array u8 capacity)]
+        [buf : (__tl_dyn-array u8) (array.make-array u8 capacity)]
         [result : (Ptr u8)
           (stdlib.fs.linux-syscall-getcwd (io.array-ptr buf) capacity)]
         (if (ptr-null? result)

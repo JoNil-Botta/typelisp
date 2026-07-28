@@ -1877,6 +1877,22 @@
       (string.eq base "tl_bytes_view_from_bytes_parts")
       (string.eq base "tl_bytes_mut_view_from_bytes_parts"))))
 
+(define (lower-atomic-buffer-extern-name? [name : String]) : bool
+  (let
+    [base : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-base name)
+        name)]
+    (or
+      (string.eq base "atomic-i64-load")
+      (string.eq base "atomic-i64-store!")
+      (string.eq base "atomic-i64-add!")
+      (string.eq base "atomic-i64-fetch-add!")
+      (string.eq base "atomic-i32-load")
+      (string.eq base "atomic-i32-store!")
+      (string.eq base "atomic-i32-add!")
+      (string.eq base "atomic-i32-fetch-add!"))))
+
 (define (lower-supported-reference-extern?
   [ctx : TcContext]
   [name : i64]
@@ -1887,7 +1903,8 @@
     (or
       (cbi.compiler-builtin-backend-tl-str-view-id? name)
       (string.eq (tc-env-key-name-text name) "tl_str_view")
-      (lower-bytes-view-from-parts-name? (tc-env-key-name-text name)))))
+      (lower-bytes-view-from-parts-name? (tc-env-key-name-text name))
+      (lower-atomic-buffer-extern-name? (tc-env-key-name-text name)))))
 
 (define (lower-name-env-lookup-symbol-id
   [names : LowerNameEnv]
@@ -30809,6 +30826,64 @@
           (CompilerIrValue.Var var-id)
           result-ty))]))
 
+(define (lower-atomic-storage-array
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [storage : AstExpr]
+  [elem-ty : AstType]) : ResultLowerExpr
+  (let
+    [array-ty : AstType (ast-ty-dyn-array elem-ty)]
+    (match (lower-expr ctx state env type-env storage)
+      [(ResultLowerExpr.Ok lowered)
+        (match lowered
+          [(LowerExpr.Expr storage-state storage-value storage-ty)
+            (match (tc-type-strip-region (tc-resolve-type ctx storage-ty))
+              [(AstType.DynArray _)
+                (ResultLowerExpr.Ok
+                  (LowerExpr.Expr storage-state storage-value array-ty))]
+              [(AstType.Ref _ referent-ty)
+                (let
+                  [referent : AstType (tc-context-type-get ctx referent-ty)]
+                  [slots-id : i64 (ci.intern "slots")]
+                  (match (tc-type-strip-region (tc-resolve-type ctx referent))
+                    [(AstType.Struct struct-name)
+                      (lower-struct-get-through-reference
+                        ctx
+                        storage-state
+                        storage-value
+                        referent
+                        struct-name
+                        (tc-nominal-name-id-display struct-name)
+                        slots-id
+                        "slots"
+                        array-ty)]
+                    [(AstType.StructArgs struct-name _)
+                      (lower-struct-get-through-reference
+                        ctx
+                        storage-state
+                        storage-value
+                        referent
+                        struct-name
+                        (tc-nominal-name-id-display struct-name)
+                        slots-id
+                        "slots"
+                        array-ty)]
+                    [_
+                      (ResultLowerExpr.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            storage
+                            "lower: atomic storage expects an atomic buffer")))]))]
+              [_
+                (ResultLowerExpr.Err
+                  (box
+                    (lower-diagnostic-at-expr
+                      storage
+                      "lower: atomic storage expects an atomic buffer")))])])]
+      [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
+
 (define (lower-atomic-array-element-address
   [ctx : TcContext]
   [state : LowerState]
@@ -30817,14 +30892,7 @@
   [array : AstExpr]
   [index : AstExpr]
   [elem-ty : AstType]) : ResultLowerExpr
-  (match (lower-expr-expected
-    ctx
-    state
-    env
-    type-env
-    array
-    (ast-ty-dyn-array elem-ty)
-    array)
+  (match (lower-atomic-storage-array ctx state env type-env array elem-ty)
     [(ResultLowerExpr.Ok arr-lowered)
       (match arr-lowered
         [(LowerExpr.Expr arr-state arr-value _)

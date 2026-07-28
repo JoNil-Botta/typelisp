@@ -4198,12 +4198,15 @@ Masked varying control flow:
 Explicit SPMD atomic scatter:
 
 - `(import stdlib.atomic)` provides sequentially consistent atomic
-  helpers for compatibility dynamic-array elements of type `i32` and `i64`:
+  helpers for owned `AtomicI32Buffer` and `AtomicI64Buffer` elements:
   `atomic-i32-load`, `atomic-i32-store!`, `atomic-i32-add!`,
   `atomic-i32-fetch-add!`, and the corresponding `i64` helpers.
-- The array argument is a compatibility dynamic array, the index is an `i64`,
-  and add or store values use the element type. There is no public
-  memory-order parameter; all helpers are sequentially consistent.
+- `i32-buffer` and `i64-buffer` allocate zero-initialized owned storage. Atomic
+  operations borrow the matching buffer, take an `i64` index, and use the
+  element type for add or store values. The private backing storage uses the
+  compatibility representation, but no public atomic operation accepts an
+  unsized array. There is no public memory-order parameter; all helpers are
+  sequentially consistent.
 - Inside `foreach`, the helper index and value arguments may be varying. This
   is the only overlap-tolerant scatter update in the source surface; ordinary
   `array-set!` with a varying non-contiguous index remains rejected.

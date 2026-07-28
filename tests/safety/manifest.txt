@@ -200,7 +200,7 @@ spmd_varying_call_reject|check-fail|tests/safety/spmd_varying_call_reject.tl|-|f
 spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_reject.tl|-|typecheck: call arity mismatch: atomic.atomic-i64-add! expected 3 arguments, got 4 arguments
 spmd_atomic_reduce_call_reject|check-fail|tests/safety/spmd_atomic_reduce_call_reject.tl|-|function calls are not allowed inside a spmd-reduce value expression
 spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
-spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: call `atomic.atomic-i64-add!` argument 1 type mismatch: expected (Array i64), found (Array u64)
+spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: call `atomic.atomic-i64-add!` argument 1 type mismatch: expected (& source stdlib.atomic/AtomicI64Buffer), found (& out stdlib.atomic/AtomicI32Buffer)
 spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|return inside foreach is not supported
 spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try inside foreach is not supported
 spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported

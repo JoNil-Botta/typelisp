@@ -122,7 +122,7 @@
             (sync.i64-channel-close (to-raw channel)))
           (define (store-raw!
             [channel : Channel]
-            [dst : (Array i64)]
+            [dst : (__tl_dyn-array i64)]
             [offset : i64]) : unit
             (begin
               (array-set! dst offset (struct-get channel slots-addr))
@@ -132,7 +132,7 @@
               (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
               (array-set! dst (+ offset 5) (struct-get channel items-handle))
               (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
-          (define (load-raw [src : (Array i64)] [offset : i64]) : Channel
+          (define (load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : Channel
             (Channel
               (array_ops.ref src offset)
               (array_ops.ref src (+ offset 1))
@@ -281,13 +281,13 @@
                     false)))))
           (define (store-raw!
             [mutex : Mutex]
-            [dst : (Array i64)]
+            [dst : (__tl_dyn-array i64)]
             [offset : i64]) : unit
             (begin
               (array-set! dst offset (struct-get mutex value-addr))
               (array-set! dst (+ offset 1) (struct-get mutex mutex-handle))
               (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
-          (define (load-raw [src : (Array i64)] [offset : i64]) : Mutex
+          (define (load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : Mutex
             (Mutex
               (array_ops.ref src offset)
               (array_ops.ref src (+ offset 1))
@@ -814,7 +814,7 @@
 ;: Store a mutex handle into a raw `i64` array at `offset`.
 (define (i64-mutex-store-raw!
   [mutex : SyncI64Mutex]
-  [dst : (Array i64)]
+  [dst : (__tl_dyn-array i64)]
   [offset : i64]) : unit
   (begin
     (array-set! dst offset (struct-get mutex value-addr))
@@ -822,7 +822,7 @@
     (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
 
 ;: Rebuild a mutex handle from a raw `i64` array at `offset`.
-(define (i64-mutex-load-raw [src : (Array i64)] [offset : i64]) : SyncI64Mutex
+(define (i64-mutex-load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : SyncI64Mutex
   (SyncI64Mutex
     (array-ref src offset)
     (array-ref src (+ offset 1))
@@ -1003,7 +1003,7 @@
 ;: Store a channel handle into a raw `i64` array at `offset`.
 (define (i64-channel-store-raw!
   [channel : SyncI64Channel]
-  [dst : (Array i64)]
+  [dst : (__tl_dyn-array i64)]
   [offset : i64]) : unit
   (begin
     (array-set! dst offset (struct-get channel slots-addr))
@@ -1015,7 +1015,7 @@
     (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
 
 ;: Rebuild a channel handle from a raw `i64` array at `offset`.
-(define (i64-channel-load-raw [src : (Array i64)] [offset : i64]) : SyncI64Channel
+(define (i64-channel-load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : SyncI64Channel
   (SyncI64Channel
     (array-ref src offset)
     (array-ref src (+ offset 1))
@@ -1219,7 +1219,7 @@
 ;: Store a pair channel handle into a raw `i64` array at `offset`.
 (define (channel-i64-pair-store-raw!
   [channel : ChannelI64PairChannel]
-  [dst : (Array i64)]
+  [dst : (__tl_dyn-array i64)]
   [offset : i64]) : unit
   (begin
     (array-set! dst offset (struct-get channel slots-addr))
@@ -1231,7 +1231,7 @@
     (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
 
 ;: Rebuild a pair channel handle from a raw `i64` array at `offset`.
-(define (channel-i64-pair-load-raw [src : (Array i64)] [offset : i64]) : ChannelI64PairChannel
+(define (channel-i64-pair-load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : ChannelI64PairChannel
   (ChannelI64PairChannel
     (array-ref src offset)
     (array-ref src (+ offset 1))
@@ -1420,7 +1420,7 @@
 ;: Store a string channel handle into a raw `i64` array at `offset`.
 (define (channel-string-store-raw!
   [channel : ChannelString]
-  [dst : (Array i64)]
+  [dst : (__tl_dyn-array i64)]
   [offset : i64]) : unit
   (begin
     (array-set! dst offset (struct-get channel slots-addr))
@@ -1432,7 +1432,7 @@
     (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
 
 ;: Rebuild a string channel handle from a raw `i64` array at `offset`.
-(define (channel-string-load-raw [src : (Array i64)] [offset : i64]) : ChannelString
+(define (channel-string-load-raw [src : (__tl_dyn-array i64)] [offset : i64]) : ChannelString
   (ChannelString
     (array-ref src offset)
     (array-ref src (+ offset 1))

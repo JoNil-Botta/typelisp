@@ -38,10 +38,11 @@ not deprecated runtime concatenation.
   `arena.rewind-safe!`, and `arena.destroy-safe!` are safe under their checker
   proofs; raw switching, destroying, and rewinding helpers require
   `(unsafe ...)`. Import it with `(import stdlib.arena)`.
-- `atomic.tl`: explicit sequentially consistent atomic integer operations on
-  one dynamic-array element. The first surface supports `i32` and `i64`
-  load/store/add/fetch-add helpers and is the only safe overlap-tolerant SPMD
-  scatter write path; ordinary `array-set!` remains non-atomic. Import it with
+- `atomic.tl`: owned `AtomicI32Buffer` and `AtomicI64Buffer` domains with
+  explicit sequentially consistent load/store/add/fetch-add operations. Their
+  backing storage is private compatibility storage, so callers never declare
+  an unsized array. This is the only safe overlap-tolerant SPMD scatter write
+  path; ordinary `array-set!` remains non-atomic. Import it with
   `(import stdlib.atomic)`.
 - `args.tl`: reusable argv option parser over explicit specs. It supports
   short/long boolean flags, short/long value flags, repeated options,
@@ -49,11 +50,12 @@ not deprecated runtime concatenation.
   missing-value and unknown-option diagnostics. The intended CLI migration path
   is for selfhost command modules to define local specs and replace hand-rolled
   flag loops incrementally. Import it with `(import stdlib.args)`.
-- `byte_buf.tl`: owned mutable binary byte buffers backed by active-arena
-  `(Array u8)` storage. The `byte-buf-*` API covers construction, capacity
-  inspection, reserve/growth, push, append/copy from arrays and strings, live
-  range reads/writes, clear/reuse, copy-out to arrays or strings, and borrowed
-  immutable/mutable `bytes` views over strings, buffers, and byte sub-slices.
+- `byte_buf.tl`: owned mutable binary byte buffers backed by private
+  active-arena compatibility storage. The public API covers construction,
+  capacity inspection, reserve/growth, push, append/copy from strings and
+  borrowed bytes, live range reads/writes, clear/reuse, copy-out to strings,
+  and borrowed immutable/mutable `bytes` views over strings, buffers, and byte
+  sub-slices. It does not expose compatibility arrays.
   Import it with `(import stdlib.byte_buf)`.
 - `byte_buf_core.tl`: lightweight append-only binary byte builder for compiler
   and runtime hot paths that need construction, push, append, reserve, length,
@@ -625,8 +627,8 @@ owned stdlib imports keep the compatibility wrappers.
 | `(channel i64)`, `ChannelI64PairChannel`, and `ChannelString` helpers in `sync.tl` | Channel creation allocates runtime-owned OS memory for the fixed ring buffer and head/tail state, plus three OS semaphore handles. Send/recv do not allocate TypeLisp heap storage; they block through the semaphore substrate and move one scalar `i64` message, one two-`i64` `ChannelI64Pair` aggregate, or one atomic-arena-owned `String` handle through the synchronized queue. `channel_i64.close`, `channel-i64-pair-close`, and `channel-string-close` release the OS memory and semaphore handles after all users are done. |
 | `(mutex i64)` generated module in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex_i64.lock` blocks on the semaphore and returns a cleanup-owned `mutex_i64.Guard`; guarded `get`/`set!`/`add!` do not allocate and `mutex_i64.unlock` releases the semaphore automatically when the `with` scope exits. `mutex_i64.close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
 | `(slice T)` generated helpers in `vector_slice.tl` | `Slice` and `MutSlice` constructors, `get`, `set`, `len`/`mut-len`, `is-empty?`/`mut-is-empty?`, and sub-slicing are non-allocating views tied to a Vec owner borrow; invalid ranges produce an empty view. `iterator` snapshots the borrowed private backing storage/start/len, `next` returns an `IterNext` value carrying either the copied item plus next iterator state or the exhausted state, and exhausted iterators remain exhausted when threaded again. `to-vec` is the explicit owned-copy boundary and allocates active-arena storage. |
-| `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-array`, `bytes-to-string`, and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries. |
-| `byte-buf-builder-*` helpers in `byte_buf_core.tl` | `ByteBufBuilder` construction, reserve, growth, append from arrays or strings, and finish/copy boundaries allocate in the active arena. Length/capacity inspection is non-allocating, and `byte-buf-builder-push` mutates the existing builder through `&mut` unless growth replaces its backing array. The module intentionally omits borrowed `bytes` views and in-place indexed mutation for hot append-only import sites. |
+| `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-string` and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries; public binary APIs do not expose compatibility arrays. |
+| `byte-buf-builder-*` helpers in `byte_buf_core.tl` | `ByteBufBuilder` construction, reserve, growth, append from private compatibility storage or strings, and finish/copy boundaries allocate in the active arena. Length/capacity inspection is non-allocating, and `byte-buf-builder-push` mutates the existing builder through `&mut` unless growth replaces its backing storage. The module is an internal compiler/runtime core and spells that storage `__tl_dyn-array`; it intentionally omits borrowed `bytes` views and in-place indexed mutation. |
 | `arena.*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` / `ArenaPhase` wrappers around raw runtime handles. `arena.make` creates an independent ordinary arena, `arena.make-atomic` creates an independent atomic arena, `arena.current` observes the active arena, and `arena.mark` observes the current bump mark. `arena.phase`, `arena.rewind-safe!`, and `arena.destroy-safe!` are accepted only under checker-proven ordinary direct-owner rules. `arena.set!`, `arena.destroy`, and `arena.rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |

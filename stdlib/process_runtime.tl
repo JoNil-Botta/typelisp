@@ -26,7 +26,7 @@
 ;: Private runtime argv sequence. `tl` converts the public process model to
 ;: this no-cycle representation before invoking the OS runtime.
 (defstruct ProcessRuntimeStringList
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 ;: Private runtime optional string value.
@@ -41,7 +41,7 @@
 
 ;: Private runtime environment override sequence.
 (defstruct ProcessRuntimeEnvList
-  (slots (Array ProcessRuntimeEnvEntry))
+  (slots (__tl_dyn-array ProcessRuntimeEnvEntry))
   (len i64))
 
 ;: Private optional string view.
@@ -112,7 +112,7 @@
 (define (args-cons [value : String] [rest : ProcessRuntimeStringList]) : ProcessRuntimeStringList
   (let
     [len : i64 (struct-get rest len)]
-    [slots : (Array String) (array.make-array String (+ len 1))]
+    [slots : (__tl_dyn-array String) (array.make-array String (+ len 1))]
     [index : i64 0]
     (begin
       (array-set! slots 0 value)
@@ -137,7 +137,7 @@
   [rest : ProcessRuntimeEnvList]) : ProcessRuntimeEnvList
   (let
     [len : i64 (struct-get rest len)]
-    [slots : (Array ProcessRuntimeEnvEntry)
+    [slots : (__tl_dyn-array ProcessRuntimeEnvEntry)
       (array.make-array ProcessRuntimeEnvEntry (+ len 1))]
     [index : i64 0]
     (begin
@@ -497,8 +497,8 @@
   (stdlib.process_runtime.output-unsupported
     "process: async child handles are not supported by this runtime"))
 
-;: Return the integer address of an `Array u8` backing buffer.
-(define (array-u8-addr [buf : (Array u8)]) : i64
+;: Return the integer address of private byte storage.
+(define (array-u8-addr [buf : (__tl_dyn-array u8)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
@@ -507,16 +507,17 @@
   windows
   (define (byte-builder-addr [buf : byte_buf_core.ByteBufBuilder]) : i64
     (let
-      [bytes : (Array u8) (byte_buf_core.byte-buf-builder-finish-array (& buf))]
+      [bytes : (__tl_dyn-array u8)
+        (byte_buf_core.byte-buf-builder-finish-array (& buf))]
       (stdlib.process_runtime.array-u8-addr bytes))))
 
-;: Return the integer address of an `Array u64` backing buffer.
-(define (array-u64-addr [buf : (Array u64)]) : i64
+;: Return the integer address of private `u64` storage.
+(define (array-u64-addr [buf : (__tl_dyn-array u64)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
-;: Return the integer address of an `Array i32` backing buffer.
-(define (array-i32-addr [buf : (Array i32)]) : i64
+;: Return the integer address of private `i32` storage.
+(define (array-i32-addr [buf : (__tl_dyn-array i32)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
@@ -555,8 +556,8 @@
       matched)))
 
 ;: Return true when inherited entry `entry` is overridden by any address in `ov`
-;: (an array of override `NAME=VALUE` C string addresses).
-(define (inherited-overridden? [entry : (Ptr u8)] [ov : (Array u64)]) : bool
+;: (private storage of override `NAME=VALUE` C string addresses).
+(define (inherited-overridden? [entry : (Ptr u8)] [ov : (__tl_dyn-array u64)]) : bool
   (let
     [n : i64 (array-length ov)]
     [i : i64 0]
@@ -571,7 +572,7 @@
       found)))
 
 ;: Build a NUL-terminated `NAME=VALUE` C string for an env override.
-(define (env-cstring [name : String] [value : String]) : (Array u8)
+(define (env-cstring [name : String] [value : String]) : (__tl_dyn-array u8)
   (let
     [nl : i64 (string-length name)]
     [vl : i64 (string-length value)]
@@ -599,10 +600,11 @@
 ;: Materialize the override list into an array of `NAME=VALUE` C string
 ;: addresses. The move-only `env` list is consumed exactly once here so the
 ;: resulting array can be scanned repeatedly without further moves.
-(define (build-override-cstrings [env : ProcessRuntimeEnvList]) : (Array u64)
+(define (build-override-cstrings [env : ProcessRuntimeEnvList]) : (__tl_dyn-array
+    u64)
   (let
     [count : i64 (struct-get env len)]
-    [ov : (Array u64) (array.make-array u64 count)]
+    [ov : (__tl_dyn-array u64) (array.make-array u64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -716,7 +718,7 @@
 (define (linux-build-argv [exec-addr : i64] [argv : ProcessRuntimeStringList]) : i64
   (let
     [argc : i64 (stdlib.process_runtime.args-count argv)]
-    [arr : (Array u64) (array.make-array u64 (+ argc 2))]
+    [arr : (__tl_dyn-array u64) (array.make-array u64 (+ argc 2))]
     [index : i64 0]
     (begin
       (array-set! arr 0 (cast exec-addr : u64))
@@ -734,7 +736,9 @@
       (stdlib.process_runtime.array-u64-addr arr))))
 
 ;: Count inherited environment entries not overridden by `ov`.
-(define (linux-count-inherited [environ : (Ptr (Ptr u8))] [ov : (Array u64)]) : i64
+(define (linux-count-inherited
+  [environ : (Ptr (Ptr u8))]
+  [ov : (__tl_dyn-array u64)]) : i64
   (let
     [i : i64 0]
     [count : i64 0]
@@ -759,7 +763,8 @@
 ;: environment array directly.
 (define (linux-build-envp [env : ProcessRuntimeEnvList]) : i64
   (let
-    [ov : (Array u64) (stdlib.process_runtime.build-override-cstrings env)]
+    [ov : (__tl_dyn-array u64)
+      (stdlib.process_runtime.build-override-cstrings env)]
     [ovc : i64 (array-length ov)]
     (if (= ovc 0)
       (unsafe
@@ -771,7 +776,7 @@
           (unsafe
             (ptr-cast (stdlib.process_runtime.linux-envp) : (Ptr (Ptr u8))))]
         [inh : i64 (stdlib.process_runtime.linux-count-inherited environ ov)]
-        [arr : (Array u64) (array.make-array u64 (+ (+ inh ovc) 1))]
+        [arr : (__tl_dyn-array u64) (array.make-array u64 (+ (+ inh ovc) 1))]
         [w : i64 0]
         [i : i64 0]
         [k : i64 0]
@@ -858,8 +863,8 @@
       (begin
         (stdlib.process_runtime.linux-close-if stdin-r)
         (let
-          [act : (Array u64) (array.make-array u64 4)]
-          [old : (Array u64) (array.make-array u64 4)]
+          [act : (__tl_dyn-array u64) (array.make-array u64 4)]
+          [old : (__tl_dyn-array u64) (array.make-array u64 4)]
           (begin
             (array-set! act 0 (cast 1 : u64))
             (unsafe
@@ -926,8 +931,8 @@
       [exec-r : i64 -1]
       [exec-w : i64 -1]
       [failed : bool false]
-      [pbuf : (Array i32) (array.make-array i32 2)]
-      [ebuf : (Array i32) (array.make-array i32 2)]
+      [pbuf : (__tl_dyn-array i32) (array.make-array i32 2)]
+      [ebuf : (__tl_dyn-array i32) (array.make-array i32 2)]
       (begin
         (if has-stdin
           (if (<
@@ -1029,8 +1034,8 @@
       [exec-r : i64 -1]
       [exec-w : i64 -1]
       [failed : bool false]
-      [pbuf : (Array i32) (array.make-array i32 2)]
-      [ebuf : (Array i32) (array.make-array i32 2)]
+      [pbuf : (__tl_dyn-array i32) (array.make-array i32 2)]
+      [ebuf : (__tl_dyn-array i32) (array.make-array i32 2)]
       (begin
         (if has-stdin
           (if (<
@@ -1205,7 +1210,7 @@
     windows
     true
     (let
-      [buf : (Array u8) (array.make-array u8 8)]
+      [buf : (__tl_dyn-array u8) (array.make-array u8 8)]
       [count : i64
         (unsafe
           (syscall 0 exec-r (stdlib.process_runtime.array-u8-addr buf) 8))]
@@ -1236,7 +1241,7 @@
             (stdlib.process_runtime.linux-close-if (struct-get spawn exec-r))
             (stdlib.process_runtime.wait-error))
           (let
-            [statusbuf : (Array i32) (array.make-array i32 1)]
+            [statusbuf : (__tl_dyn-array i32) (array.make-array i32 1)]
             [waited : i64
               (unsafe
                 (syscall
@@ -1384,7 +1389,7 @@
             (stdlib.process_runtime.linux-close-if (struct-get spawn exec-r))
             (stdlib.process_runtime.wait-error))
           (let
-            [statusbuf : (Array i32) (array.make-array i32 1)]
+            [statusbuf : (__tl_dyn-array i32) (array.make-array i32 1)]
             [waited : i64
               (unsafe
                 (syscall
@@ -1466,7 +1471,7 @@
       [pid : i64 (struct-get child pid)]
       [stdout-fd : i64 (struct-get child stdout-handle)]
       [stderr-fd : i64 (struct-get child stderr-handle)]
-      [statusbuf : (Array i32) (array.make-array i32 1)]
+      [statusbuf : (__tl_dyn-array i32) (array.make-array i32 1)]
       [waited : i64
         (unsafe
           (syscall 61 pid (stdlib.process_runtime.array-i32-addr statusbuf) 0 0))]
@@ -1562,7 +1567,8 @@
   windows
   (define (windows-build-env [env : ProcessRuntimeEnvList]) : i64
     (let
-      [ov : (Array u64) (stdlib.process_runtime.build-override-cstrings env)]
+      [ov : (__tl_dyn-array u64)
+        (stdlib.process_runtime.build-override-cstrings env)]
       [ovc : i64 (array-length ov)]
       (if (= ovc 0)
         0
@@ -1621,7 +1627,7 @@
     (let
       [source : i64 (stdlib.process_runtime.win-get-std-handle which)]
       [current : i64 (stdlib.process_runtime.win-get-current-process)]
-      [copy : (Array i64) (array.make-array i64 1)]
+      [copy : (__tl_dyn-array i64) (array.make-array i64 1)]
       (if (or (= source 0) (= source -1))
         -1
         (if (=
@@ -1643,9 +1649,9 @@
   windows
   (define (windows-make-temp-file) : i64
     (let
-      [pathbuf : (Array u8) (array.make-array u8 320)]
-      [namebuf : (Array u8) (array.make-array u8 320)]
-      [prefix : (Array u8) (io.c-string "tlp")]
+      [pathbuf : (__tl_dyn-array u8) (array.make-array u8 320)]
+      [namebuf : (__tl_dyn-array u8) (array.make-array u8 320)]
+      [prefix : (__tl_dyn-array u8) (io.c-string "tlp")]
       [path-len : i32
         (stdlib.process_runtime.win-get-temp-path
           (cast 320 : i32)
@@ -1664,7 +1670,7 @@
           (if (= (cast name-result : i64) 0)
             -1
             (let
-              [security : (Array u64) (array.make-array u64 3)]
+              [security : (__tl_dyn-array u64) (array.make-array u64 3)]
               (begin
                 (array-set! security 0 (cast 24 : u64))
                 (array-set! security 1 (cast 0 : u64))
@@ -1695,8 +1701,8 @@
     [out-handle : i64]
     [err-handle : i64]) : i64
     (let
-      [startup : (Array u64) (array.make-array u64 13)]
-      [procinfo : (Array u64) (array.make-array u64 3)]
+      [startup : (__tl_dyn-array u64) (array.make-array u64 13)]
+      [procinfo : (__tl_dyn-array u64) (array.make-array u64 3)]
       (begin
         (array-set! startup 0 (cast 104 : u64))
         (array-set! startup 7 (shl (cast 0x100 : u64) 32))
@@ -1724,7 +1730,7 @@
           (if (= created (cast 0 : i32))
             -1
             (let
-              [codebuf : (Array i32) (array.make-array i32 1)]
+              [codebuf : (__tl_dyn-array i32) (array.make-array i32 1)]
               [process-handle : i64 (cast (array-ref procinfo 0) : i64)]
               [worker-handle : i64 (cast (array-ref procinfo 1) : i64)]
               (begin
@@ -1750,8 +1756,8 @@
     [env-addr : i64]
     [cwd-addr : i64]) : i64
     (let
-      [startup : (Array u64) (array.make-array u64 13)]
-      [procinfo : (Array u64) (array.make-array u64 3)]
+      [startup : (__tl_dyn-array u64) (array.make-array u64 13)]
+      [procinfo : (__tl_dyn-array u64) (array.make-array u64 3)]
       [stdin-handle : i64
         (stdlib.process_runtime.windows-duplicate-standard-handle
           (cast -10 : i32))]
@@ -1795,7 +1801,7 @@
               (if (= created (cast 0 : i32))
                 -1
                 (let
-                  [codebuf : (Array i32) (array.make-array i32 1)]
+                  [codebuf : (__tl_dyn-array i32) (array.make-array i32 1)]
                   [process-handle : i64 (cast (array-ref procinfo 0) : i64)]
                   [worker-handle : i64 (cast (array-ref procinfo 1) : i64)]
                   (begin
@@ -1815,7 +1821,7 @@
   windows
   (define (windows-seek-handle [handle : i64] [offset : i64] [whence : i32]) : i64
     (let
-      [pos : (Array i64) (array.make-array i64 1)]
+      [pos : (__tl_dyn-array i64) (array.make-array i64 1)]
       [ok : i32
         (stdlib.process_runtime.win-set-file-pointer-ex
           handle
@@ -1847,7 +1853,7 @@
           0)
           ""
           (let
-            [buf : (Array u8) (array.make-array u8 end)]
+            [buf : (__tl_dyn-array u8) (array.make-array u8 end)]
             [offset : i64 0]
             [done : bool false]
             (begin
@@ -1860,7 +1866,7 @@
                     (if (> remaining 1048576)
                       (cast 1048576 : i32)
                       (cast remaining : i32))]
-                  [readbuf : (Array i32) (array.make-array i32 1)]
+                  [readbuf : (__tl_dyn-array i32) (array.make-array i32 1)]
                   [ok : i32
                     (stdlib.process_runtime.win-read-file
                       handle

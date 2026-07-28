@@ -8213,18 +8213,6 @@
       (+ index 1)
       (+ total (opt-i64-list-count (array-ref rows index))))))
 
-(define (opt-cfg-i64-list-array-fill-empty!
-  [rows : (Array OptI64List)]
-  [count : i64]) : unit
-  (let
-    [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (array-set! rows i (OptI64List.Nil))
-          (set! i (+ i 1))))
-      unit)))
-
 (define (opt-cfg-index-label-set-to-ids
   [labels : OptLabelSet]
   [generation : i64]) : OptI64List
@@ -8478,8 +8466,6 @@
     [reach-count : i64 0]
     [targets-known : bool true]
     (begin
-      (opt-cfg-i64-list-array-fill-empty! succ-rows count)
-      (opt-cfg-i64-list-array-fill-empty! pred-rows count)
       (set!
         targets-known
         (opt-cfg-index-fill-rows! blocks generation succ-rows pred-rows 0))
@@ -9210,7 +9196,6 @@
       (opt-cfg-fill-i64! tout count (- 0 1))
       (if (>= entry-id 0)
         (begin
-          (opt-cfg-i64-list-array-fill-empty! child-rows count)
           (opt-dom-child-rows-fill! index idom child-rows)
           (let
             [children : OptCfgCsr (opt-cfg-csr-build child-rows count)]
@@ -12264,21 +12249,27 @@
           pred
           (opt-ssa-phi-inputs (opt-label-tail preds) outs var ty)))]))
 
-(define (opt-ssa-phis-for-label
+;; Append this label's inserted phis to `builder`, in phi-site order. The old
+;; shape recursed to the end of `sites` first and consed each phi onto the
+;; returned tail, which produced the same site order through a cons node per
+;; phi; pushing on the way down produces it directly. `opt-ssa-phi-inputs` is a
+;; pure lookup over `pred-map`/`outs`, so evaluating it in forward site order
+;; rather than reverse changes nothing it returns.
+(define (opt-ssa-push-phis-for-label!
   [pred-map : OptPredMap]
   [outs : OptSsaBlockOuts]
   [sites : OptSsaPhiSites]
-  [label : i64]) : CompilerIrInstrList
+  [label : i64]
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
   (match sites
-    [(OptSsaPhiSites.Nil) (CompilerIrInstrList.Nil)]
+    [(OptSsaPhiSites.Nil) unit]
     [(OptSsaPhiSites.Cons site rest)
-      (let
-        [tail : CompilerIrInstrList
-          (opt-ssa-phis-for-label pred-map outs (box-get rest) label)]
+      (begin
         (match site
           [(OptSsaPhiSite.Site var site-label ty phi-var)
             (if (= site-label label)
-              (compiler-ir-instr-cons
+              (compiler-ir-instr-builder-push!
+                (&mut builder)
                 (CompilerIrInstr.Phi
                   phi-var
                   (opt-ssa-phi-inputs
@@ -12286,9 +12277,14 @@
                     outs
                     var
                     ty)
-                  ty)
-                tail)
-              tail)]))]))
+                  ty))
+              unit)])
+        (opt-ssa-push-phis-for-label!
+          pred-map
+          outs
+          (box-get rest)
+          label
+          (&mut builder)))]))
 
 (define (opt-ssa-materialize-blocks
   [blocks : CompilerIrBlockList]
@@ -12303,24 +12299,35 @@
       (match block
         [(CompilerIrBlock.Block label _)
           (let
-            [phis : CompilerIrInstrList
-              (opt-ssa-phis-for-label pred-map outs sites label)]
-            [body : CompilerIrInstrList
-              (opt-ssa-rewrite-preexisting-instrs
-                facts
-                outs
-                (opt-ssa-rename-blocks-lookup renamed label))]
-            (compiler-ir-block-cons
-              (compiler-ir-block
-                label
-                (opt-aggregate-instr-list-append phis body))
-              (opt-ssa-materialize-blocks
-                (box-get rest)
+            ;; One builder per block, filled phis-then-body. The old shape built
+            ;; a cons chain for each half, joined them with
+            ;; `opt-aggregate-instr-list-append`, and then had
+            ;; `compiler-ir-block` walk the joined spine twice more (count, then
+            ;; fill-array) to rebuild the dense sequence it started from.
+            [builder : CompilerIrInstrBuilder (compiler-ir-instr-builder-new)]
+            (begin
+              (opt-ssa-push-phis-for-label!
                 pred-map
-                facts
-                renamed
                 outs
-                sites)))])]
+                sites
+                label
+                (&mut builder))
+              (opt-ssa-push-rewritten-preexisting-instrs!
+                facts
+                outs
+                (opt-ssa-rename-blocks-lookup renamed label)
+                (&mut builder))
+              (compiler-ir-block-cons
+                (CompilerIrBlock.Block
+                  label
+                  (compiler-ir-instr-builder-to-seq builder))
+                (opt-ssa-materialize-blocks
+                  (box-get rest)
+                  pred-map
+                  facts
+                  renamed
+                  outs
+                  sites))))])]
     [(CompilerIrBlockList.Array seq)
       (opt-ssa-materialize-blocks
         (compiler-ir-block-seq-to-list seq)
@@ -12365,22 +12372,33 @@
         pred
         (opt-ssa-rewrite-preexisting-phi-inputs facts outs (box-get rest) ty))]))
 
-(define (opt-ssa-rewrite-preexisting-instrs
+;; Append the renamed block body to `builder`, rewriting pre-existing phi
+;; inputs in place of the old cons-per-instruction rebuild. Traversal order is
+;; unchanged: the old form evaluated the rewrite for the head before recursing
+;; on the tail, and so does this one.
+(define (opt-ssa-push-rewritten-preexisting-instrs!
   [facts : OptSsaFacts]
   [outs : OptSsaBlockOuts]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrList]
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
   (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
+    [(CompilerIrInstrList.Nil) unit]
     [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (match instr
-          [(CompilerIrInstr.Phi dst inputs ty)
-            (CompilerIrInstr.Phi
-              dst
-              (opt-ssa-rewrite-preexisting-phi-inputs facts outs inputs ty)
-              ty)]
-          [_ instr])
-        (opt-ssa-rewrite-preexisting-instrs facts outs (box-get rest)))]))
+      (begin
+        (compiler-ir-instr-builder-push!
+          (&mut builder)
+          (match instr
+            [(CompilerIrInstr.Phi dst inputs ty)
+              (CompilerIrInstr.Phi
+                dst
+                (opt-ssa-rewrite-preexisting-phi-inputs facts outs inputs ty)
+                ty)]
+            [_ instr]))
+        (opt-ssa-push-rewritten-preexisting-instrs!
+          facts
+          outs
+          (box-get rest)
+          (&mut builder)))]))
 
 ;; A pre-existing phi whose DST is itself a rename candidate would need its
 ;; definition versioned per edge -- out of scope; skip construction (the
@@ -12936,15 +12954,6 @@
               dst
               max-dst))])]))
 
-(define (opt-global-copy-buckets-fill-empty!
-  [buckets : (Array OptGlobalCopyFacts)]
-  [index : i64]) : unit
-  (if (>= index (array-length buckets))
-    unit
-    (begin
-      (array-set! buckets index (OptGlobalCopyFacts.Nil))
-      (opt-global-copy-buckets-fill-empty! buckets (+ index 1)))))
-
 (define (opt-global-copy-table-insert!
   [table : OptGlobalCopyFactTable]
   [fact : OptGlobalCopyFact]) : unit
@@ -12980,7 +12989,6 @@
       (array.make-array OptGlobalCopyFacts capacity)]
     [table : OptGlobalCopyFactTable (OptGlobalCopyFactTable buckets)]
     (begin
-      (opt-global-copy-buckets-fill-empty! buckets 0)
       (opt-global-copy-table-insert-reversed! table facts)
       table)))
 
@@ -13082,15 +13090,6 @@
               group
               max-group))])]))
 
-(define (opt-global-pack-word-buckets-fill-empty!
-  [buckets : (Array OptGlobalPackWordFacts)]
-  [index : i64]) : unit
-  (if (>= index (array-length buckets))
-    unit
-    (begin
-      (array-set! buckets index (OptGlobalPackWordFacts.Nil))
-      (opt-global-pack-word-buckets-fill-empty! buckets (+ index 1)))))
-
 (define (opt-global-pack-word-table-insert!
   [table : OptGlobalPackWordFactTable]
   [fact : OptGlobalPackWordFact]) : unit
@@ -13126,7 +13125,6 @@
       (array.make-array OptGlobalPackWordFacts capacity)]
     [table : OptGlobalPackWordFactTable (OptGlobalPackWordFactTable buckets)]
     (begin
-      (opt-global-pack-word-buckets-fill-empty! buckets 0)
       (opt-global-pack-word-table-insert-reversed! table facts)
       table)))
 
@@ -13875,15 +13873,6 @@
     [(OptGlobalExprFacts.Cons _ rest)
       (+ 1 (opt-global-expr-facts-count (box-get rest)))]))
 
-(define (opt-global-expr-buckets-fill-empty!
-  [buckets : (Array OptGlobalExprFacts)]
-  [index : i64]) : unit
-  (if (>= index (array-length buckets))
-    unit
-    (begin
-      (array-set! buckets index (OptGlobalExprFacts.Nil))
-      (opt-global-expr-buckets-fill-empty! buckets (+ index 1)))))
-
 (define (opt-global-expr-bucket-index
   [type-segment-bases : i64]
   [buckets : (Array OptGlobalExprFacts)]
@@ -13931,7 +13920,6 @@
       (array.make-array OptGlobalExprFacts capacity)]
     [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
     (begin
-      (opt-global-expr-buckets-fill-empty! buckets 0)
       (opt-global-expr-table-insert-reversed! type-segment-bases table facts)
       table)))
 
@@ -21843,16 +21831,18 @@
         defs
         (compiler-ir-block-seq-to-list seq))]))
 
+;; `OptBoolBranchDef.No` is the fieldless tag-0 variant, so its representation is
+;; all-zero bytes and `make-array` already produces it for every slot -- see
+;; `lower-make-array-zero-fill-enum-supported?`, which admits exactly the enums
+;; whose first variant carries no fields. Every `(Array E)` in this file built
+;; by `make-array` for such an `E` therefore starts out uniformly tag-0, and a
+;; pass that writes that same variant over the whole array is a pure repeat of
+;; the allocation's own fill.
 (define (opt-bool-branch-defs [frame : i64] [blocks : CompilerIrBlockList]) : (Array
     OptBoolBranchDef)
   (let
     [defs : (Array OptBoolBranchDef) (array.make-array OptBoolBranchDef frame)]
-    [index : i64 0]
     (begin
-      (while (< index frame)
-        (begin
-          (array-set! defs index (OptBoolBranchDef.No))
-          (set! index (+ index 1))))
       (opt-bool-branch-defs-fill-blocks! defs blocks)
       defs)))
 
@@ -22319,12 +22309,6 @@
                                     (array.make-array bool frame)]
                                   [remove : (Array bool)
                                     (array.make-array bool frame)]
-                                  [_expanded : unit
-                                    (opt-cfg-fill-bool! expanded frame false)]
-                                  [_emitted : unit
-                                    (opt-cfg-fill-bool! emitted frame false)]
-                                  [_remove : unit
-                                    (opt-cfg-fill-bool! remove frame false)]
                                   [cell : (Array i64) (array.make-array i64 1)]
                                   [_cell : unit (array-set! cell 0 frame)]
                                   [built : OptBoolBranchConjBuild
@@ -26055,22 +26039,9 @@
 (define (opt-gvn-bucket-capacity [count : i64]) : i64
   (opt-global-fact-bucket-capacity count))
 
-(define (opt-gvn-buckets-fill-empty!
-  [buckets : (Array OptGvnBucket)]
-  [index : i64]) : unit
-  (if (>= index (array-length buckets))
-    unit
-    (begin
-      (array-set! buckets index (OptGvnBucket.Nil))
-      (opt-gvn-buckets-fill-empty! buckets (+ index 1)))))
-
 (define (opt-gvn-map-empty [record-count : i64]) : OptGvnMap
-  (let
-    [buckets : (Array OptGvnBucket)
-      (array.make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))]
-    (begin
-      (opt-gvn-buckets-fill-empty! buckets 0)
-      (OptGvnMap buckets))))
+  (OptGvnMap
+    (array.make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))))
 
 (define (opt-gvn-bucket-index
   [type-segment-bases : i64]
@@ -26398,18 +26369,8 @@
     [count : i64 (opt-cfg-index-block-count index)]
     [child-rows : (Array OptI64List) (array.make-array OptI64List count)]
     (begin
-      (opt-cfg-i64-list-array-fill-empty! child-rows count)
       (opt-dom-child-rows-fill! index (struct-get doms idom) child-rows)
       (opt-cfg-csr-build child-rows count))))
-
-(define (opt-gvn-block-results-fill-empty!
-  [out : (Array OptGvnBlockResult)]
-  [index : i64]) : unit
-  (if (>= index (array-length out))
-    unit
-    (begin
-      (array-set! out index (OptGvnBlockResult.NoBlock))
-      (opt-gvn-block-results-fill-empty! out (+ index 1)))))
 
 (define (opt-gvn-materialize-blocks
   [doms : OptDomInfo]
@@ -26540,7 +26501,6 @@
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
       (opt-cfg-index-refresh-blocks! index blocks)
-      (opt-gvn-block-results-fill-empty! out 0)
       (let
         [changed : i64
           (match (opt-cfg-index-id index (struct-get context entry-label))
@@ -26935,12 +26895,7 @@
     OptBoolBranchDef)
   (let
     [defs : (Array OptBoolBranchDef) (array.make-array OptBoolBranchDef frame)]
-    [index : i64 0]
     (begin
-      (while (< index frame)
-        (begin
-          (array-set! defs index (OptBoolBranchDef.No))
-          (set! index (+ index 1))))
       (opt-bounds-dom-phi-defs-fill-blocks! defs blocks)
       defs)))
 
@@ -27122,12 +27077,7 @@
   (let
     [count : i64 (opt-cfg-index-block-count index)]
     [terms : (Array OptBoolBranchDef) (array.make-array OptBoolBranchDef count)]
-    [i : i64 0]
     (begin
-      (while (< i count)
-        (begin
-          (array-set! terms i (OptBoolBranchDef.No))
-          (set! i (+ i 1))))
       (opt-bounds-dom-terms-fill! terms index blocks)
       terms)))
 
@@ -27817,7 +27767,6 @@
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
       (opt-cfg-index-refresh-blocks! index blocks)
-      (opt-gvn-block-results-fill-empty! out 0)
       (match (opt-cfg-index-id index (struct-get context entry-label))
         [(option_i64.Some entry-id)
           (if (and
@@ -28508,24 +28457,6 @@
             (compiler-ir-instr-seq-ref instrs (- count 1)))
           unit))]))
 
-(define (opt-divrem-results-fill-empty!
-  [out : (Array OptDivRemBlockResult)]
-  [index : i64]) : unit
-  (if (>= index (array-length out))
-    unit
-    (begin
-      (array-set! out index (OptDivRemBlockResult.NoBlock))
-      (opt-divrem-results-fill-empty! out (+ index 1)))))
-
-(define (opt-divrem-facts-fill-empty!
-  [facts : (Array OptDivRemFacts)]
-  [index : i64]) : unit
-  (if (>= index (array-length facts))
-    unit
-    (begin
-      (array-set! facts index (OptDivRemFacts.Nil))
-      (opt-divrem-facts-fill-empty! facts (+ index 1)))))
-
 (define (opt-divrem-process-rpo!
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -28668,8 +28599,6 @@
         (array.make-array OptDivRemBlockResult count)]
       (begin
         (opt-cfg-index-refresh-blocks! index blocks)
-        (opt-divrem-facts-fill-empty! facts 0)
-        (opt-divrem-results-fill-empty! out 0)
         (opt-divrem-process-rpo!
           type-segment-bases
           context
@@ -31510,15 +31439,6 @@
     (OptLoopBceGuardEnv.Nil)
     (OptRangeFacts.Nil)))
 
-(define (opt-loop-bce-block-results-fill-empty!
-  [out : (Array OptLoopBceBlockResult)]
-  [index : i64]) : unit
-  (if (>= index (array-length out))
-    unit
-    (begin
-      (array-set! out index (OptLoopBceBlockResult.NoBlock))
-      (opt-loop-bce-block-results-fill-empty! out (+ index 1)))))
-
 (define (opt-loop-bce-materialize-blocks
   [out : (Array OptLoopBceBlockResult)]
   [blocks : CompilerIrBlockList]
@@ -31667,7 +31587,6 @@
         (match ssa-facts
           [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
       (begin
-        (opt-loop-bce-block-results-fill-empty! out 0)
         (match (opt-cfg-index-id cfg-index (struct-get context entry-label))
           [(option_i64.Some entry-id)
             (if (and
@@ -32970,24 +32889,33 @@
             (set! index (+ index 1)))))
       (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
 
-(define (optimize-block-seq-hs-dense
+;; Both block containers share ONE dense workspace per pass, so the walker takes
+;; the workspace and the generation its first block should use instead of
+;; allocating either. Block `i` of a walk that starts at `base` consumes the
+;; generation pair `(base + 2i, base + 2i + 1)`; `base` starts at 1 because a
+;; freshly allocated stamp array reads as generation 0.
+(define (opt-load-kinds-dense-block-generation [base : i64] [index : i64]) : i64
+  (+ base (* index 2)))
+
+(define (optimize-block-seq-hs-dense-from
   [pools : AstNodePoolContext]
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
-  [frame : i64]
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
   [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
   (let
     [count : i64 (compiler-ir-block-seq-count blocks)]
     [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
-    [work : OptLoadKindsDenseWork (opt-load-kinds-dense-work-with-size frame)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
-          [generation : i64 (+ (* index 2) 1)]
+          [block-generation : i64
+            (opt-load-kinds-dense-block-generation generation index)]
           [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
           (begin
             (array-set!
@@ -32999,11 +32927,11 @@
                 hs
                 (opt-load-kinds-dense-state
                   work
-                  generation
+                  block-generation
                   opt-load-cse-kinds-cap-floor)
                 (opt-load-kinds-dense-state
                   work
-                  (+ generation 1)
+                  (+ block-generation 1)
                   opt-load-cse-kinds-cap-floor)
                 entry-label
                 seed-facts
@@ -33011,6 +32939,63 @@
                 block))
             (set! index (+ index 1)))))
       (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
+
+;; Cons-list arm of the same walk. It exists because the block-local pipeline is
+;; still reached with a cons list far more often than with an `.Array` (in an
+;; opt2 self-compile the `.Array` arm was never taken at all, so the dense
+;; workspace this shares was dead code); the two arms otherwise run identical
+;; per-block work.
+(define (optimize-block-list-hs-dense
+  [pools : AstNodePoolContext]
+  [type-segment-bases : i64]
+  [hs : OptLoadHeaderSet]
+  [entry-label : i64]
+  [seed-facts : OptAliasFacts]
+  [scan-work : (Array i64)]
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (optimize-block-hs-with-kinds
+          pools
+          type-segment-bases
+          hs
+          (opt-load-kinds-dense-state
+            work
+            generation
+            opt-load-cse-kinds-cap-floor)
+          (opt-load-kinds-dense-state
+            work
+            (+ generation 1)
+            opt-load-cse-kinds-cap-floor)
+          entry-label
+          seed-facts
+          scan-work
+          block)
+        (optimize-block-list-hs-dense
+          pools
+          type-segment-bases
+          hs
+          entry-label
+          seed-facts
+          scan-work
+          work
+          (+ generation 2)
+          (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (optimize-block-seq-hs-dense-from
+        pools
+        type-segment-bases
+        hs
+        entry-label
+        seed-facts
+        scan-work
+        work
+        generation
+        seq)]))
 
 (define (optimize-block-list-hs
   [pools : AstNodePoolContext]
@@ -33103,26 +33088,35 @@
         [entry-label : i64 (opt-cfg-entry-label blocks)]
         [seed-facts : OptAliasFacts
           (opt-alias-seed-params type-segment-bases params)]
+        ;; One frame-sized dense workspace per pass, for either block container.
+        ;; The cons arm used to build two sparse `OptLoadPtrKinds` per block --
+        ;; four 32-slot hash tables, 3 KiB of zero fill, allocated even for the
+        ;; blocks `opt-block-scan-skippable?` then skipped.
+        [work : OptLoadKindsDenseWork
+          (opt-load-kinds-dense-work-with-size frame)]
         [next : CompilerIrBlockList
           (match blocks
             [(CompilerIrBlockList.Array seq)
-              (optimize-block-seq-hs-dense
+              (optimize-block-seq-hs-dense-from
                 pools
                 type-segment-bases
                 hs
                 entry-label
                 seed-facts
                 scan-work
-                frame
+                work
+                1
                 seq)]
             [_
-              (optimize-block-list-hs
+              (optimize-block-list-hs-dense
                 pools
                 type-segment-bases
                 hs
                 entry-label
                 seed-facts
                 scan-work
+                work
+                1
                 blocks)])]
         [changed : bool
           (not (opt-block-list-eq type-segment-bases blocks next))]
@@ -58256,27 +58250,19 @@
   (Sparse opt_i64_i64_map.Map opt_i64_i64_map.Map i64)
   (Dense OptLoadKindsDenseWork i64 i64 i64))
 
-(define (opt-load-kinds-fill-zero! [items : (Array i64)] [index : i64]) : unit
-  (if (>= index (array-length items))
-    unit
-    (begin
-      (array-set! items index 0)
-      (opt-load-kinds-fill-zero! items (+ index 1)))))
-
+;; The stamp arrays are read, never a source of truth on their own: a slot is
+;; live only when its stamp equals the CURRENT generation. `make-array i64`
+;; hands back all-zero storage and every generation handed out is >= 1, so the
+;; fresh arrays already read as "nothing is live" and an explicit zeroing pass
+;; only repeats what the allocation just did.
 (define (opt-load-kinds-dense-work-with-size [count : i64]) : OptLoadKindsDenseWork
-  (let
-    [kind-stamps : (Array i64) (array.make-array i64 count)]
-    [ref-stamps : (Array i64) (array.make-array i64 count)]
-    (begin
-      (opt-load-kinds-fill-zero! kind-stamps 0)
-      (opt-load-kinds-fill-zero! ref-stamps 0)
-      (OptLoadKindsDenseWork
-        (array.make-array i64 count)
-        kind-stamps
-        (array.make-array i64 count)
-        (array.make-array i64 count)
-        ref-stamps
-        (array.make-array i64 count)))))
+  (OptLoadKindsDenseWork
+    (array.make-array i64 count)
+    (array.make-array i64 count)
+    (array.make-array i64 count)
+    (array.make-array i64 count)
+    (array.make-array i64 count)
+    (array.make-array i64 count)))
 
 (define (opt-load-kinds-dense-state
   [work : OptLoadKindsDenseWork]
@@ -60338,18 +60324,6 @@
               bepoch
               aepoch))])]))
 
-(define (opt-load-state-array-fill-empty!
-  [states : (Array OptMaybeLoadCseState)]
-  [count : i64]) : unit
-  (let
-    [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (array-set! states i (OptMaybeLoadCseState.No))
-          (set! i (+ i 1))))
-      unit)))
-
 ;; --- loop-header descriptor-entry carry ---------------------------------------
 ;;
 ;; A descriptor field load (array length/data pointer) reads memory provably
@@ -60901,8 +60875,6 @@
           (opt-alias-seed-params type-segment-bases params))]
       (begin
         (opt-cfg-index-refresh-blocks! index blocks)
-        (opt-load-state-array-fill-empty! exit-states count)
-        (opt-gvn-block-results-fill-empty! out 0)
         (opt-load-gvn-process-rpo
           type-segment-bases
           context

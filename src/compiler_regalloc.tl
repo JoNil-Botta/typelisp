@@ -373,13 +373,13 @@
     CompilerRegAssignmentList
     CompilerRegVarTypeList))
 
+;; Per-instruction rewrite state for rematerialization. The rewritten
+;; instructions themselves are not carried here: they are pushed straight into
+;; a caller-owned `CompilerIrInstrBuilder` threaded `(&mut ...)` through the
+;; walk, so the payload is only the scalars and lists that thread forward
+;; (emit point, next var id, and the extra assignment/type lists remat grows).
 (defenum CompilerRegCallSaveInstrRewrite
-  (Rewrite
-    CompilerIrInstrList
-    i64
-    i64
-    CompilerRegAssignmentList
-    CompilerRegVarTypeList))
+  (Rewrite i64 i64 CompilerRegAssignmentList CompilerRegVarTypeList))
 
 ;; Conservative cold-call clobber splitting happens before scalar allocation.
 ;; `temp-start` is the first synthetic stack-home used to carry a protected GP
@@ -30128,16 +30128,6 @@
     ;; homes before every operand has been consumed.
     [_ (not (compiler-reg-backend-caller-clobber-instr? instr))]))
 
-(define (compiler-reg-remat-instr-list-onto
-  [items : CompilerIrInstrList]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
-  (match items
-    [(CompilerIrInstrList.Nil) acc]
-    [(CompilerIrInstrList.Cons head rest)
-      (compiler-ir-instr-cons
-        head
-        (compiler-reg-remat-instr-list-onto (box-get rest) acc))]))
-
 ;; Reset the entries of a shared, function-scoped identity remap array that a
 ;; single instruction touched. Only the vars in `uses` (the instruction's
 ;; operands) could have been overwritten, so restoring identity for those bits
@@ -30183,7 +30173,7 @@
   [extra-assignments : CompilerRegAssignmentList]
   [extra-types : CompilerRegVarTypeList]
   [remap : (Array i64)]
-  [acc : CompilerIrInstrList]) : CompilerRegCallSaveInstrRewrite
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : CompilerRegCallSaveInstrRewrite
   (if (compiler-reg-remat-use-site-ok? instr)
     (let
       ;; `uses` is the (1-3 var) operand bitset for THIS instruction. Iterate
@@ -30194,7 +30184,6 @@
       ;; reused across instructions; we restore the bits we set afterwards.
       [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
       [types : (Array AstType) (struct-get table types)]
-      [prefix : CompilerIrInstrList CompilerIrInstrList.Nil]
       [chosen : CompilerRegIdList CompilerRegIdList.Nil]
       [out-next-var : i64 next-var]
       [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
@@ -30234,11 +30223,14 @@
                               [ty : AstType (array-ref types var)]
                               (begin
                                 (array-set! remap var temp)
-                                (set!
-                                  prefix
-                                  (compiler-ir-instr-cons
-                                    (compiler-reg-remat-instr table temp var)
-                                    prefix))
+                                ;; Recipes for one instruction are pushed in
+                                ;; the order they are chosen (ascending operand
+                                ;; var). That is exactly the order the old
+                                ;; reverse-consed `prefix` produced once the
+                                ;; reversed accumulator was flipped at the end.
+                                (compiler-ir-instr-builder-push!
+                                  (&mut builder)
+                                  (compiler-reg-remat-instr table temp var))
                                 (set! chosen (compiler-reg-id-cons reg chosen))
                                 (set!
                                   out-extra-assignments
@@ -30261,90 +30253,37 @@
                   (set! bit (+ bit 1))))
               (set! word-index (+ word-index 1)))))
         (if (= out-next-var next-var)
-          (CompilerRegCallSaveInstrRewrite.Rewrite
-            (compiler-ir-instr-cons instr acc)
-            (+ point 2)
-            out-next-var
-            out-extra-assignments
-            out-extra-types)
+          (begin
+            (compiler-ir-instr-builder-push! (&mut builder) instr)
+            (CompilerRegCallSaveInstrRewrite.Rewrite
+              (+ point 2)
+              out-next-var
+              out-extra-assignments
+              out-extra-types))
           (let
             [rewritten : CompilerIrInstr (compiler-reg-remap-instr remap instr)]
             (begin
               ;; Restore the shared remap array to identity for the next instr.
               (compiler-reg-remat-reset-remap-uses! remap uses vars)
+              (compiler-ir-instr-builder-push! (&mut builder) rewritten)
               (CompilerRegCallSaveInstrRewrite.Rewrite
-                (compiler-ir-instr-cons
-                  rewritten
-                  (compiler-reg-remat-instr-list-onto prefix acc))
                 (+ point 2)
                 out-next-var
                 out-extra-assignments
                 out-extra-types))))))
-    (CompilerRegCallSaveInstrRewrite.Rewrite
-      (compiler-ir-instr-cons instr acc)
-      (+ point 2)
-      next-var
-      extra-assignments
-      extra-types)))
-
-(define (compiler-reg-remat-rewrite-instrs-rev
-  [instrs : CompilerIrInstrList]
-  [point : i64]
-  [vars : i64]
-  [next-var : i64]
-  [table : CompilerRegRematTable]
-  [assignments : CompilerRegAssignmentList]
-  [intervals : CompilerRegIntervalIndex]
-  [parents : (Array i64)]
-  [merged-roots : CompilerLiveI64Set]
-  [extra-assignments : CompilerRegAssignmentList]
-  [extra-types : CompilerRegVarTypeList]
-  [remap : (Array i64)]
-  [acc : CompilerIrInstrList]) : CompilerRegCallSaveInstrRewrite
-  (match instrs
-    [(CompilerIrInstrList.Nil)
+    (begin
+      (compiler-ir-instr-builder-push! (&mut builder) instr)
       (CompilerRegCallSaveInstrRewrite.Rewrite
-        acc
-        point
+        (+ point 2)
         next-var
         extra-assignments
-        extra-types)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (compiler-reg-remat-rewrite-one-instr
-        instr
-        point
-        vars
-        next-var
-        table
-        assignments
-        intervals
-        parents
-        merged-roots
-        extra-assignments
-        extra-types
-        remap
-        acc)
-        [(CompilerRegCallSaveInstrRewrite.Rewrite
-            acc2
-            point2
-            next-var2
-            extra-assignments2
-            extra-types2)
-          (compiler-reg-remat-rewrite-instrs-rev
-            (box-get rest)
-            point2
-            vars
-            next-var2
-            table
-            assignments
-            intervals
-            parents
-            merged-roots
-            extra-assignments2
-            extra-types2
-            remap
-            acc2)])]))
+        extra-types))))
 
+;; Scan one block's instructions forward, appending each rewritten instruction
+;; (preceded by the remat recipes it needs) to the caller's builder. The old
+;; shape converted the block to a cons list, walked it building a REVERSED cons
+;; accumulator, and flipped it with `compiler-ir-instr-list-reverse-onto`; the
+;; forward scan emits in the same final order with no list at all.
 (define (compiler-reg-remat-rewrite-instrs
   [instrs : CompilerIrInstrSeq]
   [point : i64]
@@ -30357,33 +30296,48 @@
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
   [extra-types : CompilerRegVarTypeList]
-  [remap : (Array i64)]) : CompilerRegCallSaveInstrRewrite
-  (match (compiler-reg-remat-rewrite-instrs-rev
-    (compiler-ir-instr-seq-to-list instrs)
-    point
-    vars
-    next-var
-    table
-    assignments
-    intervals
-    parents
-    merged-roots
-    extra-assignments
-    extra-types
-    remap
-    CompilerIrInstrList.Nil)
-    [(CompilerRegCallSaveInstrRewrite.Rewrite
-        rev
-        next-point
-        out-next-var
-        out-extra-assignments
-        out-extra-types)
+  [remap : (Array i64)]
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : CompilerRegCallSaveInstrRewrite
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [out-point : i64 point]
+    [out-next-var : i64 next-var]
+    [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
+    [out-extra-types : CompilerRegVarTypeList extra-types]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-reg-remat-rewrite-one-instr
+            (compiler-ir-instr-seq-ref instrs index)
+            out-point
+            vars
+            out-next-var
+            table
+            assignments
+            intervals
+            parents
+            merged-roots
+            out-extra-assignments
+            out-extra-types
+            remap
+            (&mut builder))
+            [(CompilerRegCallSaveInstrRewrite.Rewrite
+                point2
+                next-var2
+                extra-assignments2
+                extra-types2)
+              (begin
+                (set! out-point point2)
+                (set! out-next-var next-var2)
+                (set! out-extra-assignments extra-assignments2)
+                (set! out-extra-types extra-types2))])
+          (set! index (+ index 1))))
       (CompilerRegCallSaveInstrRewrite.Rewrite
-        (compiler-ir-instr-list-reverse-onto rev CompilerIrInstrList.Nil)
-        next-point
+        out-point
         out-next-var
         out-extra-assignments
-        out-extra-types)]))
+        out-extra-types))))
 
 (define (compiler-reg-remat-rewrite-blocks-rev
   [blocks : CompilerIrBlockList]
@@ -30410,43 +30364,50 @@
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
-          (match (compiler-reg-remat-rewrite-instrs
-            instrs
-            point
-            vars
-            next-var
-            table
-            assignments
-            intervals
-            parents
-            merged-roots
-            extra-assignments
-            extra-types
-            remap)
-            [(CompilerRegCallSaveInstrRewrite.Rewrite
-                rewritten
-                next-point
-                next-var2
-                extra-assignments2
-                extra-types2)
-              (compiler-reg-remat-rewrite-blocks-rev
-                (box-get rest)
-                next-point
-                vars
-                next-var2
-                table
-                assignments
-                intervals
-                parents
-                merged-roots
-                extra-assignments2
-                extra-types2
-                remap
-                (compiler-ir-block-cons
-                  (CompilerIrBlock.Block
-                    label
-                    (compiler-ir-instr-seq-from-list rewritten))
-                  acc))])])]
+          (let
+            ;; Seeded at the block's own length: remat only ever appends recipe
+            ;; instructions, and the (majority) blocks with no eligible operand
+            ;; land exactly on this capacity with no grow.
+            [builder : CompilerIrInstrBuilder
+              (compiler-ir-instr-builder-with-capacity
+                (compiler-ir-instr-seq-count instrs))]
+            (match (compiler-reg-remat-rewrite-instrs
+              instrs
+              point
+              vars
+              next-var
+              table
+              assignments
+              intervals
+              parents
+              merged-roots
+              extra-assignments
+              extra-types
+              remap
+              (&mut builder))
+              [(CompilerRegCallSaveInstrRewrite.Rewrite
+                  next-point
+                  next-var2
+                  extra-assignments2
+                  extra-types2)
+                (compiler-reg-remat-rewrite-blocks-rev
+                  (box-get rest)
+                  next-point
+                  vars
+                  next-var2
+                  table
+                  assignments
+                  intervals
+                  parents
+                  merged-roots
+                  extra-assignments2
+                  extra-types2
+                  remap
+                  (compiler-ir-block-cons
+                    (CompilerIrBlock.Block
+                      label
+                      (compiler-ir-instr-builder-to-seq builder))
+                    acc))]))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-remat-rewrite-block-seq-rev
         seq
@@ -30490,37 +30451,41 @@
         (begin
           (match (compiler-ir-block-seq-ref seq i)
             [(CompilerIrBlock.Block label instrs)
-              (match (compiler-reg-remat-rewrite-instrs
-                instrs
-                out-point
-                vars
-                out-next-var
-                table
-                assignments
-                intervals
-                parents
-                merged-roots
-                out-extra-assignments
-                out-extra-types
-                remap)
-                [(CompilerRegCallSaveInstrRewrite.Rewrite
-                    rewritten
-                    next-point
-                    next-var2
-                    extra-assignments2
-                    extra-types2)
-                  (begin
-                    (set! out-point next-point)
-                    (set! out-next-var next-var2)
-                    (set! out-extra-assignments extra-assignments2)
-                    (set! out-extra-types extra-types2)
-                    (set!
-                      out-acc
-                      (compiler-ir-block-cons
-                        (CompilerIrBlock.Block
-                          label
-                          (compiler-ir-instr-seq-from-list rewritten))
-                        out-acc)))])])
+              (let
+                [builder : CompilerIrInstrBuilder
+                  (compiler-ir-instr-builder-with-capacity
+                    (compiler-ir-instr-seq-count instrs))]
+                (match (compiler-reg-remat-rewrite-instrs
+                  instrs
+                  out-point
+                  vars
+                  out-next-var
+                  table
+                  assignments
+                  intervals
+                  parents
+                  merged-roots
+                  out-extra-assignments
+                  out-extra-types
+                  remap
+                  (&mut builder))
+                  [(CompilerRegCallSaveInstrRewrite.Rewrite
+                      next-point
+                      next-var2
+                      extra-assignments2
+                      extra-types2)
+                    (begin
+                      (set! out-point next-point)
+                      (set! out-next-var next-var2)
+                      (set! out-extra-assignments extra-assignments2)
+                      (set! out-extra-types extra-types2)
+                      (set!
+                        out-acc
+                        (compiler-ir-block-cons
+                          (CompilerIrBlock.Block
+                            label
+                            (compiler-ir-instr-builder-to-seq builder))
+                          out-acc)))]))])
           (set! i (+ i 1))))
       (CompilerRegCallSaveRewrite.Rewrite
         out-acc

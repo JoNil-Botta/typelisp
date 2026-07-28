@@ -3553,15 +3553,21 @@
           [(AstDecl.Module name) (intern-str name)]
           [_ (compiler-load-decls-source-module-or rest fallback)]))]))
 
+;; Tag-only predicate: an index cursor reads the tag word through a borrow
+;; instead of copying a 104 B row and a 144 B step result per declaration.
 (define (compiler-load-decl-list-has-module? [decls : AstDeclList]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module _) true]
-          [_ (compiler-load-decl-list-has-module? rest)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (begin
+          (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _) (set! found true)]
+            [_ unit])
+          (set! index (+ index 1))))
+      found)))
 
 (define (compiler-load-decl-list-has-module-name?
   [decls : AstDeclList]

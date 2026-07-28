@@ -5522,6 +5522,28 @@
     AstDecl)
   (& (array-ref (struct-get v slots) (+ (struct-get v offset) index))))
 
+;; Field-selective declaration readers.
+;;
+;; `ast-decl-list-step` emulates a cons cell over what is already a flat array
+;; slice: each step copies the whole 104 B `AstDecl` row AND writes a 144 B
+;; `AstDeclListStep` through the SRET pointer, to deliver values whose consumers
+;; read a tag plus at most one or two ids. The readers below let a scan walk
+;; `(decls, index)` and touch only the tag word, re-reading the row by value
+;; only on the arm that actually consumes a payload -- where the read is an
+;; inline projection, so a scalar-only arm loads the field directly instead of
+;; copying the row. The list layout is unchanged and `ast-decl-list-step` stays
+;; for callers that genuinely need the record.
+;; Module id of a module marker at `index`, or `fallback` for any other
+;; declaration. The match scrutinee is an element projection, so only the tag
+;; and the id word are loaded.
+(define (ast-decl-list-module-id-at
+  [v : (& v AstDeclList)]
+  [index : i64]
+  [fallback : i64]) : i64
+  (match (array-ref (struct-get v slots) (+ (struct-get v offset) index))
+    [(AstDecl.Module name) name]
+    [_ fallback]))
+
 (define (ast-decl-list-copy-range
   [dst : (&mut dst (Array AstDecl))]
   [src : (& src (Array AstDecl))]
@@ -5834,6 +5856,78 @@
   (match decl
     [(AstDecl.Unsafe inner-box) (ast-decl-unwrapped (box-get inner-box))]
     [_ decl]))
+
+;; Declaration classifiers for the index/cache builders.
+;;
+;; `ast-decl-unwrapped` copies a 104 B row twice -- once into the call and once
+;; back out through the SRET pointer -- to answer the one-bit question "is this
+;; wrapped in `unsafe`". These scans only need to know whether the peeled
+;; declaration is one of the few kinds whose payload they read; every other kind
+;; can be skipped without copying anything.
+;;
+;; The `-at?` forms read the outer tag through a borrow. `box-get` requires
+;; owned `Box` storage, so a borrow cannot walk the wrapper chain itself; only
+;; an `AstDecl.Unsafe` row -- the rare case -- is copied, to finish the peel
+;; through the by-value form below it. Callers pair these with a by-value
+;; re-read on the arm that consumes a payload, so a row copy is paid only where
+;; it is used.
+(define (ast-decl-unwrapped-import? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Import decl-meta _) true]
+    [(AstDecl.Unsafe inner-box)
+      (ast-decl-unwrapped-import? (box-get inner-box))]
+    [_ false]))
+
+(define (ast-decl-list-unwrapped-import-at?
+  [v : (& v AstDeclList)]
+  [index : i64]) : bool
+  (match (ast-decl-list-ref-borrowed v index)
+    [(AstDecl.Import decl-meta _) true]
+    [(AstDecl.Unsafe _)
+      (ast-decl-unwrapped-import?
+        (ast-decl-list-get v index (ast-decl-fallback)))]
+    [_ false]))
+
+(define (ast-decl-unwrapped-module-or-import? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Module _) true]
+    [(AstDecl.Import decl-meta _) true]
+    [(AstDecl.Unsafe inner-box)
+      (ast-decl-unwrapped-module-or-import? (box-get inner-box))]
+    [_ false]))
+
+(define (ast-decl-list-unwrapped-module-or-import-at?
+  [v : (& v AstDeclList)]
+  [index : i64]) : bool
+  (match (ast-decl-list-ref-borrowed v index)
+    [(AstDecl.Module _) true]
+    [(AstDecl.Import decl-meta _) true]
+    [(AstDecl.Unsafe _)
+      (ast-decl-unwrapped-module-or-import?
+        (ast-decl-list-get v index (ast-decl-fallback)))]
+    [_ false]))
+
+;; Module markers plus the two type-definition kinds the clone fixpoint reads.
+(define (ast-decl-unwrapped-module-or-type-definition? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Module _) true]
+    [(AstDecl.DefEnum decl-meta _ _ _) true]
+    [(AstDecl.DefStruct decl-meta _ _ _ _) true]
+    [(AstDecl.Unsafe inner-box)
+      (ast-decl-unwrapped-module-or-type-definition? (box-get inner-box))]
+    [_ false]))
+
+(define (ast-decl-list-unwrapped-module-or-type-definition-at?
+  [v : (& v AstDeclList)]
+  [index : i64]) : bool
+  (match (ast-decl-list-ref-borrowed v index)
+    [(AstDecl.Module _) true]
+    [(AstDecl.DefEnum decl-meta _ _ _) true]
+    [(AstDecl.DefStruct decl-meta _ _ _ _) true]
+    [(AstDecl.Unsafe _)
+      (ast-decl-unwrapped-module-or-type-definition?
+        (ast-decl-list-get v index (ast-decl-fallback)))]
+    [_ false]))
 
 (define (ast-decl-path-list-with-capacity [capacity : i64]) : AstDeclPathList
   (let
@@ -6236,11 +6330,18 @@
 (defenum AstProgramCompaction
   (AstProgramCompaction AstProgram AstNodePoolContext))
 
+;; `source-expr-bases` is the source pool's segment-bases pointer, resolved once
+;; when the remap is built. `ast-compaction-remap-expr-id` reads a source node
+;; per reachable expression and used to re-chase that pointer through the pool
+;; cell every time; compaction only reads `source-pools`, and the pointer is
+;; stable across reads (see `ast-node-pool-context-expr-segment-bases`), so one
+;; resolution serves the whole walk.
 (defstruct AstProgramCompactionRemap
   (source-pools AstNodePoolContext)
   (dest-pools AstNodePoolContext)
   (expr-map (Array i32))
-  (type-map (Array i32)))
+  (type-map (Array i32))
+  (source-expr-bases i64))
 
 (define (ast-compaction-id-map-create [count : i64]) : (Array i32)
   (let
@@ -7238,11 +7339,10 @@
     (if (> cached 0)
       (cast (- cached 1) : i64)
       (let
-        [source-pools : AstNodePoolContext
-          (ast-compaction-remap-source-pools remap)]
         [dest-pools : AstNodePoolContext
           (ast-compaction-remap-dest-pools remap)]
-        [source-expr : AstExpr (ast-node-pool-context-expr-get source-pools id)]
+        [source-expr : AstExpr
+          (ast-expr-segment-bases-get (struct-get remap source-expr-bases) id)]
         [new-expr : AstExpr (ast-compaction-remap-expr remap source-expr)]
         [new-id : i64 (ast-node-pool-context-expr-push dest-pools new-expr)]
         (begin
@@ -7362,21 +7462,24 @@
 (define (ast-compaction-remap-decl-list
   [remap : AstProgramCompactionRemap]
   [decls : AstDeclList]) : AstDeclList
+  ;; Index cursor rather than `ast-decl-list-step`: every row is handed to
+  ;; `ast-compaction-remap-decl` anyway, so the step result's 144 B and its
+  ;; extra row copy buy nothing.
   (let
     [count : i64 (ast-decl-list-len (& decls))]
-    [cursor : AstDeclList decls]
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [index : i64 0]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
-            (begin
-              (ast-decl-list-push
-                (&mut out)
-                (ast-compaction-remap-decl remap decl))
-              (set! cursor rest))]))
+      (while (< index count)
+        (begin
+          (ast-decl-list-push
+            (&mut out)
+            (ast-compaction-remap-decl
+              remap
+              (array-ref decl-slots (+ decl-offset index))))
+          (set! index (+ index 1))))
       out)))
 
 (define (ast-compaction-remap-program
@@ -7409,7 +7512,12 @@
         (ast-compaction-id-map-create
           (ast-node-pool-context-type-len source-pools))]
       [remap : AstProgramCompactionRemap
-        (AstProgramCompactionRemap source-pools dest-pools expr-map type-map)]
+        (AstProgramCompactionRemap
+          source-pools
+          dest-pools
+          expr-map
+          type-map
+          (ast-node-pool-context-expr-segment-bases source-pools))]
       [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
       [out-program : AstProgram
         (begin
@@ -7451,7 +7559,12 @@
       (ast-compaction-id-map-create
         (ast-node-pool-context-type-len source-pools))]
     [remap : AstProgramCompactionRemap
-      (AstProgramCompactionRemap source-pools dest-pools expr-map type-map)]
+      (AstProgramCompactionRemap
+        source-pools
+        dest-pools
+        expr-map
+        type-map
+        (ast-node-pool-context-expr-segment-bases source-pools))]
     [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
     [out-program : AstProgram
       (begin

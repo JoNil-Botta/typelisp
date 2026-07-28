@@ -191,22 +191,27 @@
     (begin
       (while (< index count)
         (begin
-          (match (ast-decl-unwrapped
-            (ast-decl-list-get (& decls) index (ast-decl-fallback)))
-            [(AstDecl.Module next-module) (set! current-module-id next-module)]
-            [(AstDecl.Import
-                decl-meta
-                (AstImportSpec.Spec
-                  _
-                  _
-                  (AstMaybeModuleName.Some target)
-                  (AstMaybeImportAlias.Some alias)
-                  _))
-              (clone_id_map.insert-ref!
-                (&mut aliases)
-                (clone-import-alias-key-id current-module-id alias)
-                target)]
-            [_ unit])
+          ;; Borrowed classification first: only module markers and imports
+          ;; carry a payload this alias table reads.
+          (if (ast-decl-list-unwrapped-module-or-import-at? (& decls) index)
+            (match (ast-decl-unwrapped
+              (ast-decl-list-get (& decls) index (ast-decl-fallback)))
+              [(AstDecl.Module next-module)
+                (set! current-module-id next-module)]
+              [(AstDecl.Import
+                  decl-meta
+                  (AstImportSpec.Spec
+                    _
+                    _
+                    (AstMaybeModuleName.Some target)
+                    (AstMaybeImportAlias.Some alias)
+                    _))
+                (clone_id_map.insert-ref!
+                  (&mut aliases)
+                  (clone-import-alias-key-id current-module-id alias)
+                  target)]
+              [_ unit])
+            unit)
           (set! index (+ index 1))))
       (CloneNameSet (clone_id_map.with-capacity 8) aliases))))
 
@@ -578,11 +583,16 @@
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
-        (let
-          [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
-          (begin
-            (match (ast-decl-unwrapped decl)
+        (begin
+          ;; Classify through a borrow first: only module markers and the two
+          ;; type-definition kinds have a payload this fixpoint reads, so every
+          ;; other declaration is skipped without materialising a 104 B row and
+          ;; copying it twice more through `ast-decl-unwrapped`.
+          (if (ast-decl-list-unwrapped-module-or-type-definition-at?
+            (& decls)
+            index)
+            (match (ast-decl-unwrapped
+              (array-ref (struct-get decls slots) (+ decl-offset index)))
               [(AstDecl.Module next-module)
                 (set! current-module-id next-module)]
               [(AstDecl.DefEnum decl-meta name _ variants)
@@ -610,7 +620,8 @@
                       (clone-name-key-id-in-module current-module-id name)))
                   unit)]
               [_ unit])
-            (set! index (+ index 1)))))
+            unit)
+          (set! index (+ index 1))))
       out)))
 
 (define (clone-fixpoint-step
@@ -633,11 +644,13 @@
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
-        (let
-          [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
-          (begin
-            (match (ast-decl-unwrapped decl)
+        (begin
+          ;; Same borrowed classification as the fixpoint step above.
+          (if (ast-decl-list-unwrapped-module-or-type-definition-at?
+            (& decls)
+            index)
+            (match (ast-decl-unwrapped
+              (array-ref (struct-get decls slots) (+ decl-offset index)))
               [(AstDecl.Module next-module)
                 (set! current-module-id next-module)]
               [(AstDecl.DefEnum decl-meta name _ _)
@@ -653,7 +666,8 @@
                     out
                     (clone-name-key-id-in-module current-module-id name)))]
               [_ unit])
-            (set! index (+ index 1)))))
+            unit)
+          (set! index (+ index 1))))
       out)))
 
 (define (clone-all-type-names [decls : AstDeclList] [acc : CloneNameSet]) : CloneNameSet
@@ -790,60 +804,63 @@
   [roots : CloneNameList]
   [name-key-id : i64]
   [module-id : i64]) : CloneNameList
+  ;; Index cursor rather than `ast-decl-list-step`, which this loop called TWICE
+  ;; per declaration -- once to test the cursor for emptiness and once to read
+  ;; its head -- so each declaration paid two 104 B row copies and two 144 B
+  ;; step results to answer a tag question. Only module markers and the two
+  ;; type-definition kinds carry a payload the search reads; the rest are
+  ;; skipped through the borrowed tag test.
   (let
-    [cur : AstDeclList cursor]
+    [count : i64 (ast-decl-list-len (& cursor))]
+    [index : i64 0]
     [out : CloneNameList roots]
     [current-module-id : i64 module-id]
     [done : bool false]
     (begin
-      (while (and
-        (not done)
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) false]
-          [_ true]))
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) unit]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-unwrapped decl)
-                [(AstDecl.Module next-module)
+      (while (and (not done) (< index count))
+        (begin
+          (if (ast-decl-list-unwrapped-module-or-type-definition-at?
+            (& cursor)
+            index)
+            (match (ast-decl-unwrapped
+              (ast-decl-list-get (& cursor) index (ast-decl-fallback)))
+              [(AstDecl.Module next-module)
+                (set! current-module-id next-module)]
+              [(AstDecl.DefEnum decl-meta decl-name _ variants)
+                (if (=
+                  (clone-name-key-id-in-module current-module-id decl-name)
+                  name-key-id)
                   (begin
-                    (set! current-module-id next-module)
-                    (set! cur rest))]
-                [(AstDecl.DefEnum decl-meta decl-name _ variants)
-                  (if (=
-                    (clone-name-key-id-in-module current-module-id decl-name)
-                    name-key-id)
-                    (begin
-                      (set!
+                    (set!
+                      out
+                      (clone-root-add-variants
+                        pools
+                        decls
+                        able
                         out
-                        (clone-root-add-variants
-                          pools
-                          decls
-                          able
-                          out
-                          variants
-                          current-module-id))
-                      (set! done true))
-                    (set! cur rest))]
-                [(AstDecl.DefStruct decl-meta decl-name _ _ fields)
-                  (if (=
-                    (clone-name-key-id-in-module current-module-id decl-name)
-                    name-key-id)
-                    (begin
-                      (set!
+                        variants
+                        current-module-id))
+                    (set! done true))
+                  unit)]
+              [(AstDecl.DefStruct decl-meta decl-name _ _ fields)
+                (if (=
+                  (clone-name-key-id-in-module current-module-id decl-name)
+                  name-key-id)
+                  (begin
+                    (set!
+                      out
+                      (clone-root-add-fields
+                        pools
+                        decls
+                        able
                         out
-                        (clone-root-add-fields
-                          pools
-                          decls
-                          able
-                          out
-                          fields
-                          current-module-id))
-                      (set! done true))
-                    (set! cur rest))]
-                [_ (set! cur rest)]))]))
+                        fields
+                        current-module-id))
+                    (set! done true))
+                  unit)]
+              [_ unit])
+            unit)
+          (set! index (+ index 1))))
       out)))
 
 (define (clone-root-add-name-deps

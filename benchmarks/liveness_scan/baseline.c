@@ -31,6 +31,8 @@
  * 2^64, so the accumulator is uint64_t here and the printed decimal matches
  * TypeLisp's print of an i64.
  */
+/* MSVC-clang deprecates fopen; the CI gate treats any stderr as failure. */
+#define _CRT_SECURE_NO_WARNINGS
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

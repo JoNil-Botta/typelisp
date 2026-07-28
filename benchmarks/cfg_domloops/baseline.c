@@ -27,6 +27,8 @@
  * reinterpreted as a signed 64-bit integer, matching TypeLisp's print of an
  * i64.
  */
+/* MSVC-clang deprecates fopen; the CI gate treats any stderr as failure. */
+#define _CRT_SECURE_NO_WARNINGS
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

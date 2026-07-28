@@ -10619,10 +10619,7 @@
               (if (compiler-reg-region-label? region label)
                 (CompilerIrBlock.Block
                   label
-                  (compiler-ir-instr-seq-from-list
-                    (compiler-reg-remap-instr-list
-                      remap
-                      (compiler-ir-instr-seq-to-list instrs))))
+                  (compiler-reg-remap-instr-seq remap instrs))
                 block)]
             (compiler-ir-block-cons
               rewritten-block
@@ -10649,10 +10646,7 @@
                       (if (compiler-reg-region-label? region label)
                         (CompilerIrBlock.Block
                           label
-                          (compiler-ir-instr-seq-from-list
-                            (compiler-reg-remap-instr-list
-                              remap
-                              (compiler-ir-instr-seq-to-list instrs))))
+                          (compiler-reg-remap-instr-seq remap instrs))
                         block)]))
                 (set! i (+ i 1)))))
           (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count))))]))
@@ -25159,15 +25153,28 @@
         cases
         default-label)]))
 
-(define (compiler-reg-remap-instr-list
+;; A 1:1 var remap: the output is exactly as long as the input, so it is
+;; written straight into a right-sized dense sequence instead of through a
+;; cons spine. The output is FRESH and the input is never written through, so
+;; the aliasing graph is unchanged and no unique-ownership argument is needed
+;; (refs #5726).
+(define (compiler-reg-remap-instr-seq
   [remap : (Array i64)]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
-    [(CompilerIrInstrList.Cons head rest)
-      (CompilerIrInstrList.Cons
-        (compiler-reg-remap-instr remap head)
-        (box (compiler-reg-remap-instr-list remap (box-get rest))))]))
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            out
+            index
+            (compiler-reg-remap-instr remap (array-ref slots index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
 
 (define (compiler-reg-remap-blocks
   [remap : (Array i64)]
@@ -25180,10 +25187,7 @@
           (CompilerIrBlockList.Cons
             (CompilerIrBlock.Block
               label
-              (compiler-ir-instr-seq-from-list
-                (compiler-reg-remap-instr-list
-                  remap
-                  (compiler-ir-instr-seq-to-list instrs))))
+              (compiler-reg-remap-instr-seq remap instrs))
             (box (compiler-reg-remap-blocks remap (box-get rest))))])]
     [(CompilerIrBlockList.Array seq)
       (let
@@ -25201,10 +25205,7 @@
                     i
                     (CompilerIrBlock.Block
                       label
-                      (compiler-ir-instr-seq-from-list
-                        (compiler-reg-remap-instr-list
-                          remap
-                          (compiler-ir-instr-seq-to-list instrs)))))])
+                      (compiler-reg-remap-instr-seq remap instrs)))])
               (set! i (+ i 1))))
           (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count))))]))
 

@@ -14170,6 +14170,267 @@
                     [_ false]))]
               [_ false]))])]))
 
+;; --- constant-branch jump threading fixtures --------------------------------
+;;
+;; The shape below is the lowered `(or c1 c2)` loop guard, copied from the opt2
+;; IR dump of route_http's byte-scan loop: an inner diamond materializes a
+;; boolean into a phi, a forwarding block carries it to the outer merge, and the
+;; outer merge retests it. Both merge phis are pure control flow, so every
+;; incoming edge already decides the branch.
+;;
+;; The fixtures drive the whole opt2 function pipeline (`optimize-function`)
+;; rather than the pass entry point, so a tree carrying only these tests still
+;; compiles and reports the new codes.
+(define (opt-thread-three-cond-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "outer" (AstType.Bool) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "left" (AstType.Bool) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "right" (AstType.Bool) 2)
+        (CompilerIrParamList.Nil)))))
+
+;; `blocked` inserts an effectful call between the merge phi and its branch, so
+;; the merge no longer consists of phis and the branch alone.
+(define (opt-thread-chain-blocks [blocked : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "tc-then")
+          (compiler-ir-label "tc-else"))
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "tc-then")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump (compiler-ir-label "tc-merge"))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "tc-else")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 1)
+              (compiler-ir-label "tc-inner-then")
+              (compiler-ir-label "tc-inner-else"))
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "tc-inner-then")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump (compiler-ir-label "tc-inner-merge"))
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (compiler-ir-label "tc-inner-else")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump (compiler-ir-label "tc-inner-merge"))
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                (compiler-ir-label "tc-inner-merge")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    3
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.Bool true)
+                      (compiler-ir-label "tc-inner-then")
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Bool false)
+                        (compiler-ir-label "tc-inner-else")
+                        (CompilerIrPhiInputList.Nil)))
+                    (AstType.Bool))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump (compiler-ir-label "tc-merge"))
+                    (CompilerIrInstrList.Nil))))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  (compiler-ir-label "tc-merge")
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Phi
+                      4
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Bool true)
+                        (compiler-ir-label "tc-then")
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.Var 3)
+                          (compiler-ir-label "tc-inner-merge")
+                          (CompilerIrPhiInputList.Nil)))
+                      (AstType.Bool))
+                    (if blocked
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Call
+                          5
+                          (opt-test-symbol "thread-probe")
+                          (CompilerIrCallArgs.Nil)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Branch
+                            (CompilerIrValue.Var 4)
+                            (compiler-ir-label "tc-yes")
+                            (compiler-ir-label "tc-no"))
+                          (CompilerIrInstrList.Nil)))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Var 4)
+                          (compiler-ir-label "tc-yes")
+                          (compiler-ir-label "tc-no"))
+                        (CompilerIrInstrList.Nil)))))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    (compiler-ir-label "tc-yes")
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Return
+                        (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
+                      (CompilerIrInstrList.Nil)))
+                  (compiler-ir-block-cons
+                    (compiler-ir-block
+                      (compiler-ir-label "tc-no")
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Return
+                          (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+                        (CompilerIrInstrList.Nil)))
+                    (CompilerIrBlockList.Nil)))))))))))
+
+;; Same chain, but both decided targets are reached from a second path as well,
+;; so `ts-yes` carries a real multi-input phi over the threaded merge edge.
+(define (opt-thread-successor-phi-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      (compiler-ir-label "entry")
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var 0)
+          (compiler-ir-label "ts-alt")
+          (compiler-ir-label "ts-guard"))
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "ts-alt")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump (compiler-ir-label "ts-yes"))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "ts-guard")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Var 1)
+              (compiler-ir-label "ts-then")
+              (compiler-ir-label "ts-else"))
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            (compiler-ir-label "ts-then")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump (compiler-ir-label "ts-merge"))
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (compiler-ir-label "ts-else")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var 2)
+                  (compiler-ir-label "ts-inner-then")
+                  (compiler-ir-label "ts-inner-else"))
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                (compiler-ir-label "ts-inner-then")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump (compiler-ir-label "ts-inner-merge"))
+                  (CompilerIrInstrList.Nil)))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  (compiler-ir-label "ts-inner-else")
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump (compiler-ir-label "ts-inner-merge"))
+                    (CompilerIrInstrList.Nil)))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    (compiler-ir-label "ts-inner-merge")
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Phi
+                        4
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.Bool true)
+                          (compiler-ir-label "ts-inner-then")
+                          (compiler-ir-phi-input-cons
+                            (CompilerIrValue.Bool false)
+                            (compiler-ir-label "ts-inner-else")
+                            (CompilerIrPhiInputList.Nil)))
+                        (AstType.Bool))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Jump (compiler-ir-label "ts-merge"))
+                        (CompilerIrInstrList.Nil))))
+                  (compiler-ir-block-cons
+                    (compiler-ir-block
+                      (compiler-ir-label "ts-merge")
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Phi
+                          5
+                          (compiler-ir-phi-input-cons
+                            (CompilerIrValue.Bool true)
+                            (compiler-ir-label "ts-then")
+                            (compiler-ir-phi-input-cons
+                              (CompilerIrValue.Var 4)
+                              (compiler-ir-label "ts-inner-merge")
+                              (CompilerIrPhiInputList.Nil)))
+                          (AstType.Bool))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Branch
+                            (CompilerIrValue.Var 5)
+                            (compiler-ir-label "ts-yes")
+                            (compiler-ir-label "ts-no"))
+                          (CompilerIrInstrList.Nil))))
+                    (compiler-ir-block-cons
+                      (compiler-ir-block
+                        (compiler-ir-label "ts-yes")
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Phi
+                            6
+                            (compiler-ir-phi-input-cons
+                              (CompilerIrValue.I64 10)
+                              (compiler-ir-label "ts-merge")
+                              (compiler-ir-phi-input-cons
+                                (CompilerIrValue.I64 20)
+                                (compiler-ir-label "ts-alt")
+                                (CompilerIrPhiInputList.Nil)))
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Return
+                              (CompilerIrMaybeValue.Some
+                                (CompilerIrValue.Var 6)))
+                            (CompilerIrInstrList.Nil))))
+                      (compiler-ir-block-cons
+                        (compiler-ir-block
+                          (compiler-ir-label "ts-no")
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Return
+                              (CompilerIrMaybeValue.Some
+                                (CompilerIrValue.I64 30)))
+                            (CompilerIrInstrList.Nil)))
+                        (CompilerIrBlockList.Nil)))))))))))))
+
+(define (opt-thread-test-function
+  [name : String]
+  [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (opt-thread-three-cond-params)
+    (AstType.I64)
+    16
+    blocks))
+
+(define (opt-thread-optimized [name : String] [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (optimize-function
+    (ast-node-pool-reader-context-current)
+    (ast-node-pool-reader-type-segment-bases)
+    (opt-thread-test-function name blocks)))
+
 (define (opt-cfg-switch-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -22931,6 +23192,20 @@
     [and-chain-or-changed : bool
       (match and-chain-or-result
         [(OptFunctionPassResult.Result _ changed) changed])]
+    [thread-chain-function : CompilerIrFunction
+      (opt-thread-optimized "thread-chain" (opt-thread-chain-blocks false))]
+    [thread-chain-blocks : CompilerIrBlockList
+      (opt-function-blocks thread-chain-function)]
+    [thread-blocked-function : CompilerIrFunction
+      (opt-thread-optimized "thread-blocked" (opt-thread-chain-blocks true))]
+    [thread-blocked-blocks : CompilerIrBlockList
+      (opt-function-blocks thread-blocked-function)]
+    [thread-successor-function : CompilerIrFunction
+      (opt-thread-optimized
+        "thread-successor"
+        (opt-thread-successor-phi-blocks))]
+    [thread-successor-blocks : CompilerIrBlockList
+      (opt-function-blocks thread-successor-function)]
     (begin
       (unless (= (compiler-ir-block-list-count constant-if) 2) (return 1))
       (unless
@@ -23132,6 +23407,72 @@
             (opt-bool-branch-chain-test-function
               (opt-bool-branch-chain-test-blocks 2))))
         (return 54))
+      ;; The lowered `(or c1 c2)` guard threads both merge levels away: every
+      ;; arm branches straight to the decided target, the retest branch and both
+      ;; boolean phis are gone, and the merges lose every predecessor.
+      (unless
+        (and
+          (= (opt-count-phi-blocks thread-chain-blocks) 0)
+          (=
+            (opt-count-jump-to-blocks
+              thread-chain-blocks
+              (compiler-ir-label "tc-merge"))
+            0)
+          (not
+            (opt-block-list-has-label?
+              thread-chain-blocks
+              (compiler-ir-label "tc-merge")))
+          (not
+            (opt-block-list-has-label?
+              thread-chain-blocks
+              (compiler-ir-label "tc-inner-merge")))
+          (opt-verify-ok? (opt-verify-function thread-chain-function)))
+        (return 55))
+      ;; Strictness rail: one effectful instruction between the merge phi and
+      ;; its branch blocks the whole chain, merges included.
+      (unless
+        (and
+          (opt-block-list-has-label?
+            thread-blocked-blocks
+            (compiler-ir-label "tc-merge"))
+          (opt-block-list-has-label?
+            thread-blocked-blocks
+            (compiler-ir-label "tc-inner-merge"))
+          (> (opt-count-phi-blocks thread-blocked-blocks) 0)
+          (opt-verify-ok? (opt-verify-function thread-blocked-function)))
+        (return 56))
+      ;; A threaded edge into a successor that carries a phi keeps the phi's
+      ;; predecessor list consistent: the merge input is replaced by one input
+      ;; per threaded origin, carrying the value the merge forwarded.
+      (unless
+        (and
+          (not
+            (opt-block-list-has-label?
+              thread-successor-blocks
+              (compiler-ir-label "ts-merge")))
+          (not
+            (opt-block-list-has-label?
+              thread-successor-blocks
+              (compiler-ir-label "ts-inner-merge")))
+          (opt-bool-branch-first-phi-has-label?
+            thread-successor-blocks
+            (compiler-ir-label "ts-yes")
+            (compiler-ir-label "ts-then"))
+          (opt-bool-branch-first-phi-has-label?
+            thread-successor-blocks
+            (compiler-ir-label "ts-yes")
+            (compiler-ir-label "ts-inner-then"))
+          (opt-bool-branch-first-phi-has-label?
+            thread-successor-blocks
+            (compiler-ir-label "ts-yes")
+            (compiler-ir-label "ts-alt"))
+          (not
+            (opt-bool-branch-first-phi-has-label?
+              thread-successor-blocks
+              (compiler-ir-label "ts-yes")
+              (compiler-ir-label "ts-merge")))
+          (opt-verify-ok? (opt-verify-function thread-successor-function)))
+        (return 57))
       42)))
 
 (define (compiler-optimize-fixed-point-self-test) : i64

@@ -49,20 +49,20 @@
 
 (cfg
   compile-profile
-  (define compiler-backend-profile-start-ms : i64
-    0))
+  (define compiler-backend-profile-start-ms-metric : i64
+    28))
 (cfg
   compile-profile
-  (define compiler-backend-profile-start-total : i64
-    0))
+  (define compiler-backend-profile-start-total-metric : i64
+    29))
 (cfg
   compile-profile
-  (define compiler-backend-profile-start-live : i64
-    0))
+  (define compiler-backend-profile-start-live-metric : i64
+    30))
 (cfg
   compile-profile
-  (define compiler-backend-profile-detail-start-ms : i64
-    0))
+  (define compiler-backend-profile-detail-start-ms-metric : i64
+    31))
 
 (cfg
   compile-profile-summary
@@ -95,22 +95,38 @@
 
 (cfg
   compile-profile
-  (define (compiler-backend-profile-start) : unit
+  (define (compiler-backend-profile-start
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
-      (set! compiler-backend-profile-start-ms (profile.now-ms))
-      (set! compiler-backend-profile-start-total (profile.alloc-total))
-      (set! compiler-backend-profile-start-live (profile.alloc-live))
+      (profile_state.compiler-profile-state-metric-set!
+        state
+        compiler-backend-profile-start-ms-metric
+        (profile.now-ms))
+      (profile_state.compiler-profile-state-metric-set!
+        state
+        compiler-backend-profile-start-total-metric
+        (profile.alloc-total))
+      (profile_state.compiler-profile-state-metric-set!
+        state
+        compiler-backend-profile-start-live-metric
+        (profile.alloc-live))
       (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
-  (define (compiler-backend-profile-finish [phase : String]) : unit
+  (define (compiler-backend-profile-finish
+    [state : profile_state.CompilerProfileState]
+    [phase : String]) : unit
     (let
       [end-ms : i64 (profile.now-ms)]
       [end-total : i64 (profile.alloc-total)]
       [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
-        (- (profile.alloc-peak) compiler-backend-profile-start-live)]
+        (-
+          (profile.alloc-peak)
+          (profile_state.compiler-profile-state-metric-value
+            state
+            compiler-backend-profile-start-live-metric))]
       (io.print-error
         (string.append
           "compile-profile|backend."
@@ -118,21 +134,37 @@
             phase
             (string.append
               (compiler-backend-profile-field
-                (- end-ms compiler-backend-profile-start-ms))
+                (-
+                  end-ms
+                  (profile_state.compiler-profile-state-metric-value
+                    state
+                    compiler-backend-profile-start-ms-metric)))
               (string.append
                 (compiler-backend-profile-field
-                  (- end-total compiler-backend-profile-start-total))
+                  (-
+                    end-total
+                    (profile_state.compiler-profile-state-metric-value
+                      state
+                      compiler-backend-profile-start-total-metric)))
                 (string.append
                   (compiler-backend-profile-field
-                    (- end-live compiler-backend-profile-start-live))
+                    (-
+                      end-live
+                      (profile_state.compiler-profile-state-metric-value
+                        state
+                        compiler-backend-profile-start-live-metric)))
                   (string.append
                     (compiler-backend-profile-field peak-delta)
                     "\n"))))))))))
 
 (cfg
   compile-profile
-  (define (compiler-backend-profile-detail-start) : unit
-    (set! compiler-backend-profile-detail-start-ms (profile.now-ms))))
+  (define (compiler-backend-profile-detail-start
+    [state : profile_state.CompilerProfileState]) : unit
+    (profile_state.compiler-profile-state-metric-set!
+      state
+      compiler-backend-profile-detail-start-ms-metric
+      (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -142,7 +174,11 @@
     [name : String]) : unit
     (let
       [elapsed : i64
-        (- (profile.now-ms) compiler-backend-profile-detail-start-ms)]
+        (-
+          (profile.now-ms)
+          (profile_state.compiler-profile-state-metric-value
+            state
+            compiler-backend-profile-detail-start-ms-metric))]
       (cfg
         compile-profile-summary
         (if (string.eq phase "function")
@@ -52221,7 +52257,10 @@
     [(CompilerIrFunctionList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
     [(CompilerIrFunctionList.Cons func rest)
       (begin
-        (cfg compile-profile (compiler-backend-profile-detail-start))
+        (cfg
+          compile-profile
+          (compiler-backend-profile-detail-start
+            (struct-get program-index profile-state)))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
@@ -52315,7 +52354,10 @@
     (let
       [func : CompilerIrFunction (compiler-ir-function-seq-ref functions index)]
       (begin
-        (cfg compile-profile (compiler-backend-profile-detail-start))
+        (cfg
+          compile-profile
+          (compiler-backend-profile-detail-start
+            (struct-get program-index profile-state)))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
@@ -52394,7 +52436,10 @@
         [caller-arena : arena.Arena (arena.current)]
         (begin
           (compiler-backend-assembly-stream-begin-raw!)
-          (cfg compile-profile (compiler-backend-profile-detail-start))
+          (cfg
+            compile-profile
+            (compiler-backend-profile-detail-start
+              (struct-get program-index profile-state)))
           (match (compiler-backend-emit-function-escaping
             type-segment-bases
             target
@@ -52497,7 +52542,10 @@
       [caller-arena : arena.Arena (arena.current)]
       (begin
         (compiler-backend-assembly-stream-begin-raw!)
-        (cfg compile-profile (compiler-backend-profile-detail-start))
+        (cfg
+          compile-profile
+          (compiler-backend-profile-detail-start
+            (struct-get program-index profile-state)))
         (match (compiler-backend-emit-function-escaping
           type-segment-bases
           target
@@ -54984,16 +55032,26 @@
     (begin
       (cfg
         compile-profile
-        (compiler-backend-profile-finish "compose.string_rodata"))
-      (cfg compile-profile (compiler-backend-profile-start))
+        (compiler-backend-profile-finish
+          (struct-get program-index profile-state)
+          "compose.string_rodata"))
+      (cfg
+        compile-profile
+        (compiler-backend-profile-start
+          (struct-get program-index profile-state)))
       (let
         [bytes-buf : text_buf.TextBuf
           (compiler-backend-emit-bytes-data-into bytes string-buf)]
         (begin
           (cfg
             compile-profile
-            (compiler-backend-profile-finish "compose.bytes_data"))
-          (cfg compile-profile (compiler-backend-profile-start))
+            (compiler-backend-profile-finish
+              (struct-get program-index profile-state)
+              "compose.bytes_data"))
+          (cfg
+            compile-profile
+            (compiler-backend-profile-start
+              (struct-get program-index profile-state)))
           (let
             [float-literals-buf : text_buf.TextBuf
               (compiler-backend-emit-float-rodata-into floats bytes-buf)]
@@ -55009,8 +55067,13 @@
             (begin
               (cfg
                 compile-profile
-                (compiler-backend-profile-finish "compose.float_rodata"))
-              (cfg compile-profile (compiler-backend-profile-start))
+                (compiler-backend-profile-finish
+                  (struct-get program-index profile-state)
+                  "compose.float_rodata"))
+              (cfg
+                compile-profile
+                (compiler-backend-profile-start
+                  (struct-get program-index profile-state)))
               (let
                 [descriptor-buf : text_buf.TextBuf
                   (compiler-backend-emit-closure-descriptors-into
@@ -55023,8 +55086,12 @@
                   (cfg
                     compile-profile
                     (compiler-backend-profile-finish
+                      (struct-get program-index profile-state)
                       "compose.closure_descriptors"))
-                  (cfg compile-profile (compiler-backend-profile-start))
+                  (cfg
+                    compile-profile
+                    (compiler-backend-profile-start
+                      (struct-get program-index profile-state)))
                   (let
                     [switch-buf : text_buf.TextBuf
                       (compiler-backend-emit-switch-tables-functions-into
@@ -55042,8 +55109,13 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-backend-profile-finish "compose.runtime_data"))
-                      (cfg compile-profile (compiler-backend-profile-start))
+                        (compiler-backend-profile-finish
+                          (struct-get program-index profile-state)
+                          "compose.runtime_data"))
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-start
+                          (struct-get program-index profile-state)))
                       (let
                         [externs-buf : text_buf.TextBuf
                           (compiler-backend-emit-externs-into
@@ -55055,8 +55127,13 @@
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-backend-profile-finish "compose.externs"))
-                          (cfg compile-profile (compiler-backend-profile-start))
+                            (compiler-backend-profile-finish
+                              (struct-get program-index profile-state)
+                              "compose.externs"))
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-start
+                              (struct-get program-index profile-state)))
                           (let
                             [runtime-externs-buf : text_buf.TextBuf
                               (text_buf.append
@@ -55070,10 +55147,12 @@
                               (cfg
                                 compile-profile
                                 (compiler-backend-profile-finish
+                                  (struct-get program-index profile-state)
                                   "compose.runtime_externs"))
                               (cfg
                                 compile-profile
-                                (compiler-backend-profile-start))
+                                (compiler-backend-profile-start
+                                  (struct-get program-index profile-state)))
                               (let
                                 [prefix-buf : text_buf.TextBuf
                                   (text_buf.append
@@ -55086,6 +55165,7 @@
                                   (cfg
                                     compile-profile
                                     (compiler-backend-profile-finish
+                                      (struct-get program-index profile-state)
                                       "compose.entry_text"))
                                   prefix-buf)))))))))))))))))
 
@@ -55129,8 +55209,15 @@
     [runtime-features : runtime_common.CompilerBackendRuntimeFeatures
       (compiler-backend-runtime-features plan)]
     (begin
-      (cfg compile-profile (compiler-backend-profile-finish "collect"))
-      (cfg compile-profile (compiler-backend-profile-start))
+      (cfg
+        compile-profile
+        (compiler-backend-profile-finish
+          (struct-get program-index profile-state)
+          "collect"))
+      (cfg
+        compile-profile
+        (compiler-backend-profile-start
+          (struct-get program-index profile-state)))
       (let
         [base-prefix-buf : text_buf.TextBuf
           (compiler-backend-emit-program-prefix-buffer
@@ -55169,8 +55256,15 @@
           ;; This window previously started at the "collect" finish and was
           ;; overwritten by the next start without ever being reported,
           ;; hiding the prefix composition from the phase breakdown.
-          (cfg compile-profile (compiler-backend-profile-finish "prefix"))
-          (cfg compile-profile (compiler-backend-profile-start))
+          (cfg
+            compile-profile
+            (compiler-backend-profile-finish
+              (struct-get program-index profile-state)
+              "prefix"))
+          (cfg
+            compile-profile
+            (compiler-backend-profile-start
+              (struct-get program-index profile-state)))
           (match (compiler-backend-emit-functions-buffer-into
             type-segment-bases
             target
@@ -55191,12 +55285,17 @@
               (begin
                 (cfg
                   compile-profile
-                  (compiler-backend-profile-finish "functions"))
+                  (compiler-backend-profile-finish
+                    (struct-get program-index profile-state)
+                    "functions"))
                 (cfg
                   compile-profile-summary
                   (compiler-backend-profile-summary-emit
                     (struct-get program-index profile-state)))
-                (cfg compile-profile (compiler-backend-profile-start))
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-start
+                    (struct-get program-index profile-state)))
                 (match (compiler-backend-emit-closure-entry-adapters-buffer-into
                   type-segment-bases
                   target
@@ -55215,8 +55314,13 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-backend-profile-finish "adapters"))
-                      (cfg compile-profile (compiler-backend-profile-start))
+                        (compiler-backend-profile-finish
+                          (struct-get program-index profile-state)
+                          "adapters"))
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-start
+                          (struct-get program-index profile-state)))
                       (let
                         [buf : text_buf.TextBuf
                           (text_buf.append
@@ -55239,7 +55343,9 @@
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-backend-profile-finish "compose_tail"))
+                            (compiler-backend-profile-finish
+                              (struct-get program-index profile-state)
+                              "compose_tail"))
                           (cfg
                             regalloc-census
                             (begin
@@ -55302,13 +55408,17 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-backend-profile-finish "adapters"))
+                        (compiler-backend-profile-finish
+                          (struct-get program-index profile-state)
+                          "adapters"))
                       (ResultCompilerBackendBuffer.Err message))]))]
             [(ResultCompilerBackendBuffer.Err message)
               (begin
                 (cfg
                   compile-profile
-                  (compiler-backend-profile-finish "functions"))
+                  (compiler-backend-profile-finish
+                    (struct-get program-index profile-state)
+                    "functions"))
                 (cfg
                   compile-profile-summary
                   (compiler-backend-profile-summary-emit
@@ -55349,7 +55459,7 @@
         (compiler-reg-call-span-census-reset!)
         (compiler-reg-move-census-reset!)))
     (cfg scavenge-census (compiler-backend-scavenge-census-reset!))
-    (cfg compile-profile (compiler-backend-profile-start))
+    (cfg compile-profile (compiler-backend-profile-start profile-state))
     (match (compiler-backend-runtime-plan-with-index program)
       [(ResultBackendRuntimePlanWithIndex.Ok planned)
         (let
@@ -55359,8 +55469,8 @@
           (begin
             (cfg
               compile-profile
-              (compiler-backend-profile-finish "runtime_plan"))
-            (cfg compile-profile (compiler-backend-profile-start))
+              (compiler-backend-profile-finish profile-state "runtime_plan"))
+            (cfg compile-profile (compiler-backend-profile-start profile-state))
             (match program
               [(CompilerIrProgram.Program globals functions externs)
                 ;; Build the program index ONCE over the entry function list
@@ -55385,8 +55495,10 @@
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-backend-profile-finish "index"))
-                    (cfg compile-profile (compiler-backend-profile-start))
+                      (compiler-backend-profile-finish profile-state "index"))
+                    (cfg
+                      compile-profile
+                      (compiler-backend-profile-start profile-state))
                     (match (compiler-backend-emit-globals-buffer-into
                       type-segment-bases
                       target
@@ -55397,8 +55509,12 @@
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-backend-profile-finish "globals"))
-                          (cfg compile-profile (compiler-backend-profile-start))
+                            (compiler-backend-profile-finish
+                              profile-state
+                              "globals"))
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-start profile-state))
                           (match (compiler-backend-validate-function-symbols
                             globals
                             entry-functions
@@ -55427,11 +55543,15 @@
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-backend-profile-finish "globals"))
+                            (compiler-backend-profile-finish
+                              profile-state
+                              "globals"))
                           (ResultCompilerBackendBuffer.Err message))])))])))]
       [(ResultBackendRuntimePlanWithIndex.Err message)
         (begin
-          (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
+          (cfg
+            compile-profile
+            (compiler-backend-profile-finish profile-state "runtime_plan"))
           (ResultCompilerBackendBuffer.Err
             (box (compiler-diagnostic-at-start "" message))))])))
 

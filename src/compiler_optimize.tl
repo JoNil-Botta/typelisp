@@ -207,20 +207,20 @@
   1)
 (cfg
   compile-profile
-  (define compiler-opt-profile-start-ms : i64
-    0))
+  (define compiler-opt-profile-start-ms-metric : i64
+    24))
 (cfg
   compile-profile
-  (define compiler-opt-profile-start-total : i64
-    0))
+  (define compiler-opt-profile-start-total-metric : i64
+    25))
 (cfg
   compile-profile
-  (define compiler-opt-profile-start-live : i64
-    0))
+  (define compiler-opt-profile-start-live-metric : i64
+    26))
 (cfg
   compile-profile
-  (define compiler-opt-profile-detail-start-ms : i64
-    0))
+  (define compiler-opt-profile-detail-start-ms-metric : i64
+    27))
 
 (cfg
   compile-profile-summary
@@ -383,22 +383,38 @@
 
 (cfg
   compile-profile
-  (define (compiler-opt-profile-start) : unit
+  (define (compiler-opt-profile-start
+    [state : profile_state.CompilerProfileState]) : unit
     (begin
-      (set! compiler-opt-profile-start-ms (profile.now-ms))
-      (set! compiler-opt-profile-start-total (profile.alloc-total))
-      (set! compiler-opt-profile-start-live (profile.alloc-live))
+      (profile_state.compiler-profile-state-metric-set!
+        state
+        compiler-opt-profile-start-ms-metric
+        (profile.now-ms))
+      (profile_state.compiler-profile-state-metric-set!
+        state
+        compiler-opt-profile-start-total-metric
+        (profile.alloc-total))
+      (profile_state.compiler-profile-state-metric-set!
+        state
+        compiler-opt-profile-start-live-metric
+        (profile.alloc-live))
       (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
-  (define (compiler-opt-profile-finish [phase : String]) : unit
+  (define (compiler-opt-profile-finish
+    [state : profile_state.CompilerProfileState]
+    [phase : String]) : unit
     (let
       [end-ms : i64 (profile.now-ms)]
       [end-total : i64 (profile.alloc-total)]
       [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
-        (- (profile.alloc-peak) compiler-opt-profile-start-live)]
+        (-
+          (profile.alloc-peak)
+          (profile_state.compiler-profile-state-metric-value
+            state
+            compiler-opt-profile-start-live-metric))]
       (io.print-error
         (string.append
           "compile-profile|optimize."
@@ -406,19 +422,35 @@
             phase
             (string.append
               (compiler-opt-profile-field
-                (- end-ms compiler-opt-profile-start-ms))
+                (-
+                  end-ms
+                  (profile_state.compiler-profile-state-metric-value
+                    state
+                    compiler-opt-profile-start-ms-metric)))
               (string.append
                 (compiler-opt-profile-field
-                  (- end-total compiler-opt-profile-start-total))
+                  (-
+                    end-total
+                    (profile_state.compiler-profile-state-metric-value
+                      state
+                      compiler-opt-profile-start-total-metric)))
                 (string.append
                   (compiler-opt-profile-field
-                    (- end-live compiler-opt-profile-start-live))
+                    (-
+                      end-live
+                      (profile_state.compiler-profile-state-metric-value
+                        state
+                        compiler-opt-profile-start-live-metric)))
                   (string.append (compiler-opt-profile-field peak-delta) "\n"))))))))))
 
 (cfg
   compile-profile
-  (define (compiler-opt-profile-detail-start) : unit
-    (set! compiler-opt-profile-detail-start-ms (profile.now-ms))))
+  (define (compiler-opt-profile-detail-start
+    [state : profile_state.CompilerProfileState]) : unit
+    (profile_state.compiler-profile-state-metric-set!
+      state
+      compiler-opt-profile-detail-start-ms-metric
+      (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -427,7 +459,12 @@
     [phase : String]
     [name : String]) : unit
     (let
-      [elapsed : i64 (- (profile.now-ms) compiler-opt-profile-detail-start-ms)]
+      [elapsed : i64
+        (-
+          (profile.now-ms)
+          (profile_state.compiler-profile-state-metric-value
+            state
+            compiler-opt-profile-detail-start-ms-metric))]
       (cfg
         compile-profile-summary
         (if (string.eq phase "function")
@@ -45890,7 +45927,10 @@
     [(CompilerIrFunctionList.Cons func rest)
       (let
         [_start : unit
-          (cfg compile-profile (compiler-opt-profile-detail-start))]
+          (cfg
+            compile-profile
+            (compiler-opt-profile-detail-start
+              (struct-get summaries profile-state)))]
         [optimized : CompilerIrFunction
           (optimize-function-level1-escaping-with-summaries
             pools
@@ -45941,7 +45981,10 @@
     [(CompilerIrFunctionList.Cons func rest)
       (let
         [_start : unit
-          (cfg compile-profile (compiler-opt-profile-detail-start))]
+          (cfg
+            compile-profile
+            (compiler-opt-profile-detail-start
+              (struct-get summaries profile-state)))]
         [optimized : CompilerIrFunction
           (optimize-function-escaping-with-summaries
             pools
@@ -54289,13 +54332,15 @@
         ;; opt-inline-program-functions runs the full inliner at level 2 and
         ;; the call-free tiny-leaf pass at level 1.
         (begin
-          (cfg compile-profile (compiler-opt-profile-start))
+          (cfg compile-profile (compiler-opt-profile-start profile-state))
           (let
             [reachable-functions : CompilerIrFunctionList
               (opt-inline-program-functions type-segment-bases functions level)]
             (begin
-              (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
-              (cfg compile-profile (compiler-opt-profile-start))
+              (cfg
+                compile-profile
+                (compiler-opt-profile-finish profile-state "pre_prune"))
+              (cfg compile-profile (compiler-opt-profile-start profile-state))
               (let
                 [pruned : OptPrunedProgram
                   (opt-prune-unreachable-program
@@ -54329,13 +54374,15 @@
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-opt-profile-finish "functions"))
+                    (compiler-opt-profile-finish profile-state "functions"))
                   (cfg
                     compile-profile-summary
                     (compiler-opt-profile-summary-emit
                       (struct-get summaries profile-state)))
                   (cfg compile-profile (compiler-opt-load-cse-profile-emit))
-                  (cfg compile-profile (compiler-opt-profile-start))
+                  (cfg
+                    compile-profile
+                    (compiler-opt-profile-start profile-state))
                   (let
                     [final-pruned
                       : OptPrunedProgram
@@ -54371,7 +54418,7 @@
                     (begin
                       (cfg
                         compile-profile
-                        (compiler-opt-profile-finish "post_prune"))
+                        (compiler-opt-profile-finish profile-state "post_prune"))
                       (CompilerIrProgram.Program
                         final-globals
                         (compiler-ir-function-list-compact
@@ -54653,7 +54700,7 @@
           (compiler-opt-debug-finish-program program)
           (opt-remap-spans-program spans program))
         (begin
-          (cfg compile-profile (compiler-opt-profile-start))
+          (cfg compile-profile (compiler-opt-profile-start profile-state))
           (match (opt-inline-program-functions-with-spans
             type-segment-bases
             functions
@@ -54661,8 +54708,10 @@
             spans)
             [(OptInlineSpanProgram.Program reachable-functions inline-spans)
               (begin
-                (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
-                (cfg compile-profile (compiler-opt-profile-start))
+                (cfg
+                  compile-profile
+                  (compiler-opt-profile-finish profile-state "pre_prune"))
+                (cfg compile-profile (compiler-opt-profile-start profile-state))
                 (let
                   [pruned : OptPrunedProgram
                     (opt-prune-unreachable-program
@@ -54696,13 +54745,15 @@
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-opt-profile-finish "functions"))
+                      (compiler-opt-profile-finish profile-state "functions"))
                     (cfg
                       compile-profile-summary
                       (compiler-opt-profile-summary-emit
                         (struct-get summaries profile-state)))
                     (cfg compile-profile (compiler-opt-load-cse-profile-emit))
-                    (cfg compile-profile (compiler-opt-profile-start))
+                    (cfg
+                      compile-profile
+                      (compiler-opt-profile-start profile-state))
                     (let
                       [final-pruned
                         : OptPrunedProgram
@@ -54744,7 +54795,9 @@
                       (begin
                         (cfg
                           compile-profile
-                          (compiler-opt-profile-finish "post_prune"))
+                          (compiler-opt-profile-finish
+                            profile-state
+                            "post_prune"))
                         (CompilerOptimizedProgram.Program
                           (compiler-opt-debug-finish-program optimized)
                           (opt-remap-spans-program inline-spans optimized)))))))])))]))

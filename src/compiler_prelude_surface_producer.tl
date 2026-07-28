@@ -159,7 +159,6 @@
     [_start-fact-recording : unit
       (surface_facts.surface-typecheck-facts-recording-start!
         (arena.tl_arena_current))]
-    [_start-early-exit-facts : unit (tc-body-early-exit-facts-start! pools)]
     [checked : ResultCompilerTypecheckChecked
       (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
         program
@@ -171,7 +170,6 @@
     (match checked
       [(ResultCompilerTypecheckChecked.Err diag)
         (begin
-          (tc-body-early-exit-facts-abort!)
           (tc-clone-root-collection-abort!)
           (surface_facts.surface-typecheck-facts-recording-abort!)
           (prelude-surface-facts-error
@@ -179,7 +177,6 @@
             (box (compiler-diagnostic-list-first (box-get diag)))))]
       [(ResultCompilerTypecheckChecked.Ok summary ctx _ _)
         (let
-          [_finish-early-exit-facts : unit (tc-body-early-exit-facts-finish!)]
           [_finish-clone-roots : CloneNameList
             (tc-clone-root-collection-finish! ctx)]
           (match summary

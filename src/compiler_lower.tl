@@ -16081,7 +16081,7 @@
                           fail-label
                           scrut-reg-group?)
                         (match ctx
-                          [(TcContext _ symbols registries _ _ _ _ _)
+                          [(TcContext _ symbols registries _ _ _ _ _ _)
                             (let
                               [handle : i64
                                 (lower-variant-handle-for-scrut-id-or
@@ -16451,7 +16451,7 @@
                   [nested-args : AstPatternList (box-get nested-args-box)]
                   [nested-name-str : String (tc-env-key-name-text nested-name)]
                   (match ctx
-                    [(TcContext _ symbols registries _ _ _ _ _)
+                    [(TcContext _ symbols registries _ _ _ _ _ _)
                       (let
                         [handle : i64
                           (lower-variant-handle-for-scrut-id-or
@@ -16988,7 +16988,7 @@
 
 (define (lower-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _ _ _ _)
+    [(TcContext program _ _ _ _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (lower-program-imports-atomic? (box-get decls-box))])]))
@@ -17838,7 +17838,7 @@
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ _ _ _ _ _ _)
+    [(TcContext _ _ _ _ _ _ _ _ _)
       (match (tc-context-enum-variants-id ctx enum-name-id enum-name)
         [(ResultAstVariantDefList.Ok variants)
           (match (lower-reserve-heap-storage
@@ -19162,7 +19162,7 @@
   [return-info : TcResultInfo]
   [payload : CompilerIrValue]) : ResultLowerState
   (match ctx
-    [(TcContext _ _ registries _ _ _ _ _)
+    [(TcContext _ _ registries _ _ _ _ _ _)
       (let
         [enum-name-id : i64 (tc-result-info-enum-id return-info)]
         [enum-name : String (tc-nominal-name-id-display enum-name-id)]
@@ -19305,7 +19305,7 @@
   [return-info : TcResultInfo]
   [origin : AstExpr]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ registries _ _ _ _ _)
+    [(TcContext _ _ registries _ _ _ _ _ _)
       (let
         [ok-id : i64 (tc-result-info-ok-id operand-info)]
         [ok-name : String
@@ -19416,7 +19416,7 @@
 
 (define (lower-top-level-value-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module module-id _ _ _)
+    [(TcContext _ symbols _ module module-id _ _ _ _)
       (compiler-symbols-handle-found?
         (if (and
           (> (string.string-length module) 0)
@@ -19433,7 +19433,7 @@
 
 (define (lower-top-level-callable-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module module-id _ _ _)
+    [(TcContext _ symbols _ module module-id _ _ _ _)
       (let
         [handle : i64
           (if (and
@@ -19480,7 +19480,7 @@
   [source-id : i64]
   [lookup-id : i64]) : i64
   (match ctx
-    [(TcContext _ _ _ module module-id _ _ _)
+    [(TcContext _ _ _ module module-id _ _ _ _)
       (if (and
         (> (string.string-length module) 0)
         (not (tc-name-qualified-id? source-id))
@@ -21170,7 +21170,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
@@ -21304,7 +21304,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
@@ -52593,7 +52593,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _ _ _ _)
+    [(TcContext _ symbols registries _ _ _ _ _ _)
       (let
         [variant-name : String (tc-env-key-name-text variant-name-id)]
         [resolved-scrut-ty : AstType
@@ -52830,7 +52830,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _ _ _ _)
+    [(TcContext _ symbols registries _ _ _ _ _ _)
       (let
         [variant-name : String (tc-env-key-name-text variant-name-id)]
         [resolved-scrut-ty : AstType
@@ -54978,7 +54978,7 @@
   [borrow-lifetime : TcMaybeNameId]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _ _ _ _)
+    [(TcContext _ symbols registries _ _ _ _ _ _)
       (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
         [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
@@ -55107,7 +55107,7 @@
   [borrow-lifetime : TcMaybeNameId]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _ _ _ _)
+    [(TcContext _ symbols registries _ _ _ _ _ _)
       (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
         [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
@@ -57267,7 +57267,9 @@
               [(AstDecl.DefFn decl-meta name _ _ body-box _)
                 (let
                   [has-early-return : bool
-                    (match (tc-body-early-exit-fact body-box)
+                    (match (tc-body-early-exit-fact
+                      (tc-context-body-state ctx)
+                      body-box)
                       [(TcBodyEarlyExitFact.Known value) value]
                       [(TcBodyEarlyExitFact.Unknown)
                         (lower-rvo-node-has-early-return? ctx body-box)])]
@@ -58278,20 +58280,17 @@
   [cache-scope : String]
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (match (let
-    [_start-early-exit-facts : unit (tc-body-early-exit-facts-start! pools)]
-    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
-      load-state
-      prefix-cache
-      program
-      paths
-      stdlib-roots
-      cache-scope
-      pools
-      source-names))
+  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+    load-state
+    prefix-cache
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    source-names)
     [(ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env _)
       (let
-        [_finish-early-exit-facts : unit (tc-body-early-exit-facts-finish!)]
         [clone-roots : CloneNameList
           (tc-clone-root-collection-finish! source-ctx)]
         [source-decl-count : i64
@@ -58435,7 +58434,6 @@
                 (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
     [(ResultCompilerTypecheckChecked.Err diag)
       (begin
-        (tc-body-early-exit-facts-abort!)
         (tc-clone-root-collection-abort!)
         (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
         (ResultCompilerLower.Err

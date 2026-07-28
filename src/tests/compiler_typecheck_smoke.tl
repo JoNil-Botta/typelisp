@@ -4741,6 +4741,25 @@
     (compiler-typecheck-auto-borrow-tests-ok?)
     (io.panic "typecheck: auto-borrow call diagnostic inline test failed")))
 
+(define (compiler-typecheck-smoke-body-state-diagnostic-reuse-ok?) : bool
+  (let
+    [failed : ResultCompilerTypecheck
+      (typecheck-compiler-source
+        "(define (bad) : bool 1)
+(define (checked-after-bad) : i64 42)")]
+    [failed-once : bool
+      (match failed
+        [(ResultCompilerTypecheck.Ok _) false]
+        [(ResultCompilerTypecheck.Err diagnostics)
+          (= (compiler-diagnostic-list-count (box-get diagnostics)) 1)])]
+    [reused : ResultCompilerTypecheck
+      (typecheck-compiler-source "(define (checked-after-reset) : i64 42)")]
+    (and
+      failed-once
+      (match reused
+        [(ResultCompilerTypecheck.Ok _) true]
+        [(ResultCompilerTypecheck.Err _) false]))))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -4759,6 +4778,9 @@
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-result-macro-ok?)
       (io.panic "typecheck: macro symbol generation reset smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-body-state-diagnostic-reuse-ok?)
+      (io.panic "typecheck: body state diagnostic reuse smoke failed"))
     (unless
       (and
         (compiler-typecheck-smoke-registry-member-diagnostic-ok?

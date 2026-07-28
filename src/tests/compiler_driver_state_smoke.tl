@@ -4,7 +4,9 @@
 ;; floor bookkeeping through that state's own cells: the globally installed
 ;; table's arena floor and pool counters stay untouched. The same session
 ;; wired to the installed state reads the live compatibility count, matching
-;; the legacy global path exactly (refs #4705).
+;; the legacy global path exactly. The typecheck body-state case interleaves
+;; independent fact/early-exit jobs and reuses one after a controlled failure
+;; (refs #4705, #4884).
 (import "../compiler_driver_smoke_tests.tl")
 (import "../compiler_typecheck.tl")
 (import "../compiler_intern.tl" as ci)
@@ -98,7 +100,8 @@
         (if (and
           (driver-state-smoke-non-installed-ok? a b)
           (driver-state-smoke-installed-ok? a)
-          (driver-state-smoke-expr-token-ok?))
+          (driver-state-smoke-expr-token-ok?)
+          (tc-body-state-isolation-self-test))
           0
           (begin
             (io.print-string "driver state isolation smoke failed\n")

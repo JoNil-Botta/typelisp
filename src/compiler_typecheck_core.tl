@@ -174,6 +174,30 @@
   (Done)
   (Bind i64 AstType TcTypeEnvScopedMarkerCursor))
 
+(defstruct TcBodyStateData
+  (type-facts-recording bool)
+  (type-facts-consuming bool)
+  (type-fact-index (Array i64))
+  (type-fact-expr-ids (Array i64))
+  (type-fact-types (Array AstType))
+  (type-fact-count i64)
+  (type-fact-storage-arena i64)
+  (type-fact-enclosing-arena i64)
+  (early-exit-facts-collecting bool)
+  (early-exit-facts-ready bool)
+  (early-exit-current bool)
+  (early-exit-suppress-depth i64)
+  (early-exit-source-expr-limit i64)
+  (early-exit-facts (Array i64))
+  (early-exit-known (Array i64)))
+
+;; TcContext values are copied while resolving modules and rebuilding macro
+;; views. Keep the mutable body analysis behind a shared one-slot cell so every
+;; derived context for one job observes the same state without consulting a
+;; process-global selector.
+(defstruct TcBodyState
+  (data (Array TcBodyStateData)))
+
 (defenum TcContext
   (TcContext
     AstProgram
@@ -183,7 +207,8 @@
     i64
     i64
     AstNodePoolContext
-    ci.InternSourceNameSessionHandle))
+    ci.InternSourceNameSessionHandle
+    TcBodyState))
 
 (defenum TcUnboundSuggestionSnapshot
   (No)
@@ -223,7 +248,28 @@
     module-id
     module-id
     pools
-    source-names))
+    source-names
+    (tc-body-state-new)))
+
+(define (tc-context-new-with-source-names-and-body-state
+  [program : AstProgram]
+  [symbols : CompilerSymbols]
+  [registries : CompilerRegistries]
+  [module : String]
+  [module-id : i64]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [body-state : TcBodyState]) : TcContext
+  (TcContext
+    program
+    symbols
+    registries
+    module
+    module-id
+    module-id
+    pools
+    source-names
+    body-state))
 
 (define (tc-context-new
   [program : AstProgram]
@@ -305,146 +351,197 @@
   (Known bool)
   (Unknown))
 
-(define tc-body-type-facts-recording : bool
-  false)
-(define tc-body-type-facts-consuming : bool
-  false)
-
 ;; Dense source-expression id -> (fact slot + 1) index. Each function clears
 ;; only ids it touched, recorded in the parallel expr-id buffer, so body
 ;; boundaries neither allocate nor zero a capacity-sized hashmap. Expression
 ;; ids synthesized after the source-pool snapshot simply miss and use the
 ;; existing conservative reinference path.
-(define tc-body-type-fact-index : (Array i64)
-  (array.make-array i64 1))
-(define tc-body-type-fact-expr-ids : (Array i64)
-  (array.make-array i64 16))
-(define tc-body-type-fact-types : (Array AstType)
-  (array.make-array AstType 16))
-(define tc-body-type-fact-count : i64
-  0)
-(define tc-body-type-fact-storage-arena : i64
-  0)
-
 ;; Lower's call-slot RVO needs one semantic fact per function body: whether a
 ;; runtime `return` or `try` occurs anywhere in it. The move checker already
 ;; visits the complete runtime body (including nested lambdas), so recording the
 ;; bit there avoids a second recursive AST walk in lower. Facts are keyed by the
 ;; stable body node id. Bodies synthesized after source typecheck are absent and
 ;; lower falls back to its conservative scanner for those only.
-(define tc-body-early-exit-facts-collecting : bool
-  false)
-(define tc-body-early-exit-facts-ready : bool
-  false)
-(define tc-body-early-exit-current : bool
-  false)
-(define tc-body-early-exit-suppress-depth : i64
-  0)
-(define tc-body-early-exit-source-expr-limit : i64
-  -1)
-(define tc-body-early-exit-facts : (Array i64)
-  (array.make-array i64 1))
-(define tc-body-early-exit-known : (Array i64)
-  (array.make-array i64 1))
-
-(define (tc-body-early-exit-facts-start! [pools : AstNodePoolContext]) : unit
+(define (tc-body-state-new) : TcBodyState
   (let
-    [expr-limit : i64 (ast-node-pool-context-expr-len pools)]
+    [cell : (Array TcBodyStateData) (array.make-array TcBodyStateData 1)]
+    (begin
+      (array-set!
+        cell
+        0
+        (TcBodyStateData
+          false
+          false
+          (array.make-array i64 1)
+          (array.make-array i64 1)
+          (array.make-array AstType 1)
+          0
+          0
+          0
+          false
+          false
+          false
+          0
+          -1
+          (array.make-array i64 1)
+          (array.make-array i64 1)))
+      (TcBodyState cell))))
+
+(define (tc-body-state-data-value [state : TcBodyState]) : TcBodyStateData
+  (array.ref (struct-get state data) 0))
+
+(define (tc-body-state-data-set! [state : TcBodyState] [data : TcBodyStateData]) : unit
+  (array-set! (struct-get state data) 0 data))
+
+(define (tc-body-state-storage-arena-value [state : TcBodyState]) : i64
+  (struct-get (tc-body-state-data-value state) type-fact-storage-arena))
+
+(define (tc-body-state-type-fact-capacity [state : TcBodyState]) : i64
+  (array.length (struct-get (tc-body-state-data-value state) type-fact-types)))
+
+(define (tc-body-state-early-exit-source-limit [state : TcBodyState]) : i64
+  (struct-get (tc-body-state-data-value state) early-exit-source-expr-limit))
+
+(define (tc-body-early-exit-facts-start-with-limit!
+  [state : TcBodyState]
+  [expr-limit : i64]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
     (begin
       (set!
-        tc-body-early-exit-facts
+        (struct-get data early-exit-facts)
         (array.make-array i64 (/ (+ expr-limit 63) 64)))
       (set!
-        tc-body-early-exit-known
+        (struct-get data early-exit-known)
         (array.make-array i64 (/ (+ expr-limit 63) 64)))
-      (set! tc-body-early-exit-current false)
-      (set! tc-body-early-exit-suppress-depth 0)
-      (set! tc-body-early-exit-source-expr-limit expr-limit)
-      (set! tc-body-early-exit-facts-ready false)
-      (set! tc-body-early-exit-facts-collecting true)
-      (tc-body-type-fact-storage-start! expr-limit))))
+      (set! (struct-get data early-exit-current) false)
+      (set! (struct-get data early-exit-suppress-depth) 0)
+      (set! (struct-get data early-exit-source-expr-limit) expr-limit)
+      (set! (struct-get data early-exit-facts-ready) false)
+      (set! (struct-get data early-exit-facts-collecting) true)
+      (tc-body-state-data-set! state data)
+      (tc-body-type-fact-storage-start! state expr-limit))))
 
-(define (tc-body-early-exit-facts-finish!) : unit
-  (begin
-    (set! tc-body-early-exit-facts-collecting false)
-    (set! tc-body-early-exit-facts-ready true)
-    (tc-body-type-fact-storage-release!)))
+(define (tc-body-early-exit-facts-start!
+  [state : TcBodyState]
+  [pools : AstNodePoolContext]) : unit
+  (tc-body-early-exit-facts-start-with-limit!
+    state
+    (ast-node-pool-context-expr-len pools)))
 
-(define (tc-body-early-exit-facts-abort!) : unit
-  (begin
-    (set! tc-body-early-exit-facts-collecting false)
-    (set! tc-body-early-exit-facts-ready false)
-    (set! tc-body-early-exit-current false)
-    (set! tc-body-early-exit-suppress-depth 0)
-    (set! tc-body-early-exit-source-expr-limit -1)
-    (tc-body-type-fact-storage-release!)))
-
-(define (tc-body-early-exit-function-start!) : unit
-  (if tc-body-early-exit-facts-collecting
+(define (tc-body-early-exit-facts-finish! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
     (begin
-      (set! tc-body-early-exit-current false)
-      (set! tc-body-early-exit-suppress-depth 0))
-    unit))
+      (set! (struct-get data early-exit-facts-collecting) false)
+      (set! (struct-get data early-exit-facts-ready) true)
+      (tc-body-state-data-set! state data)
+      (tc-body-type-fact-storage-release! state))))
 
-(define (tc-body-early-exit-function-finish! [body-id : i64]) : unit
-  (if (and
-    tc-body-early-exit-facts-collecting
-    (>= body-id 0)
-    (< body-id tc-body-early-exit-source-expr-limit))
-    (let
-      [word-index : i64 (/ body-id 64)]
-      [bit-index : i64 (% body-id 64)]
-      [bit : i64 (shl 1 bit-index)]
+(define (tc-body-early-exit-facts-abort! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (begin
+      (set! (struct-get data early-exit-facts-collecting) false)
+      (set! (struct-get data early-exit-facts-ready) false)
+      (set! (struct-get data early-exit-current) false)
+      (set! (struct-get data early-exit-suppress-depth) 0)
+      (set! (struct-get data early-exit-source-expr-limit) -1)
+      (tc-body-state-data-set! state data)
+      (tc-body-type-fact-storage-release! state))))
+
+(define (tc-body-early-exit-function-start! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (struct-get data early-exit-facts-collecting)
       (begin
-        (array-set!
-          tc-body-early-exit-known
-          word-index
-          (bit-or (array.ref tc-body-early-exit-known word-index) bit))
-        (if tc-body-early-exit-current
+        (set! (struct-get data early-exit-current) false)
+        (set! (struct-get data early-exit-suppress-depth) 0)
+        (tc-body-state-data-set! state data))
+      unit)))
+
+(define (tc-body-early-exit-function-finish!
+  [state : TcBodyState]
+  [body-id : i64]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (and
+      (struct-get data early-exit-facts-collecting)
+      (>= body-id 0)
+      (< body-id (struct-get data early-exit-source-expr-limit)))
+      (let
+        [word-index : i64 (/ body-id 64)]
+        [bit-index : i64 (% body-id 64)]
+        [bit : i64 (shl 1 bit-index)]
+        (begin
           (array-set!
-            tc-body-early-exit-facts
+            (struct-get data early-exit-known)
             word-index
-            (bit-or (array.ref tc-body-early-exit-facts word-index) bit))
-          unit)))
-    unit))
+            (bit-or
+              (array.ref (struct-get data early-exit-known) word-index)
+              bit))
+          (if (struct-get data early-exit-current)
+            (array-set!
+              (struct-get data early-exit-facts)
+              word-index
+              (bit-or
+                (array.ref (struct-get data early-exit-facts) word-index)
+                bit))
+            unit)))
+      unit)))
 
-(define (tc-body-early-exit-note!) : unit
-  (if (and
-    tc-body-early-exit-facts-collecting
-    (= tc-body-early-exit-suppress-depth 0))
-    (set! tc-body-early-exit-current true)
-    unit))
+(define (tc-body-early-exit-note! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (and
+      (struct-get data early-exit-facts-collecting)
+      (= (struct-get data early-exit-suppress-depth) 0))
+      (begin
+        (set! (struct-get data early-exit-current) true)
+        (tc-body-state-data-set! state data))
+      unit)))
 
-(define (tc-body-early-exit-suppress-push!) : unit
-  (if tc-body-early-exit-facts-collecting
-    (set!
-      tc-body-early-exit-suppress-depth
-      (+ tc-body-early-exit-suppress-depth 1))
-    unit))
+(define (tc-body-early-exit-suppress-push! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (struct-get data early-exit-facts-collecting)
+      (begin
+        (set!
+          (struct-get data early-exit-suppress-depth)
+          (+ (struct-get data early-exit-suppress-depth) 1))
+        (tc-body-state-data-set! state data))
+      unit)))
 
-(define (tc-body-early-exit-suppress-pop!) : unit
-  (if tc-body-early-exit-facts-collecting
-    (set!
-      tc-body-early-exit-suppress-depth
-      (- tc-body-early-exit-suppress-depth 1))
-    unit))
+(define (tc-body-early-exit-suppress-pop! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (struct-get data early-exit-facts-collecting)
+      (begin
+        (set!
+          (struct-get data early-exit-suppress-depth)
+          (- (struct-get data early-exit-suppress-depth) 1))
+        (tc-body-state-data-set! state data))
+      unit)))
 
-(define (tc-body-early-exit-fact [body-id : i64]) : TcBodyEarlyExitFact
-  (if (and
-    tc-body-early-exit-facts-ready
-    (>= body-id 0)
-    (< body-id tc-body-early-exit-source-expr-limit))
-    (let
-      [word-index : i64 (/ body-id 64)]
-      [bit-index : i64 (% body-id 64)]
-      [bit : i64 (shl 1 bit-index)]
-      [known : i64 (array.ref tc-body-early-exit-known word-index)]
-      (if (= (bit-and known bit) 0)
-        (TcBodyEarlyExitFact.Unknown)
-        (let
-          [bits : i64 (array.ref tc-body-early-exit-facts word-index)]
-          (TcBodyEarlyExitFact.Known (not (= (bit-and bits bit) 0))))))
-    (TcBodyEarlyExitFact.Unknown)))
+(define (tc-body-early-exit-fact [state : TcBodyState] [body-id : i64]) : TcBodyEarlyExitFact
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (and
+      (struct-get data early-exit-facts-ready)
+      (>= body-id 0)
+      (< body-id (struct-get data early-exit-source-expr-limit)))
+      (let
+        [word-index : i64 (/ body-id 64)]
+        [bit-index : i64 (% body-id 64)]
+        [bit : i64 (shl 1 bit-index)]
+        [known : i64 (array.ref (struct-get data early-exit-known) word-index)]
+        (if (= (bit-and known bit) 0)
+          (TcBodyEarlyExitFact.Unknown)
+          (let
+            [bits : i64
+              (array.ref (struct-get data early-exit-facts) word-index)]
+            (TcBodyEarlyExitFact.Known (not (= (bit-and bits bit) 0))))))
+      (TcBodyEarlyExitFact.Unknown))))
 
 (define (tc-body-type-fact-initial-capacity) : i64
   1024)
@@ -454,26 +551,37 @@
 ;; phase-lifetime arena: build its dense index once before body checking, grow
 ;; only its compact value buffers, and release the whole arena when source
 ;; typechecking finishes.
-(define (tc-body-type-fact-storage-release!) : unit
-  (if (= tc-body-type-fact-storage-arena 0)
-    unit
-    (let
-      [storage : i64 tc-body-type-fact-storage-arena]
+(define (tc-body-type-fact-storage-release! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    [storage : i64 (struct-get data type-fact-storage-arena)]
+    (if (= storage 0)
+      unit
       (begin
         (if (= (arena.tl_arena_current) storage)
           (unsafe
-            (arena.tl_arena_set node-pool-base-arena))
+            (arena.tl_arena_set (struct-get data type-fact-enclosing-arena)))
           unit)
+        ;; Replace storage-owned arrays before destroying their arena. The
+        ;; returned context retains only these tiny idle placeholders plus the
+        ;; early-exit bitsets needed by lowering.
+        (set! (struct-get data type-fact-index) (array.make-array i64 1))
+        (set! (struct-get data type-fact-expr-ids) (array.make-array i64 1))
+        (set! (struct-get data type-fact-types) (array.make-array AstType 1))
+        (set! (struct-get data type-fact-storage-arena) 0)
+        (set! (struct-get data type-fact-enclosing-arena) 0)
+        (set! (struct-get data type-fact-count) 0)
+        (set! (struct-get data type-facts-recording) false)
+        (set! (struct-get data type-facts-consuming) false)
+        (tc-body-state-data-set! state data)
         (unsafe
-          (arena.tl_arena_destroy storage))
-        (set! tc-body-type-fact-storage-arena 0)
-        (set! tc-body-type-fact-count 0)
-        (set! tc-body-type-facts-recording false)
-        (set! tc-body-type-facts-consuming false)))))
+          (arena.tl_arena_destroy storage))))))
 
-(define (tc-body-type-fact-storage-start! [source-limit : i64]) : unit
+(define (tc-body-type-fact-storage-start!
+  [state : TcBodyState]
+  [source-limit : i64]) : unit
   (begin
-    (tc-body-type-fact-storage-release!)
+    (tc-body-type-fact-storage-release! state)
     (let
       [enclosing : i64 (arena.tl_arena_current)]
       [storage : i64 (arena.tl_arena_make)]
@@ -482,39 +590,50 @@
           source-limit
           1)]
       (begin
-        (set! tc-body-type-fact-storage-arena storage)
         (unsafe
           (arena.tl_arena_set storage))
-        (set! tc-body-type-fact-index (array.make-array i64 index-cap))
-        (set!
-          tc-body-type-fact-expr-ids
-          (array.make-array i64 (tc-body-type-fact-initial-capacity)))
-        (set!
-          tc-body-type-fact-types
-          (array.make-array AstType (tc-body-type-fact-initial-capacity)))
-        (set! tc-body-type-fact-storage-arena (arena.tl_arena_current))
-        (set! tc-body-type-fact-count 0)
-        (unsafe
-          (arena.tl_arena_set enclosing))))))
+        (let
+          [data : TcBodyStateData (tc-body-state-data-value state)]
+          (begin
+            (set! (struct-get data type-fact-storage-arena) storage)
+            (set! (struct-get data type-fact-enclosing-arena) enclosing)
+            (set!
+              (struct-get data type-fact-index)
+              (array.make-array i64 index-cap))
+            (set!
+              (struct-get data type-fact-expr-ids)
+              (array.make-array i64 (tc-body-type-fact-initial-capacity)))
+            (set!
+              (struct-get data type-fact-types)
+              (array.make-array AstType (tc-body-type-fact-initial-capacity)))
+            (set!
+              (struct-get data type-fact-storage-arena)
+              (arena.tl_arena_current))
+            (set! (struct-get data type-fact-count) 0)
+            (tc-body-state-data-set! state data)
+            (unsafe
+              (arena.tl_arena_set enclosing))))))))
 
 (define (tc-body-type-fact-grow-copy!
   [dst-types : (Array AstType)]
   [dst-expr-ids : (Array i64)]
   [src-types : (Array AstType)]
   [src-expr-ids : (Array i64)]
+  [count : i64]
   [index : i64]) : unit
   (let
     [i : i64 index]
-    (while (< i tc-body-type-fact-count)
+    (while (< i count)
       (begin
         (array-set! dst-types i (array.ref src-types i))
         (array-set! dst-expr-ids i (array.ref src-expr-ids i))
         (set! i (+ i 1))))))
 
-(define (tc-body-type-fact-grow!) : unit
+(define (tc-body-type-fact-grow! [state : TcBodyState]) : unit
   (let
-    [old-types : (Array AstType) tc-body-type-fact-types]
-    [old-expr-ids : (Array i64) tc-body-type-fact-expr-ids]
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    [old-types : (Array AstType) (struct-get data type-fact-types)]
+    [old-expr-ids : (Array i64) (struct-get data type-fact-expr-ids)]
     [old-cap : i64 (array.length old-types)]
     [new-cap : i64
       (if (< old-cap 1)
@@ -523,7 +642,7 @@
     [enclosing : i64 (arena.tl_arena_current)]
     (begin
       (unsafe
-        (arena.tl_arena_set tc-body-type-fact-storage-arena))
+        (arena.tl_arena_set (struct-get data type-fact-storage-arena)))
       (let
         [next-types : (Array AstType) (array.make-array AstType new-cap)]
         [next-expr-ids : (Array i64) (array.make-array i64 new-cap)]
@@ -533,93 +652,242 @@
             next-expr-ids
             old-types
             old-expr-ids
+            (struct-get data type-fact-count)
             0)
-          (set! tc-body-type-fact-types next-types)
-          (set! tc-body-type-fact-expr-ids next-expr-ids)
-          (set! tc-body-type-fact-storage-arena (arena.tl_arena_current))
+          (set! (struct-get data type-fact-types) next-types)
+          (set! (struct-get data type-fact-expr-ids) next-expr-ids)
+          (set!
+            (struct-get data type-fact-storage-arena)
+            (arena.tl_arena_current))
+          (tc-body-state-data-set! state data)
           (unsafe
             (arena.tl_arena_set enclosing)))))))
 
-(define (tc-body-type-fact-clear-recorded-index!) : unit
+(define (tc-body-type-fact-clear-recorded-index! [state : TcBodyState]) : unit
   (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
     [i : i64 0]
-    [index-len : i64 (array.length tc-body-type-fact-index)]
+    [index-len : i64 (array.length (struct-get data type-fact-index))]
     (begin
-      (while (< i tc-body-type-fact-count)
+      (while (< i (struct-get data type-fact-count))
         (let
-          [expr-id : i64 (array.ref tc-body-type-fact-expr-ids i)]
+          [expr-id : i64 (array.ref (struct-get data type-fact-expr-ids) i)]
           (begin
             (if (and (>= expr-id 0) (< expr-id index-len))
-              (array-set! tc-body-type-fact-index expr-id 0)
+              (array-set! (struct-get data type-fact-index) expr-id 0)
               unit)
             (set! i (+ i 1)))))
-      (set! tc-body-type-fact-count 0))))
+      (set! (struct-get data type-fact-count) 0)
+      (tc-body-state-data-set! state data))))
 
-(define (tc-body-type-fact-ensure-storage!) : unit
+(define (tc-body-type-fact-ensure-storage! [state : TcBodyState]) : unit
   (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
     [source-limit : i64
-      (if (> tc-body-early-exit-source-expr-limit 0)
-        tc-body-early-exit-source-expr-limit
+      (if (> (struct-get data early-exit-source-expr-limit) 0)
+        (struct-get data early-exit-source-expr-limit)
         1)]
     (if (or
-      (= tc-body-type-fact-storage-arena 0)
-      (< (array.length tc-body-type-fact-index) source-limit)
+      (= (struct-get data type-fact-storage-arena) 0)
+      (< (array.length (struct-get data type-fact-index)) source-limit)
       (<
-        (array.length tc-body-type-fact-types)
+        (array.length (struct-get data type-fact-types))
         (tc-body-type-fact-initial-capacity)))
-      (tc-body-type-fact-storage-start! source-limit)
+      (tc-body-type-fact-storage-start! state source-limit)
       unit)))
 
-(define (tc-body-type-fact-slot [expr-id : i64]) : i64
-  (if (and (>= expr-id 0) (< expr-id (array.length tc-body-type-fact-index)))
-    (- (array.ref tc-body-type-fact-index expr-id) 1)
-    -1))
+(define (tc-body-type-fact-slot [state : TcBodyState] [expr-id : i64]) : i64
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (and
+      (>= expr-id 0)
+      (< expr-id (array.length (struct-get data type-fact-index))))
+      (- (array.ref (struct-get data type-fact-index) expr-id) 1)
+      -1)))
 
-(define (tc-body-type-facts-start-recording!) : unit
+(define (tc-body-type-facts-start-recording! [state : TcBodyState]) : unit
   (begin
-    (tc-body-type-fact-ensure-storage!)
-    (tc-body-type-fact-clear-recorded-index!)
-    (set! tc-body-type-facts-consuming false)
-    (set! tc-body-type-facts-recording true)))
-
-(define (tc-body-type-facts-start-consuming!) : unit
-  (begin
-    (set! tc-body-type-facts-recording false)
-    (set! tc-body-type-facts-consuming true)))
-
-(define (tc-body-type-facts-clear!) : unit
-  (begin
-    (set! tc-body-type-facts-recording false)
-    (set! tc-body-type-facts-consuming false)
-    (tc-body-type-fact-clear-recorded-index!)))
-
-(define (tc-body-type-fact-record! [expr-id : i64] [ty : AstType]) : unit
-  (if (and
-    tc-body-type-facts-recording
-    (>= expr-id 0)
-    (< expr-id (array.length tc-body-type-fact-index)))
-    (if (>= (tc-body-type-fact-slot expr-id) 0)
-      unit
-      (let
-        [slot : i64 tc-body-type-fact-count]
-        (begin
-          (if (>= slot (array.length tc-body-type-fact-types))
-            (tc-body-type-fact-grow!)
-            unit)
-          (array-set! tc-body-type-fact-types slot ty)
-          (array-set! tc-body-type-fact-expr-ids slot expr-id)
-          (array-set! tc-body-type-fact-index expr-id (+ slot 1))
-          (set! tc-body-type-fact-count (+ slot 1)))))
-    unit))
-
-(define (tc-body-type-fact-lookup [expr-id : i64]) : TcBodyTypeFact
-  (if tc-body-type-facts-consuming
+    (tc-body-type-fact-ensure-storage! state)
+    (tc-body-type-fact-clear-recorded-index! state)
     (let
-      [slot : i64 (tc-body-type-fact-slot expr-id)]
-      (if (and (>= slot 0) (< slot tc-body-type-fact-count))
-        (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
-        (TcBodyTypeFact.Miss)))
-    (TcBodyTypeFact.Miss)))
+      [data : TcBodyStateData (tc-body-state-data-value state)]
+      (begin
+        (set! (struct-get data type-facts-consuming) false)
+        (set! (struct-get data type-facts-recording) true)
+        (tc-body-state-data-set! state data)))))
+
+(define (tc-body-type-facts-start-consuming! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (begin
+      (set! (struct-get data type-facts-recording) false)
+      (set! (struct-get data type-facts-consuming) true)
+      (tc-body-state-data-set! state data))))
+
+(define (tc-body-type-facts-clear! [state : TcBodyState]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (begin
+      (set! (struct-get data type-facts-recording) false)
+      (set! (struct-get data type-facts-consuming) false)
+      (tc-body-state-data-set! state data)
+      (tc-body-type-fact-clear-recorded-index! state))))
+
+(define (tc-body-type-fact-record!
+  [state : TcBodyState]
+  [expr-id : i64]
+  [ty : AstType]) : unit
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (and
+      (struct-get data type-facts-recording)
+      (>= expr-id 0)
+      (< expr-id (array.length (struct-get data type-fact-index))))
+      (if (>= (tc-body-type-fact-slot state expr-id) 0)
+        unit
+        (let
+          [slot : i64 (struct-get data type-fact-count)]
+          (begin
+            (if (>= slot (array.length (struct-get data type-fact-types)))
+              (tc-body-type-fact-grow! state)
+              unit)
+            (let
+              [ready : TcBodyStateData (tc-body-state-data-value state)]
+              (begin
+                (array-set! (struct-get ready type-fact-types) slot ty)
+                (array-set! (struct-get ready type-fact-expr-ids) slot expr-id)
+                (array-set!
+                  (struct-get ready type-fact-index)
+                  expr-id
+                  (+ slot 1))
+                (set! (struct-get ready type-fact-count) (+ slot 1))
+                (tc-body-state-data-set! state ready))))))
+      unit)))
+
+(define (tc-body-type-fact-lookup [state : TcBodyState] [expr-id : i64]) : TcBodyTypeFact
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (struct-get data type-facts-consuming)
+      (let
+        [slot : i64 (tc-body-type-fact-slot state expr-id)]
+        (if (and (>= slot 0) (< slot (struct-get data type-fact-count)))
+          (TcBodyTypeFact.Hit
+            (array.ref (struct-get data type-fact-types) slot))
+          (TcBodyTypeFact.Miss)))
+      (TcBodyTypeFact.Miss))))
+
+(define (tc-body-state-type-fact-i64-hit? [state : TcBodyState] [expr-id : i64]) : bool
+  (match (tc-body-type-fact-lookup state expr-id)
+    [(TcBodyTypeFact.Hit (AstType.I64)) true]
+    [_ false]))
+
+(define (tc-body-state-type-fact-bool-hit?
+  [state : TcBodyState]
+  [expr-id : i64]) : bool
+  (match (tc-body-type-fact-lookup state expr-id)
+    [(TcBodyTypeFact.Hit (AstType.Bool)) true]
+    [_ false]))
+
+(define (tc-body-state-early-exit-known?
+  [state : TcBodyState]
+  [body-id : i64]
+  [expected : bool]) : bool
+  (match (tc-body-early-exit-fact state body-id)
+    [(TcBodyEarlyExitFact.Known actual) (= actual expected)]
+    [(TcBodyEarlyExitFact.Unknown) false]))
+
+;; Exercise the state surface directly so the isolation invariant is covered
+;; independently from the serial whole-compiler smoke. A and B deliberately
+;; interleave record/consume modes and use disjoint source-id ranges. The reused
+;; state takes a controlled error path with nested suppression before starting a
+;; fresh body, matching the lifecycle used by the checked entrypoint.
+(define (tc-body-state-isolation-self-test) : bool
+  (let
+    [a : TcBodyState (tc-body-state-new)]
+    [b : TcBodyState (tc-body-state-new)]
+    [reused : TcBodyState (tc-body-state-new)]
+    (begin
+      (tc-body-early-exit-facts-start-with-limit! a 128)
+      (tc-body-early-exit-facts-start-with-limit! b 32)
+      (tc-body-early-exit-function-start! a)
+      (tc-body-type-facts-start-recording! a)
+      (tc-body-type-fact-record! a 70 (AstType.I64))
+      (tc-body-early-exit-function-start! b)
+      (tc-body-type-facts-start-recording! b)
+      (tc-body-type-fact-record! b 7 (AstType.Bool))
+      (tc-body-type-facts-start-consuming! a)
+      (let
+        [a-hit : bool (tc-body-state-type-fact-i64-hit? a 70)]
+        [a-cross-miss : bool
+          (match (tc-body-type-fact-lookup a 7)
+            [(TcBodyTypeFact.Miss) true]
+            [_ false])]
+        (begin
+          (tc-body-type-facts-start-consuming! b)
+          (let
+            [b-hit : bool (tc-body-state-type-fact-bool-hit? b 7)]
+            [b-cross-miss : bool
+              (match (tc-body-type-fact-lookup b 70)
+                [(TcBodyTypeFact.Miss) true]
+                [_ false])]
+            (begin
+              (tc-body-early-exit-note! a)
+              (tc-body-early-exit-function-finish! a 70)
+              (tc-body-early-exit-suppress-push! b)
+              (tc-body-early-exit-note! b)
+              (tc-body-early-exit-suppress-pop! b)
+              (tc-body-early-exit-function-finish! b 7)
+              (tc-body-type-facts-clear! a)
+              (tc-body-type-facts-clear! b)
+              (tc-body-early-exit-facts-finish! a)
+              (tc-body-early-exit-facts-finish! b)
+              (tc-body-early-exit-facts-start-with-limit! reused 64)
+              (tc-body-early-exit-function-start! reused)
+              (tc-body-type-facts-start-recording! reused)
+              (tc-body-type-fact-record! reused 31 (AstType.I64))
+              (tc-body-type-facts-start-consuming! reused)
+              (match (ResultTcUnit.Err "controlled body diagnostic")
+                [(ResultTcUnit.Ok) unit]
+                [(ResultTcUnit.Err _)
+                  (begin
+                    (tc-body-type-facts-clear! reused)
+                    (tc-body-early-exit-facts-abort! reused))])
+              (tc-body-early-exit-facts-start-with-limit! reused 16)
+              (tc-body-early-exit-function-start! reused)
+              (tc-body-type-facts-start-recording! reused)
+              (tc-body-type-fact-record! reused 5 (AstType.Bool))
+              (tc-body-type-facts-start-consuming! reused)
+              (let
+                [reuse-hit : bool (tc-body-state-type-fact-bool-hit? reused 5)]
+                (begin
+                  (tc-body-early-exit-suppress-push! reused)
+                  (tc-body-early-exit-suppress-push! reused)
+                  (tc-body-early-exit-note! reused)
+                  (tc-body-early-exit-suppress-pop! reused)
+                  (tc-body-early-exit-note! reused)
+                  (tc-body-early-exit-suppress-pop! reused)
+                  (tc-body-early-exit-note! reused)
+                  (tc-body-early-exit-function-finish! reused 5)
+                  (tc-body-type-facts-clear! reused)
+                  (tc-body-early-exit-facts-finish! reused)
+                  (and
+                    a-hit
+                    a-cross-miss
+                    b-hit
+                    b-cross-miss
+                    reuse-hit
+                    (tc-body-state-early-exit-known? a 70 true)
+                    (tc-body-state-early-exit-known? b 7 false)
+                    (tc-body-state-early-exit-known? reused 5 true)
+                    (= (tc-body-state-storage-arena-value a) 0)
+                    (= (tc-body-state-storage-arena-value b) 0)
+                    (= (tc-body-state-storage-arena-value reused) 0)
+                    (= (tc-body-state-type-fact-capacity a) 1)
+                    (= (tc-body-state-type-fact-capacity b) 1)
+                    (= (tc-body-state-type-fact-capacity reused) 1)
+                    (= (tc-body-state-early-exit-source-limit a) 128)
+                    (= (tc-body-state-early-exit-source-limit b) 32)
+                    (= (tc-body-state-early-exit-source-limit reused) 16)))))))))))
 
 (defenum TcBorrowPlace
   (TcBorrowPlace i64 AstType))
@@ -1505,7 +1773,7 @@
   [module : String]
   [module-id : i64]) : TcContext
   (match ctx
-    [(TcContext program symbols registries _ _ _ pools source-names)
+    [(TcContext program symbols registries _ _ _ pools source-names body-state)
       (TcContext
         program
         symbols
@@ -1514,7 +1782,8 @@
         module-id
         module-id
         pools
-        source-names)]))
+        source-names
+        body-state)]))
 
 (define (tc-context-with-type-module-id [ctx : TcContext] [module-id : i64]) : TcContext
   (match ctx
@@ -1526,7 +1795,8 @@
         value-module-id
         _
         pools
-        source-names)
+        source-names
+        body-state)
       (TcContext
         program
         symbols
@@ -1535,7 +1805,8 @@
         value-module-id
         module-id
         pools
-        source-names)]))
+        source-names
+        body-state)]))
 
 (define (tc-context-with-program [ctx : TcContext] [program : AstProgram]) : TcContext
   (match ctx
@@ -1547,7 +1818,8 @@
         module-id
         type-module-id
         pools
-        source-names)
+        source-names
+        body-state)
       (TcContext
         program
         symbols
@@ -1556,19 +1828,20 @@
         module-id
         type-module-id
         pools
-        source-names)]))
+        source-names
+        body-state)]))
 
 (define (tc-context-module [ctx : TcContext]) : String
   (match ctx
-    [(TcContext _ _ _ module _ _ _ _) module]))
+    [(TcContext _ _ _ module _ _ _ _ _) module]))
 
 (define (tc-context-module-id [ctx : TcContext]) : i64
   (match ctx
-    [(TcContext _ _ _ _ module-id _ _ _) module-id]))
+    [(TcContext _ _ _ _ module-id _ _ _ _) module-id]))
 
 (define (tc-context-type-module-id [ctx : TcContext]) : i64
   (match ctx
-    [(TcContext _ _ _ _ _ type-module-id _ _) type-module-id]))
+    [(TcContext _ _ _ _ _ type-module-id _ _ _) type-module-id]))
 
 (define (tc-context-for-type-resolution [ctx : TcContext]) : TcContext
   (match ctx
@@ -1580,7 +1853,8 @@
         module-id
         type-module-id
         pools
-        source-names)
+        source-names
+        body-state)
       (if (= module-id type-module-id)
         ctx
         (let
@@ -1596,7 +1870,8 @@
             type-module-id
             type-module-id
             pools
-            source-names)))]))
+            source-names
+            body-state)))]))
 
 (define (tc-context-dotted-module-id-or-suffix
   [dotted-modules : sym_i64_env.SymI64Env]
@@ -1628,11 +1903,15 @@
 
 (define (tc-context-pools [ctx : TcContext]) : AstNodePoolContext
   (match ctx
-    [(TcContext _ _ _ _ _ _ pools _) pools]))
+    [(TcContext _ _ _ _ _ _ pools _ _) pools]))
 
 (define (tc-context-source-names [ctx : TcContext]) : ci.InternSourceNameSessionHandle
   (match ctx
-    [(TcContext _ _ _ _ _ _ _ source-names) source-names]))
+    [(TcContext _ _ _ _ _ _ _ source-names _) source-names]))
+
+(define (tc-context-body-state [ctx : TcContext]) : TcBodyState
+  (match ctx
+    [(TcContext _ _ _ _ _ _ _ _ body-state) body-state]))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (if (ast-node-pool-compat-context-active?)
@@ -14288,7 +14567,7 @@
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool
   (match ctx
-    [(TcContext program _ _ current-module current-module-id _ _ _)
+    [(TcContext program _ _ current-module current-module-id _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (begin
@@ -14506,7 +14785,7 @@
   [base-id : i64]
   [base : String]) : bool
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-value-id-or
@@ -14837,7 +15116,7 @@
 
 (define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ module module-id _ _ _)
+    [(TcContext program _ _ module module-id _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (tc-decl-list-module-imports-stdlib-string?
@@ -15458,7 +15737,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (string.substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ _ current-module-id _ _ _)
+          [(TcContext program _ _ _ current-module-id _ _ _ _)
             (match program
               [(AstProgram.Program decls-box)
                 (match (macro-import-alias-target-cached-id
@@ -15759,7 +16038,7 @@
   [ctx : TcContext]
   [name-id : i64]) : option_i64.Option
   (match ctx
-    [(TcContext _ _ registries _ module-id _ _ _)
+    [(TcContext _ _ registries _ module-id _ _ _ _)
       (let
         [registry-id : i64 (compiler-registries-identity registries)]
         [cached-handle : i64
@@ -15868,7 +16147,7 @@
   [module-id : i64]) : option_i64.Option
   (if (tc-enum-qualified-variant-lookup-name-id? name-id)
     (match ctx
-      [(TcContext _ _ registries module _ _ _ _)
+      [(TcContext _ _ registries module _ _ _ _ _)
         (let
           [registry-id : i64 (compiler-registries-identity registries)]
           [cached : i64
@@ -16141,7 +16420,7 @@
   [ctx : TcContext]
   [qualifier-id : i64]) : i64
   (match ctx
-    [(TcContext program _ _ _ current-module-id _ _ _)
+    [(TcContext program _ _ _ current-module-id _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (macro-resolve-qualified-module-id
@@ -16574,7 +16853,7 @@
     [(ResultTcString.Ok cached) (ResultTcString.Ok cached)]
     [(ResultTcString.Err _)
       (match ctx
-        [(TcContext program symbols _ _ _ _ _ _)
+        [(TcContext program symbols _ _ _ _ _ _ _)
           (match (compiler-symbols-owner-name-at-index
             symbols
             (compiler-symbol-handle-index handle))
@@ -16736,7 +17015,7 @@
   [name : String]
   [name-id : i64]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module module-id _ _ _)
+    [(TcContext _ symbols _ module module-id _ _ _ _)
       (let
         [current-dotted-id : i64
           (tc-current-module-dotted-name-id ctx name name-id)]
@@ -17081,7 +17360,7 @@
   [name-id : i64]
   [lifetimes : AstLifetimeList]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module module-id _ _ _)
+    [(TcContext _ symbols _ module module-id _ _ _ _)
       (let
         [current-dotted-id : i64
           (tc-current-module-dotted-name-id ctx name name-id)]
@@ -17297,7 +17576,7 @@
 
 (define (tc-nominal-lifetimes-id [ctx : TcContext] [name-id : i64]) : ResultTcLifetimeList
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-id-or
@@ -24898,7 +25177,7 @@
       (match result
         [(ResultTcType.Ok ty)
           (begin
-            (tc-body-type-fact-record! expr-id ty)
+            (tc-body-type-fact-record! (tc-context-body-state ctx) expr-id ty)
             (if tc-inlay-hint-enabled
               (tc-inlay-hint-maybe-record-expr expr ty)
               unit))]
@@ -24935,8 +25214,11 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
       [_ (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)])))
 
-(define (tc-body-type-fact-lookup-profiled [_site : String] [expr-id : i64]) : TcBodyTypeFact
-  (match (tc-body-type-fact-lookup expr-id)
+(define (tc-body-type-fact-lookup-profiled
+  [_site : String]
+  [ctx : TcContext]
+  [expr-id : i64]) : TcBodyTypeFact
+  (match (tc-body-type-fact-lookup (tc-context-body-state ctx) expr-id)
     [(TcBodyTypeFact.Hit ty)
       (begin
         (cfg compile-profile (compiler-tc-body-fact-profile-hit _site))
@@ -24951,7 +25233,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr-id : i64]) : ResultTcType
-  (match (tc-body-type-fact-lookup-profiled site expr-id)
+  (match (tc-body-type-fact-lookup-profiled site ctx expr-id)
     [(TcBodyTypeFact.Hit ty) (ResultTcType.Ok ty)]
     [(TcBodyTypeFact.Miss)
       (cfg
@@ -24960,23 +25242,26 @@
         (tc-expr-id ctx env expr-id))]))
 
 (define (tc-body-type-fact-list-types-into-at
+  [state : TcBodyState]
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [out : (&mut out AstTypeList)]) : ResultTcUnit
   (if (>= index (struct-get exprs len))
     ResultTcUnit.Ok
-    (match (tc-body-type-fact-lookup (ast-expr-list-get exprs index 0))
+    (match (tc-body-type-fact-lookup state (ast-expr-list-get exprs index 0))
       [(TcBodyTypeFact.Hit ty)
         (begin
           (ast-type-list-push out (ast-node-pool-reader-type-push ty))
-          (tc-body-type-fact-list-types-into-at exprs (+ index 1) out))]
+          (tc-body-type-fact-list-types-into-at state exprs (+ index 1) out))]
       [(TcBodyTypeFact.Miss) (ResultTcUnit.Err "")])))
 
-(define (tc-body-type-fact-list-types [exprs : AstExprList]) : ResultTcTypeList
-  (if tc-body-type-facts-consuming
+(define (tc-body-type-fact-list-types
+  [state : TcBodyState]
+  [exprs : AstExprList]) : ResultTcTypeList
+  (if (struct-get (tc-body-state-data-value state) type-facts-consuming)
     (let
       [out : AstTypeList (ast-type-list-new)]
-      (match (tc-body-type-fact-list-types-into-at (& exprs) 0 (&mut out))
+      (match (tc-body-type-fact-list-types-into-at state (& exprs) 0 (&mut out))
         [(ResultTcUnit.Ok) (ResultTcTypeList.Ok out)]
         [(ResultTcUnit.Err message) (ResultTcTypeList.Err message)]))
     (ResultTcTypeList.Err "")))
@@ -24986,7 +25271,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]) : ResultTcTypeList
-  (match (tc-body-type-fact-list-types exprs)
+  (match (tc-body-type-fact-list-types (tc-context-body-state ctx) exprs)
     [(ResultTcTypeList.Ok types)
       (begin
         (cfg compile-profile (compiler-tc-body-fact-profile-hit _site))
@@ -25322,7 +25607,7 @@
 ;; instead of building and interning the qualified string.
 (define (tc-constructor-name-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols registries module ctx-module-id _ _ _)
+    [(TcContext _ symbols registries module ctx-module-id _ _ _ _)
       (let
         [module-id : i64
           (if (> (string.string-length module) 0)
@@ -26494,16 +26779,21 @@
     [(AstExpr.Spanned inner-box _) inner-box]
     [_ -1]))
 
-(define (tc-call-arg-fact-lookup [key : i64]) : TcBodyTypeFact
-  (if (and
-    (>= key 0)
-    (or tc-body-type-facts-recording tc-body-type-facts-consuming))
-    (let
-      [slot : i64 (tc-body-type-fact-slot key)]
-      (if (and (>= slot 0) (< slot tc-body-type-fact-count))
-        (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
-        (TcBodyTypeFact.Miss)))
-    (TcBodyTypeFact.Miss)))
+(define (tc-call-arg-fact-lookup [state : TcBodyState] [key : i64]) : TcBodyTypeFact
+  (let
+    [data : TcBodyStateData (tc-body-state-data-value state)]
+    (if (and
+      (>= key 0)
+      (or
+        (struct-get data type-facts-recording)
+        (struct-get data type-facts-consuming)))
+      (let
+        [slot : i64 (tc-body-type-fact-slot state key)]
+        (if (and (>= slot 0) (< slot (struct-get data type-fact-count)))
+          (TcBodyTypeFact.Hit
+            (array.ref (struct-get data type-fact-types) slot))
+          (TcBodyTypeFact.Miss)))
+      (TcBodyTypeFact.Miss))))
 
 (define (tc-call-arg-expr-type
   [ctx : TcContext]
@@ -26511,14 +26801,15 @@
   [arg : AstExpr]) : ResultTcType
   (let
     [key : i64 (tc-call-arg-fact-key arg)]
-    (match (tc-call-arg-fact-lookup key)
+    [state : TcBodyState (tc-context-body-state ctx)]
+    (match (tc-call-arg-fact-lookup state key)
       [(TcBodyTypeFact.Hit ty) (ResultTcType.Ok ty)]
       [(TcBodyTypeFact.Miss)
         (match (tc-expr ctx env arg)
           [(ResultTcType.Ok ty)
             (begin
               (if (>= key 0)
-                (tc-body-type-fact-record! key ty)
+                (tc-body-type-fact-record! state key ty)
                 unit)
               (ResultTcType.Ok ty))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
@@ -29176,7 +29467,10 @@
                 body)
                 [(ResultTcType.Ok fn-ty)
                   (begin
-                    (tc-body-type-fact-record! func-id fn-ty)
+                    (tc-body-type-fact-record!
+                      (tc-context-body-state ctx)
+                      func-id
+                      fn-ty)
                     (match fn-ty
                       [(AstType.Func params ret)
                         (tc-call-function-type
@@ -31849,7 +32143,7 @@
 
 (define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _ _ _ _)
+    [(TcContext program _ _ _ _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
@@ -36610,15 +36904,15 @@
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
-    [(TcContext program _ _ _ _ _ _ _) program]))
+    [(TcContext program _ _ _ _ _ _ _ _) program]))
 
 (define (tc-context-symbols [ctx : TcContext]) : CompilerSymbols
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _) symbols]))
+    [(TcContext _ symbols _ _ _ _ _ _ _) symbols]))
 
 (define (tc-context-registries [ctx : TcContext]) : CompilerRegistries
   (match ctx
-    [(TcContext _ _ registries _ _ _ _ _) registries]))
+    [(TcContext _ _ registries _ _ _ _ _ _) registries]))
 
 ;; Enum queries are frequent during macro expansion, and the generated-name
 ;; compatibility path cannot always use CompilerSymbols. Index the flat
@@ -37340,7 +37634,7 @@
 
 (define (tc-struct-decl-id [ctx : TcContext] [struct-name-id : i64]) : ResultTcStructDecl
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-id-or
@@ -37404,7 +37698,7 @@
 
 (define (tc-enum-decl-id [ctx : TcContext] [enum-name-id : i64]) : ResultTcEnumDecl
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-id-or
@@ -38896,7 +39190,7 @@
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
-    [(TcContext program _ _ _ _ _ _ _)
+    [(TcContext program _ _ _ _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (let
@@ -51177,7 +51471,7 @@
   [args : AstExprList]) : ResultTcBorrowCallInfo
   (let
     [func : AstExpr (ast-expr-segment-bases-get expr-bases func-id)]
-    (match (tc-body-type-fact-lookup-profiled site func-id)
+    (match (tc-body-type-fact-lookup-profiled site ctx func-id)
       [(TcBodyTypeFact.Hit fn-ty)
         (tc-borrow-call-info-from-type ctx env func args fn-ty)]
       [(TcBodyTypeFact.Miss)
@@ -51205,7 +51499,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func-id : i64]) : ResultTcTypeList
-  (match (tc-body-type-fact-lookup-profiled site func-id)
+  (match (tc-body-type-fact-lookup-profiled site ctx func-id)
     [(TcBodyTypeFact.Hit fn-ty) (tc-move-call-param-types-from-type fn-ty)]
     [(TcBodyTypeFact.Miss)
       (cfg
@@ -52087,7 +52381,7 @@
       (begin
         ;; The legacy lower scan conservatively classified ArrayTake as an
         ;; early-exit body through its unknown-node fallback.
-        (tc-body-early-exit-note!)
+        (tc-body-early-exit-note! (tc-context-body-state ctx))
         (match (tc-move-check-expr-id
           ctx
           expr-bases
@@ -52711,7 +53005,7 @@
         (begin
           ;; Compile-time code cannot cause a runtime early exit in the
           ;; containing function; mirror lower's existing RVO scanner.
-          (tc-body-early-exit-suppress-push!)
+          (tc-body-early-exit-suppress-push! (tc-context-body-state ctx))
           (let
             [result : TcMoveResult
               (tc-move-check-expr
@@ -52723,7 +53017,7 @@
                 moved
                 inner)]
             (begin
-              (tc-body-early-exit-suppress-pop!)
+              (tc-body-early-exit-suppress-pop! (tc-context-body-state ctx))
               result))))]
     [(AstExpr.Quote _) (TcMoveResult.Ok moved)]
     [(AstExpr.Quasiquote _) (TcMoveResult.Ok moved)]
@@ -52733,7 +53027,7 @@
       (let
         [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (begin
-          (tc-body-early-exit-note!)
+          (tc-body-early-exit-note! (tc-context-body-state ctx))
           (tc-move-check-expr
             ctx
             expr-bases
@@ -52746,7 +53040,7 @@
       (let
         [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
         (begin
-          (tc-body-early-exit-note!)
+          (tc-body-early-exit-note! (tc-context-body-state ctx))
           (match (tc-move-check-expr
             ctx
             expr-bases
@@ -52771,11 +53065,11 @@
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
     [(AstExpr.Break)
       (begin
-        (tc-body-early-exit-note!)
+        (tc-body-early-exit-note! (tc-context-body-state ctx))
         (TcMoveResult.Ok moved))]
     [(AstExpr.Continue)
       (begin
-        (tc-body-early-exit-note!)
+        (tc-body-early-exit-note! (tc-context-body-state ctx))
         (TcMoveResult.Ok moved))]
     [(AstExpr.PtrNull _) (TcMoveResult.Ok moved)]
     [(AstExpr.PtrNullCheck inner-box)
@@ -58043,13 +58337,13 @@
 ;; `Ok` without walking. A call whose recorded callee type (the body type
 ;; facts from the tc-expr walk) contains no region keeps its Fallback lifetime
 ;; handling, which cannot error either; a fact Miss stays conservative.
-(define (tc-borrow-gate-call-has-region? [func-id : i64]) : bool
-  (match (tc-body-type-fact-lookup func-id)
+(define (tc-borrow-gate-call-has-region? [ctx : TcContext] [func-id : i64]) : bool
+  (match (tc-body-type-fact-lookup (tc-context-body-state ctx) func-id)
     [(TcBodyTypeFact.Hit fn-ty) (tc-type-contains-any-region fn-ty)]
     [(TcBodyTypeFact.Miss) true]))
 
-(define (tc-borrow-gate-expr-ty-has-region? [expr-id : i64]) : bool
-  (match (tc-body-type-fact-lookup expr-id)
+(define (tc-borrow-gate-expr-ty-has-region? [ctx : TcContext] [expr-id : i64]) : bool
+  (match (tc-body-type-fact-lookup (tc-context-body-state ctx) expr-id)
     [(TcBodyTypeFact.Hit ty) (tc-type-contains-any-region ty)]
     [(TcBodyTypeFact.Miss) true]))
 
@@ -58169,7 +58463,7 @@
         (ast-expr-segment-bases-get expr-bases inner-box))]
     [(AstExpr.Call func-box args)
       (or
-        (tc-borrow-gate-call-has-region? func-box)
+        (tc-borrow-gate-call-has-region? ctx func-box)
         (tc-borrow-gate-expr-relevant?
           ctx
           expr-bases
@@ -58319,7 +58613,7 @@
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
           (or
-            (tc-borrow-gate-expr-ty-has-region? scrutinee-box)
+            (tc-borrow-gate-expr-ty-has-region? ctx scrutinee-box)
             (tc-borrow-gate-expr-relevant?
               ctx
               expr-bases
@@ -59577,7 +59871,9 @@
         2
         "typecheck.macro.peak"
         "typecheck-body-facts"
-        tc-body-type-fact-storage-arena)
+        ;; Macro expansion runs before a function-body state is started. The
+        ;; old singleton could expose an unrelated job's arena here.
+        0)
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -68646,7 +68942,7 @@
                 arg
                 (tc-source-slash-qualified-message name))))
           (match ctx
-            [(TcContext program _ _ current-module current-module-id _ _ _)
+            [(TcContext program _ _ current-module current-module-id _ _ _ _)
               (match program
                 [(AstProgram.Program decls-box)
                   (match (macro-import-alias-target-cached-id
@@ -74266,14 +74562,15 @@
           (let
             [next-registries : CompilerRegistries macro-live-registries-value]
             [next-ctx : TcContext
-              (tc-context-new-with-source-names
+              (tc-context-new-with-source-names-and-body-state
                 next-program
                 next-symbols
                 next-registries
                 ""
                 cbi.compiler-builtin-id-fix-empty
                 pools
-                (tc-context-source-names cur-ctx))]
+                (tc-context-source-names cur-ctx)
+                (tc-context-body-state cur-ctx))]
             (begin
               (set! macro-expand-active-module "")
               (macro-expand-set-macro-names! macro-live-prescan-visible-names)
@@ -76545,6 +76842,7 @@
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
     [scoped-save : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter! carrier)]
+    [body-state : TcBodyState (tc-context-body-state ctx)]
     [typed-result : ResultTcType
       (begin
         (cfg
@@ -76562,8 +76860,8 @@
               (io.panic
                 "typecheck: scoped carrier diverged from persistent function env")))
           unit)
-        (tc-body-early-exit-function-start!)
-        (tc-body-type-facts-start-recording!)
+        (tc-body-early-exit-function-start! body-state)
+        (tc-body-type-facts-start-recording! body-state)
         (tc-expr-with-expected-or-actual-id ctx env body-box resolved-ret))]
     [_scoped-restored : unit (tc-type-env-scoped-runtime-restore! scoped-save)]
     [result : ResultTcUnit
@@ -76586,7 +76884,7 @@
                       resolved-ret
                       "typecheck: return type mismatch"))])]
             (begin
-              (tc-body-type-facts-start-consuming!)
+              (tc-body-type-facts-start-consuming! body-state)
               (match expect-result
                 [(ResultTcUnit.Ok)
                   (match (tc-ensure-region-value-can-flow-into
@@ -76614,17 +76912,19 @@
                             (begin
                               (match result
                                 [(ResultTcUnit.Ok)
-                                  (tc-body-early-exit-function-finish! body-box)]
+                                  (tc-body-early-exit-function-finish!
+                                    body-state
+                                    body-box)]
                                 [(ResultTcUnit.Err _) unit])
-                              (tc-body-type-facts-clear!)
+                              (tc-body-type-facts-clear! body-state)
                               result))]
                         [(ResultTcUnit.Err message)
                           (begin
-                            (tc-body-type-facts-clear!)
+                            (tc-body-type-facts-clear! body-state)
                             (ResultTcUnit.Err message))])]
                     [(ResultTcUnit.Err message)
                       (begin
-                        (tc-body-type-facts-clear!)
+                        (tc-body-type-facts-clear! body-state)
                         (ResultTcUnit.Err
                           (tc-rich-escape-at-expr
                             body
@@ -76632,11 +76932,11 @@
                             "function return type rejects this escaping value")))])]
                 [(ResultTcUnit.Err message)
                   (begin
-                    (tc-body-type-facts-clear!)
+                    (tc-body-type-facts-clear! body-state)
                     (ResultTcUnit.Err message))])))]
         [(ResultTcType.Err message)
           (begin
-            (tc-body-type-facts-clear!)
+            (tc-body-type-facts-clear! body-state)
             (ResultTcUnit.Err message))])]
     result))
 
@@ -77921,7 +78221,8 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
+  [source-names : ci.InternSourceNameSessionHandle]
+  [body-state : TcBodyState]) : ResultCompilerTypecheckChecked
   (begin
     (tc-prefix-snapshot-cache-prepare-for-job!
       prefix-cache
@@ -77940,14 +78241,15 @@
           [(ResultCompilerRegistriesDiagnostic.Ok registries)
             (let
               [ctx : TcContext
-                (tc-context-new-with-source-names
+                (tc-context-new-with-source-names-and-body-state
                   program
                   symbols
                   registries
                   ""
                   cbi.compiler-builtin-id-fix-empty
                   pools
-                  source-names)]
+                  source-names
+                  body-state)]
               (match (tc-stdlib-comptime-surface-ok ctx)
                 [(ResultTcUnit.Ok)
                   (match (tc-program-source-types-policy-ok ctx program paths)
@@ -78035,16 +78337,31 @@
   [cache-scope : String]
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
-  (tc-typecheck-checked-result-with-pool-check
-    (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
-      load-state
-      prefix-cache
-      program
-      paths
-      stdlib-roots
-      cache-scope
-      pools
-      source-names)))
+  (let
+    [body-state : TcBodyState (tc-body-state-new)]
+    [_start-body-state : unit
+      (tc-body-early-exit-facts-start! body-state pools)]
+    [checked : ResultCompilerTypecheckChecked
+      (tc-typecheck-checked-result-with-pool-check
+        (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
+          load-state
+          prefix-cache
+          program
+          paths
+          stdlib-roots
+          cache-scope
+          pools
+          source-names
+          body-state))]
+    (match checked
+      [(ResultCompilerTypecheckChecked.Ok summary ctx top-env checked-paths)
+        (begin
+          (tc-body-early-exit-facts-finish! body-state)
+          (ResultCompilerTypecheckChecked.Ok summary ctx top-env checked-paths))]
+      [(ResultCompilerTypecheckChecked.Err diag)
+        (begin
+          (tc-body-early-exit-facts-abort! body-state)
+          (ResultCompilerTypecheckChecked.Err diag))])))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
   [load-state : CompilerLoadSessionState]
@@ -78127,7 +78444,6 @@
     (tc-unbound-suggestion-snapshot-reset!)
     (tc-fn-scratch-arena-release!)
     (tc-decl-scratch-arena-release!)
-    (tc-body-early-exit-facts-abort!)
     (ctfe-builtin-reset!)
     (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
     (tc-clone-able-cache-reset!)

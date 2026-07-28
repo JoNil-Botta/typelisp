@@ -131,9 +131,6 @@
 
 ;; Stable opaque key for String-only private metadata. It cannot change if a
 ;; genuinely generated identifier is materialized later in the compilation.
-(define (ctfe-string-structural-key-id [name : String]) : i64
-  (- -1024 (bit-and (intern-hash name) 2305843009213693951)))
-
 ;; Qualified source and generated names can have different opaque ids while
 ;; carrying the same parser-assigned module/base identities. Metadata indexes
 ;; use that structural pair so both representations select the same entry.
@@ -280,11 +277,6 @@
 
 (define (ctfe-builtin-comptime-error-id? [name-id : i64]) : bool
   (= name-id (ctfe-builtin-ref 17)))
-
-(define (ctfe-builtin-error-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (= name-id (ctfe-builtin-ref 18))))
 
 (define (ctfe-builtin-reflection-primary-id? [name-id : i64]) : bool
   (or
@@ -630,15 +622,6 @@
       [(ci.InternSourceNameResolution.WrongOwner) string-id]
       [(ci.InternSourceNameResolution.StaleGeneration) string-id]
       [(ci.InternSourceNameResolution.InvalidIdentity) string-id])))
-
-(define (ctfe-value-name-id [value : CompilerCtfeValue]) : i64
-  (match value
-    [(CompilerCtfeValue.Name _ name-id) name-id]
-    [(CompilerCtfeValue.String _ name-id) name-id]
-    [_ -1]))
-
-(define (ctfe-untyped-expr-type-name) : String
-  "__typelisp_untyped_expr")
 
 (define (ctfe-untyped-expr-type-id) : i64
   -3)
@@ -1308,14 +1291,8 @@
     (ctfe-builtin-string-ref-id? name-id)
     (ctfe-builtin-string-length-id? name-id)))
 
-(define (ctfe-hygiene-enabled-name) : String
-  "__tl_macro_hygiene_enabled")
-
 (define (ctfe-hygiene-enabled-id) : i64
   -2)
-
-(define (ctfe-hygiene-template-prefix) : String
-  "__tl_macro_template$")
 
 (define (ctfe-hygiene-global-prefix) : String
   "__tl_macro_global$")
@@ -1327,16 +1304,6 @@
         [(CompilerCtfeValue.Bool enabled) enabled]
         [_ false])]
     [(CtfeMaybeValue.None) false]))
-
-(define (ctfe-hygiene-template-name [name : String]) : String
-  (if (ctfe-string-prefix? name (ctfe-hygiene-template-prefix))
-    name
-    (string.append (ctfe-hygiene-template-prefix) name)))
-
-(define (ctfe-quote-name [env : CtfeEnv] [name : String]) : String
-  (if (ctfe-hygiene-enabled? env)
-    (ctfe-hygiene-template-name name)
-    name))
 
 (define (ctfe-quote-name-id [env : CtfeEnv] [name : i64]) : i64
   (if (ctfe-hygiene-enabled? env)
@@ -1389,11 +1356,6 @@
   (if (= (ctfe-private-string-length module) 0)
     name
     (string.append module (string.append "/" name))))
-
-(define (ctfe-hygiene-global-symbol-name [module : String] [name : String]) : String
-  (string.append
-    (ctfe-hygiene-global-prefix)
-    (ctfe-symbol-module-key module name)))
 
 (define ctfe-module-macro-export-keys : (Box ctfe_key_map.Map)
   (box (ctfe_key_map.with-capacity 1)))
@@ -1642,22 +1604,6 @@
         (ctfe-reflect-enum-cleanup module module-id cleanup)
         (ctfe-reflect-variant-list-from-variants variants))]
     (ctfe-reflect-info-add-names infos info key-id name-str name module)))
-
-(define (ctfe-reflections-add-template
-  [infos : CtfeReflectInfoList]
-  [module : String]
-  [module-id : i64]
-  [template : AstDecl]) : CtfeReflectInfoList
-  (match template
-    [(AstDecl.DefStruct decl-meta name _ cleanup fields)
-      (ctfe-reflections-add-struct infos module module-id name cleanup fields)]
-    [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
-      (ctfe-reflections-add-struct infos module module-id name cleanup fields)]
-    [(AstDecl.DefEnum decl-meta name cleanup variants)
-      (ctfe-reflections-add-enum infos module module-id name cleanup variants)]
-    [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
-      (ctfe-reflections-add-enum infos module module-id name cleanup variants)]
-    [_ infos]))
 
 (define (ctfe-reflections-from-decls
   [decls : AstDeclList]
@@ -9423,29 +9369,6 @@
                 "unquote-splicing expects ExprList")))])]
     [(ResultCtfe.Err diag) (ResultCtfeQuoteExprList.Err diag)]))
 
-(define (ctfe-type-name-to-type [name : String]) : AstType
-  (cond
-    [(string.eq name "i64") (AstType.I64)]
-    [(string.eq name "i32") (AstType.I32)]
-    [(string.eq name "i16") (AstType.I16)]
-    [(string.eq name "i8") (AstType.I8)]
-    [(string.eq name "u64") (AstType.U64)]
-    [(string.eq name "u32") (AstType.U32)]
-    [(string.eq name "u16") (AstType.U16)]
-    [(string.eq name "u8") (AstType.U8)]
-    [(string.eq name "f64") (AstType.F64)]
-    [(string.eq name "f32") (AstType.F32)]
-    [(string.eq name "bool") (AstType.Bool)]
-    [(string.eq name "char") (AstType.Char)]
-    [(string.eq name "String") (AstType.String)]
-    [(string.eq name "str") (AstType.Str)]
-    [(string.eq name "bytes") (AstType.Bytes)]
-    [(string.eq name "unit") (AstType.Unit)]
-    [(string.eq name "never") (AstType.Never)]
-    [(string.eq name "Expr") (AstType.Expr)]
-    [(string.eq name "ExprList") (AstType.ExprList)]
-    [else (AstType.Var (ctfe-materialize-generated-name-id name))]))
-
 (define (ctfe-type-name-id-to-type [name-id : i64]) : AstType
   (cond
     [(= name-id (ctfe-builtin-ref 159)) (AstType.I64)]
@@ -9477,9 +9400,6 @@
 
 (define (ctfe-type-syntax-name-id [name : i64] [env : CtfeEnv]) : i64
   (ctfe-ast-push env (AstExpr.Var name)))
-
-(define (ctfe-type-syntax-string [value : String] [env : CtfeEnv]) : i64
-  (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string value))))
 
 (define (ctfe-type-syntax-call-id
   [name-id : i64]
@@ -13017,9 +12937,6 @@
           env
           (ast-expr-clause-list-get lst index (ast-expr-clause-fallback))))
       (ctfe-expr-clause-list->expr-list-into env lst (+ index 1) out))))
-
-(define (ctfe-expr-binding-clause-name [clause : AstExprBindingClause]) : String
-  (intern-str (struct-get clause name)))
 
 (define (ctfe-expr-binding-clause-name-id [clause : AstExprBindingClause]) : i64
   (struct-get clause name))

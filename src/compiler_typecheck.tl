@@ -328,13 +328,6 @@
     [(ResultCompilerTypecheck.Ok _) true]
     [(ResultCompilerTypecheck.Err _) false]))
 
-(define (compiler-typecheck-ok-with-cfg?
-  [src : String]
-  [cfgs : sym_i64_env.SymI64Env]) : bool
-  (match (typecheck-compiler-source-with-cfg src cfgs)
-    [(ResultCompilerTypecheck.Ok _) true]
-    [(ResultCompilerTypecheck.Err _) false]))
-
 (define (compiler-typecheck-unbound-source) : String
   "(define (main) : i64 missing)")
 
@@ -952,12 +945,6 @@
 (generate-point-api)
 (define (main) : i64
   (struct-get (make-point 7) x))")
-
-(define (compiler-typecheck-generated-key
-  [generator : String]
-  [item : String]
-  [arg : String]) : String
-  (gen-full-key "" generator item (string.append (spec-string-key arg) "_none")))
 
 (define (compiler-typecheck-generated-notes-ok?
   [notes : CompilerDiagnosticNoteList]

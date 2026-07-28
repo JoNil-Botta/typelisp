@@ -383,10 +383,10 @@ decision|src/compiler_lower_package_tests.tl|SPMD package callable smoke-test he
 decision|src/compiler_parallel_move.tl|target-neutral parallel move graph solver (#4365): main-less, imported by compiler_backend.tl for call/syscall argument moves and phi edge copies and by compiler_regalloc.tl for coalescing move-chain validation; exercised through compiler_backend_smoke and compiler_regalloc_smoke
 decision|src/compiler_regalloc_tests.tl|register-allocator self-test companion split from compiler_regalloc.tl (#5169): main-less, imported by src/tests/compiler_regalloc_smoke.tl; holds the 135 (cfg test) blocks only. The regalloc-census and (any regalloc-census test) blocks stay in the production module because they compile into instrumentation builds, as does compiler-regalloc-self-test, which selfhost_compiler_regalloc asserts by symbol
 case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
-contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
-contains|_tl_compiler_check_source_with_roots:
-contains|_tl_compiler_check_package_source_with_roots:
+contains|_tl_compiler_check_file_with_roots_and_cfg:
+contains|_tl_compiler_check_source_with_roots_and_cfg:
+contains|_tl_compiler_check_package_source_with_roots_and_cfg:
 end
 
 case|selfhost_compiler_semantic_index|src/compiler_semantic_index.tl|assembly|skip|direct
@@ -551,7 +551,7 @@ contains|source-level type parameters
 end
 
 case|selfhost_compiler_typecheck_core|src/compiler_typecheck_core.tl|assembly|skip|direct
-contains|_tl_typecheck_compiler_specialized_program_with_paths:
+contains|_tl_typecheck_compiler_specialized_program_with_paths_cache_with_pools_and_prefix_cache_state:
 contains|tc_inline_aggregate_layout_for_id:
 contains|tc_inline_aggregate_type_layout:
 contains|_tl_tc_source_type_policy_message:

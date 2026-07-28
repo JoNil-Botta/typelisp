@@ -1575,13 +1575,11 @@ tl_tlci_call_macro_entry:
                   arena-asm
                   (string.append
                     profile-asm
-                    (string.append
+                    (str_cat.str-cat
                       startup-profile-asm
-                      (str_cat.str-cat
-                        alloc-asm
-                        region-mark-asm
-                        region-reset-asm
-                        "")))))))))]
+                      alloc-asm
+                      region-mark-asm
+                      region-reset-asm))))))))]
     [libc-shims-asm : String
       (compiler-backend-runtime-windows-libc-shim-functions startup-profile)]
     [thread-asm : String (compiler-backend-runtime-windows-thread-functions)]

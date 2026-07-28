@@ -7916,13 +7916,13 @@
       ;; Literal public-wrapper calls disappear into integer constants during
       ;; lowering, so do not keep an otherwise-dead wrapper just for that call.
       (if (and
-        (lower-reach-public-float-to-bits-source-id? names name)
         (= (struct-get (& args) len) 1)
         (lower-reach-float-to-bits-literal-arg?
           pools
           (ast-node-pool-context-expr-get
             pools
-            (ast-expr-list-get (& args) 0 0))))
+            (ast-expr-list-get (& args) 0 0)))
+        (lower-reach-public-float-to-bits-source-id? names name))
         state
         (lower-reach-add-source-id all-functions names state name))]
     [_ (lower-reach-expr pools all-functions names state callee)]))
@@ -29752,11 +29752,11 @@
                             result-ty
                             origin)]
                         [(and
-                            (lower-float-to-bits-public-target? name)
                             (lower-float-bitcast-literal-call?
                               ctx
                               args
-                              result-ty))
+                              result-ty)
+                            (lower-float-to-bits-public-target? name))
                           (lower-float-bitcast-call
                             ctx
                             state

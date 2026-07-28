@@ -1,0 +1,2 @@
+# category|args
+dataflow|benchmarks/liveness_scan/data/cfgs.txt 5

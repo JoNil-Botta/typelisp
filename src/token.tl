@@ -277,23 +277,29 @@
 ;; diagnostics can point at the originating source location. `Token.End` carries
 ;; the position one past the last character. This is additive: the plain `Token`
 ;; stream and its accessors are unchanged, so existing callers keep working.
-(defenum SpannedToken
-  (Spanned Token i64 i64))
+;; A struct, not a one-variant enum: the enum form spent a whole 8-byte
+;; discriminant word on a type with exactly one variant, and i64 line/col spent
+;; another 8 bytes describing positions that never exceed a few tens of
+;; thousands. Record width is 48 -> 32 B, so the lexer's write stream and the
+;; parser's walk pull 2 tokens per 64-byte line instead of 1.33 (packet E1).
+;; The accessors keep their i64 signatures, so no consumer changes; this is the
+;; same shape `AstSourceSpan` already uses in compiler_ast_types.tl.
+(defstruct SpannedToken
+  (tok Token)
+  (line i32)
+  (col i32))
 
 (define (spanned-token-new [tok : Token] [line : i64] [col : i64]) : SpannedToken
-  (SpannedToken.Spanned tok line col))
+  (SpannedToken tok (cast line : i32) (cast col : i32)))
 
 (define (spanned-token-tok [s : SpannedToken]) : Token
-  (match s
-    [(SpannedToken.Spanned t _ _) t]))
+  (struct-get s tok))
 
 (define (spanned-token-line [s : SpannedToken]) : i64
-  (match s
-    [(SpannedToken.Spanned _ line _) line]))
+  (cast (struct-get s line) : i64))
 
 (define (spanned-token-col [s : SpannedToken]) : i64
-  (match s
-    [(SpannedToken.Spanned _ _ col) col]))
+  (cast (struct-get s col) : i64))
 
 (define (spanned-token-token [s : SpannedToken]) : Token
   (spanned-token-tok s))

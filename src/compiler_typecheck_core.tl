@@ -877,9 +877,8 @@
 (defenum TcReprCFieldLayout
   (Field String AstType i64))
 
-(defenum TcReprCFieldLayoutList
-  (Nil)
-  (Cons TcReprCFieldLayout (Box TcReprCFieldLayoutList)))
+(defstruct TcReprCFieldLayoutList
+  (slots (Array TcReprCFieldLayout)))
 
 (defenum TcReprCLayout
   (Layout i64 i64 TcReprCFieldLayoutList))
@@ -891,23 +890,20 @@
 (defenum TcInlineFieldLayout
   (Field i64 AstType i64))
 
-(defenum TcInlineFieldLayoutList
-  (Nil)
-  (Cons TcInlineFieldLayout (Box TcInlineFieldLayoutList)))
+(defstruct TcInlineFieldLayoutList
+  (slots (Array TcInlineFieldLayout)))
 
 (defenum TcInlinePayloadLayout
   (Payload i64 AstType i64))
 
-(defenum TcInlinePayloadLayoutList
-  (Nil)
-  (Cons TcInlinePayloadLayout (Box TcInlinePayloadLayoutList)))
+(defstruct TcInlinePayloadLayoutList
+  (slots (Array TcInlinePayloadLayout)))
 
 (defenum TcInlineVariantLayout
   (Variant i64 i64 i64 TcInlinePayloadLayoutList))
 
-(defenum TcInlineVariantLayoutList
-  (Nil)
-  (Cons TcInlineVariantLayout (Box TcInlineVariantLayoutList)))
+(defstruct TcInlineVariantLayoutList
+  (slots (Array TcInlineVariantLayout)))
 
 (defenum TcInlineFieldsLayout
   (Fields i64 i64 TcInlineFieldLayoutList))
@@ -932,9 +928,9 @@
   (Err String))
 
 ;; Aggregate layouts outlive transient typecheck/lowering scratch regions.
-;; Keep their owned list tails in a cache-owned arena and retain its newest
+;; Keep their dense metadata arrays in a cache-owned arena and retain its newest
 ;; segment after every allocation. A fixed node-pool arena handle becomes stale
-;; as soon as that segment fills, causing every later box to reserve a sibling
+;; as soon as that segment fills, causing every later array to reserve a sibling
 ;; segment that no owner can advance to.
 (define tc-agg-layout-cache-storage-arena : i64
   0)
@@ -970,12 +966,27 @@
             head
             previous))))))
 
-;; Layout list tails escape the current lowering/optimizer scratch arena through
-;; the aggregate-layout cache. Allocate each tail directly in its retained arena
-;; so storing a completed layout is a shallow value copy rather than a second
-;; recursive clone of the entire layout.
-(define (tc-inline-field-layout-list-persistent-box
-  [value : TcInlineFieldLayoutList]) : (Box TcInlineFieldLayoutList)
+;; Builders know the final cardinality from their AST vectors. Allocate one
+;; right-sized backing array in the retained cache arena, fill it in source
+;; order, and carry only the shallow array descriptor through cached layouts.
+(define (tc-repr-c-field-layout-list-with-count [count : i64]) : TcReprCFieldLayoutList
+  (TcReprCFieldLayoutList (array.make-array TcReprCFieldLayout count)))
+
+(define (tc-repr-c-field-layout-list-count [items : TcReprCFieldLayoutList]) : i64
+  (array-length (struct-get items slots)))
+
+(define (tc-repr-c-field-layout-list-ref
+  [items : TcReprCFieldLayoutList]
+  [index : i64]) : TcReprCFieldLayout
+  (array-ref (struct-get items slots) index))
+
+(define (tc-repr-c-field-layout-list-set!
+  [items : TcReprCFieldLayoutList]
+  [index : i64]
+  [value : TcReprCFieldLayout]) : unit
+  (array-set! (struct-get items slots) index value))
+
+(define (tc-inline-field-layout-list-with-count [count : i64]) : TcInlineFieldLayoutList
   (let
     [previous : i64 (arena.tl_arena_current)]
     [storage : i64 (tc-agg-layout-cache-storage-handle)]
@@ -983,13 +994,27 @@
       (unsafe
         (arena.tl_arena_set storage))
       (let
-        [out : (Box TcInlineFieldLayoutList) (box value)]
+        [out : TcInlineFieldLayoutList
+          (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))]
         (begin
           (tc-agg-layout-cache-storage-restore! previous storage)
           out)))))
 
-(define (tc-inline-payload-layout-list-persistent-box
-  [value : TcInlinePayloadLayoutList]) : (Box TcInlinePayloadLayoutList)
+(define (tc-inline-field-layout-list-count [items : TcInlineFieldLayoutList]) : i64
+  (array-length (struct-get items slots)))
+
+(define (tc-inline-field-layout-list-ref
+  [items : TcInlineFieldLayoutList]
+  [index : i64]) : TcInlineFieldLayout
+  (array-ref (struct-get items slots) index))
+
+(define (tc-inline-field-layout-list-set!
+  [items : TcInlineFieldLayoutList]
+  [index : i64]
+  [value : TcInlineFieldLayout]) : unit
+  (array-set! (struct-get items slots) index value))
+
+(define (tc-inline-payload-layout-list-with-count [count : i64]) : TcInlinePayloadLayoutList
   (let
     [previous : i64 (arena.tl_arena_current)]
     [storage : i64 (tc-agg-layout-cache-storage-handle)]
@@ -997,13 +1022,29 @@
       (unsafe
         (arena.tl_arena_set storage))
       (let
-        [out : (Box TcInlinePayloadLayoutList) (box value)]
+        [out : TcInlinePayloadLayoutList
+          (TcInlinePayloadLayoutList
+            (array.make-array TcInlinePayloadLayout count))]
         (begin
           (tc-agg-layout-cache-storage-restore! previous storage)
           out)))))
 
-(define (tc-inline-variant-layout-list-persistent-box
-  [value : TcInlineVariantLayoutList]) : (Box TcInlineVariantLayoutList)
+(define (tc-inline-payload-layout-list-count
+  [items : TcInlinePayloadLayoutList]) : i64
+  (array-length (struct-get items slots)))
+
+(define (tc-inline-payload-layout-list-ref
+  [items : TcInlinePayloadLayoutList]
+  [index : i64]) : TcInlinePayloadLayout
+  (array-ref (struct-get items slots) index))
+
+(define (tc-inline-payload-layout-list-set!
+  [items : TcInlinePayloadLayoutList]
+  [index : i64]
+  [value : TcInlinePayloadLayout]) : unit
+  (array-set! (struct-get items slots) index value))
+
+(define (tc-inline-variant-layout-list-with-count [count : i64]) : TcInlineVariantLayoutList
   (let
     [previous : i64 (arena.tl_arena_current)]
     [storage : i64 (tc-agg-layout-cache-storage-handle)]
@@ -1011,10 +1052,27 @@
       (unsafe
         (arena.tl_arena_set storage))
       (let
-        [out : (Box TcInlineVariantLayoutList) (box value)]
+        [out : TcInlineVariantLayoutList
+          (TcInlineVariantLayoutList
+            (array.make-array TcInlineVariantLayout count))]
         (begin
           (tc-agg-layout-cache-storage-restore! previous storage)
           out)))))
+
+(define (tc-inline-variant-layout-list-count
+  [items : TcInlineVariantLayoutList]) : i64
+  (array-length (struct-get items slots)))
+
+(define (tc-inline-variant-layout-list-ref
+  [items : TcInlineVariantLayoutList]
+  [index : i64]) : TcInlineVariantLayout
+  (array-ref (struct-get items slots) index))
+
+(define (tc-inline-variant-layout-list-set!
+  [items : TcInlineVariantLayoutList]
+  [index : i64]
+  [value : TcInlineVariantLayout]) : unit
+  (array-set! (struct-get items slots) index value))
 
 (defenum CompilerTypecheckSummary
   (CompilerTypecheckSummary i64 i64 i64))
@@ -37397,14 +37455,22 @@
 (define (tc-repr-c-layout-field-offset
   [fields : TcReprCFieldLayoutList]
   [name : String]) : i64
-  (match fields
-    [(TcReprCFieldLayoutList.Nil) -1]
-    [(TcReprCFieldLayoutList.Cons field rest)
+  (tc-repr-c-layout-field-offset-at fields name 0))
+
+(define (tc-repr-c-layout-field-offset-at
+  [fields : TcReprCFieldLayoutList]
+  [name : String]
+  [index : i64]) : i64
+  (if (>= index (tc-repr-c-field-layout-list-count fields))
+    -1
+    (let
+      [field : TcReprCFieldLayout
+        (tc-repr-c-field-layout-list-ref fields index)]
       (begin
         (cfg compile-profile (tc-lp-note 1))
         (if (string.eq (tc-repr-c-field-layout-name field) name)
           (tc-repr-c-field-layout-offset field)
-          (tc-repr-c-layout-field-offset (box-get rest) name)))]))
+          (tc-repr-c-layout-field-offset-at fields name (+ index 1)))))))
 
 (define (tc-inline-field-layout-name-id [field : TcInlineFieldLayout]) : i64
   (match field
@@ -37421,14 +37487,22 @@
 (define (tc-inline-field-layout-list-offset-id
   [fields : TcInlineFieldLayoutList]
   [name-id : i64]) : i64
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) -1]
-    [(TcInlineFieldLayoutList.Cons field rest)
+  (tc-inline-field-layout-list-offset-id-at fields name-id 0))
+
+(define (tc-inline-field-layout-list-offset-id-at
+  [fields : TcInlineFieldLayoutList]
+  [name-id : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    -1
+    (let
+      [field : TcInlineFieldLayout
+        (tc-inline-field-layout-list-ref fields index)]
       (begin
         (cfg compile-profile (tc-lp-note 3))
         (if (= (tc-inline-field-layout-name-id field) name-id)
           (tc-inline-field-layout-offset field)
-          (tc-inline-field-layout-list-offset-id (box-get rest) name-id)))]))
+          (tc-inline-field-layout-list-offset-id-at fields name-id (+ index 1)))))))
 
 ;; Register-resident aggregate eightbytes may be INTEGER (the
 ;; existing word-class data) or SSE. SSE admits exact aligned f64 fields and
@@ -37468,12 +37542,18 @@
 ;; True when every struct field is word-class, so the aggregate can be
 ;; packed into general-purpose register words instead of a memory slot.
 (define (tc-inline-fields-all-word-class? [fields : TcInlineFieldLayoutList]) : bool
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) true]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (if (tc-word-class-type? (tc-inline-field-layout-type field))
-        (tc-inline-fields-all-word-class? (box-get rest))
-        false)]))
+  (tc-inline-fields-all-word-class-at? fields 0))
+
+(define (tc-inline-fields-all-word-class-at?
+  [fields : TcInlineFieldLayoutList]
+  [index : i64]) : bool
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    true
+    (if (tc-word-class-type?
+      (tc-inline-field-layout-type
+        (tc-inline-field-layout-list-ref fields index)))
+      (tc-inline-fields-all-word-class-at? fields (+ index 1))
+      false)))
 
 ;; True when every struct field can be assigned to a supported
 ;; register eightbyte class and every occupied eightbyte has a single class.
@@ -37492,9 +37572,18 @@
   [fields : TcInlineFieldLayoutList]
   [word-index : i64]
   [found : i64]) : i64
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) found]
-    [(TcInlineFieldLayoutList.Cons field rest)
+  (tc-inline-fields-word-register-class-at fields word-index found 0))
+
+(define (tc-inline-fields-word-register-class-at
+  [fields : TcInlineFieldLayoutList]
+  [word-index : i64]
+  [found : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    found
+    (let
+      [field : TcInlineFieldLayout
+        (tc-inline-field-layout-list-ref fields index)]
       (if (tc-inline-field-overlaps-word? field word-index)
         (let
           [class : i64
@@ -37504,17 +37593,23 @@
           (cond
             [(= class 2) 2]
             [(= found -1)
-              (tc-inline-fields-word-register-class
-                (box-get rest)
+              (tc-inline-fields-word-register-class-at
+                fields
                 word-index
-                class)]
+                class
+                (+ index 1))]
             [(= found class)
-              (tc-inline-fields-word-register-class
-                (box-get rest)
+              (tc-inline-fields-word-register-class-at
+                fields
                 word-index
-                found)]
+                found
+                (+ index 1))]
             [else 2]))
-        (tc-inline-fields-word-register-class (box-get rest) word-index found))]))
+        (tc-inline-fields-word-register-class-at
+          fields
+          word-index
+          found
+          (+ index 1))))))
 
 (define (tc-inline-fields-all-register-class?
   [fields : TcInlineFieldLayoutList]) : bool
@@ -37527,14 +37622,18 @@
 ;; register-resident.
 (define (tc-inline-payloads-all-word-class?
   [payloads : TcInlinePayloadLayoutList]) : bool
-  (match payloads
-    [(TcInlinePayloadLayoutList.Nil) true]
-    [(TcInlinePayloadLayoutList.Cons payload rest)
-      (match payload
-        [(TcInlinePayloadLayout.Payload _ ty _)
-          (if (tc-word-class-type? ty)
-            (tc-inline-payloads-all-word-class? (box-get rest))
-            false)])]))
+  (tc-inline-payloads-all-word-class-at? payloads 0))
+
+(define (tc-inline-payloads-all-word-class-at?
+  [payloads : TcInlinePayloadLayoutList]
+  [index : i64]) : bool
+  (if (>= index (tc-inline-payload-layout-list-count payloads))
+    true
+    (match (tc-inline-payload-layout-list-ref payloads index)
+      [(TcInlinePayloadLayout.Payload _ ty _)
+        (if (tc-word-class-type? ty)
+          (tc-inline-payloads-all-word-class-at? payloads (+ index 1))
+          false)])))
 
 (define (tc-register-payload-class [payload : TcInlinePayloadLayout]) : i64
   (match payload
@@ -37546,38 +37645,59 @@
 (define (tc-inline-payloads-register-class
   [payloads : TcInlinePayloadLayoutList]
   [found : i64]) : i64
-  (match payloads
-    [(TcInlinePayloadLayoutList.Nil) found]
-    [(TcInlinePayloadLayoutList.Cons payload rest)
-      (let
-        [class : i64 (tc-register-payload-class payload)]
-        (cond
-          [(= class 2) 2]
-          [(= found -1)
-            (tc-inline-payloads-register-class (box-get rest) class)]
-          [(= found class)
-            (tc-inline-payloads-register-class (box-get rest) found)]
-          [else 2]))]))
+  (tc-inline-payloads-register-class-at payloads found 0))
+
+(define (tc-inline-payloads-register-class-at
+  [payloads : TcInlinePayloadLayoutList]
+  [found : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-payload-layout-list-count payloads))
+    found
+    (let
+      [class : i64
+        (tc-register-payload-class
+          (tc-inline-payload-layout-list-ref payloads index))]
+      (cond
+        [(= class 2) 2]
+        [(= found -1)
+          (tc-inline-payloads-register-class-at payloads class (+ index 1))]
+        [(= found class)
+          (tc-inline-payloads-register-class-at payloads found (+ index 1))]
+        [else 2]))))
 
 (define (tc-inline-enum-register-payload-class
   [variants : TcInlineVariantLayoutList]
   [found : i64]) : i64
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) found]
-    [(TcInlineVariantLayoutList.Cons variant rest)
-      (match variant
-        [(TcInlineVariantLayout.Variant _ _ _ payloads)
-          (let
-            [class : i64 (tc-inline-payloads-register-class payloads -1)]
-            (cond
-              [(= class 2) 2]
-              [(= class -1)
-                (tc-inline-enum-register-payload-class (box-get rest) found)]
-              [(= found -1)
-                (tc-inline-enum-register-payload-class (box-get rest) class)]
-              [(= found class)
-                (tc-inline-enum-register-payload-class (box-get rest) found)]
-              [else 2]))])]))
+  (tc-inline-enum-register-payload-class-at variants found 0))
+
+(define (tc-inline-enum-register-payload-class-at
+  [variants : TcInlineVariantLayoutList]
+  [found : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    found
+    (match (tc-inline-variant-layout-list-ref variants index)
+      [(TcInlineVariantLayout.Variant _ _ _ payloads)
+        (let
+          [class : i64 (tc-inline-payloads-register-class payloads -1)]
+          (cond
+            [(= class 2) 2]
+            [(= class -1)
+              (tc-inline-enum-register-payload-class-at
+                variants
+                found
+                (+ index 1))]
+            [(= found -1)
+              (tc-inline-enum-register-payload-class-at
+                variants
+                class
+                (+ index 1))]
+            [(= found class)
+              (tc-inline-enum-register-payload-class-at
+                variants
+                found
+                (+ index 1))]
+            [else 2]))])))
 
 (define (tc-inline-enum-payloads-all-register-class?
   [variants : TcInlineVariantLayoutList]) : bool
@@ -37585,31 +37705,37 @@
 
 (define (tc-inline-enum-payloads-all-word-class?
   [variants : TcInlineVariantLayoutList]) : bool
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) true]
-    [(TcInlineVariantLayoutList.Cons variant rest)
-      (match variant
-        [(TcInlineVariantLayout.Variant _ _ _ payloads)
-          (if (tc-inline-payloads-all-word-class? payloads)
-            (tc-inline-enum-payloads-all-word-class? (box-get rest))
-            false)])]))
+  (tc-inline-enum-payloads-all-word-class-at? variants 0))
+
+(define (tc-inline-enum-payloads-all-word-class-at?
+  [variants : TcInlineVariantLayoutList]
+  [index : i64]) : bool
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    true
+    (match (tc-inline-variant-layout-list-ref variants index)
+      [(TcInlineVariantLayout.Variant _ _ _ payloads)
+        (if (tc-inline-payloads-all-word-class? payloads)
+          (tc-inline-enum-payloads-all-word-class-at? variants (+ index 1))
+          false)])))
 
 (define (tc-inline-payload-layout-list-empty?
   [payloads : TcInlinePayloadLayoutList]) : bool
-  (match payloads
-    [(TcInlinePayloadLayoutList.Nil) true]
-    [(TcInlinePayloadLayoutList.Cons _ _) false]))
+  (= (tc-inline-payload-layout-list-count payloads) 0))
 
 (define (tc-inline-enum-variants-tag-only?
   [variants : TcInlineVariantLayoutList]) : bool
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) true]
-    [(TcInlineVariantLayoutList.Cons variant rest)
-      (match variant
-        [(TcInlineVariantLayout.Variant _ size _ payloads)
-          (if (and (= size 8) (tc-inline-payload-layout-list-empty? payloads))
-            (tc-inline-enum-variants-tag-only? (box-get rest))
-            false)])]))
+  (tc-inline-enum-variants-tag-only-at? variants 0))
+
+(define (tc-inline-enum-variants-tag-only-at?
+  [variants : TcInlineVariantLayoutList]
+  [index : i64]) : bool
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    true
+    (match (tc-inline-variant-layout-list-ref variants index)
+      [(TcInlineVariantLayout.Variant _ size _ payloads)
+        (if (and (= size 8) (tc-inline-payload-layout-list-empty? payloads))
+          (tc-inline-enum-variants-tag-only-at? variants (+ index 1))
+          false)])))
 
 (define (tc-inline-enum-layout-tag-only?
   [size : i64]
@@ -37638,14 +37764,25 @@
 (define (tc-inline-payload-layout-list-offset
   [payloads : TcInlinePayloadLayoutList]
   [index : i64]) : i64
-  (match payloads
-    [(TcInlinePayloadLayoutList.Nil) -1]
-    [(TcInlinePayloadLayoutList.Cons payload rest)
+  (tc-inline-payload-layout-list-offset-at payloads index 0))
+
+(define (tc-inline-payload-layout-list-offset-at
+  [payloads : TcInlinePayloadLayoutList]
+  [payload-index : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-payload-layout-list-count payloads))
+    -1
+    (let
+      [payload : TcInlinePayloadLayout
+        (tc-inline-payload-layout-list-ref payloads index)]
       (begin
         (cfg compile-profile (tc-lp-note 5))
-        (if (= (tc-inline-payload-layout-index payload) index)
+        (if (= (tc-inline-payload-layout-index payload) payload-index)
           (tc-inline-payload-layout-offset payload)
-          (tc-inline-payload-layout-list-offset (box-get rest) index)))]))
+          (tc-inline-payload-layout-list-offset-at
+            payloads
+            payload-index
+            (+ index 1)))))))
 
 (define (tc-inline-variant-layout-name-id [variant : TcInlineVariantLayout]) : i64
   (match variant
@@ -37686,56 +37823,103 @@
 (define (tc-inline-variant-layout-list-size-exact-id
   [variants : TcInlineVariantLayoutList]
   [name-id : i64]) : i64
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) -1]
-    [(TcInlineVariantLayoutList.Cons variant rest)
+  (tc-inline-variant-layout-list-size-exact-id-at variants name-id 0))
+
+(define (tc-inline-variant-layout-list-size-exact-id-at
+  [variants : TcInlineVariantLayoutList]
+  [name-id : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    -1
+    (let
+      [variant : TcInlineVariantLayout
+        (tc-inline-variant-layout-list-ref variants index)]
       (begin
         (cfg compile-profile (tc-lp-note 7))
         (if (= (tc-inline-variant-layout-name-id variant) name-id)
           (tc-inline-variant-layout-size variant)
-          (tc-inline-variant-layout-list-size-exact-id (box-get rest) name-id)))]))
+          (tc-inline-variant-layout-list-size-exact-id-at
+            variants
+            name-id
+            (+ index 1)))))))
 
 (define (tc-inline-variant-layout-list-size-fallback-id
   [variants : TcInlineVariantLayoutList]
   [name-id : i64]) : i64
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) -1]
-    [(TcInlineVariantLayoutList.Cons variant rest)
+  (tc-inline-variant-layout-list-size-fallback-id-at variants name-id 0))
+
+(define (tc-inline-variant-layout-list-size-fallback-id-at
+  [variants : TcInlineVariantLayoutList]
+  [name-id : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    -1
+    (let
+      [variant : TcInlineVariantLayout
+        (tc-inline-variant-layout-list-ref variants index)]
       (begin
         (cfg compile-profile (tc-lp-note 7))
         (if (tc-inline-variant-layout-name-matches-id?
           (tc-inline-variant-layout-name-id variant)
           name-id)
           (tc-inline-variant-layout-size variant)
-          (tc-inline-variant-layout-list-size-fallback-id
-            (box-get rest)
-            name-id)))]))
+          (tc-inline-variant-layout-list-size-fallback-id-at
+            variants
+            name-id
+            (+ index 1)))))))
 
 (define (tc-inline-variant-layout-list-payload-offset-exact-id
   [variants : TcInlineVariantLayoutList]
   [name-id : i64]
   [index : i64]) : i64
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) -1]
-    [(TcInlineVariantLayoutList.Cons variant rest)
+  (tc-inline-variant-layout-list-payload-offset-exact-id-at
+    variants
+    name-id
+    index
+    0))
+
+(define (tc-inline-variant-layout-list-payload-offset-exact-id-at
+  [variants : TcInlineVariantLayoutList]
+  [name-id : i64]
+  [payload-index : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    -1
+    (let
+      [variant : TcInlineVariantLayout
+        (tc-inline-variant-layout-list-ref variants index)]
       (begin
         (cfg compile-profile (tc-lp-note 7))
         (if (= (tc-inline-variant-layout-name-id variant) name-id)
           (tc-inline-payload-layout-list-offset
             (tc-inline-variant-layout-payloads variant)
-            index)
-          (tc-inline-variant-layout-list-payload-offset-exact-id
-            (box-get rest)
+            payload-index)
+          (tc-inline-variant-layout-list-payload-offset-exact-id-at
+            variants
             name-id
-            index)))]))
+            payload-index
+            (+ index 1)))))))
 
 (define (tc-inline-variant-layout-list-payload-offset-fallback-id
   [variants : TcInlineVariantLayoutList]
   [name-id : i64]
   [index : i64]) : i64
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) -1]
-    [(TcInlineVariantLayoutList.Cons variant rest)
+  (tc-inline-variant-layout-list-payload-offset-fallback-id-at
+    variants
+    name-id
+    index
+    0))
+
+(define (tc-inline-variant-layout-list-payload-offset-fallback-id-at
+  [variants : TcInlineVariantLayoutList]
+  [name-id : i64]
+  [payload-index : i64]
+  [index : i64]) : i64
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    -1
+    (let
+      [variant : TcInlineVariantLayout
+        (tc-inline-variant-layout-list-ref variants index)]
       (begin
         (cfg compile-profile (tc-lp-note 7))
         (if (tc-inline-variant-layout-name-matches-id?
@@ -37743,11 +37927,12 @@
           name-id)
           (tc-inline-payload-layout-list-offset
             (tc-inline-variant-layout-payloads variant)
-            index)
-          (tc-inline-variant-layout-list-payload-offset-fallback-id
-            (box-get rest)
+            payload-index)
+          (tc-inline-variant-layout-list-payload-offset-fallback-id-at
+            variants
             name-id
-            index)))]))
+            payload-index
+            (+ index 1)))))))
 
 (define (tc-inline-aggregate-layout-size [layout : TcInlineAggregateLayout]) : i64
   (match layout
@@ -38143,13 +38328,17 @@
   [cursor : i64]
   [max-align : i64]
   [stack : TcStringList]) : ResultTcInlineFieldsLayout
-  (tc-inline-aggregate-field-defs-layout-at
-    ctx
-    (& fields)
-    0
-    cursor
-    max-align
-    stack))
+  (let
+    [layout : TcInlineFieldLayoutList
+      (tc-inline-field-layout-list-with-count (struct-get fields len))]
+    (tc-inline-aggregate-field-defs-layout-at
+      ctx
+      (& fields)
+      0
+      cursor
+      max-align
+      stack
+      layout)))
 
 (define (tc-inline-aggregate-field-defs-layout-at
   [ctx : TcContext]
@@ -38157,12 +38346,13 @@
   [index : i64]
   [cursor : i64]
   [max-align : i64]
-  [stack : TcStringList]) : ResultTcInlineFieldsLayout
+  [stack : TcStringList]
+  [layout : TcInlineFieldLayoutList]) : ResultTcInlineFieldsLayout
   (if (>= index (struct-get fields len))
     (match (tc-inline-aggregate-finish-layout cursor max-align)
       [(TcLayoutInfo size align)
         (ResultTcInlineFieldsLayout.Ok
-          (TcInlineFieldsLayout.Fields size align TcInlineFieldLayoutList.Nil))])
+          (TcInlineFieldsLayout.Fields size align layout))])
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def name ty _)
         (let
@@ -38175,45 +38365,40 @@
                 [offset : i64 (tc-align-up cursor field-align)]
                 [next-cursor : i64 (+ offset field-size)]
                 [next-align : i64 (tc-max-i64 max-align field-align)]
-                (match (tc-inline-aggregate-field-defs-layout-at
-                  ctx
-                  fields
-                  (+ index 1)
-                  next-cursor
-                  next-align
-                  stack)
-                  [(ResultTcInlineFieldsLayout.Ok rest-layout)
-                    (match rest-layout
-                      [(TcInlineFieldsLayout.Fields size align rest-fields)
-                        (begin
-                          (cfg compile-profile (tc-lp-note 2))
-                          (ResultTcInlineFieldsLayout.Ok
-                            (TcInlineFieldsLayout.Fields
-                              size
-                              align
-                              (TcInlineFieldLayoutList.Cons
-                                (TcInlineFieldLayout.Field name resolved offset)
-                                (tc-inline-field-layout-list-persistent-box
-                                  rest-fields)))))])]
-                  [(ResultTcInlineFieldsLayout.Err message)
-                    (ResultTcInlineFieldsLayout.Err message)]))]
+                (begin
+                  (cfg compile-profile (tc-lp-note 2))
+                  (tc-inline-field-layout-list-set!
+                    layout
+                    index
+                    (TcInlineFieldLayout.Field name resolved offset))
+                  (tc-inline-aggregate-field-defs-layout-at
+                    ctx
+                    fields
+                    (+ index 1)
+                    next-cursor
+                    next-align
+                    stack
+                    layout)))]
             [(ResultTcLayoutInfo.Err message)
               (ResultTcInlineFieldsLayout.Err message)]))])))
 
 (define (tc-inline-aggregate-payloads-layout
   [ctx : TcContext]
   [types : AstTypeList]
-  [index : i64]
   [cursor : i64]
   [max-align : i64]
   [stack : TcStringList]) : ResultTcInlinePayloadFieldsLayout
-  (tc-inline-aggregate-payloads-layout-at
-    ctx
-    (& types)
-    index
-    cursor
-    max-align
-    stack))
+  (let
+    [layout : TcInlinePayloadLayoutList
+      (tc-inline-payload-layout-list-with-count (ast-type-list-len (& types)))]
+    (tc-inline-aggregate-payloads-layout-at
+      ctx
+      (& types)
+      0
+      cursor
+      max-align
+      stack
+      layout)))
 
 (define (tc-inline-aggregate-payloads-layout-at
   [ctx : TcContext]
@@ -38221,15 +38406,13 @@
   [index : i64]
   [cursor : i64]
   [max-align : i64]
-  [stack : TcStringList]) : ResultTcInlinePayloadFieldsLayout
+  [stack : TcStringList]
+  [layout : TcInlinePayloadLayoutList]) : ResultTcInlinePayloadFieldsLayout
   (if (>= index (ast-type-list-len types))
     (match (tc-inline-aggregate-finish-layout cursor max-align)
       [(TcLayoutInfo size align)
         (ResultTcInlinePayloadFieldsLayout.Ok
-          (TcInlinePayloadFieldsLayout.Fields
-            size
-            align
-            TcInlinePayloadLayoutList.Nil))])
+          (TcInlinePayloadFieldsLayout.Fields size align layout))])
     (let
       [ty : AstType
         (tc-context-type-get
@@ -38243,28 +38426,20 @@
             [offset : i64 (tc-align-up cursor field-align)]
             [next-cursor : i64 (+ offset field-size)]
             [next-align : i64 (tc-max-i64 max-align field-align)]
-            (match (tc-inline-aggregate-payloads-layout-at
-              ctx
-              types
-              (+ index 1)
-              next-cursor
-              next-align
-              stack)
-              [(ResultTcInlinePayloadFieldsLayout.Ok rest-layout)
-                (match rest-layout
-                  [(TcInlinePayloadFieldsLayout.Fields size align rest-payloads)
-                    (begin
-                      (cfg compile-profile (tc-lp-note 4))
-                      (ResultTcInlinePayloadFieldsLayout.Ok
-                        (TcInlinePayloadFieldsLayout.Fields
-                          size
-                          align
-                          (TcInlinePayloadLayoutList.Cons
-                            (TcInlinePayloadLayout.Payload index ty offset)
-                            (tc-inline-payload-layout-list-persistent-box
-                              rest-payloads)))))])]
-              [(ResultTcInlinePayloadFieldsLayout.Err message)
-                (ResultTcInlinePayloadFieldsLayout.Err message)]))]
+            (begin
+              (cfg compile-profile (tc-lp-note 4))
+              (tc-inline-payload-layout-list-set!
+                layout
+                index
+                (TcInlinePayloadLayout.Payload index ty offset))
+              (tc-inline-aggregate-payloads-layout-at
+                ctx
+                types
+                (+ index 1)
+                next-cursor
+                next-align
+                stack
+                layout)))]
         [(ResultTcLayoutInfo.Err message)
           (ResultTcInlinePayloadFieldsLayout.Err message)]))))
 
@@ -38303,13 +38478,17 @@
   [max-size : i64]
   [max-align : i64]
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
-  (tc-inline-aggregate-variants-layout-at
-    ctx
-    (& variants)
-    max-size
-    max-align
-    stack
-    0))
+  (let
+    [layout : TcInlineVariantLayoutList
+      (tc-inline-variant-layout-list-with-count (struct-get variants len))]
+    (tc-inline-aggregate-variants-layout-at
+      ctx
+      (& variants)
+      max-size
+      max-align
+      stack
+      0
+      layout)))
 
 (define (tc-inline-aggregate-variants-layout-at
   [ctx : TcContext]
@@ -38317,16 +38496,17 @@
   [max-size : i64]
   [max-align : i64]
   [stack : TcStringList]
-  [index : i64]) : ResultTcInlineAggregateLayout
+  [index : i64]
+  [layout : TcInlineVariantLayoutList]) : ResultTcInlineAggregateLayout
   (if (>= index (struct-get variants len))
     (ResultTcInlineAggregateLayout.Ok
       (TcInlineAggregateLayout.Enum
         (tc-align-up max-size max-align)
         max-align
-        TcInlineVariantLayoutList.Nil))
+        layout))
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def variant-name fields _)
-        (match (tc-inline-aggregate-payloads-layout ctx fields 0 8 8 stack)
+        (match (tc-inline-aggregate-payloads-layout ctx fields 8 8 stack)
           [(ResultTcInlinePayloadFieldsLayout.Ok payload-layout)
             (match payload-layout
               [(TcInlinePayloadFieldsLayout.Fields
@@ -38336,38 +38516,24 @@
                 (let
                   [next-size : i64 (tc-max-i64 max-size variant-size)]
                   [next-align : i64 (tc-max-i64 max-align variant-align)]
-                  (match (tc-inline-aggregate-variants-layout-at
-                    ctx
-                    variants
-                    next-size
-                    next-align
-                    stack
-                    (+ index 1))
-                    [(ResultTcInlineAggregateLayout.Ok rest-layout)
-                      (match rest-layout
-                        [(TcInlineAggregateLayout.Enum
-                            enum-size
-                            enum-align
-                            rest-variants)
-                          (begin
-                            (cfg compile-profile (tc-lp-note 6))
-                            (ResultTcInlineAggregateLayout.Ok
-                              (TcInlineAggregateLayout.Enum
-                                enum-size
-                                enum-align
-                                (TcInlineVariantLayoutList.Cons
-                                  (TcInlineVariantLayout.Variant
-                                    variant-name
-                                    variant-size
-                                    variant-align
-                                    payloads)
-                                  (tc-inline-variant-layout-list-persistent-box
-                                    rest-variants)))))]
-                        [(TcInlineAggregateLayout.Struct _ _ _)
-                          (ResultTcInlineAggregateLayout.Err
-                            "typecheck: internal inline enum layout mismatch")])]
-                    [(ResultTcInlineAggregateLayout.Err message)
-                      (ResultTcInlineAggregateLayout.Err message)]))])]
+                  (begin
+                    (cfg compile-profile (tc-lp-note 6))
+                    (tc-inline-variant-layout-list-set!
+                      layout
+                      index
+                      (TcInlineVariantLayout.Variant
+                        variant-name
+                        variant-size
+                        variant-align
+                        payloads))
+                    (tc-inline-aggregate-variants-layout-at
+                      ctx
+                      variants
+                      next-size
+                      next-align
+                      stack
+                      (+ index 1)
+                      layout)))])]
           [(ResultTcInlinePayloadFieldsLayout.Err message)
             (ResultTcInlineAggregateLayout.Err message)])])))
 
@@ -38462,8 +38628,8 @@
                 (set! steps (+ steps 1))))]))
       -1)))
 
-;; Layout list tails are allocated in the persistent program arena as they are
-;; built, so the completed value can be stored without recursively cloning it.
+;; Layout arrays are allocated in the persistent program arena at their final
+;; size, so the completed value can be stored without recursively cloning it.
 ;; Only fully-resolved Ok layouts reach this point, so a cached entry can never
 ;; participate in a cycle (its computation already terminated).
 (define (tc-agg-layout-cache-store!
@@ -39094,7 +39260,18 @@
   [cursor : i64]
   [max-align : i64]
   [seen : TcStringList]) : ResultTcReprCLayout
-  (tc-repr-c-fields-layout-at ctx owner (& fields) 0 cursor max-align seen))
+  (let
+    [layout : TcReprCFieldLayoutList
+      (tc-repr-c-field-layout-list-with-count (struct-get fields len))]
+    (tc-repr-c-fields-layout-at
+      ctx
+      owner
+      (& fields)
+      0
+      cursor
+      max-align
+      seen
+      layout)))
 
 (define (tc-repr-c-fields-layout-at
   [ctx : TcContext]
@@ -39103,16 +39280,14 @@
   [index : i64]
   [cursor : i64]
   [max-align : i64]
-  [seen : TcStringList]) : ResultTcReprCLayout
+  [seen : TcStringList]
+  [layout : TcReprCFieldLayoutList]) : ResultTcReprCLayout
   (if (>= index (struct-get fields len))
     (if (= max-align 0)
       (ResultTcReprCLayout.Err
         "typecheck: repr c struct needs at least one field")
       (ResultTcReprCLayout.Ok
-        (TcReprCLayout.Layout
-          (tc-align-up cursor max-align)
-          max-align
-          TcReprCFieldLayoutList.Nil)))
+        (TcReprCLayout.Layout (tc-align-up cursor max-align) max-align layout)))
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
       [(AstFieldDef.Def name ty _)
         (let
@@ -39130,29 +39305,24 @@
                 [offset : i64 (tc-align-up cursor field-align)]
                 [next-cursor : i64 (+ offset field-size)]
                 [next-align : i64 (tc-max-i64 max-align field-align)]
-                (match (tc-repr-c-fields-layout-at
-                  ctx
-                  owner
-                  fields
-                  (+ index 1)
-                  next-cursor
-                  next-align
-                  seen)
-                  [(ResultTcReprCLayout.Ok rest-layout)
-                    (begin
-                      (cfg compile-profile (tc-lp-note 0))
-                      (ResultTcReprCLayout.Ok
-                        (TcReprCLayout.Layout
-                          (tc-repr-c-layout-size rest-layout)
-                          (tc-repr-c-layout-align rest-layout)
-                          (TcReprCFieldLayoutList.Cons
-                            (TcReprCFieldLayout.Field
-                              (tc-env-key-name-text name)
-                              resolved
-                              offset)
-                            (box (tc-repr-c-layout-fields rest-layout))))))]
-                  [(ResultTcReprCLayout.Err message)
-                    (ResultTcReprCLayout.Err message)]))]
+                (begin
+                  (cfg compile-profile (tc-lp-note 0))
+                  (tc-repr-c-field-layout-list-set!
+                    layout
+                    index
+                    (TcReprCFieldLayout.Field
+                      (tc-env-key-name-text name)
+                      resolved
+                      offset))
+                  (tc-repr-c-fields-layout-at
+                    ctx
+                    owner
+                    fields
+                    (+ index 1)
+                    next-cursor
+                    next-align
+                    seen
+                    layout)))]
             [(ResultTcLayoutInfo.Err message) (ResultTcReprCLayout.Err message)]))])))
 
 (define (tc-repr-c-struct-layout-with-seen
@@ -39194,23 +39364,26 @@
 (define (tc-ctfe-inline-layout-fields-into
   [fields : TcInlineFieldLayoutList]
   [out : CtfeLayoutFieldList]) : CtfeLayoutFieldList
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) out]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (match field
-        [(TcInlineFieldLayout.Field name _ offset)
-          (tc-ctfe-inline-layout-fields-into
-            (box-get rest)
-            (ctfe-layout-field-list-push-id
-              out
-              (CtfeLayoutField.Field (tc-env-key-name-text name) offset)
-              name))])]))
+  (tc-ctfe-inline-layout-fields-into-at fields out 0))
+
+(define (tc-ctfe-inline-layout-fields-into-at
+  [fields : TcInlineFieldLayoutList]
+  [out : CtfeLayoutFieldList]
+  [index : i64]) : CtfeLayoutFieldList
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    out
+    (match (tc-inline-field-layout-list-ref fields index)
+      [(TcInlineFieldLayout.Field name _ offset)
+        (tc-ctfe-inline-layout-fields-into-at
+          fields
+          (ctfe-layout-field-list-push-id
+            out
+            (CtfeLayoutField.Field (tc-env-key-name-text name) offset)
+            name)
+          (+ index 1))])))
 
 (define (tc-ctfe-inline-layout-field-count [fields : TcInlineFieldLayoutList]) : i64
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) 0]
-    [(TcInlineFieldLayoutList.Cons _ rest)
-      (+ 1 (tc-ctfe-inline-layout-field-count (box-get rest)))]))
+  (tc-inline-field-layout-list-count fields))
 
 (define (tc-ctfe-inline-layout-fields [fields : TcInlineFieldLayoutList]) : CtfeLayoutFieldList
   (tc-ctfe-inline-layout-fields-into

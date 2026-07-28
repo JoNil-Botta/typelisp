@@ -1314,7 +1314,21 @@
   (:repr c)
   (tag u8)
   (inner Inner)
-  (tail u16))")
+  (tail u16))
+(defstruct WideC
+  (:repr c)
+  (f0 u8)
+  (f1 u16)
+  (f2 u32)
+  (f3 i64)
+  (f4 bool)
+  (f5 u8)
+  (f6 u16)
+  (f7 u32)
+  (f8 Inner)
+  (f9 i64)
+  (f10 u8)
+  (f11 u16))")
 
 (define (compiler-typecheck-repr-c-f32-source) : String
   "(defstruct Vec2
@@ -1391,36 +1405,71 @@
                         "Outer"
                         (compiler-typecheck-fixture-nominal-id program "Outer"))
                         [(ResultTcReprCLayout.Ok outer)
-                          (and
-                            (= (tc-repr-c-layout-size packet) 24)
-                            (= (tc-repr-c-layout-align packet) 8)
-                            (=
-                              (tc-repr-c-layout-field-offset
-                                (tc-repr-c-layout-fields packet)
-                                "tag")
-                              0)
-                            (=
-                              (tc-repr-c-layout-field-offset
-                                (tc-repr-c-layout-fields packet)
-                                "count")
-                              8)
-                            (=
-                              (tc-repr-c-layout-field-offset
-                                (tc-repr-c-layout-fields packet)
-                                "flag")
-                              16)
-                            (= (tc-repr-c-layout-size outer) 16)
-                            (= (tc-repr-c-layout-align outer) 4)
-                            (=
-                              (tc-repr-c-layout-field-offset
-                                (tc-repr-c-layout-fields outer)
-                                "inner")
-                              4)
-                            (=
-                              (tc-repr-c-layout-field-offset
-                                (tc-repr-c-layout-fields outer)
-                                "tail")
-                              12))]
+                          (match (tc-repr-c-struct-layout-id
+                            ctx
+                            "WideC"
+                            (compiler-typecheck-fixture-nominal-id
+                              program
+                              "WideC"))
+                            [(ResultTcReprCLayout.Ok wide)
+                              (and
+                                (= (tc-repr-c-layout-size packet) 24)
+                                (= (tc-repr-c-layout-align packet) 8)
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields packet)
+                                    "tag")
+                                  0)
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields packet)
+                                    "count")
+                                  8)
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields packet)
+                                    "flag")
+                                  16)
+                                (= (tc-repr-c-layout-size outer) 16)
+                                (= (tc-repr-c-layout-align outer) 4)
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields outer)
+                                    "inner")
+                                  4)
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields outer)
+                                    "tail")
+                                  12)
+                                (= (tc-repr-c-layout-size wide) 48)
+                                (= (tc-repr-c-layout-align wide) 8)
+                                (=
+                                  (tc-repr-c-field-layout-list-count
+                                    (tc-repr-c-layout-fields wide))
+                                  12)
+                                (=
+                                  (array-length
+                                    (struct-get
+                                      (tc-repr-c-layout-fields wide)
+                                      slots))
+                                  12)
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields wide)
+                                    "f0")
+                                  0)
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields wide)
+                                    "f8")
+                                  24)
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields wide)
+                                    "f11")
+                                  42))]
+                            [(ResultTcReprCLayout.Err _) false])]
                         [(ResultTcReprCLayout.Err _) false])]
                     [(ResultTcReprCLayout.Err _) false]))]
               [(ResultCompilerRegistries.Err _) false])]
@@ -1697,6 +1746,35 @@
   (Byte u8)
   (Wide u8 i64)
   (Pair (Tuple u8 i32)))
+(defstruct InlineInner
+  (a u8)
+  (b i64))
+(defstruct WidePacket
+  (f0 u8)
+  (f1 u16)
+  (f2 u32)
+  (f3 i64)
+  (f4 bool)
+  (f5 u8)
+  (f6 u16)
+  (f7 u32)
+  (f8 InlineInner)
+  (f9 i64)
+  (f10 u8)
+  (f11 u16))
+(defenum WideChoice
+  (V0)
+  (V1)
+  (V2)
+  (V3)
+  (V4)
+  (V5)
+  (V6)
+  (V7)
+  (V8)
+  (V9)
+  (V10)
+  (V11 u8 i64 u16))
 (defenum ListI64
   (ListNil)
   (ListCons i64 (Box ListI64)))
@@ -1707,24 +1785,18 @@
 (define (compiler-typecheck-inline-field-id-at
   [fields : TcInlineFieldLayoutList]
   [index : i64]) : i64
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) -1]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (if (= index 0)
-        (match field
-          [(TcInlineFieldLayout.Field name-id _ _) name-id])
-        (compiler-typecheck-inline-field-id-at (box-get rest) (- index 1)))]))
+  (if (or (< index 0) (>= index (tc-inline-field-layout-list-count fields)))
+    -1
+    (match (tc-inline-field-layout-list-ref fields index)
+      [(TcInlineFieldLayout.Field name-id _ _) name-id])))
 
 (define (compiler-typecheck-inline-variant-id-at
   [variants : TcInlineVariantLayoutList]
   [index : i64]) : i64
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) -1]
-    [(TcInlineVariantLayoutList.Cons variant rest)
-      (if (= index 0)
-        (match variant
-          [(TcInlineVariantLayout.Variant name-id _ _ _) name-id])
-        (compiler-typecheck-inline-variant-id-at (box-get rest) (- index 1)))]))
+  (if (or (< index 0) (>= index (tc-inline-variant-layout-list-count variants)))
+    -1
+    (match (tc-inline-variant-layout-list-ref variants index)
+      [(TcInlineVariantLayout.Variant name-id _ _ _) name-id])))
 
 (define (compiler-typecheck-inline-layout-query-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-inline-layout-query-source))
@@ -1879,6 +1951,98 @@
                             8)
                             unit
                             (set! ok false))))]
+                    [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id program "WidePacket"))
+                    [(ResultTcInlineAggregateLayout.Ok layout)
+                      (match layout
+                        [(TcInlineAggregateLayout.Struct size align fields)
+                          (let
+                            [first-id : i64
+                              (compiler-typecheck-inline-field-id-at fields 0)]
+                            [last-id : i64
+                              (compiler-typecheck-inline-field-id-at fields 11)]
+                            (if (and
+                              (= size 56)
+                              (= align 8)
+                              (= (tc-inline-field-layout-list-count fields) 12)
+                              (= (array-length (struct-get fields slots)) 12)
+                              (string.eq (tc-env-key-name-text first-id) "f0")
+                              (string.eq (tc-env-key-name-text last-id) "f11")
+                              (=
+                                (tc-inline-aggregate-layout-field-offset-id
+                                  layout
+                                  first-id)
+                                0)
+                              (=
+                                (tc-inline-aggregate-layout-field-offset-id
+                                  layout
+                                  (compiler-typecheck-inline-field-id-at
+                                    fields
+                                    8))
+                                24)
+                              (=
+                                (tc-inline-aggregate-layout-field-offset-id
+                                  layout
+                                  last-id)
+                                50))
+                              unit
+                              (set! ok false)))]
+                        [_ (set! ok false)])]
+                    [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id program "WideChoice"))
+                    [(ResultTcInlineAggregateLayout.Ok layout)
+                      (match layout
+                        [(TcInlineAggregateLayout.Enum size align variants)
+                          (let
+                            [first-id : i64
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                0)]
+                            [last-id : i64
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                11)]
+                            [payloads : TcInlinePayloadLayoutList
+                              (match (tc-inline-variant-layout-list-ref
+                                variants
+                                11)
+                                [(TcInlineVariantLayout.Variant _ _ _ items)
+                                  items])]
+                            (if (and
+                              (= size 32)
+                              (= align 8)
+                              (=
+                                (tc-inline-variant-layout-list-count variants)
+                                12)
+                              (= (array-length (struct-get variants slots)) 12)
+                              (string.eq (tc-env-key-name-text first-id) "V0")
+                              (string.eq (tc-env-key-name-text last-id) "V11")
+                              (=
+                                (tc-inline-payload-layout-list-count payloads)
+                                3)
+                              (= (array-length (struct-get payloads slots)) 3)
+                              (=
+                                (tc-inline-payload-layout-list-offset
+                                  payloads
+                                  0)
+                                8)
+                              (=
+                                (tc-inline-payload-layout-list-offset
+                                  payloads
+                                  1)
+                                16)
+                              (=
+                                (tc-inline-payload-layout-list-offset
+                                  payloads
+                                  2)
+                                24))
+                              unit
+                              (set! ok false)))]
+                        [_ (set! ok false)])]
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-layout-for-id
                     ctx

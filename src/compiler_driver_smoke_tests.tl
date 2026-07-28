@@ -40,6 +40,44 @@
                     (arena.tl_arena_destroy owner))
                   (and preserved? resumed?))))))))))
 
+(define (compiler-driver-lower-name-store-owner-current-ok?) : bool
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set owner))
+      ;; Advance this owner beyond its root before constructing the store. The
+      ;; store must retain the owner root, then resume its current head when a
+      ;; later segment is allocated from an unrelated active arena.
+      (compiler-driver-smoke-runtime-alloc 67108800)
+      (compiler-driver-smoke-runtime-alloc 8)
+      (let
+        [head : i64 (arena.tl_arena_current)]
+        [store : (Box LowerNameStore) (box (lower-name-store-new))]
+        [store-owner : i64 (struct-get (box-get store) arena)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set home))
+          (lower-name-store-add-segment! (&mut (box-get store)))
+          (let
+            [home-restored? : bool
+              (=
+                (lower-name-arena-owner-root (arena.tl_arena_current))
+                (lower-name-arena-owner-root home))]
+            [owner-head : i64 (lower-name-arena-owner-current-head owner)]
+            [segment-count : i64 (struct-get (box-get store) segment-count)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set home)
+                (arena.tl_arena_destroy owner))
+              (and
+                (not (= head owner))
+                (= store-owner owner)
+                (= owner-head head)
+                home-restored?
+                (= segment-count 2)))))))))
+
 (define (lower-symbol-smoke-extern-metadata
   [link-id : i64]
   [matches-source : bool]) : AstExternMetadata
@@ -211,8 +249,8 @@
                 "main")
               entry-main-source-id)
             (set! ok false))
-          (match derived-env
-            [(LowerNameEnv.Bind _ logical-id symbol-id _)
+          (match (lower-name-env-view derived-env)
+            [(LowerNameEnvView.Bind _ logical-id symbol-id _)
               (begin
                 (unless (= logical-id opaque-logical-id) (set! ok false))
                 (unless (not (= symbol-id opaque-logical-id)) (set! ok false))
@@ -615,6 +653,7 @@
 (define (compiler-driver-pic-smoke-main) : i64
   (begin
     (unless (compiler-driver-restore-arena-owner-current-ok?) (return 5))
+    (unless (compiler-driver-lower-name-store-owner-current-ok?) (return 6))
     (unless
       (compiler-driver-pic-smoke-core-macros-ok? (CompilerBackendTarget.Linux))
       (return 1))

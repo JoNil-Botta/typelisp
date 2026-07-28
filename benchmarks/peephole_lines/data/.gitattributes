@@ -1,0 +1,9 @@
+# The corpus is the compiler's own emitted assembly, and the peephole kernel
+# scans it line by line, so a CRLF checkout would change every line's bytes and
+# with them the printed checksum. Pin LF the way *.tl and *.sh are pinned at the
+# repository root, so the benchmark's observable output is the same on Linux and
+# on the Windows CI runners (whose Git defaults to autocrlf=true).
+#
+# The file is named .asm rather than .s because the root .gitignore ignores
+# *.s (generated assembly), which silently kept this corpus out of the commit.
+self-compile.asm text eol=lf

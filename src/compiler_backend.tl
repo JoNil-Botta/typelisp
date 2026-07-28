@@ -883,7 +883,8 @@
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
   (tlci-macro-entry bool)
-  (arena-debug bool))
+  (arena-debug bool)
+  (startup-profile bool))
 
 (defenum CompilerBackendRuntimeHelperOwner
   (Unknown)
@@ -909,7 +910,8 @@
   (defines backend_i64_i64_map.Map)
   (externs backend_i64_i64_map.Map)
   (calls backend_i64_i64_map.Map)
-  (tlci-macro-entry-call-id i64))
+  (tlci-macro-entry-call-id i64)
+  (startup-profile bool))
 
 (defstruct CompilerBackendRuntimePlanWithIndex
   (plan CompilerBackendRuntimePlan)
@@ -1050,6 +1052,10 @@
 (define (compiler-backend-runtime-tail-arena-debug?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail arena-debug))
+
+(define (compiler-backend-runtime-tail-startup-profile?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail startup-profile))
 
 (define (compiler-backend-runtime-plan-tail [plan : CompilerBackendRuntimePlan]) : CompilerBackendRuntimeTailPlan
   (match plan
@@ -1245,22 +1251,35 @@
 (define compiler-backend-emit-instrs-next-mode : CompilerBackendEmitInstrsMode
   (CompilerBackendEmitInstrsMode.Normal))
 
-(define (compiler-backend-empty-instr-list) : CompilerIrInstrList
-  CompilerIrInstrList.Nil)
+(define (compiler-backend-empty-instr-seq) : CompilerIrInstrSeq
+  (CompilerIrInstrSeq (array.make-array CompilerIrInstr 0) 0))
 
-(define compiler-backend-emit-instrs-next-instrs : CompilerIrInstrList
-  (compiler-backend-empty-instr-list))
+;; The emit spine walks a block's contiguous CompilerIrInstrSeq with a
+;; `(instrs, index)` cursor: `index` is the position of the first instruction
+;; not yet emitted, so what used to be "the remaining list" is now "the rows
+;; from `index` on" and its length is `len - index` instead of a cons-spine
+;; walk. The trampoline carries both halves; the sequence half is invariant for
+;; the lifetime of one emit-instrs-loop (every continue target is a suffix of
+;; the block the loop was entered with), and is carried anyway so the
+;; continuation stays a literal cursor rather than an invariant the reader has
+;; to reconstruct.
+(define compiler-backend-emit-instrs-next-instrs : CompilerIrInstrSeq
+  (compiler-backend-empty-instr-seq))
+(define compiler-backend-emit-instrs-next-index : i64
+  0)
 
 ;; The trampoline no longer carries a buffer across a continue step: the whole
 ;; block spine appends into ONE body buffer that the loop already holds, so the
-;; only loop-carried emission state left is the mode and the remaining list.
+;; only loop-carried emission state left is the mode and the cursor.
 (define (compiler-backend-emit-instrs-set-continue!
   [mode : CompilerBackendEmitInstrsMode]
-  [instrs : CompilerIrInstrList]) : ResultCompilerBackend
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : ResultCompilerBackend
   (begin
     (set! compiler-backend-emit-instrs-continue-pending true)
     (set! compiler-backend-emit-instrs-next-mode mode)
     (set! compiler-backend-emit-instrs-next-instrs instrs)
+    (set! compiler-backend-emit-instrs-next-index index)
     (ResultCompilerBackend.Ok "")))
 
 (defenum ResultBackendRuntimePlan
@@ -25207,38 +25226,43 @@
     0
     1))
 
+;; Scans the CopyBytes/Gep/StorePtr run starting at the cursor and stops at the
+;; first instruction of any other shape, exactly as the cons walk did.
 (define (compiler-backend-copy-run-protect-count
   [assignments : CompilerRegAssignmentList]
-  [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(CompilerIrInstr.CopyBytes dst src _)
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= index (struct-get instrs len))
+    0
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.CopyBytes dst src _)
+        (+
+          (compiler-backend-copy-run-protect-value-count assignments dst)
           (+
-            (compiler-backend-copy-run-protect-value-count assignments dst)
-            (+
-              (compiler-backend-copy-run-protect-value-count assignments src)
-              (compiler-backend-copy-run-protect-count
-                assignments
-                (box-get rest))))]
-        [(CompilerIrInstr.Gep _ base offset _)
+            (compiler-backend-copy-run-protect-value-count assignments src)
+            (compiler-backend-copy-run-protect-count
+              assignments
+              instrs
+              (+ index 1))))]
+      [(CompilerIrInstr.Gep _ base offset _)
+        (+
+          (compiler-backend-copy-run-protect-value-count assignments base)
           (+
-            (compiler-backend-copy-run-protect-value-count assignments base)
-            (+
-              (compiler-backend-copy-run-protect-value-count assignments offset)
-              (compiler-backend-copy-run-protect-count
-                assignments
-                (box-get rest))))]
-        [(CompilerIrInstr.StorePtr dst src _)
+            (compiler-backend-copy-run-protect-value-count assignments offset)
+            (compiler-backend-copy-run-protect-count
+              assignments
+              instrs
+              (+ index 1))))]
+      [(CompilerIrInstr.StorePtr dst src _)
+        (+
+          (compiler-backend-copy-run-protect-value-count assignments dst)
           (+
-            (compiler-backend-copy-run-protect-value-count assignments dst)
-            (+
-              (compiler-backend-copy-run-protect-value-count assignments src)
-              (compiler-backend-copy-run-protect-count
-                assignments
-                (box-get rest))))]
-        [_ 0])]))
+            (compiler-backend-copy-run-protect-value-count assignments src)
+            (compiler-backend-copy-run-protect-count
+              assignments
+              instrs
+              (+ index 1))))]
+      [_ 0])))
 
 (define (compiler-backend-copy-run-protect-fill-value
   [assignments : CompilerRegAssignmentList]
@@ -25255,17 +25279,20 @@
 
 (define (compiler-backend-copy-run-protect-fill
   [assignments : CompilerRegAssignmentList]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [cursor : i64]
   [out : (Array String)]
   [index : i64]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) index]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (< cursor (struct-get instrs len))
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs cursor)]
+      [rest : i64 (+ cursor 1)]
       (match instr
         [(CompilerIrInstr.CopyBytes dst src _)
           (compiler-backend-copy-run-protect-fill
             assignments
-            (box-get rest)
+            instrs
+            rest
             out
             (compiler-backend-copy-run-protect-fill-value
               assignments
@@ -25279,7 +25306,8 @@
         [(CompilerIrInstr.Gep _ base offset _)
           (compiler-backend-copy-run-protect-fill
             assignments
-            (box-get rest)
+            instrs
+            rest
             out
             (compiler-backend-copy-run-protect-fill-value
               assignments
@@ -25293,7 +25321,8 @@
         [(CompilerIrInstr.StorePtr dst src _)
           (compiler-backend-copy-run-protect-fill
             assignments
-            (box-get rest)
+            instrs
+            rest
             out
             (compiler-backend-copy-run-protect-fill-value
               assignments
@@ -25304,16 +25333,18 @@
                 dst
                 out
                 index)))]
-        [_ index])]))
+        [_ index]))
+    index))
 
 (define (compiler-backend-copy-run-protect-exclude
   [assignments : CompilerRegAssignmentList]
-  [instrs : CompilerIrInstrList]) : (Array String)
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : (Array String)
   (let
-    [n : i64 (compiler-backend-copy-run-protect-count assignments instrs)]
+    [n : i64 (compiler-backend-copy-run-protect-count assignments instrs index)]
     [out : (Array String) (make-array String n)]
     (begin
-      (compiler-backend-copy-run-protect-fill assignments instrs out 0)
+      (compiler-backend-copy-run-protect-fill assignments instrs index out 0)
       out)))
 
 ;; GAP2a (M-C2/B2 for the aggregate/group copy path): fused Gep+CopyBytes.
@@ -39608,13 +39639,16 @@
     [_ false]))
 
 (define (compiler-backend-rest-starts-load-compare-branch?
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [load-dst : i64]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [use-counts : (Array i64)]) : bool
-  (match rest
-    [(CompilerIrInstrList.Cons maybe-cmp after-cmp)
+  (if (< index (struct-get instrs len))
+    (let
+      [maybe-cmp : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [after-cmp : i64 (+ index 1)]
       (match maybe-cmp
         [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
           (if (and
@@ -39623,23 +39657,26 @@
             (compiler-backend-var-single-use? use-counts cmp-dst)
             (not
               (compiler-backend-binop-f64? types global-types lhs rhs cmp-ty)))
-            (match (box-get after-cmp)
-              [(CompilerIrInstrList.Cons branch _)
+            (if (< after-cmp (struct-get instrs len))
+              (let
+                [branch : CompilerIrInstr
+                  (compiler-ir-instr-seq-ref instrs after-cmp)]
                 (match branch
                   [(CompilerIrInstr.Branch cond _ _)
                     (compiler-backend-branch-uses-var? cond cmp-dst)]
-                  [_ false])]
-              [_ false])
+                  [_ false]))
+              false)
             false)]
-        [_ false])]
-    [_ false]))
+        [_ false]))
+    false))
 
 (define (compiler-backend-fused-compare-fallthrough
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [fallthrough : CompilerBackendMaybeLabel]) : CompilerBackendMaybeLabel
-  (match rest
-    [(CompilerIrInstrList.Nil) fallthrough]
-    [_ (CompilerBackendMaybeLabel.No)]))
+  (if (< index (struct-get instrs len))
+    (CompilerBackendMaybeLabel.No)
+    fallthrough))
 
 ;; A block-terminator fusion (mov/call/binop directly into a return) emits the
 ;; whole tail of the block and does not recurse, so it appends the terminator's
@@ -39797,7 +39834,8 @@
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [head : String]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (begin
@@ -39818,7 +39856,8 @@
           fallthrough
           dst
           ty
-          rest
+          instrs
+          index
           out)]
       [(CompilerIrInstr.CallIndirect dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
@@ -39826,7 +39865,8 @@
           fallthrough
           dst
           ty
-          rest
+          instrs
+          index
           out)]
       [(CompilerIrInstr.CallIndirectC dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
@@ -39834,28 +39874,31 @@
           fallthrough
           dst
           ty
-          rest
+          instrs
+          index
           out)]
-      [_ (compiler-backend-emit-instrs ctx fallthrough rest out)])))
+      [_ (compiler-backend-emit-instrs ctx fallthrough instrs index out)])))
 
 (define (compiler-backend-emit-instrs-normal
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-instr
     ctx
-    (match rest
-      [(CompilerIrInstrList.Nil) fallthrough]
-      [_ (CompilerBackendMaybeLabel.No)])
+    (if (< index (struct-get instrs len))
+      (CompilerBackendMaybeLabel.No)
+      fallthrough)
     instr)
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs-after-emitted
         ctx
         fallthrough
         instr
-        rest
+        instrs
+        index
         head
         out)]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
@@ -39864,13 +39907,14 @@
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [result : ResultCompilerBackend]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match result
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append out (compiler-backend-emergency-wrap head))
-        (compiler-backend-emit-instrs ctx fallthrough rest out))]
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-rax-forwardable-consumer?
@@ -39909,23 +39953,26 @@
   [global-types : CompilerBackendGlobalTypeList]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
-  [rest : CompilerIrInstrList]) : bool
-  (match rest
-    [(CompilerIrInstrList.Cons instr _)
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (< index (struct-get instrs len))
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (compiler-backend-rax-forwardable-consumer?
         types
         global-types
         assignments
         rax-var
-        instr)]
-    [(CompilerIrInstrList.Nil) false]))
+        instr))
+    false))
 
 (define (compiler-backend-emit-instrs-materialize-rax
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (begin
     (compiler-backend-emit-store-typed-var-with-plan-into
@@ -39934,26 +39981,20 @@
       rax-var
       "%rax"
       rax-ty)
-    (compiler-backend-emit-instrs ctx fallthrough instrs out)))
+    (compiler-backend-emit-instrs ctx fallthrough instrs index out)))
 
 (define (compiler-backend-emit-instrs-with-rax-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (begin
-        (compiler-backend-emit-store-typed-var-with-plan-into
-          out
-          ctx.assignments
-          rax-var
-          "%rax"
-          rax-ty)
-        (ResultCompilerBackend.Ok ""))]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (< index (struct-get instrs len))
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [rest : i64 (+ index 1)]
       (match instr
         [(CompilerIrInstr.BinOp dst op lhs rhs ty)
           (if (compiler-backend-rax-forwardable-consumer?
@@ -40008,12 +40049,14 @@
                         fallthrough
                         dst
                         ty
-                        (box-get rest)
+                        instrs
+                        rest
                         out)
                       (compiler-backend-emit-instrs
                         ctx
                         fallthrough
-                        (box-get rest)
+                        instrs
+                        rest
                         out)))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))
@@ -40023,6 +40066,7 @@
               rax-var
               rax-ty
               instrs
+              index
               out))]
         [(CompilerIrInstr.Mov dst src ty)
           (if (compiler-backend-branch-uses-var? src rax-var)
@@ -40032,7 +40076,8 @@
                 fallthrough
                 dst
                 ty
-                (box-get rest)
+                instrs
+                rest
                 out)
               (begin
                 (compiler-backend-emit-store-typed-var-with-plan-into
@@ -40041,26 +40086,23 @@
                   dst
                   "%rax"
                   ty)
-                (compiler-backend-emit-instrs
-                  ctx
-                  fallthrough
-                  (box-get rest)
-                  out)))
+                (compiler-backend-emit-instrs ctx fallthrough instrs rest out)))
             (compiler-backend-emit-instrs-materialize-rax
               ctx
               fallthrough
               rax-var
               rax-ty
               instrs
+              index
               out))]
         [(CompilerIrInstr.Return maybe)
           (match maybe
             [(CompilerIrMaybeValue.Some value)
               (if (and
                 (compiler-backend-branch-uses-var? value rax-var)
-                (match (box-get rest)
-                  [(CompilerIrInstrList.Nil) true]
-                  [_ false]))
+                (if (< rest (struct-get instrs len))
+                  false
+                  true))
                 (begin
                   (compiler-backend-asm-append
                     out
@@ -40076,6 +40118,7 @@
                   rax-var
                   rax-ty
                   instrs
+                  index
                   out))]
             [(CompilerIrMaybeValue.No)
               (compiler-backend-emit-instrs-materialize-rax
@@ -40084,6 +40127,7 @@
                 rax-var
                 rax-ty
                 instrs
+                index
                 out)])]
         [_
           (compiler-backend-emit-instrs-materialize-rax
@@ -40092,18 +40136,29 @@
             rax-var
             rax-ty
             instrs
-            out)])]))
+            index
+            out)]))
+    (begin
+      (compiler-backend-emit-store-typed-var-with-plan-into
+        out
+        ctx.assignments
+        rax-var
+        "%rax"
+        rax-ty)
+      (ResultCompilerBackend.Ok ""))))
 
 (define (compiler-backend-emit-instrs-with-call-rax-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match instrs
-    [(CompilerIrInstrList.Nil) (ResultCompilerBackend.Ok "")]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (< index (struct-get instrs len))
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [rest : i64 (+ index 1)]
       (if (compiler-backend-call-rax-forwardable-instr?
         ctx.type-segment-bases
         instr
@@ -40112,9 +40167,9 @@
         rax-ty)
         (match (compiler-backend-emit-instr-with-call-rax
           ctx
-          (match (box-get rest)
-            [(CompilerIrInstrList.Nil) fallthrough]
-            [_ (CompilerBackendMaybeLabel.No)])
+          (if (< rest (struct-get instrs len))
+            (CompilerBackendMaybeLabel.No)
+            fallthrough)
           instr
           rax-var
           rax-ty)
@@ -40123,12 +40178,14 @@
               ctx
               fallthrough
               instr
-              (box-get rest)
+              instrs
+              rest
               head
               out)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])
-        (compiler-backend-emit-instrs ctx fallthrough instrs out))]))
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out)))
+    (ResultCompilerBackend.Ok "")))
 
 (define (compiler-backend-emit-fused-compare-branch-rest
   [ctx : CompilerBackendEmissionContext]
@@ -40140,7 +40197,8 @@
   [ty : AstType]
   [true-label : i64]
   [false-label : i64]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
     ctx.type-segment-bases
@@ -40154,7 +40212,7 @@
     (compiler-backend-binop-operand-ty ctx.types ctx.global-types op lhs rhs ty)
     true-label
     false-label
-    (compiler-backend-fused-compare-fallthrough rest fallthrough)
+    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
     ctx.program-index
     ctx.vars
     (compiler-backend-scratch-plan-register-ahead
@@ -40176,7 +40234,7 @@
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append out (compiler-backend-emergency-wrap head))
-        (compiler-backend-emit-instrs ctx fallthrough rest out))]
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
         (box
@@ -40201,7 +40259,8 @@
   [_cmp-ty : AstType]
   [true-label : i64]
   [false-label : i64]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
     ctx.type-segment-bases
@@ -40215,7 +40274,7 @@
     load-ty
     true-label
     false-label
-    (compiler-backend-fused-compare-fallthrough rest fallthrough)
+    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
     ctx.program-index
     ctx.vars
     (compiler-backend-scratch-plan-register-ahead
@@ -40237,7 +40296,7 @@
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append out (compiler-backend-emergency-wrap head))
-        (compiler-backend-emit-instrs ctx fallthrough rest out))]
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
         (box
@@ -40258,7 +40317,8 @@
   [ty : AstType]
   [true-label : i64]
   [false-label : i64]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   ;; `not src` branches to its false successor when src is true. Emit the
   ;; source branch directly with reversed successors, including the matching
@@ -40272,7 +40332,7 @@
     src
     false-label
     true-label
-    (compiler-backend-fused-compare-fallthrough rest fallthrough)
+    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
     ctx.program-index
     ctx.vars
     (compiler-backend-scratch-plan-register-ahead
@@ -40290,7 +40350,7 @@
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append out (compiler-backend-emergency-wrap head))
-        (compiler-backend-emit-instrs ctx fallthrough rest out))]
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
         (box
@@ -40321,7 +40381,8 @@
   [_cmp-ty : AstType]
   [true-label : i64]
   [false-label : i64]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
     ctx.type-segment-bases
@@ -40337,7 +40398,7 @@
     load-ty
     true-label
     false-label
-    (compiler-backend-fused-compare-fallthrough rest fallthrough)
+    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
     ctx.program-index
     ctx.vars
     (compiler-backend-scratch-plan-register-ahead
@@ -40359,7 +40420,7 @@
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append out (compiler-backend-emergency-wrap head))
-        (compiler-backend-emit-instrs ctx fallthrough rest out))]
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
         (box
@@ -40383,7 +40444,7 @@
 ;; address operand home, and every scavenge excludes dst-home.
 (defenum CompilerBackendGepLoadAluFold
   (No)
-  (Some String i64 CompilerIrValue (Box CompilerIrInstrList)))
+  (Some String i64 CompilerIrValue i64))
 
 ;; Two adjacent fused loads followed by a commutative ALU op can use the same
 ;; two-instruction shape as clang: load one memory operand straight into the
@@ -40392,7 +40453,7 @@
 ;; so rejecting the fold has no scavenge or emergency-save side effects.
 (defenum CompilerBackendGepLoadPairAluFold
   (No)
-  (Some String i64 String String (Box CompilerIrInstrList)))
+  (Some String i64 String String i64))
 
 (define (compiler-backend-gep-load-pair-alu-mnemonic [op : CompilerIrBinOp]) : String
   (match op
@@ -40420,9 +40481,12 @@
   [gep-disp1 : i64]
   [load-dst1 : i64]
   [load-ty1 : AstType]
-  [rest : CompilerIrInstrList]) : CompilerBackendGepLoadPairAluFold
-  (match rest
-    [(CompilerIrInstrList.Cons maybe-binop after-binop)
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendGepLoadPairAluFold
+  (if (< index (struct-get instrs len))
+    (let
+      [maybe-binop : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [after-binop : i64 (+ index 1)]
       (match maybe-binop
         [(CompilerIrInstr.BinOp dst op lhs rhs ty)
           (let
@@ -40488,10 +40552,10 @@
                 dst
                 addr0
                 addr1
-                (box after-binop))
+                after-binop)
               (CompilerBackendGepLoadPairAluFold.No)))]
-        [_ (CompilerBackendGepLoadPairAluFold.No)])]
-    [_ (CompilerBackendGepLoadPairAluFold.No)]))
+        [_ (CompilerBackendGepLoadPairAluFold.No)]))
+    (CompilerBackendGepLoadPairAluFold.No)))
 
 (define (compiler-backend-emit-gep-load-pair-alu
   [assignments : CompilerRegAssignmentList]
@@ -40521,29 +40585,28 @@
 
 (defenum CompilerBackendMaybeGepLoadPairAluDivmodStore
   (No)
-  (Some
-    i64
-    CompilerIrValue
-    CompilerIrValue
-    AstType
-    CompilerIrValue
-    AstType
-    (Box CompilerIrInstrList)))
+  (Some i64 CompilerIrValue CompilerIrValue AstType CompilerIrValue AstType i64))
 
 (define (compiler-backend-gep-load-pair-alu-divmod-store-probe
   [ctx : CompilerBackendEmissionContext]
   [div-dst : i64]
   [src : String]
   [magic : String]
-  [after-div : CompilerIrInstrList]) : CompilerBackendMaybeGepLoadPairAluDivmodStore
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendMaybeGepLoadPairAluDivmodStore
   (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
-    (match after-div
-      [(CompilerIrInstrList.Cons maybe-gep after-gep)
+    (if (< index (struct-get instrs len))
+      (let
+        [maybe-gep : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        [after-gep : i64 (+ index 1)]
         (match maybe-gep
           [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
-              (match (box-get after-gep)
-                [(CompilerIrInstrList.Cons maybe-store after-store)
+              (if (< after-gep (struct-get instrs len))
+                (let
+                  [maybe-store : CompilerIrInstr
+                    (compiler-ir-instr-seq-ref instrs after-gep)]
+                  [after-store : i64 (+ after-gep 1)]
                   (match maybe-store
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (and
@@ -40570,13 +40633,13 @@
                           elem-ty
                           store-value
                           store-ty
-                          (box after-store))
+                          after-store)
                         (CompilerBackendMaybeGepLoadPairAluDivmodStore.No))]
-                    [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)])]
-                [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)])
+                    [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)]))
+                (CompilerBackendMaybeGepLoadPairAluDivmodStore.No))
               (CompilerBackendMaybeGepLoadPairAluDivmodStore.No))]
-          [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)])]
-      [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)])
+          [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)]))
+      (CompilerBackendMaybeGepLoadPairAluDivmodStore.No))
     (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)))
 
 (define (compiler-backend-emit-gep-load-pair-alu-divmod-rest
@@ -40589,14 +40652,17 @@
   [base : CompilerIrValue]
   [offset0 : CompilerIrValue]
   [offset1 : CompilerIrValue]
-  [after-binop : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepLoadPairAluDivmodEmission
   ;; Divmod polish normally retargets a one-use arithmetic producer into the
   ;; preserved-dividend register. A load-pair fold consumes that producer
   ;; first, so retain the same steering here instead of reintroducing a hot
   ;; producer-home -> dividend-home copy before the magic-mod sequence.
-  (match after-binop
-    [(CompilerIrInstrList.Cons div-instr after-div)
+  (if (< index (struct-get instrs len))
+    (let
+      [div-instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [after-div : i64 (+ index 1)]
       (match div-instr
         [(CompilerIrInstr.BinOp div-dst div-op div-lhs div-rhs div-ty)
           (let
@@ -40641,7 +40707,8 @@
                 div-dst
                 src
                 magic
-                (box-get after-div))]
+                instrs
+                after-div)]
             [base-home : String
               (compiler-backend-value-scalar-register ctx.assignments base)]
             [index0-home : String
@@ -40681,7 +40748,7 @@
                 [saved0-reg : i64 compiler-backend-emit-home-override0-reg]
                 [saved1-var : i64 compiler-backend-emit-home-override1-var]
                 [saved1-reg : i64 compiler-backend-emit-home-override1-reg]
-                [continuation : CompilerIrInstrList (box-get after-div)]
+                [continuation : i64 after-div]
                 [emitted : ResultCompilerBackend
                   (begin
                     (compiler-backend-divmod-overrides-install-spellings!
@@ -40750,9 +40817,7 @@
                                     store-ty)
                                     [(ResultCompilerBackend.Ok store-asm)
                                       (begin
-                                        (set!
-                                          continuation
-                                          (box-get after-store))
+                                        (set! continuation after-store)
                                         (ResultCompilerBackend.Ok
                                           (string.append
                                             pair-asm
@@ -40782,11 +40847,12 @@
                     ctx
                     fallthrough
                     emitted
+                    instrs
                     continuation
                     out)))
               (CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)))]
-        [_ (CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)])]
-    [_ (CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)]))
+        [_ (CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)]))
+    (CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)))
 
 (defenum CompilerBackendMaybeGepLoadPairAluEmission
   (No)
@@ -40801,7 +40867,8 @@
   [elem-ty : AstType]
   [load-dst : i64]
   [load-ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepLoadPairAluEmission
   ;; The existing general pair path owns constant field offsets. This narrow
   ;; sibling admits only two dynamic indexed loads followed immediately by the
@@ -40809,8 +40876,10 @@
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some _) (CompilerBackendMaybeGepLoadPairAluEmission.No)]
     [(option_i64.None)
-      (match rest
-        [(CompilerIrInstrList.Cons maybe-gep after-gep)
+      (if (< index (struct-get instrs len))
+        (let
+          [maybe-gep : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+          [after-gep : i64 (+ index 1)]
           (match maybe-gep
             [(CompilerIrInstr.Gep gep-dst2 base2 offset2 elem-ty2)
               (if (and
@@ -40820,8 +40889,11 @@
                   [(option_i64.Some _)
                     (CompilerBackendMaybeGepLoadPairAluEmission.No)]
                   [(option_i64.None)
-                    (match (box-get after-gep)
-                      [(CompilerIrInstrList.Cons maybe-load after-load2)
+                    (if (< after-gep (struct-get instrs len))
+                      (let
+                        [maybe-load : CompilerIrInstr
+                          (compiler-ir-instr-seq-ref instrs after-gep)]
+                        [after-load2 : i64 (+ after-gep 1)]
                         (match maybe-load
                           [(CompilerIrInstr.Load load-dst2 src2 load-ty2)
                             (if (compiler-backend-branch-uses-var?
@@ -40847,7 +40919,8 @@
                                 0
                                 load-dst2
                                 load-ty2
-                                (box-get after-load2))
+                                instrs
+                                after-load2)
                                 [(CompilerBackendGepLoadPairAluFold.Some
                                     _
                                     _
@@ -40877,7 +40950,8 @@
                                       gep-fold-disp2
                                       load-dst2
                                       load-ty2
-                                      (box-get after-load2))
+                                      instrs
+                                      after-load2)
                                       [(CompilerBackendGepLoadPairAluFold.Some
                                           mnem
                                           alu-dst
@@ -40894,7 +40968,8 @@
                                           base
                                           offset
                                           offset2
-                                          (box-get after-binop)
+                                          instrs
+                                          after-binop
                                           out)
                                           [(CompilerBackendMaybeGepLoadPairAluDivmodEmission.Some
                                               result)
@@ -40911,7 +40986,8 @@
                                                   alu-dst
                                                   addr0
                                                   addr1)
-                                                (box-get after-binop)
+                                                instrs
+                                                after-binop
                                                 out))])]
                                       [(CompilerBackendGepLoadPairAluFold.No)
                                         ;; The zero-displacement probe above
@@ -40920,11 +40996,11 @@
                                 [(CompilerBackendGepLoadPairAluFold.No)
                                   (CompilerBackendMaybeGepLoadPairAluEmission.No)])
                               (CompilerBackendMaybeGepLoadPairAluEmission.No))]
-                          [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)])]
-                      [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)])])
+                          [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)]))
+                      (CompilerBackendMaybeGepLoadPairAluEmission.No))])
                 (CompilerBackendMaybeGepLoadPairAluEmission.No))]
-            [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)])]
-        [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)])]))
+            [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)]))
+        (CompilerBackendMaybeGepLoadPairAluEmission.No))]))
 
 ;; Two-operand memory-form mnemonics only; Mul is excluded (imul mem needs
 ;; the two-operand register form and folds worse than the fused load).
@@ -40947,14 +41023,17 @@
   [offset : CompilerIrValue]
   [load-dst : i64]
   [load-ty : AstType]
-  [rest : CompilerIrInstrList]) : CompilerBackendGepLoadAluFold
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendGepLoadAluFold
   (if (or
     (compiler-backend-float-type? load-ty)
     (not (= (compiler-backend-type-size type-segment-bases load-ty) 8))
     (not (compiler-backend-var-single-use? use-counts load-dst)))
     (CompilerBackendGepLoadAluFold.No)
-    (match rest
-      [(CompilerIrInstrList.Cons maybe-binop after-binop)
+    (if (< index (struct-get instrs len))
+      (let
+        [maybe-binop : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        [after-binop : i64 (+ index 1)]
         (match maybe-binop
           [(CompilerIrInstr.BinOp dst op lhs rhs ty)
             (let
@@ -40985,14 +41064,10 @@
                 (not (string.eq dst-home ""))
                 (not (string.eq dst-home base-home))
                 (not (string.eq dst-home offset-home)))
-                (CompilerBackendGepLoadAluFold.Some
-                  mnem
-                  dst
-                  lhs
-                  (box after-binop))
+                (CompilerBackendGepLoadAluFold.Some mnem dst lhs after-binop)
                 (CompilerBackendGepLoadAluFold.No)))]
-          [_ (CompilerBackendGepLoadAluFold.No)])]
-      [_ (CompilerBackendGepLoadAluFold.No)])))
+          [_ (CompilerBackendGepLoadAluFold.No)]))
+      (CompilerBackendGepLoadAluFold.No))))
 
 ;; The dynamic-index register pool mirror of scavenge-exclude-regs2, extended
 ;; with the ALU destination home.
@@ -41176,7 +41251,8 @@
   [elem-ty : AstType]
   [load-dst : i64]
   [load-ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   ;; GAP8 ALU fold first: the probe is side-effect-free, so a rejection costs
   ;; nothing and falls through to the existing single/pair load fusion.
@@ -41190,7 +41266,8 @@
     offset
     load-dst
     load-ty
-    rest)
+    instrs
+    index)
     [(CompilerBackendGepLoadAluFold.Some mnem alu-dst x after-binop)
       (compiler-backend-emit-fused-result-rest
         ctx
@@ -41205,7 +41282,8 @@
           offset
           elem-ty
           gep-fold-disp)
-        (box-get after-binop)
+        instrs
+        after-binop
         out)]
     [(CompilerBackendGepLoadAluFold.No)
       (match (compiler-backend-emit-dynamic-gep-load-pair-alu-rest
@@ -41217,7 +41295,8 @@
         elem-ty
         load-dst
         load-ty
-        rest
+        instrs
+        index
         out)
         [(CompilerBackendMaybeGepLoadPairAluEmission.Some result) result]
         [(CompilerBackendMaybeGepLoadPairAluEmission.No)
@@ -41231,7 +41310,8 @@
             elem-ty
             load-dst
             load-ty
-            rest
+            instrs
+            index
             out)])]))
 
 (define (compiler-backend-emit-fused-gep-load-plain-rest
@@ -41244,7 +41324,8 @@
   [elem-ty : AstType]
   [load-dst : i64]
   [load-ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   ;; M-D emergency-leak fix: the single gep+load emission is inlined at each
   ;; fallthrough site instead of being computed SPECULATIVELY up front.
@@ -41257,8 +41338,10 @@
   ;; abort on every mid-band self-host build).
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some _)
-      (match rest
-        [(CompilerIrInstrList.Cons maybe-gep after-gep)
+      (if (< index (struct-get instrs len))
+        (let
+          [maybe-gep : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+          [after-gep : i64 (+ index 1)]
           (match maybe-gep
             [(CompilerIrInstr.Gep gep-dst2 base2 offset2 elem-ty2)
               (if (and
@@ -41266,8 +41349,11 @@
                 (opt-value-eq base2 base))
                 (match (compiler-backend-value-as-i64 offset2)
                   [(option_i64.Some _)
-                    (match (box-get after-gep)
-                      [(CompilerIrInstrList.Cons maybe-load after-load2)
+                    (if (< after-gep (struct-get instrs len))
+                      (let
+                        [maybe-load : CompilerIrInstr
+                          (compiler-ir-instr-seq-ref instrs after-gep)]
+                        [after-load2 : i64 (+ after-gep 1)]
                         (match maybe-load
                           [(CompilerIrInstr.Load load-dst2 src2 load-ty2)
                             (if (and
@@ -41281,7 +41367,8 @@
                                     ctx.use-counts
                                     load-dst2)
                                   (compiler-backend-rest-starts-load-compare-branch?
-                                    (box-get after-load2)
+                                    instrs
+                                    after-load2
                                     load-dst2
                                     ctx.types
                                     ctx.global-types
@@ -41311,7 +41398,8 @@
                                   gep-fold-disp2
                                   load-dst2
                                   load-ty2
-                                  (box-get after-load2))
+                                  instrs
+                                  after-load2)
                                   [(CompilerBackendGepLoadPairAluFold.Some
                                       mnem
                                       alu-dst
@@ -41327,7 +41415,8 @@
                                         alu-dst
                                         addr0
                                         addr1)
-                                      (box-get after-binop)
+                                      instrs
+                                      after-binop
                                       out)]
                                   [(CompilerBackendGepLoadPairAluFold.No)
                                     (compiler-backend-emit-fused-result-rest
@@ -41375,7 +41464,8 @@
                                             ctx.plan)
                                           3
                                           1))
-                                      (box-get after-load2)
+                                      instrs
+                                      after-load2
                                       out)]))
                               (compiler-backend-emit-fused-result-rest
                                 ctx
@@ -41405,7 +41495,8 @@
                                       ctx.plan)
                                     1
                                     1))
-                                rest
+                                instrs
+                                index
                                 out))]
                           [_
                             (compiler-backend-emit-fused-result-rest
@@ -41436,36 +41527,37 @@
                                     ctx.plan)
                                   1
                                   1))
-                              rest
-                              out)])]
-                      [_
-                        (compiler-backend-emit-fused-result-rest
-                          ctx
-                          fallthrough
-                          (compiler-backend-emit-load-from-gep
-                            ctx.type-segment-bases
-                            ctx.assignments
-                            load-dst
-                            base
-                            offset
-                            elem-ty
-                            load-ty
-                            ""
-                            gep-fold-disp
-                            (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch ctx.plan)
-                              0
-                              0)
-                            (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch ctx.plan)
-                              0
-                              1)
-                            (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch ctx.plan)
-                              1
-                              1))
-                          rest
-                          out)])]
+                              instrs
+                              index
+                              out)]))
+                      (compiler-backend-emit-fused-result-rest
+                        ctx
+                        fallthrough
+                        (compiler-backend-emit-load-from-gep
+                          ctx.type-segment-bases
+                          ctx.assignments
+                          load-dst
+                          base
+                          offset
+                          elem-ty
+                          load-ty
+                          ""
+                          gep-fold-disp
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            0
+                            0)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            0
+                            1)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
+                            1
+                            1))
+                        instrs
+                        index
+                        out))]
                   [(option_i64.None)
                     (compiler-backend-emit-fused-result-rest
                       ctx
@@ -41492,7 +41584,8 @@
                           (compiler-backend-runtime-plan-scratch ctx.plan)
                           1
                           1))
-                      rest
+                      instrs
+                      index
                       out)])
                 (compiler-backend-emit-fused-result-rest
                   ctx
@@ -41519,7 +41612,8 @@
                       (compiler-backend-runtime-plan-scratch ctx.plan)
                       1
                       1))
-                  rest
+                  instrs
+                  index
                   out))]
             [_
               (compiler-backend-emit-fused-result-rest
@@ -41547,36 +41641,37 @@
                     (compiler-backend-runtime-plan-scratch ctx.plan)
                     1
                     1))
-                rest
-                out)])]
-        [_
-          (compiler-backend-emit-fused-result-rest
-            ctx
-            fallthrough
-            (compiler-backend-emit-load-from-gep
-              ctx.type-segment-bases
-              ctx.assignments
-              load-dst
-              base
-              offset
-              elem-ty
-              load-ty
-              ""
-              gep-fold-disp
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch ctx.plan)
-                0
-                0)
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch ctx.plan)
-                0
-                1)
-              (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch ctx.plan)
-                1
-                1))
-            rest
-            out)])]
+                instrs
+                index
+                out)]))
+        (compiler-backend-emit-fused-result-rest
+          ctx
+          fallthrough
+          (compiler-backend-emit-load-from-gep
+            ctx.type-segment-bases
+            ctx.assignments
+            load-dst
+            base
+            offset
+            elem-ty
+            load-ty
+            ""
+            gep-fold-disp
+            (compiler-backend-scratch-plan-register-ahead
+              (compiler-backend-runtime-plan-scratch ctx.plan)
+              0
+              0)
+            (compiler-backend-scratch-plan-register-ahead
+              (compiler-backend-runtime-plan-scratch ctx.plan)
+              0
+              1)
+            (compiler-backend-scratch-plan-register-ahead
+              (compiler-backend-runtime-plan-scratch ctx.plan)
+              1
+              1))
+          instrs
+          index
+          out))]
     [(option_i64.None)
       (compiler-backend-emit-fused-result-rest
         ctx
@@ -41603,7 +41698,8 @@
             (compiler-backend-runtime-plan-scratch ctx.plan)
             1
             1))
-        rest
+        instrs
+        index
         out)]))
 
 (define (compiler-backend-emit-fused-gep-store-rest
@@ -41616,7 +41712,8 @@
   [elem-ty : AstType]
   [value : CompilerIrValue]
   [store-ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-to-gep
     ctx.type-segment-bases
@@ -41643,7 +41740,7 @@
     [(ResultCompilerBackend.Ok head)
       (begin
         (compiler-backend-asm-append out (compiler-backend-emergency-wrap head))
-        (compiler-backend-emit-instrs ctx fallthrough rest out))]
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
         (box
@@ -41663,7 +41760,8 @@
   [src : CompilerIrValue]
   [ty : AstType]
   [target-label : i64]
-  [after-jump : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match (compiler-backend-emit-mov-trivial-phi-return-edge
     ctx.type-segment-bases
@@ -41704,9 +41802,8 @@
                   ctx
                   fallthrough
                   (CompilerIrInstr.Mov dst src ty)
-                  (compiler-ir-instr-cons
-                    (CompilerIrInstr.Jump target-label)
-                    after-jump)
+                  instrs
+                  (- index 1)
                   out)
                 (match (compiler-backend-emit-trivial-phi-return-edge
                   ctx.type-segment-bases
@@ -41736,7 +41833,8 @@
                       (compiler-backend-emit-instrs
                         ctx
                         fallthrough
-                        after-jump
+                        instrs
+                        index
                         out))]
                   [(ResultCompilerBackend.Err message)
                     (ResultCompilerBackend.Err
@@ -41764,13 +41862,12 @@
             ctx
             fallthrough
             (CompilerIrInstr.Mov dst src ty)
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump target-label)
-              after-jump)
+            instrs
+            (- index 1)
             out))
         (begin
           (compiler-backend-emergency-append out direct-return)
-          (compiler-backend-emit-instrs ctx fallthrough after-jump out)))]
+          (compiler-backend-emit-instrs ctx fallthrough instrs index out)))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
         (box
@@ -43203,13 +43300,14 @@
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [result : ResultCompilerBackend]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (match result
     [(ResultCompilerBackend.Ok asm)
       (begin
         (compiler-backend-asm-append out (compiler-backend-emergency-wrap asm))
-        (compiler-backend-emit-instrs ctx fallthrough rest out))]
+        (compiler-backend-emit-instrs ctx fallthrough instrs index out))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-divmod-result-gep-store-rest
@@ -43224,7 +43322,8 @@
   [elem-ty : AstType]
   [store-value : CompilerIrValue]
   [store-ty : AstType]
-  [after-store : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (let
     [saved-count : i64 compiler-backend-emit-current-count]
@@ -43281,7 +43380,8 @@
       ctx
       fallthrough
       result
-      after-store
+      instrs
+      index
       out)))
 
 (define (compiler-backend-emit-steered-producer-divmod-plain-rest
@@ -43291,7 +43391,8 @@
   [producer-dst : i64]
   [div-instr : CompilerIrInstr]
   [src : String]
-  [after-div : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (let
     [saved-count : i64 compiler-backend-emit-current-count]
@@ -43348,7 +43449,8 @@
       ctx
       fallthrough
       result
-      after-div
+      instrs
+      index
       out)))
 
 (define (compiler-backend-emit-steered-producer-divmod-gep-store-rest
@@ -43365,7 +43467,8 @@
   [elem-ty : AstType]
   [store-value : CompilerIrValue]
   [store-ty : AstType]
-  [after-store : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (let
     [saved-count : i64 compiler-backend-emit-current-count]
@@ -43447,7 +43550,8 @@
       ctx
       fallthrough
       result
-      after-store
+      instrs
+      index
       out)))
 
 (define (compiler-backend-emit-steered-producer-divmod-rest
@@ -43459,16 +43563,22 @@
   [div-dst : i64]
   [src : String]
   [magic : String]
-  [after-div : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
-    (match after-div
-      [(CompilerIrInstrList.Cons maybe-gep after-gep)
+    (if (< index (struct-get instrs len))
+      (let
+        [maybe-gep : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        [after-gep : i64 (+ index 1)]
         (match maybe-gep
           [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
-              (match (box-get after-gep)
-                [(CompilerIrInstrList.Cons maybe-store after-store)
+              (if (< after-gep (struct-get instrs len))
+                (let
+                  [maybe-store : CompilerIrInstr
+                    (compiler-ir-instr-seq-ref instrs after-gep)]
+                  [after-store : i64 (+ after-gep 1)]
                   (match maybe-store
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (and
@@ -43502,7 +43612,8 @@
                           elem-ty
                           store-value
                           store-ty
-                          (box-get after-store)
+                          instrs
+                          after-store
                           out)
                         (compiler-backend-emit-steered-producer-divmod-plain-rest
                           ctx
@@ -43511,7 +43622,8 @@
                           producer-dst
                           div-instr
                           src
-                          after-div
+                          instrs
+                          index
                           out))]
                     [_
                       (compiler-backend-emit-steered-producer-divmod-plain-rest
@@ -43521,18 +43633,19 @@
                         producer-dst
                         div-instr
                         src
-                        after-div
-                        out)])]
-                [_
-                  (compiler-backend-emit-steered-producer-divmod-plain-rest
-                    ctx
-                    fallthrough
-                    producer-instr
-                    producer-dst
-                    div-instr
-                    src
-                    after-div
-                    out)])
+                        instrs
+                        index
+                        out)]))
+                (compiler-backend-emit-steered-producer-divmod-plain-rest
+                  ctx
+                  fallthrough
+                  producer-instr
+                  producer-dst
+                  div-instr
+                  src
+                  instrs
+                  index
+                  out))
               (compiler-backend-emit-steered-producer-divmod-plain-rest
                 ctx
                 fallthrough
@@ -43540,7 +43653,8 @@
                 producer-dst
                 div-instr
                 src
-                after-div
+                instrs
+                index
                 out))]
           [_
             (compiler-backend-emit-steered-producer-divmod-plain-rest
@@ -43550,18 +43664,19 @@
               producer-dst
               div-instr
               src
-              after-div
-              out)])]
-      [_
-        (compiler-backend-emit-steered-producer-divmod-plain-rest
-          ctx
-          fallthrough
-          producer-instr
-          producer-dst
-          div-instr
-          src
-          after-div
-          out)])
+              instrs
+              index
+              out)]))
+      (compiler-backend-emit-steered-producer-divmod-plain-rest
+        ctx
+        fallthrough
+        producer-instr
+        producer-dst
+        div-instr
+        src
+        instrs
+        index
+        out))
     (compiler-backend-emit-steered-producer-divmod-plain-rest
       ctx
       fallthrough
@@ -43569,7 +43684,8 @@
       producer-dst
       div-instr
       src
-      after-div
+      instrs
+      index
       out)))
 
 (define (compiler-backend-try-divmod-result-gep-store
@@ -43581,7 +43697,8 @@
   [div-lhs : CompilerIrValue]
   [div-rhs : CompilerIrValue]
   [div-ty : AstType]
-  [after-div : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeDivmodPolish
   (if (and
     (compiler-backend-var-single-use? ctx.use-counts div-dst)
@@ -43590,13 +43707,18 @@
       div-op
       div-rhs
       div-ty))
-    (match after-div
-      [(CompilerIrInstrList.Cons maybe-gep after-gep)
+    (if (< index (struct-get instrs len))
+      (let
+        [maybe-gep : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        [after-gep : i64 (+ index 1)]
         (match maybe-gep
           [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
-              (match (box-get after-gep)
-                [(CompilerIrInstrList.Cons maybe-store after-store)
+              (if (< after-gep (struct-get instrs len))
+                (let
+                  [maybe-store : CompilerIrInstr
+                    (compiler-ir-instr-seq-ref instrs after-gep)]
+                  [after-store : i64 (+ after-gep 1)]
                   (match maybe-store
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
                       (if (compiler-backend-divmod-direct-gep-store?
@@ -43667,22 +43789,24 @@
                                 elem-ty
                                 store-value
                                 store-ty
-                                (box-get after-store)
+                                instrs
+                                after-store
                                 out))
                             (CompilerBackendMaybeDivmodPolish.No)))
                         (CompilerBackendMaybeDivmodPolish.No))]
-                    [_ (CompilerBackendMaybeDivmodPolish.No)])]
-                [_ (CompilerBackendMaybeDivmodPolish.No)])
+                    [_ (CompilerBackendMaybeDivmodPolish.No)]))
+                (CompilerBackendMaybeDivmodPolish.No))
               (CompilerBackendMaybeDivmodPolish.No))]
-          [_ (CompilerBackendMaybeDivmodPolish.No)])]
-      [_ (CompilerBackendMaybeDivmodPolish.No)])
+          [_ (CompilerBackendMaybeDivmodPolish.No)]))
+      (CompilerBackendMaybeDivmodPolish.No))
     (CompilerBackendMaybeDivmodPolish.No)))
 
 (define (compiler-backend-try-divmod-polish
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeDivmodPolish
   (match instr
     [(CompilerIrInstr.BinOp
@@ -43691,8 +43815,10 @@
         producer-lhs
         producer-rhs
         producer-ty)
-      (match rest
-        [(CompilerIrInstrList.Cons next after-div)
+      (if (< index (struct-get instrs len))
+        (let
+          [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+          [after-div : i64 (+ index 1)]
           (match next
             [(CompilerIrInstr.BinOp div-dst div-op div-lhs div-rhs div-ty)
               (if (compiler-backend-divmod-producer-feeds?
@@ -43752,7 +43878,8 @@
                       div-dst
                       src
                       magic
-                      (box-get after-div)
+                      instrs
+                      after-div
                       out)))
                 (compiler-backend-try-divmod-result-gep-store
                   ctx
@@ -43763,7 +43890,8 @@
                   producer-lhs
                   producer-rhs
                   producer-ty
-                  rest
+                  instrs
+                  index
                   out))]
             [_
               (compiler-backend-try-divmod-result-gep-store
@@ -43775,20 +43903,21 @@
                 producer-lhs
                 producer-rhs
                 producer-ty
-                rest
-                out)])]
-        [_
-          (compiler-backend-try-divmod-result-gep-store
-            ctx
-            fallthrough
-            instr
-            producer-dst
-            producer-op
-            producer-lhs
-            producer-rhs
-            producer-ty
-            rest
-            out)])]
+                instrs
+                index
+                out)]))
+        (compiler-backend-try-divmod-result-gep-store
+          ctx
+          fallthrough
+          instr
+          producer-dst
+          producer-op
+          producer-lhs
+          producer-rhs
+          producer-ty
+          instrs
+          index
+          out))]
     [_ (CompilerBackendMaybeDivmodPolish.No)]))
 
 (define (compiler-backend-emit-load-step
@@ -43798,13 +43927,16 @@
   [load-dst : i64]
   [ptr : CompilerIrValue]
   [load-ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (and
     (compiler-backend-load-compare-type? ctx.type-segment-bases load-ty)
     (compiler-backend-var-single-use? ctx.use-counts load-dst))
-    (match rest
-      [(CompilerIrInstrList.Cons next after-cmp)
+    (if (< index (struct-get instrs len))
+      (let
+        [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        [after-cmp : i64 (+ index 1)]
         (match next
           [(CompilerIrInstr.Load second-dst second-src second-ty)
             (if (compiler-backend-branch-uses-var? second-src load-dst)
@@ -43835,13 +43967,15 @@
                     (compiler-backend-runtime-plan-scratch ctx.plan)
                     1
                     1))
-                (box-get after-cmp)
+                instrs
+                after-cmp
                 out)
               (compiler-backend-emit-instrs-normal
                 ctx
                 fallthrough
                 instr
-                rest
+                instrs
+                index
                 out))]
           [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
             (if (and
@@ -43855,8 +43989,11 @@
                   lhs
                   rhs
                   cmp-ty)))
-              (match (box-get after-cmp)
-                [(CompilerIrInstrList.Cons branch after-branch)
+              (if (< after-cmp (struct-get instrs len))
+                (let
+                  [branch : CompilerIrInstr
+                    (compiler-ir-instr-seq-ref instrs after-cmp)]
+                  [after-branch : i64 (+ after-cmp 1)]
                   (match branch
                     [(CompilerIrInstr.Branch cond true-label false-label)
                       (if (compiler-backend-branch-uses-var? cond cmp-dst)
@@ -43872,38 +44009,54 @@
                           cmp-ty
                           true-label
                           false-label
-                          (box-get after-branch)
+                          instrs
+                          after-branch
                           out)
                         (compiler-backend-emit-instrs-normal
                           ctx
                           fallthrough
                           instr
-                          rest
+                          instrs
+                          index
                           out))]
                     [_
                       (compiler-backend-emit-instrs-normal
                         ctx
                         fallthrough
                         instr
-                        rest
-                        out)])]
-                [_
-                  (compiler-backend-emit-instrs-normal
-                    ctx
-                    fallthrough
-                    instr
-                    rest
-                    out)])
+                        instrs
+                        index
+                        out)]))
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  index
+                  out))
               (compiler-backend-emit-instrs-normal
                 ctx
                 fallthrough
                 instr
-                rest
+                instrs
+                index
                 out))]
           [_
-            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)])]
-      [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)])
-    (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)))
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              index
+              out)]))
+      (compiler-backend-emit-instrs-normal
+        ctx
+        fallthrough
+        instr
+        instrs
+        index
+        out))
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
 (define (compiler-backend-emit-store-ptr-step
   [ctx : CompilerBackendEmissionContext]
@@ -43912,10 +44065,13 @@
   [ptr : CompilerIrValue]
   [value0 : CompilerIrValue]
   [ty0 : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match rest
-    [(CompilerIrInstrList.Cons maybe-gep after-gep)
+  (if (< index (struct-get instrs len))
+    (let
+      [maybe-gep : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [after-gep : i64 (+ index 1)]
       (match maybe-gep
         [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
           (if (and
@@ -43931,8 +44087,11 @@
                         ctx.type-segment-bases
                         elem-ty))]
                   (if (compiler-backend-imm32? disp)
-                    (match (box-get after-gep)
-                      [(CompilerIrInstrList.Cons maybe-store after-store)
+                    (if (< after-gep (struct-get instrs len))
+                      (let
+                        [maybe-store : CompilerIrInstr
+                          (compiler-ir-instr-seq-ref instrs after-gep)]
+                        [after-store : i64 (+ after-gep 1)]
                         (match maybe-store
                           [(CompilerIrInstr.StorePtr dst value1 ty1)
                             (if (compiler-backend-branch-uses-var? dst gep-dst)
@@ -43964,44 +44123,62 @@
                                       ctx.plan)
                                     2
                                     1))
-                                (box-get after-store)
+                                instrs
+                                after-store
                                 out)
                               (compiler-backend-emit-instrs-normal
                                 ctx
                                 fallthrough
                                 instr
-                                rest
+                                instrs
+                                index
                                 out))]
                           [_
                             (compiler-backend-emit-instrs-normal
                               ctx
                               fallthrough
                               instr
-                              rest
-                              out)])]
-                      [_
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          rest
-                          out)])
+                              instrs
+                              index
+                              out)]))
+                      (compiler-backend-emit-instrs-normal
+                        ctx
+                        fallthrough
+                        instr
+                        instrs
+                        index
+                        out))
                     (compiler-backend-emit-instrs-normal
                       ctx
                       fallthrough
                       instr
-                      rest
+                      instrs
+                      index
                       out)))]
               [(option_i64.None)
                 (compiler-backend-emit-instrs-normal
                   ctx
                   fallthrough
                   instr
-                  rest
+                  instrs
+                  index
                   out)])
-            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out))]
-        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)])]
-    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)]))
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              index
+              out))]
+        [_
+          (compiler-backend-emit-instrs-normal
+            ctx
+            fallthrough
+            instr
+            instrs
+            index
+            out)]))
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
 (define (compiler-backend-emit-vector-load-step
   [ctx : CompilerBackendEmissionContext]
@@ -44012,10 +44189,13 @@
   [index : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [cursor : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match rest
-    [(CompilerIrInstrList.Cons next after-binop)
+  (if (< cursor (struct-get instrs len))
+    (let
+      [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs cursor)]
+      [after-binop : i64 (+ cursor 1)]
       (match next
         [(CompilerIrInstr.VectorBinOp payload-box)
           (match (box-get payload-box)
@@ -44068,23 +44248,39 @@
                           next
                           ctx.func-diag
                           ""))
-                      (box-get after-binop)
+                      instrs
+                      after-binop
                       out)]
                   [(CompilerBackendVectorMemFold.No)
                     (compiler-backend-emit-instrs-normal
                       ctx
                       fallthrough
                       instr
-                      rest
+                      instrs
+                      cursor
                       out)])
                 (compiler-backend-emit-instrs-normal
                   ctx
                   fallthrough
                   instr
-                  rest
+                  instrs
+                  cursor
                   out))])]
-        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)])]
-    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)]))
+        [_
+          (compiler-backend-emit-instrs-normal
+            ctx
+            fallthrough
+            instr
+            instrs
+            cursor
+            out)]))
+    (compiler-backend-emit-instrs-normal
+      ctx
+      fallthrough
+      instr
+      instrs
+      cursor
+      out)))
 
 (define (compiler-backend-emit-copy-bytes-step
   [ctx : CompilerBackendEmissionContext]
@@ -44092,13 +44288,14 @@
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
   [size : i64]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (let
     [protect-n : i64
-      (compiler-backend-copy-run-protect-count ctx.assignments rest)]
+      (compiler-backend-copy-run-protect-count ctx.assignments instrs index)]
     [protect : (Array String)
-      (compiler-backend-copy-run-protect-exclude ctx.assignments rest)]
+      (compiler-backend-copy-run-protect-exclude ctx.assignments instrs index)]
     (compiler-backend-emit-fused-result-rest
       ctx
       fallthrough
@@ -44130,7 +44327,8 @@
             0
             2)
           ""))
-      rest
+      instrs
+      index
       out)))
 
 (define (compiler-backend-emit-mov-step
@@ -44140,14 +44338,20 @@
   [dst : i64]
   [src : CompilerIrValue]
   [ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match rest
-    [(CompilerIrInstrList.Cons next after-jump)
+  (if (< index (struct-get instrs len))
+    (let
+      [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [after-jump : i64 (+ index 1)]
       (match next
         [(CompilerIrInstr.Cast cast-dst cast-src _ _)
-          (match (box-get after-jump)
-            [(CompilerIrInstrList.Cons after-cast after-binop)
+          (if (< after-jump (struct-get instrs len))
+            (let
+              [after-cast : CompilerIrInstr
+                (compiler-ir-instr-seq-ref instrs after-jump)]
+              [after-binop : i64 (+ after-jump 1)]
               (match after-cast
                 [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
                   (if (and
@@ -44173,7 +44377,8 @@
                           (compiler-backend-emit-instrs
                             ctx
                             fallthrough
-                            (box-get after-binop)
+                            instrs
+                            after-binop
                             out))]
                       [(ResultCompilerBackend.Err message)
                         (ResultCompilerBackend.Err message)])
@@ -44181,22 +44386,24 @@
                       ctx
                       fallthrough
                       instr
-                      rest
+                      instrs
+                      index
                       out))]
                 [_
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
-                    out)])]
-            [_
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                rest
-                out)])]
+                    instrs
+                    index
+                    out)]))
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              index
+              out))]
         [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
           (if (and
             (compiler-backend-divmod-op? op)
@@ -44232,13 +44439,20 @@
                       (compiler-backend-emit-instrs
                         ctx
                         fallthrough
-                        (box-get after-jump)
+                        instrs
+                        after-jump
                         out))]
                   [(ResultCompilerBackend.Err message)
                     (ResultCompilerBackend.Err message)])]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])
-            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out))]
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              index
+              out))]
         [(CompilerIrInstr.Jump target-label)
           (compiler-backend-emit-fused-mov-trivial-phi-return-rest
             ctx
@@ -44247,60 +44461,69 @@
             src
             ty
             target-label
-            (box-get after-jump)
+            instrs
+            after-jump
             out)]
         [(CompilerIrInstr.Return maybe)
-          (match (box-get after-jump)
-            [(CompilerIrInstrList.Nil)
-              (match maybe
-                [(CompilerIrMaybeValue.Some value)
-                  (if (compiler-backend-branch-uses-var? value dst)
-                    (match (compiler-backend-emit-return
-                      ctx.type-segment-bases
-                      ctx.source-function
-                      ctx.blocks
-                      (CompilerIrMaybeValue.Some src)
-                      ctx.assignments
-                      ctx.vars
-                      ctx.ret-ty
-                      ctx.program-index)
-                      [(ResultCompilerBackend.Ok asm)
-                        (begin
-                          (compiler-backend-emergency-append out asm)
-                          (ResultCompilerBackend.Ok ""))]
-                      [(ResultCompilerBackend.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler-backend-apply-instr-diagnostic
-                              (box-get message)
-                              (compiler-backend-instr-diagnostic
-                                ctx.spans
-                                ctx.source-function
-                                instr
-                                ctx.func-diag
-                                ""))))])
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      rest
-                      out))]
-                [(CompilerIrMaybeValue.No)
+          (if (< after-jump (struct-get instrs len))
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              index
+              out)
+            (match maybe
+              [(CompilerIrMaybeValue.Some value)
+                (if (compiler-backend-branch-uses-var? value dst)
+                  (match (compiler-backend-emit-return
+                    ctx.type-segment-bases
+                    ctx.source-function
+                    ctx.blocks
+                    (CompilerIrMaybeValue.Some src)
+                    ctx.assignments
+                    ctx.vars
+                    ctx.ret-ty
+                    ctx.program-index)
+                    [(ResultCompilerBackend.Ok asm)
+                      (begin
+                        (compiler-backend-emergency-append out asm)
+                        (ResultCompilerBackend.Ok ""))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err
+                        (box
+                          (compiler-backend-apply-instr-diagnostic
+                            (box-get message)
+                            (compiler-backend-instr-diagnostic
+                              ctx.spans
+                              ctx.source-function
+                              instr
+                              ctx.func-diag
+                              ""))))])
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
-                    out)])]
-            [_
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                rest
-                out)])]
-        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)])]
-    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)]))
+                    instrs
+                    index
+                    out))]
+              [(CompilerIrMaybeValue.No)
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  index
+                  out)]))]
+        [_
+          (compiler-backend-emit-instrs-normal
+            ctx
+            fallthrough
+            instr
+            instrs
+            index
+            out)]))
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
 (define (compiler-backend-emit-call-step
   [ctx : CompilerBackendEmissionContext]
@@ -44310,68 +44533,79 @@
   [name : i64]
   [args : CompilerIrCallArgs]
   [ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match rest
-    [(CompilerIrInstrList.Cons next after-return)
+  (if (< index (struct-get instrs len))
+    (let
+      [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [after-return : i64 (+ index 1)]
       (match next
         [(CompilerIrInstr.Return maybe)
-          (match (box-get after-return)
-            [(CompilerIrInstrList.Nil)
-              (match maybe
-                [(CompilerIrMaybeValue.Some value)
-                  (if (and
-                    (compiler-backend-branch-uses-var? value dst)
-                    (not (compiler-backend-stdlib-io-panic-name? name))
-                    (opt-type-eq ctx.type-segment-bases ty ctx.ret-ty))
-                    (compiler-backend-emit-terminator-into
-                      (compiler-backend-emit-call-return
-                        ctx.type-segment-bases
-                        ctx.target
+          (if (< after-return (struct-get instrs len))
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              index
+              out)
+            (match maybe
+              [(CompilerIrMaybeValue.Some value)
+                (if (and
+                  (compiler-backend-branch-uses-var? value dst)
+                  (not (compiler-backend-stdlib-io-panic-name? name))
+                  (opt-type-eq ctx.type-segment-bases ty ctx.ret-ty))
+                  (compiler-backend-emit-terminator-into
+                    (compiler-backend-emit-call-return
+                      ctx.type-segment-bases
+                      ctx.target
+                      ctx.source-function
+                      ctx.blocks
+                      name
+                      args
+                      ctx.assignments
+                      (compiler-backend-scratch-plan-register-here
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        0)
+                      ctx.types
+                      ctx.global-types
+                      ctx.vars
+                      ctx.plan
+                      ctx.functions
+                      ctx.externs
+                      ctx.program-index
+                      (compiler-backend-instr-diagnostic
+                        ctx.spans
                         ctx.source-function
-                        ctx.blocks
-                        name
-                        args
-                        ctx.assignments
-                        (compiler-backend-scratch-plan-register-here
-                          (compiler-backend-runtime-plan-scratch ctx.plan)
-                          0)
-                        ctx.types
-                        ctx.global-types
-                        ctx.vars
-                        ctx.plan
-                        ctx.functions
-                        ctx.externs
-                        ctx.program-index
-                        (compiler-backend-instr-diagnostic
-                          ctx.spans
-                          ctx.source-function
-                          instr
-                          ctx.func-diag
-                          ""))
-                      out)
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      rest
-                      out))]
-                [(CompilerIrMaybeValue.No)
+                        instr
+                        ctx.func-diag
+                        ""))
+                    out)
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
-                    out)])]
-            [_
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                rest
-                out)])]
-        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)])]
-    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)]))
+                    instrs
+                    index
+                    out))]
+              [(CompilerIrMaybeValue.No)
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  index
+                  out)]))]
+        [_
+          (compiler-backend-emit-instrs-normal
+            ctx
+            fallthrough
+            instr
+            instrs
+            index
+            out)]))
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
 ;; The `Gep` fusion cluster of `compiler-backend-emit-instrs-step`, extracted
 ;; unchanged (refs #5177). It is the peephole family that folds a single-use
@@ -44386,13 +44620,16 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
     (match (compiler-backend-value-as-i64 offset)
       [(option_i64.Some n)
-        (match rest
-          [(CompilerIrInstrList.Cons next after-load)
+        (if (< index (struct-get instrs len))
+          (let
+            [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+            [after-load : i64 (+ index 1)]
             (match next
               [(CompilerIrInstr.Load load-dst src load-ty)
                 (if (compiler-backend-branch-uses-var? src gep-dst)
@@ -44400,71 +44637,66 @@
                     (compiler-backend-load-compare-type?
                       ctx.type-segment-bases
                       load-ty)
-                    (compiler-backend-var-single-use? ctx.use-counts load-dst))
-                    (match (box-get after-load)
-                      [(CompilerIrInstrList.Cons maybe-cmp after-cmp)
-                        (match maybe-cmp
-                          [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
-                            (if (and
-                              (compiler-backend-compare-op? op)
-                              (compiler-backend-branch-uses-var? lhs load-dst)
-                              (compiler-backend-var-single-use?
-                                ctx.use-counts
-                                cmp-dst)
-                              (not
-                                (compiler-backend-binop-f64?
-                                  ctx.types
-                                  ctx.global-types
-                                  lhs
-                                  rhs
-                                  cmp-ty)))
-                              (match (box-get after-cmp)
-                                [(CompilerIrInstrList.Cons branch after-branch)
-                                  (match branch
-                                    [(CompilerIrInstr.Branch
-                                        cond
+                    (compiler-backend-var-single-use? ctx.use-counts load-dst)
+                    ;; The fused compare+branch needs TWO more instructions.
+                    ;; The end test is a conjunct rather than another nested
+                    ;; `if` because running off the end of the block takes the
+                    ;; same fallback the non-compare shapes take.
+                    (< after-load (struct-get instrs len)))
+                    (let
+                      [maybe-cmp : CompilerIrInstr
+                        (compiler-ir-instr-seq-ref instrs after-load)]
+                      [after-cmp : i64 (+ after-load 1)]
+                      (match maybe-cmp
+                        [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
+                          (if (and
+                            (compiler-backend-compare-op? op)
+                            (compiler-backend-branch-uses-var? lhs load-dst)
+                            (compiler-backend-var-single-use?
+                              ctx.use-counts
+                              cmp-dst)
+                            (not
+                              (compiler-backend-binop-f64?
+                                ctx.types
+                                ctx.global-types
+                                lhs
+                                rhs
+                                cmp-ty)))
+                            (if (< after-cmp (struct-get instrs len))
+                              (let
+                                [branch : CompilerIrInstr
+                                  (compiler-ir-instr-seq-ref instrs after-cmp)]
+                                [after-branch : i64 (+ after-cmp 1)]
+                                (match branch
+                                  [(CompilerIrInstr.Branch
+                                      cond
+                                      true-label
+                                      false-label)
+                                    (if (compiler-backend-branch-uses-var?
+                                      cond
+                                      cmp-dst)
+                                      (compiler-backend-emit-fused-gep-load-compare-branch-rest
+                                        ctx
+                                        fallthrough
+                                        gep-dst
+                                        (compiler-backend-gep-fold-next!
+                                          ctx.type-segment-bases
+                                          offset
+                                          elem-ty)
+                                        base
+                                        offset
+                                        elem-ty
+                                        load-dst
+                                        load-ty
+                                        cmp-dst
+                                        op
+                                        rhs
+                                        cmp-ty
                                         true-label
-                                        false-label)
-                                      (if (compiler-backend-branch-uses-var?
-                                        cond
-                                        cmp-dst)
-                                        (compiler-backend-emit-fused-gep-load-compare-branch-rest
-                                          ctx
-                                          fallthrough
-                                          gep-dst
-                                          (compiler-backend-gep-fold-next!
-                                            ctx.type-segment-bases
-                                            offset
-                                            elem-ty)
-                                          base
-                                          offset
-                                          elem-ty
-                                          load-dst
-                                          load-ty
-                                          cmp-dst
-                                          op
-                                          rhs
-                                          cmp-ty
-                                          true-label
-                                          false-label
-                                          (box-get after-branch)
-                                          out)
-                                        (compiler-backend-emit-fused-gep-load-rest
-                                          ctx
-                                          fallthrough
-                                          gep-dst
-                                          (compiler-backend-gep-fold-next!
-                                            ctx.type-segment-bases
-                                            offset
-                                            elem-ty)
-                                          base
-                                          offset
-                                          elem-ty
-                                          load-dst
-                                          load-ty
-                                          (box-get after-load)
-                                          out))]
-                                    [_
+                                        false-label
+                                        instrs
+                                        after-branch
+                                        out)
                                       (compiler-backend-emit-fused-gep-load-rest
                                         ctx
                                         fallthrough
@@ -44478,24 +44710,26 @@
                                         elem-ty
                                         load-dst
                                         load-ty
-                                        (box-get after-load)
-                                        out)])]
-                                [_
-                                  (compiler-backend-emit-fused-gep-load-rest
-                                    ctx
-                                    fallthrough
-                                    gep-dst
-                                    (compiler-backend-gep-fold-next!
-                                      ctx.type-segment-bases
+                                        instrs
+                                        after-load
+                                        out))]
+                                  [_
+                                    (compiler-backend-emit-fused-gep-load-rest
+                                      ctx
+                                      fallthrough
+                                      gep-dst
+                                      (compiler-backend-gep-fold-next!
+                                        ctx.type-segment-bases
+                                        offset
+                                        elem-ty)
+                                      base
                                       offset
-                                      elem-ty)
-                                    base
-                                    offset
-                                    elem-ty
-                                    load-dst
-                                    load-ty
-                                    (box-get after-load)
-                                    out)])
+                                      elem-ty
+                                      load-dst
+                                      load-ty
+                                      instrs
+                                      after-load
+                                      out)]))
                               (compiler-backend-emit-fused-gep-load-rest
                                 ctx
                                 fallthrough
@@ -44509,9 +44743,9 @@
                                 elem-ty
                                 load-dst
                                 load-ty
-                                (box-get after-load)
-                                out))]
-                          [_
+                                instrs
+                                after-load
+                                out))
                             (compiler-backend-emit-fused-gep-load-rest
                               ctx
                               fallthrough
@@ -44525,24 +44759,26 @@
                               elem-ty
                               load-dst
                               load-ty
-                              (box-get after-load)
-                              out)])]
-                      [_
-                        (compiler-backend-emit-fused-gep-load-rest
-                          ctx
-                          fallthrough
-                          gep-dst
-                          (compiler-backend-gep-fold-next!
-                            ctx.type-segment-bases
+                              instrs
+                              after-load
+                              out))]
+                        [_
+                          (compiler-backend-emit-fused-gep-load-rest
+                            ctx
+                            fallthrough
+                            gep-dst
+                            (compiler-backend-gep-fold-next!
+                              ctx.type-segment-bases
+                              offset
+                              elem-ty)
+                            base
                             offset
-                            elem-ty)
-                          base
-                          offset
-                          elem-ty
-                          load-dst
-                          load-ty
-                          (box-get after-load)
-                          out)])
+                            elem-ty
+                            load-dst
+                            load-ty
+                            instrs
+                            after-load
+                            out)]))
                     (compiler-backend-emit-fused-gep-load-rest
                       ctx
                       fallthrough
@@ -44556,13 +44792,15 @@
                       elem-ty
                       load-dst
                       load-ty
-                      (box-get after-load)
+                      instrs
+                      after-load
                       out))
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
+                    instrs
+                    index
                     out))]
               [(CompilerIrInstr.StorePtr dst value store-ty)
                 (if (compiler-backend-branch-uses-var? dst gep-dst)
@@ -44579,13 +44817,15 @@
                     elem-ty
                     value
                     store-ty
-                    (box-get after-load)
+                    instrs
+                    after-load
                     out)
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
+                    instrs
+                    index
                     out))]
               [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
                 (if (and
@@ -44600,11 +44840,13 @@
                     [protect-n : i64
                       (compiler-backend-copy-run-protect-count
                         ctx.assignments
-                        (box-get after-load))]
+                        instrs
+                        after-load)]
                     [protect : (Array String)
                       (compiler-backend-copy-run-protect-exclude
                         ctx.assignments
-                        (box-get after-load))]
+                        instrs
+                        after-load)]
                     (compiler-backend-emit-fused-result-rest
                       ctx
                       fallthrough
@@ -44646,26 +44888,36 @@
                             1
                             2)
                           ""))
-                      (box-get after-load)
+                      instrs
+                      after-load
                       out))
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
+                    instrs
+                    index
                     out))]
               [_
                 (compiler-backend-emit-instrs-normal
                   ctx
                   fallthrough
                   instr
-                  rest
-                  out)])]
-          [_
-            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)])]
+                  instrs
+                  index
+                  out)]))
+          (compiler-backend-emit-instrs-normal
+            ctx
+            fallthrough
+            instr
+            instrs
+            index
+            out))]
       [(option_i64.None)
-        (match rest
-          [(CompilerIrInstrList.Cons next after-gep)
+        (if (< index (struct-get instrs len))
+          (let
+            [next : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+            [after-gep : i64 (+ index 1)]
             (match next
               [(CompilerIrInstr.Gep _ load-base load-offset _)
                 (compiler-backend-emit-fused-result-rest
@@ -44716,14 +44968,18 @@
                         (compiler-backend-runtime-plan-scratch ctx.plan)
                         0
                         1)))
-                  rest
+                  instrs
+                  index
                   out)]
               [(CompilerIrInstr.Mov ptr-var src _)
                 (if (and
                   (compiler-backend-branch-uses-var? src gep-dst)
                   (compiler-backend-var-single-use? ctx.use-counts ptr-var))
-                  (match (box-get after-gep)
-                    [(CompilerIrInstrList.Cons maybe-store after-store)
+                  (if (< after-gep (struct-get instrs len))
+                    (let
+                      [maybe-store : CompilerIrInstr
+                        (compiler-ir-instr-seq-ref instrs after-gep)]
+                      [after-store : i64 (+ after-gep 1)]
                       (match maybe-store
                         [(CompilerIrInstr.StorePtr dst value store-ty)
                           (if (compiler-backend-branch-uses-var? dst ptr-var)
@@ -44740,33 +44996,37 @@
                               elem-ty
                               value
                               store-ty
-                              (box-get after-store)
+                              instrs
+                              after-store
                               out)
                             (compiler-backend-emit-instrs-normal
                               ctx
                               fallthrough
                               instr
-                              rest
+                              instrs
+                              index
                               out))]
                         [_
                           (compiler-backend-emit-instrs-normal
                             ctx
                             fallthrough
                             instr
-                            rest
-                            out)])]
-                    [_
-                      (compiler-backend-emit-instrs-normal
-                        ctx
-                        fallthrough
-                        instr
-                        rest
-                        out)])
+                            instrs
+                            index
+                            out)]))
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      instrs
+                      index
+                      out))
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
+                    instrs
+                    index
                     out))]
               [(CompilerIrInstr.Load load-dst src load-ty)
                 (if (compiler-backend-branch-uses-var? src gep-dst)
@@ -44783,13 +45043,15 @@
                     elem-ty
                     load-dst
                     load-ty
-                    (box-get after-gep)
+                    instrs
+                    after-gep
                     out)
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
+                    instrs
+                    index
                     out))]
               [(CompilerIrInstr.StorePtr dst value store-ty)
                 (if (compiler-backend-branch-uses-var? dst gep-dst)
@@ -44806,13 +45068,15 @@
                     elem-ty
                     value
                     store-ty
-                    (box-get after-gep)
+                    instrs
+                    after-gep
                     out)
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
+                    instrs
+                    index
                     out))]
               [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
                 (if (compiler-backend-branch-uses-var? copy-dst gep-dst)
@@ -44820,11 +45084,13 @@
                     [protect-n : i64
                       (compiler-backend-copy-run-protect-count
                         ctx.assignments
-                        (box-get after-gep))]
+                        instrs
+                        after-gep)]
                     [protect : (Array String)
                       (compiler-backend-copy-run-protect-exclude
                         ctx.assignments
-                        (box-get after-gep))]
+                        instrs
+                        after-gep)]
                     (compiler-backend-emit-fused-result-rest
                       ctx
                       fallthrough
@@ -44866,33 +45132,43 @@
                             1
                             2)
                           ""))
-                      (box-get after-gep)
+                      instrs
+                      after-gep
                       out))
                   (compiler-backend-emit-instrs-normal
                     ctx
                     fallthrough
                     instr
-                    rest
+                    instrs
+                    index
                     out))]
               [_
                 (compiler-backend-emit-instrs-normal
                   ctx
                   fallthrough
                   instr
-                  rest
-                  out)])]
-          [_
-            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)])])
-    (compiler-backend-emit-instrs-normal ctx fallthrough instr rest out)))
+                  instrs
+                  index
+                  out)]))
+          (compiler-backend-emit-instrs-normal
+            ctx
+            fallthrough
+            instr
+            instrs
+            index
+            out))])
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
 (define (compiler-backend-emit-instrs-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [cursor : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match instrs
-    [(CompilerIrInstrList.Nil) (ResultCompilerBackend.Ok "")]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (< cursor (struct-get instrs len))
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs cursor)]
+      [rest : i64 (+ cursor 1)]
       (match instr
         [(CompilerIrInstr.Mov dst src ty)
           (compiler-backend-emit-mov-step
@@ -44902,7 +45178,8 @@
             dst
             src
             ty
-            (box-get rest)
+            instrs
+            rest
             out)]
         [(CompilerIrInstr.Call dst name args ty)
           (compiler-backend-emit-call-step
@@ -44913,7 +45190,8 @@
             name
             args
             ty
-            (box-get rest)
+            instrs
+            rest
             out)]
         [(CompilerIrInstr.StorePtr ptr value0 ty0)
           (compiler-backend-emit-store-ptr-step
@@ -44923,7 +45201,8 @@
             ptr
             value0
             ty0
-            (box-get rest)
+            instrs
+            rest
             out)]
         [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
           (compiler-backend-emit-gep-step
@@ -44934,7 +45213,8 @@
             base
             offset
             elem-ty
-            (box-get rest)
+            instrs
+            rest
             out)]
         [(CompilerIrInstr.CopyBytes dst src size)
           (compiler-backend-emit-copy-bytes-step
@@ -44943,7 +45223,8 @@
             dst
             src
             size
-            (box-get rest)
+            instrs
+            rest
             out)]
         [(CompilerIrInstr.VectorLoad load-dst base index lanes elem-ty)
           (compiler-backend-emit-vector-load-step
@@ -44955,7 +45236,8 @@
             index
             lanes
             elem-ty
-            (box-get rest)
+            instrs
+            rest
             out)]
         [(CompilerIrInstr.Load load-dst ptr load-ty)
           (compiler-backend-emit-load-step
@@ -44965,7 +45247,8 @@
             load-dst
             ptr
             load-ty
-            (box-get rest)
+            instrs
+            rest
             out)]
         [(CompilerIrInstr.BinOp dst op lhs rhs ty)
           (if (and
@@ -44983,7 +45266,8 @@
               ctx.global-types
               ctx.assignments
               dst
-              (box-get rest)))
+              instrs
+              rest))
             (match (compiler-backend-emit-binop-to-rax
               ctx.type-segment-bases
               ctx.types
@@ -45025,7 +45309,8 @@
                     fallthrough
                     dst
                     ty
-                    (box-get rest)
+                    instrs
+                    rest
                     out))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])
@@ -45041,74 +45326,78 @@
                   lhs
                   rhs
                   ty)))
-              (match (box-get rest)
-                [(CompilerIrInstrList.Cons next after-branch)
+              (if (< rest (struct-get instrs len))
+                (let
+                  [next : CompilerIrInstr
+                    (compiler-ir-instr-seq-ref instrs rest)]
+                  [after-branch : i64 (+ rest 1)]
                   (match next
                     [(CompilerIrInstr.Return maybe)
-                      (match (box-get after-branch)
-                        [(CompilerIrInstrList.Nil)
-                          (match maybe
-                            [(CompilerIrMaybeValue.Some value)
-                              (if (compiler-backend-branch-uses-var? value dst)
-                                (compiler-backend-emit-terminator-into
-                                  (compiler-backend-emit-binop-return-with-plan
-                                    ctx.type-segment-bases
-                                    ctx.source-function
-                                    ctx.blocks
-                                    ctx.types
-                                    ctx.global-types
-                                    ctx.assignments
-                                    ctx.vars
-                                    op
-                                    lhs
-                                    rhs
-                                    ty
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      0
-                                      0)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      0
-                                      1)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      0
-                                      2)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      0
-                                      3)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      0
-                                      4))
-                                  out)
-                                (compiler-backend-emit-instrs-normal
-                                  ctx
-                                  fallthrough
-                                  instr
-                                  (box-get rest)
-                                  out))]
-                            [(CompilerIrMaybeValue.No)
+                      (if (< after-branch (struct-get instrs len))
+                        (compiler-backend-emit-instrs-normal
+                          ctx
+                          fallthrough
+                          instr
+                          instrs
+                          rest
+                          out)
+                        (match maybe
+                          [(CompilerIrMaybeValue.Some value)
+                            (if (compiler-backend-branch-uses-var? value dst)
+                              (compiler-backend-emit-terminator-into
+                                (compiler-backend-emit-binop-return-with-plan
+                                  ctx.type-segment-bases
+                                  ctx.source-function
+                                  ctx.blocks
+                                  ctx.types
+                                  ctx.global-types
+                                  ctx.assignments
+                                  ctx.vars
+                                  op
+                                  lhs
+                                  rhs
+                                  ty
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
+                                    0
+                                    0)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
+                                    0
+                                    1)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
+                                    0
+                                    2)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
+                                    0
+                                    3)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
+                                    0
+                                    4))
+                                out)
                               (compiler-backend-emit-instrs-normal
                                 ctx
                                 fallthrough
                                 instr
-                                (box-get rest)
-                                out)])]
-                        [_
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            out)])]
+                                instrs
+                                rest
+                                out))]
+                          [(CompilerIrMaybeValue.No)
+                            (compiler-backend-emit-instrs-normal
+                              ctx
+                              fallthrough
+                              instr
+                              instrs
+                              rest
+                              out)]))]
                     [(CompilerIrInstr.Branch cond true-label false-label)
                       (if (compiler-backend-branch-uses-var? cond dst)
                         (compiler-backend-emit-fused-compare-branch-rest
@@ -45121,13 +45410,15 @@
                           ty
                           true-label
                           false-label
-                          (box-get after-branch)
+                          instrs
+                          after-branch
                           out)
                         (compiler-backend-emit-instrs-normal
                           ctx
                           fallthrough
                           instr
-                          (box-get rest)
+                          instrs
+                          rest
                           out))]
                     [(CompilerIrInstr.UnOp
                         not-dst
@@ -45144,8 +45435,11 @@
                           ctx.use-counts
                           not-dst)
                         (compiler-backend-branch-uses-var? not-src dst))
-                        (match (box-get after-branch)
-                          [(CompilerIrInstrList.Cons branch after-not-branch)
+                        (if (< after-branch (struct-get instrs len))
+                          (let
+                            [branch : CompilerIrInstr
+                              (compiler-ir-instr-seq-ref instrs after-branch)]
+                            [after-not-branch : i64 (+ after-branch 1)]
                             (match branch
                               [(CompilerIrInstr.Branch
                                   cond
@@ -45164,60 +45458,69 @@
                                     ty
                                     false-label
                                     true-label
-                                    (box-get after-not-branch)
+                                    instrs
+                                    after-not-branch
                                     out)
                                   (compiler-backend-emit-instrs-normal
                                     ctx
                                     fallthrough
                                     instr
-                                    (box-get rest)
+                                    instrs
+                                    rest
                                     out))]
                               [_
                                 (compiler-backend-emit-instrs-normal
                                   ctx
                                   fallthrough
                                   instr
-                                  (box-get rest)
-                                  out)])]
-                          [_
-                            (compiler-backend-emit-instrs-normal
-                              ctx
-                              fallthrough
-                              instr
-                              (box-get rest)
-                              out)])
+                                  instrs
+                                  rest
+                                  out)]))
+                          (compiler-backend-emit-instrs-normal
+                            ctx
+                            fallthrough
+                            instr
+                            instrs
+                            rest
+                            out))
                         (compiler-backend-emit-instrs-normal
                           ctx
                           fallthrough
                           instr
-                          (box-get rest)
+                          instrs
+                          rest
                           out))]
                     [_
                       (compiler-backend-emit-instrs-normal
                         ctx
                         fallthrough
                         instr
-                        (box-get rest)
-                        out)])]
-                [_
-                  (compiler-backend-emit-instrs-normal
-                    ctx
-                    fallthrough
-                    instr
-                    (box-get rest)
-                    out)])
+                        instrs
+                        rest
+                        out)]))
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  rest
+                  out))
               (compiler-backend-emit-instrs-normal
                 ctx
                 fallthrough
                 instr
-                (box-get rest)
+                instrs
+                rest
                 out)))]
         [(CompilerIrInstr.UnOp dst (CompilerIrUnOp.Not) src (AstType.Bool))
           (if (or
             (compiler-backend-var-single-use? ctx.use-counts dst)
             (compiler-backend-var-fuse-safe? dst))
-            (match (box-get rest)
-              [(CompilerIrInstrList.Cons branch after-branch)
+            (if (< rest (struct-get instrs len))
+              (let
+                [branch : CompilerIrInstr
+                  (compiler-ir-instr-seq-ref instrs rest)]
+                [after-branch : i64 (+ rest 1)]
                 (match branch
                   [(CompilerIrInstr.Branch cond true-label false-label)
                     (if (compiler-backend-branch-uses-var? cond dst)
@@ -45229,59 +45532,69 @@
                         (AstType.Bool)
                         true-label
                         false-label
-                        (box-get after-branch)
+                        instrs
+                        after-branch
                         out)
                       (compiler-backend-emit-instrs-normal
                         ctx
                         fallthrough
                         instr
-                        (box-get rest)
+                        instrs
+                        rest
                         out))]
                   [_
                     (compiler-backend-emit-instrs-normal
                       ctx
                       fallthrough
                       instr
-                      (box-get rest)
-                      out)])]
-              [_
-                (compiler-backend-emit-instrs-normal
-                  ctx
-                  fallthrough
-                  instr
-                  (box-get rest)
-                  out)])
+                      instrs
+                      rest
+                      out)]))
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                instrs
+                rest
+                out))
             (compiler-backend-emit-instrs-normal
               ctx
               fallthrough
               instr
-              (box-get rest)
+              instrs
+              rest
               out))]
         [_
           (compiler-backend-emit-instrs-normal
             ctx
             fallthrough
             instr
-            (box-get rest)
-            out)])]))
+            instrs
+            rest
+            out)]))
+    (ResultCompilerBackend.Ok "")))
 
 (define (compiler-backend-emit-instrs-divmod-polish-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match instrs
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (< index (struct-get instrs len))
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [rest : i64 (+ index 1)]
       (match (compiler-backend-try-divmod-polish
         ctx
         fallthrough
         instr
-        (box-get rest)
+        instrs
+        rest
         out)
         [(CompilerBackendMaybeDivmodPolish.Some result) result]
         [(CompilerBackendMaybeDivmodPolish.No)
-          (compiler-backend-emit-instrs-step ctx fallthrough instrs out)])]
-    [_ (compiler-backend-emit-instrs-step ctx fallthrough instrs out)]))
+          (compiler-backend-emit-instrs-step ctx fallthrough instrs index out)]))
+    (compiler-backend-emit-instrs-step ctx fallthrough instrs index out)))
 
 ;; Drift-proof per-instruction position for the scavenge coordinate. `post-base`
 ;; is the cumulative instruction count through the current block (accumulated per
@@ -45316,11 +45629,17 @@
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [mode : CompilerBackendEmitInstrsMode]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (let
     [current-mode : CompilerBackendEmitInstrsMode mode]
-    [current-instrs : CompilerIrInstrList instrs]
+    ;; `current-count` is read BEFORE `current-instrs` takes ownership of the
+    ;; sequence: the binding is an owner move, so `instrs` is not readable
+    ;; afterwards. It is refreshed alongside the cursor on every continue.
+    [current-count : i64 (struct-get instrs len)]
+    [current-instrs : CompilerIrInstrSeq instrs]
+    [current-index : i64 index]
     [done : bool false]
     [ok : bool true]
     [asm-out : String ""]
@@ -45334,43 +45653,47 @@
             (begin
               ;; The remaining-instruction count derives the
               ;; scavenge/const-hoist/scratch point 2*(post-base - count).
-              ;; When the plan homes nothing in registers (zero plan mask -
-              ;; every stack-only opt0/opt1 plan) the occupancy masks carry
-              ;; no set bits, so every mask query answers 0 at any point,
-              ;; and with no const-hoist sites the point comparisons are
-              ;; unreachable. Scalar/AVX-512 can then skip the O(n^2)
-              ;; remaining-list walk; AVX2 also uses this point to make
-              ;; predicated-store lane labels unique and retains the count.
+              ;; With the cursor the count IS `current-count - current-index`,
+              ;; read off the block sequence length instead of walked: the
+              ;; pre-cursor spine recomputed it once per emitted instruction,
+              ;; an O(n^2) cons-spine walk per block. The needs-count? guard
+              ;; stays because the answer must still be 0 (not the true
+              ;; remaining count) for plans that must not see a point at all -
+              ;; when the plan homes nothing in registers (zero plan mask -
+              ;; every stack-only opt0/opt1 plan) the occupancy masks carry no
+              ;; set bits, so every mask query answers 0 at any point, and with
+              ;; no const-hoist sites the point comparisons are unreachable.
+              ;; AVX2 also uses this point to make predicated-store lane labels
+              ;; unique and retains the count.
               (set!
                 compiler-backend-emit-current-count
                 (if (compiler-backend-emit-needs-current-count?
                   compiler-backend-scavenge-ctx-plan-reg-mask
                   compiler-backend-const-hoist-site-count
                   compiler-backend-current-mode)
-                  (compiler-ir-instr-list-count current-instrs)
+                  (- current-count current-index)
                   0))
               (cfg
                 scavenge-self-check
-                (match current-instrs
-                  [(CompilerIrInstrList.Cons head-instr _)
-                    ;; Per-step used-var check against the LIVE installed ctx
-                    ;; (real point). Live-through validation is done by the
-                    ;; function-level scavenge-self-check (which has the liveness
-                    ;; to supply live-after sets); pass empty here.
-                    (compiler-backend-scavenge-check-instr
-                      compiler-backend-scavenge-ctx-starts
-                      compiler-backend-scavenge-ctx-ends
-                      compiler-backend-scavenge-ctx-assignment-index
-                      compiler-backend-scavenge-ctx-vars
-                      ctx.function
-                      (*
-                        2
-                        (-
-                          compiler-backend-emit-instr-post-base
-                          (compiler-ir-instr-list-count current-instrs)))
-                      head-instr
-                      (compiler-live-set-empty))]
-                  [(CompilerIrInstrList.Nil) unit])
+                (if (< current-index current-count)
+                  ;; Per-step used-var check against the LIVE installed ctx
+                  ;; (real point). Live-through validation is done by the
+                  ;; function-level scavenge-self-check (which has the liveness
+                  ;; to supply live-after sets); pass empty here.
+                  (compiler-backend-scavenge-check-instr
+                    compiler-backend-scavenge-ctx-starts
+                    compiler-backend-scavenge-ctx-ends
+                    compiler-backend-scavenge-ctx-assignment-index
+                    compiler-backend-scavenge-ctx-vars
+                    ctx.function
+                    (*
+                      2
+                      (-
+                        compiler-backend-emit-instr-post-base
+                        (- current-count current-index)))
+                    (compiler-ir-instr-seq-ref current-instrs current-index)
+                    (compiler-live-set-empty))
+                  unit)
                 unit)
               (set! compiler-backend-emit-instrs-continue-pending false)
               ;; Fast and fused emitters can bypass compiler-backend-emit-instr.
@@ -45379,16 +45702,18 @@
               ;; Fusions that emit a later div/mod instruction still enter
               ;; compiler-backend-emit-instr for that instruction and replace
               ;; this state with its exact source location.
-              (match current-instrs
-                [(CompilerIrInstrList.Cons head-instr _)
-                  (compiler-backend-runtime-abort-site-install! ctx head-instr)]
-                [(CompilerIrInstrList.Nil) unit])
+              (if (< current-index current-count)
+                (compiler-backend-runtime-abort-site-install!
+                  ctx
+                  (compiler-ir-instr-seq-ref current-instrs current-index))
+                unit)
               (match current-mode
                 [(CompilerBackendEmitInstrsMode.Normal)
                   (compiler-backend-emit-instrs-divmod-polish-step
                     ctx
                     fallthrough
                     current-instrs
+                    current-index
                     out)]
                 [(CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
                   (compiler-backend-emit-instrs-with-rax-step
@@ -45397,6 +45722,7 @@
                     rax-var
                     rax-ty
                     current-instrs
+                    current-index
                     out)]
                 [(CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
                   (compiler-backend-emit-instrs-with-call-rax-step
@@ -45405,6 +45731,7 @@
                     rax-var
                     rax-ty
                     current-instrs
+                    current-index
                     out)]))]
           (match step-result
             [(ResultCompilerBackend.Ok asm)
@@ -45412,6 +45739,8 @@
                 (begin
                   (set! current-mode compiler-backend-emit-instrs-next-mode)
                   (set! current-instrs compiler-backend-emit-instrs-next-instrs)
+                  (set! current-index compiler-backend-emit-instrs-next-index)
+                  (set! current-count (struct-get current-instrs len))
                   unit)
                 (begin
                   (set! asm-out asm)
@@ -45429,17 +45758,20 @@
 (define (compiler-backend-emit-instrs
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
       (CompilerBackendEmitInstrsMode.Normal)
-      instrs)
+      instrs
+      index)
     (compiler-backend-emit-instrs-loop
       ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.Normal)
       instrs
+      index
       out)))
 
 (define (compiler-backend-emit-instrs-with-call-rax
@@ -45447,17 +45779,20 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
       (CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
-      instrs)
+      instrs
+      index)
     (compiler-backend-emit-instrs-loop
       ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
       instrs
+      index
       out)))
 
 (define (compiler-backend-emit-instrs-with-rax
@@ -45465,17 +45800,20 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
       (CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
-      instrs)
+      instrs
+      index)
     (compiler-backend-emit-instrs-loop
       ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
       instrs
+      index
       out)))
 
 (define (compiler-backend-emit-block
@@ -45552,7 +45890,8 @@
             func-diag
             use-counts)
           fallthrough
-          (compiler-ir-instr-seq-to-list instrs)
+          instrs
+          0
           out))]))
 
 ;; Total IR instruction count over a function's blocks, read from the per-block
@@ -54573,7 +54912,8 @@
     (backend_i64_i64_map.with-capacity 256)
     (backend_i64_i64_map.with-capacity 256)
     (backend_i64_i64_map.with-capacity 256)
-    -1))
+    -1
+    false))
 
 (define (compiler-backend-runtime-index-defines?
   [index : CompilerBackendRuntimeIndex]
@@ -54601,7 +54941,8 @@
         defines
         (struct-get index externs)
         (struct-get index calls)
-        (struct-get index tlci-macro-entry-call-id)))))
+        (struct-get index tlci-macro-entry-call-id)
+        (struct-get index startup-profile)))))
 
 (define (compiler-backend-runtime-index-add-extern-name
   [index : CompilerBackendRuntimeIndex]
@@ -54614,7 +54955,8 @@
         (struct-get index defines)
         externs
         (struct-get index calls)
-        (struct-get index tlci-macro-entry-call-id)))))
+        (struct-get index tlci-macro-entry-call-id)
+        (struct-get index startup-profile)))))
 
 (define (compiler-backend-runtime-index-add-call
   [index : CompilerBackendRuntimeIndex]
@@ -54627,7 +54969,8 @@
         (struct-get index defines)
         (struct-get index externs)
         calls
-        (struct-get index tlci-macro-entry-call-id)))))
+        (struct-get index tlci-macro-entry-call-id)
+        (struct-get index startup-profile)))))
 
 (define (compiler-backend-runtime-index-with-extern-role
   [index : CompilerBackendRuntimeIndex]
@@ -54639,7 +54982,22 @@
     (struct-get index calls)
     (if (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
       call-id
-      (struct-get index tlci-macro-entry-call-id))))
+      (struct-get index tlci-macro-entry-call-id))
+    (struct-get index startup-profile)))
+
+(define (compiler-backend-runtime-index-with-startup-profile-role
+  [index : CompilerBackendRuntimeIndex]
+  [link-id : i64]) : CompilerBackendRuntimeIndex
+  (if (string.eq
+    (compiler-ir-symbol-text link-id)
+    "tl_startup_profile_process_entry_tick")
+    (CompilerBackendRuntimeIndex
+      (struct-get index defines)
+      (struct-get index externs)
+      (struct-get index calls)
+      (struct-get index tlci-macro-entry-call-id)
+      true)
+    index))
 
 (define (compiler-backend-runtime-index-instr
   [index : CompilerBackendRuntimeIndex]
@@ -54746,25 +55104,32 @@
             link-symbol
             _
             provided)
-          (if provided
-            (compiler-backend-runtime-index-externs index (box-get rest))
-            (let
-              [with-names : CompilerBackendRuntimeIndex
-                (compiler-backend-runtime-index-add-extern-name
+          (let
+            [with-startup-role : CompilerBackendRuntimeIndex
+              (compiler-backend-runtime-index-with-startup-profile-role
+                index
+                link-symbol)]
+            (if provided
+              (compiler-backend-runtime-index-externs
+                with-startup-role
+                (box-get rest))
+              (let
+                [with-names : CompilerBackendRuntimeIndex
                   (compiler-backend-runtime-index-add-extern-name
                     (compiler-backend-runtime-index-add-extern-name
-                      index
-                      name-id)
-                    source-name-id)
-                  link-symbol)]
-              [with-runtime-role : CompilerBackendRuntimeIndex
-                (compiler-backend-runtime-index-with-extern-role
-                  with-names
-                  name-id
-                  link-symbol)]
-              (compiler-backend-runtime-index-externs
-                with-runtime-role
-                (box-get rest))))])]
+                      (compiler-backend-runtime-index-add-extern-name
+                        with-startup-role
+                        name-id)
+                      source-name-id)
+                    link-symbol)]
+                [with-runtime-role : CompilerBackendRuntimeIndex
+                  (compiler-backend-runtime-index-with-extern-role
+                    with-names
+                    name-id
+                    link-symbol)]
+                (compiler-backend-runtime-index-externs
+                  with-runtime-role
+                  (box-get rest)))))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-runtime-index-externs
         index
@@ -55109,6 +55474,7 @@
         (and
           (>= call-id 0)
           (compiler-backend-runtime-index-calls? index call-id)))]
+    [needs-startup-profile : bool (struct-get index startup-profile)]
     (ResultBackendRuntimePlanWithIndex.Ok
       (CompilerBackendRuntimePlanWithIndex
         (CompilerBackendRuntimePlan.Plan
@@ -55122,7 +55488,8 @@
           (CompilerBackendRuntimeTailPlan
             needs-profile
             needs-tlci-macro-entry
-            needs-arena-debug))
+            needs-arena-debug
+            needs-startup-profile))
         index))))
 
 (define (compiler-backend-runtime-plan-for
@@ -55279,7 +55646,8 @@
             (compiler-backend-runtime-tail-profile? tail-plan)
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
-            print-f64))])))
+            print-f64
+            (compiler-backend-runtime-tail-startup-profile? tail-plan)))])))
 
 (define (compiler-backend-current-arena-load
   [target : CompilerBackendTarget]
@@ -55429,35 +55797,53 @@
 (define (compiler-backend-entry
   [capture-argv : bool]
   [capture-env : bool]
+  [startup-profile : bool]
   [global-inits : String]) : String
-  (if (or capture-argv capture-env)
-    (str_cat.str-cat
-      "_tl_start:
-    movq (%rsp), %rax
+  (let
+    [startup-profile-asm : String
+      (if startup-profile
+        "    movq $228, %rax
+    movq $1, %rdi
+    leaq .L_tl_startup_profile_timespec(%rip), %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_startup_profile_process_entry_done
+    movq .L_tl_startup_profile_timespec(%rip), %rax
+    imulq $1000000000, %rax
+    addq .L_tl_startup_profile_timespec+8(%rip), %rax
+    movq %rax, .L_tl_startup_profile_process_entry_tick(%rip)
+.L_tl_startup_profile_process_entry_done:
 "
-      (if capture-argv
-        "    movq %rax, .L_tl_argc(%rip)
+        "")]
+    (if (or capture-argv capture-env)
+      (str_cat.str-cat
+        "_tl_start:\n"
+        startup-profile-asm
+        "    movq (%rsp), %rax\n"
+        (if capture-argv
+          "    movq %rax, .L_tl_argc(%rip)
     leaq 8(%rsp), %rax
     movq %rax, .L_tl_argv(%rip)
 "
-        "")
-      (if capture-env
-        (str_cat.str-cat
-          (if capture-argv
-            "    movq (%rsp), %rax\n"
-            "")
-          "    leaq 16(%rsp,%rax,8), %rax
+          "")
+        (if capture-env
+          (str_cat.str-cat
+            (if capture-argv
+              "    movq (%rsp), %rax\n"
+              "")
+            "    leaq 16(%rsp,%rax,8), %rax
     movq %rax, .L_tl_envp(%rip)
 ")
-        "")
-      "    call tl_thread_init\n"
-      global-inits
-      (compiler-backend-entry-call-main))
-    (str_cat.str-cat
-      "_tl_start:\n"
-      "    call tl_thread_init\n"
-      global-inits
-      (compiler-backend-entry-call-main))))
+          "")
+        "    call tl_thread_init\n"
+        global-inits
+        (compiler-backend-entry-call-main))
+      (str_cat.str-cat
+        "_tl_start:\n"
+        startup-profile-asm
+        "    call tl_thread_init\n"
+        global-inits
+        (compiler-backend-entry-call-main)))))
 
 (define (compiler-backend-entry-for-target-with-crt
   [type-segment-bases : i64]
@@ -55470,15 +55856,15 @@
     [(CompilerBackendTarget.Linux)
       (if crt-entry
         ""
-        (let
-          [_ : CompilerBackendRuntimePlan plan]
-          (compiler-backend-entry
-            true
-            true
-            (compiler-backend-global-initializers
-              type-segment-bases
-              globals
-              program-index))))]
+        (compiler-backend-entry
+          true
+          true
+          (compiler-backend-runtime-tail-startup-profile?
+            (compiler-backend-runtime-plan-tail plan))
+          (compiler-backend-global-initializers
+            type-segment-bases
+            globals
+            program-index)))]
     [(CompilerBackendTarget.Windows) ""]))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool

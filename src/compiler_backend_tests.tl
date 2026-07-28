@@ -56,6 +56,12 @@
 ;; String-returning shim for instruction-sequence emission. Emission appends
 ;; into a caller-owned body buffer and its Ok payload is no longer the text, so
 ;; these assertions own the buffer and hand back what was written.
+;;
+;; The emit spine takes an `(instrs, index)` cursor over a block's contiguous
+;; sequence, the same shape `compiler-backend-emit-block` hands it. These
+;; assertions spell their fixtures as cons lists, so the shim materialises the
+;; sequence once and starts the cursor at 0 -- test-side only, so the fixtures
+;; stay readable without putting a list-taking entry point back in the compiler.
 (define (compiler-backend-test-emit-instrs-text
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -63,7 +69,8 @@
   (let
     [body : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
-    (match (compiler-backend-emit-instrs ctx fallthrough instrs (&mut body))
+    [seq : CompilerIrInstrSeq (compiler-ir-instr-seq-from-list instrs)]
+    (match (compiler-backend-emit-instrs ctx fallthrough seq 0 (&mut body))
       [(ResultCompilerBackend.Ok _)
         (ResultCompilerBackend.Ok (compiler-backend-asm-buf-finish (& body)))]
       [(ResultCompilerBackend.Err diagnostic)
@@ -13895,7 +13902,7 @@
           false
           false
           false
-          (CompilerBackendRuntimeTailPlan false false false))
+          (CompilerBackendRuntimeTailPlan false false false false))
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
@@ -14152,7 +14159,7 @@
     true
     true
     true
-    (CompilerBackendRuntimeTailPlan true true false)))
+    (CompilerBackendRuntimeTailPlan true true false true)))
 
 ;; Test fixtures start from readable spellings, then exercise only the backend's
 ;; ID-native runtime inventory. Production never performs this conversion.
@@ -14595,6 +14602,44 @@
           (compiler-backend-test-plan-provides? plan "tl_region_reset"))]
       [(ResultBackendRuntimePlan.Err _) false])))
 
+(define (compiler-backend-startup-profile-runtime-plan-ok?) : bool
+  (let
+    [local-id : i64 (ci.intern "compiler-startup-profile-process-entry-probe")]
+    [link-id : i64 (ci.intern "tl_startup_profile_process_entry_tick")]
+    [externs : CompilerIrExternList
+      (compiler-ir-extern-cons
+        (CompilerIrExtern.Extern
+          local-id
+          local-id
+          "compiler-startup-profile-process-entry-probe"
+          (ast-ty-func (ast-type-list-new) (AstType.I64))
+          (AstExternAbi.C)
+          link-id
+          (ast-extern-link-input-list-new)
+          true)
+        CompilerIrExternList.Nil)]
+    (match (compiler-backend-runtime-plan-for
+      CompilerIrFunctionList.Nil
+      externs)
+      [(ResultBackendRuntimePlan.Ok plan)
+        (let
+          [features : runtime_common.CompilerBackendRuntimeFeatures
+            (compiler-backend-runtime-features plan)]
+          (and
+            (compiler-backend-runtime-tail-startup-profile?
+              (compiler-backend-runtime-plan-tail plan))
+            (runtime_common.compiler-backend-runtime-features-startup-profile?
+              (& features))
+            (match (compiler-backend-runtime-plan-for
+              CompilerIrFunctionList.Nil
+              CompilerIrExternList.Nil)
+              [(ResultBackendRuntimePlan.Ok empty-plan)
+                (not
+                  (compiler-backend-runtime-tail-startup-profile?
+                    (compiler-backend-runtime-plan-tail empty-plan)))]
+              [(ResultBackendRuntimePlan.Err _) false])))]
+      [(ResultBackendRuntimePlan.Err _) false])))
+
 (define (compiler-backend-arena-debug-runtime-plan-ok?) : bool
   (let
     [protect-id : i64
@@ -14712,6 +14757,7 @@
       (compiler-backend-runtime-plan-id-lookup-only-ok?)
       (compiler-backend-runtime-prelude-validation-plan-ok?)
       (compiler-backend-region-extern-runtime-plan-ok?)
+      (compiler-backend-startup-profile-runtime-plan-ok?)
       (compiler-backend-arena-debug-runtime-plan-ok?))))
 
 (define (compiler-backend-runtime-memchr-functions-ok?) : bool
@@ -14764,11 +14810,14 @@
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_mark")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset"))
     (compiler-backend-runtime-global-symbol-ok? asm "tl_tlci_call_image_entry")
-    (compiler-backend-runtime-global-symbol-ok? asm "tl_tlci_call_macro_entry")))
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_tlci_call_macro_entry")
+    (compiler-backend-runtime-global-symbol-ok?
+      asm
+      "tl_startup_profile_process_entry_tick")))
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 20)
+    (= (compiler-backend-string-count asm "    .globl ") 21)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -14777,7 +14826,7 @@
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 23)
+    (= (compiler-backend-string-count asm "    .globl ") 24)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")

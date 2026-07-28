@@ -48158,8 +48158,33 @@
   (Duplicate)
   (Ok opt_string_i64_map.Map))
 
+;; Shape pre-filter for the generic single-block path. It is evaluated on the
+;; callee as it stands at decision time, before GVN and copy propagation clean
+;; the body up, and naive lowering inflates a canonical arithmetic leaf by
+;; roughly half: lex_source's four-parameter `ls-fold` settles at 6
+;; instructions but presents as 9 here. A cap picked against final sizes
+;; therefore refuses exactly the shapes it was meant to admit.
+;;
+;; The growth bound is opt-inline-cost-inline-with-block-weight?, not this cap.
+;; The single-block path passes added-blocks 0, so raw = callee-instrs and
+;; net = callee-instrs - min(callee-instrs, 3 * const-args) - 6, admitted at
+;; net <= 4. With no constant arguments that prices bodies up to 10, so the old
+;; cap of 8 was strictly tighter than the priced bound and refused bodies 9 and
+;; 10 the cost model had already accepted -- at every call site, since the cap
+;; is a property of the callee.
+;;
+;; Past 10 the cost formula stops bounding size at all. const-savings saturates
+;; at raw, so a site whose constant arguments cover the body collapses net to
+;; -6 regardless of how large the body is, and an absorbable single-site callee
+;; subtracts 1000 outright. This cap is the only backstop for those two
+;; branches. 12 keeps it one step past the priced ceiling from both directions:
+;; 12 >= 10 leaves the zero-const-arg decision to the cost model, and 12 = 10+2
+;; caps the unpriced overshoot at two instructions, which is also where a
+;; canonical 8-instruction leaf lands under the same ~1.5x lowering inflation.
+;; Bodies of 13 and up stay refused here even when the cost gate would take
+;; them on constant arguments.
 (define (opt-inline-max-body) : i64
-  8)
+  12)
 
 (define (opt-inline-bounds-leaf-max-body) : i64
   48)

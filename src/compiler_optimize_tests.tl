@@ -8990,6 +8990,103 @@
         (CompilerIrValue.String "leaf"))
       CompilerIrFunctionList.Nil)))
 
+(define (opt-inline-band-symbol) : i64
+  (opt-test-symbol "band_inline"))
+
+;; A pure arithmetic chain of exactly `limit` body instructions over two
+;; parameters, closed by a Return of the last one. Every instruction writes a
+;; fresh variable at or above the parameter count, so the body clears
+;; opt-inline-body-instr-ok?, and it carries neither a Call nor a BoundsCheck,
+;; which keeps the bounds-leaf path and its 1..48 band out of the decision.
+;; Admission then turns on opt-inline-max-body and the cost gate alone.
+(define (opt-inline-band-instrs [index : i64] [limit : i64]) : CompilerIrInstrList
+  (if (>= index limit)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Return
+        (CompilerIrMaybeValue.Some (CompilerIrValue.Var (+ limit 1))))
+      CompilerIrInstrList.Nil)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        (+ index 2)
+        (CompilerIrBinOp.Add)
+        (if (= index 0)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var (+ index 1)))
+        (if (= index 0)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 1))
+        (AstType.I64))
+      (opt-inline-band-instrs (+ index 1) limit))))
+
+(define (opt-inline-band-callee [body : i64]) : CompilerIrFunction
+  (compiler-ir-function-compact-blocks
+    (CompilerIrFunction.Function
+      (opt-inline-band-symbol)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "a" (AstType.I64) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "b" (AstType.I64) 1)
+          CompilerIrParamList.Nil))
+      (AstType.I64)
+      (+ body 2)
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (opt-inline-band-instrs 0 body))
+        CompilerIrBlockList.Nil))))
+
+(define (opt-inline-band-args [const-args? : bool] [first : i64] [second : i64]) : CompilerIrCallArgs
+  (if const-args?
+    (CompilerIrCallArgs.Two
+      (CompilerIrValue.I64 (+ first 3))
+      (CompilerIrValue.I64 (+ second 5)))
+    (CompilerIrCallArgs.Two
+      (CompilerIrValue.Var first)
+      (CompilerIrValue.Var second))))
+
+;; Two ordinary call sites, so the callee is never absorbable and the cost
+;; gate's 1000-point absorb bonus never fires. `const-args?` selects the only
+;; other term that can move the price: literal arguments give the site two
+;; constant arguments and 3 * 2 = 6 points of savings, Mov-materialised
+;; variables give it none.
+(define (opt-inline-band-caller [const-args? : bool]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "main")
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 3) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 5) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Call
+                2
+                (opt-inline-band-symbol)
+                (opt-inline-band-args const-args? 0 1)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  3
+                  (opt-inline-band-symbol)
+                  (opt-inline-band-args const-args? 1 0)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-inline-band-functions [body : i64] [const-args? : bool]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-band-caller const-args?)
+    (compiler-ir-function-cons
+      (opt-inline-band-callee body)
+      CompilerIrFunctionList.Nil)))
+
 (define (opt-inline-multi-call-caller [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
     (struct-get symbols main)
@@ -9575,6 +9672,42 @@
       (= (opt-count-bounds-instrs char-instrs) 2)
       (= (opt-count-direct-call-name owned-instrs "bounds_leaf_owned_inline") 2)
       (= (opt-count-bounds-instrs owned-instrs) 0))))
+
+(define (opt-inline-band-residual-calls [body : i64] [const-args? : bool]) : i64
+  (opt-count-direct-call-name
+    (opt-inline-function-instrs
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-band-functions body const-args?)
+        2)
+      "main")
+    "band_inline"))
+
+;; The opt-inline-max-body boundary, pinned from all four sides. Every program
+;; here runs one call-free, bounds-free, single-block pure callee from two
+;; ordinary call sites, so the callee is non-absorbable and no other admission
+;; path can reach it: what is left is the shape cap and the cost gate, which
+;; both read the same instruction count.
+;;
+;; The single-block path adds no blocks, so the cost gate reduces to
+;; net = body - min(body, 3 * const-args) - 6 admitted at net <= 4:
+;;   body 10, no constant arguments -- net = 4, admitted. This is the shape the
+;;     old cap of 8 refused at every call site even though the cost model had
+;;     already priced it as a win.
+;;   body 12, two constant arguments per site -- savings min(12, 6) = 6 and
+;;     net = 0, admitted right at the cap.
+;;   body 12, no constant arguments -- net = 6, refused. Lifting the cap does
+;;     not hand the decision to the cap; the price still has to clear.
+;;   body 13, two constant arguments per site -- net = 1, which the cost gate
+;;     would take. The cap refuses it anyway, which is the whole reason the cap
+;;     exists above the priced ceiling of 10: const-savings saturates at the
+;;     body size, so past that point the cost formula stops bounding growth.
+(define (compiler-optimize-inline-band-boundary-ok?) : bool
+  (and
+    (= (opt-inline-band-residual-calls 10 false) 0)
+    (= (opt-inline-band-residual-calls 12 true) 0)
+    (= (opt-inline-band-residual-calls 12 false) 2)
+    (= (opt-inline-band-residual-calls 13 true) 2)))
 
 (define (compiler-optimize-inline-multi-call-ok?) : bool
   (let
@@ -11356,6 +11489,9 @@
                     (unless
                       (compiler-optimize-inline-bounds-leaf-char-return-ok?)
                       (return 56))
+                    (unless
+                      (compiler-optimize-inline-band-boundary-ok?)
+                      (return 57))
                     (unless
                       (compiler-optimize-inline-multi-call-ok?)
                       (return 30))

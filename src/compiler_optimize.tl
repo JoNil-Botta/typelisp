@@ -12264,21 +12264,27 @@
           pred
           (opt-ssa-phi-inputs (opt-label-tail preds) outs var ty)))]))
 
-(define (opt-ssa-phis-for-label
+;; Append this label's inserted phis to `builder`, in phi-site order. The old
+;; shape recursed to the end of `sites` first and consed each phi onto the
+;; returned tail, which produced the same site order through a cons node per
+;; phi; pushing on the way down produces it directly. `opt-ssa-phi-inputs` is a
+;; pure lookup over `pred-map`/`outs`, so evaluating it in forward site order
+;; rather than reverse changes nothing it returns.
+(define (opt-ssa-push-phis-for-label!
   [pred-map : OptPredMap]
   [outs : OptSsaBlockOuts]
   [sites : OptSsaPhiSites]
-  [label : i64]) : CompilerIrInstrList
+  [label : i64]
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
   (match sites
-    [(OptSsaPhiSites.Nil) (CompilerIrInstrList.Nil)]
+    [(OptSsaPhiSites.Nil) unit]
     [(OptSsaPhiSites.Cons site rest)
-      (let
-        [tail : CompilerIrInstrList
-          (opt-ssa-phis-for-label pred-map outs (box-get rest) label)]
+      (begin
         (match site
           [(OptSsaPhiSite.Site var site-label ty phi-var)
             (if (= site-label label)
-              (compiler-ir-instr-cons
+              (compiler-ir-instr-builder-push!
+                (&mut builder)
                 (CompilerIrInstr.Phi
                   phi-var
                   (opt-ssa-phi-inputs
@@ -12286,9 +12292,14 @@
                     outs
                     var
                     ty)
-                  ty)
-                tail)
-              tail)]))]))
+                  ty))
+              unit)])
+        (opt-ssa-push-phis-for-label!
+          pred-map
+          outs
+          (box-get rest)
+          label
+          (&mut builder)))]))
 
 (define (opt-ssa-materialize-blocks
   [blocks : CompilerIrBlockList]
@@ -12303,24 +12314,35 @@
       (match block
         [(CompilerIrBlock.Block label _)
           (let
-            [phis : CompilerIrInstrList
-              (opt-ssa-phis-for-label pred-map outs sites label)]
-            [body : CompilerIrInstrList
-              (opt-ssa-rewrite-preexisting-instrs
-                facts
-                outs
-                (opt-ssa-rename-blocks-lookup renamed label))]
-            (compiler-ir-block-cons
-              (compiler-ir-block
-                label
-                (opt-aggregate-instr-list-append phis body))
-              (opt-ssa-materialize-blocks
-                (box-get rest)
+            ;; One builder per block, filled phis-then-body. The old shape built
+            ;; a cons chain for each half, joined them with
+            ;; `opt-aggregate-instr-list-append`, and then had
+            ;; `compiler-ir-block` walk the joined spine twice more (count, then
+            ;; fill-array) to rebuild the dense sequence it started from.
+            [builder : CompilerIrInstrBuilder (compiler-ir-instr-builder-new)]
+            (begin
+              (opt-ssa-push-phis-for-label!
                 pred-map
-                facts
-                renamed
                 outs
-                sites)))])]
+                sites
+                label
+                (&mut builder))
+              (opt-ssa-push-rewritten-preexisting-instrs!
+                facts
+                outs
+                (opt-ssa-rename-blocks-lookup renamed label)
+                (&mut builder))
+              (compiler-ir-block-cons
+                (CompilerIrBlock.Block
+                  label
+                  (compiler-ir-instr-builder-to-seq builder))
+                (opt-ssa-materialize-blocks
+                  (box-get rest)
+                  pred-map
+                  facts
+                  renamed
+                  outs
+                  sites))))])]
     [(CompilerIrBlockList.Array seq)
       (opt-ssa-materialize-blocks
         (compiler-ir-block-seq-to-list seq)
@@ -12365,22 +12387,33 @@
         pred
         (opt-ssa-rewrite-preexisting-phi-inputs facts outs (box-get rest) ty))]))
 
-(define (opt-ssa-rewrite-preexisting-instrs
+;; Append the renamed block body to `builder`, rewriting pre-existing phi
+;; inputs in place of the old cons-per-instruction rebuild. Traversal order is
+;; unchanged: the old form evaluated the rewrite for the head before recursing
+;; on the tail, and so does this one.
+(define (opt-ssa-push-rewritten-preexisting-instrs!
   [facts : OptSsaFacts]
   [outs : OptSsaBlockOuts]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrList]
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
   (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
+    [(CompilerIrInstrList.Nil) unit]
     [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (match instr
-          [(CompilerIrInstr.Phi dst inputs ty)
-            (CompilerIrInstr.Phi
-              dst
-              (opt-ssa-rewrite-preexisting-phi-inputs facts outs inputs ty)
-              ty)]
-          [_ instr])
-        (opt-ssa-rewrite-preexisting-instrs facts outs (box-get rest)))]))
+      (begin
+        (compiler-ir-instr-builder-push!
+          (&mut builder)
+          (match instr
+            [(CompilerIrInstr.Phi dst inputs ty)
+              (CompilerIrInstr.Phi
+                dst
+                (opt-ssa-rewrite-preexisting-phi-inputs facts outs inputs ty)
+                ty)]
+            [_ instr]))
+        (opt-ssa-push-rewritten-preexisting-instrs!
+          facts
+          outs
+          (box-get rest)
+          (&mut builder)))]))
 
 ;; A pre-existing phi whose DST is itself a rename candidate would need its
 ;; definition versioned per edge -- out of scope; skip construction (the

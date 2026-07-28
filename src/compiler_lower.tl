@@ -5056,7 +5056,7 @@
       [prev-arena : i64 (arena.tl_arena_current)]
       [_make-arena : unit
         (if (= lower-module-decl-index-arena 0)
-          (set! lower-module-decl-index-arena (arena.tl_arena_make))
+          (set! lower-module-decl-index-arena (arena.tl_arena_make_small))
           unit)]
       [_switch : unit
         (unsafe

@@ -875,18 +875,22 @@
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
       (let
-        [message : String (compiler-diagnostic-message (box-get diag))]
+        [message : String
+          (compiler-diagnostic-message
+            (compiler-diagnostic-list-first (box-get diag)))]
         (and
           (string.contains (& message) (& want-message-fragment))
           (compiler-typecheck-help-contains?
-            (box-get diag)
+            (compiler-diagnostic-list-first (box-get diag))
             "narrower lexical scope")
           (=
             (compiler-typecheck-secondary-count
-              (compiler-diagnostic-secondary-spans (box-get diag)))
+              (compiler-diagnostic-secondary-spans
+                (compiler-diagnostic-list-first (box-get diag))))
             1)
           (compiler-typecheck-secondary-label-contains?
-            (compiler-diagnostic-secondary-spans (box-get diag))
+            (compiler-diagnostic-secondary-spans
+              (compiler-diagnostic-list-first (box-get diag)))
             "remains live")))]
     [(ResultCompilerTypecheck.Ok _) false]))
 
@@ -994,14 +998,21 @@
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
       (and
-        (string.eq (compiler-diagnostic-message (box-get diag)) want-message)
-        (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
+        (string.eq
+          (compiler-diagnostic-message
+            (compiler-diagnostic-list-first (box-get diag)))
+          want-message)
+        (compiler-typecheck-help-contains?
+          (compiler-diagnostic-list-first (box-get diag))
+          "clone the owner")
         (=
           (compiler-typecheck-secondary-count
-            (compiler-diagnostic-secondary-spans (box-get diag)))
+            (compiler-diagnostic-secondary-spans
+              (compiler-diagnostic-list-first (box-get diag))))
           1)
         (compiler-typecheck-secondary-label-contains?
-          (compiler-diagnostic-secondary-spans (box-get diag))
+          (compiler-diagnostic-secondary-spans
+            (compiler-diagnostic-list-first (box-get diag)))
           want-label-fragment))]
     [(ResultCompilerTypecheck.Ok _) false]))
 
@@ -1013,17 +1024,25 @@
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
       (and
-        (string.eq (compiler-diagnostic-message (box-get diag)) want-message)
-        (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
+        (string.eq
+          (compiler-diagnostic-message
+            (compiler-diagnostic-list-first (box-get diag)))
+          want-message)
+        (compiler-typecheck-help-contains?
+          (compiler-diagnostic-list-first (box-get diag))
+          "clone the owner")
         (=
           (compiler-typecheck-secondary-count
-            (compiler-diagnostic-secondary-spans (box-get diag)))
+            (compiler-diagnostic-secondary-spans
+              (compiler-diagnostic-list-first (box-get diag))))
           2)
         (compiler-typecheck-secondary-label-contains?
-          (compiler-diagnostic-secondary-spans (box-get diag))
+          (compiler-diagnostic-secondary-spans
+            (compiler-diagnostic-list-first (box-get diag)))
           want-move-label-fragment)
         (compiler-typecheck-secondary-label-contains?
-          (compiler-diagnostic-secondary-spans (box-get diag))
+          (compiler-diagnostic-secondary-spans
+            (compiler-diagnostic-list-first (box-get diag)))
           want-owner-label-fragment))]
     [(ResultCompilerTypecheck.Ok _) false]))
 
@@ -1883,7 +1902,8 @@
     [(ResultCompilerTypecheck.Ok _) false]
     [(ResultCompilerTypecheck.Err diag)
       (let
-        [value : CompilerDiagnostic (box-get diag)]
+        [value : CompilerDiagnostic
+          (compiler-diagnostic-list-first (box-get diag))]
         (and
           (string.eq
             (compiler-diagnostic-message value)
@@ -2715,7 +2735,8 @@
             "typecheck-generated-import-state-threading"
             pools)]
         [(ResultCompilerLoadWithPaths.Err diag)
-          (ResultCompilerTypecheck.Err diag)])]
+          (ResultCompilerTypecheck.Err
+            (compiler-diagnostic-list-box-single diag))])]
     [_reset-before-controlled-failure : unit
       (compiler-typecheck-reset-file-state!)]
     [controlled-failure : ResultCompilerTypecheck
@@ -2734,13 +2755,16 @@
             "typecheck-controlled-failure-state-threading"
             pools)]
         [(ResultAstProgramDiagnostic.Err diag)
-          (ResultCompilerTypecheck.Err diag)])]
+          (ResultCompilerTypecheck.Err
+            (compiler-diagnostic-list-box-single diag))])]
     [ok : bool
       (and
         (match result
           [(ResultCompilerTypecheck.Ok _) true]
           [(ResultCompilerTypecheck.Err diag)
-            (io.panic (compiler-diagnostic-render (box-get diag)))])
+            (io.panic
+              (compiler-diagnostic-render
+                (compiler-diagnostic-list-first (box-get diag))))])
         (match controlled-failure
           [(ResultCompilerTypecheck.Err _) true]
           [(ResultCompilerTypecheck.Ok _) false])
@@ -2827,9 +2851,13 @@
               cfgs))
             [(ResultCompilerTypecheck.Err diag)
               (and
-                (string.eq (compiler-diagnostic-path (box-get diag)) dep)
                 (string.eq
-                  (compiler-diagnostic-message (box-get diag))
+                  (compiler-diagnostic-path
+                    (compiler-diagnostic-list-first (box-get diag)))
+                  dep)
+                (string.eq
+                  (compiler-diagnostic-message
+                    (compiler-diagnostic-list-first (box-get diag)))
                   "typecheck: value definition type mismatch: expected i64, found bool"))]
             [(ResultCompilerTypecheck.Ok _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
@@ -4224,7 +4252,8 @@
                 [(ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [message : String
-                      (compiler-diagnostic-message (box-get diag))]
+                      (compiler-diagnostic-message
+                        (compiler-diagnostic-list-first (box-get diag)))]
                     (begin
                       (io.stderr-write (& message))
                       (io.panic
@@ -4262,7 +4291,8 @@
                 [(ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [message : String
-                      (compiler-diagnostic-message (box-get diag))]
+                      (compiler-diagnostic-message
+                        (compiler-diagnostic-list-first (box-get diag)))]
                     (begin
                       (io.stderr-write (& message))
                       false))]))]
@@ -4291,7 +4321,8 @@
               [(ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [message : String
-                    (compiler-diagnostic-message (box-get diag))]
+                    (compiler-diagnostic-message
+                      (compiler-diagnostic-list-first (box-get diag)))]
                   (begin
                     (io.stderr-write (& message))
                     false))])]
@@ -4320,7 +4351,8 @@
               [(ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [message : String
-                    (compiler-diagnostic-message (box-get diag))]
+                    (compiler-diagnostic-message
+                      (compiler-diagnostic-list-first (box-get diag)))]
                   (begin
                     (io.stderr-write (& message))
                     false))])]
@@ -4402,7 +4434,8 @@
           (ast-decl-root-path-cons path (ast-decl-path-list-new))))
         [(ResultCompilerTypecheck.Err diag)
           (let
-            [value : CompilerDiagnostic (box-get diag)]
+            [value : CompilerDiagnostic
+              (compiler-diagnostic-list-first (box-get diag))]
             (and
               (string.eq (compiler-diagnostic-message value) message)
               (string.eq (compiler-diagnostic-path value) path)

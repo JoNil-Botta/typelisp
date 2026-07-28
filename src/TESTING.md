@@ -334,12 +334,15 @@ mismatch.
 ### One-shot compile startup profiling
 
 `compile-startup-profile` is a build cfg for attributing one fresh `typelisp
-compile` process from the earliest source global through the start of user-entry
-loading. It records raw monotonic ticks in memory and prints them only after the
-compile finishes, keeping marker formatting and stderr I/O outside the measured
-preamble. The required cross-platform verifier builds an instrumented compiler,
-checks marker presence/order, and requires its generated assembly to match the
-normal compiler:
+compile` process from the backend-owned process entry through the start of
+user-entry loading. The runtime captures `process.entry` before argv or arena
+setup, and the Windows harness reports `launch_to_process_entry` plus
+`process_entry_to_globals` alongside the source-level intervals. It records raw
+monotonic ticks in memory and prints them only after the compile finishes,
+keeping marker formatting and stderr I/O outside the measured preamble. The
+required cross-platform verifier builds an instrumented compiler, checks marker
+presence/order, and requires its generated assembly to match the normal
+compiler:
 
 ```sh
 TYPELISP_BIN=target/stage0/typelisp scripts/verify-compile-startup-profile.sh

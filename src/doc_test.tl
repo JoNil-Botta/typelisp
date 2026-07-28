@@ -1659,7 +1659,9 @@
               path
               source-line
               index
-              (doc-test-unexpected-error-message index (box-get diag)))))])))
+              (doc-test-unexpected-error-message
+                index
+                (compiler-diagnostic-list-first (box-get diag))))))])))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
@@ -1708,7 +1710,9 @@
               path
               source-line
               index
-              (doc-test-unexpected-error-message index (box-get diag)))))])))
+              (doc-test-unexpected-error-message
+                index
+                (compiler-diagnostic-list-first (box-get diag))))))])))
 
 (define (doc-test-check-example-with-roots
   [path : String]

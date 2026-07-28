@@ -92,6 +92,7 @@ $script:ChildFrequency = [Diagnostics.Stopwatch]::Frequency
 $script:Rows = New-Object System.Collections.Generic.List[object]
 $script:Runs = New-Object System.Collections.Generic.List[object]
 $requiredMarkers = @(
+    "process.entry",
     "globals.start",
     "main.entry",
     "cli.compile_action",
@@ -153,6 +154,8 @@ function Add-MetricRows([object]$Run) {
     $m = $Run.Markers
     $f = $Run.Frequency
     $metrics = [ordered]@{
+        "launch_to_process_entry" = @( $Run.LaunchTick, $m["process.entry"] )
+        "process_entry_to_globals" = @( $m["process.entry"], $m["globals.start"] )
         "launch_to_globals" = @( $Run.LaunchTick, $m["globals.start"] )
         "global_initializers" = @( $m["globals.start"], $m["main.entry"] )
         "launch_to_main" = @( $Run.LaunchTick, $m["main.entry"] )

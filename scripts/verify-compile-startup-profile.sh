@@ -80,8 +80,8 @@ fi
 
 awk -F'|' '
 BEGIN {
-    split("globals.start main.entry cli.compile_action driver_state.begin driver_state.end preflight.begin preflight.end file_state_reset.end compile_driver.start prelude.begin prelude.end user_entry.start", order, " ")
-    wanted = 12
+    split("process.entry globals.start main.entry cli.compile_action driver_state.begin driver_state.end preflight.begin preflight.end file_state_reset.end compile_driver.start prelude.begin prelude.end user_entry.start", order, " ")
+    wanted = 13
 }
 $1 == "compile-startup-profile" && $2 != "marker" {
     if (($3 + 0) <= 0 || ($4 + 0) <= 0) {

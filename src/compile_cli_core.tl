@@ -2338,7 +2338,8 @@
         [(ResultCompilerCheck.Err diag)
           (begin
             (io.print-error
-              (compiler-driver-render-source-diagnostic (box-get diag)))
+              (compiler-driver-render-source-diagnostic
+                (compiler-diagnostic-list-first (box-get diag))))
             1)])]
     [(CompileCliAction.Help)
       (begin

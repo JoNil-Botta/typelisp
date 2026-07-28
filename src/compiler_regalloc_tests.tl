@@ -2993,7 +2993,7 @@
   (define (compiler-reg-remat-single-spill-plan [func : CompilerIrFunction]) : CompilerRegPlan
     (CompilerRegPlan.Plan
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment
+        (CompilerRegAssignment
           0
           (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
         CompilerRegAssignmentList.Nil)
@@ -3008,11 +3008,11 @@
   (define (compiler-reg-remat-conflict-plan [func : CompilerIrFunction]) : CompilerRegPlan
     (CompilerRegPlan.Plan
       (compiler-reg-assignment-cons
-        (CompilerRegAssignment.Assignment
+        (CompilerRegAssignment
           0
           (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment
+          (CompilerRegAssignment
             1
             (CompilerRegLocation.Register compiler-reg-id-r9))
           CompilerRegAssignmentList.Nil))
@@ -3814,7 +3814,7 @@
         [(CompilerRegIntervalSelection.Selection intervals _)
           (CompilerRegPlan.Plan
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment
+              (CompilerRegAssignment
                 0
                 (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
               CompilerRegAssignmentList.Nil)
@@ -3835,11 +3835,11 @@
         [(CompilerRegIntervalSelection.Selection intervals _)
           (CompilerRegPlan.Plan
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment
+              (CompilerRegAssignment
                 0
                 (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 0)))
               (compiler-reg-assignment-cons
-                (CompilerRegAssignment.Assignment
+                (CompilerRegAssignment
                   1
                   (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset 1)))
                 CompilerRegAssignmentList.Nil))
@@ -3860,11 +3860,11 @@
         [(CompilerRegIntervalSelection.Selection intervals _)
           (CompilerRegPlan.Plan
             (compiler-reg-assignment-cons
-              (CompilerRegAssignment.Assignment
+              (CompilerRegAssignment
                 0
                 (CompilerRegLocation.Register compiler-reg-id-r12))
               (compiler-reg-assignment-cons
-                (CompilerRegAssignment.Assignment
+                (CompilerRegAssignment
                   1
                   (CompilerRegLocation.Register compiler-reg-id-r8))
                 CompilerRegAssignmentList.Nil))
@@ -4676,7 +4676,7 @@
           (CompilerRegLocation.Register preassigned-reg))]
       [candidates : CompilerRegIntervalSeq
         (compiler-reg-interval-seq-prepend
-          (CompilerRegInterval.Interval 1 candidate-start candidate-end)
+          (CompilerRegInterval 1 candidate-start candidate-end)
           (compiler-reg-interval-seq-empty))]
       (match (compiler-reg-assign-fixed-candidates
         candidates
@@ -4776,20 +4776,20 @@
     [candidate-start : i64]
     [candidate-end : i64]) : CompilerRegIntervalSeq
     (compiler-reg-interval-seq-prepend
-      (CompilerRegInterval.Interval 0 pre-start pre-end)
+      (CompilerRegInterval 0 pre-start pre-end)
       (compiler-reg-interval-seq-prepend
-        (CompilerRegInterval.Interval 1 candidate-start candidate-end)
+        (CompilerRegInterval 1 candidate-start candidate-end)
         (compiler-reg-interval-seq-empty)))))
 
 (cfg
   test
   (define (compiler-reg-xmm-ownership-segment-hole-intervals) : CompilerRegIntervalSeq
     (compiler-reg-interval-seq-prepend
-      (CompilerRegInterval.Interval 0 0 2)
+      (CompilerRegInterval 0 0 2)
       (compiler-reg-interval-seq-prepend
-        (CompilerRegInterval.Interval 1 3 5)
+        (CompilerRegInterval 1 3 5)
         (compiler-reg-interval-seq-prepend
-          (CompilerRegInterval.Interval 0 6 8)
+          (CompilerRegInterval 0 6 8)
           (compiler-reg-interval-seq-empty))))))
 
 (cfg
@@ -5054,25 +5054,25 @@
       [interval-index : CompilerRegIntervalIndex
         (compiler-reg-interval-index-build
           (compiler-reg-interval-seq-prepend
-            (CompilerRegInterval.Interval 0 0 10)
+            (CompilerRegInterval 0 0 10)
             (compiler-reg-interval-seq-prepend
-              (CompilerRegInterval.Interval 1 0 10)
+              (CompilerRegInterval 1 0 10)
               (compiler-reg-interval-seq-prepend
-                (CompilerRegInterval.Interval 2 0 10)
+                (CompilerRegInterval 2 0 10)
                 (compiler-reg-interval-seq-prepend
-                  (CompilerRegInterval.Interval 3 0 10)
+                  (CompilerRegInterval 3 0 10)
                   (compiler-reg-interval-seq-prepend
-                    (CompilerRegInterval.Interval 4 0 10)
+                    (CompilerRegInterval 4 0 10)
                     (compiler-reg-interval-seq-prepend
-                      (CompilerRegInterval.Interval 5 0 10)
+                      (CompilerRegInterval 5 0 10)
                       (compiler-reg-interval-seq-prepend
-                        (CompilerRegInterval.Interval 6 0 10)
+                        (CompilerRegInterval 6 0 10)
                         (compiler-reg-interval-seq-prepend
-                          (CompilerRegInterval.Interval 7 0 10)
+                          (CompilerRegInterval 7 0 10)
                           (compiler-reg-interval-seq-prepend
-                            (CompilerRegInterval.Interval 8 0 10)
+                            (CompilerRegInterval 8 0 10)
                             (compiler-reg-interval-seq-prepend
-                              (CompilerRegInterval.Interval 9 0 10)
+                              (CompilerRegInterval 9 0 10)
                               (compiler-reg-interval-seq-empty)))))))))))
           vars)]
       [members : (Array i64) (array.make-array i64 vars)]
@@ -5379,9 +5379,12 @@
     [var : i64]
     [start : i64]
     [end : i64]) : bool
-    (match (compiler-reg-interval-seq-ref items index)
-      [(CompilerRegInterval.Interval got-var got-start got-end)
-        (and (= got-var var) (= got-start start) (= got-end end))])))
+    (let
+      [got : CompilerRegInterval (compiler-reg-interval-seq-ref items index)]
+      (and
+        (= (struct-get got var) var)
+        (= (struct-get got start) start)
+        (= (struct-get got end) end)))))
 
 (cfg
   test
@@ -5407,84 +5410,84 @@
               appended
               (compiler-reg-interval-seq-append
                 appended
-                (CompilerRegInterval.Interval i (* i 2) (+ (* i 2) 1))))
+                (CompilerRegInterval i (* i 2) (+ (* i 2) 1))))
             (set!
               prepended
               (compiler-reg-interval-seq-prepend
-                (CompilerRegInterval.Interval i (* i 2) (+ (* i 2) 1))
+                (CompilerRegInterval i (* i 2) (+ (* i 2) 1))
                 prepended))
             (set! i (+ i 1))))
         (set!
           inserted
           (compiler-reg-interval-seq-append
             inserted
-            (CompilerRegInterval.Interval 0 0 1)))
+            (CompilerRegInterval 0 0 1)))
         (set!
           inserted
           (compiler-reg-interval-seq-append
             inserted
-            (CompilerRegInterval.Interval 2 4 5)))
+            (CompilerRegInterval 2 4 5)))
         (set!
           inserted
           (compiler-reg-interval-seq-append
             inserted
-            (CompilerRegInterval.Interval 1 2 3)))
+            (CompilerRegInterval 1 2 3)))
         (set! inserted (compiler-reg-candidate-sort inserted))
         (set!
           separated-left
           (compiler-reg-interval-seq-append
             separated-left
-            (CompilerRegInterval.Interval 0 1 2)))
+            (CompilerRegInterval 0 1 2)))
         (set!
           separated-left
           (compiler-reg-interval-seq-append
             separated-left
-            (CompilerRegInterval.Interval 0 6 8)))
+            (CompilerRegInterval 0 6 8)))
         (set!
           separated-left
           (compiler-reg-interval-seq-append
             separated-left
-            (CompilerRegInterval.Interval 0 12 15)))
+            (CompilerRegInterval 0 12 15)))
         (set!
           separated-right
           (compiler-reg-interval-seq-append
             separated-right
-            (CompilerRegInterval.Interval 1 2 4)))
+            (CompilerRegInterval 1 2 4)))
         (set!
           separated-right
           (compiler-reg-interval-seq-append
             separated-right
-            (CompilerRegInterval.Interval 1 8 10)))
+            (CompilerRegInterval 1 8 10)))
         (set!
           separated-right
           (compiler-reg-interval-seq-append
             separated-right
-            (CompilerRegInterval.Interval 1 15 18)))
+            (CompilerRegInterval 1 15 18)))
         (set!
           late-overlap-right
           (compiler-reg-interval-seq-append
             late-overlap-right
-            (CompilerRegInterval.Interval 1 2 4)))
+            (CompilerRegInterval 1 2 4)))
         (set!
           late-overlap-right
           (compiler-reg-interval-seq-append
             late-overlap-right
-            (CompilerRegInterval.Interval 1 8 10)))
+            (CompilerRegInterval 1 8 10)))
         (set!
           late-overlap-right
           (compiler-reg-interval-seq-append
             late-overlap-right
-            (CompilerRegInterval.Interval 1 14 18)))
+            (CompilerRegInterval 1 14 18)))
         (set!
           zero-left
           (compiler-reg-interval-seq-append
             zero-left
-            (CompilerRegInterval.Interval 0 0 0)))
+            (CompilerRegInterval 0 0 0)))
         (set!
           zero-right
           (compiler-reg-interval-seq-append
             zero-right
-            (CompilerRegInterval.Interval 1 0 2)))
+            (CompilerRegInterval 1 0 2)))
         (and
           (= (compiler-reg-interval-seq-count appended) 10)
           (compiler-reg-test-interval-shape? appended 0 0 0 1)
@@ -5506,7 +5509,7 @@
           (not
             (compiler-reg-interval-seq-overlaps-one?
               separated-left
-              (CompilerRegInterval.Interval 2 4 6)))
+              (CompilerRegInterval 2 4 6)))
           ;; Entry-point touches preserve the prologue-home exception.
           (compiler-reg-interval-seq-overlaps? zero-left zero-right))))))
 
@@ -5640,9 +5643,9 @@
   test
   (define (compiler-reg-color-phi-web-intervals) : CompilerRegIntervalSeq
     (compiler-reg-interval-seq-prepend
-      (CompilerRegInterval.Interval 1 0 6)
+      (CompilerRegInterval 1 0 6)
       (compiler-reg-interval-seq-prepend
-        (CompilerRegInterval.Interval 0 4 6)
+        (CompilerRegInterval 0 4 6)
         (compiler-reg-interval-seq-empty)))))
 
 (cfg

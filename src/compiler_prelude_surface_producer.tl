@@ -176,7 +176,7 @@
           (surface_facts.surface-typecheck-facts-recording-abort!)
           (prelude-surface-facts-error
             "prelude surface typecheck failed: "
-            diag))]
+            (box (compiler-diagnostic-list-first (box-get diag)))))]
       [(ResultCompilerTypecheckChecked.Ok summary ctx _ _)
         (let
           [_finish-early-exit-facts : unit (tc-body-early-exit-facts-finish!)]

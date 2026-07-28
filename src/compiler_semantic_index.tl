@@ -528,7 +528,9 @@
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheckWithSemanticIndex.Err
             (box
-              (compiler-check-diagnostic-with-fallback-path (box-get diag) path))))])))
+              (compiler-check-diagnostic-with-fallback-path
+                (compiler-diagnostic-list-first (box-get diag))
+                path))))])))
 
 (define (compiler-check-loaded-with-prelude-index-cache
   [path : String]

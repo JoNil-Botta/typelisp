@@ -52,7 +52,7 @@
     (compiler-backend-runtime-arena-data
       (runtime_common.compiler-backend-runtime-features-arena-debug? features))))
 
-(define (compiler-backend-runtime-windows-libc-shim-functions) : String
+(define (compiler-backend-runtime-windows-libc-shim-functions-base) : String
   "    .globl __chkstk
 __chkstk:
     pushq %rcx
@@ -1501,6 +1501,21 @@ tl_tlci_call_macro_entry:
 
 ")
 
+(define (compiler-backend-runtime-windows-libc-shim-functions
+  [startup-profile : bool]) : String
+  (if startup-profile
+    (string.replace
+      (compiler-backend-runtime-windows-libc-shim-functions-base)
+      "    subq $40, %rsp
+    call tl_setup_argv
+"
+      "    subq $40, %rsp
+    leaq .L_tl_startup_profile_process_entry_tick(%rip), %rcx
+    call QueryPerformanceCounter
+    call tl_setup_argv
+")
+    (compiler-backend-runtime-windows-libc-shim-functions-base)))
+
 (define (compiler-backend-runtime-functions
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
   (let
@@ -1530,6 +1545,12 @@ tl_tlci_call_macro_entry:
       (if profile
         (runtime_common.compiler-backend-runtime-profile-functions)
         "")]
+    [startup-profile : bool
+      (runtime_common.compiler-backend-runtime-features-startup-profile?
+        features)]
+    [startup-profile-asm : String
+      (runtime_common.compiler-backend-runtime-startup-profile-functions
+        startup-profile)]
     [memcpy-asm : String (compiler-backend-runtime-memcpy-functions)]
     [memchr-asm : String (compiler-backend-runtime-memchr-functions)]
     [array-zero-asm : String (compiler-backend-runtime-array-zero-functions)]
@@ -1555,12 +1576,12 @@ tl_tlci_call_macro_entry:
                   (string.append
                     profile-asm
                     (str_cat.str-cat
+                      startup-profile-asm
                       alloc-asm
                       region-mark-asm
-                      region-reset-asm
-                      ""))))))))]
+                      region-reset-asm))))))))]
     [libc-shims-asm : String
-      (compiler-backend-runtime-windows-libc-shim-functions)]
+      (compiler-backend-runtime-windows-libc-shim-functions startup-profile)]
     [thread-asm : String (compiler-backend-runtime-windows-thread-functions)]
     (str_cat.str-cat runtime-front-asm thread-asm libc-shims-asm "")))
 
@@ -1572,6 +1593,11 @@ tl_tlci_call_macro_entry:
     .extern GetLastError
     .extern ExitProcess
 "
+    (if (runtime_common.compiler-backend-runtime-features-startup-profile?
+      features)
+      "    .extern QueryPerformanceCounter
+"
+      "")
     (if (runtime_common.compiler-backend-runtime-features-write-exit? features)
       "    .extern WriteFile
 "

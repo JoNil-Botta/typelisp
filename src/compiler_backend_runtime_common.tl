@@ -10,7 +10,8 @@
   (profile bool)
   (tlci-macro-entry bool)
   (write-exit bool)
-  (print-f64 bool))
+  (print-f64 bool)
+  (startup-profile bool))
 
 (define (compiler-backend-runtime-features-alloc?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
@@ -44,6 +45,10 @@
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
   (struct-get features print-f64))
 
+(define (compiler-backend-runtime-features-startup-profile?
+  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
+  (struct-get features startup-profile))
+
 (define (compiler-backend-runtime-fast-alloc-label [size : i64]) : String
   (str_cat.str-cat ".L_tl_alloc" (string.int->string size) "" ""))
 
@@ -57,6 +62,18 @@ tl_profile_alloc_live_bytes:
     .zero 8
 tl_profile_alloc_peak_bytes:
     .zero 8
+
+"
+    ""))
+
+(define (compiler-backend-runtime-startup-profile-data [startup-profile : bool]) : String
+  (if startup-profile
+    "    .section .bss
+    .balign 8
+.L_tl_startup_profile_process_entry_tick:
+    .zero 8
+.L_tl_startup_profile_timespec:
+    .zero 16
 
 "
     ""))
@@ -92,6 +109,8 @@ tl_profile_alloc_peak_bytes:
   [arena-data : String]) : String
   (str_cat.str-cat
     arena-data
+    (compiler-backend-runtime-startup-profile-data
+      (compiler-backend-runtime-features-startup-profile? features))
     (compiler-backend-runtime-profile-data
       (compiler-backend-runtime-features-profile? features))
     (if (compiler-backend-runtime-features-region-reset? features)
@@ -99,6 +118,18 @@ tl_profile_alloc_peak_bytes:
       "")
     (compiler-backend-runtime-argv-data)
     (compiler-backend-runtime-env-data)))
+
+(define (compiler-backend-runtime-startup-profile-functions
+  [startup-profile : bool]) : String
+  (if startup-profile
+    "    .text
+    .globl tl_startup_profile_process_entry_tick
+tl_startup_profile_process_entry_tick:
+    movq .L_tl_startup_profile_process_entry_tick(%rip), %rax
+    ret
+
+"
+    ""))
 
 (define (compiler-backend-runtime-profile-alloc-account
   [size-reg : String]

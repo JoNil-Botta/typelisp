@@ -883,7 +883,8 @@
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
   (tlci-macro-entry bool)
-  (arena-debug bool))
+  (arena-debug bool)
+  (startup-profile bool))
 
 (defenum CompilerBackendRuntimeHelperOwner
   (Unknown)
@@ -909,7 +910,8 @@
   (defines backend_i64_i64_map.Map)
   (externs backend_i64_i64_map.Map)
   (calls backend_i64_i64_map.Map)
-  (tlci-macro-entry-call-id i64))
+  (tlci-macro-entry-call-id i64)
+  (startup-profile bool))
 
 (defstruct CompilerBackendRuntimePlanWithIndex
   (plan CompilerBackendRuntimePlan)
@@ -1050,6 +1052,10 @@
 (define (compiler-backend-runtime-tail-arena-debug?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail arena-debug))
+
+(define (compiler-backend-runtime-tail-startup-profile?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail startup-profile))
 
 (define (compiler-backend-runtime-plan-tail [plan : CompilerBackendRuntimePlan]) : CompilerBackendRuntimeTailPlan
   (match plan
@@ -17839,7 +17845,7 @@
   (if (>= i n)
     assignments
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment
+      (CompilerRegAssignment
         (+ vars i)
         (if (= (array-ref regs i) compiler-reg-id-invalid)
           (CompilerRegLocation.Spill
@@ -17882,7 +17888,7 @@
             out
             (compiler-reg-interval-seq-append
               out
-              (CompilerRegInterval.Interval
+              (CompilerRegInterval
                 (+ vars index)
                 (array-ref lo index)
                 (array-ref hi index))))
@@ -18004,7 +18010,7 @@
           vars
           assignments)
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment
+          (CompilerRegAssignment
             (+ vars success)
             (CompilerRegLocation.Register reg))
           (compiler-backend-scratch-plan-extend-assignments-from
@@ -18050,7 +18056,7 @@
                   out
                   (compiler-reg-interval-seq-append
                     out
-                    (CompilerRegInterval.Interval
+                    (CompilerRegInterval
                       (+ vars success-index)
                       (struct-get requirement lo)
                       (struct-get requirement hi))))
@@ -47177,24 +47183,25 @@
   (match assignments
     [(CompilerRegAssignmentList.Nil) mask]
     [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment var location)
-          (compiler-backend-scavenge-assignment-index-fill!
-            (box-get rest)
-            present
-            items
-            (if (or
-              (< var 0)
-              (>= var (array-length present))
-              (not (= (array-ref present var) 0)))
-              mask
-              (let
-                [loc-mask : i64
-                  (compiler-backend-scavenge-location-mask location)]
-                (begin
-                  (array-set! present var 1)
-                  (array-set! items var location)
-                  (bit-or mask loc-mask)))))])]))
+      (let
+        [var : i64 (struct-get item var)]
+        [location : CompilerRegLocation (struct-get item location)]
+        (compiler-backend-scavenge-assignment-index-fill!
+          (box-get rest)
+          present
+          items
+          (if (or
+            (< var 0)
+            (>= var (array-length present))
+            (not (= (array-ref present var) 0)))
+            mask
+            (let
+              [loc-mask : i64
+                (compiler-backend-scavenge-location-mask location)]
+              (begin
+                (array-set! present var 1)
+                (array-set! items var location)
+                (bit-or mask loc-mask))))))]))
 
 (define (compiler-backend-scavenge-assignment-index-build
   [assignments : CompilerRegAssignmentList]
@@ -47224,13 +47231,10 @@
   (match assignments
     [(CompilerRegAssignmentList.Nil) false]
     [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment _ location)
-          (match location
-            [(CompilerRegLocation.Register _) true]
-            [(CompilerRegLocation.RegisterPair _ _) true]
-            [_
-              (compiler-backend-assignments-have-register-home? (box-get rest))])])]))
+      (match (struct-get item location)
+        [(CompilerRegLocation.Register _) true]
+        [(CompilerRegLocation.RegisterPair _ _) true]
+        [_ (compiler-backend-assignments-have-register-home? (box-get rest))])]))
 
 (cfg
   scavenge-self-check
@@ -54908,7 +54912,8 @@
     (backend_i64_i64_map.with-capacity 256)
     (backend_i64_i64_map.with-capacity 256)
     (backend_i64_i64_map.with-capacity 256)
-    -1))
+    -1
+    false))
 
 (define (compiler-backend-runtime-index-defines?
   [index : CompilerBackendRuntimeIndex]
@@ -54936,7 +54941,8 @@
         defines
         (struct-get index externs)
         (struct-get index calls)
-        (struct-get index tlci-macro-entry-call-id)))))
+        (struct-get index tlci-macro-entry-call-id)
+        (struct-get index startup-profile)))))
 
 (define (compiler-backend-runtime-index-add-extern-name
   [index : CompilerBackendRuntimeIndex]
@@ -54949,7 +54955,8 @@
         (struct-get index defines)
         externs
         (struct-get index calls)
-        (struct-get index tlci-macro-entry-call-id)))))
+        (struct-get index tlci-macro-entry-call-id)
+        (struct-get index startup-profile)))))
 
 (define (compiler-backend-runtime-index-add-call
   [index : CompilerBackendRuntimeIndex]
@@ -54962,7 +54969,8 @@
         (struct-get index defines)
         (struct-get index externs)
         calls
-        (struct-get index tlci-macro-entry-call-id)))))
+        (struct-get index tlci-macro-entry-call-id)
+        (struct-get index startup-profile)))))
 
 (define (compiler-backend-runtime-index-with-extern-role
   [index : CompilerBackendRuntimeIndex]
@@ -54974,7 +54982,22 @@
     (struct-get index calls)
     (if (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
       call-id
-      (struct-get index tlci-macro-entry-call-id))))
+      (struct-get index tlci-macro-entry-call-id))
+    (struct-get index startup-profile)))
+
+(define (compiler-backend-runtime-index-with-startup-profile-role
+  [index : CompilerBackendRuntimeIndex]
+  [link-id : i64]) : CompilerBackendRuntimeIndex
+  (if (string.eq
+    (compiler-ir-symbol-text link-id)
+    "tl_startup_profile_process_entry_tick")
+    (CompilerBackendRuntimeIndex
+      (struct-get index defines)
+      (struct-get index externs)
+      (struct-get index calls)
+      (struct-get index tlci-macro-entry-call-id)
+      true)
+    index))
 
 (define (compiler-backend-runtime-index-instr
   [index : CompilerBackendRuntimeIndex]
@@ -55081,25 +55104,32 @@
             link-symbol
             _
             provided)
-          (if provided
-            (compiler-backend-runtime-index-externs index (box-get rest))
-            (let
-              [with-names : CompilerBackendRuntimeIndex
-                (compiler-backend-runtime-index-add-extern-name
+          (let
+            [with-startup-role : CompilerBackendRuntimeIndex
+              (compiler-backend-runtime-index-with-startup-profile-role
+                index
+                link-symbol)]
+            (if provided
+              (compiler-backend-runtime-index-externs
+                with-startup-role
+                (box-get rest))
+              (let
+                [with-names : CompilerBackendRuntimeIndex
                   (compiler-backend-runtime-index-add-extern-name
                     (compiler-backend-runtime-index-add-extern-name
-                      index
-                      name-id)
-                    source-name-id)
-                  link-symbol)]
-              [with-runtime-role : CompilerBackendRuntimeIndex
-                (compiler-backend-runtime-index-with-extern-role
-                  with-names
-                  name-id
-                  link-symbol)]
-              (compiler-backend-runtime-index-externs
-                with-runtime-role
-                (box-get rest))))])]
+                      (compiler-backend-runtime-index-add-extern-name
+                        with-startup-role
+                        name-id)
+                      source-name-id)
+                    link-symbol)]
+                [with-runtime-role : CompilerBackendRuntimeIndex
+                  (compiler-backend-runtime-index-with-extern-role
+                    with-names
+                    name-id
+                    link-symbol)]
+                (compiler-backend-runtime-index-externs
+                  with-runtime-role
+                  (box-get rest)))))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-runtime-index-externs
         index
@@ -55444,6 +55474,7 @@
         (and
           (>= call-id 0)
           (compiler-backend-runtime-index-calls? index call-id)))]
+    [needs-startup-profile : bool (struct-get index startup-profile)]
     (ResultBackendRuntimePlanWithIndex.Ok
       (CompilerBackendRuntimePlanWithIndex
         (CompilerBackendRuntimePlan.Plan
@@ -55457,7 +55488,8 @@
           (CompilerBackendRuntimeTailPlan
             needs-profile
             needs-tlci-macro-entry
-            needs-arena-debug))
+            needs-arena-debug
+            needs-startup-profile))
         index))))
 
 (define (compiler-backend-runtime-plan-for
@@ -55614,7 +55646,8 @@
             (compiler-backend-runtime-tail-profile? tail-plan)
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
-            print-f64))])))
+            print-f64
+            (compiler-backend-runtime-tail-startup-profile? tail-plan)))])))
 
 (define (compiler-backend-current-arena-load
   [target : CompilerBackendTarget]
@@ -55764,35 +55797,53 @@
 (define (compiler-backend-entry
   [capture-argv : bool]
   [capture-env : bool]
+  [startup-profile : bool]
   [global-inits : String]) : String
-  (if (or capture-argv capture-env)
-    (str_cat.str-cat
-      "_tl_start:
-    movq (%rsp), %rax
+  (let
+    [startup-profile-asm : String
+      (if startup-profile
+        "    movq $228, %rax
+    movq $1, %rdi
+    leaq .L_tl_startup_profile_timespec(%rip), %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_startup_profile_process_entry_done
+    movq .L_tl_startup_profile_timespec(%rip), %rax
+    imulq $1000000000, %rax
+    addq .L_tl_startup_profile_timespec+8(%rip), %rax
+    movq %rax, .L_tl_startup_profile_process_entry_tick(%rip)
+.L_tl_startup_profile_process_entry_done:
 "
-      (if capture-argv
-        "    movq %rax, .L_tl_argc(%rip)
+        "")]
+    (if (or capture-argv capture-env)
+      (str_cat.str-cat
+        "_tl_start:\n"
+        startup-profile-asm
+        "    movq (%rsp), %rax\n"
+        (if capture-argv
+          "    movq %rax, .L_tl_argc(%rip)
     leaq 8(%rsp), %rax
     movq %rax, .L_tl_argv(%rip)
 "
-        "")
-      (if capture-env
-        (str_cat.str-cat
-          (if capture-argv
-            "    movq (%rsp), %rax\n"
-            "")
-          "    leaq 16(%rsp,%rax,8), %rax
+          "")
+        (if capture-env
+          (str_cat.str-cat
+            (if capture-argv
+              "    movq (%rsp), %rax\n"
+              "")
+            "    leaq 16(%rsp,%rax,8), %rax
     movq %rax, .L_tl_envp(%rip)
 ")
-        "")
-      "    call tl_thread_init\n"
-      global-inits
-      (compiler-backend-entry-call-main))
-    (str_cat.str-cat
-      "_tl_start:\n"
-      "    call tl_thread_init\n"
-      global-inits
-      (compiler-backend-entry-call-main))))
+          "")
+        "    call tl_thread_init\n"
+        global-inits
+        (compiler-backend-entry-call-main))
+      (str_cat.str-cat
+        "_tl_start:\n"
+        startup-profile-asm
+        "    call tl_thread_init\n"
+        global-inits
+        (compiler-backend-entry-call-main)))))
 
 (define (compiler-backend-entry-for-target-with-crt
   [type-segment-bases : i64]
@@ -55805,15 +55856,15 @@
     [(CompilerBackendTarget.Linux)
       (if crt-entry
         ""
-        (let
-          [_ : CompilerBackendRuntimePlan plan]
-          (compiler-backend-entry
-            true
-            true
-            (compiler-backend-global-initializers
-              type-segment-bases
-              globals
-              program-index))))]
+        (compiler-backend-entry
+          true
+          true
+          (compiler-backend-runtime-tail-startup-profile?
+            (compiler-backend-runtime-plan-tail plan))
+          (compiler-backend-global-initializers
+            type-segment-bases
+            globals
+            program-index)))]
     [(CompilerBackendTarget.Windows) ""]))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool

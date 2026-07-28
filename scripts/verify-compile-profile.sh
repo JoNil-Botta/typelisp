@@ -1366,6 +1366,112 @@ if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM"; then
     fail "comment-modified stdlib root changed generated assembly"
 fi
 
+# The public concatenator must preserve every operand-count arm across the
+# embedded native route and forced source interpretation. Besides assembly
+# parity, assert the public and runtime profile rows plus zero native-route
+# fallbacks so silently dropping the native entry cannot pass this gate.
+echo "[compile-profile] verify public str-cat arity routing differential (#5628)"
+STR_CAT_ARITIES_SOURCE="$ROOT/tests/integration/str_cat_native_arities.tl"
+STR_CAT_ARITIES_EMBEDDED_ASM="$STDLIB_TLCI_DIR/str-cat-arities-embedded.s"
+STR_CAT_ARITIES_EMBEDDED_OBJ="$STDLIB_TLCI_DIR/str-cat-arities-embedded.$NL_OBJ_EXT"
+STR_CAT_ARITIES_EMBEDDED_BIN="$STDLIB_TLCI_DIR/str-cat-arities-embedded$NL_BIN_EXT"
+STR_CAT_ARITIES_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/str-cat-arities-embedded.stdout"
+STR_CAT_ARITIES_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/str-cat-arities-embedded.stderr"
+STR_CAT_ARITIES_INTERPRETED_ASM="$STDLIB_TLCI_DIR/str-cat-arities-interpreted.s"
+STR_CAT_ARITIES_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/str-cat-arities-interpreted.stdout"
+STR_CAT_ARITIES_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/str-cat-arities-interpreted.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$STR_CAT_ARITIES_SOURCE" \
+        -o "$STR_CAT_ARITIES_EMBEDDED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$STR_CAT_ARITIES_EMBEDDED_STDOUT" 2> "$STR_CAT_ARITIES_EMBEDDED_STDERR"; then
+    show_failure_logs \
+        "$STR_CAT_ARITIES_EMBEDDED_STDOUT" "$STR_CAT_ARITIES_EMBEDDED_STDERR"
+    fail "embedded public str-cat arity fixture compile failed"
+fi
+if ! (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" compile "$STR_CAT_ARITIES_SOURCE" \
+        -o "$STR_CAT_ARITIES_INTERPRETED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib
+) > "$STR_CAT_ARITIES_INTERPRETED_STDOUT" 2> "$STR_CAT_ARITIES_INTERPRETED_STDERR"; then
+    show_failure_logs \
+        "$STR_CAT_ARITIES_INTERPRETED_STDOUT" "$STR_CAT_ARITIES_INTERPRETED_STDERR"
+    fail "interpreted public str-cat arity fixture compile failed"
+fi
+for arity in 0 1 2 5 6 8; do
+    assert_contains \
+        "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
+        "stdlib.str_cat/str-cat arity=$arity"
+    assert_contains \
+        "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
+        "stdlib.str_cat_runtime/str-cat-scoped arity=$arity"
+done
+assert_contains \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
+    "stdlib.str_cat_runtime/str-cat-pack arity=3"
+assert_profile_counter_at_least_in \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_dispatches" \
+    6 \
+    "$STR_CAT_ARITIES_EMBEDDED_STDOUT" \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_misses" \
+    0 \
+    "$STR_CAT_ARITIES_EMBEDDED_STDOUT" \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_load_failures" \
+    0 \
+    "$STR_CAT_ARITIES_EMBEDDED_STDOUT" \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+    0 \
+    "$STR_CAT_ARITIES_EMBEDDED_STDOUT" \
+    "$STR_CAT_ARITIES_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STR_CAT_ARITIES_INTERPRETED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$STR_CAT_ARITIES_INTERPRETED_STDOUT" \
+    "$STR_CAT_ARITIES_INTERPRETED_STDERR"
+if ! cmp -s "$STR_CAT_ARITIES_EMBEDDED_ASM" "$STR_CAT_ARITIES_INTERPRETED_ASM"; then
+    diff -u \
+        "$STR_CAT_ARITIES_INTERPRETED_ASM" "$STR_CAT_ARITIES_EMBEDDED_ASM" \
+        >&2 || true
+    fail "native and interpreted public str-cat arities changed generated assembly"
+fi
+if ! assemble_and_link \
+    str-cat-arities-native \
+    "$STR_CAT_ARITIES_EMBEDDED_ASM" \
+    "$STR_CAT_ARITIES_EMBEDDED_OBJ" \
+    "$STR_CAT_ARITIES_EMBEDDED_BIN" \
+    >> "$STR_CAT_ARITIES_EMBEDDED_STDOUT" 2>> "$STR_CAT_ARITIES_EMBEDDED_STDERR"; then
+    show_failure_logs \
+        "$STR_CAT_ARITIES_EMBEDDED_STDOUT" "$STR_CAT_ARITIES_EMBEDDED_STDERR"
+    fail "native public str-cat arity fixture link failed"
+fi
+set +e
+"$STR_CAT_ARITIES_EMBEDDED_BIN" \
+    >> "$STR_CAT_ARITIES_EMBEDDED_STDOUT" 2>> "$STR_CAT_ARITIES_EMBEDDED_STDERR"
+STR_CAT_ARITIES_STATUS=$?
+set -e
+if [ "$STR_CAT_ARITIES_STATUS" -ne 42 ]; then
+    show_failure_logs \
+        "$STR_CAT_ARITIES_EMBEDDED_STDOUT" "$STR_CAT_ARITIES_EMBEDDED_STDERR"
+    fail \
+        "native public str-cat arity fixture expected exit 42, got $STR_CAT_ARITIES_STATUS"
+fi
+
 # The scoped concatenator's fixed arities now execute through the native
 # catalog. Compare that route with forced source interpretation, then run the
 # native result so parity covers both generated bytes and behavior. Refs #5656.

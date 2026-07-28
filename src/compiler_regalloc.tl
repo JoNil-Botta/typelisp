@@ -17643,8 +17643,6 @@
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
   [allowed-regs : CompilerRegIdList]
-  [reg-arr : (Array i64)]
-  [rcount : i64]
   [var : i64]
   [forbidden : CompilerRegIdList]) : i64
   (if (or (< var 0) (>= var (array-length copy-hints)))
@@ -18052,8 +18050,6 @@
           ref-counts
           copy-hints
           hint-regs
-          reg-arr
-          rcount
           var
           forbidden)]
       ;; The ABI arg-register preference takes priority over the copy hint; both

@@ -199,16 +199,17 @@
             (> n 2)
             (= (string.string-ref spelling 0) '%')
             (= (string.string-ref spelling 1) 'k'))]
-        (if is-xmm
-          (compiler-abi-xmm-register-id
-            (compiler-abi-register-decimal-suffix spelling 4 31))
-          (if is-vec
+        (cond
+          [is-xmm
+            (compiler-abi-xmm-register-id
+              (compiler-abi-register-decimal-suffix spelling 4 31))]
+          [is-vec
             (compiler-abi-vector-register-id
-              (compiler-abi-register-decimal-suffix spelling 4 31))
-            (if is-mask
-              (compiler-abi-mask-register-id
-                (compiler-abi-register-decimal-suffix spelling 2 7))
-              compiler-reg-id-invalid))))]))
+              (compiler-abi-register-decimal-suffix spelling 4 31))]
+          [is-mask
+            (compiler-abi-mask-register-id
+              (compiler-abi-register-decimal-suffix spelling 2 7))]
+          [else compiler-reg-id-invalid]))]))
 
 (define (compiler-abi-register-spelling [reg-id : i64]) : String
   (cond

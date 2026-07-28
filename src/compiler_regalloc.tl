@@ -6137,15 +6137,14 @@
         (let
           [interval : CompilerRegInterval
             (compiler-reg-interval-seq-ref intervals index)]
-          (let
-            [id : i64 (struct-get interval var)]
-            (cond
-              [(= id var)
-                (begin
-                  (set! result (CompilerRegMaybeInterval.Some interval))
-                  (set! done true))]
-              [(> id var) (set! done true)]
-              [else (set! index (+ index 1))]))))
+          [id : i64 (struct-get interval var)]
+          (cond
+            [(= id var)
+              (begin
+                (set! result (CompilerRegMaybeInterval.Some interval))
+                (set! done true))]
+            [(> id var) (set! done true)]
+            [else (set! index (+ index 1))])))
       result)))
 
 (define (compiler-reg-interval-overlap?
@@ -6183,20 +6182,19 @@
       (while (and (< index count) (not done))
         (let
           [head : CompilerRegInterval (array-ref slots index)]
-          (let
-            [head-start : i64 (struct-get head start)]
-            [head-end : i64 (struct-get head end)]
-            [interval-start : i64 (struct-get interval start)]
-            [interval-end : i64 (struct-get interval end)]
-            (cond
-              [(and (<= head-end interval-start) (not (= interval-start 0)))
-                (set! index (+ index 1))]
-              [(and (<= interval-end head-start) (not (= head-start 0)))
-                (set! done true)]
-              [else
-                (begin
-                  (set! overlap true)
-                  (set! done true))]))))
+          [head-start : i64 (struct-get head start)]
+          [head-end : i64 (struct-get head end)]
+          [interval-start : i64 (struct-get interval start)]
+          [interval-end : i64 (struct-get interval end)]
+          (cond
+            [(and (<= head-end interval-start) (not (= interval-start 0)))
+              (set! index (+ index 1))]
+            [(and (<= interval-end head-start) (not (= head-start 0)))
+              (set! done true)]
+            [else
+              (begin
+                (set! overlap true)
+                (set! done true))])))
       overlap)))
 
 (define (compiler-reg-interval-seq-overlaps?
@@ -6222,17 +6220,16 @@
             (array-ref left-slots left-index)]
           [right-interval : CompilerRegInterval
             (array-ref right-slots right-index)]
-          (let
-            [left-start : i64 (struct-get left-interval start)]
-            [left-end : i64 (struct-get left-interval end)]
-            [right-start : i64 (struct-get right-interval start)]
-            [right-end : i64 (struct-get right-interval end)]
-            (cond
-              [(and (<= left-end right-start) (not (= right-start 0)))
-                (set! left-index (+ left-index 1))]
-              [(and (<= right-end left-start) (not (= left-start 0)))
-                (set! right-index (+ right-index 1))]
-              [else (set! overlap true)]))))
+          [left-start : i64 (struct-get left-interval start)]
+          [left-end : i64 (struct-get left-interval end)]
+          [right-start : i64 (struct-get right-interval start)]
+          [right-end : i64 (struct-get right-interval end)]
+          (cond
+            [(and (<= left-end right-start) (not (= right-start 0)))
+              (set! left-index (+ left-index 1))]
+            [(and (<= right-end left-start) (not (= left-start 0)))
+              (set! right-index (+ right-index 1))]
+            [else (set! overlap true)])))
       overlap)))
 
 (define (compiler-reg-interval-range?
@@ -8098,23 +8095,47 @@
     (let
       [interval : CompilerRegInterval
         (compiler-reg-interval-seq-ref candidates index)]
-      (let
-        [var : i64 (struct-get interval var)]
-        [start : i64 (struct-get interval start)]
-        [end : i64 (struct-get interval end)]
-        (let
-          [expired : CompilerRegActiveSeq
-            (compiler-reg-expire-active active start)]
-          [preferred : CompilerRegMaybeString
-            (compiler-reg-fixed-preferred-register
+      [var : i64 (struct-get interval var)]
+      [start : i64 (struct-get interval start)]
+      [end : i64 (struct-get interval end)]
+      [expired : CompilerRegActiveSeq (compiler-reg-expire-active active start)]
+      [preferred : CompilerRegMaybeString
+        (compiler-reg-fixed-preferred-register
+          assignments
+          expired
+          regs
+          preferences
+          interval-index
+          var
+          start)]
+      (match preferred
+        [(CompilerRegMaybeString.Some reg)
+          (compiler-reg-assign-fixed-candidates-from
+            candidates
+            (+ index 1)
+            regs
+            (compiler-reg-active-insert expired (CompilerRegActive var end reg))
+            (compiler-reg-assignment-table-insert
               assignments
-              expired
-              regs
-              preferences
-              interval-index
               var
-              start)]
-          (match preferred
+              (CompilerRegLocation.Register reg))
+            preferences
+            interval-index)]
+        [(CompilerRegMaybeString.No)
+          (match (compiler-reg-first-free-fixed-register
+            regs
+            expired
+            interval-index
+            var)
+            [(CompilerRegMaybeString.No)
+              (compiler-reg-assign-fixed-candidates-from
+                candidates
+                (+ index 1)
+                regs
+                expired
+                assignments
+                preferences
+                interval-index)]
             [(CompilerRegMaybeString.Some reg)
               (compiler-reg-assign-fixed-candidates-from
                 candidates
@@ -8128,36 +8149,7 @@
                   var
                   (CompilerRegLocation.Register reg))
                 preferences
-                interval-index)]
-            [(CompilerRegMaybeString.No)
-              (match (compiler-reg-first-free-fixed-register
-                regs
-                expired
-                interval-index
-                var)
-                [(CompilerRegMaybeString.No)
-                  (compiler-reg-assign-fixed-candidates-from
-                    candidates
-                    (+ index 1)
-                    regs
-                    expired
-                    assignments
-                    preferences
-                    interval-index)]
-                [(CompilerRegMaybeString.Some reg)
-                  (compiler-reg-assign-fixed-candidates-from
-                    candidates
-                    (+ index 1)
-                    regs
-                    (compiler-reg-active-insert
-                      expired
-                      (CompilerRegActive var end reg))
-                    (compiler-reg-assignment-table-insert
-                      assignments
-                      var
-                      (CompilerRegLocation.Register reg))
-                    preferences
-                    interval-index)])]))))))
+                interval-index)])]))))
 
 (define (compiler-reg-assign-fixed-candidates
   [candidates : CompilerRegIntervalSeq]
@@ -12661,38 +12653,37 @@
             [interval : CompilerRegInterval (array-ref slots index)]
             [start : i64 (struct-get interval start)]
             [end : i64 (struct-get interval end)]
-            (let
-              [before? : bool
-                (and
-                  (< start region-start)
-                  (compiler-reg-loop-split-location-conflicts-region?
-                    assignments
-                    intervals
-                    (compiler-reg-loop-split-region-interval
-                      ignore-var
+            [before? : bool
+              (and
+                (< start region-start)
+                (compiler-reg-loop-split-location-conflicts-region?
+                  assignments
+                  intervals
+                  (compiler-reg-loop-split-region-interval
+                    ignore-var
+                    start
+                    (if (< end region-start)
+                      end
+                      region-start))
+                  ignore-var
+                  location))]
+            [after? : bool
+              (and
+                (> end region-end)
+                (compiler-reg-loop-split-location-conflicts-region?
+                  assignments
+                  intervals
+                  (compiler-reg-loop-split-region-interval
+                    ignore-var
+                    (if (> start region-end)
                       start
-                      (if (< end region-start)
-                        end
-                        region-start))
-                    ignore-var
-                    location))]
-              [after? : bool
-                (and
-                  (> end region-end)
-                  (compiler-reg-loop-split-location-conflicts-region?
-                    assignments
-                    intervals
-                    (compiler-reg-loop-split-region-interval
-                      ignore-var
-                      (if (> start region-end)
-                        start
-                        region-end)
-                      end)
-                    ignore-var
-                    location))]
-              (if (or before? after?)
-                (set! conflict true)
-                unit)))
+                      region-end)
+                    end)
+                  ignore-var
+                  location))]
+            (if (or before? after?)
+              (set! conflict true)
+              unit))
           (set! index (+ index 1))))
       conflict)))
 
@@ -15848,41 +15839,28 @@
     (let
       [interval : CompilerRegInterval
         (compiler-reg-interval-seq-ref candidates index)]
-      (let
-        [var : i64 (struct-get interval var)]
-        [start : i64 (struct-get interval start)]
-        [end : i64 (struct-get interval end)]
-        ;; lint-allow: single-begin
-        (begin
-          (if (and
-            (>= var 0)
-            (< var n)
-            (= (array-ref root-has-remat var) 0)
-            (compiler-reg-call-set-in-range? kind0 start end)
-            (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
-              [(CompilerRegMaybeType.Some _) true]
-              [(CompilerRegMaybeType.No) false])
-            (match (compiler-reg-assignment-table-lookup assignments var)
-              [(CompilerRegMaybeLocation.Some location)
-                (match location
-                  [(CompilerRegLocation.Spill _) true]
-                  [_ false])]
-              [(CompilerRegMaybeLocation.No) false]))
-            (begin
-              (array-set! cand var 1)
-              (array-set! order count var)
-              (compiler-reg-call-region-mark-candidates
-                candidates
-                (+ index 1)
-                assignments
-                type-info
-                group-vars
-                kind0
-                root-has-remat
-                n
-                cand
-                order
-                (+ count 1)))
+      [var : i64 (struct-get interval var)]
+      [start : i64 (struct-get interval start)]
+      [end : i64 (struct-get interval end)]
+      ;; lint-allow: single-begin
+      (begin
+        (if (and
+          (>= var 0)
+          (< var n)
+          (= (array-ref root-has-remat var) 0)
+          (compiler-reg-call-set-in-range? kind0 start end)
+          (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
+            [(CompilerRegMaybeType.Some _) true]
+            [(CompilerRegMaybeType.No) false])
+          (match (compiler-reg-assignment-table-lookup assignments var)
+            [(CompilerRegMaybeLocation.Some location)
+              (match location
+                [(CompilerRegLocation.Spill _) true]
+                [_ false])]
+            [(CompilerRegMaybeLocation.No) false]))
+          (begin
+            (array-set! cand var 1)
+            (array-set! order count var)
             (compiler-reg-call-region-mark-candidates
               candidates
               (+ index 1)
@@ -15894,7 +15872,19 @@
               n
               cand
               order
-              count)))))))
+              (+ count 1)))
+          (compiler-reg-call-region-mark-candidates
+            candidates
+            (+ index 1)
+            assignments
+            type-info
+            group-vars
+            kind0
+            root-has-remat
+            n
+            cand
+            order
+            count))))))
 
 ;; The widened rescue entry point (M-G2b): enumerate every candidate root's
 ;; call-free regions, select the profitable ones, and home each accepted

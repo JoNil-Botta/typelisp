@@ -8750,6 +8750,137 @@
       (opt-inline-bounds-leaf-callee symbols body)
       CompilerIrFunctionList.Nil)))
 
+;; Two ordinary call sites with variable arguments: the callee is neither
+;; absorbable (refcount 2) nor all-const-args, so opt-inline-bounds-inline-ok?
+;; refuses it and admission has to come from the bounds-leaf path.
+(define (opt-inline-call-bounds-leaf-twice
+  [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols main)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 8) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Call
+                2
+                (struct-get symbols bounds-leaf-inline)
+                (CompilerIrCallArgs.Two
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 1))
+                (AstType.Unit))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  3
+                  (struct-get symbols bounds-leaf-inline)
+                  (CompilerIrCallArgs.Two
+                    (CompilerIrValue.Var 1)
+                    (CompilerIrValue.Var 0))
+                  (AstType.Unit))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-inline-bounds-leaf-twice-functions
+  [symbols : OptInlineBoundsTestSymbols]
+  [body : i64]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-call-bounds-leaf-twice symbols)
+    (compiler-ir-function-cons
+      (opt-inline-bounds-leaf-callee symbols body)
+      CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-bounds-leaf-call-symbol) : i64
+  (opt-test-symbol "bounds_leaf_call_inline"))
+
+(define (opt-inline-bounds-leaf-opaque-symbol) : i64
+  (opt-test-symbol "opaque_sink"))
+
+;; Small has-bounds callee whose body carries a Call. The bounds-leaf
+;; whitelist refuses calls, so this shape must keep its call boundary even
+;; though its body is well inside the admitted size band.
+(define (opt-inline-bounds-leaf-call-callee) : CompilerIrFunction
+  (compiler-ir-function-compact-blocks
+    (CompilerIrFunction.Function
+      (opt-inline-bounds-leaf-call-symbol)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "idx" (AstType.I64) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "len" (AstType.I64) 1)
+          CompilerIrParamList.Nil))
+      (AstType.Unit)
+      4
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          (compiler-ir-label "entry")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (compiler-ir-label "bounds_leaf_call.ok"))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Call
+                2
+                (opt-inline-bounds-leaf-opaque-symbol)
+                (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return (CompilerIrMaybeValue.No))
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
+
+(define (opt-inline-call-bounds-leaf-call-twice
+  [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols main)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        (compiler-ir-label "entry")
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 8) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Call
+                2
+                (opt-inline-bounds-leaf-call-symbol)
+                (CompilerIrCallArgs.Two
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 1))
+                (AstType.Unit))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  3
+                  (opt-inline-bounds-leaf-call-symbol)
+                  (CompilerIrCallArgs.Two
+                    (CompilerIrValue.Var 1)
+                    (CompilerIrValue.Var 0))
+                  (AstType.Unit))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-inline-bounds-leaf-call-functions
+  [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-call-bounds-leaf-call-twice symbols)
+    (compiler-ir-function-cons
+      (opt-inline-bounds-leaf-call-callee)
+      CompilerIrFunctionList.Nil)))
+
 (define (opt-inline-multi-call-caller [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
     (struct-get symbols main)
@@ -9260,6 +9391,48 @@
       (= (opt-count-direct-call-name accepted-instrs "bounds_leaf_inline") 0)
       (= (opt-count-bounds-instrs accepted-instrs) 1)
       (= (opt-count-direct-call-name rejected-instrs "bounds_leaf_inline") 1))))
+
+;; The small end of the bounds-leaf band. Both bodies here are at or below
+;; opt-inline-max-body, so the generic single-block path sees them and
+;; opt-inline-bounds-inline-ok? refuses them: two call sites make the callee
+;; non-absorbable and the arguments are variables, not constants. Admission
+;; therefore proves the bounds-leaf path covers 1..opt-inline-max-body, the
+;; band that used to be excluded. The third program pins the whitelist: a
+;; body-carrying Call keeps the call boundary at both sites.
+(define (compiler-optimize-inline-small-bounds-leaf-ok?) : bool
+  (let
+    [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
+    [minimal : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-bounds-leaf-twice-functions symbols 1)
+        2)]
+    [boundary : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-bounds-leaf-twice-functions symbols (opt-inline-max-body))
+        2)]
+    [leaf-call : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (ast-node-pool-reader-type-segment-bases)
+        (opt-inline-bounds-leaf-call-functions symbols)
+        2)]
+    [minimal-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs minimal "main")]
+    [boundary-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs boundary "main")]
+    [leaf-call-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs leaf-call "main")]
+    (and
+      (= (opt-count-direct-call-name minimal-instrs "bounds_leaf_inline") 0)
+      (= (opt-count-bounds-instrs minimal-instrs) 2)
+      (= (opt-count-direct-call-name boundary-instrs "bounds_leaf_inline") 0)
+      (= (opt-count-bounds-instrs boundary-instrs) 2)
+      (=
+        (opt-count-direct-call-name leaf-call-instrs "bounds_leaf_call_inline")
+        2)
+      (= (opt-count-direct-call-name leaf-call-instrs "opaque_sink") 0)
+      (= (opt-count-bounds-instrs leaf-call-instrs) 0))))
 
 (define (compiler-optimize-inline-multi-call-ok?) : bool
   (let
@@ -11035,6 +11208,9 @@
                     (unless
                       (compiler-optimize-inline-bounds-leaf-body-gate-ok?)
                       (return 48))
+                    (unless
+                      (compiler-optimize-inline-small-bounds-leaf-ok?)
+                      (return 55))
                     (unless
                       (compiler-optimize-inline-multi-call-ok?)
                       (return 30))

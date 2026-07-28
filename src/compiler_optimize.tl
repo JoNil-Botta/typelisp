@@ -48352,13 +48352,28 @@
             (or has-bounds (compiler-ir-instr-bounds-check? instr)))
           false)))))
 
+;; The admitted body band is 1..opt-inline-bounds-leaf-max-body. The band used
+;; to start above opt-inline-max-body, which inverted the cost argument: a
+;; 9..48 instruction bounds leaf inlined while a smaller one fell through to
+;; the generic single-block path, where opt-inline-bounds-inline-ok? refuses
+;; every has-bounds callee that is neither absorbable nor called with
+;; all-constant arguments. The smallest bounds leaves have the highest
+;; call-overhead ratio, so they were exactly the wrong class to refuse.
+;;
+;; Duplicating a bounds check is a static cost, not a dynamic one: the check
+;; runs once per call whether it sits in the callee or in the expanded copy, so
+;; the executed check count is unchanged. What disappears is the call boundary
+;; itself -- the argument moves, call, and return, roughly 4-6 executed
+;; instructions per call. Static growth stays bounded by the same
+;; opt-inline-bounds-leaf-cost-inline? admission the 9..48 band uses
+;; (callee-instrs cap, heavy gate, block fuel).
 (define (opt-inline-bounds-leaf-seq-ok? [seq : CompilerIrInstrSeq] [np : i64]) : bool
   (let
     [n : i64 (compiler-ir-instr-seq-count seq)]
     [body : i64 (- n 1)]
     (and
       (>= n 1)
-      (> body (opt-inline-max-body))
+      (>= body 1)
       (<= body (opt-inline-bounds-leaf-max-body))
       (opt-inline-bounds-leaf-instr-seq-ok-from? seq np 0 (- n 1) false))))
 

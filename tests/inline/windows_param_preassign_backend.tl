@@ -127,7 +127,7 @@
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register r)
-                (compiler-reg-string-list-contains?
+                (compiler-reg-id-list-contains?
                   (compiler-reg-win64-callee-saved-integer-registers)
                   r)]
               [_ false])]

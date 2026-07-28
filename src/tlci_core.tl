@@ -711,6 +711,10 @@
   "local-expr-list-length")
 (define tlci-host-callback-name-local-expr-list-nth : String
   "local-expr-list-nth")
+(define tlci-host-callback-name-local-expr-string? : String
+  "local-expr-string?")
+(define tlci-host-callback-name-local-expr-var? : String
+  "local-expr-var?")
 
 ;; Remaining binder-free template node kinds (refs #5605): expr-return,
 ;; expr-box, and expr-box-get each pop one expression and push the node the

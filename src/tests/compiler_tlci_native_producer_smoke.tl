@@ -276,6 +276,115 @@
       (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern name)))
       (AstType.Expr))))
 
+;; The named local Expr probes return boolean data for live Expr slots and the
+;; shared negative malformed-request sentinel for an unbound slot. Refs #5656.
+(define (producer-test-local-expr-probes-ok?) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [var-node : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "value")))]
+    [string-node : i64
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Literal (AstLiteral.String (ci.intern "literal"))))]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 2)]
+    (begin
+      (array-set! operands 0 (CompilerCtfeValue.Expr var-node (AstType.Expr)))
+      (array-set!
+        operands
+        1
+        (CompilerCtfeValue.Expr string-node (AstType.Expr)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        2
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (and
+            (=
+              (compiler-comptime-host-callback-push-operand
+                producer-test-cookie
+                0
+                0
+                0)
+              tlci-host-callback-status-ok)
+            (=
+              (compiler-comptime-host-callback-local-set
+                producer-test-cookie
+                0
+                0
+                0)
+              tlci-host-callback-status-ok)
+            (=
+              (compiler-comptime-host-callback-push-operand
+                producer-test-cookie
+                1
+                0
+                0)
+              tlci-host-callback-status-ok)
+            (=
+              (compiler-comptime-host-callback-local-set
+                producer-test-cookie
+                1
+                0
+                0)
+              tlci-host-callback-status-ok)
+            (=
+              (compiler-comptime-host-callback-local-expr-var?
+                producer-test-cookie
+                0
+                0
+                0)
+              1)
+            (=
+              (compiler-comptime-host-callback-local-expr-string?
+                producer-test-cookie
+                0
+                0
+                0)
+              0)
+            (=
+              (compiler-comptime-host-callback-local-expr-var?
+                producer-test-cookie
+                1
+                0
+                0)
+              0)
+            (=
+              (compiler-comptime-host-callback-local-expr-string?
+                producer-test-cookie
+                1
+                0
+                0)
+              1)
+            (<
+              (compiler-comptime-host-callback-local-expr-var?
+                producer-test-cookie
+                2
+                0
+                0)
+              0)
+            (<
+              (compiler-comptime-host-callback-local-expr-string?
+                producer-test-cookie
+                2
+                0
+                0)
+              0))]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
+(test
+  local-expr-shape-probes
+  (unless
+    (producer-test-local-expr-probes-ok?)
+    (io.panic "local Expr shape probes failed")))
+
 ;; Dispatch one single-Expr-operand identity and inspect the committed
 ;; result; returns false when the dispatch errors or commits no result. The
 ;; `check` selector picks the result assertion: 0 = flat call template, 1 =
@@ -525,6 +634,147 @@
                   first
                   second
                   third))])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
+;; `str-cat-scoped` must preserve every operand node while selecting the
+;; borrowed fixed-arity helper only when every expression is a literal or
+;; variable. Refs #5656.
+(define (producer-test-scoped-cat-result-ok?
+  [pools : AstNodePoolContext]
+  [nodes : (Array i64)]
+  [count : i64]
+  [borrowed : bool]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Call callee args)
+          (let
+            [expected-base : String
+              (cond
+                [(<= count 3) "stdlib.string.concat3"]
+                [(= count 4) "stdlib.string.concat4"]
+                [else "stdlib.string.concat5"])]
+            [expected : String
+              (if borrowed
+                (string.append expected-base "-borrowed")
+                expected-base)]
+            [expected-count : i64
+              (if (= count 2)
+                3
+                count)]
+            [index : i64 0]
+            [ok : bool
+              (and
+                (match (ast-node-pool-context-expr-get pools callee)
+                  [(AstExpr.Var name) (= name (producer-test-name-id expected))]
+                  [_ false])
+                (= (ast-expr-list-len (& args)) expected-count))]
+            (begin
+              (while (and ok (< index count))
+                (begin
+                  (when
+                    (not
+                      (=
+                        (ast-expr-list-get (& args) index -1)
+                        (array-ref nodes index)))
+                    (set! ok false))
+                  (set! index (+ index 1))))
+              (if (and ok (= count 2))
+                (match (ast-node-pool-context-expr-get
+                  pools
+                  (ast-expr-list-get (& args) 2 -1))
+                  [(AstExpr.Literal (AstLiteral.String sid))
+                    (string.eq (intern-str sid) "")]
+                  [_ false])
+                ok)))]
+        [_ false])]
+    [_ false]))
+
+(define (producer-test-dispatch-scoped-cat?
+  [loaded : (& loaded TlciLoadedImage)]
+  [count : i64]
+  [mixed : bool]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [nodes : (Array i64) (array.make-array i64 5)]
+    [items : AstExprList (ast-expr-list-new)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    [call-callee : i64
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Var (ci.intern "make-value")))]
+    (begin
+      (array-set!
+        nodes
+        0
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Literal (AstLiteral.String (ci.intern "alpha")))))
+      (array-set!
+        nodes
+        1
+        (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "beta"))))
+      (array-set!
+        nodes
+        2
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Literal (AstLiteral.String (ci.intern "gamma")))))
+      (array-set!
+        nodes
+        3
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Var (ci.intern "delta"))))
+      (array-set!
+        nodes
+        4
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Literal (AstLiteral.String (ci.intern "epsilon")))))
+      (when
+        mixed
+        (array-set!
+          nodes
+          1
+          (ast-node-pool-context-expr-push
+            pools
+            (AstExpr.Call call-callee (ast-expr-list-new)))))
+      (let
+        [index : i64 0]
+        (while (< index count)
+          (begin
+            (ast-expr-list-push (&mut items) (array-ref nodes index))
+            (set! index (+ index 1)))))
+      (array-set! operands 0 (CompilerCtfeValue.ExprList items))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            "stdlib.str_cat_runtime/str-cat-scoped"
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= (struct-get dispatch status) tlci-host-callback-status-ok)
+                (compiler-comptime-host-result-ready?)
+                (producer-test-scoped-cat-result-ok?
+                  pools
+                  nodes
+                  count
+                  (not mixed)))])]
         (begin
           (compiler-comptime-host-session-close!)
           ok)))))
@@ -1929,6 +2179,99 @@
         (match (tlci-loader-release loaded)
           [(ResultTlciLoaderUnit.Ok) ok]
           [(ResultTlciLoaderUnit.Err _) false]))]))
+
+;; Compile the checked-in scoped concatenator itself, then exercise every
+;; fixed-arity branch with both all-borrowable and mixed expression shapes.
+;; This keeps the focused producer smoke byte-for-byte aligned with the stdlib
+;; macro instead of maintaining a simplified copy. Refs #5656.
+(define (producer-test-str-cat-scoped-native-image-ok?) : bool
+  (let
+    [source : String (io.read-file "stdlib/str_cat_runtime.tl")]
+    [names : producer_test_svec.Vec (producer_test_svec.new)]
+    [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
+    (match (parse-ast-source source)
+      [(ResultAstProgram.Err _) false]
+      [(ResultAstProgram.Ok program)
+        (match program
+          [(AstProgram.Program decls)
+            (begin
+              (producer-test-collect-decls!
+                (box-get decls)
+                "stdlib.str_cat_runtime"
+                (&mut names)
+                (&mut captures))
+              (let
+                [name-count : i64 (producer_test_svec.len (& names))]
+                [name-array : (Array String)
+                  (array.make-array String name-count)]
+                [name-index : i64 0]
+                [_copy-names : unit
+                  (while (< name-index name-count)
+                    (begin
+                      (array-set!
+                        name-array
+                        name-index
+                        (producer_test_svec.get (& names) name-index ""))
+                      (set! name-index (+ name-index 1))))]
+                (match (embedded-native-emit-package
+                  (tlci-metadata-emit
+                    (tlci-make-metadata "v1" "str-cat-scoped-test" "0.1.0"))
+                  "producer-test"
+                  (cfg windows true false)
+                  (tlci-empty-bytes)
+                  name-array
+                  (& captures))
+                  [(ResultProducerBytes.Err _) false]
+                  [(ResultProducerBytes.Ok bytes)
+                    (match (tlci-loader-load-from-bytes-with-host
+                      bytes
+                      (compiler-comptime-host-table))
+                      [(ResultTlciLoadedImage.Err _) false]
+                      [(ResultTlciLoadedImage.Ok loaded)
+                        (let
+                          [ok : bool
+                            (and
+                              (producer-test-dispatch-scoped-cat?
+                                (& loaded)
+                                2
+                                false)
+                              (producer-test-dispatch-scoped-cat?
+                                (& loaded)
+                                2
+                                true)
+                              (producer-test-dispatch-scoped-cat?
+                                (& loaded)
+                                3
+                                false)
+                              (producer-test-dispatch-scoped-cat?
+                                (& loaded)
+                                3
+                                true)
+                              (producer-test-dispatch-scoped-cat?
+                                (& loaded)
+                                4
+                                false)
+                              (producer-test-dispatch-scoped-cat?
+                                (& loaded)
+                                4
+                                true)
+                              (producer-test-dispatch-scoped-cat?
+                                (& loaded)
+                                5
+                                false)
+                              (producer-test-dispatch-scoped-cat?
+                                (& loaded)
+                                5
+                                true))]
+                          (match (tlci-loader-release loaded)
+                            [(ResultTlciLoaderUnit.Ok) ok]
+                            [(ResultTlciLoaderUnit.Err _) false]))])])))])])))
+
+(test
+  str-cat-scoped-tlci-native-producer
+  (unless
+    (producer-test-str-cat-scoped-native-image-ok?)
+    (io.panic "str-cat-scoped tlci native producer test failed")))
 
 ;; In-package coverage: every supported shape dispatches natively and the
 ;; let-rooted body stays a counted shell. The report count must equal the

@@ -49513,9 +49513,9 @@
       unit)
     ;; The sweep's displacement model starts at a function-entry prologue.
     ;; Keep shrink-wrapped interior prologues conservatively excluded.
-    (if shrinkwrap-active?
-      unit
-      (if fpo-ok
+    (cond
+      [shrinkwrap-active? unit]
+      [fpo-ok
         (compiler-backend-sweep-record-fpo!
           symbol
           frame
@@ -49523,16 +49523,16 @@
           slot-vars
           compiler-backend-emergency-slot-offset
           compiler-backend-emergency-used-count
-          outgoing)
-        (if (and (compiler-backend-target-windows? target) rebase-ok)
-          (compiler-backend-sweep-record-win64!
-            symbol
-            frame
-            slot-vars
-            compiler-backend-emergency-slot-offset
-            compiler-backend-emergency-used-count
-            outgoing)
-          unit)))))
+          outgoing)]
+      [(and (compiler-backend-target-windows? target) rebase-ok)
+        (compiler-backend-sweep-record-win64!
+          symbol
+          frame
+          slot-vars
+          compiler-backend-emergency-slot-offset
+          compiler-backend-emergency-used-count
+          outgoing)]
+      [else unit])))
 
 ;; Append `v` at `count` into a growable i64 scratch array; returns the
 ;; (possibly reallocated) array. The caller advances its own count.

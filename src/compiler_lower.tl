@@ -2989,8 +2989,8 @@
 ;; lower-name-env-from-import-aliases-in-module-cache. That overlay starts empty
 ;; and is accumulated strictly linearly (single accumulator, no branching or
 ;; re-entrant overlay builds), so an O(1) hashmap presence check can stand in for
-;; the O(n) LowerNameEnv scan that lower-name-env-add-alias-if-free-id otherwise
-;; runs for every added alias -- previously O(aliases^2) per module. Only
+;; the O(n) LowerNameEnv scan previously run for every added alias -- formerly
+;; O(aliases^2) per module. Only
 ;; presence matters here, so a bare generated i64 -> i64 map (which grows) is
 ;; used rather than a fixed-capacity LowerNameCache.
 ;;
@@ -3039,24 +3039,6 @@
                   bind-id
                   1))
               (set! cur rest))])))))
-
-(define (lower-name-env-add-alias-if-free-id
-  [names : LowerNameEnv]
-  [_ : String]
-  [source-id : i64]
-  [logical-name : String]
-  [logical-id : i64]) : LowerNameEnv
-  (match (lower-name-env-lookup-with-id names source-id)
-    [(TcMaybeString.Some _) names]
-    [(TcMaybeString.No)
-      (lower-name-env-bind-logical-symbol-id
-        source-id
-        logical-id
-        (lower-logical-symbol-id-select
-          logical-name
-          logical-id
-          (lower-logical-symbol-id-direct? logical-id source-id))
-        names)]))
 
 (define (lower-name-env-add-import-alias-binding-symbol-id
   [names : LowerNameEnv]
@@ -3552,11 +3534,6 @@
   (begin
     (cbi.compiler-builtin-refresh!)
     cbi.compiler-builtin-id-tl-str-view))
-
-(define (lower-tl-int-to-string-symbol) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-tl-int-to-string))
 
 (define (lower-tl-array-fill8-symbol) : i64
   (begin
@@ -4629,11 +4606,6 @@
       logical-id
       source-id)
     (lower-logical-symbol-id-direct? logical-id source-id)))
-
-(define (lower-import-alias-key [importer-module : String] [alias : String]) : String
-  (if (string.eq alias "")
-    importer-module
-    alias))
 
 (define (lower-import-alias-key-id [importer-module-id : i64] [alias-id : i64]) : i64
   (if (= alias-id cbi.compiler-builtin-id-fix-empty)
@@ -15451,34 +15423,6 @@
       (if (and (>= last-dot 0) (< last-dot (- n 1)))
         (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
         source))))
-
-(define (lower-member-name-prefix [name : String]) : String
-  (let
-    [qualified-module : String
-      (if (tc-name-qualified? name)
-        (tc-qualified-name-module name)
-        "")]
-    [source : String
-      (if (tc-name-qualified? name)
-        (tc-qualified-name-base name)
-        name)]
-    [i : i64 0]
-    [last-dot : i64 -1]
-    [n : i64 (string.string-length source)]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref source i) '.')
-            (set! last-dot i)
-            unit)
-          (set! i (+ i 1))))
-      (if (>= last-dot 0)
-        (let
-          [local-prefix : String (string.substring source 0 last-dot)]
-          (if (> (string.string-length qualified-module) 0)
-            (compiler-symbol-module-key qualified-module local-prefix)
-            local-prefix))
-        qualified-module))))
 
 (define (lower-variant-payload-offset
   [ctx : TcContext]
@@ -46310,9 +46254,6 @@
 (define (lower-masked-shift-lane-supported? [ty : AstType]) : bool
   (lower-spmd-shift-lane-supported? ty))
 
-(define (lower-masked-shift-width [ty : AstType]) : i64
-  (lower-spmd-shift-width ty))
-
 (define (lower-masked-shift-unsupported
   [state : LowerState]
   [expr : AstExpr]
@@ -58516,26 +58457,6 @@
             prev-module
             prev-module-id)
           result)))))
-
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
-  [entry-path : String]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
-  [mode : CompilerLowerMode]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerLower
-  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
-    (compiler-load-serial-test-session-state)
-    tc-prefix-snapshot-serial-test-cache-state
-    entry-path
-    program
-    paths
-    mode
-    stdlib-roots
-    cache-scope
-    pools
-    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache
   [entry-path : String]

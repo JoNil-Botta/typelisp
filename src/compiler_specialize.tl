@@ -384,10 +384,6 @@
   (match param
     [(AstParam.Param name _ _ _) name]))
 
-(define (spec-param-type [param : AstParam]) : AstType
-  (match param
-    [(AstParam.Param _ ty _ _) ty]))
-
 (define (spec-state-ctfe-env [state : SpecState]) : CtfeEnv
   (match state
     [(SpecState.State _ _ env _) env]))
@@ -1229,17 +1225,6 @@
         (ast-variant-def-list-get b index (ast-variant-def-fallback)))
       (gen-variant-list-eq-at? a b (+ index 1)))))
 
-(define (gen-fn-export-eq? [a : AstFnExport] [b : AstFnExport]) : bool
-  (match a
-    [(AstFnExport.No)
-      (match b
-        [(AstFnExport.No) true]
-        [_ false])]
-    [(AstFnExport.Export a-symbol)
-      (match b
-        [(AstFnExport.Export b-symbol) (= a-symbol b-symbol)]
-        [_ false])]))
-
 (define (gen-spmd-param-class-eq?
   [a : AstSpmdParamClass]
   [b : AstSpmdParamClass]) : bool
@@ -1645,39 +1630,6 @@
   (if (gen-full-key? arg-key)
     arg-key
     (gen-full-key module generator item arg-key)))
-
-(define (gen-qualified-local-name-start-from
-  [name : String]
-  [index : i64]
-  [n : i64]
-  [start : i64]) : i64
-  (if (>= index n)
-    start
-    (gen-qualified-local-name-start-from
-      name
-      (+ index 1)
-      n
-      (if (= (cast (string.string-ref name index) : i64) 46)
-        (+ index 1)
-        start))))
-
-(define (gen-qualified-local-name-start [name : String]) : i64
-  (gen-qualified-local-name-start-from name 0 (string.string-length name) 0))
-
-(define (gen-qualified-local-name [name : String]) : String
-  (let
-    [n : i64 (string.string-length name)]
-    [start : i64 (gen-qualified-local-name-start name)]
-    (string.substring name start (- n start))))
-
-(define (gen-qualified-function-prefix
-  [item-name : String]
-  [local-prefix : String]) : String
-  (let
-    [start : i64 (gen-qualified-local-name-start item-name)]
-    (if (= start 0)
-      local-prefix
-      (string.append (string.substring item-name 0 start) local-prefix))))
 
 (define (gen-item-mismatch-diag
   [template : AstDecl]
@@ -2100,22 +2052,6 @@
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultGenProgram (gen-normalize-program-with-pools program pools)]
-    (begin
-      (ast-node-pool-context-install! pools)
-      result)))
-
-(define (gen-normalize-program-with-paths
-  [program : AstProgram]
-  [paths : AstDeclPathList]
-  [fallback-path : String]) : ResultGenProgramWithPaths
-  (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [result : ResultGenProgramWithPaths
-      (gen-normalize-program-with-paths-and-pools
-        program
-        paths
-        fallback-path
-        pools)]
     (begin
       (ast-node-pool-context-install! pools)
       result)))

@@ -245,9 +245,6 @@
     ""
     (array-ref compiler-ir-label-slots label)))
 
-(define (compiler-ir-label-eq? [left : i64] [right : i64]) : bool
-  (= left right))
-
 (define (compiler-ir-label-none) : i64
   -1)
 
@@ -1242,11 +1239,6 @@
     [(CompilerIrInstr.Return _) true]
     [_ false]))
 
-(define (compiler-ir-instr-phi? [instr : CompilerIrInstr]) : bool
-  (match instr
-    [(CompilerIrInstr.Phi _ _ _) true]
-    [_ false]))
-
 (define (compiler-ir-instr-bounds-check? [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
@@ -1748,9 +1740,6 @@
 
 (define (compiler-ir-instr-builder-to-seq [builder : CompilerIrInstrBuilder]) : CompilerIrInstrSeq
   (CompilerIrInstrSeq (struct-get builder slots) (struct-get builder len)))
-
-(define (compiler-ir-instr-builder-to-list [builder : CompilerIrInstrBuilder]) : CompilerIrInstrList
-  (compiler-ir-instr-seq-to-list (compiler-ir-instr-builder-to-seq builder)))
 
 (define (compiler-ir-block-builder-with-capacity [capacity : i64]) : CompilerIrBlockBuilder
   (let
@@ -4843,10 +4832,6 @@
         [(CompilerSourceSpansInstrKey.Bounds right-function right-label)
           (and (= left-label right-label) (= left-function right-function))]
         [_ false])]))
-
-(define (compiler-source-spans-instr-entry-list-count
-  [entries : CompilerSourceSpansInstrEntryList]) : i64
-  (struct-get entries len))
 
 (define (compiler-source-spans-instr-entry-list-copy-array-range!
   [dst : (&mut dst (Array CompilerSourceSpansInstrEntry))]

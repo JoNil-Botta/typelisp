@@ -100,20 +100,6 @@
                 (box-get diag)
                 path))))])))
 
-(define (compiler-check-program-with-paths
-  [path : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultCompilerCheck
-  (compiler-check-program-with-paths-cache
-    path
-    decls
-    paths
-    (svec.new)
-    (tc-prefix-default-cache-scope)))
-
-(define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
-  (compiler-check-program-with-paths path decls (ast-decl-path-list-new)))
-
 (define (compiler-check-loaded-with-prelude-cache
   [path : String]
   [prelude-decls : AstDeclList]
@@ -166,19 +152,6 @@
         (ResultCompilerCheckWithPaths.Err
           (compiler-diagnostic-list-box-single diag)))]))
 
-(define (compiler-check-loaded-with-prelude
-  [path : String]
-  [prelude-decls : AstDeclList]
-  [prelude-paths : AstDeclPathList]
-  [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
-  (compiler-check-loaded-with-prelude-cache
-    path
-    prelude-decls
-    prelude-paths
-    loaded
-    (svec.new)
-    (tc-prefix-default-cache-scope)))
-
 (define (compiler-check-file-loaded-with-prelude
   [path : String]
   [stdlib-roots : svec.Vec]
@@ -209,19 +182,6 @@
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))]))
 
-(define (compiler-check-file [path : String]) : ResultCompilerCheck
-  (begin
-    (compiler-check-reset-pools!)
-    (cfg compile-profile (compiler-check-profile-start))
-    (compiler-check-file-loaded-with-prelude
-      path
-      (svec.new)
-      (compiler-load-core-macro-prelude-with-roots-cfg
-        (sym_i64_env.sym-i64-empty)
-        (svec.new)
-        (compiler-check-language-cfgs))
-      (compiler-check-language-cfgs))))
-
 (define (compiler-check-file-with-roots
   [path : String]
   [stdlib-roots : svec.Vec]) : ResultCompilerCheck
@@ -245,73 +205,6 @@
         stdlib-roots
         cfgs)
       cfgs)))
-
-(define (compiler-check-package-file-with-roots
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : ResultCompilerCheck
-  (compiler-check-package-file-with-roots-and-cfg
-    path
-    stdlib-roots
-    manifest-dir
-    deps
-    (compiler-check-language-cfgs)))
-
-(define (compiler-check-package-file-with-roots-and-cfg
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
-  (begin
-    (compiler-check-reset-pools!)
-    (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler-load-package-core-macro-prelude-with-roots-cfg
-      (sym_i64_env.sym-i64-empty)
-      stdlib-roots
-      manifest-dir
-      deps
-      cfgs)
-      [(ResultCompilerLoadWithPaths.Ok
-          prelude-decls
-          prelude-paths
-          prelude-modules
-          prelude-seen)
-        (compiler-check-loaded-with-prelude-cache
-          path
-          prelude-decls
-          (ast-decl-path-list-with-modules prelude-paths prelude-modules)
-          (compiler-load-package-file-with-paths-and-roots-cfg
-            path
-            prelude-seen
-            stdlib-roots
-            manifest-dir
-            deps
-            cfgs)
-          stdlib-roots
-          (compiler-typecheck-prefix-cache-scope
-            "typecheck-prefix-check"
-            stdlib-roots
-            cfgs))]
-      [(ResultCompilerLoadWithPaths.Err diag)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))])))
-
-(define (compiler-check-package-source-with-roots
-  [path : String]
-  [source : String]
-  [stdlib-roots : svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : ResultCompilerCheck
-  (compiler-check-package-source-with-roots-and-cfg
-    path
-    source
-    stdlib-roots
-    manifest-dir
-    deps
-    (compiler-check-language-cfgs)))
 
 (define (compiler-check-package-source-with-roots-and-cfg
   [path : String]
@@ -373,20 +266,6 @@
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))])))
-
-(define (compiler-check-package-entry-file-with-roots
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]
-  [emit-entry : bool]) : ResultCompilerCheckWithPaths
-  (compiler-check-package-entry-file-with-roots-and-cfg
-    path
-    stdlib-roots
-    manifest-dir
-    deps
-    emit-entry
-    (compiler-check-language-cfgs)))
 
 (define (compiler-check-package-entry-file-with-roots-and-cfg
   [path : String]
@@ -457,16 +336,6 @@
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))])))
 
-(define (compiler-check-source-with-roots
-  [path : String]
-  [source : String]
-  [stdlib-roots : svec.Vec]) : ResultCompilerCheck
-  (compiler-check-source-with-roots-and-cfg
-    path
-    source
-    stdlib-roots
-    (compiler-check-language-cfgs)))
-
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-source path source)
     [(ResultCompilerCheck.Ok _) true]
@@ -523,18 +392,6 @@
   (match (compiler-check-direct-source path source)
     [(ResultCompilerCheck.Ok _) true]
     [(ResultCompilerCheck.Err _) false]))
-
-(define (compiler-check-direct-source-error-ok?
-  [path : String]
-  [source : String]
-  [want : String]) : bool
-  (match (compiler-check-direct-source path source)
-    [(ResultCompilerCheck.Ok _) false]
-    [(ResultCompilerCheck.Err diag)
-      (string.eq
-        (compiler-diagnostic-message
-          (compiler-diagnostic-list-first (box-get diag)))
-        want)]))
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
   "(module a)

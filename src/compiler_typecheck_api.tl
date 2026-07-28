@@ -20,32 +20,6 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (compiler-typecheck-reset-intern-owned-state!)))
 
-(define (typecheck-compiler-specialized-program-with-paths-cache-and-pools
-  [program : AstProgram]
-  [paths : AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
-  (typecheck-compiler-specialized-program-with-paths-cache-with-pools
-    program
-    paths
-    stdlib-roots
-    cache-scope
-    pools))
-
-(define (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
-  [program : AstProgram]
-  [paths : AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
-  (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
-    program
-    paths
-    stdlib-roots
-    cache-scope
-    pools))
-
 (define (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
@@ -251,16 +225,6 @@
     paths
     stdlib-roots
     pools))
-
-(define (typecheck-compiler-doc-expand-program-with-paths
-  [program : AstProgram]
-  [paths : AstDeclPathList]
-  [stdlib-roots : svec.Vec]) : ResultCompilerDocExpand
-  (typecheck-compiler-doc-expand-program-with-paths-and-pools
-    program
-    paths
-    stdlib-roots
-    (ast-node-pool-context-capture-active)))
 
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
   [load-state : CompilerLoadSessionState]
@@ -561,24 +525,6 @@
                 (ResultCompilerTypecheck.Err
                   (compiler-diagnostic-list-box-single diag))])
             (typecheck-compiler-program program))]
-        [(ResultAstProgramDiagnostic.Err diag)
-          (ResultCompilerTypecheck.Err
-            (compiler-diagnostic-list-box-single diag))])]
-    (begin
-      (compiler-typecheck-reset-file-state!)
-      result)))
-
-(define (typecheck-compiler-source-with-cfg
-  [src : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerTypecheck
-  (let
-    [_cache-reset : unit (tc-prefix-snapshot-cache-clear!)]
-    [_dedup-reset : unit (ty-node-dedup-clear!)]
-    [_reset-before : unit (compiler-typecheck-reset-file-state!)]
-    [result : ResultCompilerTypecheck
-      (match (parse-ast-source-diagnostic-with-cfg "" src cfgs)
-        [(ResultAstProgramDiagnostic.Ok program)
-          (typecheck-compiler-program program)]
         [(ResultAstProgramDiagnostic.Err diag)
           (ResultCompilerTypecheck.Err
             (compiler-diagnostic-list-box-single diag))])]

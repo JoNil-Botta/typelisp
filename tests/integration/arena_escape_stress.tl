@@ -1,7 +1,7 @@
 ; #1691: stress the manual scratch-arena escape pattern used by
-; tc-check-decl-escaping, lower-function-escaping, optimize-function-escaping,
-; and compiler-backend-emit-function-escaping until the high-level escape form
-; is used everywhere.
+; direct declaration checking, lower-function-escaping,
+; optimize-function-escaping, and compiler-backend-emit-function-escaping
+; until the high-level escape form is used everywhere.
 ;
 ; Each escape switches to a scratch arena, allocates past the 64 MiB arena
 ; granule so the scratch grows an overflow arena, clones the result back into

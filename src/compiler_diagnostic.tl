@@ -74,9 +74,6 @@
   (Nil)
   (Cons CompilerDiagnostic (Box CompilerDiagnosticList)))
 
-(define (compiler-diagnostic-list-empty) : CompilerDiagnosticList
-  CompilerDiagnosticList.Nil)
-
 (define (compiler-diagnostic-list-single [diag : CompilerDiagnostic]) : CompilerDiagnosticList
   (CompilerDiagnosticList.Cons diag (box CompilerDiagnosticList.Nil)))
 

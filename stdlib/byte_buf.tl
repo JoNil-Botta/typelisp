@@ -251,7 +251,7 @@
 
 ;: Copy `count` bytes from `src[src-start..]` into `dst[dst-start..]`,
 ;: trapping on invalid source or destination ranges.
-(define (__byte-buf-copy-slots-range-into
+(define (byte-buf-copy-slots-range-into
   [dst : (__tl_dyn-array u8)]
   [dst-start : i64]
   [src : (__tl_dyn-array u8)]
@@ -288,7 +288,7 @@
           doubled)]
       [bigger : (__tl_dyn-array u8) (array.make-array u8 new-capacity)]
       (begin
-        (__byte-buf-copy-slots-range-into
+        (byte-buf-copy-slots-range-into
           bigger
           0
           (struct-get buf slots)

@@ -10050,18 +10050,18 @@
 (define (compiler-backend-plan-uses-callee-regs?
   [assignments : CompilerRegAssignmentList]) : bool
   (or
-    (compiler-backend-callee-needs-save? assignments "%rbx")
-    (compiler-backend-callee-needs-save? assignments "%r12")
-    (compiler-backend-callee-needs-save? assignments "%r13")
-    (compiler-backend-callee-needs-save? assignments "%r14")
-    (compiler-backend-callee-needs-save? assignments "%r15")
+    (compiler-backend-callee-needs-save? assignments compiler-reg-id-rbx)
+    (compiler-backend-callee-needs-save? assignments compiler-reg-id-r12)
+    (compiler-backend-callee-needs-save? assignments compiler-reg-id-r13)
+    (compiler-backend-callee-needs-save? assignments compiler-reg-id-r14)
+    (compiler-backend-callee-needs-save? assignments compiler-reg-id-r15)
     ;; M-G3 stage 2: %rbp is the 6th pool CSR in FPO functions.
-    (compiler-backend-callee-needs-save? assignments "%rbp")
+    (compiler-backend-callee-needs-save? assignments compiler-reg-id-rbp)
     (and
       (compiler-backend-current-fn-win64?)
       (or
-        (compiler-backend-callee-needs-save? assignments "%rsi")
-        (compiler-backend-callee-needs-save? assignments "%rdi")
+        (compiler-backend-callee-needs-save? assignments compiler-reg-id-rsi)
+        (compiler-backend-callee-needs-save? assignments compiler-reg-id-rdi)
         (compiler-backend-plan-uses-win64-xmm-callee-regs? assignments)))))
 
 (define (compiler-backend-win64-xmm-callee-highest-at
@@ -10078,7 +10078,7 @@
       (+ idx 1)
       (if (compiler-backend-callee-needs-save?
         assignments
-        (compiler-abi-callee-saved-xmm-register
+        (compiler-abi-callee-saved-xmm-register-id
           (CompilerRegTargetAbi.Windows)
           idx))
         idx
@@ -10106,7 +10106,7 @@
 
 (define (compiler-backend-win64-gp-callee-save-prefix
   [assignments : CompilerRegAssignmentList]) : i64
-  (if (compiler-backend-callee-needs-save? assignments "%rbp")
+  (if (compiler-backend-callee-needs-save? assignments compiler-reg-id-rbp)
     8
     7))
 
@@ -10130,19 +10130,31 @@
       (if (compiler-backend-plan-uses-callee-regs? assignments)
         (if (compiler-backend-current-fn-win64?)
           (cond
-            [(compiler-backend-callee-needs-save? assignments "%rbp")
+            [(compiler-backend-callee-needs-save?
+                assignments
+                compiler-reg-id-rbp)
               (+ vars 8)]
-            [(compiler-backend-callee-needs-save? assignments "%rdi")
+            [(compiler-backend-callee-needs-save?
+                assignments
+                compiler-reg-id-rdi)
               (+ vars 7)]
-            [(compiler-backend-callee-needs-save? assignments "%rsi")
+            [(compiler-backend-callee-needs-save?
+                assignments
+                compiler-reg-id-rsi)
               (+ vars 6)]
-            [(compiler-backend-callee-needs-save? assignments "%rbx")
+            [(compiler-backend-callee-needs-save?
+                assignments
+                compiler-reg-id-rbx)
               (+ vars 5)]
             [else (+ vars 4)])
           (cond
-            [(compiler-backend-callee-needs-save? assignments "%rbp")
+            [(compiler-backend-callee-needs-save?
+                assignments
+                compiler-reg-id-rbp)
               (+ vars 6)]
-            [(compiler-backend-callee-needs-save? assignments "%rbx")
+            [(compiler-backend-callee-needs-save?
+                assignments
+                compiler-reg-id-rbx)
               (+ vars 5)]
             [else (+ vars 4)]))
         vars))))
@@ -10267,10 +10279,11 @@
         (CompilerRegTargetAbi.Windows))))
     ""
     (let
-      [reg : String
-        (compiler-abi-callee-saved-xmm-register
+      [reg-id : i64
+        (compiler-abi-callee-saved-xmm-register-id
           (CompilerRegTargetAbi.Windows)
           idx)]
+      [reg : String (compiler-abi-register-spelling reg-id)]
       [tail : String
         (compiler-backend-emit-win64-xmm-callee-regs-at
           assignments
@@ -10279,7 +10292,7 @@
           (+ idx step)
           step
           saving)]
-      (if (compiler-backend-callee-needs-save? assignments reg)
+      (if (compiler-backend-callee-needs-save? assignments reg-id)
         (if saving
           (let
             [slot-offset : i64
@@ -10337,17 +10350,18 @@
       (CompilerRegTargetAbi.Windows)))
     ""
     (let
-      [reg : String
-        (compiler-abi-callee-saved-xmm-register
+      [reg-id : i64
+        (compiler-abi-callee-saved-xmm-register-id
           (CompilerRegTargetAbi.Windows)
           idx)]
+      [reg : String (compiler-abi-register-spelling reg-id)]
       [tail : String
         (compiler-backend-emit-save-win64-xmm-callee-regs-fpo-at
           assignments
           vars
           rsp-bias
           (+ idx 1))]
-      (if (compiler-backend-callee-needs-save? assignments reg)
+      (if (compiler-backend-callee-needs-save? assignments reg-id)
         (let
           [slot-offset : i64
             (compiler-backend-win64-xmm-callee-slot-offset assignments vars idx)]
@@ -11578,39 +11592,41 @@
 ;; inline during the body, so an early return would restore a partial set.
 (define (compiler-backend-callee-needs-save?
   [assignments : CompilerRegAssignmentList]
-  [reg : String]) : bool
+  [reg : i64]) : bool
   (or
-    (compiler-backend-plan-uses-reg?
-      assignments
-      (compiler-abi-register-id-from-spelling reg))
+    (compiler-backend-plan-uses-reg? assignments reg)
     (compiler-backend-const-hoist-uses-reg? reg)))
 
 (define (compiler-backend-emit-save-callee-reg
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [reg : String]
+  [reg-id : i64]
   [idx : i64]) : String
-  (if (compiler-backend-callee-needs-save? assignments reg)
-    (str-cat
-      "    movq "
-      reg
-      ", "
-      (compiler-backend-callee-save-slot vars idx)
-      "\n")
+  (if (compiler-backend-callee-needs-save? assignments reg-id)
+    (let
+      [reg : String (compiler-abi-register-spelling reg-id)]
+      (str-cat
+        "    movq "
+        reg
+        ", "
+        (compiler-backend-callee-save-slot vars idx)
+        "\n"))
     ""))
 
 (define (compiler-backend-emit-restore-callee-reg
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [reg : String]
+  [reg-id : i64]
   [idx : i64]) : String
-  (if (compiler-backend-callee-needs-save? assignments reg)
-    (str-cat
-      "    movq "
-      (compiler-backend-callee-save-slot vars idx)
-      ", "
-      reg
-      "\n")
+  (if (compiler-backend-callee-needs-save? assignments reg-id)
+    (let
+      [reg : String (compiler-abi-register-spelling reg-id)]
+      (str-cat
+        "    movq "
+        (compiler-backend-callee-save-slot vars idx)
+        ", "
+        reg
+        "\n"))
     ""))
 
 ;; Pop restores are correct only when the used callee-save homes are adjacent in
@@ -11619,24 +11635,30 @@
 (define (compiler-backend-callee-save-pop-eligible?
   [assignments : CompilerRegAssignmentList]) : bool
   (let
-    [r12 : bool (compiler-backend-callee-needs-save? assignments "%r12")]
-    [r13 : bool (compiler-backend-callee-needs-save? assignments "%r13")]
-    [r14 : bool (compiler-backend-callee-needs-save? assignments "%r14")]
-    [r15 : bool (compiler-backend-callee-needs-save? assignments "%r15")]
-    [rbx : bool (compiler-backend-callee-needs-save? assignments "%rbx")]
+    [r12 : bool
+      (compiler-backend-callee-needs-save? assignments compiler-reg-id-r12)]
+    [r13 : bool
+      (compiler-backend-callee-needs-save? assignments compiler-reg-id-r13)]
+    [r14 : bool
+      (compiler-backend-callee-needs-save? assignments compiler-reg-id-r14)]
+    [r15 : bool
+      (compiler-backend-callee-needs-save? assignments compiler-reg-id-r15)]
+    [rbx : bool
+      (compiler-backend-callee-needs-save? assignments compiler-reg-id-rbx)]
     ;; M-G3 stage 2: %rbp (slot idx 5, allocated LAST) extends the contiguous
     ;; pop run. Sound: a plan can only home a value in %rbp on the FPO path,
     ;; where the epilogue `leave` is rewritten to `addq $N,%rsp` (never reads
     ;; %rbp), so `popq %rbp` restoring the caller's value early is fine; if
     ;; the FPO audit fails on an rbp-planned function it is DEMOTED (re-planned
     ;; without %rbp), so `popq %rbp` can never precede a real `leave`.
-    [rbp : bool (compiler-backend-callee-needs-save? assignments "%rbp")]
+    [rbp : bool
+      (compiler-backend-callee-needs-save? assignments compiler-reg-id-rbp)]
     [win-extra : bool
       (and
         (compiler-backend-current-fn-win64?)
         (or
-          (compiler-backend-callee-needs-save? assignments "%rsi")
-          (compiler-backend-callee-needs-save? assignments "%rdi")))]
+          (compiler-backend-callee-needs-save? assignments compiler-reg-id-rsi)
+          (compiler-backend-callee-needs-save? assignments compiler-reg-id-rdi)))]
     (and
       (not win-extra)
       (or
@@ -11649,17 +11671,17 @@
 (define (compiler-backend-callee-save-pop-start-idx
   [assignments : CompilerRegAssignmentList]) : i64
   (cond
-    [(compiler-backend-callee-needs-save? assignments "%rbp") 5]
-    [(compiler-backend-callee-needs-save? assignments "%rbx") 4]
-    [(compiler-backend-callee-needs-save? assignments "%r15") 3]
-    [(compiler-backend-callee-needs-save? assignments "%r14") 2]
+    [(compiler-backend-callee-needs-save? assignments compiler-reg-id-rbp) 5]
+    [(compiler-backend-callee-needs-save? assignments compiler-reg-id-rbx) 4]
+    [(compiler-backend-callee-needs-save? assignments compiler-reg-id-r15) 3]
+    [(compiler-backend-callee-needs-save? assignments compiler-reg-id-r14) 2]
     [else 1]))
 
 (define (compiler-backend-emit-pop-callee-reg
   [assignments : CompilerRegAssignmentList]
-  [reg : String]) : String
-  (if (compiler-backend-callee-needs-save? assignments reg)
-    (str-cat "    popq " reg "\n" "")
+  [reg-id : i64]) : String
+  (if (compiler-backend-callee-needs-save? assignments reg-id)
+    (str-cat "    popq " (compiler-abi-register-spelling reg-id) "\n" "")
     ""))
 
 (define (compiler-backend-emit-restore-callee-regs-pop
@@ -11674,16 +11696,22 @@
       ", %rsp\n")
     (string.append
       ;; %rbp's slot (idx 5) is the lowest address, so it pops FIRST.
-      (compiler-backend-emit-pop-callee-reg assignments "%rbp")
+      (compiler-backend-emit-pop-callee-reg assignments compiler-reg-id-rbp)
       (string.append
-        (compiler-backend-emit-pop-callee-reg assignments "%rbx")
+        (compiler-backend-emit-pop-callee-reg assignments compiler-reg-id-rbx)
         (string.append
-          (compiler-backend-emit-pop-callee-reg assignments "%r15")
+          (compiler-backend-emit-pop-callee-reg assignments compiler-reg-id-r15)
           (string.append
-            (compiler-backend-emit-pop-callee-reg assignments "%r14")
+            (compiler-backend-emit-pop-callee-reg
+              assignments
+              compiler-reg-id-r14)
             (string.append
-              (compiler-backend-emit-pop-callee-reg assignments "%r13")
-              (compiler-backend-emit-pop-callee-reg assignments "%r12"))))))))
+              (compiler-backend-emit-pop-callee-reg
+                assignments
+                compiler-reg-id-r13)
+              (compiler-backend-emit-pop-callee-reg
+                assignments
+                compiler-reg-id-r12))))))))
 
 ;; Win64-only callee-save extension: on Win64 %rsi/%rdi are callee-saved (unlike
 ;; SysV, where they are caller-saved argument registers), so a function that
@@ -11694,8 +11722,16 @@
   [vars : i64]) : String
   (if (compiler-backend-current-fn-win64?)
     (string.append
-      (compiler-backend-emit-save-callee-reg assignments vars "%rsi" 5)
-      (compiler-backend-emit-save-callee-reg assignments vars "%rdi" 6))
+      (compiler-backend-emit-save-callee-reg
+        assignments
+        vars
+        compiler-reg-id-rsi
+        5)
+      (compiler-backend-emit-save-callee-reg
+        assignments
+        vars
+        compiler-reg-id-rdi
+        6))
     ""))
 
 (define (compiler-backend-emit-restore-win64-callee-regs
@@ -11703,8 +11739,16 @@
   [vars : i64]) : String
   (if (compiler-backend-current-fn-win64?)
     (string.append
-      (compiler-backend-emit-restore-callee-reg assignments vars "%rdi" 6)
-      (compiler-backend-emit-restore-callee-reg assignments vars "%rsi" 5))
+      (compiler-backend-emit-restore-callee-reg
+        assignments
+        vars
+        compiler-reg-id-rdi
+        6)
+      (compiler-backend-emit-restore-callee-reg
+        assignments
+        vars
+        compiler-reg-id-rsi
+        5))
     ""))
 
 (define (compiler-backend-emit-restore-win64-xmm-callee-regs
@@ -11727,15 +11771,35 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
   (string.append
-    (compiler-backend-emit-save-callee-reg assignments vars "%r12" 0)
+    (compiler-backend-emit-save-callee-reg
+      assignments
+      vars
+      compiler-reg-id-r12
+      0)
     (string.append
-      (compiler-backend-emit-save-callee-reg assignments vars "%r13" 1)
+      (compiler-backend-emit-save-callee-reg
+        assignments
+        vars
+        compiler-reg-id-r13
+        1)
       (string.append
-        (compiler-backend-emit-save-callee-reg assignments vars "%r14" 2)
+        (compiler-backend-emit-save-callee-reg
+          assignments
+          vars
+          compiler-reg-id-r14
+          2)
         (string.append
-          (compiler-backend-emit-save-callee-reg assignments vars "%r15" 3)
+          (compiler-backend-emit-save-callee-reg
+            assignments
+            vars
+            compiler-reg-id-r15
+            3)
           (string.append
-            (compiler-backend-emit-save-callee-reg assignments vars "%rbx" 4)
+            (compiler-backend-emit-save-callee-reg
+              assignments
+              vars
+              compiler-reg-id-rbx
+              4)
             ;; %rbp is saved like any other CSR (Linux slot 5, Win64 slot 7).
             ;; FPO rebases the frame operand before replacing these moves with
             ;; unwind-described prologue pushes.
@@ -11743,7 +11807,7 @@
               (compiler-backend-emit-save-callee-reg
                 assignments
                 vars
-                "%rbp"
+                compiler-reg-id-rbp
                 (compiler-backend-rbp-callee-save-slot-index))
               ;; Win64: %rsi/%rdi saves (no-op on Linux).
               (compiler-backend-emit-save-win64-callee-regs assignments vars))))))))
@@ -11762,36 +11826,36 @@
             (compiler-backend-emit-restore-callee-reg
               assignments
               vars
-              "%rbp"
+              compiler-reg-id-rbp
               (compiler-backend-rbp-callee-save-slot-index))
             (string.append
               (compiler-backend-emit-restore-callee-reg
                 assignments
                 vars
-                "%rbx"
+                compiler-reg-id-rbx
                 4)
               (string.append
                 (compiler-backend-emit-restore-callee-reg
                   assignments
                   vars
-                  "%r15"
+                  compiler-reg-id-r15
                   3)
                 (string.append
                   (compiler-backend-emit-restore-callee-reg
                     assignments
                     vars
-                    "%r14"
+                    compiler-reg-id-r14
                     2)
                   (string.append
                     (compiler-backend-emit-restore-callee-reg
                       assignments
                       vars
-                      "%r13"
+                      compiler-reg-id-r13
                       1)
                     (compiler-backend-emit-restore-callee-reg
                       assignments
                       vars
-                      "%r12"
+                      compiler-reg-id-r12
                       0))))))))]
     (if (compiler-backend-current-fn-win64?)
       (let
@@ -16714,12 +16778,10 @@
       (= (array-ref compiler-backend-const-hoist-site-regs i) reg)
       (compiler-backend-const-hoist-uses-reg-id-from? reg (+ i 1)))))
 
-(define (compiler-backend-const-hoist-uses-reg? [reg : String]) : bool
+(define (compiler-backend-const-hoist-uses-reg? [reg : i64]) : bool
   (or
-    (compiler-backend-const-hoist-uses-reg-id-from?
-      (compiler-abi-register-id-from-spelling reg)
-      0)
-    (and compiler-backend-const-hoist-frame-rbx (string.eq reg "%rbx"))))
+    (compiler-backend-const-hoist-uses-reg-id-from? reg 0)
+    (and compiler-backend-const-hoist-frame-rbx (= reg compiler-reg-id-rbx))))
 
 ;; The register carrying this site's hoisted magic, or "" when the site has no
 ;; hoist or the recorded value does not match the magic this expansion computed
@@ -48647,34 +48709,36 @@
   [assignments : CompilerRegAssignmentList]
   [regs : (Array String)]) : i64
   (let
-    [names : (Array String) (make-array String 8)]
+    [names : (Array i64) (make-array i64 8)]
     [idx : i64 0]
     [count : i64 0]
     (begin
-      (array-set! names 0 "%r12")
-      (array-set! names 1 "%r13")
-      (array-set! names 2 "%r14")
-      (array-set! names 3 "%r15")
-      (array-set! names 4 "%rbx")
+      (array-set! names 0 compiler-reg-id-r12)
+      (array-set! names 1 compiler-reg-id-r13)
+      (array-set! names 2 compiler-reg-id-r14)
+      (array-set! names 3 compiler-reg-id-r15)
+      (array-set! names 4 compiler-reg-id-rbx)
       (if (compiler-backend-current-fn-win64?)
         (begin
-          (array-set! names 5 "%rsi")
-          (array-set! names 6 "%rdi")
-          (array-set! names 7 "%rbp"))
+          (array-set! names 5 compiler-reg-id-rsi)
+          (array-set! names 6 compiler-reg-id-rdi)
+          (array-set! names 7 compiler-reg-id-rbp))
         (begin
-          (array-set! names 5 "%rbp")
-          (array-set! names 6 "")
-          (array-set! names 7 "")))
+          (array-set! names 5 compiler-reg-id-rbp)
+          (array-set! names 6 compiler-reg-id-invalid)
+          (array-set! names 7 compiler-reg-id-invalid)))
       (while (< idx (array-length names))
-        (begin
-          (if (compiler-backend-callee-needs-save?
-            assignments
-            (array-ref names idx))
-            (begin
-              (array-set! regs idx (array-ref names idx))
-              (set! count (+ count 1)))
-            (array-set! regs idx ""))
-          (set! idx (+ idx 1))))
+        (let
+          [reg-id : i64 (array-ref names idx)]
+          (begin
+            (if (and
+              (not (= reg-id compiler-reg-id-invalid))
+              (compiler-backend-callee-needs-save? assignments reg-id))
+              (begin
+                (array-set! regs idx (compiler-abi-register-spelling reg-id))
+                (set! count (+ count 1)))
+              (array-set! regs idx ""))
+            (set! idx (+ idx 1)))))
       count)))
 
 ;; The prologue subq constant S under n pushes: frame + pad where pad keeps

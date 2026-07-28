@@ -270,6 +270,8 @@
           1)
         unit))))
 
+;: Write a signed integer without allocating, including the full INT64_MIN
+;: range needed by division and bounds diagnostics.
 (define (abort-write-signed-decimal [value : i64]) : unit
   (if (< value 0)
     (begin
@@ -345,6 +347,7 @@
   (unsafe
     (ptr-read (ptr-offset site offset))))
 
+;: Render one compiler-emitted abort-site descriptor as `path:line:column: `.
 (define (abort-write-site [site : (Ptr i64)]) : unit
   (let
     [path-address : i64 (abort-site-word site 0)]
@@ -363,6 +366,8 @@
       (abort-write-signed-decimal column)
       (abort-write ": "))))
 
+;: Report a source-located bounds failure with its index and length, then exit
+;: with the legacy bounds-abort status.
 (define (oob-abort-at [site : (Ptr i64)] [index : i64] [length : i64])
   (:export-symbol "tl_oob_abort_at") : never
   (begin
@@ -375,6 +380,8 @@
     (abort-write "\n")
     (os-exit 134)))
 
+;: Report a source-located integer division or remainder failure with both
+;: operands, then exit with the legacy division-abort status.
 (define (div-abort-at [site : (Ptr i64)] [dividend : i64] [divisor : i64])
   (:export-symbol "tl_div_abort_at") : never
   (begin
@@ -387,6 +394,8 @@
     (abort-write "\n")
     (os-exit 135)))
 
+;: Report a source-located invalid shift with its count and operand width, then
+;: exit with the legacy shift-abort status.
 (define (shift-abort-at [site : (Ptr i64)] [count : i64] [width : i64])
   (:export-symbol "tl_shift_abort_at") : never
   (begin
@@ -399,6 +408,8 @@
     (abort-write "\n")
     (os-exit 129)))
 
+;: Report a source-located panic message and exit with the legacy panic status.
+;: A trailing newline in `message` is preserved without adding a second one.
 (define (panic-abort-at [site : (Ptr i64)] [message : String])
   (:export-symbol "tl_panic_at") : never
   (let

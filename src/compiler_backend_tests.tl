@@ -3109,7 +3109,7 @@
         (set! compiler-backend-emit-current-count prev-current-count))]
     result))
 
-(define (compiler-backend-indirect-c-call-reg-assignments [home : String]) : CompilerRegAssignmentList
+(define (compiler-backend-indirect-c-call-reg-assignments [home : i64]) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register home))
     (compiler-reg-assignment-cons
@@ -3123,7 +3123,7 @@
   (match (compiler-backend-indirect-c-call-shape-asm
     target
     (CompilerIrValue.Var 1)
-    (compiler-backend-indirect-c-call-reg-assignments "%r12"))
+    (compiler-backend-indirect-c-call-reg-assignments compiler-reg-id-r12))
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    call *%r12\n")
@@ -3136,7 +3136,7 @@
   (match (compiler-backend-indirect-c-call-shape-asm
     target
     (CompilerIrValue.Var 1)
-    (compiler-backend-indirect-c-call-reg-assignments "%rcx"))
+    (compiler-backend-indirect-c-call-reg-assignments compiler-reg-id-rcx))
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    movq %rcx, %r10\n")
@@ -4538,8 +4538,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         idx
-        (CompilerRegLocation.Register
-          (string.append "%xmm" (string.int->string (+ idx 6)))))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id (+ idx 6))))
       (compiler-backend-win64-xmm-full-assignments-at (+ idx 1)))))
 
 (define (compiler-backend-win64-xmm-full-assignments) : CompilerRegAssignmentList
@@ -8981,7 +8980,7 @@
         [(ResultCompilerBackend.Ok restore-asm)
           (let
             [save-asm : String
-              (compiler-backend-emit-arg-cycle-temp-save "%rdi")]
+              (compiler-backend-emit-arg-cycle-temp-save compiler-reg-id-rdi)]
             [asm : String (string.append save-asm restore-asm)]
             (and
               (compiler-backend-string-contains?
@@ -17204,7 +17203,7 @@
       [(ResultCompilerBackend.Err _) false])))
 
 ;; GAP8: three-operand constant multiply strength reduction shapes.
-(define (compiler-backend-mul-pow2-test-asm [factor : i64] [dst-reg : String]) : ResultCompilerBackend
+(define (compiler-backend-mul-pow2-test-asm [factor : i64] [dst-reg : i64]) : ResultCompilerBackend
   (compiler-backend-emit-test-instrs
     (compiler-ir-instr-cons
       (CompilerIrInstr.BinOp
@@ -17228,7 +17227,7 @@
     3))
 
 (define (compiler-backend-mul-pow2-lea-shape-ok?) : bool
-  (match (compiler-backend-mul-pow2-test-asm 8 "%rcx")
+  (match (compiler-backend-mul-pow2-test-asm 8 compiler-reg-id-rcx)
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    leaq (,%r12,8), %rcx\n")
@@ -17236,7 +17235,7 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-mul-pow2-shl-shape-ok?) : bool
-  (match (compiler-backend-mul-pow2-test-asm 32 "%r12")
+  (match (compiler-backend-mul-pow2-test-asm 32 compiler-reg-id-r12)
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    shlq $5, %r12\n")
@@ -17244,7 +17243,7 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-mul-non-pow2-imul-shape-ok?) : bool
-  (match (compiler-backend-mul-pow2-test-asm 24 "%rcx")
+  (match (compiler-backend-mul-pow2-test-asm 24 compiler-reg-id-rcx)
     [(ResultCompilerBackend.Ok asm)
       (compiler-backend-string-contains? asm "    imulq $24, %r12, %rcx\n")]
     [(ResultCompilerBackend.Err _) false]))
@@ -18070,8 +18069,8 @@
 (define (compiler-backend-direct-bitcast-asm
   [from-ty : AstType]
   [to-ty : AstType]
-  [src-home : String]
-  [dst-home : String]) : ResultCompilerBackend
+  [src-home : i64]
+  [dst-home : i64]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
     (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
@@ -18098,26 +18097,26 @@
   (match (compiler-backend-direct-bitcast-asm
     (AstType.F32)
     (AstType.U64)
-    "%xmm2"
-    "%r12")
+    (compiler-abi-xmm-register-id 2)
+    compiler-reg-id-r12)
     [(ResultCompilerBackend.Ok f32-to-int)
       (match (compiler-backend-direct-bitcast-asm
         (AstType.F64)
         (AstType.U64)
-        "%xmm2"
-        "%r12")
+        (compiler-abi-xmm-register-id 2)
+        compiler-reg-id-r12)
         [(ResultCompilerBackend.Ok f64-to-int)
           (match (compiler-backend-direct-bitcast-asm
             (AstType.U64)
             (AstType.F32)
-            "%r12"
-            "%xmm2")
+            compiler-reg-id-r12
+            (compiler-abi-xmm-register-id 2))
             [(ResultCompilerBackend.Ok int-to-f32)
               (match (compiler-backend-direct-bitcast-asm
                 (AstType.U64)
                 (AstType.F64)
-                "%r12"
-                "%xmm2")
+                compiler-reg-id-r12
+                (compiler-abi-xmm-register-id 2))
                 [(ResultCompilerBackend.Ok int-to-f64)
                   (and
                     (backend-and4
@@ -19679,8 +19678,8 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-float-return-binop-asm
-  [lhs-home : String]
-  [rhs-home : String]) : ResultCompilerBackend
+  [lhs-home : i64]
+  [rhs-home : i64]) : ResultCompilerBackend
   (compiler-backend-emit-binop-return
     (ast-node-pool-reader-type-segment-bases)
     (ci.intern "ret_float")
@@ -19707,9 +19706,13 @@
     (AstType.F64)))
 
 (define (compiler-backend-float-return-binop-home-ok?) : bool
-  (match (compiler-backend-float-return-binop-asm "%xmm2" "%xmm3")
+  (match (compiler-backend-float-return-binop-asm
+    (compiler-abi-xmm-register-id 2)
+    (compiler-abi-xmm-register-id 3))
     [(ResultCompilerBackend.Ok home-asm)
-      (match (compiler-backend-float-return-binop-asm "%xmm3" "%xmm0")
+      (match (compiler-backend-float-return-binop-asm
+        (compiler-abi-xmm-register-id 3)
+        (compiler-abi-xmm-register-id 0))
         [(ResultCompilerBackend.Ok clobber-asm)
           (and
             (backend-and8
@@ -23105,30 +23108,28 @@
 (define compiler-backend-inline-fast-alloc-emergency-live-count : i64
   13)
 
-(define (compiler-backend-inline-fast-alloc-emergency-regs) : (Array String)
+(define (compiler-backend-inline-fast-alloc-emergency-regs) : (Array i64)
   (let
-    [regs : (Array String)
-      (make-array
-        String
-        compiler-backend-inline-fast-alloc-emergency-live-count)]
+    [regs : (Array i64)
+      (make-array i64 compiler-backend-inline-fast-alloc-emergency-live-count)]
     (begin
-      (array-set! regs 0 "%r9")
-      (array-set! regs 1 "%rcx")
-      (array-set! regs 2 "%rdx")
-      (array-set! regs 3 "%r10")
-      (array-set! regs 4 "%r11")
-      (array-set! regs 5 "%r8")
-      (array-set! regs 6 "%r12")
-      (array-set! regs 7 "%r13")
-      (array-set! regs 8 "%r14")
-      (array-set! regs 9 "%r15")
-      (array-set! regs 10 "%rbx")
-      (array-set! regs 11 "%rsi")
-      (array-set! regs 12 "%rdi")
+      (array-set! regs 0 compiler-reg-id-r9)
+      (array-set! regs 1 compiler-reg-id-rcx)
+      (array-set! regs 2 compiler-reg-id-rdx)
+      (array-set! regs 3 compiler-reg-id-r10)
+      (array-set! regs 4 compiler-reg-id-r11)
+      (array-set! regs 5 compiler-reg-id-r8)
+      (array-set! regs 6 compiler-reg-id-r12)
+      (array-set! regs 7 compiler-reg-id-r13)
+      (array-set! regs 8 compiler-reg-id-r14)
+      (array-set! regs 9 compiler-reg-id-r15)
+      (array-set! regs 10 compiler-reg-id-rbx)
+      (array-set! regs 11 compiler-reg-id-rsi)
+      (array-set! regs 12 compiler-reg-id-rdi)
       regs)))
 
 (define (compiler-backend-inline-fast-alloc-emergency-assignments-from
-  [regs : (Array String)]
+  [regs : (Array i64)]
   [index : i64]) : CompilerRegAssignmentList
   (if (>= index (array-length regs))
     CompilerRegAssignmentList.Nil
@@ -28624,8 +28625,8 @@
             1
             (CompilerRegLocation.Register
               (if carried?
-                "%r13"
-                "%r14")))
+                compiler-reg-id-r13
+                compiler-reg-id-r14)))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2

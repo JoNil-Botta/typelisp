@@ -5,11 +5,12 @@
 ;; compile-time value types are i64, f64/f32, bool, char, unit, type values, and
 ;; Expr / list aggregates.
 ;;
-;; Evaluation is purely functional: the environment is an immutable cons list
-;; threaded through recursion, and the step budget ("fuel") is threaded through
-;; results so the evaluator stays deterministic without a mutable counter.
+;; Evaluation threads persistent environment snapshots through recursion, and
+;; the step budget ("fuel") through results, so the evaluator stays
+;; deterministic without a mutable fuel counter.
 (cfg (any test selfhost-compile-manifest) (import stdlib.hashmap))
 (import (hashmap.hashmap i64 i64) as ctfe_key_map)
+(import stdlib.arena)
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import "compiler_ast_types.tl")
@@ -20,6 +21,138 @@
 (import "compiler_float.tl")
 (import stdlib.string)
 (import stdlib.result)
+
+(cfg
+  compile-profile
+  (define ctfe-env-profile-binding-appends : i64
+    0))
+(cfg
+  compile-profile
+  (define ctfe-env-profile-value-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define ctfe-env-profile-type-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define ctfe-env-profile-lookup-steps : i64
+    0))
+(cfg
+  compile-profile
+  (define ctfe-env-profile-local-set-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define ctfe-env-profile-local-set-steps : i64
+    0))
+(cfg
+  compile-profile
+  (define ctfe-env-profile-arena-roots : i64
+    0))
+(cfg
+  compile-profile
+  (define ctfe-env-profile-arena-grows : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-reset!) : unit
+    (begin
+      (set! ctfe-env-profile-binding-appends 0)
+      (set! ctfe-env-profile-value-lookups 0)
+      (set! ctfe-env-profile-type-lookups 0)
+      (set! ctfe-env-profile-lookup-steps 0)
+      (set! ctfe-env-profile-local-set-calls 0)
+      (set! ctfe-env-profile-local-set-steps 0)
+      (set! ctfe-env-profile-arena-roots 0)
+      (set! ctfe-env-profile-arena-grows 0))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-note-binding-append!) : unit
+    (set!
+      ctfe-env-profile-binding-appends
+      (+ ctfe-env-profile-binding-appends 1))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-note-value-lookup!) : unit
+    (set! ctfe-env-profile-value-lookups (+ ctfe-env-profile-value-lookups 1))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-note-type-lookup!) : unit
+    (set! ctfe-env-profile-type-lookups (+ ctfe-env-profile-type-lookups 1))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-note-lookup-step!) : unit
+    (set! ctfe-env-profile-lookup-steps (+ ctfe-env-profile-lookup-steps 1))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-note-local-set!) : unit
+    (set!
+      ctfe-env-profile-local-set-calls
+      (+ ctfe-env-profile-local-set-calls 1))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-note-local-set-step!) : unit
+    (set!
+      ctfe-env-profile-local-set-steps
+      (+ ctfe-env-profile-local-set-steps 1))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-note-arena-root!) : unit
+    (set! ctfe-env-profile-arena-roots (+ ctfe-env-profile-arena-roots 1))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-note-arena-grow!) : unit
+    (set! ctfe-env-profile-arena-grows (+ ctfe-env-profile-arena-grows 1))))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-binding-appends-value) : i64
+    ctfe-env-profile-binding-appends))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-value-lookups-value) : i64
+    ctfe-env-profile-value-lookups))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-type-lookups-value) : i64
+    ctfe-env-profile-type-lookups))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-lookup-steps-value) : i64
+    ctfe-env-profile-lookup-steps))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-local-set-calls-value) : i64
+    ctfe-env-profile-local-set-calls))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-local-set-steps-value) : i64
+    ctfe-env-profile-local-set-steps))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-arena-roots-value) : i64
+    ctfe-env-profile-arena-roots))
+
+(cfg
+  compile-profile
+  (define (ctfe-env-profile-arena-grows-value) : i64
+    ctfe-env-profile-arena-grows))
 
 (define (ctfe-builtin-reset!) : unit
   unit)
@@ -699,8 +832,9 @@
 ;;   CtfeReflectVariantList, and CtfeReflectInfoList are vector-backed
 ;;   generated-collection families. The historical `List` names are retained so
 ;;   callers do not need a public naming churn while the representation changes.
-;; - CtfeEnv remains a persistent cons chain because lexical shadowing and cheap
-;;   push/pop are its primary operations.
+;; - CtfeEnv bindings occupy an indexed append-only arena. Snapshot handles keep
+;;   a head index, and every binding keeps its parent index, preserving lexical
+;;   shadowing and cheap push/pop without one heap object per binding.
 ;; - AST-owned lists such as AstExprList, AstTypeList, and AstParamList remain
 ;;   frontend data structures and are tracked separately.
 (defenum CtfeLayoutField
@@ -760,33 +894,102 @@
   (None)
   (Some CtfeReflectInfo))
 
-;; Name -> value environment plus immutable type metadata tables. Newest value
-;; binding sits at the front so lookup finds the most recent shadowing binding
-;; first; metadata lives at the root and is shared by extensions. `LocalCons`
-;; is the deliberately narrow mutable cell used for CTFE `let` bindings.
-;; `syntax-pools` is inherited by each extension so constructing captured syntax
-;; stays O(1), including inside iterative transformer-local bindings.
-(defenum CtfeEnv
-  (Nil
-    AstNodePoolContext
-    CtfeMaybeSyntaxPools
-    CtfeLayoutInfoList
-    CtfeReflectInfoList
-    ci.InternSourceNameSessionHandle)
-  (Cons i64 CompilerCtfeValue AstType CtfeMaybeSyntaxPools (Box CtfeEnv))
-  (LocalCons
-    i64
-    (Box CompilerCtfeValue)
-    AstType
-    CtfeMaybeSyntaxPools
-    (Box CtfeEnv)))
+;; Name -> value environment plus immutable type metadata tables. A snapshot is
+;; an arena handle and the newest binding index. Branches may append to the same
+;; arena in any order because each binding stores its snapshot's previous head,
+;; rather than assuming adjacent indices form a chain. Mutable CTFE `let`
+;; bindings rewrite their stable arena slot; immutable bindings never do.
+;; Fixed-size binding segments make growth append-only even under bump allocation:
+;; only the small segment directory may be copied.
+;; `syntax-pools` remains snapshot-local so captured caller syntax selects its
+;; owning pool in O(1).
+(defstruct CtfeEnvBinding
+  (key i64)
+  (value CompilerCtfeValue)
+  (ty AstType)
+  (parent i64)
+  (mutable-local bool))
+
+(defstruct CtfeEnvArena
+  (segments (Array (Array CtfeEnvBinding)))
+  (segment-count i64)
+  (len i64)
+  (owner-arena i64))
+
+(defstruct CtfeEnvMetadata
+  (pools AstNodePoolContext)
+  (layouts CtfeLayoutInfoList)
+  (reflections CtfeReflectInfoList)
+  (source-names ci.InternSourceNameSessionHandle))
+
+(defstruct CtfeEnv
+  (arena-store (Box CtfeEnvArena))
+  (head i64)
+  (syntax-pools CtfeMaybeSyntaxPools)
+  (metadata (Box CtfeEnvMetadata)))
+
+(define (ctfe-env-arena-segment-capacity) : i64
+  8)
+
+(define (ctfe-env-arena-owner-root [handle : i64]) : i64
+  (if (= handle 0)
+    0
+    (let
+      [root : i64
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+      (if (= root 0)
+        handle
+        root))))
+
+(define (ctfe-env-arena-owner-current-head [handle : i64]) : i64
+  (let
+    [root : i64 (ctfe-env-arena-owner-root handle)]
+    (if (= root 0)
+      0
+      (let
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (if (= head 0)
+          root
+          head)))))
+
+(define (ctfe-env-arena-restore-after-owner-alloc!
+  [previous-arena : i64]
+  [owner : i64]) : unit
+  (if (=
+    (ctfe-env-arena-owner-root previous-arena)
+    (ctfe-env-arena-owner-root owner))
+    unit
+    (unsafe
+      (arena.tl_arena_set (ctfe-env-arena-owner-current-head previous-arena)))))
+
+(define (ctfe-env-arena-new) : CtfeEnvArena
+  (CtfeEnvArena
+    (array.make-array (Array CtfeEnvBinding) 1)
+    0
+    0
+    (ctfe-env-arena-owner-root (arena.tl_arena_current))))
+
+(define (ctfe-env-new
+  [pools : AstNodePoolContext]
+  [layouts : CtfeLayoutInfoList]
+  [reflections : CtfeReflectInfoList]
+  [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
+  (begin
+    (cfg compile-profile (ctfe-env-profile-note-arena-root!) unit)
+    (CtfeEnv
+      (box (ctfe-env-arena-new))
+      -1
+      (CtfeMaybeSyntaxPools.None)
+      (box (CtfeEnvMetadata pools layouts reflections source-names)))))
 
 (define (ctfe-env-empty-with-pools-and-source-names
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
-  (CtfeEnv.Nil
+  (ctfe-env-new
     pools
-    (CtfeMaybeSyntaxPools.None)
     (ctfe-layout-info-list-empty)
     (ctfe-reflect-info-list-empty)
     source-names))
@@ -802,9 +1005,8 @@
 (define (ctfe-env-with-layouts-and-pools
   [layouts : CtfeLayoutInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnv.Nil
+  (ctfe-env-new
     pools
-    (CtfeMaybeSyntaxPools.None)
     layouts
     (ctfe-reflect-info-list-empty)
     (ci.intern-source-name-session-capture-active-handle)))
@@ -817,9 +1019,8 @@
 (define (ctfe-env-with-reflections-and-pools
   [reflections : CtfeReflectInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnv.Nil
+  (ctfe-env-new
     pools
-    (CtfeMaybeSyntaxPools.None)
     (ctfe-layout-info-list-empty)
     reflections
     (ci.intern-source-name-session-capture-active-handle)))
@@ -834,12 +1035,7 @@
   [reflections : CtfeReflectInfoList]
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
-  (CtfeEnv.Nil
-    pools
-    (CtfeMaybeSyntaxPools.None)
-    layouts
-    reflections
-    source-names))
+  (ctfe-env-new pools layouts reflections source-names))
 
 (define (ctfe-env-with-metadata-and-pools
   [layouts : CtfeLayoutInfoList]
@@ -851,30 +1047,127 @@
     pools
     (ci.intern-source-name-session-capture-active-handle)))
 
+(define (ctfe-env-arena-segments-copy-range!
+  [dst : (&mut dst (Array (Array CtfeEnvBinding)))]
+  [src : (& src (Array (Array CtfeEnvBinding)))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array.ref src index))
+        (set! index (+ index 1))))))
+
+(define (ctfe-env-arena-add-segment! [store : (&mut store CtfeEnvArena)]) : unit
+  (let
+    [count : i64 (struct-get store segment-count)]
+    [capacity : i64 (array-length (struct-get store segments))]
+    [owner : i64 (struct-get store owner-arena)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set (ctfe-env-arena-owner-current-head owner)))
+      (if (< count capacity)
+        unit
+        (let
+          [bigger : (Array (Array CtfeEnvBinding))
+            (array.make-array
+              (Array CtfeEnvBinding)
+              (if (< capacity 1)
+                1
+                (* capacity 2)))]
+          (begin
+            (ctfe-env-arena-segments-copy-range!
+              (&mut bigger)
+              (& (struct-get store segments))
+              count)
+            (set! (struct-get store segments) bigger))))
+      (array-set!
+        (struct-get store segments)
+        count
+        (array.make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
+      (set! (struct-get store segment-count) (+ count 1))
+      (ctfe-env-arena-restore-after-owner-alloc! previous-arena owner)
+      (cfg compile-profile (ctfe-env-profile-note-arena-grow!) unit))))
+
+(define (ctfe-env-arena-ensure-index!
+  [store : (&mut store CtfeEnvArena)]
+  [index : i64]) : unit
+  (let
+    [segment-index : i64 (/ index (ctfe-env-arena-segment-capacity))]
+    (while (>= segment-index (struct-get store segment-count))
+      (ctfe-env-arena-add-segment! store))))
+
+(define (ctfe-env-arena-write-index!
+  [store : (&mut store CtfeEnvArena)]
+  [index : i64]
+  [binding : CtfeEnvBinding]) : unit
+  (let
+    [segment-index : i64 (/ index (ctfe-env-arena-segment-capacity))]
+    [offset : i64 (- index (* segment-index (ctfe-env-arena-segment-capacity)))]
+    [segment : (Array CtfeEnvBinding)
+      (array.ref (struct-get store segments) segment-index)]
+    (array-set! segment offset binding)))
+
+(define (ctfe-env-arena-binding-at [store : CtfeEnvArena] [index : i64]) : CtfeEnvBinding
+  (let
+    [segment-index : i64 (/ index (ctfe-env-arena-segment-capacity))]
+    [offset : i64 (- index (* segment-index (ctfe-env-arena-segment-capacity)))]
+    [segment : (Array CtfeEnvBinding)
+      (array.ref (struct-get store segments) segment-index)]
+    (unsafe
+      (ptr-read (ptr-offset (array-data segment) offset)))))
+
+(define (ctfe-env-arena-push!
+  [store : (&mut store CtfeEnvArena)]
+  [binding : CtfeEnvBinding]) : i64
+  (let
+    [index : i64 (struct-get store len)]
+    (begin
+      (ctfe-env-arena-ensure-index! store index)
+      (ctfe-env-arena-write-index! store index binding)
+      (set! (struct-get store len) (+ index 1))
+      index)))
+
+(define (ctfe-env-append-binding
+  [env : CtfeEnv]
+  [name-id : i64]
+  [value : CompilerCtfeValue]
+  [ty : AstType]
+  [mutable-local : bool]) : CtfeEnv
+  (let
+    [store : (Box CtfeEnvArena) (struct-get env arena-store)]
+    [index : i64
+      (ctfe-env-arena-push!
+        (&mut (box-get store))
+        (CtfeEnvBinding name-id value ty (struct-get env head) mutable-local))]
+    (begin
+      (cfg compile-profile (ctfe-env-profile-note-binding-append!) unit)
+      (CtfeEnv
+        store
+        index
+        (ctfe-env-syntax-pools-for-value env value)
+        (struct-get env metadata)))))
+
 (define (ctfe-env-extend-id
   [env : CtfeEnv]
   [name-id : i64]
   [value : CompilerCtfeValue]) : CtfeEnv
-  (CtfeEnv.Cons
+  (ctfe-env-append-binding
+    env
     name-id
     value
     (ctfe-value-default-cast-type value)
-    (ctfe-env-syntax-pools-for-value env value)
-    (box env)))
+    false))
 
 (define (ctfe-env-extend-typed-id
   [env : CtfeEnv]
   [name-id : i64]
   [value : CompilerCtfeValue]
   [ty : AstType]) : CtfeEnv
-  (CtfeEnv.Cons
-    name-id
-    value
-    ty
-    (ctfe-env-syntax-pools-for-value env value)
-    (box env)))
+  (ctfe-env-append-binding env name-id value ty false))
 
-;; Only CTFE lexical `let` bindings receive mutable cells. This keeps compiler
+;; Only CTFE lexical `let` bindings receive mutable slots. This keeps compiler
 ;; metadata, macro parameters, and all runtime-only forms outside the mutation
 ;; surface while still allowing iterative compile-time syntax construction.
 (define (ctfe-env-extend-local-typed-id
@@ -882,12 +1175,7 @@
   [name-id : i64]
   [value : CompilerCtfeValue]
   [ty : AstType]) : CtfeEnv
-  (CtfeEnv.LocalCons
-    name-id
-    (box value)
-    ty
-    (ctfe-env-syntax-pools-for-value env value)
-    (box env)))
+  (ctfe-env-append-binding env name-id value ty true))
 
 (define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
   (CtfeLayoutFieldList
@@ -1048,38 +1336,23 @@
   (ctfe-layout-field-offset-id-from fields name-id 0))
 
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
-  (match env
-    [(CtfeEnv.Nil _ _ layouts _ _) layouts]
-    [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-layouts (box-get rest))]
-    [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
+  (struct-get (box-get (struct-get env metadata)) layouts))
 
 (define (ctfe-env-reflections [env : CtfeEnv]) : CtfeReflectInfoList
-  (match env
-    [(CtfeEnv.Nil _ _ _ reflections _) reflections]
-    [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-reflections (box-get rest))]
-    [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
+  (struct-get (box-get (struct-get env metadata)) reflections))
 
 (define (ctfe-env-pools [env : CtfeEnv]) : AstNodePoolContext
-  (match env
-    [(CtfeEnv.Nil pools _ _ _ _) pools]
-    [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-pools (box-get rest))]
-    [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-pools (box-get rest))]))
+  (struct-get (box-get (struct-get env metadata)) pools))
 
 (define (ctfe-env-source-names [env : CtfeEnv]) : ci.InternSourceNameSessionHandle
-  (match env
-    [(CtfeEnv.Nil _ _ _ _ source-names) source-names]
-    [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-source-names (box-get rest))]
-    [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-source-names (box-get rest))]))
+  (struct-get (box-get (struct-get env metadata)) source-names))
 
 ;; A transformer reads its definition body from `ctfe-env-pools`, but syntax
 ;; selected from a variadic caller argument may belong to a newer pool. Carry
 ;; that pool on every environment extension so generated nodes and captured
 ;; children always share ownership without rescanning lexical locals.
 (define (ctfe-env-syntax-pools [env : CtfeEnv]) : CtfeMaybeSyntaxPools
-  (match env
-    [(CtfeEnv.Nil _ syntax-pools _ _ _) syntax-pools]
-    [(CtfeEnv.Cons _ _ _ syntax-pools _) syntax-pools]
-    [(CtfeEnv.LocalCons _ _ _ syntax-pools _) syntax-pools]))
+  (struct-get env syntax-pools))
 
 (define (ctfe-env-syntax-pools-for-value
   [env : CtfeEnv]
@@ -1109,23 +1382,18 @@
   (ctfe-syntax-expr-value env (ctfe-syntax-ast-push env node) ty))
 
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : AstNodePoolContext]) : CtfeEnv
-  (match env
-    [(CtfeEnv.Nil _ syntax-pools layouts reflections source-names)
-      (CtfeEnv.Nil pools syntax-pools layouts reflections source-names)]
-    [(CtfeEnv.Cons key value ty syntax-pools rest)
-      (CtfeEnv.Cons
-        key
-        value
-        ty
-        syntax-pools
-        (box (ctfe-env-rebase-pools (box-get rest) pools)))]
-    [(CtfeEnv.LocalCons key value ty syntax-pools rest)
-      (CtfeEnv.LocalCons
-        key
-        value
-        ty
-        syntax-pools
-        (box (ctfe-env-rebase-pools (box-get rest) pools)))]))
+  (let
+    [metadata : CtfeEnvMetadata (box-get (struct-get env metadata))]
+    (CtfeEnv
+      (struct-get env arena-store)
+      (struct-get env head)
+      (struct-get env syntax-pools)
+      (box
+        (CtfeEnvMetadata
+          pools
+          (struct-get metadata layouts)
+          (struct-get metadata reflections)
+          (struct-get metadata source-names))))))
 
 (define (ctfe-ast-get [env : CtfeEnv] [id : i64]) : AstExpr
   (ast-node-pool-context-expr-get (ctfe-env-pools env) id))
@@ -1147,29 +1415,53 @@
   (None)
   (Some CompilerCtfeValue))
 
+(define (ctfe-env-lookup-id-from [env : CtfeEnv] [name-id : i64]) : CtfeMaybeValue
+  (let
+    [store : CtfeEnvArena (box-get (struct-get env arena-store))]
+    [index : i64 (struct-get env head)]
+    [searching? : bool true]
+    [result : CtfeMaybeValue (CtfeMaybeValue.None)]
+    (begin
+      (while (and searching? (>= index 0))
+        (let
+          [binding : CtfeEnvBinding (ctfe-env-arena-binding-at store index)]
+          (begin
+            (cfg compile-profile (ctfe-env-profile-note-lookup-step!) unit)
+            (if (= (struct-get binding key) name-id)
+              (begin
+                (set! result (CtfeMaybeValue.Some (struct-get binding value)))
+                (set! searching? false))
+              (set! index (struct-get binding parent))))))
+      result)))
+
 (define (ctfe-env-lookup-id [env : CtfeEnv] [name-id : i64]) : CtfeMaybeValue
-  (match env
-    [(CtfeEnv.Nil _ _ _ _ _) (CtfeMaybeValue.None)]
-    [(CtfeEnv.Cons key value _ _ rest)
-      (if (= key name-id)
-        (CtfeMaybeValue.Some value)
-        (ctfe-env-lookup-id (box-get rest) name-id))]
-    [(CtfeEnv.LocalCons key value _ _ rest)
-      (if (= key name-id)
-        (CtfeMaybeValue.Some (box-get value))
-        (ctfe-env-lookup-id (box-get rest) name-id))]))
+  (begin
+    (cfg compile-profile (ctfe-env-profile-note-value-lookup!) unit)
+    (ctfe-env-lookup-id-from env name-id)))
+
+(define (ctfe-env-lookup-type-id-from [env : CtfeEnv] [name-id : i64]) : AstMaybeType
+  (let
+    [store : CtfeEnvArena (box-get (struct-get env arena-store))]
+    [index : i64 (struct-get env head)]
+    [searching? : bool true]
+    [result : AstMaybeType (AstMaybeType.No)]
+    (begin
+      (while (and searching? (>= index 0))
+        (let
+          [binding : CtfeEnvBinding (ctfe-env-arena-binding-at store index)]
+          (begin
+            (cfg compile-profile (ctfe-env-profile-note-lookup-step!) unit)
+            (if (= (struct-get binding key) name-id)
+              (begin
+                (set! result (AstMaybeType.Some (struct-get binding ty)))
+                (set! searching? false))
+              (set! index (struct-get binding parent))))))
+      result)))
 
 (define (ctfe-env-lookup-type-id [env : CtfeEnv] [name-id : i64]) : AstMaybeType
-  (match env
-    [(CtfeEnv.Nil _ _ _ _ _) (AstMaybeType.No)]
-    [(CtfeEnv.Cons key _ ty _ rest)
-      (if (= key name-id)
-        (AstMaybeType.Some ty)
-        (ctfe-env-lookup-type-id (box-get rest) name-id))]
-    [(CtfeEnv.LocalCons key _ ty _ rest)
-      (if (= key name-id)
-        (AstMaybeType.Some ty)
-        (ctfe-env-lookup-type-id (box-get rest) name-id))]))
+  (begin
+    (cfg compile-profile (ctfe-env-profile-note-type-lookup!) unit)
+    (ctfe-env-lookup-type-id-from env name-id)))
 
 ;; Set the nearest CTFE-local binding. Finding an immutable binding with the
 ;; same name stops the search, matching ordinary lexical shadowing rules.
@@ -1177,18 +1469,33 @@
   [env : CtfeEnv]
   [name-id : i64]
   [value : CompilerCtfeValue]) : bool
-  (match env
-    [(CtfeEnv.Nil _ _ _ _ _) false]
-    [(CtfeEnv.Cons key _ _ _ rest)
-      (if (= key name-id)
-        false
-        (ctfe-env-set-local-id! (box-get rest) name-id value))]
-    [(CtfeEnv.LocalCons key cell _ _ rest)
-      (if (= key name-id)
-        (begin
-          (set! (box-get cell) value)
-          true)
-        (ctfe-env-set-local-id! (box-get rest) name-id value))]))
+  (let
+    [store : (Box CtfeEnvArena) (struct-get env arena-store)]
+    [index : i64 (struct-get env head)]
+    [searching? : bool true]
+    [updated? : bool false]
+    (begin
+      (cfg compile-profile (ctfe-env-profile-note-local-set!) unit)
+      (while (and searching? (>= index 0))
+        (let
+          [binding : CtfeEnvBinding
+            (ctfe-env-arena-binding-at (box-get store) index)]
+          (begin
+            (cfg compile-profile (ctfe-env-profile-note-local-set-step!) unit)
+            (if (= (struct-get binding key) name-id)
+              (begin
+                (if (struct-get binding mutable-local)
+                  (begin
+                    (set! (struct-get binding value) value)
+                    (ctfe-env-arena-write-index!
+                      (&mut (box-get store))
+                      index
+                      binding)
+                    (set! updated? true))
+                  unit)
+                (set! searching? false))
+              (set! index (struct-get binding parent))))))
+      updated?)))
 
 (define (ctfe-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -15616,6 +15923,205 @@
             "compile-time evaluation limit exceeded")]
         [(ResultCtfe.Ok _ _) false]))))
 
+(define (compiler-ctfe-env-i64-value-ok?
+  [env : CtfeEnv]
+  [name-id : i64]
+  [expected : i64]) : bool
+  (match (ctfe-env-lookup-id env name-id)
+    [(CtfeMaybeValue.Some value)
+      (match value
+        [(CompilerCtfeValue.I64 actual) (= actual expected)]
+        [_ false])]
+    [(CtfeMaybeValue.None) false]))
+
+(define (compiler-ctfe-env-value-missing? [env : CtfeEnv] [name-id : i64]) : bool
+  (match (ctfe-env-lookup-id env name-id)
+    [(CtfeMaybeValue.None) true]
+    [(CtfeMaybeValue.Some _) false]))
+
+(define (compiler-ctfe-env-type-ok?
+  [env : CtfeEnv]
+  [name-id : i64]
+  [expected : AstType]) : bool
+  (match (ctfe-env-lookup-type-id env name-id)
+    [(AstMaybeType.Some actual) (ctfe-type-eq actual expected)]
+    [(AstMaybeType.No) false]))
+
+;; Arena snapshots may branch and may outlive backing-array growth. Each branch
+;; must continue following the parent index captured when its head was appended.
+(define (compiler-ctfe-env-arena-snapshots-ok?) : bool
+  (let
+    [base : CtfeEnv (ctfe-env-empty)]
+    [shared-id : i64 (ctfe-materialize-generated-name-id "arena-shared")]
+    [left-id : i64 (ctfe-materialize-generated-name-id "arena-left")]
+    [right-id : i64 (ctfe-materialize-generated-name-id "arena-right")]
+    [shared : CtfeEnv
+      (ctfe-env-extend-typed-id
+        base
+        shared-id
+        (CompilerCtfeValue.I64 1)
+        (AstType.I64))]
+    [left : CtfeEnv
+      (ctfe-env-extend-id shared left-id (CompilerCtfeValue.I64 2))]
+    [right : CtfeEnv
+      (ctfe-env-extend-id shared right-id (CompilerCtfeValue.I64 3))]
+    [grown : CtfeEnv right]
+    [index : i64 0]
+    (begin
+      ;; Exceed the initial capacity after both branches exist.
+      (while (< index 16)
+        (begin
+          (set!
+            grown
+            (ctfe-env-extend-id
+              grown
+              (+ 100000 index)
+              (CompilerCtfeValue.I64 index)))
+          (set! index (+ index 1))))
+      (and
+        (compiler-ctfe-env-value-missing? base shared-id)
+        (compiler-ctfe-env-i64-value-ok? shared shared-id 1)
+        (compiler-ctfe-env-type-ok? shared shared-id (AstType.I64))
+        (compiler-ctfe-env-i64-value-ok? left left-id 2)
+        (compiler-ctfe-env-i64-value-ok? left shared-id 1)
+        (compiler-ctfe-env-value-missing? left right-id)
+        (compiler-ctfe-env-i64-value-ok? grown (+ 100000 15) 15)
+        (compiler-ctfe-env-i64-value-ok? grown right-id 3)
+        (compiler-ctfe-env-i64-value-ok? grown shared-id 1)
+        (compiler-ctfe-env-value-missing? grown left-id)))))
+
+;; Local identity belongs to a stable slot. Descendant snapshots retain that
+;; identity, a newer local gets a different slot, and an immutable shadow stops
+;; mutation before an older local with the same name.
+(define (compiler-ctfe-env-arena-mutation-ok?) : bool
+  (let
+    [base : CtfeEnv (ctfe-env-empty)]
+    [name-id : i64 (ctfe-materialize-generated-name-id "arena-local")]
+    [other-id : i64 (ctfe-materialize-generated-name-id "arena-other")]
+    [local : CtfeEnv
+      (ctfe-env-extend-local-typed-id
+        base
+        name-id
+        (CompilerCtfeValue.I64 1)
+        (AstType.I64))]
+    [descendant : CtfeEnv
+      (ctfe-env-extend-id local other-id (CompilerCtfeValue.I64 9))]
+    [updated-through-descendant? : bool
+      (ctfe-env-set-local-id! descendant name-id (CompilerCtfeValue.I64 2))]
+    [immutable-shadow : CtfeEnv
+      (ctfe-env-extend-id descendant name-id (CompilerCtfeValue.I64 3))]
+    [immutable-stopped? : bool
+      (not
+        (ctfe-env-set-local-id!
+          immutable-shadow
+          name-id
+          (CompilerCtfeValue.I64 4)))]
+    [local-shadow : CtfeEnv
+      (ctfe-env-extend-local-typed-id
+        descendant
+        name-id
+        (CompilerCtfeValue.I64 5)
+        (AstType.I64))]
+    [local-shadow-updated? : bool
+      (ctfe-env-set-local-id! local-shadow name-id (CompilerCtfeValue.I64 6))]
+    (and
+      updated-through-descendant?
+      immutable-stopped?
+      local-shadow-updated?
+      (compiler-ctfe-env-i64-value-ok? local name-id 2)
+      (compiler-ctfe-env-i64-value-ok? descendant name-id 2)
+      (compiler-ctfe-env-i64-value-ok? immutable-shadow name-id 3)
+      (compiler-ctfe-env-i64-value-ok? local-shadow name-id 6)
+      (compiler-ctfe-env-type-ok? local-shadow name-id (AstType.I64)))))
+
+;; Rebasing changes only the definition pools. Bindings and root metadata stay
+;; shared, while a captured value's newer syntax pools remain snapshot-local.
+(define (compiler-ctfe-env-arena-provenance-ok?) : bool
+  (let
+    [definition-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-create 8)
+        (ast-type-node-pool-state-create 8))]
+    [rebased-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-create 8)
+        (ast-type-node-pool-state-create 8))]
+    [syntax-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-create 8)
+        (ast-type-node-pool-state-create 8))]
+    [layout-name : i64 cbi.compiler-builtin-id-fix-Packet]
+    [layouts : CtfeLayoutInfoList
+      (ctfe-layout-info-list-push-id
+        (ctfe-layout-info-list-with-capacity 1)
+        (CtfeLayoutInfo.Info "Packet" true 8 8 (ctfe-layout-field-list-empty))
+        layout-name)]
+    [reflection-env : CtfeEnv (compiler-ctfe-reflection-env)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-capture-active-handle)]
+    [base : CtfeEnv
+      (ctfe-env-with-metadata-and-pools-and-source-names
+        layouts
+        (ctfe-env-reflections reflection-env)
+        definition-pools
+        source-names)]
+    [binding-id : i64 (ctfe-materialize-generated-name-id "arena-rebase")]
+    [bound : CtfeEnv
+      (ctfe-env-extend-id base binding-id (CompilerCtfeValue.I64 7))]
+    [rebased : CtfeEnv (ctfe-env-rebase-pools bound rebased-pools)]
+    [captured-node : i64
+      (ast-node-pool-context-expr-push
+        syntax-pools
+        (AstExpr.Literal (AstLiteral.Bool true)))]
+    [captured : CtfeEnv
+      (ctfe-env-extend-id
+        bound
+        (+ binding-id 1)
+        (CompilerCtfeValue.CapturedExpr
+          captured-node
+          (AstType.Bool)
+          syntax-pools))]
+    [captured-child : CtfeEnv
+      (ctfe-env-extend-id captured (+ binding-id 2) (CompilerCtfeValue.I64 8))]
+    [captured-rebased : CtfeEnv
+      (ctfe-env-rebase-pools captured-child rebased-pools)]
+    (and
+      (compiler-ctfe-env-i64-value-ok? rebased binding-id 7)
+      (ctfe-node-pools-share-storage? (ctfe-env-pools bound) definition-pools)
+      (ctfe-node-pools-share-storage? (ctfe-env-pools rebased) rebased-pools)
+      (not
+        (ctfe-node-pools-share-storage?
+          (ctfe-env-pools bound)
+          (ctfe-env-pools rebased)))
+      (ctfe-node-pools-share-storage?
+        (ctfe-env-syntax-pool-context captured)
+        syntax-pools)
+      (ctfe-node-pools-share-storage?
+        (ctfe-env-syntax-pool-context captured-child)
+        syntax-pools)
+      (ctfe-node-pools-share-storage?
+        (ctfe-env-syntax-pool-context captured-rebased)
+        syntax-pools)
+      (=
+        (struct-get (ctfe-env-source-names rebased) address)
+        (struct-get source-names address))
+      (match (ctfe-layout-info-lookup-name-id
+        (ctfe-env-layouts rebased)
+        layout-name)
+        [(CtfeMaybeLayoutInfo.Some _) true]
+        [(CtfeMaybeLayoutInfo.None) false])
+      (match (ctfe-reflect-info-lookup-name-id
+        (ctfe-env-reflections rebased)
+        cbi.compiler-builtin-id-fix-Point)
+        [(CtfeMaybeReflectInfo.Some _) true]
+        [(CtfeMaybeReflectInfo.None) false]))))
+
+(define (compiler-ctfe-env-arena-ok?) : bool
+  (and
+    (compiler-ctfe-env-arena-snapshots-ok?)
+    (compiler-ctfe-env-arena-mutation-ok?)
+    (compiler-ctfe-env-arena-provenance-ok?)))
+
 (define (compiler-ctfe-generated-dotted-suffix-id-ok?) : bool
   (match (ctfe-generated-string-append-value
     "."
@@ -15870,6 +16376,7 @@
     (unless (compiler-ctfe-captured-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))
     (unless (compiler-ctfe-local-while-ok?) (return 1))
+    (unless (compiler-ctfe-env-arena-ok?) (return 1))
     (unless (compiler-ctfe-generated-dotted-suffix-id-ok?) (return 1))
     (cfg
       test

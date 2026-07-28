@@ -2127,7 +2127,7 @@
       (compiler-typecheck-inline-layout-ok? src "InlineHelperRootList")
       (compiler-typecheck-inline-layout-ok? src "CompilerPkgDepList"))))
 
-(define (compiler-typecheck-inline-boxed-ctfe-metadata-source) : String
+(define (compiler-typecheck-inline-ctfe-metadata-source) : String
   "(defenum CompilerCtfeValue
   (Unit))
 (defstruct CtfeLayoutField
@@ -2168,15 +2168,33 @@
 (defstruct CtfeReflectInfoList
   (slots (Array CtfeReflectInfo))
   (len i64))
-(defenum CtfeEnv
-  (Nil CtfeLayoutInfoList CtfeReflectInfoList)
-  (Cons String CompilerCtfeValue AstType (Box CtfeEnv)))")
+(defstruct CtfeEnvBinding
+  (key i64)
+  (value CompilerCtfeValue)
+  (ty AstType)
+  (parent i64)
+  (mutable-local bool))
+(defstruct CtfeEnvArena
+  (segments (Array (Array CtfeEnvBinding)))
+  (segment-count i64)
+  (len i64)
+  (owner-arena i64))
+(defstruct CtfeEnvMetadata
+  (layouts CtfeLayoutInfoList)
+  (reflections CtfeReflectInfoList))
+(defstruct CtfeEnv
+  (arena-store (Box CtfeEnvArena))
+  (head i64)
+  (metadata (Box CtfeEnvMetadata)))")
 
 (define (compiler-typecheck-inline-ctfe-metadata-layout-ok?) : bool
   (let
-    [src : String (compiler-typecheck-inline-boxed-ctfe-metadata-source)]
+    [src : String (compiler-typecheck-inline-ctfe-metadata-source)]
     (and
       (compiler-typecheck-inline-layout-ok? src "CtfeEnv")
+      (compiler-typecheck-inline-layout-ok? src "CtfeEnvBinding")
+      (compiler-typecheck-inline-layout-ok? src "CtfeEnvArena")
+      (compiler-typecheck-inline-layout-ok? src "CtfeEnvMetadata")
       (compiler-typecheck-inline-layout-ok? src "CtfeLayoutInfoList")
       (compiler-typecheck-inline-layout-ok? src "CtfeLayoutFieldList")
       (compiler-typecheck-inline-layout-ok? src "CtfeReflectInfoList")

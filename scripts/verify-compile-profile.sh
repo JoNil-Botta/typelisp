@@ -278,6 +278,11 @@ profile_live_counter_value_in() {
 # Lowerer counters use the same six-field phase schema, with their value in
 # the live-delta column. Keep this separate from the ordinary profile counters
 # above, whose value lives in the elapsed-ms column.
+#
+# Every exact pin expressed through this helper is verified twice: in PR CI and
+# after merge by Bootstrap Stage0's narrow Windows main-push step. Keep new
+# exact profile pins in this verifier so they inherit that attribution guarantee
+# instead of first failing on an unrelated later PR (#5773).
 assert_profile_live_counter_eq_in() {
     _file=$1
     _phase=$2
@@ -995,13 +1000,13 @@ fi
 # compiler's own source graph, and a segmented pool sized from that graph is
 # expected to step.
 #
-# Why a step reaches main red rather than being caught: CI runs on
-# `pull_request` only, so it verifies a head merged into the base as of that
-# event and never re-verifies main afterwards (#5770). A PR is green against an
-# older base and the merged tree is never compiled, so the break surfaces on
-# whichever unrelated PR next opens -- #5759 hit it having changed only CLI help
-# strings. Each boundary now moves as one constant with a report that names the
-# whole family, so the next step costs a one-number edit instead of the
+# PR CI verifies a head merged into the base as of that event, not the eventual
+# merge result. Bootstrap Stage0 therefore runs this complete verifier on its
+# converged Windows compiler after every push to main. A boundary crossed by a
+# merge now fails on that merge's own workflow instead of whichever unrelated
+# PR opens next (#5773). Keep that post-merge step paired with these Windows
+# selfhost pins. Each boundary moves as one constant with a report that names
+# the whole family, so the next step costs a one-number edit instead of the
 # archaeology that took (#5764).
 #
 # Current headroom, used against capacity on the exact #5980 merge probe:

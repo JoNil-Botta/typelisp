@@ -113,6 +113,17 @@ jobs:
         shell: bash
         run: scripts/check-bootstrap-fixpoint.sh "$PWD/typelisp-stage0-windows.exe"
 
+      # Keep this narrow post-merge gate on the converged Windows compiler:
+      # verify-compile-profile owns every exact profile-counter pin, including
+      # the Windows-only selfhost pool boundaries. PR CI runs the same verifier,
+      # but this main-push run attributes a stale pin to the merge that moved it
+      # instead of to the next unrelated PR (#5773).
+      - name: Verify post-merge exact compile-profile counters
+        shell: bash
+        run: |
+          TYPELISP_BIN="$PWD/typelisp-stage0-windows.exe" \
+            scripts/verify-compile-profile.sh
+
       - name: Corpus-check the new stage0 (frontend only)
         shell: bash
         run: |

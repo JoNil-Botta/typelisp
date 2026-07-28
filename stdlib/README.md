@@ -15,6 +15,21 @@ The in-tree unsized `(Array T)` migration census lives in
 new public growable collection surface or migrating an existing dynamic-array
 use.
 
+## Source Conventions
+
+Runtime stdlib code uses `str-cat` for fixed-arity string construction and
+`text_buf` for incremental building. CI runs
+`scripts/check-stdlib-concat-lint.sh` through `verify-stdlib.sh`; the helper
+lints every git-tracked `stdlib/**/*.tl` file with
+`--deprecated-string-concat` in deterministic bounded batches and includes a
+rejection probe for an ordinary `string.append` call.
+
+Only the low-level `stdlib.runtime/string-concat` compatibility primitive and
+the `stdlib.comptime` `string-concat` / `string-append` declaration heads have
+documented `lint-allow: deprecated-string-concat` suppressions. Qualified
+`comptime.string-append` calls are compiler-recognized macro-CTFE operations,
+not deprecated runtime concatenation.
+
 ## Current Modules
 
 - `arena.tl`: typed first-class `Arena`, `ArenaMark`, and `ArenaPhase` helper

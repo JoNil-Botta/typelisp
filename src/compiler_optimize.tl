@@ -2698,14 +2698,28 @@
     [(CompilerIrInstr.Word dst _ _ _) (not (opt-used-array-contains items dst))]
     [_ false]))
 
+;; Retain-only sweep into a fresh dense sequence. The BACKWARD walk is load
+;; bearing and is preserved exactly: deleting an instruction drops the uses it
+;; made (opt-uncount-instr-uses-array), which is what lets an earlier
+;; instruction become dead in the same sweep. Survivors are therefore written
+;; from the END of the output array and the live suffix is slid down to index 0
+;; afterwards -- the same two-phase shape opt-dce-instr-seq-array-escape already
+;; uses, minus the escape clone. Output is fresh; `instrs` is untouched (this is
+;; the opt2 path, where the fixpoint driver still needs its input intact --
+;; opt-dce-instr-seq-array-in-place! remains the opt1 form). refs #5726
 (define (opt-dce-instr-seq-array
   [items : (Array i64)]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
+    [out-slots : (Array CompilerIrInstr)
+      (array.make-array CompilerIrInstr count)]
     [index : i64 (- count 1)]
-    [out : CompilerIrInstrList CompilerIrInstrList.Nil]
+    [write : i64 (- count 1)]
+    [live-count : i64 0]
+    [src : i64 0]
+    [dst : i64 0]
     (begin
       (while (>= index 0)
         (begin
@@ -2713,9 +2727,21 @@
             [instr : CompilerIrInstr (array-ref slots index)]
             (if (opt-instr-dead-array? items slots count index instr)
               (opt-uncount-instr-uses-array items instr)
-              (set! out (compiler-ir-instr-cons (array-ref slots index) out))))
+              (begin
+                (array-set! out-slots write (array-ref slots index))
+                (set! write (- write 1)))))
           (set! index (- index 1))))
-      out)))
+      (set! live-count (- count (+ write 1)))
+      (set! src (+ write 1))
+      (set! dst 0)
+      (while (< dst live-count)
+        (begin
+          (if (not (= dst src))
+            (array-set! out-slots dst (array-ref out-slots src))
+            unit)
+          (set! dst (+ dst 1))
+          (set! src (+ src 1))))
+      (CompilerIrInstrSeq out-slots live-count))))
 
 (define (opt-dce-instr-seq-array-in-place!
   [items : (Array i64)]
@@ -2759,7 +2785,7 @@
 (define (opt-dce-block-array [items : (Array i64)] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-dce-instr-seq-array items instrs))]))
+      (CompilerIrBlock.Block label (opt-dce-instr-seq-array items instrs))]))
 
 (define (opt-dce-block-array-in-place
   [items : (Array i64)]
@@ -8454,7 +8480,6 @@
       (set!
         targets-known
         (opt-cfg-index-fill-rows! blocks generation succ-rows pred-rows 0))
-      (opt-cfg-fill-bool! reachable count false)
       (opt-cfg-fill-i64! postorder count (- 0 1))
       (opt-cfg-fill-i64! rpo count (- 0 1))
       (opt-cfg-fill-i64! rpo-num count (- 0 1))
@@ -9811,16 +9836,15 @@
               unit)])
         (opt-var-defs-index-fill! items (box-get rest)))]))
 
+;; `OptMaybeVarDef.No` is the fieldless tag-0 variant, so its representation is
+;; all-zero bytes and `make-array` already produces it for every slot -- see
+;; `lower-make-array-zero-fill-enum-supported?`. Re-writing `.No` over the whole
+;; array with a scalar loop only repeats what the allocation just did.
 (define (opt-var-defs-index [defs : OptVarDefList]) : (Array OptMaybeVarDef)
   (let
     [count : i64 (+ (opt-var-defs-max-id defs (- 0 1)) 1)]
     [items : (Array OptMaybeVarDef) (array.make-array OptMaybeVarDef count)]
-    [i : i64 0]
     (begin
-      (while (< i count)
-        (begin
-          (array-set! items i (OptMaybeVarDef.No))
-          (set! i (+ i 1))))
       (opt-var-defs-index-fill! items defs)
       items)))
 
@@ -13699,34 +13723,41 @@
         cases
         default-label)]))
 
+;; 1:1 rewrite: the output has exactly the input's length, so it is built
+;; straight into a right-sized dense array instead of a cons spine that
+;; `compiler-ir-block` would then have to re-count and re-copy. The result is a
+;; FRESH sequence and `instrs` is not touched, so this needs no unique-ownership
+;; argument -- which matters, because the opt2 fixpoint driver
+;; (optimize-function-pass-with-summaries) falls back to its INPUT function when
+;; a round changes nothing, and the pipeline head can still alias it. refs #5726
 (define (opt-global-copy-instr-seq
   [facts : OptGlobalCopyFactTable]
   [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
   [uses : (Array i64)]
   [block-id : i64]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerIrInstrList (CompilerIrInstrList.Nil)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
     (begin
-      (while (>= index 0)
+      (while (< index count)
         (begin
-          (set!
+          (array-set!
             out
-            (compiler-ir-instr-cons
-              (opt-global-copy-subst-instr
-                facts
-                pack-facts
-                doms
-                uses
-                block-id
-                (+ index 1)
-                (array-ref slots index))
-              out))
-          (set! index (- index 1))))
-      out)))
+            index
+            (opt-global-copy-subst-instr
+              facts
+              pack-facts
+              doms
+              uses
+              block-id
+              (+ index 1)
+              (array-ref slots index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
 
 ;; Every rewrite in this pass keeps the block sequence -- only block contents
 ;; change -- so the walk position stays the id `doms`'s index assigned.
@@ -13743,7 +13774,7 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (compiler-ir-block
+            (CompilerIrBlock.Block
               label
               (opt-global-copy-instr-seq
                 facts
@@ -14054,39 +14085,40 @@
               [_ false]))]
         [_ false]))))
 
+;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
 (define (opt-global-cse-instr-seq
   [type-segment-bases : i64]
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
   [block-label : i64]
   [block-id : i64]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerIrInstrList (CompilerIrInstrList.Nil)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
     (begin
-      (while (>= index 0)
+      (while (< index count)
         (let
           [instr : CompilerIrInstr (array-ref slots index)]
           (begin
-            (set!
+            (array-set!
               out
-              (compiler-ir-instr-cons
-                (if (or
-                  (opt-global-cse-bool-chain-compare? block-label instrs instr)
-                  (opt-global-cse-unroll2-address-offset? block-label instr))
-                  instr
-                  (opt-global-cse-instr
-                    type-segment-bases
-                    facts
-                    doms
-                    block-id
-                    (+ index 1)
-                    instr))
-                out))
-            (set! index (- index 1)))))
-      out)))
+              index
+              (if (or
+                (opt-global-cse-bool-chain-compare? block-label instrs instr)
+                (opt-global-cse-unroll2-address-offset? block-label instr))
+                instr
+                (opt-global-cse-instr
+                  type-segment-bases
+                  facts
+                  doms
+                  block-id
+                  (+ index 1)
+                  instr)))
+            (set! index (+ index 1)))))
+      (CompilerIrInstrSeq out count))))
 
 (define (opt-global-cse-blocks
   [type-segment-bases : i64]
@@ -14107,7 +14139,7 @@
               label
               instrs)
               block
-              (compiler-ir-block
+              (CompilerIrBlock.Block
                 label
                 (opt-global-cse-instr-seq
                   type-segment-bases
@@ -14247,26 +14279,27 @@
         [_ instr])]
     [_ instr]))
 
-(define (opt-cfg-fold-branches-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). The
+;; in-place twin below (-instr-seq-rewrite!) stays reserved for the opt1 path,
+;; which owns its blocks; this form is the one the opt2 fixpoint can use,
+;; because it leaves its input alone. refs #5726
+(define (opt-cfg-fold-branches-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerIrInstrList CompilerIrInstrList.Nil]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
     (begin
-      (while (>= index 0)
+      (while (< index count)
         (begin
-          (set!
-            out
-            (compiler-ir-instr-cons
-              (opt-cfg-fold-branch (array-ref slots index))
-              out))
-          (set! index (- index 1))))
-      out)))
+          (array-set! out index (opt-cfg-fold-branch (array-ref slots index)))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
 
 (define (opt-cfg-fold-branches-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-cfg-fold-branches-instr-seq instrs))]))
+      (CompilerIrBlock.Block label (opt-cfg-fold-branches-instr-seq instrs))]))
 
 (define (opt-cfg-fold-branches-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -21562,33 +21595,34 @@
           (CompilerIrInstr.Phi dst kept ty)))]
     [_ instr]))
 
+;; 1:1 rewrite -> dense output sequence (see opt-global-copy-instr-seq). refs #5726
 (define (opt-cfg-clean-instr-seq
   [index : OptCfgIndex]
   [block-label : i64]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [block-id : i64
       (match (opt-cfg-index-id index block-label)
         [(option_i64.Some id) id]
         [(option_i64.None) (- 0 1)])]
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [pos : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerIrInstrList CompilerIrInstrList.Nil]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [pos : i64 0]
     (begin
-      (while (>= pos 0)
+      (while (< pos count)
         (begin
-          (set!
+          (array-set!
             out
-            (compiler-ir-instr-cons
-              (opt-cfg-clean-instr index block-id (array-ref slots pos))
-              out))
-          (set! pos (- pos 1))))
-      out)))
+            pos
+            (opt-cfg-clean-instr index block-id (array-ref slots pos)))
+          (set! pos (+ pos 1))))
+      (CompilerIrInstrSeq out count))))
 
 (define (opt-cfg-clean-block [index : OptCfgIndex] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-cfg-clean-instr-seq index label instrs))]))
+      (CompilerIrBlock.Block label (opt-cfg-clean-instr-seq index label instrs))]))
 
 (define (opt-cfg-filter-clean-blocks
   [index : OptCfgIndex]
@@ -22258,8 +22292,6 @@
                               [refs : (Array i64) (opt-used-array-new frame)]
                               [visited : (Array bool)
                                 (array.make-array bool frame)]
-                              [_visited : unit
-                                (opt-cfg-fill-bool! visited frame false)]
                               [collected? : bool
                                 (opt-bool-branch-chain-collect-value!
                                   type-segment-bases
@@ -23074,6 +23106,24 @@
               (set! pos (+ pos 1))))
           false))]))
 
+;; The bool-branch fuser mutates its working copy, so it clones the block
+;; contents first. The clone used to go seq -> cons list -> seq: it built a
+;; 112 B node per instruction and then `compiler-ir-block` re-counted the spine
+;; and copied it back into an array, purely to reproduce the array it started
+;; from. It is a straight row copy. refs #5726
+(define (opt-bool-branch-clone-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! out index (array-ref slots index))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
+
 (define (opt-bool-branch-clone-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -23081,7 +23131,9 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (compiler-ir-block label (compiler-ir-instr-seq-to-list instrs))
+            (CompilerIrBlock.Block
+              label
+              (opt-bool-branch-clone-instr-seq instrs))
             (opt-bool-branch-clone-blocks (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-bool-branch-clone-blocks (compiler-ir-block-seq-to-list seq))]))
@@ -24526,37 +24578,38 @@
         [_ false])]
     [_ false]))
 
-(define (opt-sccp-rewrite-instr-seq-from
-  [env : OptSccpEnv]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [out : CompilerIrInstrList]) : CompilerIrInstrList
-  (if (< index 0)
-    out
-    (let
-      [rewritten : CompilerIrInstr
-        (opt-sccp-rewrite-instr env (compiler-ir-instr-seq-ref instrs index))]
-      (opt-sccp-rewrite-instr-seq-from
-        env
-        instrs
-        (- index 1)
-        (if (opt-sccp-bounds-check-in-range? rewritten)
-          out
-          (compiler-ir-instr-cons rewritten out))))))
-
+;; Retain-only rewrite (1:1 substitution, minus the bounds checks SCCP proved
+;; in range), so the output length is not known up front: build it with the
+;; capacity-managed dense builder seeded at the input length, not a cons
+;; accumulator. `opt-sccp-rewrite-instr` is a pure function of `env` and the
+;; instruction, so walking forward instead of the old backward-cons produces
+;; the identical sequence. Output is fresh; `instrs` is untouched. refs #5726
 (define (opt-sccp-rewrite-instr-seq
   [env : OptSccpEnv]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (opt-sccp-rewrite-instr-seq-from
-    env
-    instrs
-    (- (compiler-ir-instr-seq-count instrs) 1)
-    CompilerIrInstrList.Nil))
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [rewritten : CompilerIrInstr
+            (opt-sccp-rewrite-instr
+              env
+              (compiler-ir-instr-seq-ref instrs index))]
+          (begin
+            (if (opt-sccp-bounds-check-in-range? rewritten)
+              unit
+              (compiler-ir-instr-builder-push! (&mut builder) rewritten))
+            (set! index (+ index 1)))))
+      (compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-sccp-rewrite-block [env : OptSccpEnv] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-sccp-rewrite-instr-seq env instrs))]))
+      (CompilerIrBlock.Block label (opt-sccp-rewrite-instr-seq env instrs))]))
 
 (define (opt-sccp-rewrite-blocks
   [env : OptSccpEnv]
@@ -26578,7 +26631,7 @@
 ;; have been unified into shared vars first. Facts flow down the dominator
 ;; tree as an immutable list, so sibling subtrees are isolated by construction.
 (defenum OptBoundsDomWalk
-  (Walk CompilerIrInstrList OptBoundsFacts OptDomCmpFacts))
+  (Walk CompilerIrInstrSeq OptBoundsFacts OptDomCmpFacts))
 
 ;; GVN rewrites a dominated duplicate expression (e.g. the per-access
 ;; `Cast(i -> U64)` index) into `Mov dst2 = dst1`, and block-local copy
@@ -27408,136 +27461,120 @@
   [copies : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : OptBoundsDomWalk
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OptBoundsDomWalk.Walk (CompilerIrInstrList.Nil) facts cmp-facts)
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (match instr
-        [(CompilerIrInstr.BoundsCheck idx len _)
-          (let
-            [cidx : CompilerIrValue (opt-bounds-dom-resolve copies idx)]
-            [clen : CompilerIrValue (opt-bounds-dom-resolve copies len)]
-            (if (or
-              (opt-bounds-contains facts cidx clen)
-              (opt-bounds-dom-mask-in-range?
-                type-segment-bases
-                defs
-                phi-defs
-                copies
-                cmp-facts
-                cidx
-                clen)
-              (opt-bounds-dom-counter-in-range?
-                type-segment-bases
-                cfg-index
-                terms
-                defs
-                phi-defs
-                copies
-                cmp-facts
-                block-label
-                (opt-bounds-dom-strip-int-cast
-                  type-segment-bases
-                  phi-defs
-                  copies
-                  cidx)
-                (opt-bounds-dom-strip-int-cast
-                  type-segment-bases
-                  phi-defs
-                  copies
-                  clen)))
-              (opt-bounds-dom-instrs-from
-                type-segment-bases
-                defs
-                phi-defs
-                terms
-                cfg-index
-                block-label
-                cmp-facts
-                facts
-                sources
-                copies
-                instrs
-                (+ index 1))
-              (let
-                [stable? : bool
-                  (and
-                    (opt-gvn-value-stable? sources cidx)
-                    (opt-gvn-value-stable? sources clen))]
-                [next-facts : OptBoundsFacts
-                  (if stable?
-                    (opt-bounds-add facts cidx clen)
-                    facts)]
-                ;; A passed bounds check is an unsigned `idx < len` whose
-                ;; length operand is a runtime container length, so len is
-                ;; always < 2^63: the continuation also proves
-                ;; 0 <= idx < len in the SIGNED domain. Record both lt
-                ;; spellings so the dominating-comparison fold kills a later
-                ;; redundant signed test (`le idx len`, `gt len idx`, ...) --
-                ;; e.g. a loop-versioning guard condition that repeats what a
-                ;; dominating access already checked.
-                [next-cmp-facts : OptDomCmpFacts
-                  (if stable?
-                    (OptDomCmpFacts.Cons
-                      (OptDomCmpFact.Fact
-                        (CompilerIrBinOp.Lt)
-                        cidx
-                        clen
-                        (AstType.I64)
-                        true)
-                      (box
-                        (OptDomCmpFacts.Cons
-                          (OptDomCmpFact.Fact
-                            (CompilerIrBinOp.Lt)
-                            clen
-                            cidx
-                            (AstType.I64)
-                            false)
-                          (box cmp-facts))))
-                    cmp-facts)]
-                (match (opt-bounds-dom-instrs-from
-                  type-segment-bases
-                  defs
-                  phi-defs
-                  terms
-                  cfg-index
-                  block-label
-                  next-cmp-facts
-                  next-facts
-                  sources
-                  copies
-                  instrs
-                  (+ index 1))
-                  [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
-                    (OptBoundsDomWalk.Walk
-                      (compiler-ir-instr-cons instr tail)
-                      out-facts
-                      out-cmp-facts)]))))]
-        [_
-          (match (opt-bounds-dom-instrs-from
-            type-segment-bases
-            defs
-            phi-defs
-            terms
-            cfg-index
-            block-label
-            cmp-facts
-            facts
-            sources
-            copies
-            instrs
-            (+ index 1))
-            [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
-              (OptBoundsDomWalk.Walk
-                (compiler-ir-instr-cons
+  ;; Retain-only walk (drops bounds checks a dominating check/comparison already
+  ;; proved, folds decided comparisons), so the output length is not known up
+  ;; front: it goes into the capacity-managed dense builder seeded at the input
+  ;; length. This used to be a tail-consing recursion -- recurse first, cons the
+  ;; head onto the returned tail -- which built the whole block as a 112 B-per-
+  ;; instruction spine that `compiler-ir-block` then re-counted and re-copied.
+  ;; The facts/cmp-facts threading was already strictly forward (each step hands
+  ;; the NEXT step its updated facts and the head is emitted with the facts that
+  ;; were current when it was read), so the loop below threads them the same way
+  ;; and pushes in the same order. Output is fresh; `instrs` is untouched.
+  ;; refs #5726
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity
+        (if (< index count)
+          (- count index)
+          1))]
+    [cur-facts : OptBoundsFacts facts]
+    [cur-cmp-facts : OptDomCmpFacts cmp-facts]
+    [pos : i64 index]
+    (begin
+      (while (< pos count)
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
+          (begin
+            (match instr
+              [(CompilerIrInstr.BoundsCheck idx len _)
+                (let
+                  [cidx : CompilerIrValue (opt-bounds-dom-resolve copies idx)]
+                  [clen : CompilerIrValue (opt-bounds-dom-resolve copies len)]
+                  (if (or
+                    (opt-bounds-contains cur-facts cidx clen)
+                    (opt-bounds-dom-mask-in-range?
+                      type-segment-bases
+                      defs
+                      phi-defs
+                      copies
+                      cur-cmp-facts
+                      cidx
+                      clen)
+                    (opt-bounds-dom-counter-in-range?
+                      type-segment-bases
+                      cfg-index
+                      terms
+                      defs
+                      phi-defs
+                      copies
+                      cur-cmp-facts
+                      block-label
+                      (opt-bounds-dom-strip-int-cast
+                        type-segment-bases
+                        phi-defs
+                        copies
+                        cidx)
+                      (opt-bounds-dom-strip-int-cast
+                        type-segment-bases
+                        phi-defs
+                        copies
+                        clen)))
+                    unit
+                    (let
+                      [stable? : bool
+                        (and
+                          (opt-gvn-value-stable? sources cidx)
+                          (opt-gvn-value-stable? sources clen))]
+                      (begin
+                        (compiler-ir-instr-builder-push! (&mut builder) instr)
+                        ;; A passed bounds check is an unsigned `idx < len`
+                        ;; whose length operand is a runtime container length,
+                        ;; so len is always < 2^63: the continuation also
+                        ;; proves 0 <= idx < len in the SIGNED domain. Record
+                        ;; both lt spellings so the dominating-comparison fold
+                        ;; kills a later redundant signed test (`le idx len`,
+                        ;; `gt len idx`, ...) -- e.g. a loop-versioning guard
+                        ;; condition that repeats what a dominating access
+                        ;; already checked.
+                        (if stable?
+                          (begin
+                            (set!
+                              cur-cmp-facts
+                              (OptDomCmpFacts.Cons
+                                (OptDomCmpFact.Fact
+                                  (CompilerIrBinOp.Lt)
+                                  cidx
+                                  clen
+                                  (AstType.I64)
+                                  true)
+                                (box
+                                  (OptDomCmpFacts.Cons
+                                    (OptDomCmpFact.Fact
+                                      (CompilerIrBinOp.Lt)
+                                      clen
+                                      cidx
+                                      (AstType.I64)
+                                      false)
+                                    (box cur-cmp-facts)))))
+                            (set!
+                              cur-facts
+                              (opt-bounds-add cur-facts cidx clen)))
+                          unit)))))]
+              [_
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
                   (opt-bounds-dom-fold-compare
                     type-segment-bases
-                    cmp-facts
+                    cur-cmp-facts
                     copies
-                    instr)
-                  tail)
-                out-facts
-                out-cmp-facts)])]))))
+                    instr))])
+            (set! pos (+ pos 1)))))
+      (OptBoundsDomWalk.Walk
+        (compiler-ir-instr-builder-to-seq builder)
+        cur-facts
+        cur-cmp-facts))))
 
 ;; Replace a comparison a dominating branch already decided with its constant.
 ;; The move keeps the destination and bool type, so every consumer -- branch,
@@ -27611,7 +27648,7 @@
                         out
                         id
                         (OptGvnBlockResult.SomeBlock
-                          (compiler-ir-block label rewritten)))
+                          (CompilerIrBlock.Block label rewritten)))
                       (opt-bounds-dom-rewrite-children
                         type-segment-bases
                         context
@@ -27828,7 +27865,7 @@
   (SomeBlock CompilerIrBlock))
 
 (defenum OptDivRemInstrRewrite
-  (Rewrite OptDivRemFacts CompilerIrInstrList))
+  (Rewrite OptDivRemFacts CompilerIrInstrSeq))
 
 (defenum OptDivRemBlockRewrite
   (Rewrite CompilerIrBlock OptDivRemFacts))
@@ -28337,28 +28374,32 @@
     [(option_i64.Some dst) (opt-divrem-facts-remove-var facts dst)]
     [(option_i64.None) facts]))
 
-(define (opt-divrem-rewrite-instr-seq-from
+;; 1:1 rewrite with forward-threaded facts. The old form accumulated a reversed
+;; cons list and reversed it back at the end; the fact threading is unchanged,
+;; the output just lands in a right-sized dense array. Output is fresh;
+;; `instrs` is untouched. refs #5726
+(define (opt-divrem-rewrite-instr-seq
   [type-segment-bases : i64]
   [facts : OptDivRemFacts]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [count : i64]
-  [out-rev : CompilerIrInstrList]) : OptDivRemInstrRewrite
-  (if (>= index count)
-    (OptDivRemInstrRewrite.Rewrite
-      facts
-      (compiler-ir-instr-list-reverse-onto out-rev CompilerIrInstrList.Nil))
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      [rewritten : CompilerIrInstr
-        (opt-divrem-rewrite-instr type-segment-bases facts instr)]
-      (opt-divrem-rewrite-instr-seq-from
-        type-segment-bases
-        (opt-divrem-facts-after-instr facts rewritten)
-        instrs
-        (+ index 1)
-        count
-        (compiler-ir-instr-cons rewritten out-rev)))))
+  [instrs : CompilerIrInstrSeq]) : OptDivRemInstrRewrite
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [current : OptDivRemFacts facts]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [rewritten : CompilerIrInstr
+            (opt-divrem-rewrite-instr
+              type-segment-bases
+              current
+              (compiler-ir-instr-seq-ref instrs index))]
+          (begin
+            (array-set! out index rewritten)
+            (set! current (opt-divrem-facts-after-instr current rewritten))
+            (set! index (+ index 1)))))
+      (OptDivRemInstrRewrite.Rewrite current (CompilerIrInstrSeq out count)))))
 
 (define (opt-divrem-rewrite-block
   [type-segment-bases : i64]
@@ -28366,16 +28407,10 @@
   [block : CompilerIrBlock]) : OptDivRemBlockRewrite
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (match (opt-divrem-rewrite-instr-seq-from
-        type-segment-bases
-        facts
-        instrs
-        0
-        (compiler-ir-instr-seq-count instrs)
-        CompilerIrInstrList.Nil)
+      (match (opt-divrem-rewrite-instr-seq type-segment-bases facts instrs)
         [(OptDivRemInstrRewrite.Rewrite final-facts rewritten)
           (OptDivRemBlockRewrite.Rewrite
-            (compiler-ir-block label rewritten)
+            (CompilerIrBlock.Block label rewritten)
             final-facts)])]))
 
 (define (opt-divrem-reachable-pred-count [index : OptCfgIndex] [id : i64]) : i64
@@ -44463,6 +44498,795 @@
   (match (opt-if-convert-function-pass type-segment-bases func)
     [(OptFunctionPassResult.Result next _) next]))
 
+;; --- G1a: constructor destination forwarding (SRET<-tmp) --------------------
+;;
+;; Lowering builds a nested constructor into a fresh frame temp and then copies
+;; the finished aggregate into its real destination:
+;;
+;;     %t   = alloc T                 ; fresh frame storage (>= 1 slot)
+;;     %p   = addr_of %t
+;;     %g   = gep %p, K : u8          ; one per field
+;;     store_ptr %g, v : ty
+;;     ...
+;;     %d   = gep %B, J : u8          ; the real destination (sret slot, field)
+;;     call tl_memcpy(%d, %p, S)      ; or `copy_bytes %d, %p, S`
+;;
+;; The whole-aggregate copy disappears when the field stores are retargeted at
+;; `%B + J + K` directly. That is a REORDERING: every retargeted store now
+;; writes the destination BEFORE the instructions that used to sit between it
+;; and the copy.
+;;
+;; SOUNDNESS. Issue #5971: TypeLisp passes by-value aggregate parameters as bare
+;; pointers with no caller-side copy, and the hidden sret slot is ordinary
+;; caller storage, so THE SRET SLOT MAY ALIAS A BY-VALUE ARGUMENT of the same
+;; call (accumulator threading -- `acc = (f acc x)` -- produces exactly that at
+;; run time). "The destination cannot alias what the window reads" is therefore
+;; not derivable from types; a lowering-level version of this transform
+;; miscompiled the compiler (it broke `tc-name-id-list-add`) for precisely this
+;; reason. The guard below is the conservative alias proof that makes the
+;; reordering safe without any interprocedural fact:
+;;
+;;   (1) `%t` is a FRESH FRAME ALLOCATION whose address never escapes: the
+;;       ALLOC var `%t` is used exactly once in the whole function (by the
+;;       matched `addr_of`, so no second pointer to the same storage exists),
+;;       every use of `%p` is one of the retargeted geps or the copy's source
+;;       operand, and every retargeted gep var is used only by its own store --
+;;       all three via EXACT function-wide use counts. Nothing else can observe
+;;       `T`, so deleting `T` is invisible.
+;;   (2) The window -- from the FIRST retargeted store to the copy -- contains
+;;       ONLY instructions that cannot observe or disturb the destination
+;;       bytes: side-effect-free (`Pure`) instructions, frame `Alloc`s (which
+;;       emit no code), the retargeted geps/stores themselves, and stores
+;;       through a constant offset off the SAME base as the destination whose
+;;       byte range is provably disjoint from `[J, J + S)` (two constant offsets
+;;       off one pointer cannot overlap). Any load, call, or store through an
+;;       unrelated pointer aborts the match -- that is exactly the class the
+;;       sret-may-alias-an-argument hole makes unprovable.
+;;   (3) The destination base var `%B` is not redefined between the destination
+;;       address computation (or the temp's `addr_of`, whichever is earlier) and
+;;       the copy, so the address the retargeted geps compute is the address the
+;;       copy would have written.
+;;   (4) Every retargeted store lies inside `[0, S)`, so no store escapes the
+;;       byte range the copy used to define.
+;;
+;; Blocks are straight-line, so nothing inside the window can trap or branch out
+;; between the first retargeted store and the deleted copy (a trapping check is
+;; its own block, and calls are rejected by (2)); the destination is therefore
+;; written on exactly the paths that used to run the copy.
+;;
+;; Bytes of `[J, J + S)` that no store covers keep the destination's previous
+;; contents instead of receiving the temp's uninitialised stack bytes. Both are
+;; values no defined program can observe (they are padding of a freshly reserved
+;; frame slot), and the bootstrap fixpoint / deterministic-asm gates cover the
+;; claim end to end.
+;;
+;; The rewrite itself is minimal: rebase the field geps and delete the copy.
+;; `addr_of` and the `alloc` run then have no uses left and the pipeline DCE
+;; retires them, which also releases the frame slots.
+(defenum OptCtorFwdCopy
+  (NoCopy)
+  ;; destination address value, source var, byte size, call result var (-1 for
+  ;; `CopyBytes`, which defines nothing).
+  (Copy CompilerIrValue i64 i64 i64))
+
+;; Destination base var, its constant byte offset, and the index of the address
+;; computation inside the block (-1 when the address enters the block already
+;; computed).
+(defenum OptCtorFwdDest
+  (NoDest)
+  (Dest i64 i64 i64))
+
+;; Byte width a `StorePtr` of this value type writes. This number is
+;; load-bearing twice (the `offset + width <= size` coverage check and the
+;; same-base disjointness check), so it MUST NOT under-report.
+;;
+;; The invariant that makes it exact is a BACKEND one, not a lowering one:
+;; `compiler-backend-emit-store-ptr` routes every `StorePtr` through
+;; `compiler-backend-emit-store-value-to-address`, which emits exactly ONE
+;; register store -- `compiler-backend-emit-store-reg-to-memory` picks
+;; `movq`/`movl`/`movw`/`movb` purely from `compiler-backend-type-size ty`
+;; (8/4/2/1 and nothing else; `compiler_backend.tl`, the `type-size` /
+;; `emit-store-reg-to-memory` pair), and the float path emits one xmm store of
+;; the same width. A `StorePtr` therefore writes at most 8 bytes, whatever the
+;; type, and the arms below reproduce `compiler-backend-type-size` exactly for
+;; every type they accept -- including the ones that look wide at the source
+;; level (`String`, `Str`, `Bytes`, `DynArray`, `Array`, `Func`, `Tuple`, and
+;; register-resident `Struct`/`Enum`), all of which the backend stores as a
+;; single 8-byte word.
+;;
+;; Every remaining type FAILS CLOSED with -1 and aborts the match, which is
+;; strictly more conservative than the backend: that covers the zero-width
+;; types (`Unit`/`Never`/`Expr`/`ExprList`), the type variables
+;; (`Var`/`VarArgs`), and the two arms the backend resolves by recursing through
+;; the type-segment table (`Region`/`Consume`), which this pass does not thread.
+;; If `compiler-backend-type-size` ever grows an arm wider than 8, this function
+;; must reject that type here.
+(define (opt-ctor-fwd-store-byte-size [ty : AstType]) : i64
+  (match ty
+    [(AstType.I64) 8]
+    [(AstType.U64) 8]
+    [(AstType.F64) 8]
+    [(AstType.I32) 4]
+    [(AstType.U32) 4]
+    [(AstType.F32) 4]
+    [(AstType.I16) 2]
+    [(AstType.U16) 2]
+    [(AstType.I8) 1]
+    [(AstType.U8) 1]
+    [(AstType.Bool) 1]
+    [(AstType.Char) 1]
+    [(AstType.Ptr _) 8]
+    [(AstType.MutPtr _) 8]
+    [(AstType.Ref _ _) 8]
+    [(AstType.MutRef _ _) 8]
+    [(AstType.Box _) 8]
+    [(AstType.String) 8]
+    [(AstType.Str) 8]
+    [(AstType.Bytes) 8]
+    [(AstType.DynArray _) 8]
+    [(AstType.Array _ _) 8]
+    [(AstType.Func _ _) 8]
+    [(AstType.Tuple _) 8]
+    [(AstType.Enum _) 8]
+    [(AstType.EnumArgs _ _) 8]
+    [(AstType.Struct _) 8]
+    [(AstType.StructArgs _ _) 8]
+    [_ -1]))
+
+(define (opt-ctor-fwd-memcpy-symbol? [symbol : i64]) : bool
+  (string.eq (compiler-ir-symbol-text symbol) "tl_memcpy"))
+
+;; A whole-aggregate copy out of an IR var: `CopyBytes` (the 16..112 B inline
+;; band) or the `tl_memcpy` runtime call lowering emits above that band.
+(define (opt-ctor-fwd-match-copy [instr : CompilerIrInstr]) : OptCtorFwdCopy
+  (match instr
+    [(CompilerIrInstr.CopyBytes dst src size)
+      (match src
+        [(CompilerIrValue.Var src-var)
+          (if (> size 0)
+            (OptCtorFwdCopy.Copy dst src-var size -1)
+            (OptCtorFwdCopy.NoCopy))]
+        [_ (OptCtorFwdCopy.NoCopy)])]
+    [(CompilerIrInstr.Call call-dst name args _)
+      (match args
+        [(CompilerIrCallArgs.Array values)
+          (if (= (array-length values) 3)
+            (match (array-ref values 2)
+              [(CompilerIrValue.I64 size)
+                (match (array-ref values 1)
+                  [(CompilerIrValue.Var src-var)
+                    (if (and (> size 0) (opt-ctor-fwd-memcpy-symbol? name))
+                      (OptCtorFwdCopy.Copy
+                        (array-ref values 0)
+                        src-var
+                        size
+                        call-dst)
+                      (OptCtorFwdCopy.NoCopy))]
+                  [_ (OptCtorFwdCopy.NoCopy)])]
+              [_ (OptCtorFwdCopy.NoCopy)])
+            (OptCtorFwdCopy.NoCopy))]
+        [_ (OptCtorFwdCopy.NoCopy)])]
+    [_ (OptCtorFwdCopy.NoCopy)]))
+
+;; Cheap per-block admission: a block can only hold the pattern when it has both
+;; a frame `addr_of` and a whole-aggregate copy out of a var. Everything else
+;; (the exact use census, which allocates) is gated behind this.
+(define (opt-ctor-fwd-block-candidate? [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [saw-addr : bool false]
+    [saw-copy : bool false]
+    [i : i64 0]
+    (begin
+      (while (and (< i count) (not (and saw-addr saw-copy)))
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs i)]
+          (begin
+            (match instr
+              [(CompilerIrInstr.AddrOf _ _) (set! saw-addr true)]
+              [_
+                (match (opt-ctor-fwd-match-copy instr)
+                  [(OptCtorFwdCopy.Copy _ _ _ _) (set! saw-copy true)]
+                  [(OptCtorFwdCopy.NoCopy) unit])])
+            (set! i (+ i 1)))))
+      (and saw-addr saw-copy))))
+
+(define (opt-ctor-fwd-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-ctor-fwd-block-candidate? instrs)
+            true
+            (opt-ctor-fwd-blocks-have-candidate? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-ctor-fwd-blocks-have-candidate? (compiler-ir-block-seq-to-list seq))]))
+
+;; Index of the `addr_of` that defines `var`, searching back from `from`.
+;; Returns -1 when the search hits another definition of `var` first or leaves
+;; the block.
+(define (opt-ctor-fwd-find-addr-of
+  [instrs : CompilerIrInstrSeq]
+  [from : i64]
+  [var : i64]) : i64
+  (let
+    [i : i64 from]
+    [found : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (>= i 0))
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs i)]
+          (begin
+            (match instr
+              [(CompilerIrInstr.AddrOf dst _)
+                (if (= dst var)
+                  (begin
+                    (set! found i)
+                    (set! done true))
+                  unit)]
+              [_
+                (match (opt-instr-def-var instr)
+                  [(option_i64.Some d)
+                    (if (= d var)
+                      (set! done true)
+                      unit)]
+                  [(option_i64.None) unit])])
+            (set! i (- i 1)))))
+      found)))
+
+;; Index of the last definition of `var` in `[0, from]`, or -1 when `var` enters
+;; the block already defined.
+(define (opt-ctor-fwd-find-def
+  [instrs : CompilerIrInstrSeq]
+  [from : i64]
+  [var : i64]) : i64
+  (let
+    [i : i64 from]
+    [found : i64 -1]
+    (begin
+      (while (>= i 0)
+        (begin
+          (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs i))
+            [(option_i64.Some d)
+              (if (= d var)
+                (begin
+                  (set! found i)
+                  (set! i 0))
+                unit)]
+            [(option_i64.None) unit])
+          (set! i (- i 1))))
+      found)))
+
+(define (opt-ctor-fwd-defined-in-range?
+  [instrs : CompilerIrInstrSeq]
+  [lo : i64]
+  [hi : i64]
+  [var : i64]) : bool
+  (let
+    [i : i64 lo]
+    [found : bool false]
+    (begin
+      (while (and (not found) (<= i hi))
+        (begin
+          (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs i))
+            [(option_i64.Some d)
+              (if (= d var)
+                (set! found true)
+                unit)]
+            [(option_i64.None) unit])
+          (set! i (+ i 1))))
+      found)))
+
+;; Byte offset of a `gep <base>, K : u8` instruction, or -1 when the instruction
+;; is not one.
+(define (opt-ctor-fwd-gep-offset [instr : CompilerIrInstr] [base : i64]) : i64
+  (match instr
+    [(CompilerIrInstr.Gep _ source offset elem-ty)
+      (match elem-ty
+        [(AstType.U8)
+          (match source
+            [(CompilerIrValue.Var source-var)
+              (if (= source-var base)
+                (match offset
+                  [(CompilerIrValue.I64 k)
+                    (if (>= k 0)
+                      k
+                      -1)]
+                  [_ -1])
+                -1)]
+            [_ -1])]
+        [_ -1])]
+    [_ -1]))
+
+(define (opt-ctor-fwd-gep-dst [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.Gep dst _ _ _) dst]
+    [_ -1]))
+
+;; The frame slot var an `addr_of` reads, i.e. the storage the temp pointer
+;; names. `opt-collect-instr-uses-array` counts this operand
+;; (`AddrOf _ src -> opt-used-array-add items src`), so its exact function-wide
+;; use count answers "is there a SECOND pointer to this storage?".
+(define (opt-ctor-fwd-addr-of-slot [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.AddrOf _ src) src]
+    [_ -1]))
+
+;; Constant byte offset of `var` off `base` when `var` is a `gep base, K : u8`
+;; defined in `[lo, hi]`; -1 otherwise.
+(define (opt-ctor-fwd-same-base-offset
+  [instrs : CompilerIrInstrSeq]
+  [lo : i64]
+  [hi : i64]
+  [base : i64]
+  [var : i64]) : i64
+  (let
+    [index : i64 (opt-ctor-fwd-find-def instrs hi var)]
+    (if (or (< index lo) (< index 0))
+      -1
+      (opt-ctor-fwd-gep-offset (compiler-ir-instr-seq-ref instrs index) base))))
+
+(define (opt-ctor-fwd-ranges-disjoint?
+  [a-start : i64]
+  [a-size : i64]
+  [b-start : i64]
+  [b-size : i64]) : bool
+  (or (<= (+ a-start a-size) b-start) (<= (+ b-start b-size) a-start)))
+
+;; True for the instructions the window may contain besides the retargeted
+;; geps/stores: anything without a memory effect, plus frame `Alloc` (a slot
+;; reservation the backend emits no code for), plus a store through a constant
+;; offset off the destination base whose bytes provably miss the destination
+;; range.
+(define (opt-ctor-fwd-window-instr-ok?
+  [instrs : CompilerIrInstrSeq]
+  [lo : i64]
+  [index : i64]
+  [dest-base : i64]
+  [dest-off : i64]
+  [dest-size : i64]) : bool
+  (let
+    [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+    (match instr
+      [(CompilerIrInstr.Alloc _ _) true]
+      [(CompilerIrInstr.StorePtr ptr _ ty)
+        (match ptr
+          [(CompilerIrValue.Var ptr-var)
+            (let
+              [width : i64 (opt-ctor-fwd-store-byte-size ty)]
+              [offset : i64
+                (opt-ctor-fwd-same-base-offset
+                  instrs
+                  lo
+                  (- index 1)
+                  dest-base
+                  ptr-var)]
+              (and
+                (> width 0)
+                (>= offset 0)
+                (opt-ctor-fwd-ranges-disjoint? offset width dest-off dest-size)))]
+          [_ false])]
+      [_
+        (match (compiler-ir-instr-effect instr)
+          [(CompilerIrEffect.Pure) true]
+          [_ false])])))
+
+;; Exact use count of `var` across the whole function; -1 when the var is out of
+;; range, which makes every test below fail closed.
+(define (opt-ctor-fwd-use-count [uses : (Array i64)] [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length uses)))
+    -1
+    (array-ref uses var)))
+
+;; Index of the `StorePtr` whose address is exactly `var`, searched in
+;; `(from, limit)`; -1 when there is none.
+(define (opt-ctor-fwd-find-store
+  [instrs : CompilerIrInstrSeq]
+  [from : i64]
+  [limit : i64]
+  [var : i64]) : i64
+  (let
+    [i : i64 (+ from 1)]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< i limit))
+        (begin
+          (match (compiler-ir-instr-seq-ref instrs i)
+            [(CompilerIrInstr.StorePtr ptr _ _)
+              (match ptr
+                [(CompilerIrValue.Var ptr-var)
+                  (if (= ptr-var var)
+                    (set! found i)
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! i (+ i 1))))
+      found)))
+
+;; Resolve the copy destination address into `(base var, byte offset, address
+;; instruction index)`.
+(define (opt-ctor-fwd-resolve-dest
+  [instrs : CompilerIrInstrSeq]
+  [copy-index : i64]
+  [dest-value : CompilerIrValue]) : OptCtorFwdDest
+  (match dest-value
+    [(CompilerIrValue.Var dest-var)
+      (let
+        [def-index : i64
+          (opt-ctor-fwd-find-def instrs (- copy-index 1) dest-var)]
+        [gep-offset : i64
+          (if (< def-index 0)
+            -1
+            (match (compiler-ir-instr-seq-ref instrs def-index)
+              [(CompilerIrInstr.Gep _ source offset elem-ty)
+                (match elem-ty
+                  [(AstType.U8)
+                    (match source
+                      [(CompilerIrValue.Var _)
+                        (match offset
+                          [(CompilerIrValue.I64 k) k]
+                          [_ -1])]
+                      [_ -1])]
+                  [_ -1])]
+              [_ -1]))]
+        (if (>= gep-offset 0)
+          (match (compiler-ir-instr-seq-ref instrs def-index)
+            [(CompilerIrInstr.Gep _ source _ _)
+              (match source
+                [(CompilerIrValue.Var source-var)
+                  (OptCtorFwdDest.Dest source-var gep-offset def-index)]
+                [_ (OptCtorFwdDest.NoDest)])]
+            [_ (OptCtorFwdDest.NoDest)])
+          (OptCtorFwdDest.Dest dest-var 0 def-index)))]
+    [_ (OptCtorFwdDest.NoDest)]))
+
+;; Validate one gep off the temp. Returns the index of its store, `copy-index`
+;; when the gep has no uses at all, or -1 when the gep disqualifies the site.
+(define (opt-ctor-fwd-gep-store-index
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [copy-index : i64]
+  [temp : i64]
+  [size : i64]
+  [gep-index : i64]) : i64
+  (let
+    [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs gep-index)]
+    [offset : i64 (opt-ctor-fwd-gep-offset instr temp)]
+    [gep-dst : i64 (opt-ctor-fwd-gep-dst instr)]
+    [gep-uses : i64 (opt-ctor-fwd-use-count uses gep-dst)]
+    (cond
+      [(< offset 0) -1]
+      [(>= offset size) -1]
+      [(< gep-uses 0) -1]
+      [(= gep-uses 0) copy-index]
+      [(> gep-uses 1) -1]
+      [else
+        (let
+          [store-index : i64
+            (opt-ctor-fwd-find-store instrs gep-index copy-index gep-dst)]
+          (if (< store-index 0)
+            -1
+            (let
+              [width : i64
+                (match (compiler-ir-instr-seq-ref instrs store-index)
+                  [(CompilerIrInstr.StorePtr _ _ ty)
+                    (opt-ctor-fwd-store-byte-size ty)]
+                  [_ -1])]
+              (if (or (<= width 0) (> (+ offset width) size))
+                -1
+                store-index))))])))
+
+;; Walk every gep off the temp inside the window. Returns the index of the
+;; earliest retargeted store, or -1 when the site is disqualified (clauses 1
+;; and 4).
+(define (opt-ctor-fwd-scan-geps
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [copy-index : i64]
+  [addr-index : i64]
+  [temp : i64]
+  [size : i64]) : i64
+  (let
+    [ok : bool true]
+    [gep-count : i64 0]
+    [first-store : i64 copy-index]
+    [i : i64 (+ addr-index 1)]
+    (begin
+      (while (and ok (< i copy-index))
+        (begin
+          (if (>=
+            (opt-ctor-fwd-gep-offset (compiler-ir-instr-seq-ref instrs i) temp)
+            0)
+            (let
+              [store-index : i64
+                (opt-ctor-fwd-gep-store-index
+                  instrs
+                  uses
+                  copy-index
+                  temp
+                  size
+                  i)]
+              (begin
+                (set! gep-count (+ gep-count 1))
+                (if (< store-index 0)
+                  (set! ok false)
+                  (if (< store-index first-store)
+                    (set! first-store store-index)
+                    unit))))
+            unit)
+          (set! i (+ i 1))))
+      (if (= gep-count 0)
+        (set! ok false)
+        unit)
+      (if (not (= (opt-ctor-fwd-use-count uses temp) (+ gep-count 1)))
+        (set! ok false)
+        unit)
+      (if ok
+        first-store
+        -1))))
+
+(define (opt-ctor-fwd-store-into-temp?
+  [instrs : CompilerIrInstrSeq]
+  [addr-index : i64]
+  [index : i64]
+  [temp : i64]) : bool
+  (match (compiler-ir-instr-seq-ref instrs index)
+    [(CompilerIrInstr.StorePtr ptr _ _)
+      (match ptr
+        [(CompilerIrValue.Var ptr-var)
+          (>=
+            (opt-ctor-fwd-same-base-offset
+              instrs
+              addr-index
+              (- index 1)
+              temp
+              ptr-var)
+            0)]
+        [_ false])]
+    [_ false]))
+
+;; Clause (2): every instruction from the first retargeted store to the copy is
+;; harmless with respect to the destination bytes.
+(define (opt-ctor-fwd-window-ok?
+  [instrs : CompilerIrInstrSeq]
+  [addr-index : i64]
+  [first-store : i64]
+  [copy-index : i64]
+  [temp : i64]
+  [dest-base : i64]
+  [dest-off : i64]
+  [size : i64]) : bool
+  (let
+    [ok : bool true]
+    [i : i64 first-store]
+    (begin
+      (while (and ok (< i copy-index))
+        (begin
+          (unless
+            (or
+              (>=
+                (opt-ctor-fwd-gep-offset
+                  (compiler-ir-instr-seq-ref instrs i)
+                  temp)
+                0)
+              (opt-ctor-fwd-store-into-temp? instrs addr-index i temp)
+              (opt-ctor-fwd-window-instr-ok?
+                instrs
+                addr-index
+                i
+                dest-base
+                dest-off
+                size))
+            (set! ok false))
+          (set! i (+ i 1))))
+      ok)))
+
+;; Record the rewrite: rebase each field gep onto the destination base and drop
+;; the copy.
+(define (opt-ctor-fwd-commit
+  [instrs : CompilerIrInstrSeq]
+  [plan : (Array i64)]
+  [bases : (Array i64)]
+  [addr-index : i64]
+  [copy-index : i64]
+  [temp : i64]
+  [dest-base : i64]
+  [dest-off : i64]) : unit
+  (let
+    [i : i64 (+ addr-index 1)]
+    (begin
+      (while (< i copy-index)
+        (let
+          [offset : i64
+            (opt-ctor-fwd-gep-offset (compiler-ir-instr-seq-ref instrs i) temp)]
+          (begin
+            (if (>= offset 0)
+              (begin
+                (array-set! plan i (+ dest-off offset))
+                (array-set! bases i dest-base))
+              unit)
+            (set! i (+ i 1)))))
+      (array-set! plan copy-index -2))))
+
+(define (opt-ctor-fwd-try-site
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [copy-index : i64]
+  [dest-value : CompilerIrValue]
+  [temp : i64]
+  [size : i64]
+  [result-var : i64]
+  [plan : (Array i64)]
+  [bases : (Array i64)]) : bool
+  (if (and
+    (>= result-var 0)
+    (not (= (opt-ctor-fwd-use-count uses result-var) 0)))
+    false
+    (let
+      [addr-index : i64
+        (opt-ctor-fwd-find-addr-of instrs (- copy-index 1) temp)]
+      ;; Clause (1), second-pointer half: the frame slot the matched `addr_of`
+      ;; reads must have exactly ONE use in the whole function -- that
+      ;; `addr_of`. A second `addr_of` of the same slot would hand out an
+      ;; independent pointer to `T`, and writes through it would be silently
+      ;; dropped when the copy is deleted (the "uncovered bytes are only
+      ;; padding" argument assumes `T` holds nothing but our own stores).
+      [slot : i64
+        (if (< addr-index 0)
+          -1
+          (opt-ctor-fwd-addr-of-slot
+            (compiler-ir-instr-seq-ref instrs addr-index)))]
+      (if (or
+        (< addr-index 0)
+        (< slot 0)
+        (not (= (opt-ctor-fwd-use-count uses slot) 1)))
+        false
+        (match (opt-ctor-fwd-resolve-dest instrs copy-index dest-value)
+          [(OptCtorFwdDest.NoDest) false]
+          [(OptCtorFwdDest.Dest dest-base dest-off dest-def)
+            (let
+              [guard-lo : i64
+                (if (and (>= dest-def 0) (< dest-def addr-index))
+                  dest-def
+                  addr-index)]
+              (if (or
+                (= dest-base temp)
+                (opt-ctor-fwd-defined-in-range?
+                  instrs
+                  guard-lo
+                  copy-index
+                  dest-base))
+                false
+                (let
+                  [first-store : i64
+                    (opt-ctor-fwd-scan-geps
+                      instrs
+                      uses
+                      copy-index
+                      addr-index
+                      temp
+                      size)]
+                  (if (or (< first-store 0) (>= first-store copy-index))
+                    false
+                    (if (opt-ctor-fwd-window-ok?
+                      instrs
+                      addr-index
+                      first-store
+                      copy-index
+                      temp
+                      dest-base
+                      dest-off
+                      size)
+                      (begin
+                        (opt-ctor-fwd-commit
+                          instrs
+                          plan
+                          bases
+                          addr-index
+                          copy-index
+                          temp
+                          dest-base
+                          dest-off)
+                        true)
+                      false)))))])))))
+
+(define (opt-ctor-fwd-rebuild-from
+  [instrs : CompilerIrInstrSeq]
+  [plan : (Array i64)]
+  [bases : (Array i64)]
+  [index : i64]
+  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    acc
+    (let
+      [action : i64 (array-ref plan index)]
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (opt-ctor-fwd-rebuild-from
+        instrs
+        plan
+        bases
+        (- index 1)
+        (cond
+          [(= action -2) acc]
+          [(>= action 0)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                (opt-ctor-fwd-gep-dst instr)
+                (CompilerIrValue.Var (array-ref bases index))
+                (CompilerIrValue.I64 action)
+                (AstType.U8))
+              acc)]
+          [else (compiler-ir-instr-cons instr acc)])))))
+
+(define (opt-ctor-fwd-block [uses : (Array i64)] [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (if (not (opt-ctor-fwd-block-candidate? instrs))
+        block
+        (let
+          [count : i64 (compiler-ir-instr-seq-count instrs)]
+          [plan : (Array i64) (array.make-array i64 count)]
+          [bases : (Array i64) (array.make-array i64 count)]
+          [changed : bool false]
+          [i : i64 0]
+          (begin
+            (while (< i count)
+              (begin
+                (array-set! plan i -1)
+                (array-set! bases i 0)
+                (set! i (+ i 1))))
+            (set! i 0)
+            (while (< i count)
+              (begin
+                (match (opt-ctor-fwd-match-copy
+                  (compiler-ir-instr-seq-ref instrs i))
+                  [(OptCtorFwdCopy.Copy dest-value temp size result-var)
+                    (if (opt-ctor-fwd-try-site
+                      instrs
+                      uses
+                      i
+                      dest-value
+                      temp
+                      size
+                      result-var
+                      plan
+                      bases)
+                      (set! changed true)
+                      unit)]
+                  [(OptCtorFwdCopy.NoCopy) unit])
+                (set! i (+ i 1))))
+            (if changed
+              (compiler-ir-block
+                label
+                (opt-ctor-fwd-rebuild-from
+                  instrs
+                  plan
+                  bases
+                  (- count 1)
+                  CompilerIrInstrList.Nil))
+              block))))]))
+
+(define (opt-ctor-fwd-blocks
+  [uses : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-ctor-fwd-block uses block)
+        (opt-ctor-fwd-blocks uses (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-ctor-fwd-blocks uses (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-ctor-fwd-function-blocks
+  [frame : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (if (not (opt-ctor-fwd-blocks-have-candidate? blocks))
+    blocks
+    (opt-ctor-fwd-blocks (opt-collect-blocks-uses-array frame blocks) blocks)))
+
 (define (optimize-function-once-with-summaries
   [pools : AstNodePoolContext]
   [type-segment-bases : i64]
@@ -44557,6 +45381,25 @@
             (if (struct-get summaries enabled)
               (opt-loop-bce-blocks type-segment-bases summaries params affine)
               affine)]
+          [_t-ctor-fwd : i64 (cfg compile-profile (profile.now-ms) 0)]
+          [ctor-fwd : CompilerIrBlockList
+            (compiler-opt-debug-observe-blocks
+              type-segment-bases
+              "ctor_fwd"
+              name
+              params
+              ret-ty
+              frame
+              (opt-ctor-fwd-function-blocks frame loop-bce))]
+          [_p-ctor-fwd : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-pass-finish
+                (struct-get summaries profile-state)
+                "ctor_fwd"
+                name
+                _t-ctor-fwd)
+              unit)]
           [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
           [promoted : CompilerIrFunction
             (compiler-opt-debug-observe-function
@@ -44564,7 +45407,7 @@
               "stack_promote"
               (opt-aggregate-stack-promote-function
                 type-segment-bases
-                (CompilerIrFunction.Function name params ret-ty frame loop-bce)))]
+                (CompilerIrFunction.Function name params ret-ty frame ctor-fwd)))]
           [_p-promote : unit
             (cfg
               compile-profile
@@ -45533,6 +46376,25 @@
           (if (struct-get summaries enabled)
             (opt-loop-bce-blocks type-segment-bases summaries params folded)
             folded)]
+        [_t-ctor-fwd : i64 (cfg compile-profile (profile.now-ms) 0)]
+        [ctor-fwd : CompilerIrBlockList
+          (compiler-opt-debug-observe-blocks
+            type-segment-bases
+            "ctor_fwd"
+            name
+            params
+            ret-ty
+            frame
+            (opt-ctor-fwd-function-blocks frame loop-bce))]
+        [_p-ctor-fwd : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-pass-finish
+              (struct-get summaries profile-state)
+              "ctor_fwd"
+              name
+              _t-ctor-fwd)
+            unit)]
         [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
         [promoted : CompilerIrFunction
           (compiler-opt-debug-observe-function
@@ -45540,7 +46402,7 @@
             "stack_promote"
             (opt-aggregate-stack-promote-function
               type-segment-bases
-              (CompilerIrFunction.Function name params ret-ty frame loop-bce)))]
+              (CompilerIrFunction.Function name params ret-ty frame ctor-fwd)))]
         [_p-promote : unit
           (cfg
             compile-profile
@@ -47034,7 +47896,6 @@
     (begin
       (opt-cfg-fill-i64! indices count (- 0 1))
       (opt-cfg-fill-i64! lowlink count (- 0 1))
-      (opt-cfg-fill-bool! on-stack count false)
       (opt-cfg-fill-i64! scc-of count (- 0 1))
       (opt-cfg-fill-i64! order-scratch count (- 0 1))
       (while (< root count)
@@ -50879,7 +51740,6 @@
     [order-index : i64 0]
     [offset : i64 0]
     (begin
-      (opt-cfg-fill-i64! counts scc-count 0)
       (while (< slot slot-count)
         (let
           [scc-id : i64 (array-ref scc-of slot)]
@@ -59925,7 +60785,6 @@
       (begin
         (opt-cfg-index-refresh-blocks! index blocks)
         (opt-load-state-array-fill-empty! exit-states count)
-        (opt-cfg-fill-bool! processed count false)
         (opt-gvn-block-results-fill-empty! out 0)
         (opt-load-gvn-process-rpo
           type-segment-bases

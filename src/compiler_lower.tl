@@ -57752,7 +57752,8 @@
         (tc-body-early-exit-facts-abort!)
         (tc-clone-root-collection-abort!)
         (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
-        (ResultCompilerLower.Err diag))]))
+        (ResultCompilerLower.Err
+          (box (compiler-diagnostic-list-first (box-get diag)))))]))
 
 (define (lower-typecheck-clone-and-lower
   [entry-path : String]

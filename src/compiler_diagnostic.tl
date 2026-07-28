@@ -70,6 +70,53 @@
   (notes CompilerDiagnosticNoteList)
   (fixes CompilerDiagnosticFixSeq))
 
+(defenum CompilerDiagnosticList
+  (Nil)
+  (Cons CompilerDiagnostic (Box CompilerDiagnosticList)))
+
+(define (compiler-diagnostic-list-empty) : CompilerDiagnosticList
+  CompilerDiagnosticList.Nil)
+
+(define (compiler-diagnostic-list-single [diag : CompilerDiagnostic]) : CompilerDiagnosticList
+  (CompilerDiagnosticList.Cons diag (box CompilerDiagnosticList.Nil)))
+
+(define (compiler-diagnostic-list-box-single [diag : (Box CompilerDiagnostic)]) : (Box
+    CompilerDiagnosticList)
+  (box (compiler-diagnostic-list-single (box-get diag))))
+
+(define (compiler-diagnostic-list-prepend
+  [diag : CompilerDiagnostic]
+  [diagnostics : CompilerDiagnosticList]) : CompilerDiagnosticList
+  (CompilerDiagnosticList.Cons diag (box diagnostics)))
+
+(define (compiler-diagnostic-list-reverse-into
+  [diagnostics : CompilerDiagnosticList]
+  [out : CompilerDiagnosticList]) : CompilerDiagnosticList
+  (match diagnostics
+    [(CompilerDiagnosticList.Nil) out]
+    [(CompilerDiagnosticList.Cons diag rest)
+      (compiler-diagnostic-list-reverse-into
+        (box-get rest)
+        (compiler-diagnostic-list-prepend diag out))]))
+
+(define (compiler-diagnostic-list-reverse
+  [diagnostics : CompilerDiagnosticList]) : CompilerDiagnosticList
+  (compiler-diagnostic-list-reverse-into diagnostics CompilerDiagnosticList.Nil))
+
+(define (compiler-diagnostic-list-count [diagnostics : CompilerDiagnosticList]) : i64
+  (match diagnostics
+    [(CompilerDiagnosticList.Nil) 0]
+    [(CompilerDiagnosticList.Cons _ rest)
+      (+ 1 (compiler-diagnostic-list-count (box-get rest)))]))
+
+(define (compiler-diagnostic-list-first [diagnostics : CompilerDiagnosticList]) : CompilerDiagnostic
+  (match diagnostics
+    [(CompilerDiagnosticList.Cons diag _) diag]
+    [(CompilerDiagnosticList.Nil)
+      (compiler-diagnostic-at-start
+        ""
+        "compiler: internal empty diagnostic list")]))
+
 (define (compiler-diagnostic-span-path [span : (& span CompilerDiagnosticSpan)]) : String
   (string.copy (& (struct-get span path))))
 

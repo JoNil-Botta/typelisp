@@ -322,6 +322,14 @@
 (define (repl-report-diagnostic [diag : CompilerDiagnostic]) : unit
   (repl-stderr-write-line (compiler-diagnostic-render diag)))
 
+(define (repl-report-diagnostics [diagnostics : CompilerDiagnosticList]) : unit
+  (match diagnostics
+    [(CompilerDiagnosticList.Nil) unit]
+    [(CompilerDiagnosticList.Cons diag rest)
+      (begin
+        (repl-report-diagnostic diag)
+        (repl-report-diagnostics (box-get rest)))]))
+
 (define (repl-char-display-helpers-source) : String
   "(define __tl_repl_ascii_printable_table : String
   \" !\\\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\")
@@ -508,7 +516,8 @@
     [(ResultReplDeclList.Ok decls)
       (typecheck-compiler-program (ast-program decls))]
     [(ResultReplDeclList.Err message)
-      (ResultCompilerTypecheck.Err (box (tc-diag-at-start message)))]))
+      (ResultCompilerTypecheck.Err
+        (box (compiler-diagnostic-list-single (tc-diag-at-start message))))]))
 
 (define (repl-report-run-status [status : i64]) : unit
   (if (= status 0)
@@ -614,7 +623,7 @@
                 candidate)]
             [(ResultCompilerTypecheck.Err diag)
               (begin
-                (repl-report-diagnostic (box-get diag))
+                (repl-report-diagnostics (box-get diag))
                 session-source)]))]
       [(io.ErrIoString error)
         (begin
@@ -633,7 +642,7 @@
               [(ResultCompilerTypecheck.Ok _) candidate]
               [(ResultCompilerTypecheck.Err diag)
                 (begin
-                  (repl-report-diagnostic (box-get diag))
+                  (repl-report-diagnostics (box-get diag))
                   session-source)]))]
         [(AstReplExpr expr)
           (begin

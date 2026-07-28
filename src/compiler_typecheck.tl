@@ -127,7 +127,10 @@
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
-      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq
+        (compiler-diagnostic-message
+          (compiler-diagnostic-list-first (box-get diag)))
+        want)]
     [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-error-location-ok?
@@ -138,7 +141,8 @@
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
       (let
-        [value : CompilerDiagnostic (box-get diag)]
+        [value : CompilerDiagnostic
+          (compiler-diagnostic-list-first (box-get diag))]
         (and
           (string.eq (compiler-diagnostic-message value) want)
           (= (compiler-diagnostic-line value) want-line)
@@ -151,10 +155,12 @@
   [want-category : String]) : bool
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
-      (match (compiler-diagnostic-code (box-get diag))
+      (match (compiler-diagnostic-code
+        (compiler-diagnostic-list-first (box-get diag)))
         [(CompilerDiagnosticSomeString code)
           (if (string.eq code want-code)
-            (match (compiler-diagnostic-category (box-get diag))
+            (match (compiler-diagnostic-category
+              (compiler-diagnostic-list-first (box-get diag)))
               [(CompilerDiagnosticSomeString category)
                 (string.eq category want-category)]
               [CompilerDiagnosticNoString false])
@@ -183,14 +189,25 @@
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
       (and
-        (string.eq (compiler-diagnostic-message (box-get diag)) want)
-        (= (compiler-diagnostic-line (box-get diag)) want-line)
-        (= (compiler-diagnostic-col (box-get diag)) want-col)
+        (string.eq
+          (compiler-diagnostic-message
+            (compiler-diagnostic-list-first (box-get diag)))
+          want)
+        (=
+          (compiler-diagnostic-line
+            (compiler-diagnostic-list-first (box-get diag)))
+          want-line)
+        (=
+          (compiler-diagnostic-col
+            (compiler-diagnostic-list-first (box-get diag)))
+          want-col)
         (=
           (compiler-typecheck-secondary-count
-            (compiler-diagnostic-secondary-spans (box-get diag)))
+            (compiler-diagnostic-secondary-spans
+              (compiler-diagnostic-list-first (box-get diag))))
           want-secondary-count)
-        (compiler-typecheck-help-present? (box-get diag)))]
+        (compiler-typecheck-help-present?
+          (compiler-diagnostic-list-first (box-get diag))))]
     [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-program-error-ok?
@@ -198,7 +215,10 @@
   [want : String]) : bool
   (match (typecheck-compiler-program program)
     [(ResultCompilerTypecheck.Err diag)
-      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq
+        (compiler-diagnostic-message
+          (compiler-diagnostic-list-first (box-get diag)))
+        want)]
     [(ResultCompilerTypecheck.Ok _) false]))
 
 ;; With the growing ty-node pool a compile that starts with the pool at
@@ -399,7 +419,11 @@
 (define (compiler-typecheck-rendered-error-ok? [src : String] [want : String]) : bool
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
-      (string.eq (compiler-diagnostic-render-source (box-get diag) src) want)]
+      (string.eq
+        (compiler-diagnostic-render-source
+          (compiler-diagnostic-list-first (box-get diag))
+          src)
+        want)]
     [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-vector-ref-rvalue-diagnostic-source) : String
@@ -4660,10 +4684,17 @@
 (define (compiler-typecheck-located-source-ok? [src : String]) : bool
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
-      (if (= (compiler-diagnostic-line (box-get diag)) 2)
-        (if (> (compiler-diagnostic-col (box-get diag)) 0)
+      (if (=
+        (compiler-diagnostic-line
+          (compiler-diagnostic-list-first (box-get diag)))
+        2)
+        (if (>
+          (compiler-diagnostic-col
+            (compiler-diagnostic-list-first (box-get diag)))
+          0)
           (string.eq
-            (compiler-diagnostic-message (box-get diag))
+            (compiler-diagnostic-message
+              (compiler-diagnostic-list-first (box-get diag)))
             "typecheck: unbound name missing")
           false)
         false)]
@@ -4680,10 +4711,17 @@
       [(ResultCompilerTypecheck.Err diag)
         (and
           (string.eq
-            (compiler-diagnostic-message (box-get diag))
+            (compiler-diagnostic-message
+              (compiler-diagnostic-list-first (box-get diag)))
             "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
-          (= (compiler-diagnostic-line (box-get diag)) 9)
-          (= (compiler-diagnostic-col (box-get diag)) 7))]
+          (=
+            (compiler-diagnostic-line
+              (compiler-diagnostic-list-first (box-get diag)))
+            9)
+          (=
+            (compiler-diagnostic-col
+              (compiler-diagnostic-list-first (box-get diag)))
+            7))]
       [(ResultCompilerTypecheck.Ok _) false])))
 
 (define (compiler-typecheck-nested-expression-diagnostic-span-ok?) : bool
@@ -9143,7 +9181,9 @@
           unit
           (panic "typecheck: smoke score mismatch"))]
       [(ResultCompilerTypecheck.Err diag)
-        (panic (compiler-diagnostic-message (box-get diag)))])
+        (panic
+          (compiler-diagnostic-message
+            (compiler-diagnostic-list-first (box-get diag))))])
     unit))
 
 ;; --- move checker fixtures ----------------------------------------------------
@@ -10811,7 +10851,8 @@
         (compiler-typecheck-dup-extern-paths))
         [(ResultCompilerTypecheck.Err diag)
           (let
-            [value : CompilerDiagnostic (box-get diag)]
+            [value : CompilerDiagnostic
+              (compiler-diagnostic-list-first (box-get diag))]
             [message : String (compiler-diagnostic-message value)]
             [duplicate-needle : String "symbols: duplicate value declaration f"]
             [main-path : String "src/main.tl"]
@@ -10831,7 +10872,8 @@
         (compiler-typecheck-dup-extern-paths))
         [(ResultCompilerTypecheck.Err diag)
           (let
-            [value : CompilerDiagnostic (box-get diag)]
+            [value : CompilerDiagnostic
+              (compiler-diagnostic-list-first (box-get diag))]
             (and
               (string.contains
                 (compiler-diagnostic-message value)
@@ -10850,7 +10892,8 @@
         (compiler-typecheck-dup-extern-paths))
         [(ResultCompilerTypecheck.Err diag)
           (let
-            [value : CompilerDiagnostic (box-get diag)]
+            [value : CompilerDiagnostic
+              (compiler-diagnostic-list-first (box-get diag))]
             (and
               (string.contains
                 (compiler-diagnostic-message value)
@@ -10909,7 +10952,8 @@
                   (match (typecheck-compiler-program program)
                     [(ResultCompilerTypecheck.Err diag)
                       (let
-                        [value : CompilerDiagnostic (box-get diag)]
+                        [value : CompilerDiagnostic
+                          (compiler-diagnostic-list-first (box-get diag))]
                         (and
                           (string.eq
                             (compiler-diagnostic-message value)
@@ -10938,7 +10982,8 @@
         (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
           [(ResultCompilerTypecheck.Err diag)
             (let
-              [value : CompilerDiagnostic (box-get diag)]
+              [value : CompilerDiagnostic
+                (compiler-diagnostic-list-first (box-get diag))]
               (and
                 (string.eq
                   (compiler-diagnostic-message value)

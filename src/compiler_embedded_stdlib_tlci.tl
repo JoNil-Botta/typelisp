@@ -346,6 +346,31 @@
       (CompilerCtfeMaybeExprList.Some items)]
     [_ (CompilerCtfeMaybeExprList.None)]))
 
+;; An unspanned expression held in a session local. Captured expressions retain
+;; their caller pool context, just like operand probes and local ExprList
+;; projections. Refs #5656.
+(defenum CompilerCtfeMaybeExpr
+  (Some AstExpr)
+  (None))
+
+(define (compiler-comptime-host-local-expr [slot : i64]) : CompilerCtfeMaybeExpr
+  (if (or
+    (< slot 0)
+    (>= slot compiler-comptime-host-locals-cap)
+    (not (array-ref compiler-comptime-host-locals-live slot)))
+    (CompilerCtfeMaybeExpr.None)
+    (let
+      [value : CompilerCtfeValue (array-ref compiler-comptime-host-locals slot)]
+      [node : i64 (compiler-comptime-host-value-node value)]
+      (if (< node 0)
+        (CompilerCtfeMaybeExpr.None)
+        (CompilerCtfeMaybeExpr.Some
+          (compiler-comptime-host-unspanned-expr
+            (compiler-comptime-host-value-pools value)
+            (ast-node-pool-context-expr-get
+              (compiler-comptime-host-value-pools value)
+              node)))))))
+
 ;; Comptime String text held in a session local, for the scanner ops that read
 ;; a bound template or type key by slot. `live` is checked by the caller, which
 ;; distinguishes an out-of-range slot from a slot holding a non-String value.
@@ -4466,6 +4491,46 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; Local-slot twins of the operand Expr shape probes. They inspect the
+;; let-bound Expr without consuming or duplicating its stack value and answer
+;; 1/0 as data; malformed slots and non-Expr values use the shared negative
+;; sentinel. Refs #5656.
+(define (compiler-comptime-host-callback-local-expr-string?
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (match (compiler-comptime-host-local-expr arg-a)
+        [(CompilerCtfeMaybeExpr.Some (AstExpr.Literal (AstLiteral.String _))) 1]
+        [(CompilerCtfeMaybeExpr.Some _) 0]
+        [(CompilerCtfeMaybeExpr.None) -3]))))
+
+(define (compiler-comptime-host-callback-local-expr-var?
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (match (compiler-comptime-host-local-expr arg-a)
+        [(CompilerCtfeMaybeExpr.Some (AstExpr.Var _)) 1]
+        [(CompilerCtfeMaybeExpr.Some _) 0]
+        [(CompilerCtfeMaybeExpr.None) -3]))))
+
 ;; value-i64: push a comptime i64 from the immediate, so a literal or a
 ;; data-local index can feed int->string. Refs #5700.
 (define (compiler-comptime-host-callback-value-i64
@@ -5618,6 +5683,14 @@
         (&mut registry)
         tlci-host-callback-name-local-expr-list-nth
         compiler-comptime-host-callback-local-expr-list-nth)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-local-expr-string?
+        compiler-comptime-host-callback-local-expr-string?)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        tlci-host-callback-name-local-expr-var?
+        compiler-comptime-host-callback-local-expr-var?)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         tlci-host-callback-name-value-i64

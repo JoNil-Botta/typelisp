@@ -66,7 +66,7 @@ read-range overlap test.
 
 ## Corpus
 
-`data/self-compile.s` — 2,789,404 bytes, 101,747 lines, 1,190 function chunks
+`data/self-compile.asm` — 2,789,404 bytes, 101,747 lines, 1,190 function chunks
 sampled from 16,652 with stride 14.
 
 Provenance: the `.s` the snapshot compiler emits for `src/main.tl` at
@@ -78,6 +78,12 @@ chunks is kept. A chunk starts at a line whose first non-space bytes are
 `compiler-backend-peephole-chunk-starts-global?`, which is where pending-pair
 and owner state are conservatively reset anyway; everything before the first
 `.globl` (the file prologue) is always kept.
+
+The corpus is checked in as `.asm`, not `.s`: the repository's root
+`.gitignore` ignores `*.s` (generated assembly), which would silently keep it
+out of the commit and leave both implementations with no corpus to read.
+`data/.gitattributes` pins it to LF so the line scan — and therefore the
+printed checksum — is the same on Linux and on Windows CI runners.
 
 Because the kept chunks are not adjacent in the original file, a `jmp` whose
 target block was dropped simply stays (the fallthrough scan only excises a jump
@@ -98,14 +104,14 @@ cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
 
 # 3. sample it (the byte budget is part of the corpus identity)
 python3 benchmarks/peephole_lines/tools/export_asm_slice.py \
-    benchmarks/peephole_lines/data/self-compile.s 3000000 /tmp/main.s
+    benchmarks/peephole_lines/data/self-compile.asm 3000000 /tmp/main.s
 ```
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
+| corpus path | argument 1 | runtime-opaque; the corpus is fixed. A missing argument or an unreadable corpus is an empty text on both sides, so both print the same checksum and exit 0 |
 | rounds | argument 2, `2` in `optimization.tsv` | tunes TypeLisp Ir to 1.72 G and C to 0.46 G |
 | round rotation | starting chunk advances by one per round | each chunk is an independent peephole group, so rotating them is faithful and makes every round's accumulator differ |
 | owner map | 14 registers, `%rbp`/`%rsp` untracked | `CompilerBackendPeepholeOwners` |

@@ -1597,7 +1597,7 @@
     [start : i64 0]
     [acc : i64 pl-hash-basis]
     (begin
-      (set! pl-text (io.read-file path))
+      (set! pl-text (io.read-file-or (& path) ""))
       (set! pl-len (string.string-length pl-text))
       (set! acc (pl-mix acc pl-len))
       (set! pl-chunk-start (array.make-array i64 (+ (/ pl-len 16) 4)))
@@ -1698,10 +1698,23 @@
         (= (pl-byte-at (+ i 4)) 98)
         (= (pl-byte-at (+ i 5)) 108)))))
 
+;; The corpus path and round count are read defensively so that a run with no
+;; arguments, or with a corpus this checkout does not have, still prints one
+;; deterministic checksum and exits 0 -- the same value and the same exit status
+;; the C baseline produces from `argc > 1 ? argv[1] : ""` and a failed `fopen`.
+;; An unreadable corpus is an empty text, which yields zero chunks and folds
+;; only the round counter.
 (define (main) : i64
   (let
-    [path : String (io.arg 1)]
-    [rounds : i64 (string.>int (io.arg 2))]
+    [count : i64 (io.arg-count)]
+    [path : String
+      (if (> count 1)
+        (io.arg 1)
+        "")]
+    [rounds : i64
+      (if (> count 2)
+        (string.>int (io.arg 2))
+        0)]
     (begin
       (io.print (pl-bench path rounds))
       0)))

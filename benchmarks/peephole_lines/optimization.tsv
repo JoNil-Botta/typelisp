@@ -1,2 +1,2 @@
 # category|args
-compiler|benchmarks/peephole_lines/data/self-compile.s 2
+compiler|benchmarks/peephole_lines/data/self-compile.asm 2

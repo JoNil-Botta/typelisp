@@ -21,8 +21,11 @@ slightly relative to the whole file. Within one function every label is local
 and present, which is where all the pair rules and nearly all the fallthrough
 jumps live.
 
+The output is named `.asm`, not `.s`: the repository's root `.gitignore` ignores
+`*.s`, so a `.s` corpus would silently never be committed.
+
 Usage:
-  python3 export_asm_slice.py OUT.s BUDGET_BYTES MAIN.s
+  python3 export_asm_slice.py OUT.asm BUDGET_BYTES MAIN.s
 
 See ../README.md for the exact regeneration commands.
 """

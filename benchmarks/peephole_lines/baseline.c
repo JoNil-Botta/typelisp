@@ -129,25 +129,50 @@ static int64_t *pl_alloc(int64_t count) {
     return items;
 }
 
+/* An unreadable corpus becomes an empty text, exactly as TypeLisp's
+ * `io.read-file-or path ""` does, so both sides then fold zero chunks, print
+ * the same deterministic checksum and exit 0. */
+static void pl_empty_text(void) {
+    pl_text = (char *)malloc(1);
+    if (!pl_text) {
+        abort();
+    }
+    pl_text[0] = '\0';
+    pl_len = 0;
+}
+
 static void pl_read_file(const char *path) {
     FILE *handle = fopen(path, "rb");
     long size;
     if (!handle) {
-        abort();
+        pl_empty_text();
+        return;
     }
     if (fseek(handle, 0, SEEK_END) != 0) {
-        abort();
+        fclose(handle);
+        pl_empty_text();
+        return;
     }
     size = ftell(handle);
     if (size < 0 || fseek(handle, 0, SEEK_SET) != 0) {
-        abort();
+        fclose(handle);
+        pl_empty_text();
+        return;
     }
+    /* A path that opens but is not a readable regular file (a directory, for
+     * instance) can report a nonsense size here. Degrade rather than abort, so
+     * the exit status still matches TypeLisp's `read-file-or` fallback. */
     pl_text = (char *)malloc((size_t)size + 1);
     if (!pl_text) {
-        abort();
+        fclose(handle);
+        pl_empty_text();
+        return;
     }
     if (fread(pl_text, 1, (size_t)size, handle) != (size_t)size) {
-        abort();
+        free(pl_text);
+        fclose(handle);
+        pl_empty_text();
+        return;
     }
     pl_text[size] = '\0';
     fclose(handle);

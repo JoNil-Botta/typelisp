@@ -211,8 +211,8 @@
                 "main")
               entry-main-source-id)
             (set! ok false))
-          (match derived-env
-            [(LowerNameEnv.Bind _ logical-id symbol-id _)
+          (match (lower-name-env-view derived-env)
+            [(LowerNameEnvView.Bind _ logical-id symbol-id _)
               (begin
                 (unless (= logical-id opaque-logical-id) (set! ok false))
                 (unless (not (= symbol-id opaque-logical-id)) (set! ok false))

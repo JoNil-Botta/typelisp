@@ -995,8 +995,7 @@
         (arena.tl_arena_set storage))
       (let
         [out : TcInlineFieldLayoutList
-          (TcInlineFieldLayoutList
-            (array.make-array TcInlineFieldLayout count))]
+          (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))]
         (begin
           (tc-agg-layout-cache-storage-restore! previous storage)
           out)))))

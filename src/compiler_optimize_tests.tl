@@ -10245,52 +10245,59 @@
         caller-name
         caller-call
         (opt-test-span 181 35))]
-    (match (opt-inline-program-functions-with-spans
-      (ast-node-pool-reader-type-segment-bases)
-      (opt-inline-switch-functions-named symbols callee-name)
-      2
-      spans)
-      [(OptInlineSpanProgram.Program optimized optimized-spans)
-        (match (opt-function-list-find optimized "main")
-          [(OptMaybeFunction.Some main)
-            (let
-              [blocks : CompilerIrBlockList (opt-function-blocks main)]
-              (+
-                (if (=
-                  (opt-count-direct-call-name-blocks blocks callee-text)
-                  (if expect-inline?
-                    0
-                    1))
-                  1
-                  0)
-                (+
-                  (if (=
-                    (opt-count-bounds-blocks blocks)
-                    (if expect-inline?
-                      1
-                      0))
-                    2
-                    0)
+    [previous-debug : bool (compiler-debug-info-enabled?)]
+    [code : i64
+      (begin
+        (compiler-debug-info-set-enabled! true)
+        (match (opt-inline-program-functions-with-spans
+          (ast-node-pool-reader-type-segment-bases)
+          (opt-inline-switch-functions-named symbols callee-name)
+          2
+          spans)
+          [(OptInlineSpanProgram.Program optimized optimized-spans)
+            (match (opt-function-list-find optimized "main")
+              [(OptMaybeFunction.Some main)
+                (let
+                  [blocks : CompilerIrBlockList (opt-function-blocks main)]
                   (+
-                    (if (if expect-inline?
-                      (opt-inline-phi-span-ok-blocks?
-                        blocks
-                        optimized-spans
-                        caller-name
-                        171
-                        33)
-                      (opt-span-lookup-ok?
-                        optimized-spans
-                        caller-name
-                        caller-call
-                        181
-                        35))
-                      4
+                    (if (=
+                      (opt-count-direct-call-name-blocks blocks callee-text)
+                      (if expect-inline?
+                        0
+                        1))
+                      1
                       0)
-                    (if (opt-inline-structure-ok? blocks)
-                      8
-                      0)))))]
-          [(OptMaybeFunction.No) 0])])))
+                    (+
+                      (if (=
+                        (opt-count-bounds-blocks blocks)
+                        (if expect-inline?
+                          1
+                          0))
+                        2
+                        0)
+                      (+
+                        (if (if expect-inline?
+                          (opt-inline-phi-span-ok-blocks?
+                            blocks
+                            optimized-spans
+                            caller-name
+                            171
+                            33)
+                          (opt-span-lookup-ok?
+                            optimized-spans
+                            caller-name
+                            caller-call
+                            181
+                            35))
+                          4
+                          0)
+                        (if (opt-inline-structure-ok? blocks)
+                          8
+                          0)))))]
+              [(OptMaybeFunction.No) 0])]))]
+    (begin
+      (compiler-debug-info-set-enabled! previous-debug)
+      code)))
 
 (define (opt-inline-costly-switch-params) : CompilerIrParamList
   (compiler-ir-param-cons

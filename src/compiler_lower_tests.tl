@@ -781,6 +781,49 @@
 (define (f32-from [bits : u32]) : f32 (__tl_float_from_bits bits))
 (define (main) : i64 0)")
 
+(define (compiler-lower-literal-float-to-bits-source) : String
+  "(define (f64-pos-zero) : u64 (__tl_float_to_bits 0.0))
+(define (f64-neg-zero) : u64 (__tl_float_to_bits -0.0))
+(define (f64-pos-normal) : u64 (__tl_float_to_bits 0.1))
+(define (f64-neg-normal) : u64 (__tl_float_to_bits -0.1))
+(define (f64-pos-subnormal) : u64
+  (__tl_float_to_bits 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005))
+(define (f64-neg-subnormal) : u64
+  (__tl_float_to_bits -0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005))
+(define (f32-pos-zero) : u32 (__tl_float_to_bits (ann 0.0 : f32)))
+(define (f32-neg-zero) : u32 (__tl_float_to_bits (ann -0.0 : f32)))
+(define (f32-pos-normal) : u32 (__tl_float_to_bits (ann 0.1 : f32)))
+(define (f32-neg-normal) : u32 (__tl_float_to_bits (ann -0.1 : f32)))
+(define (f32-pos-subnormal) : u32
+  (__tl_float_to_bits
+    (ann 0.000000000000000000000000000000000000000000001 : f32)))
+(define (f32-neg-subnormal) : u32
+  (__tl_float_to_bits
+    (ann -0.000000000000000000000000000000000000000000001 : f32)))
+(define (main) : i64 0)")
+
+(define (compiler-lower-public-literal-float-to-bits-source) : String
+  "(module stdlib.math)
+(define (f64-to-bits [value : f64]) : u64 (__tl_float_to_bits value))
+(define (f32-to-bits [value : f32]) : u32 (__tl_float_to_bits value))
+(define (f64-literal) : u64 (stdlib.math.f64-to-bits 0.1))
+(define (f32-literal) : u32 (stdlib.math.f32-to-bits -0.0))
+(define (main) : i64
+  (+ (cast (f64-literal) : i64) (cast (f32-literal) : i64)))")
+
+(define (compiler-lower-public-literal-float-to-bits-paths) : AstDeclPathList
+  (ast-decl-root-path-cons
+    "stdlib/math.tl"
+    (ast-decl-root-path-cons
+      "stdlib/math.tl"
+      (ast-decl-root-path-cons
+        "stdlib/math.tl"
+        (ast-decl-root-path-cons
+          "stdlib/math.tl"
+          (ast-decl-root-path-cons
+            "stdlib/math.tl"
+            (ast-decl-root-path-cons "stdlib/math.tl" (ast-decl-path-list-new))))))))
+
 (define (compiler-lower-stdlib-string-wrapper-prune-source) : String
   "(module stdlib.string)
 (define (string.string-length [text : (& text str)]) : i64 0)
@@ -4591,6 +4634,19 @@
       (lower-test-function-bitcast-count
         (compiler-ir-function-seq-to-list seq)
         name)]))
+
+(define (lower-test-functions-bitcast-count [funcs : CompilerIrFunctionList]) : i64
+  (match funcs
+    [(CompilerIrFunctionList.Nil) 0]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (+
+            (lower-test-blocks-bitcast-count blocks)
+            (lower-test-functions-bitcast-count (box-get rest)))])]
+    [(CompilerIrFunctionList.Array seq)
+      (lower-test-functions-bitcast-count
+        (compiler-ir-function-seq-to-list seq))]))
 
 (define (lower-test-function-store-global-count
   [funcs : CompilerIrFunctionList]
@@ -10016,6 +10072,34 @@
               0))])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-literal-float-to-bits-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-literal-float-to-bits-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-functions-bitcast-count functions) 0)
+            (=
+              (lower-test-functions-direct-call-count
+                functions
+                "__tl_float_to_bits")
+              0))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-public-literal-float-to-bits-ok?) : bool
+  (match (parse-ast-source (compiler-lower-public-literal-float-to-bits-source))
+    [(ResultAstProgram.Ok program)
+      (match (lower-compiler-program-with-decl-paths
+        "stdlib/math.tl"
+        program
+        (compiler-lower-public-literal-float-to-bits-paths))
+        [(ResultCompilerLower.Ok lowered _)
+          (match lowered
+            [(CompilerIrProgram.Program _ functions _)
+              (= (lower-test-functions-bitcast-count functions) 0)])]
+        [(ResultCompilerLower.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
+
 (define (compiler-lower-string-runtime-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-runtime-source))
     [(ResultAstProgram.Ok program)
@@ -10186,6 +10270,12 @@
         unit
         (set! ok false))
       (if (compiler-lower-float-bitcast-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-literal-float-to-bits-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-public-literal-float-to-bits-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-stdlib-string-wrapper-prune-ok?)

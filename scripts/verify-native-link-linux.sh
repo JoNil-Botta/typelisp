@@ -777,7 +777,13 @@ EOF
 
     echo "[selfhost-native] compiler_driver runtime trap output"
     run_compiler_driver "$_driver" compiler-driver-string-oob "$_oob_src" "$_oob_asm"
-    assemble_link_run_asm compiler-driver-string-oob "$_oob_asm" 134 - "printf:tl: array index out of bounds\n" 1
+    assemble_link_run_asm \
+        compiler-driver-string-oob \
+        "$_oob_asm" \
+        134 \
+        - \
+        "printf:tl: $_oob_src:1:28: array index out of bounds: index=1 length=1\n" \
+        1
 }
 
 verify_compiler_driver_immutable_refs() {

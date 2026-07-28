@@ -58489,7 +58489,15 @@
 ;;    (B, byte-offset, load-type); the byte offset is offset*type-size exactly
 ;;    as the backend scales gep displacements. Base redefinition drops the
 ;;    entries (extended invalidation below), so var identity == value identity
-;;    for the key's lifetime.
+;;    for the key's lifetime. A gep whose base is a GLOBAL operand rather than a
+;;    var (`gep (Global g) k`, the shape every access to a global array/string
+;;    emits, or `gep (GlobalAddr g) k`) has no base var to key on at all; those
+;;    key as (global symbol, byte-offset, load-type, value-base?) off the
+;;    separate OptLoadGlobalBases map, whose write-clearing lifetime is what
+;;    makes the `Global` spelling sound. Chains fold: a const-offset gep of a
+;;    const-offset gep sums the byte offsets and keys identically to the flat
+;;    gep, while a VARIABLE offset ends the resolution (the scaled key needs a
+;;    var base, so a global-based index gep keeps its own temp's raw identity).
 ;;
 ;; 2. ALIAS-GRANULAR INVALIDATION: a StorePtr/CopyBytes drops only MAY-ALIAS
 ;;    entries. Sound keep rules (everything else is dropped):
@@ -59639,7 +59647,16 @@
   ;; (the scale), header-typed base. The var-offset analog of Field -- two
   ;; structurally identical index geps of the same array key alike even though
   ;; each is a distinct temp var (the Raw key would not CSE them).
-  (ScaledField i64 i64 AstType bool))
+  (ScaledField i64 i64 AstType bool)
+  ;; A constant-offset slot reached from a GLOBAL operand: global symbol id,
+  ;; byte offset, loaded type, value-base flag. Field's analog for the one base
+  ;; form that is not a var at all -- a descriptor fetch group that addresses a
+  ;; global (`gep @g, 1` for the length, `gep @g, 0` for the data pointer)
+  ;; spends a fresh gep temp on every copy, and only this key form makes those
+  ;; copies name one location. `value-base?` separates the two spellings, which
+  ;; are DIFFERENT addresses: true is `gep (Global g) k`, based at the pointer
+  ;; STORED in g; false is `gep (GlobalAddr g) k`, based at g's own address.
+  (GlobalField i64 i64 AstType bool))
 
 ;; key, cached value, and the allocation epoch the entry was created at (the
 ;; state's allocation counter at bind time).
@@ -59650,12 +59667,204 @@
   (Nil)
   (Cons OptLoadEntry (Box OptLoadTable)))
 
-;; facts, table, pointer kinds, table cap, allocation-epoch counter.
+;; Resolved global-based addresses: var -> (global symbol, byte offset,
+;; value-base?), as a persistent list so the cross-block walk shares spines
+;; instead of cloning a table per edge.
+;;
+;; This is deliberately NOT part of OptLoadPtrKinds, because it does not have a
+;; pointer kind's lifetime. A kind is a property of a pointer VALUE and survives
+;; calls and stores; `gep (Global g) k` instead RE-READS the global slot on every
+;; execution, so "var v addresses [g]+k" stops being true the moment anything
+;; writes g. The whole map is therefore dropped by every instruction that could
+;; write memory (every dispatch arm except the pure/read/control-flow one and the
+;; load itself), and at a loop header whose back edge is still unprocessed. A
+;; binding can only ever be consulted while no write has intervened since the gep
+;; that produced it, which is exactly the condition under which the two spellings
+;; of one global slot are the same address.
+;;
+;; `gep (GlobalAddr g) k` needs no such care -- g's own address is a link-time
+;; constant -- but it rides the same map and the same conservative clearing.
+(defenum OptLoadGlobalBases
+  (Nil)
+  (Cons i64 i64 i64 bool (Box OptLoadGlobalBases)))
+
+(defenum OptMaybeGlobalBase
+  (No)
+  (Some i64 i64 bool))
+
+;; facts, table, pointer kinds, table cap, allocation-epoch counter, resolved
+;; global-based addresses.
 (defenum OptLoadCseState
-  (State OptAliasFacts OptLoadTable OptLoadPtrKinds i64 i64))
+  (State OptAliasFacts OptLoadTable OptLoadPtrKinds i64 i64 OptLoadGlobalBases))
 
 (defenum OptLoadCseResult
   (Result OptLoadCseState CompilerIrInstr))
+
+;; Bindings only live from a gep to the next memory write, so the map stays
+;; short on its own; the cap just bounds the scan in a long write-free run of
+;; global accesses.
+(define opt-load-global-bases-cap : i64
+  32)
+
+(define (opt-load-global-bases-lookup [bases : OptLoadGlobalBases] [var : i64]) : OptMaybeGlobalBase
+  (match bases
+    [(OptLoadGlobalBases.Nil) (OptMaybeGlobalBase.No)]
+    [(OptLoadGlobalBases.Cons bound global off value-base? rest)
+      (if (= bound var)
+        (OptMaybeGlobalBase.Some global off value-base?)
+        (opt-load-global-bases-lookup (box-get rest) var))]))
+
+(define (opt-load-global-bases-mentions-var?
+  [bases : OptLoadGlobalBases]
+  [var : i64]) : bool
+  (match bases
+    [(OptLoadGlobalBases.Nil) false]
+    [(OptLoadGlobalBases.Cons bound _ _ _ rest)
+      (if (= bound var)
+        true
+        (opt-load-global-bases-mentions-var? (box-get rest) var))]))
+
+(define (opt-load-global-bases-drop-var-scan
+  [bases : OptLoadGlobalBases]
+  [var : i64]) : OptLoadGlobalBases
+  (match bases
+    [(OptLoadGlobalBases.Nil) (OptLoadGlobalBases.Nil)]
+    [(OptLoadGlobalBases.Cons bound global off value-base? rest)
+      (let
+        [tail : OptLoadGlobalBases
+          (opt-load-global-bases-drop-var-scan (box-get rest) var)]
+        (if (= bound var)
+          tail
+          (OptLoadGlobalBases.Cons bound global off value-base? (box tail))))]))
+
+;; Every defining instruction runs this, so the no-match case returns the map
+;; unchanged instead of re-boxing the spine (see opt-load-table-invalidate-var).
+(define (opt-load-global-bases-drop-var
+  [bases : OptLoadGlobalBases]
+  [var : i64]) : OptLoadGlobalBases
+  (if (opt-load-global-bases-mentions-var? bases var)
+    (opt-load-global-bases-drop-var-scan bases var)
+    bases))
+
+(define (opt-load-global-bases-len [bases : OptLoadGlobalBases]) : i64
+  (match bases
+    [(OptLoadGlobalBases.Nil) 0]
+    [(OptLoadGlobalBases.Cons _ _ _ _ rest)
+      (+ 1 (opt-load-global-bases-len (box-get rest)))]))
+
+(define (opt-load-global-bases-bind
+  [bases : OptLoadGlobalBases]
+  [var : i64]
+  [global : i64]
+  [off : i64]
+  [value-base? : bool]) : OptLoadGlobalBases
+  (let
+    [dropped : OptLoadGlobalBases (opt-load-global-bases-drop-var bases var)]
+    (if (or
+      (< var 0)
+      (< global 0)
+      (< off 0)
+      (>= (opt-load-global-bases-len dropped) opt-load-global-bases-cap))
+      dropped
+      (OptLoadGlobalBases.Cons var global off value-base? (box dropped)))))
+
+;; Control-flow join: keep only bindings identical on both edges. A var bound on
+;; both edges is bound by its single definition, so agreement is the common case;
+;; disagreement (or a write on one edge, which empties that edge's map) drops it.
+(define (opt-load-global-bases-intersect
+  [a : OptLoadGlobalBases]
+  [b : OptLoadGlobalBases]) : OptLoadGlobalBases
+  (match a
+    [(OptLoadGlobalBases.Nil) (OptLoadGlobalBases.Nil)]
+    [(OptLoadGlobalBases.Cons var global off value-base? rest)
+      (let
+        [tail : OptLoadGlobalBases
+          (opt-load-global-bases-intersect (box-get rest) b)]
+        (match (opt-load-global-bases-lookup b var)
+          [(OptMaybeGlobalBase.Some bglobal boff bvalue-base?)
+            (if (and
+              (= global bglobal)
+              (= off boff)
+              (=
+                (if value-base?
+                  1
+                  0)
+                (if bvalue-base?
+                  1
+                  0)))
+              (OptLoadGlobalBases.Cons var global off value-base? (box tail))
+              tail)]
+          [(OptMaybeGlobalBase.No) tail]))]))
+
+;; The global operand a gep base names, if any: `Global g` addresses the pointer
+;; stored in g, `GlobalAddr g` addresses g itself. Everything else (vars,
+;; literals, RuntimeGlobal -- whose read may run a hidden initializer) is not a
+;; resolvable global base.
+(define (opt-load-global-base-of-value [value : CompilerIrValue]) : OptMaybeGlobalBase
+  (match value
+    [(CompilerIrValue.Global g)
+      (OptMaybeGlobalBase.Some (compiler-ir-symbol-id g) 0 true)]
+    [(CompilerIrValue.GlobalAddr g)
+      (OptMaybeGlobalBase.Some (compiler-ir-symbol-id g) 0 false)]
+    [_ (OptMaybeGlobalBase.No)]))
+
+;; Resolve a gep's base to a global form: the base operand itself, or a var the
+;; map already resolved (so const-offset gep chains sum into one key exactly as
+;; a flat gep of the summed offset does).
+(define (opt-load-global-base-of-gep-base
+  [bases : OptLoadGlobalBases]
+  [base : CompilerIrValue]) : OptMaybeGlobalBase
+  (match base
+    [(CompilerIrValue.Var v) (opt-load-global-bases-lookup bases v)]
+    [_ (opt-load-global-base-of-value base)]))
+
+;; Transfer for one instruction on the PURE/read/control-flow path (the write
+;; arms clear the whole map instead). A Gep with a constant offset off a
+;; resolvable global base binds its dst; a Mov copies a binding; every other
+;; definition just drops its dst, because nothing else is a provable
+;; global-based address.
+;;
+;; Both binding arms resolve the base in the PRE-def map and let
+;; `opt-load-global-bases-bind` do the dst drop, so `Gep dst dst k` reads dst's
+;; OLD address and then rebinds it. The catch-all arm is the one every ordinary
+;; instruction takes: an already empty map cannot lose a binding, so it returns
+;; without even asking for the instruction's def var.
+(define (opt-load-global-bases-step
+  [type-segment-bases : i64]
+  [bases : OptLoadGlobalBases]
+  [instr : CompilerIrInstr]) : OptLoadGlobalBases
+  (match instr
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (match (opt-load-global-base-of-gep-base bases base)
+        [(OptMaybeGlobalBase.Some global off value-base?)
+          (match offset
+            [(CompilerIrValue.I64 k)
+              (let
+                [sz : i64 (opt-load-loc-type-size type-segment-bases ty)]
+                (if (> sz 0)
+                  (opt-load-global-bases-bind
+                    bases
+                    dst
+                    global
+                    (+ off (* k sz))
+                    value-base?)
+                  (opt-load-global-bases-drop-var bases dst)))]
+            ;; A variable offset leaves the constant-offset form; the gep temp
+            ;; keeps its own raw identity.
+            [_ (opt-load-global-bases-drop-var bases dst)])]
+        [(OptMaybeGlobalBase.No) (opt-load-global-bases-drop-var bases dst)])]
+    [(CompilerIrInstr.Mov dst src _)
+      (match (opt-load-global-base-of-gep-base bases src)
+        [(OptMaybeGlobalBase.Some global off value-base?)
+          (opt-load-global-bases-bind bases dst global off value-base?)]
+        [(OptMaybeGlobalBase.No) (opt-load-global-bases-drop-var bases dst)])]
+    [_
+      (match bases
+        [(OptLoadGlobalBases.Nil) bases]
+        [_
+          (match (opt-instr-def-var instr)
+            [(option_i64.Some dst) (opt-load-global-bases-drop-var bases dst)]
+            [(option_i64.None) bases])])]))
 
 ;; How a classified store writes memory (Unknown clears the whole table).
 (defenum OptLoadStoreClass
@@ -59711,34 +59920,72 @@
               (if bh
                 1
                 0)))]
+        [_ false])]
+    [(OptLoadKey.GlobalField aglobal aoff aty avalue)
+      (match b
+        [(OptLoadKey.GlobalField bglobal boff bty bvalue)
+          (and
+            (= aglobal bglobal)
+            (= aoff boff)
+            (opt-type-eq type-segment-bases aty bty)
+            (=
+              (if avalue
+                1
+                0)
+              (if bvalue
+                1
+                0)))]
         [_ false])]))
 
 (define (opt-load-key-uses-var? [key : OptLoadKey] [var : i64]) : bool
   (match key
     [(OptLoadKey.Raw value _ _) (opt-value-is-var? value var)]
     [(OptLoadKey.Field base _ _ _) (= base var)]
-    [(OptLoadKey.ScaledField base index _ _) (or (= base var) (= index var))]))
+    [(OptLoadKey.ScaledField base index _ _) (or (= base var) (= index var))]
+    ;; A global base names no var, so no redefinition can invalidate this key.
+    [(OptLoadKey.GlobalField _ _ _ _) false]))
 
 (define (opt-load-key-type [key : OptLoadKey]) : AstType
   (match key
     [(OptLoadKey.Raw _ ty _) ty]
     [(OptLoadKey.Field _ _ ty _) ty]
-    [(OptLoadKey.ScaledField _ _ ty _) ty]))
+    [(OptLoadKey.ScaledField _ _ ty _) ty]
+    [(OptLoadKey.GlobalField _ _ ty _) ty]))
 
-;; Canonical key for an address value under the current pointer kinds.
+;; Canonical key for an address value under the current pointer kinds and
+;; resolved global bases.
+;;
+;; A HEADER-TYPED Field key wins outright: it is the strictly stronger key,
+;; because descriptor-field entries are the ones that survive element stores.
+;; Otherwise a resolved global base wins, and it is strictly stronger than a
+;; plain Field key for the addresses that have one: `gep (gep (Global g) 1) 1`
+;; keys off whichever temp the chain passed through under the Field form, while
+;; the global form sums the offsets and matches the flat `gep (Global g) 2`.
+;; Element/ScaledField vars never carry a base binding (a Load and a var-offset
+;; Gep both drop their dst from the map), so those arms cannot disagree.
 (define (opt-load-key-for-address
   [kinds : OptLoadPtrKinds]
+  [bases : OptLoadGlobalBases]
   [addr : CompilerIrValue]
   [ty : AstType]) : OptLoadKey
   (match addr
     [(CompilerIrValue.Var p)
       (match (opt-load-kinds-lookup kinds p)
         [(OptLoadLocField base off _ header?)
-          (OptLoadKey.Field base off ty header?)]
+          (if header?
+            (OptLoadKey.Field base off ty header?)
+            (match (opt-load-global-bases-lookup bases p)
+              [(OptMaybeGlobalBase.Some global goff value-base?)
+                (OptLoadKey.GlobalField global goff ty value-base?)]
+              [(OptMaybeGlobalBase.No) (OptLoadKey.Field base off ty header?)]))]
         [(OptLoadLocScaledField base index _ header?)
           (OptLoadKey.ScaledField base index ty header?)]
         [(OptLoadLocElement) (OptLoadKey.Raw addr ty true)]
-        [(OptLoadLocUnknown) (OptLoadKey.Raw addr ty false)])]
+        [(OptLoadLocUnknown)
+          (match (opt-load-global-bases-lookup bases p)
+            [(OptMaybeGlobalBase.Some global off value-base?)
+              (OptLoadKey.GlobalField global off ty value-base?)]
+            [(OptMaybeGlobalBase.No) (OptLoadKey.Raw addr ty false)])])]
     [_ (OptLoadKey.Raw addr ty false)]))
 
 (define (opt-load-entry-key [entry : OptLoadEntry]) : OptLoadKey
@@ -60003,7 +60250,12 @@
     [(OptLoadKey.Field base _ _ _) (opt-alias-root-of-var facts base)]
     ;; A scaled element address lives in the base var's buffer: rooting it at
     ;; the base is what lets an exclusive-allocation store root clear it.
-    [(OptLoadKey.ScaledField base _ _ _) (opt-alias-root-of-var facts base)]))
+    [(OptLoadKey.ScaledField base _ _ _) (opt-alias-root-of-var facts base)]
+    ;; A global slot has no tracked pointer provenance. NoRoot is the
+    ;; conservative answer: `opt-alias-store-root-disjoint?` never proves an
+    ;; entry on NoRoot disjoint from any store, so a global-keyed entry can only
+    ;; survive a store through the epoch rule or the location rule below.
+    [(OptLoadKey.GlobalField _ _ _ _) (OptAliasRoot.NoRoot)]))
 
 (define (opt-load-entry-survives-store-location?
   [type-segment-bases : i64]
@@ -60034,7 +60286,10 @@
               (opt-load-loc-type-size type-segment-bases ety)))]
         ;; A var-offset key cannot prove disjointness from any store: drop
         ;; (conservative, matching a generic Raw).
-        [(OptLoadKey.ScaledField _ _ _ _) false])]
+        [(OptLoadKey.ScaledField _ _ _ _) false]
+        ;; A field store's base var may hold the global's own address, so a
+        ;; global-keyed entry is never provably outside it: drop.
+        [(OptLoadKey.GlobalField _ _ _ _) false])]
     [(OptLoadStoreUnknown) false]))
 
 ;; Epoch-ordering rule: freshly allocated storage is disjoint from every address
@@ -60423,7 +60678,12 @@
     [(OptLoadKey.ScaledField base index _ _)
       (and
         (opt-gvn-stable-var? sources base)
-        (opt-gvn-stable-var? sources index))]))
+        (opt-gvn-stable-var? sources index))]
+    ;; The key names no var at all. The base map that produced it is emptied by
+    ;; every memory write and at every unprocessed-back-edge loop header, so a
+    ;; key of this form can only have been built where the global base still
+    ;; held the value the walk observed.
+    [(OptLoadKey.GlobalField _ _ _ _) true]))
 
 (define (opt-load-value-gvn-stable?
   [sources : opt_i64_i64_map.Map]
@@ -60472,14 +60732,16 @@
     (CompilerIrMaybeValue.No)))
 
 ;; Any instruction that is neither Load/StorePtr/CopyBytes nor a clear-all:
-;; drop def-invalidated entries, update alias facts and pointer kinds.
+;; drop def-invalidated entries, update alias facts and pointer kinds. This is
+;; the ONLY arm that can write no memory (pure, memory-read and control-flow
+;; effects only), so it is also the only one that carries global bases forward.
 (define (opt-load-cse-state-step-other
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch)
+    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -60494,20 +60756,23 @@
             [(option_i64.None) table])
           (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
-          next-epoch))]))
+          next-epoch
+          (opt-load-global-bases-step type-segment-bases bases instr)))]))
 
 ;; Calls/unknown effects: the table clears entirely; pointer kinds are value
 ;; properties and survive (only the instr's own def is invalidated). The
 ;; allocation counter is carried, never reset: alias facts keep their
 ;; Unique(epoch) roots across the clear, so a lower counter afterwards would
-;; make a later entry look older than an earlier allocation.
+;; make a later entry look older than an earlier allocation. Global bases are
+;; NOT value properties -- the write this instruction may perform could land on
+;; a global slot -- so they clear with the table.
 (define (opt-load-cse-state-clear-for-memory
   [type-segment-bases : i64]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts _ kinds table-cap epoch)
+    [(OptLoadCseState.State facts _ kinds table-cap epoch _)
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -60520,7 +60785,8 @@
           (OptLoadTable.Nil)
           (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
-          next-epoch))]))
+          next-epoch
+          (OptLoadGlobalBases.Nil)))]))
 
 ;; Apply one callee parameter-write bit to the cached load table. The callee
 ;; summary carries no byte-range fact, so filtering is root-only: a write
@@ -60569,7 +60835,11 @@
   [args : CompilerIrCallArgs]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch)
+    ;; A callee may write globals, so the base map clears here even when the
+    ;; summary lets table entries live: those entries survive only where the
+    ;; callee provably cannot reach them, while a base map binding would have to
+    ;; re-prove that the global SLOT is untouched, which no summary states.
+    [(OptLoadCseState.State facts table kinds table-cap epoch _)
       (let
         ;; Filtering reads the PRE-call facts and table, so a tl_alloc call
         ;; cannot use its own (not yet bound) fresh root to keep entries.
@@ -60604,7 +60874,8 @@
           (opt-load-table-invalidate-var filtered dst)
           (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
-          next-epoch))]))
+          next-epoch
+          (OptLoadGlobalBases.Nil)))]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
 ;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
@@ -60622,7 +60893,9 @@
   [ty : AstType]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch)
+    ;; The store may land on a global slot (an unclassified pointer can address
+    ;; anything), so the base map clears whatever the class turns out to be.
+    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (let
         [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
         [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
@@ -60647,10 +60920,16 @@
             ;; Unknown offset/location still preserves entries rooted at a
             ;; different exclusive checked or fresh allocation root, and entries
             ;; created before a fresh store root's allocation epoch.
-            (OptLoadCseState.State facts2 filtered kinds table-cap next-epoch)]
+            (OptLoadCseState.State
+              facts2
+              filtered
+              kinds
+              table-cap
+              next-epoch
+              (OptLoadGlobalBases.Nil))]
           [_
             (let
-              [key : OptLoadKey (opt-load-key-for-address kinds ptr ty)]
+              [key : OptLoadKey (opt-load-key-for-address kinds bases ptr ty)]
               [forwardable? : bool
                 (if gated?
                   (and
@@ -60684,7 +60963,8 @@
                   [(CompilerIrMaybeValue.No) filtered])
                 kinds
                 table-cap
-                next-epoch))]))]))
+                next-epoch
+                (OptLoadGlobalBases.Nil)))]))]))
 
 ;; CopyBytes writes `size` bytes through its dst pointer: same granular
 ;; invalidation, plus conservative field-to-field forwarding when source and
@@ -60699,7 +60979,9 @@
   [size : i64]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch)
+    ;; Same reasoning as the StorePtr arm: a copy through an unclassified
+    ;; pointer may write a global slot, so the base map clears here too.
+    [(OptLoadCseState.State facts table kinds table-cap epoch _)
       (let
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
         [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
@@ -60721,9 +61003,21 @@
             class)]
         (match class
           [(OptLoadStoreUnknown)
-            (OptLoadCseState.State facts2 filtered kinds table-cap next-epoch)]
+            (OptLoadCseState.State
+              facts2
+              filtered
+              kinds
+              table-cap
+              next-epoch
+              (OptLoadGlobalBases.Nil))]
           [(OptLoadStoreElement)
-            (OptLoadCseState.State facts2 filtered kinds table-cap next-epoch)]
+            (OptLoadCseState.State
+              facts2
+              filtered
+              kinds
+              table-cap
+              next-epoch
+              (OptLoadGlobalBases.Nil))]
           [(OptLoadStoreField dst-base dst-off _ dst-header?)
             (let
               [copied : OptLoadTable
@@ -60755,7 +61049,13 @@
                         next-epoch)
                       filtered)]
                   [_ filtered])]
-              (OptLoadCseState.State facts2 copied kinds table-cap next-epoch))]))]))
+              (OptLoadCseState.State
+                facts2
+                copied
+                kinds
+                table-cap
+                next-epoch
+                (OptLoadGlobalBases.Nil)))]))]))
 
 (define (opt-load-cse-core-load
   [type-segment-bases : i64]
@@ -60768,12 +61068,15 @@
   [ty : AstType]
   [instr : CompilerIrInstr]) : OptLoadCseResult
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch)
+    ;; A Load writes nothing, so the base map is carried (through the same
+    ;; transfer the pure arm uses -- the rewritten Mov can inherit a binding).
+    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (let
         ;; The dst redefinition drops stale entries first; the key is computed
-        ;; from the PRE-def kinds (a `Load dst <- dst` reads the old address).
+        ;; from the PRE-def kinds and bases (a `Load dst <- dst` reads the old
+        ;; address).
         [table2 : OptLoadTable (opt-load-table-invalidate-var table dst)]
-        [key : OptLoadKey (opt-load-key-for-address kinds src ty)]
+        [key : OptLoadKey (opt-load-key-for-address kinds bases src ty)]
         [eligible? : bool
           (if gated?
             (and
@@ -60800,7 +61103,11 @@
                   table2
                   (opt-load-kinds-step type-segment-bases kinds hs new-instr)
                   table-cap
-                  next-epoch)
+                  next-epoch
+                  (opt-load-global-bases-step
+                    type-segment-bases
+                    bases
+                    new-instr))
                 new-instr))]
           [(CompilerIrMaybeValue.No)
             (let
@@ -60826,7 +61133,8 @@
                     table2)
                   (opt-load-kinds-step type-segment-bases kinds hs instr)
                   table-cap
-                  next-epoch)
+                  next-epoch
+                  (opt-load-global-bases-step type-segment-bases bases instr))
                 instr))]))]))
 
 ;; Shared per-instruction dispatcher for the block-local (gated? false) and
@@ -60965,7 +61273,8 @@
       (OptLoadTable.Nil)
       (opt-load-kinds-empty-with-cap kinds-cap)
       table-cap
-      0)))
+      0
+      (OptLoadGlobalBases.Nil))))
 
 (define (opt-load-cse-empty-state-with-caps [table-cap : i64] [kinds-cap : i64]) : OptLoadCseState
   (opt-load-cse-state-with-caps-and-facts table-cap kinds-cap (opt-alias-empty)))
@@ -60992,20 +61301,23 @@
           kinds
           (opt-load-cse-kinds-cap-for-size instr-count))
         table-cap
-        0))))
+        0
+        (OptLoadGlobalBases.Nil)))))
 
 ;; The load table is a persistent list, but the alias facts and pointer kinds
 ;; are mutable tables; entering a block through a single predecessor must
 ;; process a copy.
 (define (opt-load-cse-state-clone-facts [state : OptLoadCseState]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds table-cap epoch)
+    ;; The base map is persistent too, so it shares its spine like the table.
+    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (OptLoadCseState.State
         (opt-alias-clone facts)
         table
         (opt-load-kinds-clone kinds)
         table-cap
-        epoch)]))
+        epoch
+        bases)]))
 
 (defenum OptMaybeLoadEntry
   (No)
@@ -61066,9 +61378,9 @@
   [a : OptLoadCseState]
   [b : OptLoadCseState]) : OptLoadCseState
   (match a
-    [(OptLoadCseState.State afacts atable akinds atable-cap aepoch)
+    [(OptLoadCseState.State afacts atable akinds atable-cap aepoch abases)
       (match b
-        [(OptLoadCseState.State bfacts btable bkinds btable-cap bepoch)
+        [(OptLoadCseState.State bfacts btable bkinds btable-cap bepoch bbases)
           (OptLoadCseState.State
             (opt-alias-intersect afacts bfacts)
             (opt-load-table-intersect type-segment-bases atable btable)
@@ -61080,7 +61392,8 @@
             ;; exceeds every entry epoch arriving on either edge.
             (if (< aepoch bepoch)
               bepoch
-              aepoch))])]))
+              aepoch)
+            (opt-load-global-bases-intersect abases bbases))])]))
 
 ;; --- loop-header descriptor-entry carry ---------------------------------------
 ;;
@@ -61291,11 +61604,13 @@
       ;; are value properties the back edge cannot change -- keep them. A loop
       ;; proven to write only element memory also keeps its descriptor-field
       ;; entries (header-typed, stable base): those loads live outside every
-      ;; data buffer, so the loop's stores cannot reach them.
+      ;; data buffer, so the loop's stores cannot reach them. Global bases do
+      ;; NOT carry: the unprocessed edge may write the global slot a binding
+      ;; read, which would make the binding name a stale address.
       (match acc
-        [(OptLoadCseState.State _ acc-table acc-kinds _ acc-epoch)
+        [(OptLoadCseState.State _ acc-table acc-kinds _ acc-epoch _)
           (match empty-state
-            [(OptLoadCseState.State empty-facts empty-table _ empty-cap _)
+            [(OptLoadCseState.State empty-facts empty-table _ empty-cap _ _)
               (OptLoadCseState.State
                 empty-facts
                 (if (opt-load-gvn-loop-safe-contains? loop-safe label)
@@ -61307,7 +61622,8 @@
                 ;; must be the accumulated predecessors' value: resetting it to
                 ;; zero would let a loop-body allocation claim an epoch that a
                 ;; surviving entry already used.
-                acc-epoch)])])
+                acc-epoch
+                (OptLoadGlobalBases.Nil))])])
       acc)
     (let
       [pred : i64 (array-ref (struct-get (struct-get index preds) edges) edge)]

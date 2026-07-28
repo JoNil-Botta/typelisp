@@ -988,7 +988,7 @@ for gather_oob in tests/integration/spmd_gather_oob.tl tests/integration/spmd_ga
             continue
         fi
         run_spmd_mode "$gather_oob" "$mode"
-        if [ "$mode_code" != 134 ] || ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+        if [ "$mode_code" != 134 ] || ! grep -F -- "array index out of bounds" "$mode_err" > /dev/null; then
             echo "[spmd-simd] gather-oob $gather_oob $mode did not take the bounds abort path:" >&2
             sed 's/^/    /' "$mode_err" >&2
             echo "$gather_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
@@ -1016,7 +1016,7 @@ do
         fi
         run_spmd_mode "$shift_trap" "$mode"
         if [ "$mode_code" != 129 ] ||
-            ! grep -F -- "tl: shift count out of range" "$mode_err" > /dev/null; then
+            ! grep -F -- "shift count out of range" "$mode_err" > /dev/null; then
             echo "[spmd-simd] $shift_trap $mode did not take the shift abort path:" >&2
             sed 's/^/    /' "$mode_err" >&2
             echo "$shift_trap $mode (expected shift abort 129, got $mode_code)" >> "$FAILURES"
@@ -1042,7 +1042,7 @@ do
         fi
         run_spmd_mode "$scan_oob" "$mode"
         if [ "$mode_code" != 134 ] ||
-            ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+            ! grep -F -- "array index out of bounds" "$mode_err" > /dev/null; then
             echo "[spmd-simd] scan-oob $scan_oob $mode did not preserve the bounds abort:" >&2
             sed 's/^/    /' "$mode_err" >&2
             echo "$scan_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
@@ -1088,7 +1088,7 @@ do
             continue
         fi
         run_spmd_mode "$shuffle_oob" "$mode"
-        if [ "$mode_code" != 134 ] || ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+        if [ "$mode_code" != 134 ] || ! grep -F -- "array index out of bounds" "$mode_err" > /dev/null; then
             echo "[spmd-simd] $shuffle_oob $mode did not take the bounds abort path:" >&2
             sed 's/^/    /' "$mode_err" >&2
             echo "$shuffle_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
@@ -1110,7 +1110,7 @@ for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
     fi
     run_spmd_mode tests/spmd/multi_output_bounds_trap.tl "$mode"
     if [ "$mode_code" != 134 ] ||
-        ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+        ! grep -F -- "array index out of bounds" "$mode_err" > /dev/null; then
         echo "[spmd-simd] multi-output bounds $mode did not preserve the trap:" >&2
         echo "    exit=$mode_code" >&2
         sed 's/^/    /' "$mode_err" >&2

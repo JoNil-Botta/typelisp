@@ -140,7 +140,7 @@ tail_direct_mutual|tests/integration/tail_direct_mutual.tl|42|-|-|-
 tail_direct_stack_args|tests/integration/tail_direct_stack_args.tl|42|-|-|-
 tail_indirect_closure|tests/integration/tail_indirect_closure.tl|42|-|-|-
 early_return|tests/integration/early_return.tl|42|-|-|-
-div_zero_trap|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+div_zero_trap|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/div_zero_trap/div_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 dot_field_access|tests/integration/dot_field_access.tl|0|-|-|-
 dotted_field_place_parity|tests/integration/dotted_field_place_parity.tl|42|-|-|stdlib/vector.tl
 enum_match|tests/integration/enum_match.tl|42|-|-|-
@@ -148,8 +148,8 @@ box_pattern_direct|tests/integration/box_pattern_direct.tl|42|-|-|-
 box_pattern_enum_payload|tests/integration/box_pattern_enum_payload.tl|42|-|-|-
 make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
-bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
-bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_paired_underflow_sp0_trap/bce_paired_underflow_sp0_trap.tl:39:47: array index out of bounds: index=-1 length=4\n
+bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_paired_underflow_sp1_trap/bce_paired_underflow_sp1_trap.tl:40:46: array index out of bounds: index=-1 length=4\n
 make_array_init|tests/integration/make_array_init.tl|42|-|-|stdlib/string.tl
 make_array_zero|tests/integration/make_array_zero.tl|0|-|-|-
 mutable_reference_array|tests/integration/mutable_reference_array.tl|42|-|-|-
@@ -172,8 +172,8 @@ functions|tests/integration/functions.tl|32|-|-|-
 global_initializer|tests/integration/global_initializer.tl|120|-|-|-
 hello|tests/integration/hello.tl|42|-|-|-
 parameter_set_rebind|tests/integration/parameter_set_rebind.tl|42|-|-|-
-i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
-i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/i16_min_div_neg1_trap/i16_min_div_neg1_trap.tl:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
+i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/i16_min_rem_neg1_trap/i16_min_rem_neg1_trap.tl:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|stdlib/string.tl
 lambda_capture_aggregate|tests/integration/lambda_capture_aggregate.tl|42|-|-|stdlib/string.tl
 lambda_capture_fixed_array|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-
@@ -188,7 +188,7 @@ lifetime_nullary_variant|tests/integration/lifetime_nullary_variant.tl|42|-|-|-
 lifetime_enum_borrow_return|tests/integration/lifetime_enum_borrow_return.tl|42|-|-|stdlib/string.tl
 many_args|tests/integration/many_args.tl|36|-|-|-
 maybe_result|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl
-min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/min_div_neg1_trap/min_div_neg1_trap.tl:5:7: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
 modules_main|tests/integration/modules_main.tl|30|-|-|modules_helper.tl
 dotted_nested_variant|tests/integration/dotted_nested_variant_main.tl|0|-|-|dotted_nested_variant_consumer.tl dotted_nested_variant_provider.tl
 legacy_dotted_enum|tests/integration/legacy_dotted_enum_main.tl|42|-|-|legacy_dotted_enum_bridge.tl legacy_dotted_enum_provider.tl
@@ -204,12 +204,12 @@ integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.
 inline_alloc_scavenge_live_through|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl
 parser|tests/integration/parser.tl|14|-|-|-
 process_runtime|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
-read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n
+read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1519:8: panic: tl: read-file failed\n
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
-selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: argv index out of bounds\n
+selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1447:8: panic: tl: argv index out of bounds\n
 tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 windows_allocation_abort|tests/integration/windows_allocation_abort.tl|134|-|-|-|expected-stderr:tl: allocation failed: arena=atomic operation=growth-commit requested=18446744073709551615 reserved=18446744073709551614 committed=9223372036854775808 windows-error=4294967295\n
-stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdin failed\n
+stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1712:6: panic: tl: stdin failed\n
 region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl
 region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl
@@ -222,20 +222,21 @@ print_char|tests/integration/print_char.tl|0|A\n|-|-
 print_float|tests/integration/print_float.tl|0|1.5\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-
 register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
-rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/rem_zero_trap/rem_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 short_circuit|tests/integration/short_circuit.tl|42|-|-|-
-shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
-shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
+shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shl_count_width_trap/shl_count_width_trap.tl:3:5: shift count out of range: count=64 width=64\n
+shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: target/integration-verify/windows/shl_neg_count_trap/shl_neg_count_trap.tl:3:5: shift count out of range: count=-1 width=64\n
+runtime_panic_site_trap|tests/integration/runtime_panic_site_trap.tl|134|-|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/runtime_panic_site_trap/runtime_panic_site_trap.tl:4:4: panic: boom\n
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
 spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|-
-spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
-spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/windows/spmd_gather_oob/spmd_gather_oob.tl:22:41: array index out of bounds: index=9223372036854775807 length=8\n
+spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/windows/spmd_gather_lane_offset_oob/spmd_gather_lane_offset_oob.tl:22:25: array index out of bounds: index=-9223372036854775808 length=8\n
 spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|-
 spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|-
-spmd_scan_negative_start_trap|tests/integration/spmd_scan_negative_start_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
-spmd_scan_short_output_trap|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_scan_negative_start_trap|tests/integration/spmd_scan_negative_start_trap.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/windows/spmd_scan_negative_start_trap/spmd_scan_negative_start_trap.tl:13:23: array index out of bounds: index=-1 length=4\n
+spmd_scan_short_output_trap|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/windows/spmd_scan_short_output_trap/spmd_scan_short_output_trap.tl:14:25: array index out of bounds: index=6 length=6\n
 spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|-
 spmd_shuffle_simd|tests/integration/spmd_shuffle_simd.tl|42|-|-|-
 spmd_shuffle_types|tests/integration/spmd_shuffle_types.tl|42|-|-|-
@@ -295,7 +296,7 @@ arena_lifetimes_example|examples/arena_lifetimes.tl|42|arena lifetime score: 42\
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
-u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: target/integration-verify/windows/u16_div_zero_trap/u16_div_zero_trap.tl:3:5: integer division or remainder error: dividend=1 divisor=0\n
 u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 u64_high_bit_load_compare|tests/integration/u64_high_bit_load_compare.tl|42|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-

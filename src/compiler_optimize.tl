@@ -55327,111 +55327,161 @@
   (NoKey)
   (SomeKey CompilerSourceSpansInstrKey))
 
-(define (opt-remap-spans-instr-key [function : i64] [instr : CompilerIrInstr]) : OptRemapSpanKey
+(define (opt-runtime-abort-instr? [instr : CompilerIrInstr]) : bool
   (match instr
-    [(CompilerIrInstr.Mov dst _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Alloc dst _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.AddrOf dst _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Gep dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Load dst _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Cast dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Bitcast dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.BinOp dst _ _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.UnOp dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.LaneId dst _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Splat dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey
-            (CompilerSourceSpansInstrKey.Value function dst))])]
-    [(CompilerIrInstr.VectorPrefix payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey
-            (CompilerSourceSpansInstrKey.Value function dst))])]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.VectorCompare payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey
-            (CompilerSourceSpansInstrKey.Value function dst))])]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.MaskNot dst _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.MaskReduce dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey
-            (CompilerSourceSpansInstrKey.Value function dst))])]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey
-            (CompilerSourceSpansInstrKey.Value function dst))])]
-    [(CompilerIrInstr.GatherLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey
-            (CompilerSourceSpansInstrKey.Value function dst))])]
-    [(CompilerIrInstr.VectorShuffle payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey
-            (CompilerSourceSpansInstrKey.Value function dst))])]
-    [(CompilerIrInstr.TailMask dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.EntryArgc dst)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.EntryArgv dst)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.EntryEnvp dst)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.CpuId dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Xgetbv dst _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Syscall dst _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Call dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
-          (match result
-            [(CompilerIrSpmdCallResult.Unit) (OptRemapSpanKey.NoKey)]
-            [(CompilerIrSpmdCallResult.Value dst _ _)
-              (OptRemapSpanKey.SomeKey
-                (CompilerSourceSpansInstrKey.Value function dst))])])]
-    [(CompilerIrInstr.Pack dst _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [(CompilerIrInstr.Word dst _ _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    ;; Tail-indirect is control flow and does not define a destination value.
-    [(CompilerIrInstr.TailCallIndirect _ _ _) (OptRemapSpanKey.NoKey)]
-    [(CompilerIrInstr.Store name _ _)
-      (OptRemapSpanKey.SomeKey
-        (CompilerSourceSpansInstrKey.Store function name))]
-    [(CompilerIrInstr.Phi dst _ _)
-      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
-    [_ (OptRemapSpanKey.NoKey)]))
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(CompilerIrInstr.BinOp _ op _ _ _)
+      (match op
+        [(CompilerIrBinOp.Div) true]
+        [(CompilerIrBinOp.Mod) true]
+        [(CompilerIrBinOp.Shl) true]
+        [(CompilerIrBinOp.Shr) true]
+        [_ false])]
+    [(CompilerIrInstr.Call _ name _ _)
+      (let
+        [text : String (ci.intern-str name)]
+        (or
+          (string.eq text "stdlib/io.tl::stdlib.io/panic")
+          (string.eq text "stdlib\\io.tl::stdlib.io/panic")))]
+    [_ false]))
+
+(define (opt-remap-spans-instr-key [function : i64] [instr : CompilerIrInstr]) : OptRemapSpanKey
+  (if (or (compiler-debug-info-enabled?) (opt-runtime-abort-instr? instr))
+    (match instr
+      [(CompilerIrInstr.Mov dst _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Alloc dst _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.AddrOf dst _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Gep dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Load dst _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Cast dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Bitcast dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.BinOp dst _ _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.UnOp dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.LaneId dst _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Splat dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.VectorBinOp payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+            (OptRemapSpanKey.SomeKey
+              (CompilerSourceSpansInstrKey.Value function dst))])]
+      [(CompilerIrInstr.VectorPrefix payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
+            (OptRemapSpanKey.SomeKey
+              (CompilerSourceSpansInstrKey.Value function dst))])]
+      [(CompilerIrInstr.VectorReduce dst _ _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.VectorCompare payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
+            (OptRemapSpanKey.SomeKey
+              (CompilerSourceSpansInstrKey.Value function dst))])]
+      [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.MaskNot dst _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.MaskReduce dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Select payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
+            (OptRemapSpanKey.SomeKey
+              (CompilerSourceSpansInstrKey.Value function dst))])]
+      [(CompilerIrInstr.VectorLoad dst _ _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.PredicatedLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+            (OptRemapSpanKey.SomeKey
+              (CompilerSourceSpansInstrKey.Value function dst))])]
+      [(CompilerIrInstr.GatherLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+            (OptRemapSpanKey.SomeKey
+              (CompilerSourceSpansInstrKey.Value function dst))])]
+      [(CompilerIrInstr.VectorShuffle payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
+            (OptRemapSpanKey.SomeKey
+              (CompilerSourceSpansInstrKey.Value function dst))])]
+      [(CompilerIrInstr.TailMask dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.EntryArgc dst)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.EntryArgv dst)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.EntryEnvp dst)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.CpuId dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Xgetbv dst _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Syscall dst _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Call dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.BoundsCheck _ _ ok-label)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Bounds function ok-label))]
+      [(CompilerIrInstr.SpmdCall payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
+            (match result
+              [(CompilerIrSpmdCallResult.Unit) (OptRemapSpanKey.NoKey)]
+              [(CompilerIrSpmdCallResult.Value dst _ _)
+                (OptRemapSpanKey.SomeKey
+                  (CompilerSourceSpansInstrKey.Value function dst))])])]
+      [(CompilerIrInstr.Pack dst _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [(CompilerIrInstr.Word dst _ _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      ;; Tail-indirect is control flow and does not define a destination value.
+      [(CompilerIrInstr.TailCallIndirect _ _ _) (OptRemapSpanKey.NoKey)]
+      [(CompilerIrInstr.Store name _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Store function name))]
+      [(CompilerIrInstr.Phi dst _ _)
+        (OptRemapSpanKey.SomeKey
+          (CompilerSourceSpansInstrKey.Value function dst))]
+      [_ (OptRemapSpanKey.NoKey)])
+    (OptRemapSpanKey.NoKey)))
 
 (define (opt-remap-spans-instr
   [instr-entries : CompilerSourceSpansInstrEntryList]
@@ -55441,18 +55491,11 @@
   (match (opt-remap-spans-instr-key function instr)
     [(OptRemapSpanKey.NoKey) out]
     [(OptRemapSpanKey.SomeKey key)
-      (if (compiler-debug-info-enabled?)
-        (match (compiler-source-spans-instr-entry-list-lookup instr-entries key)
-          [(CompilerMaybeSourceLocation.Some
-              (CompilerSourceLocation path-id span))
-            (opt-remap-spans-prepend-entry out key path-id span)]
-          [(CompilerMaybeSourceLocation.No) out])
-        (match (compiler-source-spans-instr-entry-list-lookup-span
-          instr-entries
-          key)
-          [(CompilerMaybeSourceSpan.Some span)
-            (compiler-source-spans-insert-instr-entry out key span)]
-          [(CompilerMaybeSourceSpan.No) out]))]))
+      (match (compiler-source-spans-instr-entry-list-lookup instr-entries key)
+        [(CompilerMaybeSourceLocation.Some
+            (CompilerSourceLocation path-id span))
+          (opt-remap-spans-prepend-entry out key path-id span)]
+        [(CompilerMaybeSourceLocation.No) out])]))
 
 (define (opt-remap-spans-instr-seq-from
   [instr-entries : CompilerSourceSpansInstrEntryList]

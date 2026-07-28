@@ -207,7 +207,7 @@ compile_case() {
 
     stdout="$out.stdout"
     stderr="$out.stderr"
-    compile_source=$(compile_source_for_case "$name" "$source" "$WORKDIR/inputs/$compiler_label/$name")
+    compile_source=$(compile_source_for_case "$name" "$source" "$WORKDIR/inputs/$name")
     echo "[build-invariance] $compiler_label compile $name opt$opt_level"
     if ! ci_timing_run "$compiler_label:$name" compile \
         run_with_heartbeat_capture \

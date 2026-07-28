@@ -41,6 +41,8 @@ src/compiler_backend.tl	compiler-backend-debug-function-end-label	object-format	
 src/compiler_backend.tl	compiler-backend-debug-trailer	object-format	compiler-backend-target-(linux|windows)[?]	2	Debug trailers select DWARF metadata on Linux and CodeView metadata on Windows.
 src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-call stack adjustment is explicitly zero for both pre-reserved target frames.
 src/compiler_backend.tl	compiler-backend-varargs-pre-call	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 varargs setup are different ABIs.
+src/compiler_backend.tl	compiler-backend-abort-site-target	runtime	CompilerBackendTarget[.]Linux	1	The inactive abort-site state uses Linux as a harmless default and is overwritten from the emission context before target ABI registers are selected.
+src/compiler_backend.tl	compiler-backend-abort-arg-reg	abi	CompilerBackendTarget[.](Linux|Windows)	2	Runtime abort diagnostics pass their site and value operands in the target calling convention's integer argument registers.
 src/compiler_backend.tl	compiler-backend-atomic-ptr-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's first integer argument register.
 src/compiler_backend.tl	compiler-backend-atomic-value-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's second integer argument register.
 src/compiler_backend.tl	compiler-backend-atomic-new-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer CAS consumes the target ABI's third integer argument register.
@@ -50,7 +52,8 @@ src/compiler_backend.tl	compiler-backend-emit-syscall	runtime	compiler-backend-t
 src/compiler_backend.tl	compiler-backend-emit-inline-fast-alloc	runtime	compiler-backend-target-windows[?]	2	Windows register choices and incrementally committed arena bounds differ in the inline allocator fast path.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	entry	compiler-backend-target-windows[?]	1	Windows CRT passes argc and argv in Win64 registers.
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	entry	compiler-backend-target-linux[?]	1	Linux CRT passes argc, argv, and envp in System V registers.
-src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	12	Function emission selects target entry capture, FPO eligibility/prologue, debug locations, object-format suffixes, and Win64 sweep metadata.
+src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	11	Function emission selects target entry capture, FPO eligibility/prologue, debug locations, and object-format suffixes.
+src/compiler_backend.tl	compiler-backend-commit-frame-layout!	abi	compiler-backend-target-windows[?]	1	Committed frame-layout metadata records Win64-specific sweep displacement state only after shrink-wrap retry decisions are final.
 src/compiler_backend.tl	compiler-backend-emit-function-entry	object-format	compiler-backend-target-linux[?]	2	Linux debug builds wrap function bodies in CFI start/end directives.
 src/compiler_backend.tl	compiler-backend-emit-closure-entry-adapter	object-format	compiler-backend-target-linux[?]	1	Linux debug builds wrap closure adapters in CFI start/end directives.
 src/compiler_backend.tl	compiler-backend-object-call-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object call lowering reserves target ABI shadow and stack argument space.

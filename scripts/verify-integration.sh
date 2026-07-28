@@ -1545,6 +1545,12 @@ tl_oob_abort:
     movq $134, %rdi
     syscall
 
+    .globl tl_oob_abort_at
+tl_oob_abort_at:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
     .globl tl_oom_abort
 tl_oom_abort:
     movq $60, %rax

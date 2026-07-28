@@ -118,7 +118,7 @@ expect_trap() {
     if [ "$mode_code" = 0 ]; then
         echo "[spmd-broadcast] $_prog $_mode unexpectedly exited 0" >&2
         echo "$_prog $_mode missing trap" >> "$FAILURES"
-    elif ! grep -F -- "tl: array index out of bounds" "$mode_err" >/dev/null; then
+    elif ! grep -F -- "array index out of bounds" "$mode_err" >/dev/null; then
         echo "[spmd-broadcast] $_prog $_mode trap diagnostic mismatch:" >&2
         sed 's/^/    /' "$mode_err" >&2
         echo "$_prog $_mode wrong trap" >> "$FAILURES"

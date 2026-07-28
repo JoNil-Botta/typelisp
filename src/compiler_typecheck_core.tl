@@ -78368,7 +78368,16 @@
             module
             module-id
             (tc-empty-module-local-env-cache)))]
-      [(ResultCompilerTypecheck.Err diag) (ResultCompilerTypecheck.Err diag)])))
+      ;; Prefix snapshots only store successful summaries. If an imported
+      ;; prefix is invalid, rerun the complete walk so diagnostic recovery can
+      ;; continue through later imports and the entry source.
+      [(ResultCompilerTypecheck.Err _)
+        (tc-check-decls-with-paths-cold
+          ctx
+          top-env
+          decls
+          paths
+          (CompilerTypecheckSummary 0 0 0))])))
 
 (cfg
   compile-profile

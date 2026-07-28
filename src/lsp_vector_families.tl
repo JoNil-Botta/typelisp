@@ -21,6 +21,10 @@
   (LspCheckCacheOk)
   (LspCheckCacheErr String))
 
+(defenum LspDiagnosticUriList
+  (Nil)
+  (Cons String (Box LspDiagnosticUriList)))
+
 (defstruct LspDocument
   (uri String)
   (path String)
@@ -29,7 +33,7 @@
   ;; source did not arrive from a versioned open/change notification and must
   ;; not be the target of a versioned WorkspaceEdit.
   (version i64)
-  (diagnostic-uri String)
+  (diagnostic-uris LspDiagnosticUriList)
   (decls lsp_decl_vec.Vec)
   (decls-valid bool)
   (check-cache LspCheckCache))

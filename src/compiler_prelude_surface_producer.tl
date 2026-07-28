@@ -275,11 +275,22 @@
       (array-set!
         sections
         0
-        (TlciAuxSection tlci-aux-kind-package-identity 1 identity-bytes))
+        (TlciAuxSection
+          tlci-aux-kind-package-identity
+          surface_identity.surface-identity-schema-version
+          identity-bytes))
       (array-set!
         sections
         1
-        (TlciAuxSection tlci-aux-kind-frontend-ast 1 ast-bytes))
+        ;; The aux section's schema-version is what
+        ;; `compiler_surface_hydrate.tl` compares against
+        ;; `surface-ast-schema-version`; it must BE that constant, not a
+        ;; literal that happens to equal it. The facts section below
+        ;; already does this correctly.
+        (TlciAuxSection
+          tlci-aux-kind-frontend-ast
+          surface-ast-schema-version
+          ast-bytes))
       (array-set!
         sections
         2

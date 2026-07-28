@@ -4319,7 +4319,7 @@
         [(io.ErrIoString _) (compiler-diagnostic-render-source diag "")]))))
 
 (define (compiler-driver-write-result
-  [profile-state : profile_state.CompilerProfileState]
+  [_profile-state : profile_state.CompilerProfileState]
   [result : ResultCompilerDriver]
   [output-path : String]) : i64
   (match result
@@ -4327,14 +4327,14 @@
       (begin
         (cfg
           compile-profile
-          (compiler-driver-profile-start-phase profile-state))
+          (compiler-driver-profile-start-phase _profile-state))
         (io.write-file output-path asm)
         (cfg
           compile-profile
-          (compiler-driver-profile-finish-phase profile-state "write"))
+          (compiler-driver-profile-finish-phase _profile-state "write"))
         (cfg
           compile-profile
-          (compiler-driver-profile-finish-total profile-state))
+          (compiler-driver-profile-finish-total _profile-state))
         (io.print-string
           (string.append "Wrote " (string.append output-path "\n")))
         0)]
@@ -4342,13 +4342,13 @@
       (begin
         (cfg
           compile-profile
-          (compiler-driver-profile-finish-total profile-state))
+          (compiler-driver-profile-finish-total _profile-state))
         (io.print-error
           (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))
 
 (define (compiler-driver-write-buffer-result
-  [profile-state : profile_state.CompilerProfileState]
+  [_profile-state : profile_state.CompilerProfileState]
   [result : ResultCompilerDriverBuffer]
   [output-path : String]) : i64
   (match result
@@ -4358,16 +4358,16 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-start-phase profile-state))
+              (compiler-driver-profile-start-phase _profile-state))
             (compiler-driver-write-text-buf output-path buf))]
         (begin
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase profile-state "write"))
+            (compiler-driver-profile-finish-phase _profile-state "write"))
           (compiler-driver-allocation-profile-snapshot! "write")
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-total profile-state))
+            (compiler-driver-profile-finish-total _profile-state))
           (if (= status 0)
             (begin
               (io.print-string
@@ -4379,7 +4379,7 @@
         (compiler-driver-allocation-profile-snapshot! "write-error")
         (cfg
           compile-profile
-          (compiler-driver-profile-finish-total profile-state))
+          (compiler-driver-profile-finish-total _profile-state))
         (io.print-error
           (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))
@@ -4388,7 +4388,7 @@
   (string.append output-path ".fixups"))
 
 (define (compiler-driver-write-pic-result
-  [profile-state : profile_state.CompilerProfileState]
+  [_profile-state : profile_state.CompilerProfileState]
   [result : ResultCompilerDriverPic]
   [output-path : String]) : i64
   (match result
@@ -4398,15 +4398,15 @@
         (begin
           (cfg
             compile-profile
-            (compiler-driver-profile-start-phase profile-state))
+            (compiler-driver-profile-start-phase _profile-state))
           (io.write-file output-path (struct-get output asm))
           (io.write-file fixups-path (struct-get output fixups))
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase profile-state "write"))
+            (compiler-driver-profile-finish-phase _profile-state "write"))
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-total profile-state))
+            (compiler-driver-profile-finish-total _profile-state))
           (io.print-string
             (string.append "Wrote " (string.append output-path "\n")))
           (io.print-string
@@ -4416,7 +4416,7 @@
       (begin
         (cfg
           compile-profile
-          (compiler-driver-profile-finish-total profile-state))
+          (compiler-driver-profile-finish-total _profile-state))
         (io.print-error
           (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))

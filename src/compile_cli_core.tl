@@ -1297,7 +1297,7 @@
           doctest-status)))))
 
 (define (compile-cli-write-windows-batch-artifact
-  [state : CompilerDriverState]
+  [_state : CompilerDriverState]
   [result : ResultCompilerWindowsBatchArtifact]
   [object-path : String]
   [assembly-path : String]) : ResultCompileCliWindowsBatchEntry
@@ -1311,7 +1311,7 @@
               (cfg
                 compile-profile
                 (compiler-driver-profile-start-phase
-                  (compiler-driver-state-profile state)))
+                  (compiler-driver-state-profile _state)))
               (match (io.try-write-file (& object-path) (& object))
                 [(io.OkIoUnit) 0]
                 [(io.ErrIoUnit error)
@@ -1328,13 +1328,13 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase
-                (compiler-driver-state-profile state)
+                (compiler-driver-state-profile _state)
                 "write"))
             (compiler-driver-allocation-profile-snapshot! "write")
             (cfg
               compile-profile
               (compiler-driver-profile-finish-total
-                (compiler-driver-state-profile state)))
+                (compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
                 (io.print-string
@@ -1351,19 +1351,19 @@
               (cfg
                 compile-profile
                 (compiler-driver-profile-start-phase
-                  (compiler-driver-state-profile state)))
+                  (compiler-driver-state-profile _state)))
               (compiler-driver-write-text-buf assembly-path asm))]
           (begin
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase
-                (compiler-driver-state-profile state)
+                (compiler-driver-state-profile _state)
                 "write"))
             (compiler-driver-allocation-profile-snapshot! "write")
             (cfg
               compile-profile
               (compiler-driver-profile-finish-total
-                (compiler-driver-state-profile state)))
+                (compiler-driver-state-profile _state)))
             (if (= write-status 0)
               (begin
                 (io.print-string
@@ -1379,7 +1379,7 @@
           (cfg
             compile-profile
             (compiler-driver-profile-finish-total
-              (compiler-driver-state-profile state)))
+              (compiler-driver-state-profile _state)))
           (io.print-error
             (compiler-driver-render-source-diagnostic (box-get diag)))
           (ResultCompileCliWindowsBatchEntry.Err 1))])))

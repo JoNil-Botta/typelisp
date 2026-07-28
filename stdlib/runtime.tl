@@ -403,19 +403,21 @@
   (:export-symbol "tl_panic_at") : never
   (let
     [len : i64 (string-length message)]
-    (begin
-      (abort-write "tl: ")
-      (abort-write-site site)
-      (abort-write "panic: ")
-      (abort-write message)
-      (if (and
-        (> len 0)
+    [ends-with-newline? : bool
+      (if (> len 0)
         (=
           (cast
             (unsafe
               (ptr-read (ptr-offset (string-data message) (- len 1))))
             : i64)
-          10))
+          10)
+        false)]
+    (begin
+      (abort-write "tl: ")
+      (abort-write-site site)
+      (abort-write "panic: ")
+      (abort-write message)
+      (if ends-with-newline?
         unit
         (abort-write "\n"))
       (os-exit 134))))

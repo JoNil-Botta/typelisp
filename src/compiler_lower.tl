@@ -614,6 +614,8 @@
 
 (define lower-current-source-path-id : i64
   0)
+(define lower-current-decl-generated? : bool
+  false)
 (define lower-checked-dest-pools-active : bool
   false)
 (define lower-checked-dest-pools-committed : bool
@@ -11068,7 +11070,9 @@
   [state : LowerState]
   [instr : CompilerIrInstr]
   [expr : AstExpr]) : LowerState
-  (if (or (compiler-debug-info-enabled?) (lower-runtime-abort-instr? instr))
+  (if (or
+    (compiler-debug-info-enabled?)
+    (and (not lower-current-decl-generated?) (lower-runtime-abort-instr? instr)))
     (match state
       [(LowerState.State
           next-var
@@ -11125,43 +11129,13 @@
   [state : LowerState]
   [label-prefix : String]
   [expr : AstExpr]) : LowerState
-  (match (lower-ast-expr-span expr)
-    [(CompilerMaybeSourceSpan.No) state]
-    [(CompilerMaybeSourceSpan.Some span)
-      (match state
-        [(LowerState.State
-            next-var
-            next-label
-            next-lambda
-            current-label
-            current-instrs
-            blocks
-            functions
-            function
-            spans
-            names
-            type-cache
-            mode
-            address-taken
-            tail-param-start
-            tail-param-end)
-          (let
-            [bounds-label : i64
-              (compiler-ir-label
-                (str_cat.str-cat
-                  (str_cat.str-cat label-prefix ".")
-                  (string.int->string (- next-label 1))))]
-            [next-spans : CompilerSourceSpans
-              (compiler-source-spans-insert-instr-located
-                (box-get spans)
-                function
-                (CompilerIrInstr.BoundsCheck
-                  CompilerIrValue.Unit
-                  CompilerIrValue.Unit
-                  bounds-label)
-                lower-current-source-path-id
-                span)]
-            (LowerState.State
+  (if (and lower-current-decl-generated? (not (compiler-debug-info-enabled?)))
+    state
+    (match (lower-ast-expr-span expr)
+      [(CompilerMaybeSourceSpan.No) state]
+      [(CompilerMaybeSourceSpan.Some span)
+        (match state
+          [(LowerState.State
               next-var
               next-label
               next-lambda
@@ -11170,13 +11144,45 @@
               blocks
               functions
               function
-              (box next-spans)
+              spans
               names
               type-cache
               mode
               address-taken
               tail-param-start
-              tail-param-end))])]))
+              tail-param-end)
+            (let
+              [bounds-label : i64
+                (compiler-ir-label
+                  (str_cat.str-cat
+                    (str_cat.str-cat label-prefix ".")
+                    (string.int->string (- next-label 1))))]
+              [next-spans : CompilerSourceSpans
+                (compiler-source-spans-insert-instr-located
+                  (box-get spans)
+                  function
+                  (CompilerIrInstr.BoundsCheck
+                    CompilerIrValue.Unit
+                    CompilerIrValue.Unit
+                    bounds-label)
+                  lower-current-source-path-id
+                  span)]
+              (LowerState.State
+                next-var
+                next-label
+                next-lambda
+                current-label
+                current-instrs
+                blocks
+                functions
+                function
+                (box next-spans)
+                names
+                type-cache
+                mode
+                address-taken
+                tail-param-start
+                tail-param-end))])])))
 
 (define (lower-state-record-latest-bounds-check-at-expr
   [state : LowerState]
@@ -56771,6 +56777,12 @@
                   (if (> (string.string-length decl-path) 0)
                     (compiler-load-source-path-id decl-path)
                     0))]
+              [_generated-decl : unit
+                (set!
+                  lower-current-decl-generated?
+                  (match (ast-decl-generated-meta decl)
+                    [(AstGeneratedDeclMeta.Some _ _ _ _) true]
+                    [(AstGeneratedDeclMeta.No) false]))]
               (match (ast-decl-unwrapped decl)
                 [(AstDecl.ModuleBody _ _) (set! cur-decls rest)]
                 [(AstDecl.Def decl-meta name _ expr-box)

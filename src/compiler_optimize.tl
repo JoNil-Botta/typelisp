@@ -7782,7 +7782,10 @@
       (match block
         [(CompilerIrBlock.Block label _) label])]
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-entry-label (compiler-ir-block-seq-to-list seq))]))
+      (if (> (compiler-ir-block-seq-count seq) 0)
+        (match (compiler-ir-block-seq-ref seq 0)
+          [(CompilerIrBlock.Block label _) label])
+        (compiler-ir-label-none))]))
 
 ;; A hash-set seen-check; the incremental label-list scan made this
 ;; O(blocks^2) string comparisons on large functions.
@@ -33058,10 +33061,22 @@
       (if (opt-block-scan-skippable? scan-work block)
         (optimize-block-list-has-work? scan-work (box-get rest))
         true)]
+    ;; Read-only, early-exit: scan the sequence directly (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (optimize-block-list-has-work?
-        scan-work
-        (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [found : bool false]
+        [i : i64 0]
+        (begin
+          (while (and (not found) (< i count))
+            (begin
+              (if (opt-block-scan-skippable?
+                scan-work
+                (compiler-ir-block-seq-ref seq i))
+                unit
+                (set! found true))
+              (set! i (+ i 1))))
+          found))]))
 
 ;; GAP4: the header-typed handle set feeds gep classification; build it from
 ;; the whole function so the block-local pass sees params and cross-block defs.
@@ -33573,11 +33588,22 @@
           (if (opt-tailrec-instr-seq-has-convertible? instrs fname n)
             true
             (opt-tailrec-blocks-have-convertible? (box-get rest) fname n))])]
+    ;; Read-only, early-exit: scan the sequence directly (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-tailrec-blocks-have-convertible?
-        (compiler-ir-block-seq-to-list seq)
-        fname
-        n)]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [found : bool false]
+        [i : i64 0]
+        (begin
+          (while (and (not found) (< i count))
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (if (opt-tailrec-instr-seq-has-convertible? instrs fname n)
+                    (set! found true)
+                    unit)])
+              (set! i (+ i 1))))
+          found))]))
 
 (define (opt-tailrec-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -41940,213 +41966,122 @@
         found))))
 
 ;; One fresh single-use Gep immediately before its Load/StorePtr use.
-(define (opt-gep-split-rewrite-instrs
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
+;; Emit the rewrite of one instruction into the output builder. Expand shape:
+;; a candidate `Load`/`StorePtr` emits a fresh `Gep` ahead of the memory op, so
+;; the output can be longer than the input. Per #5726's migration shape an
+;; insert/expand pass takes a capacity-managed dense builder, not a cons
+;; accumulator. The fresh-var allocator `cell` is consumed in exactly the order
+;; the old recursion consumed it: that code allocated for instruction `i`
+;; before recursing on `i + 1`, and this loop pushes for `i` before advancing.
+(define (opt-gep-split-push-instr!
+  [instr : CompilerIrInstr]
   [cands : (Array i64)]
   [bases : (Array CompilerIrValue)]
   [offsets : (Array CompilerIrValue)]
   [tys : (Array AstType)]
-  [cell : (Array i64)]) : CompilerIrInstrList
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (CompilerIrInstrList.Nil)
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (match instr
-        [(CompilerIrInstr.Gep dst base offset ty)
-          (match base
-            [(CompilerIrValue.Var v)
-              (match offset
-                [(CompilerIrValue.I64 n)
-                  (if (and (= n 0) (= (array-ref cands v) 1))
-                    (compiler-ir-instr-cons
-                      (CompilerIrInstr.Gep
-                        dst
-                        (array-ref bases v)
-                        (array-ref offsets v)
-                        (array-ref tys v))
-                      (opt-gep-split-rewrite-instrs
-                        instrs
-                        (+ index 1)
-                        cands
-                        bases
-                        offsets
-                        tys
-                        cell))
-                    (compiler-ir-instr-cons
-                      instr
-                      (opt-gep-split-rewrite-instrs
-                        instrs
-                        (+ index 1)
-                        cands
-                        bases
-                        offsets
-                        tys
-                        cell)))]
-                [_
-                  (compiler-ir-instr-cons
-                    instr
-                    (opt-gep-split-rewrite-instrs
-                      instrs
-                      (+ index 1)
-                      cands
-                      bases
-                      offsets
-                      tys
-                      cell))])]
-            [_
-              (compiler-ir-instr-cons
-                instr
-                (opt-gep-split-rewrite-instrs
-                  instrs
-                  (+ index 1)
-                  cands
-                  bases
-                  offsets
-                  tys
-                  cell))])]
-        [(CompilerIrInstr.Load dst src ty)
-          (match src
-            [(CompilerIrValue.Var v)
-              (if (= (array-ref cands v) 1)
-                (let
-                  [fresh : i64 (opt-bce-version-alloc-var cell)]
-                  (compiler-ir-instr-cons
-                    (CompilerIrInstr.Gep
-                      fresh
-                      (array-ref bases v)
-                      (array-ref offsets v)
-                      (array-ref tys v))
-                    (compiler-ir-instr-cons
-                      (CompilerIrInstr.Load dst (CompilerIrValue.Var fresh) ty)
-                      (opt-gep-split-rewrite-instrs
-                        instrs
-                        (+ index 1)
-                        cands
-                        bases
-                        offsets
-                        tys
-                        cell))))
-                (compiler-ir-instr-cons
-                  instr
-                  (opt-gep-split-rewrite-instrs
-                    instrs
-                    (+ index 1)
-                    cands
-                    bases
-                    offsets
-                    tys
-                    cell)))]
-            [_
-              (compiler-ir-instr-cons
-                instr
-                (opt-gep-split-rewrite-instrs
-                  instrs
-                  (+ index 1)
-                  cands
-                  bases
-                  offsets
-                  tys
-                  cell))])]
-        [(CompilerIrInstr.StorePtr dst value ty)
-          (match dst
-            [(CompilerIrValue.Var v)
-              (if (= (array-ref cands v) 1)
-                (let
-                  [fresh : i64 (opt-bce-version-alloc-var cell)]
-                  (compiler-ir-instr-cons
-                    (CompilerIrInstr.Gep
-                      fresh
-                      (array-ref bases v)
-                      (array-ref offsets v)
-                      (array-ref tys v))
-                    (compiler-ir-instr-cons
-                      (CompilerIrInstr.StorePtr
-                        (CompilerIrValue.Var fresh)
-                        value
-                        ty)
-                      (opt-gep-split-rewrite-instrs
-                        instrs
-                        (+ index 1)
-                        cands
-                        bases
-                        offsets
-                        tys
-                        cell))))
-                (compiler-ir-instr-cons
-                  instr
-                  (opt-gep-split-rewrite-instrs
-                    instrs
-                    (+ index 1)
-                    cands
-                    bases
-                    offsets
-                    tys
-                    cell)))]
-            [_
-              (compiler-ir-instr-cons
-                instr
-                (opt-gep-split-rewrite-instrs
-                  instrs
-                  (+ index 1)
-                  cands
-                  bases
-                  offsets
-                  tys
-                  cell))])]
-        [(CompilerIrInstr.Mov dst src mov-ty)
-          ;; `dst = Mov gep` becomes `dst = Gep base, offset`: the copy was
-          ;; just staging the address, so the fresh single-use Gep feeds the
-          ;; backend's indexed fusion directly.
-          (match src
-            [(CompilerIrValue.Var v)
-              (if (= (array-ref cands v) 1)
-                (compiler-ir-instr-cons
+  [cell : (Array i64)]
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
+  (match instr
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (match base
+        [(CompilerIrValue.Var v)
+          (match offset
+            [(CompilerIrValue.I64 n)
+              (if (and (= n 0) (= (array-ref cands v) 1))
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
                   (CompilerIrInstr.Gep
                     dst
                     (array-ref bases v)
                     (array-ref offsets v)
-                    (array-ref tys v))
-                  (opt-gep-split-rewrite-instrs
-                    instrs
-                    (+ index 1)
-                    cands
-                    bases
-                    offsets
-                    tys
-                    cell))
-                (compiler-ir-instr-cons
-                  instr
-                  (opt-gep-split-rewrite-instrs
-                    instrs
-                    (+ index 1)
-                    cands
-                    bases
-                    offsets
-                    tys
-                    cell)))]
-            [_
-              (compiler-ir-instr-cons
-                instr
-                (opt-gep-split-rewrite-instrs
-                  instrs
-                  (+ index 1)
-                  cands
-                  bases
-                  offsets
-                  tys
-                  cell))])]
-        [_
-          (compiler-ir-instr-cons
-            instr
-            (opt-gep-split-rewrite-instrs
-              instrs
-              (+ index 1)
-              cands
-              bases
-              offsets
-              tys
-              cell))]))))
+                    (array-ref tys v)))
+                (compiler-ir-instr-builder-push! (&mut builder) instr))]
+            [_ (compiler-ir-instr-builder-push! (&mut builder) instr)])]
+        [_ (compiler-ir-instr-builder-push! (&mut builder) instr)])]
+    [(CompilerIrInstr.Load dst src ty)
+      (match src
+        [(CompilerIrValue.Var v)
+          (if (= (array-ref cands v) 1)
+            (let
+              [fresh : i64 (opt-bce-version-alloc-var cell)]
+              (begin
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (CompilerIrInstr.Gep
+                    fresh
+                    (array-ref bases v)
+                    (array-ref offsets v)
+                    (array-ref tys v)))
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (CompilerIrInstr.Load dst (CompilerIrValue.Var fresh) ty))))
+            (compiler-ir-instr-builder-push! (&mut builder) instr))]
+        [_ (compiler-ir-instr-builder-push! (&mut builder) instr)])]
+    [(CompilerIrInstr.StorePtr dst value ty)
+      (match dst
+        [(CompilerIrValue.Var v)
+          (if (= (array-ref cands v) 1)
+            (let
+              [fresh : i64 (opt-bce-version-alloc-var cell)]
+              (begin
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (CompilerIrInstr.Gep
+                    fresh
+                    (array-ref bases v)
+                    (array-ref offsets v)
+                    (array-ref tys v)))
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (CompilerIrInstr.StorePtr
+                    (CompilerIrValue.Var fresh)
+                    value
+                    ty))))
+            (compiler-ir-instr-builder-push! (&mut builder) instr))]
+        [_ (compiler-ir-instr-builder-push! (&mut builder) instr)])]
+    [(CompilerIrInstr.Mov dst src mov-ty)
+      ;; `dst = Mov gep` becomes `dst = Gep base, offset`: the copy was
+      ;; just staging the address, so the fresh single-use Gep feeds the
+      ;; backend's indexed fusion directly.
+      (match src
+        [(CompilerIrValue.Var v)
+          (if (= (array-ref cands v) 1)
+            (compiler-ir-instr-builder-push!
+              (&mut builder)
+              (CompilerIrInstr.Gep
+                dst
+                (array-ref bases v)
+                (array-ref offsets v)
+                (array-ref tys v)))
+            (compiler-ir-instr-builder-push! (&mut builder) instr))]
+        [_ (compiler-ir-instr-builder-push! (&mut builder) instr)])]
+    [_ (compiler-ir-instr-builder-push! (&mut builder) instr)]))
+
+(define (opt-gep-split-rewrite-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [cands : (Array i64)]
+  [bases : (Array CompilerIrValue)]
+  [offsets : (Array CompilerIrValue)]
+  [tys : (Array AstType)]
+  [cell : (Array i64)]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (opt-gep-split-push-instr!
+            (compiler-ir-instr-seq-ref instrs index)
+            cands
+            bases
+            offsets
+            tys
+            cell
+            (&mut builder))
+          (set! index (+ index 1))))
+      (compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-gep-split-rewrite-blocks
   [blocks : CompilerIrBlockList]
@@ -42161,11 +42096,10 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (compiler-ir-block
+            (CompilerIrBlock.Block
               label
-              (opt-gep-split-rewrite-instrs
+              (opt-gep-split-rewrite-instr-seq
                 instrs
-                0
                 cands
                 bases
                 offsets
@@ -42178,14 +42112,35 @@
               offsets
               tys
               cell))])]
+    ;; The array arm used to materialise a whole block cons chain purely to
+    ;; walk it once (refs #5729); it now scans the sequence in place and
+    ;; writes a dense output sequence. Same forward order, so `cell` hands out
+    ;; the same fresh var ids in the same places.
     [(CompilerIrBlockList.Array seq)
-      (opt-gep-split-rewrite-blocks
-        (compiler-ir-block-seq-to-list seq)
-        cands
-        bases
-        offsets
-        tys
-        cell)]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [slots : (Array CompilerIrBlock)
+          (array.make-array CompilerIrBlock count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq index)
+                [(CompilerIrBlock.Block label instrs)
+                  (array-set!
+                    slots
+                    index
+                    (CompilerIrBlock.Block
+                      label
+                      (opt-gep-split-rewrite-instr-seq
+                        instrs
+                        cands
+                        bases
+                        offsets
+                        tys
+                        cell)))])
+              (set! index (+ index 1))))
+          (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count))))]))
 
 (define (opt-gep-split-function
   [type-segment-bases : i64]
@@ -43367,11 +43322,18 @@
           [(CompilerIrBlock.Block _ instrs)
             (opt-successor-sink-fill-defs! frame instrs defs)])
         (opt-successor-sink-fill-all-defs! frame (box-get rest) defs))]
+    ;; Read-only over the blocks (it writes only the `defs` side array, in the
+    ;; same order): scan the sequence directly (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-successor-sink-fill-all-defs!
-        frame
-        (compiler-ir-block-seq-to-list seq)
-        defs)]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [i : i64 0]
+        (while (< i count)
+          (begin
+            (match (compiler-ir-block-seq-ref seq i)
+              [(CompilerIrBlock.Block _ instrs)
+                (opt-successor-sink-fill-defs! frame instrs defs)])
+            (set! i (+ i 1)))))]))
 
 (define (opt-successor-sink-loop-target?
   [index : OptCfgIndex]
@@ -44700,8 +44662,22 @@
           (if (opt-ctor-fwd-block-candidate? instrs)
             true
             (opt-ctor-fwd-blocks-have-candidate? (box-get rest)))])]
+    ;; Read-only, early-exit: scan the sequence directly (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-ctor-fwd-blocks-have-candidate? (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [found : bool false]
+        [i : i64 0]
+        (begin
+          (while (and (not found) (< i count))
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (if (opt-ctor-fwd-block-candidate? instrs)
+                    (set! found true)
+                    unit)])
+              (set! i (+ i 1))))
+          found))]))
 
 ;; Index of the `addr_of` that defines `var`, searching back from `from`.
 ;; Returns -1 when the search hits another definition of `var` first or leaves
@@ -47223,8 +47199,21 @@
             index
             (opt-callgraph-instr-seq index callees instrs)
             (box-get rest))])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-callgraph-blocks index callees (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [acc : OptSlotList callees]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set! acc (opt-callgraph-instr-seq index acc instrs))])
+              (set! i (+ i 1))))
+          acc))]))
 
 (define (opt-callgraph-callees
   [index : OptFunctionIndex]
@@ -47690,11 +47679,21 @@
             index
             (opt-inline-census-instr-seq index census instrs)
             (box-get rest))])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-inline-census-blocks
-        index
-        census
-        (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [acc : OptInlineCensus census]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set! acc (opt-inline-census-instr-seq index acc instrs))])
+              (set! i (+ i 1))))
+          acc))]))
 
 (define (opt-inline-census-function
   [index : OptFunctionIndex]
@@ -48464,10 +48463,23 @@
           (opt-inline-blocks-phi-predecessors-add
             (box-get rest)
             (opt-inline-instr-seq-phi-labels-add-from instrs 0 labels))])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-inline-blocks-phi-predecessors-add
-        (compiler-ir-block-seq-to-list seq)
-        labels)]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [acc : OptLabelSet labels]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set!
+                    acc
+                    (opt-inline-instr-seq-phi-labels-add-from instrs 0 acc))])
+              (set! i (+ i 1))))
+          acc))]))
 
 ;; A successful multiblock inline moves the original block's tail to the
 ;; generated continuation. A matching phi input is itself the old predecessor
@@ -48668,8 +48680,21 @@
           (+
             (opt-inline-cost-instrs instrs)
             (opt-inline-multiblock-cost-instrs (box-get rest)))])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-inline-multiblock-cost-instrs (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [total : i64 0]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set! total (+ total (opt-inline-cost-instrs instrs)))])
+              (set! i (+ i 1))))
+          total))]))
 
 (define (opt-inline-params-have-sret? [params : CompilerIrParamList]) : bool
   (match (compiler-ir-param-list-force-cons params)
@@ -53019,8 +53044,21 @@
             index
             (opt-reach-instr-seq index state instrs)
             (box-get rest))])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-reach-blocks index state (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [out : OptReachState state]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set! out (opt-reach-instr-seq index out instrs))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (opt-reach-function
   [index : OptFunctionIndex]
@@ -54875,8 +54913,27 @@
               0
               (compiler-ir-instr-seq-count instrs))
             (box-get rest))])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-const-globals-disq-blocks disq (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [acc : opt_i64_i64_map.Map disq]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set!
+                    acc
+                    (opt-const-globals-disq-seq-from
+                      acc
+                      instrs
+                      0
+                      (compiler-ir-instr-seq-count instrs)))])
+              (set! i (+ i 1))))
+          acc))]))
 
 (define (opt-const-globals-disqualified
   [disq : opt_i64_i64_map.Map]
@@ -55538,12 +55595,27 @@
             (opt-remap-spans-instr-seq instr-entries out function instrs)
             function
             (box-get rest))])]
+    ;; Read-only walk over the blocks (the spans accumulator is threaded
+    ;; forward exactly as the cons walk threaded it) (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (opt-remap-spans-blocks
-        instr-entries
-        out
-        function
-        (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [acc : CompilerSourceSpans out]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set!
+                    acc
+                    (opt-remap-spans-instr-seq
+                      instr-entries
+                      acc
+                      function
+                      instrs))])
+              (set! i (+ i 1))))
+          acc))]))
 
 (define (opt-remap-spans-function
   [instr-entries : CompilerSourceSpansInstrEntryList]

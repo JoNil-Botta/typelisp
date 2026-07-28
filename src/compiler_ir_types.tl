@@ -2881,11 +2881,25 @@
         pools
         (box-get rest)
         (compiler-ir-block-cons (compiler-ir-clone-block pools block) acc))]
+    ;; Same forward order the cons walk used, so the accumulated (reversed)
+    ;; result is unchanged (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (compiler-ir-clone-block-list-acc
-        pools
-        (compiler-ir-block-seq-to-list seq)
-        acc)]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [out : CompilerIrBlockList acc]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (set!
+                out
+                (compiler-ir-block-cons
+                  (compiler-ir-clone-block
+                    pools
+                    (compiler-ir-block-seq-ref seq index))
+                  out))
+              (set! index (+ index 1))))
+          out))]))
 
 (define (compiler-ir-block-list-reverse-onto
   [blocks : CompilerIrBlockList]
@@ -5789,9 +5803,21 @@
           (+
             (compiler-ir-instr-seq-count instrs)
             (compiler-ir-block-list-instruction-count (box-get rest)))])]
+    ;; Read-only: scan the sequence instead of materialising a block cons
+    ;; chain to walk once (refs #5729).
     [(CompilerIrBlockList.Array seq)
-      (compiler-ir-block-list-instruction-count
-        (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [total : i64 0]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq index)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set! total (+ total (compiler-ir-instr-seq-count instrs)))])
+              (set! index (+ index 1))))
+          total))]))
 
 (define (compiler-ir-function-block-count [func : CompilerIrFunction]) : i64
   (match func

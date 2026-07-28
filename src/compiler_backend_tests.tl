@@ -56,6 +56,12 @@
 ;; String-returning shim for instruction-sequence emission. Emission appends
 ;; into a caller-owned body buffer and its Ok payload is no longer the text, so
 ;; these assertions own the buffer and hand back what was written.
+;;
+;; The emit spine takes an `(instrs, index)` cursor over a block's contiguous
+;; sequence, the same shape `compiler-backend-emit-block` hands it. These
+;; assertions spell their fixtures as cons lists, so the shim materialises the
+;; sequence once and starts the cursor at 0 -- test-side only, so the fixtures
+;; stay readable without putting a list-taking entry point back in the compiler.
 (define (compiler-backend-test-emit-instrs-text
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -63,7 +69,8 @@
   (let
     [body : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
-    (match (compiler-backend-emit-instrs ctx fallthrough instrs (&mut body))
+    [seq : CompilerIrInstrSeq (compiler-ir-instr-seq-from-list instrs)]
+    (match (compiler-backend-emit-instrs ctx fallthrough seq 0 (&mut body))
       [(ResultCompilerBackend.Ok _)
         (ResultCompilerBackend.Ok (compiler-backend-asm-buf-finish (& body)))]
       [(ResultCompilerBackend.Err diagnostic)

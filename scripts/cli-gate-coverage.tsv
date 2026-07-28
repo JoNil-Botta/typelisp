@@ -46,7 +46,7 @@
 # count	process	program	rows	5
 # count	duplicates	all	groups	9
 # count	duplicates	all	rows	18
-# child-corpus	public-lsp-corpus	all	tests/public-tools/lsp	*.in.json	-	66
+# child-corpus	public-lsp-corpus	all	tests/public-tools/lsp	*.in.json	-	67
 # child-corpus	public-repl-corpus	windows	tests/public-tools/repl	*.in	*.linux.in	14
 # child-corpus	public-repl-corpus	linux	tests/public-tools/repl	*.in	-	21
 # child-corpus	public-repl-corpus	linux	tests/public-tools/selfhost-repl	*.linux.in	-	17

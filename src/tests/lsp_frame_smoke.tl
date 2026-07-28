@@ -792,6 +792,225 @@
         (string.contains (& utf16-rendered) (& utf16-want))
         (string.contains (& utf8-rendered) (& utf8-want))))))
 
+(define (lsp-code-action-edit-seq
+  [first : CompilerDiagnosticTextEdit]
+  [second : CompilerDiagnosticTextEdit]
+  [third : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
+  (let
+    [slots : (Array CompilerDiagnosticTextEdit)
+      (make-array CompilerDiagnosticTextEdit 3)]
+    (begin
+      (array-set! slots 0 first)
+      (array-set! slots 1 second)
+      (array-set! slots 2 third)
+      (CompilerDiagnosticTextEditSeq slots 3))))
+
+;; Compiler fixes preserve byte-accurate Unicode ranges, group multiple edits
+;; per open document, and reject the whole fix when any target is missing or
+;; lacks a client-owned document version.
+(define (lsp-code-action-workspace-edit-smoke-ok?) : bool
+  (let
+    [path-a : String "target/code_action_a.tl"]
+    [path-b : String "target/code_action_b.tl"]
+    [uri-a : String (lsp-resolved-path-to-file-uri path-a)]
+    [uri-b : String (lsp-resolved-path-to-file-uri path-b)]
+    [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
+    [edits : CompilerDiagnosticTextEditSeq
+      (lsp-code-action-edit-seq
+        (compiler-diagnostic-text-edit-new
+          (CompilerDiagnosticSpan path-a 1 3 1 6)
+          "bar")
+        (compiler-diagnostic-text-edit-new
+          (CompilerDiagnosticSpan path-a 2 1 2 2)
+          "y")
+        (compiler-diagnostic-text-edit-new
+          (CompilerDiagnosticSpan path-b 1 1 1 2)
+          "z"))]
+    [missing-edits : CompilerDiagnosticTextEditSeq
+      (compiler-diagnostic-text-edit-single
+        (compiler-diagnostic-text-edit-new
+          (CompilerDiagnosticSpan "target/generated.tl" 1 1 1 2)
+          "no"))]
+    (begin
+      (lsp-position-encoding-use-utf16!)
+      (set!
+        docs
+        (lsp-documents-set-versioned docs uri-a path-a "λfoo\nx" 7 ""))
+      (set! docs (lsp-documents-set-versioned docs uri-b path-b "q" 9 ""))
+      (let
+        [rendered : String
+          (json.stringify (lsp-code-action-workspace-edit docs path-a edits))]
+        [utf-range : String
+          "\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":4}"]
+        [first-version : String "\"version\":7"]
+        [second-version : String "\"version\":9"]
+        [two-a-edits : String
+          "\"edits\":[{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":1}},\"newText\":\"y\"},{\"range\":{\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":4}},\"newText\":\"bar\"}]"]
+        [unversioned : lsp_document_vec.Vec
+          (lsp-documents-set (lsp_document_vec.new) uri-a path-a "λfoo\nx" "")]
+        (and
+          (lsp-code-action-all-edits-open? docs path-a edits)
+          (not (lsp-code-action-all-edits-open? docs path-a missing-edits))
+          (not
+            (lsp-code-action-all-edits-open?
+              unversioned
+              path-a
+              (compiler-diagnostic-text-edit-single
+                (compiler-diagnostic-text-edit-new
+                  (CompilerDiagnosticSpan path-a 1 3 1 6)
+                  "bar"))))
+          (string.contains (& rendered) (& uri-a))
+          (string.contains (& rendered) (& uri-b))
+          (string.contains (& rendered) (& utf-range))
+          (string.contains (& rendered) (& first-version))
+          (string.contains (& rendered) (& second-version))
+          (string.contains (& rendered) (& two-a-edits)))))))
+
+;; Diagnostic tokens are version-checked and range-filtered. Repeated lint
+;; findings for the same rule/form collapse to one suppression action, whose
+;; insertion preserves the form's indentation.
+(define (lsp-code-action-lint-smoke-ok?) : bool
+  (let
+    [text : String "(define (main) : i64\n  (begin 42))"]
+    [span : AstSourceSpan (AstSourceSpan 2 3 2 13)]
+    [finding : LintFinding
+      (LintFinding
+        (lint-rule-single-begin-message)
+        (lint-rule-single-begin-id)
+        0
+        span)]
+    [slots : (Array LintFinding) (make-array LintFinding 2)]
+    [request-range : json.Json
+      (lsp-json-object2 "start" (lsp-position 2 3) "end" (lsp-position 2 4))]
+    [cursor-range : json.Json
+      (lsp-json-object2 "start" (lsp-position 2 3) "end" (lsp-position 2 3))]
+    [adjacent-range : json.Json
+      (lsp-json-object2 "start" (lsp-position 2 2) "end" (lsp-position 2 3))]
+    [far-range : json.Json
+      (lsp-json-object2 "start" (lsp-position 1 1) "end" (lsp-position 1 2))]
+    [diagnostic : json.Json (lsp-lint-finding-diagnostic text 3 0 finding)]
+    [diagnostics : json.JsonSeq
+      (lsp-json-list-cons diagnostic (json.list-empty))]
+    [edit-rendered : String
+      (json.stringify
+        (lsp-code-action-lint-edit "file:///lint.tl" 3 text finding))]
+    [directive : String "\"newText\":\"  ;; lint-allow: single-begin\\n\""]
+    [insertion : String
+      "\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":0}"]
+    (begin
+      (array-set! slots 0 finding)
+      (array-set! slots 1 finding)
+      (let
+        [findings : LintFindings (LintFindings slots 2)]
+        (and
+          (match (lsp-code-action-find-diagnostic-from
+            diagnostics
+            request-range
+            3
+            "lint"
+            0
+            0)
+            [(LspJsonValue.Found _) true]
+            [(LspJsonValue.Missing) false])
+          (match (lsp-code-action-find-diagnostic-from
+            diagnostics
+            cursor-range
+            3
+            "lint"
+            0
+            0)
+            [(LspJsonValue.Found _) true]
+            [(LspJsonValue.Missing) false])
+          (match (lsp-code-action-find-diagnostic-from
+            diagnostics
+            adjacent-range
+            3
+            "lint"
+            0
+            0)
+            [(LspJsonValue.Found _) false]
+            [(LspJsonValue.Missing) true])
+          (match (lsp-code-action-find-diagnostic-from
+            diagnostics
+            request-range
+            4
+            "lint"
+            0
+            0)
+            [(LspJsonValue.Found _) false]
+            [(LspJsonValue.Missing) true])
+          (match (lsp-code-action-find-diagnostic-from
+            diagnostics
+            far-range
+            3
+            "lint"
+            0
+            0)
+            [(LspJsonValue.Found _) false]
+            [(LspJsonValue.Missing) true])
+          (lsp-code-action-lint-duplicate-before? findings finding 1)
+          (string.eq (lsp-code-action-newline "a\r\nb") "\r\n")
+          (string.contains (& edit-rendered) (& directive))
+          (string.contains (& edit-rendered) (& insertion)))))))
+
+(define (lsp-transcript-code-action
+  [uri : String]
+  [id : i64]
+  [version : i64]
+  [only : String]) : String
+  (lsp-str7
+    "{\"jsonrpc\":\"2.0\",\"id\":"
+    (string.int->string id)
+    ",\"method\":\"textDocument/codeAction\",\"params\":{\"textDocument\":{\"uri\":\""
+    uri
+    "\"},\"range\":{\"start\":{\"line\":4,\"character\":3},\"end\":{\"line\":4,\"character\":4}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":4,\"character\":3},\"end\":{\"line\":4,\"character\":4}},\"severity\":1,\"source\":\"typelisp\",\"code\":\"E0201\",\"message\":\"opaque\",\"data\":{\"version\":"
+    (string.int->string version)
+    (lsp-str3
+      ",\"kind\":\"compiler\",\"index\":0}}],\"only\":[\""
+      only
+      "\"]}}}")))
+
+;; End-to-end dispatch rebuilds a machine-applicable compiler fix, while a
+;; stale token and a non-quickfix `context.only` both return an empty result.
+(define (lsp-code-action-transcript-smoke-ok?) : bool
+  (let
+    [path : String "target/lsp_code_action_doc.tl"]
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [source : String
+      "(define (render-value [value : i64]) : i64\\n  value)\\n\\n(define (main) : i64\\n  (render-vaule 42))"]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [input : String
+      (string.append
+        (lsp-transcript-frame (lsp-transcript-did-open uri source))
+        (string.append
+          (lsp-transcript-frame
+            (lsp-transcript-code-action uri 91 1 "quickfix"))
+          (string.append
+            (lsp-transcript-frame
+              (lsp-transcript-code-action uri 92 0 "quickfix"))
+            (string.append
+              (lsp-transcript-frame
+                (lsp-transcript-code-action uri 93 1 "refactor"))
+              (lsp-transcript-frame exit)))))]
+    [result : LspTranscriptResult (lsp-transcript-run input)]
+    [action : String
+      "\"id\":91,\"result\":[{\"title\":\"Replace misspelled name\",\"kind\":\"quickfix\""]
+    [replacement : String "\"newText\":\"render-value\""]
+    [versioned-edit : String "\"version\":1"]
+    [stale : String "\"id\":92,\"result\":[]"]
+    [filtered : String "\"id\":93,\"result\":[]"]
+    [capability : String "\"codeActionKinds\":[\"quickfix\"]"]
+    [capabilities : String (json.stringify (lsp-initialize-result))]
+    (and
+      (= (struct-get result status) 0)
+      (string.eq (struct-get result stderr) "")
+      (lsp-transcript-result-contains? result action)
+      (lsp-transcript-result-contains? result replacement)
+      (lsp-transcript-result-contains? result versioned-edit)
+      (lsp-transcript-result-contains? result stale)
+      (lsp-transcript-result-contains? result filtered)
+      (string.contains (& capabilities) (& capability)))))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -821,6 +1040,9 @@
         (unless (lsp-position-encoding-negotiation-smoke-ok?) (return 30))
         (unless (lsp-position-encoding-conversion-smoke-ok?) (return 31))
         (unless (lsp-position-encoding-diagnostic-smoke-ok?) (return 32))
+        (unless (lsp-code-action-workspace-edit-smoke-ok?) (return 33))
+        (unless (lsp-code-action-lint-smoke-ok?) (return 34))
+        (unless (lsp-code-action-transcript-smoke-ok?) (return 35))
         (unless (lsp-transcript-framing-smoke-ok?) (return 18))
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))

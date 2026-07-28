@@ -51706,6 +51706,30 @@
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
+        ;; Ensure the register allocator can see the program-wide group
+        ;; word-count map (so a group-typed call result / param / mov gets a
+        ;; register PAIR, not a single register). Idempotent per function.
+        ;;
+        ;; INVARIANT: this install must precede every reader of the map in this
+        ;; function, not merely the register plan. The map is read through
+        ;; `compiler-reg-type-register-group?` and its two `-sse?` siblings; the
+        ;; installed value does NOT survive from one `compiler-backend-emit-function`
+        ;; call into the next, so a read taken before this binding faults on the
+        ;; first aggregate-typed query rather than returning a stale answer. The
+        ;; earliest reader is the cold-call rewrite below, whose
+        ;; `compiler-reg-cold-call-protectable-type?` asks exactly that question
+        ;; of every live value it considers protecting; the register plan, the
+        ;; parameter pin/greedy eligibility tests and the frame coloring are the
+        ;; later ones. Binding it first here keeps the requirement trivially
+        ;; true for any pass added to this function in future -- it depends only
+        ;; on `program-index`, which is constant across the program, so nothing
+        ;; forces it later.
+        [_ra-grp : unit
+          (compiler-reg-set-group-counts!
+            (struct-get program-index group-word-counts))]
+        [_ra-grp-mask : unit
+          (compiler-reg-set-group-class-masks!
+            (struct-get program-index group-word-class-masks))]
         ;; Prefix dry-emission is part of shrink-wrap admission and precedes
         ;; this function's const-hoist build. Fail closed unless its scratch
         ;; state was reset successfully for this function.
@@ -51769,15 +51793,6 @@
             (compiler-ir-symbol-typed-id name)
             "")]
         [_current-mode : unit (compiler-backend-set-current-mode! mode)]
-        ;; Ensure the register allocator can see the program-wide group
-        ;; word-count map (so a group-typed call result / param / mov gets a
-        ;; register PAIR, not a single register). Idempotent per function.
-        [_ra-grp : unit
-          (compiler-reg-set-group-counts!
-            (struct-get program-index group-word-counts))]
-        [_ra-grp-mask : unit
-          (compiler-reg-set-group-class-masks!
-            (struct-get program-index group-word-class-masks))]
         ;; M-G3 stage 2: enable %rbp as the final CSR for this function's plan
         ;; on both text backends. The `allow-rbp` parameter is false only on the
         ;; DEMOTION retry (the FPO audit failed on an rbp-planned function).

@@ -902,22 +902,29 @@
   [decls : CompilerLoadSurfaceDeclList]
   [root-module : i64]
   [out : SelfhostLintUnsafeSurfaceNames]) : SelfhostLintUnsafeSurfaceNames
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) out]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (selfhost-lint-unsafe-surface-copy-decls
-        (box-get rest)
-        root-module
-        (if (and
-          (= (struct-get decl module) root-module)
-          (not (struct-get decl has-generated-meta))
-          (selfhost-lint-unsafe-surface-value-kind? (struct-get decl kind)))
-          (selfhost-lint-unsafe-surface-names-add
-            (SelfhostLintUnsafeSurfaceName
-              (string.copy (intern-str (struct-get decl name)))
-              (struct-get decl was-unsafe))
-            out)
-          out))]))
+  (let
+    [index : i64 0]
+    [result : SelfhostLintUnsafeSurfaceNames out]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (begin
+            (if (and
+              (= (struct-get decl module) root-module)
+              (not (struct-get decl has-generated-meta))
+              (selfhost-lint-unsafe-surface-value-kind? (struct-get decl kind)))
+              (set!
+                result
+                (selfhost-lint-unsafe-surface-names-add
+                  (SelfhostLintUnsafeSurfaceName
+                    (string.copy (intern-str (struct-get decl name)))
+                    (struct-get decl was-unsafe))
+                  result))
+              unit)
+            (set! index (+ index 1)))))
+      result)))
 
 (define (selfhost-lint-unsafe-surface-cache-push!
   [entry : SelfhostLintUnsafeSurfaceCacheEntry]) : unit
@@ -1056,28 +1063,29 @@
 (define (selfhost-lint-unsafe-surface-add-local-decls!
   [decls : CompilerLoadSurfaceDeclList]
   [root-module : i64]) : unit
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) unit]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (begin
-        (if (and
-          (= (struct-get decl module) root-module)
-          (not (struct-get decl has-generated-meta))
-          (selfhost-lint-unsafe-surface-value-kind? (struct-get decl kind)))
-          (lint-unused-unsafe-classifier-add-exact-name!
-            (string.copy (intern-str (struct-get decl name)))
-            (struct-get decl was-unsafe))
-          unit)
-        ;; A top-level declaration can shadow an import alias. Only qualified
-        ;; references consult this root blocker, so unqualified local facts
-        ;; remain usable.
-        (if (not (struct-get decl has-generated-meta))
-          (lint-unused-unsafe-classifier-add-unknown-root!
-            (string.copy (intern-str (struct-get decl name))))
-          unit)
-        (selfhost-lint-unsafe-surface-add-local-decls!
-          (box-get rest)
-          root-module))]))
+  (let
+    [index : i64 0]
+    (while (< index (compiler-load-surface-decl-list-count decls))
+      (let
+        [decl : CompilerLoadSurfaceDecl
+          (compiler-load-surface-decl-list-at decls index)]
+        (begin
+          (if (and
+            (= (struct-get decl module) root-module)
+            (not (struct-get decl has-generated-meta))
+            (selfhost-lint-unsafe-surface-value-kind? (struct-get decl kind)))
+            (lint-unused-unsafe-classifier-add-exact-name!
+              (string.copy (intern-str (struct-get decl name)))
+              (struct-get decl was-unsafe))
+            unit)
+          ;; A top-level declaration can shadow an import alias. Only qualified
+          ;; references consult this root blocker, so unqualified local facts
+          ;; remain usable.
+          (if (not (struct-get decl has-generated-meta))
+            (lint-unused-unsafe-classifier-add-unknown-root!
+              (string.copy (intern-str (struct-get decl name))))
+            unit)
+          (set! index (+ index 1)))))))
 
 (define (selfhost-lint-unsafe-surface-resolve-import
   [path : String]
@@ -1102,10 +1110,12 @@
   [stdlib-roots : lint_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [imports : CompilerLoadSurfaceImportList]) : unit
-  (match imports
-    [(CompilerLoadSurfaceImportNil) unit]
-    [(CompilerLoadSurfaceImportCons import-edge rest)
+  (let
+    [index : i64 0]
+    (while (< index (compiler-load-surface-import-list-count imports))
       (let
+        [import-edge : CompilerLoadSurfaceImport
+          (compiler-load-surface-import-list-at imports index)]
         [alias : String (selfhost-lint-unsafe-surface-import-alias import-edge)]
         (begin
           (if (string.eq alias "")
@@ -1122,11 +1132,7 @@
                     (if valid
                       (selfhost-lint-unsafe-surface-add-names! alias names)
                       unit)])]))
-          (selfhost-lint-unsafe-surface-prepare-imports!
-            path
-            stdlib-roots
-            cfgs
-            (box-get rest))))]))
+          (set! index (+ index 1)))))))
 
 (define (selfhost-lint-unsafe-surface-prepare!
   [path : String]

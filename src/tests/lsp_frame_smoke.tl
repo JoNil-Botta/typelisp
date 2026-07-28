@@ -169,6 +169,19 @@
     ""
     ""))
 
+(define (lsp-transcript-did-change
+  [uri : String]
+  [text : String]
+  [version : i64]) : String
+  (lsp-str7
+    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\""
+    uri
+    "\",\"version\":"
+    (string.int->string version)
+    "},\"contentChanges\":[{\"text\":\""
+    text
+    "\"}]}}"))
+
 (define (lsp-transcript-check [uri : String] [id : i64]) : String
   (lsp-str5
     "{\"jsonrpc\":\"2.0\",\"id\":"
@@ -231,6 +244,49 @@
       (=
         (lsp-smoke-count-substring (struct-get result stdout) compiler-source)
         2))))
+
+(define (lsp-multiple-external-diagnostics-smoke-ok?) : bool
+  (let
+    [dir : String "target"]
+    [root-path : String "target/lsp_multi_root.tl"]
+    [dep-a-path : String "target/lsp_multi_dep_a.tl"]
+    [dep-b-path : String "target/lsp_multi_dep_b.tl"]
+    [root-uri : String (lsp-resolved-path-to-file-uri root-path)]
+    [dep-a-uri : String (lsp-resolved-path-to-file-uri dep-a-path)]
+    [dep-b-uri : String (lsp-resolved-path-to-file-uri dep-b-path)]
+    [source : String
+      "(import \\\"lsp_multi_dep_a.tl\\\")\\n(import \\\"lsp_multi_dep_b.tl\\\")\\n(define (main) : i64 0)"]
+    [valid-source : String "(define (main) : i64 0)"]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    (begin
+      (match (fs.try-mkdir-if-missing (& dir))
+        [(io.OkIoUnit) unit]
+        [(io.ErrIoUnit _) unit])
+      (io.write-file dep-a-path "(module dep-a)\n(define broken-a : i64 true)")
+      (io.write-file
+        dep-b-path
+        "(module dep-b)\n(define broken-b : i64 \"bad\")")
+      (let
+        [input : String
+          (string.append
+            (lsp-transcript-frame (lsp-transcript-did-open root-uri source))
+            (string.append
+              (lsp-transcript-frame
+                (lsp-transcript-did-change root-uri valid-source 2))
+              (lsp-transcript-frame exit)))]
+        [result : LspTranscriptResult (lsp-transcript-run input)]
+        [out : String (struct-get result stdout)]
+        [message-a : String
+          "typecheck: value definition type mismatch: expected i64, found bool"]
+        [message-b : String
+          "typecheck: value definition type mismatch: expected i64, found String"]
+        (and
+          (= (struct-get result status) 0)
+          (string.eq (struct-get result stderr) "")
+          (string.contains (& out) (& message-a))
+          (string.contains (& out) (& message-b))
+          (= (lsp-smoke-count-substring out dep-a-uri) 2)
+          (= (lsp-smoke-count-substring out dep-b-uri) 2))))))
 
 (define (lsp-transcript-arena-escape-smoke-ok?) : bool
   (let
@@ -378,17 +434,29 @@
     [uri : String "file:///tmp/cache.tl"]
     [path : String "/tmp/cache.tl"]
     [docs0 : lsp_document_vec.Vec (lsp_document_vec.new)]
-    [docs1 : lsp_document_vec.Vec (lsp-documents-set docs0 uri path "" uri)]
+    [docs1 : lsp_document_vec.Vec
+      (lsp-documents-set docs0 uri path "" (lsp-diagnostic-uri-list-single uri))]
     [doc1 : LspDocument
       (lsp_document_vec.get (& docs1) 0 (lsp-document-fallback))]
     [empty-decls : lsp_decl_vec.Vec (lsp-document-decls doc1 docs1)]
     [cached-empty-doc : LspDocument
       (lsp_document_vec.get (& docs1) 0 (lsp-document-fallback))]
-    [docs2 : lsp_document_vec.Vec (lsp-documents-set docs1 uri path "" "diag")]
+    [docs2 : lsp_document_vec.Vec
+      (lsp-documents-set
+        docs1
+        uri
+        path
+        ""
+        (lsp-diagnostic-uri-list-single "diag"))]
     [same-text-doc : LspDocument
       (lsp_document_vec.get (& docs2) 0 (lsp-document-fallback))]
     [docs3 : lsp_document_vec.Vec
-      (lsp-documents-set docs2 uri path "(define cached : i64 1)" "diag")]
+      (lsp-documents-set
+        docs2
+        uri
+        path
+        "(define cached : i64 1)"
+        (lsp-diagnostic-uri-list-single "diag"))]
     [changed-doc : LspDocument
       (lsp_document_vec.get (& docs3) 0 (lsp-document-fallback))]
     [changed-decls : lsp_decl_vec.Vec (lsp-document-decls changed-doc docs3)]
@@ -421,7 +489,14 @@
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
       (io.write-file path disk-text)
-      (set! docs (lsp-documents-set docs uri path stale-text uri))
+      (set!
+        docs
+        (lsp-documents-set
+          docs
+          uri
+          path
+          stale-text
+          (lsp-diagnostic-uri-list-single uri)))
       (let
         [lookup-ok : bool
           (match (lsp-get-document params docs)
@@ -461,12 +536,22 @@
     [initial : String "(define (main) : i64 1)"]
     [updated : String "(define (main) : i64 42)"]
     [docs : lsp_document_vec.Vec
-      (lsp-documents-set (lsp_document_vec.new) uri path initial uri)]
+      (lsp-documents-set
+        (lsp_document_vec.new)
+        uri
+        path
+        initial
+        (lsp-diagnostic-uri-list-single uri))]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
-      (match (lsp-tl-save-doc docs uri path uri updated)
+      (match (lsp-tl-save-doc
+        docs
+        uri
+        path
+        (lsp-diagnostic-uri-list-single uri)
+        updated)
         [(LspSaveResult.Ok next-docs)
           (let
             [disk-text : String (io.read-file path)]
@@ -865,8 +950,22 @@
       (lsp-position-encoding-use-utf16!)
       (set!
         docs
-        (lsp-documents-set-versioned docs uri-a path-a "λfoo\nx" 7 ""))
-      (set! docs (lsp-documents-set-versioned docs uri-b path-b "q" 9 ""))
+        (lsp-documents-set-versioned
+          docs
+          uri-a
+          path-a
+          "λfoo\nx"
+          7
+          LspDiagnosticUriList.Nil))
+      (set!
+        docs
+        (lsp-documents-set-versioned
+          docs
+          uri-b
+          path-b
+          "q"
+          9
+          LspDiagnosticUriList.Nil))
       (let
         [rendered : String
           (json.stringify (lsp-code-action-workspace-edit docs path-a edits))]
@@ -877,7 +976,12 @@
         [two-a-edits : String
           "\"edits\":[{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":1}},\"newText\":\"y\"},{\"range\":{\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":4}},\"newText\":\"bar\"}]"]
         [unversioned : lsp_document_vec.Vec
-          (lsp-documents-set (lsp_document_vec.new) uri-a path-a "λfoo\nx" "")]
+          (lsp-documents-set
+            (lsp_document_vec.new)
+            uri-a
+            path-a
+            "λfoo\nx"
+            LspDiagnosticUriList.Nil)]
         (and
           (lsp-code-action-all-edits-open? docs path-a edits)
           (not (lsp-code-action-all-edits-open? docs path-a missing-edits))
@@ -987,18 +1091,38 @@
   [uri : String]
   [id : i64]
   [version : i64]
+  [line : i64]
+  [diagnostic-index : i64]
   [only : String]) : String
-  (lsp-str7
-    "{\"jsonrpc\":\"2.0\",\"id\":"
-    (string.int->string id)
-    ",\"method\":\"textDocument/codeAction\",\"params\":{\"textDocument\":{\"uri\":\""
-    uri
-    "\"},\"range\":{\"start\":{\"line\":4,\"character\":3},\"end\":{\"line\":4,\"character\":4}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":4,\"character\":3},\"end\":{\"line\":4,\"character\":4}},\"severity\":1,\"source\":\"typelisp\",\"code\":\"E0201\",\"message\":\"opaque\",\"data\":{\"version\":"
-    (string.int->string version)
-    (lsp-str3
-      ",\"kind\":\"compiler\",\"index\":0}}],\"only\":[\""
-      only
-      "\"]}}}")))
+  (let
+    [line-text : String (string.int->string line)]
+    [range-prefix : String
+      (lsp-str5
+        "\"},\"range\":{\"start\":{\"line\":"
+        line-text
+        ",\"character\":3},\"end\":{\"line\":"
+        line-text
+        ",\"character\":4}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":")]
+    [range-suffix : String
+      (lsp-str5
+        line-text
+        ",\"character\":3},\"end\":{\"line\":"
+        line-text
+        ",\"character\":4}},\"severity\":1,\"source\":\"typelisp\",\"code\":\"E0201\",\"message\":\"opaque\",\"data\":{\"version\":"
+        (string.int->string version))]
+    (lsp-str7
+      "{\"jsonrpc\":\"2.0\",\"id\":"
+      (string.int->string id)
+      ",\"method\":\"textDocument/codeAction\",\"params\":{\"textDocument\":{\"uri\":\""
+      uri
+      range-prefix
+      range-suffix
+      (lsp-str5
+        ",\"kind\":\"compiler\",\"index\":"
+        (string.int->string diagnostic-index)
+        "}}],\"only\":[\""
+        only
+        "\"]}}}"))))
 
 ;; End-to-end dispatch rebuilds a machine-applicable compiler fix, while a
 ;; stale token and a non-quickfix `context.only` both return an empty result.
@@ -1014,13 +1138,13 @@
         (lsp-transcript-frame (lsp-transcript-did-open uri source))
         (string.append
           (lsp-transcript-frame
-            (lsp-transcript-code-action uri 91 1 "quickfix"))
+            (lsp-transcript-code-action uri 91 1 4 0 "quickfix"))
           (string.append
             (lsp-transcript-frame
-              (lsp-transcript-code-action uri 92 0 "quickfix"))
+              (lsp-transcript-code-action uri 92 0 4 0 "quickfix"))
             (string.append
               (lsp-transcript-frame
-                (lsp-transcript-code-action uri 93 1 "refactor"))
+                (lsp-transcript-code-action uri 93 1 4 0 "refactor"))
               (lsp-transcript-frame exit)))))]
     [result : LspTranscriptResult (lsp-transcript-run input)]
     [action : String
@@ -1040,6 +1164,33 @@
       (lsp-transcript-result-contains? result stale)
       (lsp-transcript-result-contains? result filtered)
       (string.contains (& capabilities) (& capability)))))
+
+(define (lsp-second-diagnostic-code-action-smoke-ok?) : bool
+  (let
+    [path : String "target/lsp_second_code_action_doc.tl"]
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [source : String
+      "(define (render-value [value : i64]) : i64\\n  value)\\n\\n(define (first) : i64\\n  (render-vaule 1))\\n\\n(define (second) : i64\\n  (render-vlaue 2))\\n\\n(define (main) : i64 0)"]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [input : String
+      (string.append
+        (lsp-transcript-frame (lsp-transcript-did-open uri source))
+        (string.append
+          (lsp-transcript-frame
+            (lsp-transcript-code-action uri 94 1 7 1 "quickfix"))
+          (lsp-transcript-frame exit)))]
+    [result : LspTranscriptResult (lsp-transcript-run input)]
+    [out : String (struct-get result stdout)]
+    [action : String
+      "\"id\":94,\"result\":[{\"title\":\"Replace misspelled name\",\"kind\":\"quickfix\""]
+    [replacement : String "\"newText\":\"render-value\""]
+    [second-index : String "\"index\":1"]
+    (and
+      (= (struct-get result status) 0)
+      (string.eq (struct-get result stderr) "")
+      (string.contains (& out) (& action))
+      (string.contains (& out) (& replacement))
+      (string.contains (& out) (& second-index)))))
 
 (define (main) : i64
   (let
@@ -1073,9 +1224,11 @@
         (unless (lsp-code-action-workspace-edit-smoke-ok?) (return 33))
         (unless (lsp-code-action-lint-smoke-ok?) (return 34))
         (unless (lsp-code-action-transcript-smoke-ok?) (return 35))
+        (unless (lsp-second-diagnostic-code-action-smoke-ok?) (return 38))
         (unless (lsp-transcript-framing-smoke-ok?) (return 18))
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))
         (unless (lsp-multiple-diagnostics-smoke-ok?) (return 36))
+        (unless (lsp-multiple-external-diagnostics-smoke-ok?) (return 37))
         (unless (lsp-transcript-arena-escape-smoke-ok?) (return 21))
         42))))

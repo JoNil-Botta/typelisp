@@ -12,6 +12,7 @@
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.test)
 
 ;; --- self-test ---------------------------------------------------------------
 (define (compiler-lower-smoke-source) : String
@@ -11135,6 +11136,168 @@
                     (compiler-lower-unsafe-ast-dce-kept-ok? (box-get kept-box))])]))])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-lower-name-env-dense-snapshots-ok?) : bool
+  (let
+    [source-id : i64 (ci.intern-generated-canonical-name "dense-source")]
+    [sibling-id : i64 (ci.intern-generated-canonical-name "dense-sibling")]
+    [overlay-id : i64 (ci.intern-generated-canonical-name "dense-overlay")]
+    [alias-id : i64 (ci.intern-generated-canonical-name "dense-alias")]
+    [base-logical-id : i64
+      (ci.intern-generated-canonical-name "dense-base-logical")]
+    [base-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-base-symbol")]
+    [child-logical-id : i64
+      (ci.intern-generated-canonical-name "dense-child-logical")]
+    [child-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-child-symbol")]
+    [sibling-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-sibling-symbol")]
+    [overlay-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-overlay-symbol")]
+    [right-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-right-symbol")]
+    [left-old-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-left-old-symbol")]
+    [left-new-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-left-new-symbol")]
+    [copy-branch-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-copy-branch-symbol")]
+    [grown-symbol-id : i64
+      (ci.intern-generated-canonical-name "dense-grown-symbol")]
+    [base : LowerNameEnv
+      (lower-name-env-bind-logical-symbol-id
+        source-id
+        base-logical-id
+        base-symbol-id
+        LowerNameEnv.Nil)]
+    [child : LowerNameEnv
+      (lower-name-env-bind-logical-symbol-id
+        source-id
+        child-logical-id
+        child-symbol-id
+        base)]
+    [sibling : LowerNameEnv
+      (lower-name-env-bind-logical-symbol-id
+        sibling-id
+        sibling-id
+        sibling-symbol-id
+        base)]
+    [grown : LowerNameEnv
+      (lower-name-env-bind-logical-symbol-id
+        source-id
+        child-logical-id
+        grown-symbol-id
+        child)]
+    [grow-index : i64 1]
+    [_grow : unit
+      (while (< grow-index 16)
+        (begin
+          (set!
+            grown
+            (lower-name-env-bind-logical-symbol-id
+              source-id
+              child-logical-id
+              grown-symbol-id
+              grown))
+          (set! grow-index (+ grow-index 1))))]
+    [copied : LowerNameEnv (lower-name-env-copy-active child)]
+    [copy-branch : LowerNameEnv
+      (lower-name-env-bind-logical-symbol-id
+        source-id
+        source-id
+        copy-branch-symbol-id
+        copied)]
+    [right : LowerNameEnv
+      (lower-name-env-bind-logical-symbol-id
+        alias-id
+        alias-id
+        right-symbol-id
+        LowerNameEnv.Nil)]
+    [left : LowerNameEnv
+      (lower-name-env-bind-logical-symbol-id
+        alias-id
+        alias-id
+        left-new-symbol-id
+        (lower-name-env-bind-logical-symbol-id
+          alias-id
+          alias-id
+          left-old-symbol-id
+          LowerNameEnv.Nil))]
+    [appended : LowerNameEnv (lower-name-env-append left right)]
+    [previous-global : LowerNameCache lower-active-global-name-cache]
+    [_set-global : unit
+      (set! lower-active-global-name-cache (lower-name-cache-from-env base))]
+    [overlay : LowerNameCache
+      (lower-name-cache-overlay
+        (lower-name-env-bind-logical-symbol-id
+          overlay-id
+          overlay-id
+          overlay-symbol-id
+          LowerNameEnv.Nil)
+        (ci.intern-generated-canonical-name "dense-overlay-module"))]
+    [ok : bool
+      (and
+        (= (lower-name-env-count base) 1)
+        (= (lower-name-env-count child) 2)
+        (= (lower-name-env-count sibling) 2)
+        (= (lower-name-env-count grown) 18)
+        (= (lower-name-env-count copied) 2)
+        (= (lower-name-env-count copy-branch) 3)
+        (= (lower-name-env-count appended) 3)
+        (= (lower-name-env-lookup-symbol-id base source-id -1) base-symbol-id)
+        (= (lower-name-env-lookup-symbol-id child source-id -1) child-symbol-id)
+        (=
+          (lower-name-env-lookup-symbol-id sibling source-id -1)
+          base-symbol-id)
+        (= (lower-name-env-lookup-symbol-id grown source-id -1) grown-symbol-id)
+        (=
+          (lower-name-env-lookup-symbol-id sibling sibling-id -1)
+          sibling-symbol-id)
+        (=
+          (lower-name-env-lookup-symbol-id copied source-id -1)
+          child-symbol-id)
+        (=
+          (lower-name-env-lookup-symbol-id copy-branch source-id -1)
+          copy-branch-symbol-id)
+        (=
+          (lower-name-env-lookup-symbol-id appended alias-id -1)
+          left-new-symbol-id)
+        (= (lower-name-env-lookup-symbol-id right alias-id -1) right-symbol-id)
+        (string.eq
+          (tc-env-key-name-text
+            (lower-name-env-lookup-symbol-id copied source-id -1))
+          (tc-env-key-name-text child-symbol-id))
+        (=
+          (lower-name-cache-lookup-symbol-id (& overlay) overlay-id -1)
+          overlay-symbol-id)
+        (=
+          (lower-name-cache-lookup-symbol-id (& overlay) source-id -1)
+          base-symbol-id)
+        (match (lower-name-env-view child)
+          [(LowerNameEnvView.Bind head-source _ head-symbol rest)
+            (and
+              (= head-source source-id)
+              (= head-symbol child-symbol-id)
+              (match (lower-name-env-view rest)
+                [(LowerNameEnvView.Bind tail-source _ tail-symbol tail)
+                  (and
+                    (= tail-source source-id)
+                    (= tail-symbol base-symbol-id)
+                    (match tail
+                      [(LowerNameEnv.Nil) true]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]
+    (begin
+      (set! lower-active-global-name-cache previous-global)
+      ok)))
+
+(test
+  compiler-lower-name-env-dense-snapshots
+  (test.assert-true
+    (compiler-lower-name-env-dense-snapshots-ok?)
+    "dense lower-name snapshots preserve overlays, append order, and names"))
+
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let
     [source-a-id : i64 (ci.intern-generated-canonical-name "source-a")]
@@ -11289,6 +11452,9 @@
   (let
     [ok : bool true]
     (begin
+      (if (compiler-lower-name-env-dense-snapshots-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-boxed-helper-lists-ok?)
         unit
         (set! ok false))

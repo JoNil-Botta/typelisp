@@ -48152,8 +48152,33 @@
   (Duplicate)
   (Ok opt_string_i64_map.Map))
 
+;; Shape pre-filter for the generic single-block path. It is evaluated on the
+;; callee as it stands at decision time, before GVN and copy propagation clean
+;; the body up, and naive lowering inflates a canonical arithmetic leaf by
+;; roughly half: lex_source's four-parameter `ls-fold` settles at 6
+;; instructions but presents as 9 here. A cap picked against final sizes
+;; therefore refuses exactly the shapes it was meant to admit.
+;;
+;; The growth bound is opt-inline-cost-inline-with-block-weight?, not this cap.
+;; The single-block path passes added-blocks 0, so raw = callee-instrs and
+;; net = callee-instrs - min(callee-instrs, 3 * const-args) - 6, admitted at
+;; net <= 4. With no constant arguments that prices bodies up to 10, so the old
+;; cap of 8 was strictly tighter than the priced bound and refused bodies 9 and
+;; 10 the cost model had already accepted -- at every call site, since the cap
+;; is a property of the callee.
+;;
+;; Past 10 the cost formula stops bounding size at all. const-savings saturates
+;; at raw, so a site whose constant arguments cover the body collapses net to
+;; -6 regardless of how large the body is, and an absorbable single-site callee
+;; subtracts 1000 outright. This cap is the only backstop for those two
+;; branches. 12 keeps it one step past the priced ceiling from both directions:
+;; 12 >= 10 leaves the zero-const-arg decision to the cost model, and 12 = 10+2
+;; caps the unpriced overshoot at two instructions, which is also where a
+;; canonical 8-instruction leaf lands under the same ~1.5x lowering inflation.
+;; Bodies of 13 and up stay refused here even when the cost gate would take
+;; them on constant arguments.
 (define (opt-inline-max-body) : i64
-  8)
+  12)
 
 (define (opt-inline-bounds-leaf-max-body) : i64
   48)
@@ -48346,25 +48371,45 @@
             (or has-bounds (compiler-ir-instr-bounds-check? instr)))
           false)))))
 
+;; The admitted body band is 1..opt-inline-bounds-leaf-max-body. The band used
+;; to start above opt-inline-max-body, which inverted the cost argument: a
+;; 9..48 instruction bounds leaf inlined while a smaller one fell through to
+;; the generic single-block path, where opt-inline-bounds-inline-ok? refuses
+;; every has-bounds callee that is neither absorbable nor called with
+;; all-constant arguments. The smallest bounds leaves have the highest
+;; call-overhead ratio, so they were exactly the wrong class to refuse.
+;;
+;; Duplicating a bounds check is a static cost, not a dynamic one: the check
+;; runs once per call whether it sits in the callee or in the expanded copy, so
+;; the executed check count is unchanged. What disappears is the call boundary
+;; itself -- the argument moves, call, and return, roughly 4-6 executed
+;; instructions per call. Static growth stays bounded by the same
+;; opt-inline-bounds-leaf-cost-inline? admission the 9..48 band uses
+;; (callee-instrs cap, heavy gate, block fuel).
 (define (opt-inline-bounds-leaf-seq-ok? [seq : CompilerIrInstrSeq] [np : i64]) : bool
   (let
     [n : i64 (compiler-ir-instr-seq-count seq)]
     [body : i64 (- n 1)]
     (and
       (>= n 1)
-      (> body (opt-inline-max-body))
+      (>= body 1)
       (<= body (opt-inline-bounds-leaf-max-body))
       (opt-inline-bounds-leaf-instr-seq-ok-from? seq np 0 (- n 1) false))))
 
-;; Return-to-mov cloning preserves non-owning scalar values. Keep owned String
-;; and aggregate results out of this path; their call boundary carries cleanup
-;; semantics that the bounds-leaf expansion does not reproduce.
+;; Return-to-mov cloning rewrites the callee return into a Mov of the returned
+;; value into the call's destination. That reproduces the call boundary exactly
+;; for the non-owning scalars -- integers, Bool, Char, and Unit. Each is a
+;; single-register value the Mov carries under its own declared type, and none
+;; of them owns storage, so retiring the boundary retires nothing else with it.
+;; Owned String and aggregate results stay out of this path; their call boundary
+;; carries cleanup semantics that the bounds-leaf expansion does not reproduce.
 (define (opt-inline-bounds-leaf-return-type? [ty : AstType]) : bool
   (if (opt-integer-type? ty)
     true
     (match ty
       [(AstType.Unit) true]
       [(AstType.Bool) true]
+      [(AstType.Char) true]
       [_ false])))
 
 (define (opt-inline-bounds-leaf-ok?

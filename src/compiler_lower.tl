@@ -21,11 +21,242 @@
 (cfg compile-profile (import stdlib.profile))
 (import sym_i64_env)
 
-(defenum LowerNameEnv
-  (Nil)
+(defstruct LowerNameBinding
   ;; Source/logical identities and the renderable logical symbol. Spellings are
   ;; owned once by the active interner and recovered only when emitted.
-  (Bind i64 i64 i64 (Box LowerNameEnv)))
+  (source-id i64)
+  (logical-id i64)
+  (symbol-id i64)
+  (parent i64))
+
+(defstruct LowerNameFlatBinding
+  (source-id i64)
+  (logical-id i64)
+  (symbol-id i64))
+
+;; Bindings are append-only in fixed segments. Parent indices span the segments;
+;; growing the small segment directory never relocates a binding. A snapshot is
+;; just a shared store plus an independent head/count pair, so extending a child
+;; cannot change its parent.
+(defstruct LowerNameStore
+  (segments (Array (Array LowerNameBinding)))
+  (segment-count i64)
+  (len i64)
+  (arena i64))
+
+(defenum LowerNameEnv
+  (Nil)
+  (Inline i64 i64 i64)
+  (Dense (Box LowerNameStore) i64 i64))
+
+(defenum LowerNameEnvView
+  (Nil)
+  (Bind i64 i64 i64 LowerNameEnv))
+
+(define (lower-name-arena-owner-root [handle : i64]) : i64
+  (if (= handle 0)
+    0
+    (let
+      [root : i64
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+      (if (= root 0)
+        handle
+        root))))
+
+(define (lower-name-arena-owner-current-head [handle : i64]) : i64
+  (let
+    [root : i64 (lower-name-arena-owner-root handle)]
+    (if (= root 0)
+      0
+      (let
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (if (= head 0)
+          root
+          head)))))
+
+(define (lower-name-arena-restore-after-owner-alloc!
+  [previous-arena : i64]
+  [owner : i64]) : unit
+  ;; If the caller was already in this owner, allocation may have advanced its
+  ;; head and that new head must remain active. Otherwise resume the unrelated
+  ;; caller owner at its own current head.
+  (if (=
+    (lower-name-arena-owner-root previous-arena)
+    (lower-name-arena-owner-root owner))
+    unit
+    (unsafe
+      (arena.tl_arena_set (lower-name-arena-owner-current-head previous-arena)))))
+
+(define (lower-name-store-new) : LowerNameStore
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        compiler-lower-profile-name-env-stores
+        (+ compiler-lower-profile-name-env-stores 1)))
+    (let
+      [segments : (Array (Array LowerNameBinding))
+        (make-array (Array LowerNameBinding) 4)]
+      [first : (Array LowerNameBinding) (make-array LowerNameBinding 16)]
+      [owner : i64 (lower-name-arena-owner-root (arena.tl_arena_current))]
+      (begin
+        (array-set! segments 0 first)
+        (LowerNameStore segments 1 0 owner)))))
+
+(define (lower-name-store-segments-copy-range!
+  [dst : (&mut dst (Array (Array LowerNameBinding)))]
+  [src : (& src (Array (Array LowerNameBinding)))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (lower-name-store-add-segment! [store : (&mut store LowerNameStore)]) : unit
+  (let
+    [count : i64 (struct-get store segment-count)]
+    [capacity : i64 (array-length (struct-get store segments))]
+    [owner : i64 (struct-get store arena)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (cfg
+        compile-profile
+        (set!
+          compiler-lower-profile-name-env-store-grows
+          (+ compiler-lower-profile-name-env-store-grows 1)))
+      (unsafe
+        (arena.tl_arena_set (lower-name-arena-owner-current-head owner)))
+      (if (< count capacity)
+        unit
+        (let
+          [bigger : (Array (Array LowerNameBinding))
+            (make-array
+              (Array LowerNameBinding)
+              (if (< capacity 1)
+                4
+                (* capacity 2)))]
+          (begin
+            (lower-name-store-segments-copy-range!
+              (&mut bigger)
+              (& (struct-get store segments))
+              count)
+            (set! (struct-get store segments) bigger))))
+      (array-set!
+        (struct-get store segments)
+        count
+        (make-array LowerNameBinding 16))
+      (set! (struct-get store segment-count) (+ count 1))
+      (lower-name-arena-restore-after-owner-alloc! previous-arena owner))))
+
+(define (lower-name-store-ensure-index!
+  [store : (&mut store LowerNameStore)]
+  [index : i64]) : unit
+  (let
+    [segment-index : i64 (/ index 16)]
+    (while (>= segment-index (struct-get store segment-count))
+      (lower-name-store-add-segment! store))))
+
+(define (lower-name-store-write-index!
+  [store : (&mut store LowerNameStore)]
+  [index : i64]
+  [binding : LowerNameBinding]) : unit
+  (let
+    [segment-index : i64 (/ index 16)]
+    [offset : i64 (- index (* segment-index 16))]
+    [segment : (Array LowerNameBinding)
+      (array-ref (struct-get store segments) segment-index)]
+    (array-set! segment offset binding)))
+
+(define (lower-name-store-binding-at
+  [store : (& store LowerNameStore)]
+  [index : i64]) : LowerNameBinding
+  ;; Every index comes from a successful push or a checked materialization.
+  ;; The raw read avoids repeating a dynamic bounds check on each parent hop.
+  (let
+    [segment-index : i64 (/ index 16)]
+    [offset : i64 (- index (* segment-index 16))]
+    [segment : (Array LowerNameBinding)
+      (array-ref (struct-get store segments) segment-index)]
+    (unsafe
+      (ptr-read (ptr-offset (array-data segment) offset)))))
+
+(define (lower-name-store-push!
+  [store : (&mut store LowerNameStore)]
+  [binding : LowerNameBinding]) : i64
+  (let
+    [index : i64 (struct-get store len)]
+    (begin
+      (lower-name-store-ensure-index! store index)
+      (lower-name-store-write-index! store index binding)
+      (set! (struct-get store len) (+ index 1))
+      index)))
+
+(define (lower-name-env-bind-ids-raw
+  [source-id : i64]
+  [logical-id : i64]
+  [symbol-id : i64]
+  [rest : LowerNameEnv]) : LowerNameEnv
+  (match rest
+    [(LowerNameEnv.Nil) (LowerNameEnv.Inline source-id logical-id symbol-id)]
+    [(LowerNameEnv.Inline parent-source-id parent-logical-id parent-symbol-id)
+      (let
+        [store : (Box LowerNameStore) (box (lower-name-store-new))]
+        [parent : i64
+          (lower-name-store-push!
+            (&mut (box-get store))
+            (LowerNameBinding
+              parent-source-id
+              parent-logical-id
+              parent-symbol-id
+              -1))]
+        [head : i64
+          (lower-name-store-push!
+            (&mut (box-get store))
+            (LowerNameBinding source-id logical-id symbol-id parent))]
+        (LowerNameEnv.Dense store head 2))]
+    [(LowerNameEnv.Dense store parent count)
+      (let
+        [head : i64
+          (lower-name-store-push!
+            (&mut (box-get store))
+            (LowerNameBinding source-id logical-id symbol-id parent))]
+        (LowerNameEnv.Dense store head (+ count 1)))]))
+
+(define (lower-name-env-bind-ids
+  [source-id : i64]
+  [logical-id : i64]
+  [symbol-id : i64]
+  [rest : LowerNameEnv]) : LowerNameEnv
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        compiler-lower-profile-name-env-binds
+        (+ compiler-lower-profile-name-env-binds 1)))
+    (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest)))
+
+(define (lower-name-env-view [names : LowerNameEnv]) : LowerNameEnvView
+  (match names
+    [(LowerNameEnv.Nil) LowerNameEnvView.Nil]
+    [(LowerNameEnv.Inline source-id logical-id symbol-id)
+      (LowerNameEnvView.Bind source-id logical-id symbol-id LowerNameEnv.Nil)]
+    [(LowerNameEnv.Dense store head count)
+      (let
+        [binding : LowerNameBinding
+          (lower-name-store-binding-at (& (box-get store)) head)]
+        [parent : i64 (struct-get binding parent)]
+        (LowerNameEnvView.Bind
+          (struct-get binding source-id)
+          (struct-get binding logical-id)
+          (struct-get binding symbol-id)
+          (if (< parent 0)
+            LowerNameEnv.Nil
+            (LowerNameEnv.Dense store parent (- count 1)))))]))
 
 ;; Like LowerTypeCache, a LowerNameCache carries a `parent` marker.
 ;; `LowerNameParent.None` is a complete cache (a miss returns the source name
@@ -858,12 +1089,9 @@
 (define (lower-name-env-copy-active [names : LowerNameEnv]) : LowerNameEnv
   (match names
     [(LowerNameEnv.Nil) LowerNameEnv.Nil]
-    [(LowerNameEnv.Bind source-id logical-id symbol-id rest)
-      (LowerNameEnv.Bind
-        source-id
-        logical-id
-        symbol-id
-        (box (lower-name-env-copy-active (box-get rest))))]))
+    [(LowerNameEnv.Inline source-id logical-id symbol-id)
+      (LowerNameEnv.Inline source-id logical-id symbol-id)]
+    [_ (lower-name-env-materialize-two names LowerNameEnv.Nil)]))
 
 (define (lower-name-env-copy-into-pools
   [names : LowerNameEnv]
@@ -1023,6 +1251,54 @@
 (cfg
   compile-profile
   (define compiler-lower-profile-string-concat-runtime-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-env-binds : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-env-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-env-lookup-steps : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-env-stores : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-env-store-grows : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-env-materializations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-env-materialized-entries : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-cache-builds : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-cache-entries : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-cache-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-cache-local-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-name-cache-local-misses : i64
     0))
 
 (define (lower-test-generated-name-id [value : String]) : i64
@@ -1216,6 +1492,79 @@
       (compiler-lower-profile-counter
         "string_concat.runtime_calls"
         compiler-lower-profile-string-concat-runtime-calls))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-name-reset) : unit
+    (begin
+      (set! compiler-lower-profile-name-env-binds 0)
+      (set! compiler-lower-profile-name-env-lookups 0)
+      (set! compiler-lower-profile-name-env-lookup-steps 0)
+      (set! compiler-lower-profile-name-env-stores 0)
+      (set! compiler-lower-profile-name-env-store-grows 0)
+      (set! compiler-lower-profile-name-env-materializations 0)
+      (set! compiler-lower-profile-name-env-materialized-entries 0)
+      (set! compiler-lower-profile-name-cache-builds 0)
+      (set! compiler-lower-profile-name-cache-entries 0)
+      (set! compiler-lower-profile-name-cache-lookups 0)
+      (set! compiler-lower-profile-name-cache-local-hits 0)
+      (set! compiler-lower-profile-name-cache-local-misses 0))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-name-finish) : unit
+    (begin
+      (compiler-lower-profile-counter
+        "name_env.binds"
+        compiler-lower-profile-name-env-binds)
+      (compiler-lower-profile-counter
+        "name_env.lookups"
+        compiler-lower-profile-name-env-lookups)
+      (compiler-lower-profile-counter
+        "name_env.lookup_steps"
+        compiler-lower-profile-name-env-lookup-steps)
+      (compiler-lower-profile-counter
+        "name_env.stores"
+        compiler-lower-profile-name-env-stores)
+      (compiler-lower-profile-counter
+        "name_env.store_grows"
+        compiler-lower-profile-name-env-store-grows)
+      (compiler-lower-profile-counter
+        "name_env.materializations"
+        compiler-lower-profile-name-env-materializations)
+      (compiler-lower-profile-counter
+        "name_env.materialized_entries"
+        compiler-lower-profile-name-env-materialized-entries)
+      (compiler-lower-profile-counter
+        "name_cache.builds"
+        compiler-lower-profile-name-cache-builds)
+      (compiler-lower-profile-counter
+        "name_cache.entries"
+        compiler-lower-profile-name-cache-entries)
+      (compiler-lower-profile-counter
+        "name_cache.lookups"
+        compiler-lower-profile-name-cache-lookups)
+      (compiler-lower-profile-counter
+        "name_cache.local_hits"
+        compiler-lower-profile-name-cache-local-hits)
+      (compiler-lower-profile-counter
+        "name_cache.local_misses"
+        compiler-lower-profile-name-cache-local-misses))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-name-cache-lookup [hit : bool]) : unit
+    (begin
+      (set!
+        compiler-lower-profile-name-cache-lookups
+        (+ compiler-lower-profile-name-cache-lookups 1))
+      (if hit
+        (set!
+          compiler-lower-profile-name-cache-local-hits
+          (+ compiler-lower-profile-name-cache-local-hits 1))
+        (set!
+          compiler-lower-profile-name-cache-local-misses
+          (+ compiler-lower-profile-name-cache-local-misses 1))))))
 
 (cfg
   compile-profile
@@ -1544,25 +1893,44 @@
   [names : LowerNameEnv]
   [source-id : i64]
   [fallback : i64]) : i64
-  (let
-    [cur : LowerNameEnv names]
-    [result : i64 fallback]
-    [done : bool false]
-    (begin
-      (while (and
-        (not done)
-        (match cur
-          [(LowerNameEnv.Nil) false]
-          [_ true]))
-        (match cur
-          [(LowerNameEnv.Nil) unit]
-          [(LowerNameEnv.Bind bind-id _ symbol-id rest)
-            (if (and (>= source-id 0) (= bind-id source-id))
-              (begin
-                (set! result symbol-id)
-                (set! done true))
-              (set! cur (box-get rest)))]))
-      result)))
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        compiler-lower-profile-name-env-lookups
+        (+ compiler-lower-profile-name-env-lookups 1)))
+    (if (< source-id 0)
+      fallback
+      (match names
+        [(LowerNameEnv.Nil) fallback]
+        [(LowerNameEnv.Inline bind-id _ symbol-id)
+          (begin
+            (cfg
+              compile-profile
+              (set!
+                compiler-lower-profile-name-env-lookup-steps
+                (+ compiler-lower-profile-name-env-lookup-steps 1)))
+            (if (= bind-id source-id)
+              symbol-id
+              fallback))]
+        [(LowerNameEnv.Dense store head _)
+          (let
+            [cursor : i64 head]
+            (begin
+              (while (>= cursor 0)
+                (let
+                  [binding : LowerNameBinding
+                    (lower-name-store-binding-at (& (box-get store)) cursor)]
+                  (begin
+                    (cfg
+                      compile-profile
+                      (set!
+                        compiler-lower-profile-name-env-lookup-steps
+                        (+ compiler-lower-profile-name-env-lookup-steps 1)))
+                    (if (= (struct-get binding source-id) source-id)
+                      (return (struct-get binding symbol-id))
+                      (set! cursor (struct-get binding parent))))))
+              fallback))]))))
 
 (define (lower-name-env-lookup-with-id [names : LowerNameEnv] [source-id : i64]) : TcMaybeString
   (let
@@ -1580,55 +1948,127 @@
     [(TcMaybeString.No) source-name]))
 
 (define (lower-name-env-count [names : LowerNameEnv]) : i64
-  (let
-    [cur : LowerNameEnv names]
-    [count : i64 0]
-    (begin
-      (while (match cur
-        [(LowerNameEnv.Nil) false]
-        [_ true])
-        (match cur
-          [(LowerNameEnv.Nil) unit]
-          [(LowerNameEnv.Bind _ _ _ rest)
-            (begin
-              (set! count (+ count 1))
-              (set! cur (box-get rest)))]))
-      count)))
+  (match names
+    [(LowerNameEnv.Nil) 0]
+    [(LowerNameEnv.Inline _ _ _) 1]
+    [(LowerNameEnv.Dense _ _ count) count]))
 
-(define (lower-name-env-append [left : LowerNameEnv] [right : LowerNameEnv]) : LowerNameEnv
+(define (lower-name-env-copy-chain-into!
+  [names : LowerNameEnv]
+  [target : (&mut target LowerNameStore)]
+  [start : i64]) : unit
+  (match names
+    [(LowerNameEnv.Nil) unit]
+    [(LowerNameEnv.Inline source-id logical-id symbol-id)
+      (lower-name-store-write-index!
+        target
+        start
+        (LowerNameBinding source-id logical-id symbol-id (- start 1)))]
+    [(LowerNameEnv.Dense store head count)
+      (let
+        [cursor : i64 head]
+        [write : i64 (+ start (- count 1))]
+        (while (>= cursor 0)
+          (let
+            [binding : LowerNameBinding
+              (lower-name-store-binding-at (& (box-get store)) cursor)]
+            (begin
+              (lower-name-store-write-index!
+                target
+                write
+                (LowerNameBinding
+                  (struct-get binding source-id)
+                  (struct-get binding logical-id)
+                  (struct-get binding symbol-id)
+                  (- write 1)))
+              (set! cursor (struct-get binding parent))
+              (set! write (- write 1))))))]))
+
+(define (lower-name-env-materialize-two
+  [left : LowerNameEnv]
+  [right : LowerNameEnv]) : LowerNameEnv
   (let
+    [left-count : i64 (lower-name-env-count left)]
+    [right-count : i64 (lower-name-env-count right)]
+    [count : i64 (+ left-count right-count)]
+    (if (< count 1)
+      LowerNameEnv.Nil
+      (let
+        [_profile : unit
+          (cfg
+            compile-profile
+            (begin
+              (set!
+                compiler-lower-profile-name-env-materializations
+                (+ compiler-lower-profile-name-env-materializations 1))
+              (set!
+                compiler-lower-profile-name-env-materialized-entries
+                (+ compiler-lower-profile-name-env-materialized-entries count))))]
+        [last-index : i64
+          (if (< count 1)
+            0
+            (- count 1))]
+        [store : (Box LowerNameStore) (box (lower-name-store-new))]
+        [_ensure : unit
+          (lower-name-store-ensure-index! (&mut (box-get store)) last-index)]
+        [_copy-right : unit
+          (lower-name-env-copy-chain-into! right (&mut (box-get store)) 0)]
+        [_copy-left : unit
+          (lower-name-env-copy-chain-into!
+            left
+            (&mut (box-get store))
+            right-count)]
+        (begin
+          (set! (struct-get (box-get store) len) count)
+          (LowerNameEnv.Dense store (- count 1) count))))))
+
+(define (lower-name-env-rebuild-over
+  [left : LowerNameEnv]
+  [right : LowerNameEnv]) : LowerNameEnv
+  (let
+    [count : i64 (lower-name-env-count left)]
     [cur : LowerNameEnv left]
-    [reversed : LowerNameEnv LowerNameEnv.Nil]
+    [bindings : (Array LowerNameFlatBinding)
+      (make-array LowerNameFlatBinding count)]
+    [index : i64 0]
     [out : LowerNameEnv right]
     (begin
       (while (match cur
         [(LowerNameEnv.Nil) false]
         [_ true])
-        (match cur
-          [(LowerNameEnv.Nil) unit]
-          [(LowerNameEnv.Bind source-id logical-id symbol-id rest)
+        (match (lower-name-env-view cur)
+          [(LowerNameEnvView.Nil) unit]
+          [(LowerNameEnvView.Bind source-id logical-id symbol-id rest)
             (begin
-              (set!
-                reversed
-                (LowerNameEnv.Bind
-                  source-id
-                  logical-id
-                  symbol-id
-                  (box reversed)))
-              (set! cur (box-get rest)))]))
-      (set! cur reversed)
-      (while (match cur
-        [(LowerNameEnv.Nil) false]
-        [_ true])
-        (match cur
-          [(LowerNameEnv.Nil) unit]
-          [(LowerNameEnv.Bind source-id logical-id symbol-id rest)
-            (begin
-              (set!
-                out
-                (LowerNameEnv.Bind source-id logical-id symbol-id (box out)))
-              (set! cur (box-get rest)))]))
+              (array-set!
+                bindings
+                index
+                (LowerNameFlatBinding source-id logical-id symbol-id))
+              (set! index (+ index 1))
+              (set! cur rest))]))
+      (set! index (- count 1))
+      (while (>= index 0)
+        (let
+          [binding : LowerNameFlatBinding (array-ref bindings index)]
+          (begin
+            (set!
+              out
+              (lower-name-env-bind-ids-raw
+                (struct-get binding source-id)
+                (struct-get binding logical-id)
+                (struct-get binding symbol-id)
+                out))
+            (set! index (- index 1)))))
       out)))
+
+(define (lower-name-env-append [left : LowerNameEnv] [right : LowerNameEnv]) : LowerNameEnv
+  (match left
+    [(LowerNameEnv.Nil) right]
+    [_
+      (match right
+        [(LowerNameEnv.Nil)
+          (lower-name-env-materialize-two left LowerNameEnv.Nil)]
+        [_ (lower-name-env-rebuild-over left right)])]))
 
 (define (lower-name-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -1726,18 +2166,18 @@
   [logical-name : String]
   [logical-id : i64]
   [rest : LowerNameEnv]) : LowerNameEnv
-  (LowerNameEnv.Bind
+  (lower-name-env-bind-ids
     source-id
     logical-id
     (lower-derived-symbol-id logical-name)
-    (box rest)))
+    rest))
 
 (define (lower-name-env-bind-logical-symbol-id
   [source-id : i64]
   [logical-id : i64]
   [symbol-id : i64]
   [rest : LowerNameEnv]) : LowerNameEnv
-  (LowerNameEnv.Bind source-id logical-id symbol-id (box rest)))
+  (lower-name-env-bind-ids source-id logical-id symbol-id rest))
 
 (define (lower-name-env-bind-cached-logical-id
   [source-id : i64]
@@ -1805,6 +2245,11 @@
                           logical-id
                           -1)]))))]
             (begin
+              (cfg
+                compile-profile
+                (set!
+                  compiler-lower-profile-name-cache-entries
+                  (+ compiler-lower-profile-name-cache-entries 1)))
               (when (< symbol-id 0) (set! symbol-id fallback-symbol-id))
               (array-set! logical-ids next logical-id)
               (array-set! symbol-ids next symbol-id)
@@ -1838,48 +2283,60 @@
       (while (match cur
         [(LowerNameEnv.Nil) false]
         [_ true])
-        (match cur
-          [(LowerNameEnv.Nil) unit]
-          [(LowerNameEnv.Bind source-id logical-id symbol-id rest)
+        (match (lower-name-env-view cur)
+          [(LowerNameEnvView.Nil) unit]
+          [(LowerNameEnvView.Bind source-id logical-id symbol-id rest)
             (begin
               (set!
                 out
                 (lower-name-cache-add-id out source-id logical-id symbol-id))
-              (set! cur (box-get rest)))]))
+              (set! cur rest))]))
       out)))
 
 (define (lower-name-cache-from-env [names : LowerNameEnv]) : LowerNameCache
-  (let
-    [count : i64 (lower-name-env-count names)]
-    (lower-name-cache-from-env-into
-      names
-      (LowerNameCache
-        (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
-        (make-array i64 count)
-        (make-array i64 count)
-        (lower_i64_i64_map.with-capacity 64)
-        (lower-module-path-index-empty)
-        (CloneNameList.Nil)
-        cbi.compiler-builtin-id-fix-empty
-        (LowerNameParent.None)))))
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        compiler-lower-profile-name-cache-builds
+        (+ compiler-lower-profile-name-cache-builds 1)))
+    (let
+      [count : i64 (lower-name-env-count names)]
+      (lower-name-cache-from-env-into
+        names
+        (LowerNameCache
+          (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
+          (make-array i64 count)
+          (make-array i64 count)
+          (lower_i64_i64_map.with-capacity 64)
+          (lower-module-path-index-empty)
+          (CloneNameList.Nil)
+          cbi.compiler-builtin-id-fix-empty
+          (LowerNameParent.None))))))
 
 ;; Build a small overlay name cache from `names` (the module-local names
 ;; only). On a miss it falls through to the shared global cache
 ;; `lower-active-global-name-cache` (see lower-name-cache-resolve-logical-id).
 (define (lower-name-cache-overlay [names : LowerNameEnv] [module-id : i64]) : LowerNameCache
-  (let
-    [count : i64 (lower-name-env-count names)]
-    (lower-name-cache-from-env-into
-      names
-      (LowerNameCache
-        (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
-        (make-array i64 count)
-        (make-array i64 count)
-        (lower_i64_i64_map.with-capacity 16)
-        (lower-module-path-index-empty)
-        (CloneNameList.Nil)
-        module-id
-        (LowerNameParent.Global)))))
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        compiler-lower-profile-name-cache-builds
+        (+ compiler-lower-profile-name-cache-builds 1)))
+    (let
+      [count : i64 (lower-name-env-count names)]
+      (lower-name-cache-from-env-into
+        names
+        (LowerNameCache
+          (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
+          (make-array i64 count)
+          (make-array i64 count)
+          (lower_i64_i64_map.with-capacity 16)
+          (lower-module-path-index-empty)
+          (CloneNameList.Nil)
+          module-id
+          (LowerNameParent.Global))))))
 
 (define (lower-name-cache-with-module-id
   [cache : LowerNameCache]
@@ -1949,13 +2406,19 @@
   (let
     [index : i64
       (lower_i64_i64_map.get-value-or (& (struct-get cache ids)) source-id -1)]
-    (if (>= index 0)
-      (TcMaybeString.Some
-        (tc-env-key-name-text (array-ref (struct-get cache symbol-ids) index)))
-      (match (struct-get cache parent)
-        [(LowerNameParent.None) (TcMaybeString.No)]
-        [(LowerNameParent.Global)
-          (lower-name-cache-lookup-id lower-active-global-name-cache source-id)]))))
+    (begin
+      (cfg
+        compile-profile
+        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+      (if (>= index 0)
+        (TcMaybeString.Some
+          (tc-env-key-name-text (array-ref (struct-get cache symbol-ids) index)))
+        (match (struct-get cache parent)
+          [(LowerNameParent.None) (TcMaybeString.No)]
+          [(LowerNameParent.Global)
+            (lower-name-cache-lookup-id
+              lower-active-global-name-cache
+              source-id)])))))
 
 (define (lower-name-cache-lookup-logical-id
   [cache : (& cache LowerNameCache)]
@@ -1964,15 +2427,19 @@
   (let
     [index : i64
       (lower_i64_i64_map.get-value-or (& (struct-get cache ids)) source-id -1)]
-    (if (>= index 0)
-      (array-ref (struct-get cache logical-ids) index)
-      (match (struct-get cache parent)
-        [(LowerNameParent.None) fallback]
-        [(LowerNameParent.Global)
-          (lower-name-cache-lookup-logical-id
-            (& lower-active-global-name-cache)
-            source-id
-            fallback)]))))
+    (begin
+      (cfg
+        compile-profile
+        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+      (if (>= index 0)
+        (array-ref (struct-get cache logical-ids) index)
+        (match (struct-get cache parent)
+          [(LowerNameParent.None) fallback]
+          [(LowerNameParent.Global)
+            (lower-name-cache-lookup-logical-id
+              (& lower-active-global-name-cache)
+              source-id
+              fallback)])))))
 
 (define (lower-name-cache-lookup-symbol-id
   [cache : (& cache LowerNameCache)]
@@ -1981,23 +2448,27 @@
   (let
     [index : i64
       (lower_i64_i64_map.get-value-or (& (struct-get cache ids)) source-id -1)]
-    (if (>= index 0)
-      (array-ref (struct-get cache symbol-ids) index)
-      (let
-        [symbol-id : i64
-          (lower_i64_i64_map.get-value-or
-            (& (struct-get cache logical-symbols))
-            source-id
-            -1)]
-        (if (>= symbol-id 0)
-          symbol-id
-          (match (struct-get cache parent)
-            [(LowerNameParent.None) fallback]
-            [(LowerNameParent.Global)
-              (lower-name-cache-lookup-symbol-id
-                (& lower-active-global-name-cache)
-                source-id
-                fallback)]))))))
+    (begin
+      (cfg
+        compile-profile
+        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+      (if (>= index 0)
+        (array-ref (struct-get cache symbol-ids) index)
+        (let
+          [symbol-id : i64
+            (lower_i64_i64_map.get-value-or
+              (& (struct-get cache logical-symbols))
+              source-id
+              -1)]
+          (if (>= symbol-id 0)
+            symbol-id
+            (match (struct-get cache parent)
+              [(LowerNameParent.None) fallback]
+              [(LowerNameParent.Global)
+                (lower-name-cache-lookup-symbol-id
+                  (& lower-active-global-name-cache)
+                  source-id
+                  fallback)])))))))
 
 (define (lower-module-path-index-resolve-logical-id
   [cache : (& cache LowerNameCache)]
@@ -2557,9 +3028,9 @@
       (while (match cur
         [(LowerNameEnv.Nil) false]
         [_ true])
-        (match cur
-          [(LowerNameEnv.Nil) unit]
-          [(LowerNameEnv.Bind bind-id _ _ rest)
+        (match (lower-name-env-view cur)
+          [(LowerNameEnvView.Nil) unit]
+          [(LowerNameEnvView.Bind bind-id _ _ rest)
             (begin
               (if (< bind-id 0)
                 (set! lower-alias-overlay-valid false)
@@ -2567,7 +3038,7 @@
                   (&mut lower-alias-overlay-ids)
                   bind-id
                   1))
-              (set! cur (box-get rest)))])))))
+              (set! cur rest))])))))
 
 (define (lower-name-env-add-alias-if-free-id
   [names : LowerNameEnv]
@@ -2876,13 +3347,13 @@
     [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
     [symbol-id : i64
       (lower-extern-logical-symbol-id logical-id source-name source-id metadata)]
-    (LowerNameEnv.Bind
+    (lower-name-env-bind-ids
       (if (compiler-symbol-root-module-id? module-id)
         source-id
         logical-id)
       logical-id
       symbol-id
-      (box names))))
+      names)))
 
 (define (lower-name-env-add-struct-cleanup-in-module
   [names : LowerNameEnv]
@@ -3931,10 +4402,10 @@
   (match (lower-decl-lexical-binding-id decl)
     [(LowerNameCacheMaybeId.No) names]
     [(LowerNameCacheMaybeId.Some source-id)
-      (match names
-        [(LowerNameEnv.Bind _ logical-id symbol-id _)
-          (LowerNameEnv.Bind source-id logical-id symbol-id (box names))]
-        [(LowerNameEnv.Nil) names])]))
+      (match (lower-name-env-view names)
+        [(LowerNameEnvView.Bind _ logical-id symbol-id _)
+          (lower-name-env-bind-ids source-id logical-id symbol-id names)]
+        [(LowerNameEnvView.Nil) names])]))
 
 (define (lower-name-env-from-decls
   [decls : AstDeclList]
@@ -4980,11 +5451,11 @@
               (struct-get name-cache module-id)
               name))]
         [logical-name : String (compiler-symbol-module-key module name-str)]
-        (LowerNameEnv.Bind
+        (lower-name-env-bind-ids
           name
           logical-id
           (lower-derived-symbol-id logical-name)
-          (box names)))]
+          names))]
     [(AstDecl.DefEnum decl-meta _ cleanup _)
       (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
     [(AstDecl.DefEnumLifetimes decl-meta _ _ cleanup _)
@@ -12032,50 +12503,74 @@
   [fields : TcInlineFieldLayoutList]
   [word-index : i64]
   [current : AstType]) : AstType
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) current]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (lower-register-struct-word-type-fields
-        (box-get rest)
+  (lower-register-struct-word-type-fields-at fields word-index current 0))
+
+(define (lower-register-struct-word-type-fields-at
+  [fields : TcInlineFieldLayoutList]
+  [word-index : i64]
+  [current : AstType]
+  [index : i64]) : AstType
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    current
+    (let
+      [field : TcInlineFieldLayout
+        (tc-inline-field-layout-list-ref fields index)]
+      (lower-register-struct-word-type-fields-at
+        fields
         word-index
         (lower-register-word-type-merge
           current
           (tc-inline-field-layout-type field)
           (tc-inline-field-layout-offset field)
-          word-index))]))
+          word-index)
+        (+ index 1)))))
 
 (define (lower-register-payload-word-type-fields
   [payloads : TcInlinePayloadLayoutList]
   [word-index : i64]
   [current : AstType]) : AstType
-  (match payloads
-    [(TcInlinePayloadLayoutList.Nil) current]
-    [(TcInlinePayloadLayoutList.Cons payload rest)
-      (lower-register-payload-word-type-fields
-        (box-get rest)
+  (lower-register-payload-word-type-fields-at payloads word-index current 0))
+
+(define (lower-register-payload-word-type-fields-at
+  [payloads : TcInlinePayloadLayoutList]
+  [word-index : i64]
+  [current : AstType]
+  [index : i64]) : AstType
+  (if (>= index (tc-inline-payload-layout-list-count payloads))
+    current
+    (let
+      [payload : TcInlinePayloadLayout
+        (tc-inline-payload-layout-list-ref payloads index)]
+      (lower-register-payload-word-type-fields-at
+        payloads
         word-index
         (lower-register-word-type-merge
           current
           (tc-inline-payload-layout-type payload)
           (tc-inline-payload-layout-offset payload)
-          word-index))]))
+          word-index)
+        (+ index 1)))))
 
 (define (lower-register-enum-word-type-variants
   [variants : TcInlineVariantLayoutList]
   [word-index : i64]
   [current : AstType]) : AstType
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) current]
-    [(TcInlineVariantLayoutList.Cons variant rest)
-      (match variant
-        [(TcInlineVariantLayout.Variant _ _ _ payloads)
-          (lower-register-enum-word-type-variants
-            (box-get rest)
-            word-index
-            (lower-register-payload-word-type-fields
-              payloads
-              word-index
-              current))])]))
+  (lower-register-enum-word-type-variants-at variants word-index current 0))
+
+(define (lower-register-enum-word-type-variants-at
+  [variants : TcInlineVariantLayoutList]
+  [word-index : i64]
+  [current : AstType]
+  [index : i64]) : AstType
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    current
+    (match (tc-inline-variant-layout-list-ref variants index)
+      [(TcInlineVariantLayout.Variant _ _ _ payloads)
+        (lower-register-enum-word-type-variants-at
+          variants
+          word-index
+          (lower-register-payload-word-type-fields payloads word-index current)
+          (+ index 1))])))
 
 ;; Register-resident aggregate word type for lowering/backend movement. INTEGER
 ;; words are represented as i64 bit words; SSE eightbytes are represented by f64
@@ -14517,45 +15012,53 @@
   [base : CompilerIrValue]
   [values : CompilerIrValueList]
   [fields : TcReprCFieldLayoutList]) : ResultLowerState
+  (lower-store-repr-c-values-at ctx state base values fields 0))
+
+(define (lower-store-repr-c-values-at
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [fields : TcReprCFieldLayoutList]
+  [field-index : i64]) : ResultLowerState
   (match values
     [(CompilerIrValueList.Nil)
-      (match fields
-        [(TcReprCFieldLayoutList.Nil) (ResultLowerState.Ok state)]
-        [_
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+      (if (= field-index (tc-repr-c-field-layout-list-count fields))
+        (ResultLowerState.Ok state)
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch"))))]
     [(CompilerIrValueList.Array seq)
-      (lower-store-repr-c-values
+      (lower-store-repr-c-values-at
         ctx
         state
         base
         (compiler-ir-value-seq-to-list seq)
-        fields)]
+        fields
+        field-index)]
     [(CompilerIrValueList.Cons value rest-values)
-      (match fields
-        [(TcReprCFieldLayoutList.Cons field rest-fields)
-          (match field
-            [(TcReprCFieldLayout.Field _ field-ty offset)
-              (let
-                [stored-state : LowerState
-                  (if (lower-repr-c-inline-field? ctx field-ty)
-                    (lower-copy-bytes
-                      state
-                      base
-                      offset
-                      value
-                      0
-                      (lower-repr-c-field-size ctx field-ty))
-                    (lower-store-at-offset state base offset value field-ty))]
-                (lower-store-repr-c-values
-                  ctx
-                  stored-state
-                  base
-                  (box-get rest-values)
-                  (box-get rest-fields)))])]
-        [(TcReprCFieldLayoutList.Nil)
-          (ResultLowerState.Err
-            (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
+      (if (>= field-index (tc-repr-c-field-layout-list-count fields))
+        (ResultLowerState.Err
+          (box (lower-diagnostic "lower: constructor arity mismatch")))
+        (match (tc-repr-c-field-layout-list-ref fields field-index)
+          [(TcReprCFieldLayout.Field _ field-ty offset)
+            (let
+              [stored-state : LowerState
+                (if (lower-repr-c-inline-field? ctx field-ty)
+                  (lower-copy-bytes
+                    state
+                    base
+                    offset
+                    value
+                    0
+                    (lower-repr-c-field-size ctx field-ty))
+                  (lower-store-at-offset state base offset value field-ty))]
+              (lower-store-repr-c-values-at
+                ctx
+                stored-state
+                base
+                (box-get rest-values)
+                fields
+                (+ field-index 1)))]))]))
 
 (define (lower-store-inline-struct-values
   [ctx : TcContext]
@@ -16202,18 +16705,22 @@
 (define (lower-field-info-from-repr-c-list
   [fields : TcReprCFieldLayoutList]
   [field-name : String]) : ResultLowerFieldInfo
-  (match fields
-    [(TcReprCFieldLayoutList.Nil)
-      (ResultLowerFieldInfo.Err
-        (box
-          (lower-diagnostic
-            (string.append "lower: unknown struct field " field-name))))]
-    [(TcReprCFieldLayoutList.Cons field rest)
-      (match field
-        [(TcReprCFieldLayout.Field name ty offset)
-          (if (string.eq name field-name)
-            (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset ty))
-            (lower-field-info-from-repr-c-list (box-get rest) field-name))])]))
+  (lower-field-info-from-repr-c-list-at fields field-name 0))
+
+(define (lower-field-info-from-repr-c-list-at
+  [fields : TcReprCFieldLayoutList]
+  [field-name : String]
+  [index : i64]) : ResultLowerFieldInfo
+  (if (>= index (tc-repr-c-field-layout-list-count fields))
+    (ResultLowerFieldInfo.Err
+      (box
+        (lower-diagnostic
+          (string.append "lower: unknown struct field " field-name))))
+    (match (tc-repr-c-field-layout-list-ref fields index)
+      [(TcReprCFieldLayout.Field name ty offset)
+        (if (string.eq name field-name)
+          (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset ty))
+          (lower-field-info-from-repr-c-list-at fields field-name (+ index 1)))])))
 
 (define (lower-struct-field-info
   [ctx : TcContext]
@@ -25298,14 +25805,20 @@
 (define (lower-c-abi-inline-fields-integer-only?
   [ctx : TcContext]
   [fields : TcInlineFieldLayoutList]) : bool
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) true]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (and
-        (lower-c-abi-integer-field-type?
-          ctx
-          (tc-inline-field-layout-type field))
-        (lower-c-abi-inline-fields-integer-only? ctx (box-get rest)))]))
+  (lower-c-abi-inline-fields-integer-only-at? ctx fields 0))
+
+(define (lower-c-abi-inline-fields-integer-only-at?
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]
+  [index : i64]) : bool
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    true
+    (and
+      (lower-c-abi-integer-field-type?
+        ctx
+        (tc-inline-field-layout-type
+          (tc-inline-field-layout-list-ref fields index)))
+      (lower-c-abi-inline-fields-integer-only-at? ctx fields (+ index 1)))))
 
 (define (lower-c-abi-win64-register-struct-id?
   [ctx : TcContext]
@@ -25332,14 +25845,20 @@
 (define (lower-c-abi-inline-fields-win64-register?
   [ctx : TcContext]
   [fields : TcInlineFieldLayoutList]) : bool
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) true]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (and
-        (lower-c-abi-win64-register-field-type?
-          ctx
-          (tc-inline-field-layout-type field))
-        (lower-c-abi-inline-fields-win64-register? ctx (box-get rest)))]))
+  (lower-c-abi-inline-fields-win64-register-at? ctx fields 0))
+
+(define (lower-c-abi-inline-fields-win64-register-at?
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]
+  [index : i64]) : bool
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    true
+    (and
+      (lower-c-abi-win64-register-field-type?
+        ctx
+        (tc-inline-field-layout-type
+          (tc-inline-field-layout-list-ref fields index)))
+      (lower-c-abi-inline-fields-win64-register-at? ctx fields (+ index 1)))))
 
 (define (lower-c-abi-register-aggregate-fields-ok?
   [ctx : TcContext]
@@ -25496,52 +26015,82 @@
   [fields : TcInlineFieldLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match fields
-    [(TcInlineFieldLayoutList.Nil) slots]
-    [(TcInlineFieldLayoutList.Cons field rest)
-      (lower-c-abi-sysv-classify-fields
+  (lower-c-abi-sysv-classify-fields-at ctx fields base-offset slots 0))
+
+(define (lower-c-abi-sysv-classify-fields-at
+  [ctx : TcContext]
+  [fields : TcInlineFieldLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc-inline-field-layout-list-count fields))
+    slots
+    (let
+      [field : TcInlineFieldLayout
+        (tc-inline-field-layout-list-ref fields index)]
+      (lower-c-abi-sysv-classify-fields-at
         ctx
-        (box-get rest)
+        fields
         base-offset
         (lower-c-abi-sysv-classify-type
           ctx
           (tc-inline-field-layout-type field)
           (+ base-offset (tc-inline-field-layout-offset field))
-          slots))]))
+          slots)
+        (+ index 1)))))
 
 (define (lower-c-abi-sysv-classify-payloads
   [ctx : TcContext]
   [payloads : TcInlinePayloadLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match payloads
-    [(TcInlinePayloadLayoutList.Nil) slots]
-    [(TcInlinePayloadLayoutList.Cons payload rest)
-      (lower-c-abi-sysv-classify-payloads
+  (lower-c-abi-sysv-classify-payloads-at ctx payloads base-offset slots 0))
+
+(define (lower-c-abi-sysv-classify-payloads-at
+  [ctx : TcContext]
+  [payloads : TcInlinePayloadLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc-inline-payload-layout-list-count payloads))
+    slots
+    (let
+      [payload : TcInlinePayloadLayout
+        (tc-inline-payload-layout-list-ref payloads index)]
+      (lower-c-abi-sysv-classify-payloads-at
         ctx
-        (box-get rest)
+        payloads
         base-offset
         (lower-c-abi-sysv-classify-type
           ctx
           (tc-inline-payload-layout-type payload)
           (+ base-offset (tc-inline-payload-layout-offset payload))
-          slots))]))
+          slots)
+        (+ index 1)))))
 
 (define (lower-c-abi-sysv-classify-variants
   [ctx : TcContext]
   [variants : TcInlineVariantLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match variants
-    [(TcInlineVariantLayoutList.Nil) slots]
-    [(TcInlineVariantLayoutList.Cons variant rest)
-      (match variant
-        [(TcInlineVariantLayout.Variant _ _ _ payloads)
-          (lower-c-abi-sysv-classify-variants
-            ctx
-            (box-get rest)
-            base-offset
-            (lower-c-abi-sysv-classify-payloads ctx payloads base-offset slots))])]))
+  (lower-c-abi-sysv-classify-variants-at ctx variants base-offset slots 0))
+
+(define (lower-c-abi-sysv-classify-variants-at
+  [ctx : TcContext]
+  [variants : TcInlineVariantLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]
+  [index : i64]) : LowerCAbiSysvSlots
+  (if (>= index (tc-inline-variant-layout-list-count variants))
+    slots
+    (match (tc-inline-variant-layout-list-ref variants index)
+      [(TcInlineVariantLayout.Variant _ _ _ payloads)
+        (lower-c-abi-sysv-classify-variants-at
+          ctx
+          variants
+          base-offset
+          (lower-c-abi-sysv-classify-payloads ctx payloads base-offset slots)
+          (+ index 1))])))
 
 (define (lower-c-abi-sysv-classify-layout
   [ctx : TcContext]
@@ -57720,6 +58269,9 @@
                             (compiler-lower-profile-string-concat-finish))
                           (cfg
                             compile-profile
+                            (compiler-lower-profile-name-finish))
+                          (cfg
+                            compile-profile
                             (compiler-lower-profile-finish "decls"))
                           (cfg
                             compile-profile
@@ -57733,6 +58285,9 @@
                           (cfg
                             compile-profile
                             (compiler-lower-profile-string-concat-finish))
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-name-finish))
                           (cfg
                             compile-profile
                             (compiler-lower-profile-finish "decls"))
@@ -57793,6 +58348,7 @@
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
   (begin
+    (cfg compile-profile (compiler-lower-profile-name-reset))
     (cfg compile-profile (compiler-lower-profile-start))
     (let
       [needs-specialization : bool

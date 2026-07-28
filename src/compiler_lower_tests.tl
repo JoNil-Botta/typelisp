@@ -2259,11 +2259,11 @@
         1
         0)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ call-name _ _)
-          (if (string.eq (compiler-ir-symbol-text call-name) name)
-            1
-            0)])]
+      (let
+        [call-name (struct-get (box-get payload-box) name)]
+        (if (string.eq (compiler-ir-symbol-text call-name) name)
+          1
+          0))]
     [_ 0]))
 
 (define (lower-test-instr-cpuid-count [instr : CompilerIrInstr]) : i64
@@ -2406,9 +2406,7 @@
 
 (define (lower-test-instr-vector-binop-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ _ _ _ _) 1])]
+    [(CompilerIrInstr.VectorBinOp _) 1]
     [_ 0]))
 
 (define (lower-test-instr-vector-binop-op-count
@@ -2416,11 +2414,11 @@
   [want : CompilerIrBinOp]) : i64
   (match instr
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload _ op _ _ _ _)
-          (if (lower-test-binop-same? op want)
-            1
-            0)])]
+      (let
+        [op (struct-get (box-get payload-box) op)]
+        (if (lower-test-binop-same? op want)
+          1
+          0))]
     [_ 0]))
 
 (define (lower-test-instr-vector-reduce-count [instr : CompilerIrInstr]) : i64
@@ -2430,30 +2428,22 @@
 
 (define (lower-test-instr-vector-store-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload _ _ _ _ _) 1])]
+    [(CompilerIrInstr.VectorStore _) 1]
     [_ 0]))
 
 (define (lower-test-instr-predicated-load-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ _ _ _ _) 1])]
+    [(CompilerIrInstr.PredicatedLoad _) 1]
     [_ 0]))
 
 (define (lower-test-instr-predicated-store-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload _ _ _ _ _ _) 1])]
+    [(CompilerIrInstr.PredicatedStore _) 1]
     [_ 0]))
 
 (define (lower-test-instr-select-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload _ _ _ _ _ _) 1])]
+    [(CompilerIrInstr.Select _) 1]
     [_ 0]))
 
 (define (lower-test-instr-tail-mask-count [instr : CompilerIrInstr]) : i64
@@ -2557,75 +2547,51 @@
         1
         0)]
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload
-            _
-            _
-            _
-            _
-            actual-lanes
-            actual-ty)
-          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-            1
-            0)])]
+      (let
+        [actual-lanes (struct-get (box-get payload-box) lanes)]
+        [actual-ty (struct-get (box-get payload-box) ty)]
+        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+          1
+          0))]
     [(CompilerIrInstr.VectorReduce _ _ _ actual-lanes actual-ty)
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
     [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload
-            _
-            _
-            _
-            actual-lanes
-            actual-ty)
-          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-            1
-            0)])]
+      (let
+        [actual-lanes (struct-get (box-get payload-box) lanes)]
+        [actual-ty (struct-get (box-get payload-box) ty)]
+        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+          1
+          0))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload
-            _
-            _
-            _
-            _
-            actual-lanes
-            actual-ty)
-          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-            1
-            0)])]
+      (let
+        [actual-lanes (struct-get (box-get payload-box) lanes)]
+        [actual-ty (struct-get (box-get payload-box) ty)]
+        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+          1
+          0))]
     [(CompilerIrInstr.GatherLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload
-            _
-            _
-            _
-            _
-            _
-            actual-lanes
-            actual-ty)
-          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-            1
-            0)])]
+      (let
+        [actual-lanes (struct-get (box-get payload-box) lanes)]
+        [actual-ty (struct-get (box-get payload-box) ty)]
+        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+          1
+          0))]
     [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload
-            _
-            _
-            _
-            _
-            actual-lanes
-            actual-ty)
-          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-            1
-            0)])]
+      (let
+        [actual-lanes (struct-get (box-get payload-box) lanes)]
+        [actual-ty (struct-get (box-get payload-box) ty)]
+        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+          1
+          0))]
     [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload _ _ _ _ actual-lanes actual-ty)
-          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-            1
-            0)])]
+      (let
+        [actual-lanes (struct-get (box-get payload-box) lanes)]
+        [actual-ty (struct-get (box-get payload-box) ty)]
+        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+          1
+          0))]
     [(CompilerIrInstr.Splat _ _ actual-lanes actual-ty)
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1

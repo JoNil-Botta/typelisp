@@ -836,70 +836,67 @@
     [(CompilerIrInstr.LaneId _ _ _) (compiler-live-set-empty)]
     [(CompilerIrInstr.Splat _ value _ _) (compiler-live-value-vars value)]
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
-          (compiler-live-values2-vars lhs rhs)])]
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (compiler-live-values2-vars lhs rhs))]
     [(CompilerIrInstr.VectorPrefix payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
-          (compiler-live-values2-vars src carry)])]
+      (let
+        [src (struct-get (box-get payload-box) src)]
+        [carry (struct-get (box-get payload-box) carry)]
+        (compiler-live-values2-vars src carry))]
     [(CompilerIrInstr.VectorReduce _ _ src _ _) (compiler-live-value-vars src)]
     [(CompilerIrInstr.VectorCompare payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
-          (compiler-live-values2-vars lhs rhs)])]
+      (let
+        [lhs (struct-get (box-get payload-box) lhs)]
+        [rhs (struct-get (box-get payload-box) rhs)]
+        (compiler-live-values2-vars lhs rhs))]
     [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (compiler-live-values2-vars lhs rhs)]
     [(CompilerIrInstr.MaskNot _ src _) (compiler-live-value-vars src)]
     [(CompilerIrInstr.MaskReduce _ _ src _) (compiler-live-value-vars src)]
     [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload _ mask on-true on-false _ _)
-          (compiler-live-values3-vars mask on-true on-false)])]
+      (let
+        [mask (struct-get (box-get payload-box) mask)]
+        [on-true (struct-get (box-get payload-box) on-true)]
+        [on-false (struct-get (box-get payload-box) on-false)]
+        (compiler-live-values3-vars mask on-true on-false))]
     [(CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-live-values2-vars base index)]
     [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
-          (compiler-live-values3-vars base index value)])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        (compiler-live-values3-vars base index value))]
     [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload
-            base
-            index
-            value
-            mask
-            _
-            _)
-          (compiler-live-values4-vars base index value mask)])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [value (struct-get (box-get payload-box) value)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (compiler-live-values4-vars base index value mask))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
-          (compiler-live-values3-vars base index mask)])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index (struct-get (box-get payload-box) index)]
+        [mask (struct-get (box-get payload-box) mask)]
+        (compiler-live-values3-vars base index mask))]
     [(CompilerIrInstr.GatherLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload
-            _
-            base
-            index-base
-            index
-            _
-            _
-            _)
-          (compiler-live-values3-vars base index-base index)])]
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [index-base (struct-get (box-get payload-box) index-base)]
+        [index (struct-get (box-get payload-box) index)]
+        (compiler-live-values3-vars base index-base index))]
     [(CompilerIrInstr.VectorShuffle payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorShufflePayload.Payload
-            _
-            source
-            selector-low
-            selector-high
-            active-lanes
-            _
-            _)
-          (compiler-live-set-union
-            (compiler-live-values3-vars source selector-low active-lanes)
-            (compiler-live-maybe-value-vars selector-high))])]
+      (let
+        [source (struct-get (box-get payload-box) source)]
+        [selector-low (struct-get (box-get payload-box) selector-low)]
+        [selector-high (struct-get (box-get payload-box) selector-high)]
+        [active-lanes (struct-get (box-get payload-box) active-lanes)]
+        (compiler-live-set-union
+          (compiler-live-values3-vars source selector-low active-lanes)
+          (compiler-live-maybe-value-vars selector-high)))]
     [(CompilerIrInstr.TailMask _ index len _)
       (compiler-live-values2-vars index len)]
     [(CompilerIrInstr.EntryArgc _) (compiler-live-set-empty)]
@@ -915,29 +912,27 @@
     [(CompilerIrInstr.CallIndirectC _ func args _)
       (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [args (struct-get (box-get payload-box) args)]
+        (compiler-live-value-vars-into (compiler-live-call-args-vars args) base))]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [base (struct-get (box-get payload-box) base)]
+        [func (struct-get (box-get payload-box) callee)]
+        [args (struct-get (box-get payload-box) args)]
+        (compiler-live-value-vars-into
           (compiler-live-value-vars-into
             (compiler-live-call-args-vars args)
-            base)])]
-    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
-            base
-            func
-            args
-            _)
-          (compiler-live-value-vars-into
-            (compiler-live-value-vars-into
-              (compiler-live-call-args-vars args)
-              base)
-            func)])]
+            base)
+          func))]
     [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
-          (compiler-live-value-vars-into
-            (compiler-live-spmd-call-args-vars args)
-            active-mask)])]
+      (let
+        [active-mask (struct-get (box-get payload-box) active-mask)]
+        [args (struct-get (box-get payload-box) args)]
+        (compiler-live-value-vars-into
+          (compiler-live-spmd-call-args-vars args)
+          active-mask))]
     [(CompilerIrInstr.TailCall _ args _) (compiler-live-call-args-vars args)]
     [(CompilerIrInstr.Store _ value _) (compiler-live-value-vars value)]
     [(CompilerIrInstr.Branch cond _ _) (compiler-live-value-vars cond)]
@@ -964,38 +959,38 @@
     [(CompilerIrInstr.LaneId dst _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.Splat dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
-          (compiler-live-set1 dst)])]
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        (compiler-live-set1 dst))]
     [(CompilerIrInstr.VectorPrefix payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
-          (compiler-live-set1 dst)])]
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        (compiler-live-set1 dst))]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.VectorCompare payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
-          (compiler-live-set1 dst)])]
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        (compiler-live-set1 dst))]
     [(CompilerIrInstr.MaskBinOp dst _ _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.MaskNot dst _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.MaskReduce dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
-          (compiler-live-set1 dst)])]
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        (compiler-live-set1 dst))]
     [(CompilerIrInstr.VectorLoad dst _ _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
-          (compiler-live-set1 dst)])]
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        (compiler-live-set1 dst))]
     [(CompilerIrInstr.GatherLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
-          (compiler-live-set1 dst)])]
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        (compiler-live-set1 dst))]
     [(CompilerIrInstr.VectorShuffle payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
-          (compiler-live-set1 dst)])]
+      (let
+        [dst (struct-get (box-get payload-box) dst)]
+        (compiler-live-set1 dst))]
     [(CompilerIrInstr.TailMask dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.EntryArgc dst) (compiler-live-set1 dst)]
     [(CompilerIrInstr.EntryArgv dst) (compiler-live-set1 dst)]
@@ -1007,9 +1002,9 @@
     [(CompilerIrInstr.CallIndirect dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.CallIndirectC dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
-          (compiler-live-spmd-call-result-defs result)])]
+      (let
+        [result (struct-get (box-get payload-box) result)]
+        (compiler-live-spmd-call-result-defs result))]
     [(CompilerIrInstr.Phi dst _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.Pack dst _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.Word dst _ _ _) (compiler-live-set1 dst)]

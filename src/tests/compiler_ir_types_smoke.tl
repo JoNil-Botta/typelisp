@@ -548,12 +548,11 @@
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
       (match instr
         [(CompilerIrInstr.SpmdCall payload-box)
-          (match (box-get payload-box)
-            [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ stored-args _)
-              (match stored-args
-                [(CompilerIrSpmdCallArgList.Array seq)
-                  (= (struct-get seq len) 2)]
-                [_ false])])]
+          (let
+            [stored-args (struct-get (box-get payload-box) args)]
+            (match stored-args
+              [(CompilerIrSpmdCallArgList.Array seq) (= (struct-get seq len) 2)]
+              [_ false]))]
         [_ false])
       (compiler-ir-effect-is? instr CompilerIrEffect.Unknown)
       (= (compiler-ir-instr-call-arg-count instr) 2)

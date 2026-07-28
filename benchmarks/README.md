@@ -27,11 +27,11 @@ benchmarks/
 Each `<name>/` is one benchmark. `scripts/bench.sh` discovers every directory
 that contains both `bench.tl` and `baseline.c`.
 
-Optimizer-corpus benchmarks use an `opt_` prefix, for example
+The older synthetic optimizer cases use an `opt_` prefix, for example
 `opt_array_sum`, so they do not collide with the generic `array_sum` and
-`string_scan` benchmarks. Their `optimization.tsv` file stores the category and
-space-separated command-line arguments used by
-`scripts/run-optimization-benchmarks.sh`.
+`string_scan` benchmarks. Any benchmark with an `optimization.tsv` file also
+joins the stricter stdout-comparison and instruction-count harnesses; the file
+stores its category and space-separated command-line arguments.
 
 ### Available benchmarks
 
@@ -45,6 +45,15 @@ space-separated command-line arguments used by
 | `hashmap_insert` | Repeatedly build and populate a fresh generated i64/i64 hashmap, focused on the insert probe path (refs #2165). |
 | `hashmap_grow` | Repeated insertions that force map growth and rehashing. |
 | `hashmap_churn` | Generated i64/i64 hashmap insert/remove churn with tombstone cleanup on the insert path (refs #2167). |
+| `phys_nbody` | Fixed-point 2D N-body simulation with integer square root and branchy wall clamps. |
+| `route_http` | Byte-oriented HTTP method/path routing with literal and parameter segments, misses, and query strings. |
+| `graph_dijkstra` | Binary-heap Dijkstra over a deterministic CSR graph. |
+| `lex_source` | Compiler lexer byte dispatch over a captured 2.4 MB self-compile source corpus. |
+| `intern_table` | Compiler interner hash, probe, growth, and copy-on-miss behavior over a captured identifier stream. |
+| `liveness_scan` | Ordinary and edge-precise compiler liveness fixpoints over captured function CFGs and use/def sets. |
+| `cfg_domloops` | Optimizer CFG indexing, dominators, and natural-loop discovery over captured function graphs. |
+| `gvn_table` | Optimizer load-CSE state machine over a captured pre-GVN instruction tape. |
+| `peephole_lines` | Backend line peephole, reload elision, fallthrough scan, and dead-store sweep over captured self-compile assembly. |
 | `spmd_map` | Data-parallel elementwise map (`out[i] = a[i] + b[i] + r`) via `foreach`, establishing the SPMD/SIMD-vs-clang baseline (refs #1125). |
 | `spmd_zip` | Data-parallel three-input fused multiply-add (`out[i] = a[i] * b[i] + c[i] + r`) via `foreach` (refs #1125). |
 | `spmd_mask` | Data-parallel masked conditional (`out[i] = (a[i] odd) ? a[i]+r : a[i]-r`) via `foreach`, exercising a divergent lane body (refs #1125). |

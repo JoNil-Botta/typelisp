@@ -44,9 +44,13 @@ def main(argv):
     with open(source, "r", encoding="utf-8", errors="replace", newline="\n") as fh:
         text = fh.read()
 
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+
     chunks = []
     current = []
-    for line in text.split("\n"):
+    for line in lines:
         if line.lstrip(" ").startswith(".globl") and current:
             chunks.append("\n".join(current) + "\n")
             current = [line]

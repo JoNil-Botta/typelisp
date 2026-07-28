@@ -589,17 +589,17 @@
                 (match plan
                   [(CompilerRegPlan.Plan assignments _ _ _ _ _)
                     (compiler-reg-assignment-lookup assignments 0)])
-                "%rdi")
+                compiler-reg-id-rdi)
               (compiler-reg-location-register?
                 (match plan
                   [(CompilerRegPlan.Plan assignments _ _ _ _ _)
                     (compiler-reg-assignment-lookup assignments 1)])
-                "%rsi")
+                compiler-reg-id-rsi)
               (compiler-reg-location-register?
                 (match plan
                   [(CompilerRegPlan.Plan assignments _ _ _ _ _)
                     (compiler-reg-assignment-lookup assignments 2)])
-                "%rdx")
+                compiler-reg-id-rdx)
               (compiler-reg-cold-call-carriers-stack? plan temp-start vars)))]))))
 
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
@@ -753,18 +753,18 @@
                 scratch-vreg
                 (compiler-reg-location-register?
                   (compiler-reg-assignment-lookup splat-assignments 0)
-                  "%xmm0")
+                  (compiler-abi-xmm-register-id 0))
                 (not
                   (compiler-reg-location-any-register?
                     (compiler-reg-assignment-lookup splat-assignments 0))))
               (not
                 (compiler-reg-location-register?
                   (compiler-reg-assignment-lookup clobber-assignments 0)
-                  "%xmm0"))
+                  (compiler-abi-xmm-register-id 0)))
               (not
                 (compiler-reg-location-register?
                   (compiler-reg-assignment-lookup clobber-assignments 0)
-                  "%xmm1")))])])))
+                  (compiler-abi-xmm-register-id 1))))])])))
 
 (cfg
   test
@@ -1147,10 +1147,10 @@
           (not (compiler-live-set-contains? ineligible 1))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%rdi")
+            compiler-reg-id-rdi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%rsi"))])))
+            compiler-reg-id-rsi))])))
 
 (cfg
   test
@@ -1170,10 +1170,10 @@
           (not (compiler-live-set-contains? ineligible 1))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%rdi")
+            compiler-reg-id-rdi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%rsi"))])))
+            compiler-reg-id-rsi))])))
 
 (cfg
   test
@@ -1229,10 +1229,10 @@
           (not (compiler-live-set-contains? ineligible 0))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%rdi")
+            compiler-reg-id-rdi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%r12"))])))
+            compiler-reg-id-r12))])))
 
 (cfg
   test
@@ -1295,13 +1295,13 @@
           (not (compiler-live-set-contains? ineligible 2))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%rdi")
+            compiler-reg-id-rdi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%rsi")
+            compiler-reg-id-rsi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
-            "%r12"))])))
+            compiler-reg-id-r12))])))
 
 (cfg
   test
@@ -1373,16 +1373,16 @@
           (not (compiler-live-set-contains? ineligible 3))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%rdi")
+            compiler-reg-id-rdi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%rsi")
+            compiler-reg-id-rsi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
-            "%rdx")
+            compiler-reg-id-rdx)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 3)
-            "%r12"))])))
+            compiler-reg-id-r12))])))
 
 (cfg
   test
@@ -1443,7 +1443,7 @@
           (not
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 0)
-              "%rdi"))
+              compiler-reg-id-rdi))
           (compiler-reg-location-any-register?
             (compiler-reg-assignment-lookup assignments 0))
           (compiler-reg-same-location? assignments 0 1))])))
@@ -1477,7 +1477,7 @@
   test
   (define (compiler-reg-indirect-call-arg-prefs-ok?) : bool
     (let
-      [pool : CompilerRegStringList
+      [pool : CompilerRegIdList
         (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Linux)]
       [prefs : (Array i64)
         (compiler-reg-function-arg-prefs
@@ -1489,10 +1489,10 @@
         (= (array-ref prefs 0) -1)
         (=
           (array-ref prefs 1)
-          (compiler-reg-string-list-index-of pool "%rsi" 0))
+          (compiler-reg-id-list-index-of pool compiler-reg-id-rsi 0))
         (=
           (array-ref prefs 2)
-          (compiler-reg-string-list-index-of pool "%rdx" 0))))))
+          (compiler-reg-id-list-index-of pool compiler-reg-id-rdx 0))))))
 
 (cfg
   test
@@ -1507,13 +1507,13 @@
           (not (compiler-live-set-contains? ineligible 2))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%rdi")
+            compiler-reg-id-rdi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%rsi")
+            compiler-reg-id-rsi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
-            "%rdx"))])))
+            compiler-reg-id-rdx))])))
 
 (cfg
   test
@@ -1532,13 +1532,13 @@
           (not (compiler-live-set-contains? ineligible 2))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%rcx")
+            compiler-reg-id-rcx)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%rdx")
+            compiler-reg-id-rdx)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
-            "%r12"))])))
+            compiler-reg-id-r12))])))
 
 (cfg
   test
@@ -1556,10 +1556,10 @@
             (and
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 0)
-                "%xmm0")
+                (compiler-abi-xmm-register-id 0))
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 1)
-                "%xmm1"))
+                (compiler-abi-xmm-register-id 1)))
             (and
               (not
                 (compiler-reg-location-any-register?
@@ -1569,7 +1569,7 @@
                   (compiler-reg-assignment-lookup assignments 1)))))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
-            "%xmm2"))])))
+            (compiler-abi-xmm-register-id 2)))])))
 
 (cfg
   test
@@ -1584,13 +1584,19 @@
           (not (compiler-live-set-contains? ineligible 2))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            (cfg scratch-vreg "%xmm0" "%xmm6"))
+            (cfg
+              scratch-vreg
+              (compiler-abi-xmm-register-id 0)
+              (compiler-abi-xmm-register-id 6)))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            (cfg scratch-vreg "%xmm1" "%xmm7"))
+            (cfg
+              scratch-vreg
+              (compiler-abi-xmm-register-id 1)
+              (compiler-abi-xmm-register-id 7)))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
-            "%xmm2"))])))
+            (compiler-abi-xmm-register-id 2)))])))
 
 (cfg
   test
@@ -1610,16 +1616,16 @@
             (and
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 1)
-                "%xmm0")
+                (compiler-abi-xmm-register-id 0))
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 2)
-                "%xmm1"))
+                (compiler-abi-xmm-register-id 1)))
             (and
               (compiler-reg-unassigned? assignments 1)
               (compiler-reg-unassigned? assignments 2)))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 3)
-            "%xmm2"))])))
+            (compiler-abi-xmm-register-id 2)))])))
 
 (cfg
   test
@@ -1638,14 +1644,14 @@
             scratch-vreg
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 1)
-              "%xmm1")
+              (compiler-abi-xmm-register-id 1))
             (compiler-reg-unassigned? assignments 1))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
-            "%xmm2")
+            (compiler-abi-xmm-register-id 2))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 3)
-            "%xmm3"))])))
+            (compiler-abi-xmm-register-id 3)))])))
 
 (cfg
   test
@@ -1657,8 +1663,12 @@
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 6))
-          (compiler-reg-assignments-use-register? assignments "%rsi")
-          (compiler-reg-assignments-use-register? assignments "%rdi"))])))
+          (compiler-reg-assignments-use-register?
+            assignments
+            compiler-reg-id-rsi)
+          (compiler-reg-assignments-use-register?
+            assignments
+            compiler-reg-id-rdi))])))
 
 (cfg
   test
@@ -1705,7 +1715,7 @@
   test
   (define (compiler-reg-win64-arg-result-prefs-ok?) : bool
     (let
-      [pool : CompilerRegStringList
+      [pool : CompilerRegIdList
         (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows)]
       [prefs : (Array i64)
         (compiler-reg-function-arg-prefs
@@ -1716,16 +1726,20 @@
       (and
         (=
           (array-ref prefs 0)
-          (compiler-reg-string-list-index-of pool "%rcx" 0))
+          (compiler-reg-id-list-index-of pool compiler-reg-id-rcx 0))
         (=
           (array-ref prefs 1)
-          (compiler-reg-string-list-index-of pool "%rdx" 0))
-        (= (array-ref prefs 2) (compiler-reg-string-list-index-of pool "%r8" 0))
-        (= (array-ref prefs 3) (compiler-reg-string-list-index-of pool "%r9" 0))
+          (compiler-reg-id-list-index-of pool compiler-reg-id-rdx 0))
+        (=
+          (array-ref prefs 2)
+          (compiler-reg-id-list-index-of pool compiler-reg-id-r8 0))
+        (=
+          (array-ref prefs 3)
+          (compiler-reg-id-list-index-of pool compiler-reg-id-r9 0))
         (= (array-ref prefs 4) -1)
         (=
           (array-ref prefs 5)
-          (compiler-reg-string-list-index-of pool "%rax" 0))))))
+          (compiler-reg-id-list-index-of pool compiler-reg-id-rax 0))))))
 
 (cfg
   test
@@ -1743,7 +1757,7 @@
           (not (compiler-live-set-contains? ineligible 0))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%r12"))])))
+            compiler-reg-id-r12))])))
 
 (cfg
   test
@@ -1760,7 +1774,7 @@
           (not (compiler-live-set-contains? ineligible 0))
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%rdi"))])))
+            compiler-reg-id-rdi))])))
 
 ;; M-A (RC1): a used param's interval is force-extended to the function's first
 ;; point (the entry copy writes its home register in the prologue), so the
@@ -1782,16 +1796,16 @@
           (= (compiler-reg-spill-count assignments) 0)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 5)
-            "%r9")
+            compiler-reg-id-r9)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 6)
-            "%rax")
+            compiler-reg-id-rax)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 7)
-            "%rsi")
+            compiler-reg-id-rsi)
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 8)
-            "%rdi"))])))
+            compiler-reg-id-rdi))])))
 
 (cfg
   test
@@ -3000,7 +3014,7 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r9"))
+            (CompilerRegLocation.Register compiler-reg-id-r9))
           CompilerRegAssignmentList.Nil))
       (compiler-live-set-empty)
       (compiler-reg-interval-seq-empty)
@@ -3052,12 +3066,12 @@
                   (= (compiler-reg-assignment-count extra-assignments) 2)
                   (compiler-reg-location-register?
                     (compiler-reg-assignment-lookup rewritten-assignments vars)
-                    "%r9")
+                    compiler-reg-id-r9)
                   (compiler-reg-location-register?
                     (compiler-reg-assignment-lookup
                       rewritten-assignments
                       (+ vars 1))
-                    "%r9")
+                    compiler-reg-id-r9)
                   (compiler-reg-instr-list-has-mov-i64? items vars 7)
                   (compiler-reg-instr-list-has-mov-i64? items (+ vars 1) 7)
                   (compiler-reg-instr-list-has-store-var? items "use0a" vars)
@@ -3848,11 +3862,11 @@
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 0
-                (CompilerRegLocation.Register "%r12"))
+                (CompilerRegLocation.Register compiler-reg-id-r12))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   1
-                  (CompilerRegLocation.Register "%r8"))
+                  (CompilerRegLocation.Register compiler-reg-id-r8))
                 CompilerRegAssignmentList.Nil))
             (compiler-live-set-empty)
             intervals
@@ -3981,7 +3995,7 @@
                     (not
                       (compiler-reg-assignments-use-register?
                         assignments
-                        "%r12"))
+                        compiler-reg-id-r12))
                     (not
                       (compiler-reg-location-any-register?
                         (compiler-reg-assignment-lookup assignments 0)))
@@ -4276,7 +4290,7 @@
                       (compiler-reg-assignment-lookup
                         rewritten-assignments
                         vars)
-                      "%r8")
+                      compiler-reg-id-r8)
                     (compiler-reg-instr-list-has-mov-var? body vars 0)
                     (compiler-reg-instr-list-has-mov-var? body 0 vars)
                     (compiler-reg-instr-list-has-store-var? body "hot0" vars)
@@ -4328,12 +4342,12 @@
                       (compiler-reg-assignment-lookup
                         rewritten-assignments
                         split0)
-                      "%r8")
+                      compiler-reg-id-r8)
                     (compiler-reg-location-register?
                       (compiler-reg-assignment-lookup
                         rewritten-assignments
                         split1)
-                      "%r9")
+                      compiler-reg-id-r9)
                     (compiler-reg-instr-list-has-store-var? body "hot0" split0)
                     (compiler-reg-instr-list-has-store-var? body "hot1" split1)
                     (compiler-reg-instr-list-has-store-var? body "hot2" split0)
@@ -4453,22 +4467,22 @@
   test
   (define (compiler-reg-loop-split-rcx-rdx-candidates-ok?) : bool
     (let
-      [safe : CompilerRegStringList
+      [safe : CompilerRegIdList
         (compiler-reg-loop-split-candidate-regs true true true)]
-      [unsafe : CompilerRegStringList
+      [unsafe : CompilerRegIdList
         (compiler-reg-loop-split-candidate-regs true false false)]
-      [call-region : CompilerRegStringList
+      [call-region : CompilerRegIdList
         (compiler-reg-loop-split-candidate-regs false true true)]
       (and
-        (compiler-reg-string-list-contains? safe "%rcx")
-        (compiler-reg-string-list-contains? safe "%rdx")
-        (not (compiler-reg-string-list-contains? unsafe "%rcx"))
-        (not (compiler-reg-string-list-contains? unsafe "%rdx"))
-        (compiler-reg-string-list-contains? unsafe "%r8")
-        (compiler-reg-string-list-contains? unsafe "%rdi")
-        (not (compiler-reg-string-list-contains? call-region "%r8"))
-        (not (compiler-reg-string-list-contains? call-region "%rcx"))
-        (not (compiler-reg-string-list-contains? call-region "%rdx"))))))
+        (compiler-reg-id-list-contains? safe compiler-reg-id-rcx)
+        (compiler-reg-id-list-contains? safe compiler-reg-id-rdx)
+        (not (compiler-reg-id-list-contains? unsafe compiler-reg-id-rcx))
+        (not (compiler-reg-id-list-contains? unsafe compiler-reg-id-rdx))
+        (compiler-reg-id-list-contains? unsafe compiler-reg-id-r8)
+        (compiler-reg-id-list-contains? unsafe compiler-reg-id-rdi)
+        (not (compiler-reg-id-list-contains? call-region compiler-reg-id-r8))
+        (not (compiler-reg-id-list-contains? call-region compiler-reg-id-rcx))
+        (not (compiler-reg-id-list-contains? call-region compiler-reg-id-rdx))))))
 
 (cfg
   test
@@ -4476,7 +4490,7 @@
     (let
       [func : CompilerIrFunction
         (compiler-reg-loop-split-clobber-scan-function)]
-      [full-window : CompilerRegStringList
+      [full-window : CompilerRegIdList
         (compiler-reg-loop-split-candidate-regs
           true
           (compiler-reg-loop-split-region-rcx-safe?
@@ -4518,10 +4532,10 @@
             2
             0
             4))
-        (not (compiler-reg-string-list-contains? full-window "%rcx"))
-        (not (compiler-reg-string-list-contains? full-window "%rdx"))
-        (compiler-reg-string-list-contains? full-window "%r8")
-        (compiler-reg-string-list-contains? full-window "%rdi")))))
+        (not (compiler-reg-id-list-contains? full-window compiler-reg-id-rcx))
+        (not (compiler-reg-id-list-contains? full-window compiler-reg-id-rdx))
+        (compiler-reg-id-list-contains? full-window compiler-reg-id-r8)
+        (compiler-reg-id-list-contains? full-window compiler-reg-id-rdi)))))
 
 (cfg
   test
@@ -4647,11 +4661,11 @@
 (cfg
   test
   (define (compiler-reg-xmm-ownership-fixed-home
-    [preassigned-reg : String]
+    [preassigned-reg : i64]
     [intervals : CompilerRegIntervalSeq]
     [candidate-start : i64]
     [candidate-end : i64]
-    [regs : CompilerRegStringList]) : String
+    [regs : CompilerRegIdList]) : i64
     (let
       [index : CompilerRegIntervalIndex
         (compiler-reg-interval-index-build intervals 2)]
@@ -4675,7 +4689,84 @@
           (match (compiler-reg-assignment-table-lookup out 1)
             [(CompilerRegMaybeLocation.Some location)
               (compiler-reg-location-primary-register location)]
-            [(CompilerRegMaybeLocation.No) ""])]))))
+            [(CompilerRegMaybeLocation.No) compiler-reg-id-invalid])]))))
+
+(cfg
+  test
+  (define (compiler-reg-register-id-range-roundtrips?
+    [reg-id : i64]
+    [end : i64]) : bool
+    (if (>= reg-id end)
+      true
+      (and
+        (=
+          (compiler-abi-register-id-from-spelling
+            (compiler-abi-register-spelling reg-id))
+          reg-id)
+        (compiler-reg-register-id-range-roundtrips? (+ reg-id 1) end)))))
+
+(cfg
+  test
+  (define (compiler-reg-canonical-register-ids-ok?) : bool
+    (and
+      ;; Every canonical ID round-trips through the cold spelling boundary.
+      (compiler-reg-register-id-range-roundtrips?
+        compiler-reg-id-rax
+        (+ compiler-reg-id-r15 1))
+      (compiler-reg-register-id-range-roundtrips?
+        compiler-reg-id-xmm-base
+        (+ compiler-reg-id-xmm-base compiler-reg-id-family-count))
+      (compiler-reg-register-id-range-roundtrips?
+        compiler-reg-id-vec-base
+        (+ compiler-reg-id-vec-base compiler-reg-id-family-count))
+      (compiler-reg-register-id-range-roundtrips?
+        compiler-reg-id-mask-base
+        (+ compiler-reg-id-mask-base compiler-reg-id-mask-count))
+      ;; Constructors reject values outside their compact domains.
+      (= (compiler-abi-xmm-register-id -1) compiler-reg-id-invalid)
+      (= (compiler-abi-xmm-register-id 32) compiler-reg-id-invalid)
+      (= (compiler-abi-vector-register-id -1) compiler-reg-id-invalid)
+      (= (compiler-abi-vector-register-id 32) compiler-reg-id-invalid)
+      (= (compiler-abi-mask-register-id -1) compiler-reg-id-invalid)
+      (= (compiler-abi-mask-register-id 8) compiler-reg-id-invalid)
+      ;; Width-specific vector spellings share ownership without losing class.
+      (=
+        (compiler-abi-register-id-from-spelling "%ymm31")
+        (compiler-abi-vector-register-id 31))
+      (=
+        (compiler-abi-register-id-from-spelling "%zmm31")
+        (compiler-abi-vector-register-id 31))
+      (compiler-abi-registers-overlap?
+        (compiler-abi-xmm-register-id 31)
+        (compiler-abi-vector-register-id 31))
+      (=
+        (compiler-abi-register-with-vector-class
+          (compiler-abi-xmm-register-id 31)
+          true)
+        (compiler-abi-vector-register-id 31))
+      ;; ABI tables return canonical IDs, including their invalid boundaries.
+      (=
+        (compiler-abi-gp-arg-register-id (CompilerRegTargetAbi.Linux) 0)
+        compiler-reg-id-rdi)
+      (=
+        (compiler-abi-gp-arg-register-id (CompilerRegTargetAbi.Windows) 3)
+        compiler-reg-id-r9)
+      (=
+        (compiler-abi-float-arg-register-id (CompilerRegTargetAbi.Linux) 7)
+        (compiler-abi-xmm-register-id 7))
+      (=
+        (compiler-abi-callee-saved-xmm-register-id
+          (CompilerRegTargetAbi.Windows)
+          9)
+        (compiler-abi-xmm-register-id 15))
+      (=
+        (compiler-abi-gp-arg-register-id (CompilerRegTargetAbi.Windows) 4)
+        compiler-reg-id-invalid)
+      (=
+        (compiler-abi-caller-saved-xmm-register-id
+          (CompilerRegTargetAbi.Windows)
+          6)
+        compiler-reg-id-invalid))))
 
 (cfg
   test
@@ -4705,14 +4796,18 @@
   test
   (define (compiler-reg-xmm-physical-ownership-ok?) : bool
     (let
-      [vector-pool : CompilerRegStringList
-        (compiler-reg-string-cons
-          "%vec6"
-          (compiler-reg-string-cons "%vec7" CompilerRegStringList.Nil))]
-      [scalar-spelled-pool : CompilerRegStringList
-        (compiler-reg-string-cons
-          "%xmm6"
-          (compiler-reg-string-cons "%xmm7" CompilerRegStringList.Nil))]
+      [vector-pool : CompilerRegIdList
+        (compiler-reg-id-cons
+          (compiler-abi-vector-register-id 6)
+          (compiler-reg-id-cons
+            (compiler-abi-vector-register-id 7)
+            CompilerRegIdList.Nil))]
+      [scalar-spelled-pool : CompilerRegIdList
+        (compiler-reg-id-cons
+          (compiler-abi-xmm-register-id 6)
+          (compiler-reg-id-cons
+            (compiler-abi-xmm-register-id 7)
+            CompilerRegIdList.Nil))]
       [overlap : CompilerRegIntervalSeq
         (compiler-reg-xmm-ownership-intervals 0 8 2 6)]
       [boundary-reuse : CompilerRegIntervalSeq
@@ -4720,70 +4815,93 @@
       (and
         ;; AVX2/AVX-512 spellings and the width-neutral allocator home all own
         ;; the same physical register as an f32/f64 scalar XMM spelling.
-        (compiler-reg-registers-overlap? "%xmm6" "%vec6")
-        (compiler-reg-registers-overlap? "%xmm6" "%ymm6")
-        (compiler-reg-registers-overlap? "%xmm6" "%zmm6")
-        (not (compiler-reg-registers-overlap? "%xmm6" "%vec7"))
-        (not (compiler-reg-registers-overlap? "%xmm6" "%k6"))
-        (= (compiler-reg-xmm-family-index "%xmm13") 13)
-        (= (compiler-reg-xmm-family-index "%ymm13") 13)
-        (= (compiler-reg-xmm-family-index "%zmm13") 13)
-        (= (compiler-reg-xmm-family-index "%vec13") 13)
-        (= (compiler-reg-xmm-family-index "%xmm06") -1)
+        (compiler-reg-registers-overlap?
+          (compiler-abi-xmm-register-id 6)
+          (compiler-abi-vector-register-id 6))
+        (compiler-reg-registers-overlap?
+          (compiler-abi-xmm-register-id 6)
+          (compiler-abi-register-id-from-spelling "%ymm6"))
+        (compiler-reg-registers-overlap?
+          (compiler-abi-xmm-register-id 6)
+          (compiler-abi-register-id-from-spelling "%zmm6"))
+        (not
+          (compiler-reg-registers-overlap?
+            (compiler-abi-xmm-register-id 6)
+            (compiler-abi-vector-register-id 7)))
+        (not
+          (compiler-reg-registers-overlap?
+            (compiler-abi-xmm-register-id 6)
+            (compiler-abi-mask-register-id 6)))
+        (= (compiler-reg-xmm-family-index (compiler-abi-xmm-register-id 13)) 13)
+        (=
+          (compiler-reg-xmm-family-index
+            (compiler-abi-register-id-from-spelling "%ymm13"))
+          13)
+        (=
+          (compiler-reg-xmm-family-index
+            (compiler-abi-register-id-from-spelling "%zmm13"))
+          13)
+        (=
+          (compiler-reg-xmm-family-index (compiler-abi-vector-register-id 13))
+          13)
+        (=
+          (compiler-reg-xmm-family-index
+            (compiler-abi-register-id-from-spelling "%xmm06"))
+          -1)
         ;; Deliberate f32/f64-vs-vector collisions reject physical index 6 at
         ;; every emitted width and select the next vector home.
-        (string.eq
+        (=
           (compiler-reg-xmm-ownership-fixed-home
-            "%xmm6"
+            (compiler-abi-xmm-register-id 6)
             overlap
             2
             6
             vector-pool)
-          "%vec7")
-        (string.eq
+          (compiler-abi-vector-register-id 7))
+        (=
           (compiler-reg-xmm-ownership-fixed-home
-            "%ymm6"
+            (compiler-abi-vector-register-id 6)
             overlap
             2
             6
             vector-pool)
-          "%vec7")
-        (string.eq
+          (compiler-abi-vector-register-id 7))
+        (=
           (compiler-reg-xmm-ownership-fixed-home
-            "%zmm6"
+            (compiler-abi-vector-register-id 6)
             overlap
             2
             6
             vector-pool)
-          "%vec7")
+          (compiler-abi-vector-register-id 7))
         ;; Mask-on-vector allocation uses the same ownership query even when
         ;; the preassignment and candidate pools use opposite class spellings.
-        (string.eq
+        (=
           (compiler-reg-xmm-ownership-fixed-home
-            "%vec6"
+            (compiler-abi-vector-register-id 6)
             overlap
             2
             6
             scalar-spelled-pool)
-          "%xmm7")
+          (compiler-abi-xmm-register-id 7))
         ;; Touching ranges and a segmented phi/liveness hole may safely reuse
         ;; the physical register; real segment overlap still rejects it.
-        (string.eq
+        (=
           (compiler-reg-xmm-ownership-fixed-home
-            "%xmm6"
+            (compiler-abi-xmm-register-id 6)
             boundary-reuse
             2
             6
             vector-pool)
-          "%vec6")
-        (string.eq
+          (compiler-abi-vector-register-id 6))
+        (=
           (compiler-reg-xmm-ownership-fixed-home
-            "%xmm6"
+            (compiler-abi-xmm-register-id 6)
             (compiler-reg-xmm-ownership-segment-hole-intervals)
             3
             5
             vector-pool)
-          "%vec6")))))
+          (compiler-abi-vector-register-id 6))))))
 
 (cfg
   test
@@ -4801,16 +4919,16 @@
       (and
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup list-assignments 0)
-          "%vec6")
+          (compiler-abi-vector-register-id 6))
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup list-assignments 1)
-          "%vec7")
+          (compiler-abi-vector-register-id 7))
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup dense-assignments 0)
-          "%vec6")
+          (compiler-abi-vector-register-id 6))
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup dense-assignments 1)
-          "%vec7")))))
+          (compiler-abi-vector-register-id 7))))))
 
 (cfg
   test
@@ -4969,8 +5087,9 @@
         (compiler-reg-assignment-table-make vars)]
       [nonoccupying : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make vars)]
-      [shadow-regs : (Array String) (array.make-array String 2)]
+      [shadow-regs : (Array i64) (array.make-array i64 2)]
       (begin
+        (compiler-reg-fill-i64-array shadow-regs compiler-reg-id-invalid)
         (array-set! members 0 0)
         (compiler-reg-fill-i64-array weights 1)
         (array-set! weights 0 10)
@@ -4981,7 +5100,7 @@
               (array-set! parents v v)
               (array-set! poisoned v false)
               (set! v (+ v 1)))))
-        (array-set! shadow-regs 1 "%r8")
+        (array-set! shadow-regs 1 compiler-reg-id-r8)
         (compiler-reg-group-pair-test-fill-homes! assignments 1 vars)
         (compiler-reg-group-pair-test-fill-homes! csr-assignments 1 vars)
         (compiler-reg-group-pair-test-fill-homes! caller-occupied 1 vars)
@@ -4995,17 +5114,19 @@
             (compiler-reg-assignment-table-insert
               nonoccupying
               2
-              (CompilerRegLocation.RegisterPair "%r12" "%r13"))]
+              (CompilerRegLocation.RegisterPair
+                compiler-reg-id-r12
+                compiler-reg-id-r13))]
           [_caller-occupied-r8 : CompilerRegAssignmentTable
             (compiler-reg-assignment-table-insert
               caller-occupied
               1
-              (CompilerRegLocation.Register "%r8"))]
+              (CompilerRegLocation.Register compiler-reg-id-r8))]
           [_caller-occupied-r12 : CompilerRegAssignmentTable
             (compiler-reg-assignment-table-insert
               caller-occupied
               6
-              (CompilerRegLocation.Register "%r12"))]
+              (CompilerRegLocation.Register compiler-reg-id-r12))]
           [empty-split : CompilerRegCallSplit (compiler-reg-call-split-empty)]
           [shadow-split : CompilerRegCallSplit
             (CompilerRegCallSplit
@@ -5056,7 +5177,7 @@
               10
               true
               shadow-split
-              "%r8"
+              compiler-reg-id-r8
               vars)]
           [free-r8-cost : i64
             (compiler-reg-group-pair-component-register-cost
@@ -5068,7 +5189,7 @@
               10
               true
               empty-split
-              "%r8"
+              compiler-reg-id-r8
               vars)]
           [occupied-r8-cost : i64
             (compiler-reg-group-pair-component-register-cost
@@ -5080,7 +5201,7 @@
               10
               true
               empty-split
-              "%r8"
+              compiler-reg-id-r8
               vars)]
           [csr-evict-cost : i64
             (compiler-reg-group-pair-component-register-cost
@@ -5092,7 +5213,7 @@
               10
               false
               empty-split
-              "%r12"
+              compiler-reg-id-r12
               vars)]
           [blocked-r12-cost : i64
             (compiler-reg-group-pair-component-register-cost
@@ -5104,7 +5225,7 @@
               10
               false
               empty-split
-              "%r12"
+              compiler-reg-id-r12
               vars)]
           (let
             [_caller-placed : unit
@@ -5166,11 +5287,13 @@
                 empty-split)]
             (and
               (= (compiler-reg-group-pair-candidate-count true) 7)
-              (string.eq (compiler-reg-group-pair-candidate true 0) "%r8")
-              (string.eq (compiler-reg-group-pair-candidate true 1) "%r9")
-              (string.eq (compiler-reg-group-pair-candidate true 2) "%r12")
+              (= (compiler-reg-group-pair-candidate true 0) compiler-reg-id-r8)
+              (= (compiler-reg-group-pair-candidate true 1) compiler-reg-id-r9)
+              (= (compiler-reg-group-pair-candidate true 2) compiler-reg-id-r12)
               (= (compiler-reg-group-pair-candidate-count false) 5)
-              (string.eq (compiler-reg-group-pair-candidate false 0) "%r12")
+              (=
+                (compiler-reg-group-pair-candidate false 0)
+                compiler-reg-id-r12)
               (compiler-reg-group-pair-component-clobber-free?
                 interval-index
                 (compiler-live-set-empty)
@@ -5199,20 +5322,25 @@
                 [(CompilerRegMaybeLocation.Some location)
                   (match location
                     [(CompilerRegLocation.RegisterPair first second)
-                      (and (string.eq first "%r8") (string.eq second "%r9"))]
+                      (and
+                        (= first compiler-reg-id-r8)
+                        (= second compiler-reg-id-r9))]
                     [_ false])]
                 [(CompilerRegMaybeLocation.No) false])
               (match (compiler-reg-assignment-table-lookup assignments 1)
                 [(CompilerRegMaybeLocation.Some location)
                   (match location
-                    [(CompilerRegLocation.Register reg) (string.eq reg "%r12")]
+                    [(CompilerRegLocation.Register reg)
+                      (= reg compiler-reg-id-r12)]
                     [_ false])]
                 [(CompilerRegMaybeLocation.No) false])
               (match (compiler-reg-assignment-table-lookup caller-occupied 0)
                 [(CompilerRegMaybeLocation.Some location)
                   (match location
                     [(CompilerRegLocation.RegisterPair first second)
-                      (and (string.eq first "%r8") (string.eq second "%r9"))]
+                      (and
+                        (= first compiler-reg-id-r8)
+                        (= second compiler-reg-id-r9))]
                     [_ false])]
                 [(CompilerRegMaybeLocation.No) false])
               (match (compiler-reg-assignment-table-lookup caller-occupied 1)
@@ -5225,7 +5353,9 @@
                 [(CompilerRegMaybeLocation.Some location)
                   (match location
                     [(CompilerRegLocation.RegisterPair first second)
-                      (and (string.eq first "%r12") (string.eq second "%r13"))]
+                      (and
+                        (= first compiler-reg-id-r12)
+                        (= second compiler-reg-id-r13))]
                     [_ false])]
                 [(CompilerRegMaybeLocation.No) false])
               (match (compiler-reg-assignment-table-lookup csr-assignments 1)
@@ -5395,6 +5525,14 @@
     (test.assert-true
       (compiler-reg-call-word-in-range-matches-walk?)
       "mask range test agrees with the bit walk it replaced, high bits included")))
+
+(cfg
+  test
+  (test
+    regalloc-canonical-register-ids
+    (test.assert-true
+      (compiler-reg-canonical-register-ids-ok?)
+      "canonical GP/vector/mask IDs round-trip, alias, and follow both ABIs")))
 
 (cfg
   test

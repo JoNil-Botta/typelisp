@@ -2910,7 +2910,9 @@
 
 (define (compiler-backend-call-result-store-bool-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     CompilerRegAssignmentList.Nil))
 
 (define (compiler-backend-c-abi-call-result-store-bool-asm-ok? [asm : String]) : bool
@@ -3111,7 +3113,9 @@
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register home))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        2
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-indirect-c-call-callee-home-target-ok?
@@ -3156,7 +3160,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil)))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -3194,15 +3198,15 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegLocation.Register compiler-reg-id-rcx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%r13"))
+              (CompilerRegLocation.Register compiler-reg-id-r13))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -3300,7 +3304,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r11"))
+          (CompilerRegLocation.Register compiler-reg-id-r11))
         CompilerRegAssignmentList.Nil)]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -3548,21 +3552,21 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r13"))
+            (CompilerRegLocation.Register compiler-reg-id-r13))
           CompilerRegAssignmentList.Nil))]
     [xmm-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%xmm4"))
+            (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
           CompilerRegAssignmentList.Nil))]
     (match (compiler-backend-emit-pack-words
       (ast-node-pool-reader-type-segment-bases)
@@ -4316,7 +4320,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         CompilerRegAssignmentList.Nil)]
     [ok : bool
       (match (compiler-backend-emit-compare-branch
@@ -4376,22 +4380,28 @@
 
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-expanded-scalar-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r8"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r8))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r9"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r9))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-expanded-scalar-regs-ok?) : bool
@@ -4416,82 +4426,110 @@
 
 (define (compiler-backend-callee-save-assignments1) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     CompilerRegAssignmentList.Nil))
 
 (define (compiler-backend-callee-save-assignments2) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-callee-save-assignments3) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r14"))
+          (CompilerRegLocation.Register compiler-reg-id-r14))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-callee-save-assignments4) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r14"))
+          (CompilerRegLocation.Register compiler-reg-id-r14))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%r15"))
+            (CompilerRegLocation.Register compiler-reg-id-r15))
           CompilerRegAssignmentList.Nil)))))
 
 (define (compiler-backend-callee-save-assignments5) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r14"))
+          (CompilerRegLocation.Register compiler-reg-id-r14))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%r15"))
+            (CompilerRegLocation.Register compiler-reg-id-r15))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%rbx"))
+              (CompilerRegLocation.Register compiler-reg-id-rbx))
             CompilerRegAssignmentList.Nil))))))
 
 (define (compiler-backend-win64-callee-save-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rsi"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-rsi))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%rdi"))
+          (CompilerRegLocation.Register compiler-reg-id-rdi))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-win64-callee-save-full-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 5 (CompilerRegLocation.Register "%rsi"))
+    (CompilerRegAssignment.Assignment
+      5
+      (CompilerRegLocation.Register compiler-reg-id-rsi))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 6 (CompilerRegLocation.Register "%rdi"))
+      (CompilerRegAssignment.Assignment
+        6
+        (CompilerRegLocation.Register compiler-reg-id-rdi))
       (compiler-backend-callee-save-assignments5))))
 
 (define (compiler-backend-win64-callee-save-rbp-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 7 (CompilerRegLocation.Register "%rbp"))
+    (CompilerRegAssignment.Assignment
+      7
+      (CompilerRegLocation.Register compiler-reg-id-rbp))
     (compiler-backend-win64-callee-save-full-assignments)))
 
 (define (compiler-backend-win64-xmm-full-assignments-at [idx : i64]) : CompilerRegAssignmentList
@@ -4509,21 +4547,25 @@
 
 (define (compiler-backend-win64-xmm-sparse-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
       ;; The canonical ownership lookup must recognize vector-width aliases.
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%vec6"))
+        (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%zmm15"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 15)))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-win64-xmm15-only-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm15"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-xmm-register-id 15)))
     CompilerRegAssignmentList.Nil))
 
 (define (compiler-backend-callee-save-double-return-blocks) : CompilerIrBlockList
@@ -4835,7 +4877,7 @@
       (and
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup planned 0)
-          "%xmm6")
+          (compiler-abi-xmm-register-id 6))
         (compiler-backend-string-contains? planned-save "    movdqu %xmm6, ")
         (not (compiler-backend-string-contains? planned-save "%xmm7"))
         (compiler-backend-plan-uses-callee-regs? sparse)
@@ -4914,21 +4956,21 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             2
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           CompilerRegAssignmentList.Nil))]
     [casted : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             2
-            (CompilerRegLocation.Register "%r13"))
+            (CompilerRegLocation.Register compiler-reg-id-r13))
           CompilerRegAssignmentList.Nil))]
     (and
       (string.eq
@@ -5021,7 +5063,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -5065,13 +5107,13 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)]
     [float-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-mov
@@ -5224,7 +5266,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)
       (CompilerIrValue.Var 0)
       "backend: register-group var assigned scalar register home")
@@ -5414,11 +5456,11 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%r13"))
+              (CompilerRegLocation.Register compiler-reg-id-r13))
             CompilerRegAssignmentList.Nil)))]
     [_group-enable : unit
       (begin
@@ -5498,19 +5540,23 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+          (CompilerRegLocation.RegisterPair
+            compiler-reg-id-r12
+            compiler-reg-id-r13))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rbx"))
+            (CompilerRegLocation.Register compiler-reg-id-rbx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%rsi"))
+              (CompilerRegLocation.Register compiler-reg-id-rsi))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 3
-                (CompilerRegLocation.RegisterPair "%r14" "%r15"))
+                (CompilerRegLocation.RegisterPair
+                  compiler-reg-id-r14
+                  compiler-reg-id-r15))
               CompilerRegAssignmentList.Nil))))]
     [_group-enable : unit
       (begin
@@ -5784,12 +5830,13 @@
       (compiler-backend-reg-part-entry-ok? reg "%ebp" "%bp" "%bpl")]
     [else false]))
 
-(define (compiler-backend-reg-part-list-ok? [regs : CompilerRegStringList]) : bool
+(define (compiler-backend-reg-part-list-ok? [regs : CompilerRegIdList]) : bool
   (match regs
-    [(CompilerRegStringList.Nil) true]
-    [(CompilerRegStringList.Cons reg rest)
+    [(CompilerRegIdList.Nil) true]
+    [(CompilerRegIdList.Cons reg rest)
       (and
-        (compiler-backend-reg-part-known-entry-ok? reg)
+        (compiler-backend-reg-part-known-entry-ok?
+          (compiler-abi-register-spelling reg))
         (compiler-backend-reg-part-list-ok? (box-get rest)))]))
 
 (define (compiler-backend-reg-part-pools-ok?) : bool
@@ -7145,13 +7192,13 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)]
     [index-reg-length-spill : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil))]
@@ -7220,7 +7267,7 @@
   (let
     [previous-slot : i64 compiler-backend-emergency-slot-offset]
     [_slot : unit (set! compiler-backend-emergency-slot-offset -512)]
-    [regs : (Array String) (compiler-backend-scavenge-candidates)]
+    [regs : (Array i64) (compiler-backend-scavenge-candidates)]
     [count : i64 (array-length regs)]
     [assignments : CompilerRegAssignmentList
       (compiler-backend-test-reg-assignment-list-from regs 0)]
@@ -7252,7 +7299,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%rax"))
+          (CompilerRegLocation.Register compiler-reg-id-rax))
         CompilerRegAssignmentList.Nil)]
     [ok : bool
       (match (compiler-backend-emit-test-instrs
@@ -7285,7 +7332,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%rax"))
+          (CompilerRegLocation.Register compiler-reg-id-rax))
         CompilerRegAssignmentList.Nil)]
     [ok : bool
       (match (compiler-backend-emit-compare-branch
@@ -7747,7 +7794,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil)
       4)
       [(ResultCompilerBackend.Ok asm)
@@ -7762,29 +7809,31 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r13"))
+            (CompilerRegLocation.Register compiler-reg-id-r13))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+              (CompilerRegLocation.RegisterPair
+                compiler-reg-id-r12
+                compiler-reg-id-r13))
             CompilerRegAssignmentList.Nil)))]
     [_r8-tie-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r8"))
+            (CompilerRegLocation.Register compiler-reg-id-r8))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%r8"))
+              (CompilerRegLocation.Register compiler-reg-id-r8))
             CompilerRegAssignmentList.Nil)))]
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
     (and
@@ -7871,9 +7920,13 @@
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-phi-same-home-blocks) : CompilerIrBlockList
@@ -7918,11 +7971,13 @@
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment
       0
-      (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+      (CompilerRegLocation.RegisterPair compiler-reg-id-r12 compiler-reg-id-r13))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.RegisterPair "%r14" "%r15"))
+        (CompilerRegLocation.RegisterPair
+          compiler-reg-id-r14
+          compiler-reg-id-r15))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-phi-group-cycle-blocks) : CompilerIrBlockList
@@ -7952,11 +8007,13 @@
 
 (define (compiler-backend-phi-f64-cycle-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-phi-f64-spill-cycle-assignments) : CompilerRegAssignmentList
@@ -7965,7 +8022,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-phi-f64-cycle-blocks) : CompilerIrBlockList
@@ -7993,15 +8050,17 @@
 
 (define (compiler-backend-phi-f32-three-cycle-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%xmm5"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 5)))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-phi-f32-three-cycle-blocks) : CompilerIrBlockList
@@ -8039,11 +8098,15 @@
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment
       0
-      (CompilerRegLocation.RegisterPair "%xmm2" "%xmm3"))
+      (CompilerRegLocation.RegisterPair
+        (compiler-abi-xmm-register-id 2)
+        (compiler-abi-xmm-register-id 3)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.RegisterPair "%xmm4" "%xmm5"))
+        (CompilerRegLocation.RegisterPair
+          (compiler-abi-xmm-register-id 4)
+          (compiler-abi-xmm-register-id 5)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-phi-group-f64-cycle-blocks) : CompilerIrBlockList
@@ -8093,13 +8156,17 @@
 
 (define (compiler-backend-branch-phi-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r14"))
+          (CompilerRegLocation.Register compiler-reg-id-r14))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-branch-phi-edge-copy-ok?) : bool
@@ -8176,11 +8243,13 @@
   (match (compiler-backend-emit-phi-edge-copies
     (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil))
     (compiler-backend-branch-phi-blocks)
     (compiler-ir-label "body")
@@ -8199,7 +8268,7 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
             CompilerRegAssignmentList.Nil))
@@ -8224,7 +8293,7 @@
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   1
-                  (CompilerRegLocation.Register "%r13"))
+                  (CompilerRegLocation.Register compiler-reg-id-r13))
                 CompilerRegAssignmentList.Nil))
             (compiler-backend-branch-phi-blocks)
             (compiler-ir-label "body")
@@ -8333,9 +8402,13 @@
 
 (define (compiler-backend-single-phi-return-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r14"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r14))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-single-phi-return-shortcut-ok?) : bool
@@ -8405,21 +8478,25 @@
 
 (define (compiler-backend-multi-phi-return-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r14"))
+          (CompilerRegLocation.Register compiler-reg-id-r14))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%r15"))
+            (CompilerRegLocation.Register compiler-reg-id-r15))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%rbx"))
+              (CompilerRegLocation.Register compiler-reg-id-rbx))
             CompilerRegAssignmentList.Nil))))))
 
 (define (compiler-backend-multi-phi-return-shortcut-ok?) : bool
@@ -8467,13 +8544,17 @@
 
 (define (compiler-backend-phi-return-work-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r14"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r14))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r15"))
+          (CompilerRegLocation.Register compiler-reg-id-r15))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-phi-return-rejects-work-ok?) : bool
@@ -8525,13 +8606,17 @@
 
 (define (compiler-backend-mov-phi-copy-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r14"))
+          (CompilerRegLocation.Register compiler-reg-id-r14))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-mov-phi-copy-fusion-ok?) : bool
@@ -8890,7 +8975,7 @@
     [restore : ResultCompilerBackend
       (compiler-backend-emit-arg-move
         CompilerRegAssignmentList.Nil
-        (BackendArgMove "%rsi" BackendArgMoveStackPop))]
+        (BackendArgMove compiler-reg-id-rsi BackendArgMoveStackPop))]
     [ok : bool
       (match restore
         [(ResultCompilerBackend.Ok restore-asm)
@@ -8921,11 +9006,11 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%rdx"))
+          (CompilerRegLocation.Register compiler-reg-id-rdx))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rsi"))
+            (CompilerRegLocation.Register compiler-reg-id-rsi))
           CompilerRegAssignmentList.Nil))]
     [args : CompilerIrCallArgs
       (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
@@ -8961,11 +9046,11 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%rdi"))
+          (CompilerRegLocation.Register compiler-reg-id-rdi))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rsi"))
+            (CompilerRegLocation.Register compiler-reg-id-rsi))
           CompilerRegAssignmentList.Nil))]
     [args : CompilerIrCallArgs
       (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
@@ -9000,11 +9085,11 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%rsi"))
+          (CompilerRegLocation.Register compiler-reg-id-rsi))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rdi"))
+            (CompilerRegLocation.Register compiler-reg-id-rdi))
           CompilerRegAssignmentList.Nil))]
     [args : CompilerIrCallArgs
       (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
@@ -10399,30 +10484,40 @@
 
 (define (compiler-backend-stack-splat-dst-only-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     CompilerRegAssignmentList.Nil))
 
 (define (compiler-backend-stack-splat-spill-assignments [offset : i64]) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill offset))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-stack-splat-register-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-stack-splat-float-register-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-stack-memory-operand-ok?) : bool
@@ -10601,40 +10696,49 @@
 
 (define (compiler-backend-vector-spill-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-rdi))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%vec6"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Spill -64))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%k1"))
+              (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
             CompilerRegAssignmentList.Nil))))))
 
 (define (compiler-backend-avx2-native-mask-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-rdi))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%vec6"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Spill -64))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%vec7"))
+              (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 5
-                (CompilerRegLocation.Register "%vec8"))
+                (CompilerRegLocation.Register
+                  (compiler-abi-vector-register-id 8)))
               CompilerRegAssignmentList.Nil)))))))
 
 (define (compiler-backend-avx2-native-mask-emission-ok?) : bool
@@ -10795,9 +10899,13 @@
 
 (define (compiler-backend-vector-prefix-spill-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -64))
         CompilerRegAssignmentList.Nil))))
@@ -10810,7 +10918,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%vec7"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx2-vector-prefix-i64-spill-ok?) : bool
@@ -11065,9 +11173,13 @@
 
 (define (compiler-backend-avx512-vector-prefix-bool-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k2"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-mask-register-id 2)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rax"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-rax))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -64))
         CompilerRegAssignmentList.Nil))))
@@ -11080,7 +11192,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%k3"))
+          (CompilerRegLocation.Register (compiler-abi-mask-register-id 3)))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-scratch-requirement
@@ -11092,7 +11204,7 @@
     (compiler-reg-scratch-policy
       (CompilerRegTargetAbi.Linux)
       CompilerRegAssignmentList.Nil
-      CompilerRegStringList.Nil)
+      CompilerRegIdList.Nil)
     CompilerRegAssignmentList.Nil
     CompilerRegVarTypeList.Nil
     (ir-instr-vector-prefix
@@ -11356,29 +11468,33 @@
 
 (define (compiler-backend-simd-address-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-rdi))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%rax"))
+          (CompilerRegLocation.Register compiler-reg-id-rax))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%vec6"))
+            (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%vec7"))
+              (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 5
-                (CompilerRegLocation.Register "%k1"))
+                (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   6
-                  (CompilerRegLocation.Register "%rcx"))
+                  (CompilerRegLocation.Register compiler-reg-id-rcx))
                 CompilerRegAssignmentList.Nil))))))))
 
 (define (compiler-backend-simd-indexed-address-with-base-emits?
@@ -11598,32 +11714,40 @@
 
 (define (compiler-backend-avx512-select-alias-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%k1"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%vec6"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%vec7"))
+            (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
           CompilerRegAssignmentList.Nil)))))
 
 (define (compiler-backend-avx512-select-false-alias-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec7"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%k1"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%vec6"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%vec7"))
+            (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
           CompilerRegAssignmentList.Nil)))))
 
 (define (compiler-backend-avx512-select-true-alias-ok?) : bool
@@ -11664,13 +11788,17 @@
 
 (define (compiler-backend-avx512-mask-load-temp-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k1"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%k2"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register (compiler-abi-mask-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx512-mask-load-temp-ok?) : bool
@@ -11702,13 +11830,17 @@
 
 (define (compiler-backend-avx512-mask-store-temp-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k1"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%k2"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register (compiler-abi-mask-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx512-mask-store-temp-ok?) : bool
@@ -12282,7 +12414,9 @@
 (define (compiler-backend-vector-reduce-direct-assignments
   [dst-location : CompilerRegLocation]) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 1 dst-location)
       CompilerRegAssignmentList.Nil)))
@@ -12295,7 +12429,7 @@
   (match (compiler-backend-emit-avx512-vector-reduce
     (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-reduce-direct-assignments
-      (CompilerRegLocation.Register "%r10"))
+      (CompilerRegLocation.Register compiler-reg-id-r10))
     1
     (CompilerIrVectorReduceOp.Min)
     (CompilerIrValue.Var 0)
@@ -12374,7 +12508,7 @@
   (match (compiler-backend-emit-avx2-vector-reduce
     (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-reduce-direct-assignments
-      (CompilerRegLocation.Register "%r12"))
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     1
     (CompilerIrVectorReduceOp.Sum)
     (CompilerIrValue.Var 0)
@@ -12426,7 +12560,7 @@
   (match (compiler-backend-emit-avx512-vector-reduce
     (ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-reduce-direct-assignments
-      (CompilerRegLocation.Register "%r12"))
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     1
     (CompilerIrVectorReduceOp.Sum)
     (CompilerIrValue.Var 0)
@@ -12523,20 +12657,40 @@
 
 (define (compiler-backend-xmm-family-conversion-ok?) : bool
   (and
-    (string.eq (compiler-backend-vector-home-to-reg "%vec6" "xmm") "%xmm6")
-    (string.eq (compiler-backend-vector-home-to-reg "%vec6" "ymm") "%ymm6")
-    (string.eq (compiler-backend-vector-home-to-reg "%vec6" "zmm") "%zmm6")
-    (string.eq (compiler-backend-vector-home-to-reg "%ymm7" "zmm") "%zmm7")
+    (string.eq
+      (compiler-backend-vector-home-to-reg
+        (compiler-abi-vector-register-id 6)
+        "xmm")
+      "%xmm6")
+    (string.eq
+      (compiler-backend-vector-home-to-reg
+        (compiler-abi-vector-register-id 6)
+        "ymm")
+      "%ymm6")
+    (string.eq
+      (compiler-backend-vector-home-to-reg
+        (compiler-abi-vector-register-id 6)
+        "zmm")
+      "%zmm6")
+    (string.eq
+      (compiler-backend-vector-home-to-reg
+        (compiler-abi-vector-register-id 7)
+        "zmm")
+      "%zmm7")
     (string.eq (compiler-backend-vector-reg-lower-xmm "%zmm14") "%xmm14")
     (string.eq (compiler-backend-vector-reg-lower-ymm "%zmm15") "%ymm15")
     (string.eq (compiler-backend-xmm-to-ymm "%xmm3") "%ymm3")
-    (compiler-backend-vector-home-valid? "%xmm2")
-    (compiler-backend-vector-home-valid? "%vec6")
-    (compiler-backend-vector-home-valid? "%zmm13")
-    (compiler-backend-vector-home-valid? "%vec14")
-    (compiler-backend-vector-home-valid? "%zmm15")
-    (not (compiler-backend-vector-home-valid? "%xmm1"))
-    (string.eq (compiler-backend-vector-home-to-reg "%k1" "zmm") "")))
+    (compiler-backend-vector-home-valid? (compiler-abi-xmm-register-id 2))
+    (compiler-backend-vector-home-valid? (compiler-abi-vector-register-id 6))
+    (compiler-backend-vector-home-valid? (compiler-abi-vector-register-id 13))
+    (compiler-backend-vector-home-valid? (compiler-abi-vector-register-id 14))
+    (compiler-backend-vector-home-valid? (compiler-abi-vector-register-id 15))
+    (not (compiler-backend-vector-home-valid? (compiler-abi-xmm-register-id 1)))
+    (string.eq
+      (compiler-backend-vector-home-to-reg
+        (compiler-abi-mask-register-id 1)
+        "zmm")
+      "")))
 
 (define (compiler-backend-avx512-select-false-home-asm-ok?) : bool
   (match (compiler-backend-emit-program-target-with-mode
@@ -12575,13 +12729,17 @@
 
 (define (compiler-backend-avx512-tail-mask-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k1"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx512-tail-mask-emits?
@@ -12655,13 +12813,17 @@
 
 (define (compiler-backend-avx2-tail-mask-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx2-tail-mask-emits [lanes : i64]) : ResultCompilerBackend
@@ -12734,9 +12896,13 @@
 
 (define (compiler-backend-avx512-mask-not-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k1"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%k2"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register (compiler-abi-mask-register-id 2)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-avx512-mask-not-emits? [lanes : i64] [want : String]) : bool
@@ -12761,14 +12927,20 @@
 
 (define (compiler-backend-avx512-mask-binop-same-dst-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k1"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
     CompilerRegAssignmentList.Nil))
 
 (define (compiler-backend-avx512-mask-binop-copy-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k1"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%k2"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register (compiler-abi-mask-register-id 2)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-avx512-mask-binop-emits?
@@ -12813,9 +12985,13 @@
 
 (define (compiler-backend-avx512-mask-reduce-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k1"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-avx512-mask-reduce-emits?
@@ -12858,16 +13034,18 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           CompilerRegAssignmentList.Nil)))))
 
 (define (compiler-backend-avx512-mask-spill-compare-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      4
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         5
-        (CompilerRegLocation.Register "%vec7"))
+        (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
       (compiler-backend-avx512-mask-spill-assignments))))
 
 (define (compiler-backend-avx512-mask-spill-compare-emits-ok?) : bool
@@ -13266,15 +13444,17 @@
 
 (define (compiler-backend-vector-binop-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%vec7"))
+        (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%vec8"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 8)))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-avx2-vector-binop-emits?
@@ -13861,7 +14041,7 @@
     [prev-continue-pending : bool compiler-backend-emit-instrs-continue-pending]
     [prev-identity-tail : bool compiler-backend-identity-tail-forwarder-active]
     [prev-emergency-pending : bool compiler-backend-emergency-pending]
-    [prev-emergency-reg : String compiler-backend-emergency-reg]
+    [prev-emergency-reg : i64 compiler-backend-emergency-reg]
     [prev-emergency-used : bool compiler-backend-emergency-used]
     [prev-emergency-pending-count : i64
       compiler-backend-emergency-pending-count]
@@ -14975,7 +15155,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           4
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)
       5)
       [(ResultCompilerBackend.Ok asm)
@@ -15045,7 +15225,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           4
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil)
       5)
       [(ResultCompilerBackend.Ok asm)
@@ -15081,7 +15261,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           3
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil)
       4)
       [(ResultCompilerBackend.Ok asm)
@@ -15120,7 +15300,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           4
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil)
       5)
       [(ResultCompilerBackend.Ok asm)
@@ -15142,7 +15322,9 @@
           (AstType.I64))
         CompilerIrInstrList.Nil))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        2
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       CompilerRegAssignmentList.Nil)
     4)
     [(ResultCompilerBackend.Ok asm)
@@ -15162,7 +15344,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-addr-of assignments 2 1 "")
       [(ResultCompilerBackend.Ok asm)
@@ -15253,15 +15435,15 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%rsi"))
+          (CompilerRegLocation.Register compiler-reg-id-rsi))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rax"))
+            (CompilerRegLocation.Register compiler-reg-id-rax))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%rax"))
+              (CompilerRegLocation.Register compiler-reg-id-rax))
             CompilerRegAssignmentList.Nil)))]
     [ok : bool
       (match (compiler-backend-emit-test-instrs
@@ -15436,7 +15618,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil)
       4)
       [(ResultCompilerBackend.Ok asm)
@@ -15499,21 +15681,25 @@
 ;; the store memory operand. A second non-memory use keeps the Gep materialized.
 (define (compiler-backend-gep-store-fold-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rsi"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-rsi))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rax"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-rax))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%rdi"))
+          (CompilerRegLocation.Register compiler-reg-id-rdi))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegLocation.Register compiler-reg-id-rcx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%r8"))
+              (CompilerRegLocation.Register compiler-reg-id-r8))
             CompilerRegAssignmentList.Nil))))))
 
 (define (compiler-backend-gep-store-fold-positive-ok?
@@ -15591,7 +15777,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)
       3)
       [(ResultCompilerBackend.Ok asm)
@@ -15660,7 +15846,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
@@ -15694,13 +15880,13 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         CompilerRegAssignmentList.Nil)]
     [pair-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r8"))
+          (CompilerRegLocation.Register compiler-reg-id-r8))
         CompilerRegAssignmentList.Nil)]
     [plain-ok : bool
       (match (compiler-backend-emit-test-instrs
@@ -15781,13 +15967,13 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)]
     [r11-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r11"))
+          (CompilerRegLocation.Register compiler-reg-id-r11))
         CompilerRegAssignmentList.Nil)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -15902,19 +16088,19 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r8"))
+            (CompilerRegLocation.Register compiler-reg-id-r8))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               3
-              (CompilerRegLocation.Register "%rcx"))
+              (CompilerRegLocation.Register compiler-reg-id-rcx))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 4
-                (CompilerRegLocation.Register "%r9"))
+                (CompilerRegLocation.Register compiler-reg-id-r9))
               CompilerRegAssignmentList.Nil))))]
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
@@ -15959,15 +16145,15 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             4
-            (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegLocation.Register compiler-reg-id-rcx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               5
-              (CompilerRegLocation.Register "%r10"))
+              (CompilerRegLocation.Register compiler-reg-id-r10))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -16037,37 +16223,41 @@
 
 (define (compiler-backend-gep-load-multi-emergency-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r9"))
+    (CompilerRegAssignment.Assignment
+      1
+      (CompilerRegLocation.Register compiler-reg-id-r9))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%rcx"))
+      (CompilerRegAssignment.Assignment
+        2
+        (CompilerRegLocation.Register compiler-reg-id-rcx))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           3
-          (CompilerRegLocation.Register "%rdx"))
+          (CompilerRegLocation.Register compiler-reg-id-rdx))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             4
-            (CompilerRegLocation.Register "%r10"))
+            (CompilerRegLocation.Register compiler-reg-id-r10))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               5
-              (CompilerRegLocation.Register "%r11"))
+              (CompilerRegLocation.Register compiler-reg-id-r11))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 6
-                (CompilerRegLocation.Register "%r8"))
+                (CompilerRegLocation.Register compiler-reg-id-r8))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   7
-                  (CompilerRegLocation.Register "%rsi"))
+                  (CompilerRegLocation.Register compiler-reg-id-rsi))
                 (compiler-reg-assignment-cons
                   (CompilerRegAssignment.Assignment
                     8
-                    (CompilerRegLocation.Register "%rdi"))
+                    (CompilerRegLocation.Register compiler-reg-id-rdi))
                   (compiler-reg-assignment-cons
                     (CompilerRegAssignment.Assignment
                       9
-                      (CompilerRegLocation.Register "%rax"))
+                      (CompilerRegLocation.Register compiler-reg-id-rax))
                     CompilerRegAssignmentList.Nil))))))))))
 
 (define (compiler-backend-gep-load-multi-emergency-instrs) : CompilerIrInstrList
@@ -16245,11 +16435,11 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r13"))
+            (CompilerRegLocation.Register compiler-reg-id-r13))
           CompilerRegAssignmentList.Nil))]
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
@@ -16288,15 +16478,15 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             4
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               5
-              (CompilerRegLocation.Register "%r13"))
+              (CompilerRegLocation.Register compiler-reg-id-r13))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -16365,15 +16555,15 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           5
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             8
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               9
-              (CompilerRegLocation.Register "%r13"))
+              (CompilerRegLocation.Register compiler-reg-id-r13))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -16468,17 +16658,17 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           5
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             6
-            (CompilerRegLocation.Register "%rbx"))
+            (CompilerRegLocation.Register compiler-reg-id-rbx))
           CompilerRegAssignmentList.Nil))]
     [stack-src : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           6
-          (CompilerRegLocation.Register "%rbx"))
+          (CompilerRegLocation.Register compiler-reg-id-rbx))
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-cast
@@ -16520,7 +16710,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-test-instrs
@@ -16594,29 +16784,33 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rbx"))
+            (CompilerRegLocation.Register compiler-reg-id-rbx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.RegisterPair "%r14" "%r15"))
+              (CompilerRegLocation.RegisterPair
+                compiler-reg-id-r14
+                compiler-reg-id-r15))
             CompilerRegAssignmentList.Nil)))]
     [noop-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r14"))
+          (CompilerRegLocation.Register compiler-reg-id-r14))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r15"))
+            (CompilerRegLocation.Register compiler-reg-id-r15))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.RegisterPair "%r14" "%r15"))
+              (CompilerRegLocation.RegisterPair
+                compiler-reg-id-r14
+                compiler-reg-id-r15))
             CompilerRegAssignmentList.Nil)))]
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
     (and
@@ -16708,23 +16902,23 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rax"))
+            (CompilerRegLocation.Register compiler-reg-id-rax))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%rax"))
+              (CompilerRegLocation.Register compiler-reg-id-rax))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 3
-                (CompilerRegLocation.Register "%rax"))
+                (CompilerRegLocation.Register compiler-reg-id-rax))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   4
-                  (CompilerRegLocation.Register "%rax"))
+                  (CompilerRegLocation.Register compiler-reg-id-rax))
                 CompilerRegAssignmentList.Nil)))))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -16760,19 +16954,19 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r8"))
+            (CompilerRegLocation.Register compiler-reg-id-r8))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%r14"))
+              (CompilerRegLocation.Register compiler-reg-id-r14))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 5
-                (CompilerRegLocation.Register "%r14"))
+                (CompilerRegLocation.Register compiler-reg-id-r14))
               CompilerRegAssignmentList.Nil))))]
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
@@ -16850,17 +17044,21 @@
 
 (define (compiler-backend-gep-fold-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r8))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           4
-          (CompilerRegLocation.Register "%r14"))
+          (CompilerRegLocation.Register compiler-reg-id-r14))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             5
-            (CompilerRegLocation.Register "%r13"))
+            (CompilerRegLocation.Register compiler-reg-id-r13))
           CompilerRegAssignmentList.Nil)))))
 
 (define (compiler-backend-gep-fold-disp-shape-ok?) : bool
@@ -16958,23 +17156,23 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r8"))
+            (CompilerRegLocation.Register compiler-reg-id-r8))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               3
-              (CompilerRegLocation.Register "%rcx"))
+              (CompilerRegLocation.Register compiler-reg-id-rcx))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 4
-                (CompilerRegLocation.Register "%r14"))
+                (CompilerRegLocation.Register compiler-reg-id-r14))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   5
-                  (CompilerRegLocation.Register "%r14"))
+                  (CompilerRegLocation.Register compiler-reg-id-r14))
                 CompilerRegAssignmentList.Nil)))))]
     (match (compiler-backend-emit-test-instrs
       (compiler-ir-instr-cons
@@ -17019,7 +17217,9 @@
         (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
         CompilerIrInstrList.Nil))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
@@ -17091,15 +17291,15 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r13"))
+            (CompilerRegLocation.Register compiler-reg-id-r13))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%r14"))
+              (CompilerRegLocation.Register compiler-reg-id-r14))
             CompilerRegAssignmentList.Nil)))]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
@@ -17152,7 +17352,9 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+          (CompilerRegLocation.RegisterPair
+            compiler-reg-id-r12
+            compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil)]
     [r11-occupied-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
@@ -17160,7 +17362,7 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r11"))
+            (CompilerRegLocation.Register compiler-reg-id-r11))
           CompilerRegAssignmentList.Nil))]
     [no-location-ok? : bool
       (match (compiler-backend-emit-test-instrs
@@ -17446,11 +17648,11 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrValue.Var 0)
@@ -17501,7 +17703,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -17556,11 +17758,13 @@
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm2"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrValue.Var 0)
@@ -17599,7 +17803,9 @@
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -17646,7 +17852,9 @@
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -17703,11 +17911,11 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrValue.Var 0)
@@ -17748,7 +17956,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -17795,7 +18003,9 @@
     "test_cast"
     (compiler-ir-label "entry")
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -17942,7 +18152,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -17982,7 +18192,9 @@
   (compiler-backend-emit-bitcast
     (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -18026,7 +18238,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -18068,7 +18280,9 @@
   (match (compiler-backend-emit-bitcast
     (ast-node-pool-reader-type-segment-bases)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -18938,11 +19152,11 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrUnOp.Neg)
@@ -18962,7 +19176,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -18986,17 +19200,17 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%xmm2"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%xmm3"))
+            (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
           CompilerRegAssignmentList.Nil))]
     [spill : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil))]
@@ -19151,15 +19365,15 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             2
-            (CompilerRegLocation.Register "%xmm4"))
+            (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
           CompilerRegAssignmentList.Nil)))
     2
     op
@@ -19211,11 +19425,11 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm4"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil)))
@@ -19271,15 +19485,15 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             2
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           CompilerRegAssignmentList.Nil)))
     2
     (CompilerIrBinOp.Lt)
@@ -19331,11 +19545,11 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm4"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil)))
@@ -19393,11 +19607,11 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%xmm4"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
         CompilerRegAssignmentList.Nil))
     2
     (CompilerIrBinOp.Add)
@@ -19421,11 +19635,11 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             2
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           CompilerRegAssignmentList.Nil)))
     2
     (CompilerIrBinOp.Lt)
@@ -19535,11 +19749,11 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         0
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil))
     2
     (CompilerIrBinOp.Lt)
@@ -19563,7 +19777,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil))
     2
     (CompilerIrBinOp.Lt)
@@ -19617,7 +19831,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r8"))
+          (CompilerRegLocation.Register compiler-reg-id-r8))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil))]
@@ -19788,7 +20002,9 @@
 (define (compiler-backend-direct-condition-branch-ok?) : bool
   (match (compiler-backend-emit-branch
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       CompilerRegAssignmentList.Nil)
     "bool_branch"
     (CompilerIrValue.Var 0)
@@ -19824,9 +20040,13 @@
 
 (define (compiler-backend-direct-compare-branch-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))))
@@ -20052,11 +20272,13 @@
       CompilerRegVarTypeList.Nil)
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r15))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil))
     1
     (CompilerIrBinOp.BitAnd)
@@ -20109,15 +20331,17 @@
           CompilerRegVarTypeList.Nil)))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r15))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             2
-            (CompilerRegLocation.Register "%r13"))
+            (CompilerRegLocation.Register compiler-reg-id-r13))
           CompilerRegAssignmentList.Nil)))
     1
     (CompilerIrBinOp.Lt)
@@ -20159,11 +20383,13 @@
         CompilerRegVarTypeList.Nil))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r15))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil))
     1
     op
@@ -20209,15 +20435,17 @@
           CompilerRegVarTypeList.Nil)))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r15"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r15))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%rcx"))
+          (CompilerRegLocation.Register compiler-reg-id-rcx))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             2
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           CompilerRegAssignmentList.Nil)))
     2
     op
@@ -20269,7 +20497,9 @@
         CompilerRegVarTypeList.Nil))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -20319,11 +20549,13 @@
           CompilerRegVarTypeList.Nil)))
     (CompilerBackendGlobalTypeList.Nil)
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           1
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
           CompilerRegAssignmentList.Nil)))
@@ -20362,7 +20594,9 @@
 (define (compiler-backend-spill-unop-home-ok?) : bool
   (match (compiler-backend-emit-unop
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        0
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))
@@ -20486,7 +20720,7 @@
         "%r8"
         "%r10"
         "%r10"
-        (CompilerBackendConstHoistHomeReg "%r8" magic false))]
+        (CompilerBackendConstHoistHomeReg compiler-reg-id-r8 magic false))]
     [frame-asm : String
       (compiler-backend-signed-magic-divmod-src-asm
         1000000007
@@ -20513,33 +20747,37 @@
 ;; those tables deliberately.
 (define (compiler-backend-divmod-polish-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%rdx"))
+          (CompilerRegLocation.Register compiler-reg-id-rdx))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%rax"))
+            (CompilerRegLocation.Register compiler-reg-id-rax))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%rdi"))
+              (CompilerRegLocation.Register compiler-reg-id-rdi))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 5
-                (CompilerRegLocation.Register "%rsi"))
+                (CompilerRegLocation.Register compiler-reg-id-rsi))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   6
-                  (CompilerRegLocation.Register "%r10"))
+                  (CompilerRegLocation.Register compiler-reg-id-r10))
                 (compiler-reg-assignment-cons
                   (CompilerRegAssignment.Assignment
                     7
-                    (CompilerRegLocation.Register "%r14"))
+                    (CompilerRegLocation.Register compiler-reg-id-r14))
                   CompilerRegAssignmentList.Nil)))))))))
 
 (define (compiler-backend-divmod-polish-instrs
@@ -20605,9 +20843,9 @@
     [prev-gep-cursor : i64 compiler-backend-gep-fold-cursor]
     [prev-gep-drift : bool compiler-backend-gep-fold-drift]
     [prev0-var : i64 compiler-backend-emit-home-override0-var]
-    [prev0-reg : String compiler-backend-emit-home-override0-reg]
+    [prev0-reg : i64 compiler-backend-emit-home-override0-reg]
     [prev1-var : i64 compiler-backend-emit-home-override1-var]
-    [prev1-reg : String compiler-backend-emit-home-override1-reg]
+    [prev1-reg : i64 compiler-backend-emit-home-override1-reg]
     [assignments : CompilerRegAssignmentList
       (compiler-backend-divmod-polish-assignments)]
     [instrs : CompilerIrInstrList
@@ -20717,29 +20955,33 @@
 ;; %rcx is restored before the ordinary Gep+StorePtr reads it.
 (define (compiler-backend-c22-divmod-store-collision-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rcx"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-rcx))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r8))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           4
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             7
-            (CompilerRegLocation.Register "%rdx"))
+            (CompilerRegLocation.Register compiler-reg-id-rdx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               8
-              (CompilerRegLocation.Register "%rax"))
+              (CompilerRegLocation.Register compiler-reg-id-rax))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 10
-                (CompilerRegLocation.Register "%r10"))
+                (CompilerRegLocation.Register compiler-reg-id-r10))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   11
-                  (CompilerRegLocation.Register "%r11"))
+                  (CompilerRegLocation.Register compiler-reg-id-r11))
                 CompilerRegAssignmentList.Nil))))))))
 
 (define (compiler-backend-c22-divmod-store-collision-instrs) : CompilerIrInstrList
@@ -20821,9 +21063,9 @@
     [prev-gep-cursor : i64 compiler-backend-gep-fold-cursor]
     [prev-gep-drift : bool compiler-backend-gep-fold-drift]
     [prev0-var : i64 compiler-backend-emit-home-override0-var]
-    [prev0-reg : String compiler-backend-emit-home-override0-reg]
+    [prev0-reg : i64 compiler-backend-emit-home-override0-reg]
     [prev1-var : i64 compiler-backend-emit-home-override1-var]
-    [prev1-reg : String compiler-backend-emit-home-override1-reg]
+    [prev1-reg : i64 compiler-backend-emit-home-override1-reg]
     [prev-emergency-slot-offset : i64 compiler-backend-emergency-slot-offset]
     [assignments : CompilerRegAssignmentList
       (compiler-backend-c22-divmod-store-collision-assignments)]
@@ -20949,11 +21191,11 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rax"))
+            (CompilerRegLocation.Register compiler-reg-id-rax))
           CompilerRegAssignmentList.Nil))]
     (match (compiler-backend-emit-binop
       (ast-node-pool-reader-type-segment-bases)
@@ -21644,7 +21886,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%xmm3"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-test-emit-scalar-stack-call-arg-text
       (ast-node-pool-reader-type-segment-bases)
@@ -21668,7 +21910,9 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.RegisterPair "%xmm3" "%xmm4"))
+          (CompilerRegLocation.RegisterPair
+            (compiler-abi-xmm-register-id 3)
+            (compiler-abi-xmm-register-id 4)))
         CompilerRegAssignmentList.Nil)]
     [ty : AstType (compiler-backend-register-group-f64-test-type)]
     (match (compiler-backend-emit-group-stack-arg
@@ -21702,7 +21946,9 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+          (CompilerRegLocation.RegisterPair
+            compiler-reg-id-r12
+            compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil)]
     (and
       (match (compiler-backend-emit-param-spills
@@ -22088,7 +22334,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r11"))
+          (CompilerRegLocation.Register compiler-reg-id-r11))
         CompilerRegAssignmentList.Nil)]
     [types : CompilerRegVarTypeList
       (compiler-reg-var-type-cons
@@ -22937,7 +23183,7 @@
     [prev-current-count : i64 compiler-backend-emit-current-count]
     [prev-win64 : bool (compiler-backend-current-fn-win64?)]
     [prev-emergency-pending : bool compiler-backend-emergency-pending]
-    [prev-emergency-reg : String compiler-backend-emergency-reg]
+    [prev-emergency-reg : i64 compiler-backend-emergency-reg]
     [prev-emergency-used : bool compiler-backend-emergency-used]
     [prev-emergency-pending-count : i64
       compiler-backend-emergency-pending-count]
@@ -22967,7 +23213,7 @@
         (set! compiler-backend-emit-instr-post-base count)
         (set! compiler-backend-emit-current-count count)
         (set! compiler-backend-emergency-pending false)
-        (set! compiler-backend-emergency-reg "")
+        (set! compiler-backend-emergency-reg compiler-reg-id-invalid)
         (set! compiler-backend-emergency-used false)
         (set! compiler-backend-emergency-pending-count 0)
         (set! compiler-backend-emergency-used-count 0)
@@ -23662,41 +23908,41 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegLocation.Register compiler-reg-id-rcx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%rdx"))
+              (CompilerRegLocation.Register compiler-reg-id-rdx))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 4
-                (CompilerRegLocation.Register "%r8"))
+                (CompilerRegLocation.Register compiler-reg-id-r8))
               CompilerRegAssignmentList.Nil))))]
     [r11-free : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegLocation.Register compiler-reg-id-rcx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%rdx"))
+              (CompilerRegLocation.Register compiler-reg-id-rdx))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 3
-                (CompilerRegLocation.Register "%r10"))
+                (CompilerRegLocation.Register compiler-reg-id-r10))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   4
-                  (CompilerRegLocation.Register "%r8"))
+                  (CompilerRegLocation.Register compiler-reg-id-r8))
                 CompilerRegAssignmentList.Nil)))))]
     (begin
       (array-set! starts 0 0)
@@ -23741,41 +23987,41 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegLocation.Register compiler-reg-id-rcx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%rdx"))
+              (CompilerRegLocation.Register compiler-reg-id-rdx))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 4
-                (CompilerRegLocation.Register "%r8"))
+                (CompilerRegLocation.Register compiler-reg-id-r8))
               CompilerRegAssignmentList.Nil))))]
     [r11-free : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegLocation.Register compiler-reg-id-rcx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%rdx"))
+              (CompilerRegLocation.Register compiler-reg-id-rdx))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 3
-                (CompilerRegLocation.Register "%r10"))
+                (CompilerRegLocation.Register compiler-reg-id-r10))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   4
-                  (CompilerRegLocation.Register "%r8"))
+                  (CompilerRegLocation.Register compiler-reg-id-r8))
                 CompilerRegAssignmentList.Nil)))))]
     (begin
       (array-set! starts 0 0)
@@ -23820,27 +24066,27 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%rcx"))
+            (CompilerRegLocation.Register compiler-reg-id-rcx))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%rdx"))
+              (CompilerRegLocation.Register compiler-reg-id-rdx))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 3
-                (CompilerRegLocation.Register "%r8"))
+                (CompilerRegLocation.Register compiler-reg-id-r8))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   5
-                  (CompilerRegLocation.Register "%r13"))
+                  (CompilerRegLocation.Register compiler-reg-id-r13))
                 (compiler-reg-assignment-cons
                   (CompilerRegAssignment.Assignment
                     6
-                    (CompilerRegLocation.Register "%r14"))
+                    (CompilerRegLocation.Register compiler-reg-id-r14))
                   CompilerRegAssignmentList.Nil))))))]
     (begin
       (array-set! starts 0 0)
@@ -23913,7 +24159,7 @@
         "%r9"))))
 
 (define (compiler-backend-test-reg-assignment-list-from
-  [regs : (Array String)]
+  [regs : (Array i64)]
   [index : i64]) : CompilerRegAssignmentList
   (if (>= index (array-length regs))
     CompilerRegAssignmentList.Nil
@@ -23968,11 +24214,11 @@
   (let
     [prev-mode : CompilerBackendMode compiler-backend-current-mode]
     [prev-pending : bool compiler-backend-emergency-pending]
-    [prev-reg : String compiler-backend-emergency-reg]
+    [prev-reg : i64 compiler-backend-emergency-reg]
     [prev-used : bool compiler-backend-emergency-used]
     [prev-pending-count : i64 compiler-backend-emergency-pending-count]
     [prev-used-count : i64 compiler-backend-emergency-used-count]
-    [prev-reg0 : String (array-ref compiler-backend-emergency-regs 0)]
+    [prev-reg0 : i64 (array-ref compiler-backend-emergency-regs 0)]
     [prev-slot : i64 compiler-backend-emergency-slot-offset]
     [prev-suppressed : bool compiler-backend-emergency-restore-suppressed]
     [_init : unit
@@ -24026,26 +24272,26 @@
 (define (compiler-backend-scavenge-widened-pool-picks-rsi-ok?) : bool
   (let
     [prev-win64 : bool (compiler-backend-current-fn-win64?)]
-    [regs : (Array String) (make-array String 13)]
+    [regs : (Array i64) (make-array i64 13)]
     [starts : (Array i64) (make-array i64 13)]
     [ends : (Array i64) (make-array i64 13)]
     [assignments : CompilerRegAssignmentList CompilerRegAssignmentList.Nil]
     [picked : String ""]
     [ok : bool false]
     (begin
-      (array-set! regs 0 "%r9")
-      (array-set! regs 1 "%rcx")
-      (array-set! regs 2 "%rdx")
-      (array-set! regs 3 "%r10")
-      (array-set! regs 4 "%r11")
-      (array-set! regs 5 "%r8")
-      (array-set! regs 6 "%r12")
-      (array-set! regs 7 "%r13")
-      (array-set! regs 8 "%r14")
-      (array-set! regs 9 "%r15")
-      (array-set! regs 10 "%rbx")
-      (array-set! regs 11 "%rdi")
-      (array-set! regs 12 "%rax")
+      (array-set! regs 0 compiler-reg-id-r9)
+      (array-set! regs 1 compiler-reg-id-rcx)
+      (array-set! regs 2 compiler-reg-id-rdx)
+      (array-set! regs 3 compiler-reg-id-r10)
+      (array-set! regs 4 compiler-reg-id-r11)
+      (array-set! regs 5 compiler-reg-id-r8)
+      (array-set! regs 6 compiler-reg-id-r12)
+      (array-set! regs 7 compiler-reg-id-r13)
+      (array-set! regs 8 compiler-reg-id-r14)
+      (array-set! regs 9 compiler-reg-id-r15)
+      (array-set! regs 10 compiler-reg-id-rbx)
+      (array-set! regs 11 compiler-reg-id-rdi)
+      (array-set! regs 12 compiler-reg-id-rax)
       (compiler-backend-test-fill-live-range! starts ends 13 0 10)
       (set! assignments (compiler-backend-test-reg-assignment-list-from regs 0))
       (compiler-backend-set-current-fn-linux!)
@@ -24089,16 +24335,26 @@
       (set!
         linux-ok
         (and
-          (compiler-backend-scavenge-candidate-ok? 0 0 0 "%rsi")
-          (compiler-backend-scavenge-candidate-ok? 0 0 0 "%rdi")))
+          (compiler-backend-scavenge-candidate-ok? 0 0 0 compiler-reg-id-rsi)
+          (compiler-backend-scavenge-candidate-ok? 0 0 0 compiler-reg-id-rdi)))
       (compiler-backend-set-current-fn-win64!)
       (set!
         win64-ok
         (and
-          (not (compiler-backend-scavenge-candidate-ok? 0 0 0 "%rsi"))
-          (not (compiler-backend-scavenge-candidate-ok? 0 0 0 "%rdi"))
-          (compiler-backend-scavenge-candidate-ok? 0 0 rsi-bit "%rsi")
-          (compiler-backend-scavenge-candidate-ok? 0 0 rdi-bit "%rdi")))
+          (not
+            (compiler-backend-scavenge-candidate-ok? 0 0 0 compiler-reg-id-rsi))
+          (not
+            (compiler-backend-scavenge-candidate-ok? 0 0 0 compiler-reg-id-rdi))
+          (compiler-backend-scavenge-candidate-ok?
+            0
+            0
+            rsi-bit
+            compiler-reg-id-rsi)
+          (compiler-backend-scavenge-candidate-ok?
+            0
+            0
+            rdi-bit
+            compiler-reg-id-rdi)))
       (if prev-win64
         (compiler-backend-set-current-fn-win64!)
         (compiler-backend-set-current-fn-linux!))
@@ -24124,13 +24380,17 @@
 
 (define (compiler-backend-scratch-vreg-call-target-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r10))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-scratch-vreg-tail-target-test-blocks) : CompilerIrBlockList
@@ -24147,13 +24407,17 @@
 
 (define (compiler-backend-scratch-vreg-tail-target-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r11"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r11))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r10))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-scratch-vreg-switch-test-blocks) : CompilerIrBlockList
@@ -24198,9 +24462,13 @@
 
 (define (compiler-backend-scratch-vreg-c-abi-return-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r10"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r10))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r12))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-vreg-bounds-test-blocks) : CompilerIrBlockList
@@ -24229,9 +24497,13 @@
 
 (define (compiler-backend-scratch-vreg-memory-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r9))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r10))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-vreg-fused-sibling-test-blocks) : CompilerIrBlockList
@@ -24259,7 +24531,9 @@
 
 (define (compiler-backend-scratch-vreg-fused-sibling-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r8"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r8))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -8))
       (compiler-reg-assignment-cons
@@ -24268,7 +24542,7 @@
         ;; group may use its home.
         (CompilerRegAssignment.Assignment
           3
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Spill -16))
           (compiler-reg-assignment-cons
@@ -24396,7 +24670,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm6"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 6)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-vreg-float-compare-test-assignments) : CompilerRegAssignmentList
@@ -24407,7 +24681,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%xmm7"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 7)))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-scratch-vreg-float-unop-test-assignments) : CompilerRegAssignmentList
@@ -24416,7 +24690,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm6"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 6)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-vreg-float-arith-return-test-assignments) : CompilerRegAssignmentList
@@ -24425,11 +24699,11 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm6"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 6)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%xmm0"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 0)))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-scratch-vreg-float-compare-return-test-assignments) : CompilerRegAssignmentList
@@ -24440,7 +24714,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%xmm7"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 7)))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-scratch-vreg-splat-test-blocks) : CompilerIrBlockList
@@ -24483,27 +24757,35 @@
 
 (define (compiler-backend-scratch-vreg-splat-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r8"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r8))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%vec6"))
+        (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-vreg-reduce-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm2"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-vreg-prefix-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r8))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
         CompilerRegAssignmentList.Nil))))
@@ -24603,23 +24885,24 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%vec6"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%vec7"))
+            (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%k1"))
+              (CompilerRegLocation.Register (compiler-abi-mask-register-id 1)))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 5
-                (CompilerRegLocation.Register "%k2"))
+                (CompilerRegLocation.Register (compiler-abi-mask-register-id 2)))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   6
-                  (CompilerRegLocation.Register "%vec8"))
+                  (CompilerRegLocation.Register
+                    (compiler-abi-vector-register-id 8)))
                 (compiler-reg-assignment-cons
                   (CompilerRegAssignment.Assignment
                     7
@@ -24627,19 +24910,22 @@
                   (compiler-reg-assignment-cons
                     (CompilerRegAssignment.Assignment
                       8
-                      (CompilerRegLocation.Register "%r12"))
+                      (CompilerRegLocation.Register compiler-reg-id-r12))
                     (compiler-reg-assignment-cons
                       (CompilerRegAssignment.Assignment
                         9
-                        (CompilerRegLocation.Register "%vec9"))
+                        (CompilerRegLocation.Register
+                          (compiler-abi-vector-register-id 9)))
                       (compiler-reg-assignment-cons
                         (CompilerRegAssignment.Assignment
                           10
-                          (CompilerRegLocation.Register "%vec10"))
+                          (CompilerRegLocation.Register
+                            (compiler-abi-vector-register-id 10)))
                         (compiler-reg-assignment-cons
                           (CompilerRegAssignment.Assignment
                             11
-                            (CompilerRegLocation.Register "%vec11"))
+                            (CompilerRegLocation.Register
+                              (compiler-abi-vector-register-id 11)))
                           CompilerRegAssignmentList.Nil)))))))))))))
 
 (define (compiler-backend-scratch-vreg-indexed-simd-fused-blocks) : CompilerIrBlockList
@@ -24672,15 +24958,15 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%vec6"))
+          (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%vec8"))
+            (CompilerRegLocation.Register (compiler-abi-vector-register-id 8)))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%vec7"))
+              (CompilerRegLocation.Register (compiler-abi-vector-register-id 7)))
             CompilerRegAssignmentList.Nil))))))
 
 (define (compiler-backend-scratch-vreg-cast-test-blocks) : CompilerIrBlockList
@@ -24733,7 +25019,9 @@
 
 (define (compiler-backend-scratch-vreg-cast-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
       CompilerRegAssignmentList.Nil)))
@@ -24744,7 +25032,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm6"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 6)))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-vreg-bitcast-test-assignments) : CompilerRegAssignmentList
@@ -24756,7 +25044,9 @@
 
 (define (compiler-backend-scratch-vreg-float-mov-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm6"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-xmm-register-id 6)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
       CompilerRegAssignmentList.Nil)))
@@ -24829,13 +25119,19 @@
 
 (define (compiler-backend-scratch-vreg-aggregate-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm4"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r8))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.RegisterPair "%xmm6" "%r13"))
+          (CompilerRegLocation.RegisterPair
+            (compiler-abi-xmm-register-id 6)
+            compiler-reg-id-r13))
         CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-scratch-vreg-copy-xmm-test-blocks) : CompilerIrBlockList
@@ -25024,19 +25320,21 @@
 
 (define (compiler-backend-scratch-vreg-float-phi-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%xmm5"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 5)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%xmm4"))
+            (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
           CompilerRegAssignmentList.Nil)))))
 
 (define (compiler-backend-scratch-f64-four-types) : CompilerRegVarTypeList
@@ -25052,23 +25350,25 @@
 
 (define (compiler-backend-scratch-float-phi-branch-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register (compiler-abi-xmm-register-id 2)))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         1
-        (CompilerRegLocation.Register "%xmm3"))
+        (CompilerRegLocation.Register (compiler-abi-xmm-register-id 3)))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%xmm5"))
+          (CompilerRegLocation.Register (compiler-abi-xmm-register-id 5)))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%xmm4"))
+            (CompilerRegLocation.Register (compiler-abi-xmm-register-id 4)))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               4
-              (CompilerRegLocation.Register "%r12"))
+              (CompilerRegLocation.Register compiler-reg-id-r12))
             CompilerRegAssignmentList.Nil))))))
 
 (define (compiler-backend-scratch-float-phi-branch-types) : CompilerRegVarTypeList
@@ -25078,9 +25378,13 @@
 
 (define (compiler-backend-scratch-vreg-phi-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-test-types-from [var : i64] [vars : i64]) : CompilerRegVarTypeList
@@ -25182,7 +25486,8 @@
   [ordinal : i64]) : String
   (match result
     [(CompilerRegScratchPlanResult.Result _ plan)
-      (compiler-reg-scratch-plan-register plan 0 ordinal)]))
+      (compiler-abi-register-spelling
+        (compiler-reg-scratch-plan-register plan 0 ordinal))]))
 
 (define (compiler-backend-scratch-test-success-count
   [result : CompilerRegScratchPlanResult]) : i64
@@ -25273,7 +25578,7 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%r8"))
+            (CompilerRegLocation.Register compiler-reg-id-r8))
           CompilerRegAssignmentList.Nil)]
       [listed : CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
@@ -25302,7 +25607,7 @@
         (match listed
           [(CompilerRegScratchPlanResult.Result _ plan)
             (and
-              (compiler-reg-string-list-contains?
+              (compiler-reg-id-list-contains?
                 (struct-get
                   (struct-get
                     (struct-get
@@ -25311,7 +25616,7 @@
                     constraint)
                   excluded)
                 "%r8")
-              (compiler-reg-string-list-contains?
+              (compiler-reg-id-list-contains?
                 (struct-get
                   (struct-get
                     (struct-get
@@ -25529,11 +25834,11 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               1
-              (CompilerRegLocation.Register "%r13"))
+              (CompilerRegLocation.Register compiler-reg-id-r13))
             CompilerRegAssignmentList.Nil))]
       [index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
@@ -25903,7 +26208,7 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%r10"))
+            (CompilerRegLocation.Register compiler-reg-id-r10))
           CompilerRegAssignmentList.Nil)]
       [result : CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
@@ -25926,11 +26231,11 @@
 (define (compiler-backend-scratch-items-registers-differ-from?
   [items : (Array CompilerRegScratchAssignment)]
   [index : i64]
-  [reg : String]) : bool
+  [reg : i64]) : bool
   (if (>= index (array-length items))
     true
     (and
-      (not (string.eq reg (struct-get (array-ref items index) register)))
+      (not (= reg (struct-get (array-ref items index) register)))
       (compiler-backend-scratch-items-registers-differ-from?
         items
         (+ index 1)
@@ -25942,9 +26247,9 @@
   (if (>= index (array-length items))
     true
     (let
-      [reg : String (struct-get (array-ref items index) register)]
+      [reg : i64 (struct-get (array-ref items index) register)]
       (and
-        (not (string.eq reg ""))
+        (not (= reg compiler-reg-id-invalid))
         (compiler-backend-scratch-items-registers-differ-from?
           items
           (+ index 1)
@@ -25963,17 +26268,17 @@
       [item : CompilerRegScratchAssignment (array-ref items index)]
       [requirement : CompilerRegScratchRequirement
         (struct-get item requirement)]
-      [excluded : CompilerRegStringList
+      [excluded : CompilerRegIdList
         (struct-get (struct-get requirement constraint) excluded)]
       (and
         (< index (array-length dense-items))
         (= (struct-get requirement lo) 0)
         (= (struct-get requirement hi) 7)
-        (compiler-reg-string-list-contains? excluded "%r8")
-        (compiler-reg-string-list-contains? excluded "%r9")
-        (not (string.eq (struct-get item register) "%r8"))
-        (not (string.eq (struct-get item register) "%r9"))
-        (string.eq
+        (compiler-reg-id-list-contains? excluded compiler-reg-id-r8)
+        (compiler-reg-id-list-contains? excluded compiler-reg-id-r9)
+        (not (= (struct-get item register) compiler-reg-id-r8))
+        (not (= (struct-get item register) compiler-reg-id-r9))
+        (=
           (struct-get item register)
           (struct-get (array-ref dense-items index) register))
         (compiler-backend-scratch-fused-items-shape-from?
@@ -26142,7 +26447,7 @@
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%r11"))
+              (CompilerRegLocation.Register compiler-reg-id-r11))
             CompilerRegAssignmentList.Nil))]
       [blocks : CompilerIrBlockList
         (compiler-backend-scratch-vreg-c-memory-test-blocks name)]
@@ -26232,7 +26537,7 @@
   (match result
     [(CompilerRegScratchPlanResult.Result _ plan)
       (let
-        [value-reg : String
+        [value-reg : i64
           (compiler-reg-scratch-plan-register plan 0 value-ordinal)]
         [items : (Array CompilerRegScratchAssignment) (struct-get plan items)]
         [value-item : CompilerRegScratchAssignment
@@ -26242,7 +26547,10 @@
         (and
           (= (compiler-backend-scratch-test-plan-count result) expected)
           (= (compiler-backend-scratch-test-success-count result) expected)
-          (compiler-backend-string-prefix-at? value-reg "%xmm" 0)
+          (compiler-backend-string-prefix-at?
+            (compiler-abi-register-spelling value-reg)
+            "%xmm"
+            0)
           (match (struct-get requirement role)
             [(CompilerRegScratchRole.FloatMemoryValueXmm) true]
             [_ false])
@@ -26364,21 +26672,21 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%xmm8"))
+            (CompilerRegLocation.Register (compiler-abi-xmm-register-id 8)))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               1
-              (CompilerRegLocation.Register "%xmm6"))
+              (CompilerRegLocation.Register (compiler-abi-xmm-register-id 6)))
             CompilerRegAssignmentList.Nil))]
       [direct-compare-assignments : CompilerRegAssignmentList
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               1
-              (CompilerRegLocation.Register "%xmm6"))
+              (CompilerRegLocation.Register (compiler-abi-xmm-register-id 6)))
             CompilerRegAssignmentList.Nil))]
       [arith : CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi-with-types
@@ -26869,18 +27177,18 @@
   (if (>= point 16)
     true
     (let
-      [base : String (compiler-reg-scratch-plan-register plan point 0)]
-      [index : String (compiler-reg-scratch-plan-register plan point 1)]
+      [base : i64 (compiler-reg-scratch-plan-register plan point 0)]
+      [index : i64 (compiler-reg-scratch-plan-register plan point 1)]
       (and
-        (not (string.eq base ""))
-        (not (string.eq index ""))
+        (not (= base compiler-reg-id-invalid))
+        (not (= index compiler-reg-id-invalid))
         (not (compiler-reg-registers-overlap? base index))
-        (string.eq base (compiler-reg-scratch-plan-register dense-plan point 0))
-        (string.eq
-          index
-          (compiler-reg-scratch-plan-register dense-plan point 1))
+        (= base (compiler-reg-scratch-plan-register dense-plan point 0))
+        (= index (compiler-reg-scratch-plan-register dense-plan point 1))
         (if (>= point 12)
-          (and (not (string.eq base "%r12")) (not (string.eq index "%r12")))
+          (and
+            (not (= base compiler-reg-id-r12))
+            (not (= index compiler-reg-id-r12)))
           true)
         (compiler-backend-scratch-vreg-indexed-simd-points-ok?
           plan
@@ -26942,9 +27250,9 @@
                   (match fused-dense
                     [(CompilerRegScratchPlanResult.Result _ fused-dense-plan)
                       (let
-                        [constant-base : String
+                        [constant-base : i64
                           (compiler-reg-scratch-plan-register plan 16 0)]
-                        [vector-constant-base : String
+                        [vector-constant-base : i64
                           (compiler-reg-scratch-plan-register plan 18 0)]
                         [fused-base : CompilerRegScratchRequirement
                           (struct-get
@@ -26964,21 +27272,21 @@
                             plan
                             dense-plan
                             0)
-                          (not (string.eq constant-base ""))
-                          (string.eq
+                          (not (= constant-base compiler-reg-id-invalid))
+                          (=
                             constant-base
                             (compiler-reg-scratch-plan-register dense-plan 16 0))
-                          (string.eq
+                          (=
                             (compiler-reg-scratch-plan-register plan 16 1)
-                            "")
-                          (not (string.eq vector-constant-base ""))
-                          (string.eq
+                            compiler-reg-id-invalid)
+                          (not (= vector-constant-base compiler-reg-id-invalid))
+                          (=
                             vector-constant-base
                             (compiler-reg-scratch-plan-register dense-plan 18 0))
-                          (string.eq
+                          (=
                             (compiler-reg-scratch-plan-register plan 18 1)
-                            "")
-                          (not (string.eq constant-base "%r12"))
+                            compiler-reg-id-invalid)
+                          (not (= constant-base compiler-reg-id-r12))
                           (compiler-backend-scratch-vreg-indexed-simd-role?
                             plan
                             0
@@ -27004,13 +27312,13 @@
                           (= (struct-get fused-base hi) 3)
                           (= (struct-get fused-index lo) 0)
                           (= (struct-get fused-index hi) 3)
-                          (string.eq
+                          (=
                             (compiler-reg-scratch-plan-register fused-plan 0 0)
                             (compiler-reg-scratch-plan-register
                               fused-dense-plan
                               0
                               0))
-                          (string.eq
+                          (=
                             (compiler-reg-scratch-plan-register fused-plan 0 1)
                             (compiler-reg-scratch-plan-register
                               fused-dense-plan
@@ -27026,17 +27334,17 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               1
-              (CompilerRegLocation.Register "%vec6"))
+              (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
             CompilerRegAssignmentList.Nil))]
       [reduce-assignments : CompilerRegAssignmentList
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%vec6"))
+            (CompilerRegLocation.Register (compiler-abi-vector-register-id 6)))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
             CompilerRegAssignmentList.Nil))]
@@ -27369,7 +27677,7 @@
       [types : (Array AstType) (array.make-array AstType 2)]
       [assignments : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make 2)]
-      [registers : (Array String)
+      [registers : (Array i64)
         (compiler-reg-scratch-register-array (CompilerRegTargetAbi.Linux))]
       [occupancy : CompilerRegGreedyOccupancy
         (compiler-reg-greedy-occupancy-make
@@ -27380,9 +27688,9 @@
       [fixed-rcx : CompilerRegScratchConstraint
         (CompilerRegScratchConstraint
           (CompilerRegScratchClass.Gp)
-          CompilerRegStringList.Nil
-          CompilerRegStringList.Nil
-          "%rcx")]
+          CompilerRegIdList.Nil
+          CompilerRegIdList.Nil
+          compiler-reg-id-rcx)]
       (begin
         (compiler-reg-fill-i64-array starts -1)
         (compiler-reg-fill-i64-array ends -1)
@@ -27401,7 +27709,7 @@
               0
               3
               0)
-            ""))
+            compiler-reg-id-invalid))
         (array-set!
           items
           1
@@ -27414,7 +27722,7 @@
               0
               3
               1)
-            ""))
+            compiler-reg-id-invalid))
         (compiler-reg-scratch-mark-requirement!
           starts
           ends
@@ -27443,14 +27751,20 @@
         (let
           [partial? : bool
             (and
-              (string.eq (struct-get (array-ref items 0) register) "%rcx")
-              (string.eq (struct-get (array-ref items 1) register) ""))]
+              (= (struct-get (array-ref items 0) register) compiler-reg-id-rcx)
+              (=
+                (struct-get (array-ref items 1) register)
+                compiler-reg-id-invalid))]
           (begin
             (compiler-reg-scratch-clear-incomplete-groups! items 0)
             (and
               partial?
-              (string.eq (struct-get (array-ref items 0) register) "")
-              (string.eq (struct-get (array-ref items 1) register) ""))))))
+              (=
+                (struct-get (array-ref items 0) register)
+                compiler-reg-id-invalid)
+              (=
+                (struct-get (array-ref items 1) register)
+                compiler-reg-id-invalid))))))
     true))
 
 (define (compiler-backend-scratch-vreg-constraint-shapes-ok?) : bool
@@ -27467,7 +27781,7 @@
       [types : (Array AstType) (array.make-array AstType 5)]
       [assignments : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make 5)]
-      [registers : (Array String)
+      [registers : (Array i64)
         (compiler-reg-scratch-register-array (CompilerRegTargetAbi.Linux))]
       [occupancy : CompilerRegGreedyOccupancy
         (compiler-reg-greedy-occupancy-make
@@ -27478,29 +27792,29 @@
       [gp-fixed-rcx : CompilerRegScratchConstraint
         (CompilerRegScratchConstraint
           (CompilerRegScratchClass.Gp)
-          CompilerRegStringList.Nil
-          CompilerRegStringList.Nil
-          "%rcx")]
+          CompilerRegIdList.Nil
+          CompilerRegIdList.Nil
+          compiler-reg-id-rcx)]
       [gp-r10-not-rcx : CompilerRegScratchConstraint
         (CompilerRegScratchConstraint
           (CompilerRegScratchClass.Gp)
-          (compiler-reg-string-cons
-            "%rcx"
-            (compiler-reg-string-cons "%r10" CompilerRegStringList.Nil))
-          (compiler-reg-string-cons "%rcx" CompilerRegStringList.Nil)
-          "")]
+          (compiler-reg-id-cons
+            compiler-reg-id-rcx
+            (compiler-reg-id-cons compiler-reg-id-r10 CompilerRegIdList.Nil))
+          (compiler-reg-id-cons compiler-reg-id-rcx CompilerRegIdList.Nil)
+          compiler-reg-id-invalid)]
       [gp-r10 : CompilerRegScratchConstraint
         (CompilerRegScratchConstraint
           (CompilerRegScratchClass.Gp)
-          (compiler-reg-string-cons "%r10" CompilerRegStringList.Nil)
-          CompilerRegStringList.Nil
-          "")]
+          (compiler-reg-id-cons compiler-reg-id-r10 CompilerRegIdList.Nil)
+          CompilerRegIdList.Nil
+          compiler-reg-id-invalid)]
       [xmm-any : CompilerRegScratchConstraint
         (CompilerRegScratchConstraint
           (CompilerRegScratchClass.Xmm)
-          CompilerRegStringList.Nil
-          CompilerRegStringList.Nil
-          "")]
+          CompilerRegIdList.Nil
+          CompilerRegIdList.Nil
+          compiler-reg-id-invalid)]
       (begin
         (compiler-reg-fill-i64-array starts -1)
         (compiler-reg-fill-i64-array ends -1)
@@ -27520,7 +27834,7 @@
               0
               4
               0)
-            ""))
+            compiler-reg-id-invalid))
         ;; Allowed {rcx,r10}, excluded {rcx}: selects r10.
         (array-set!
           items
@@ -27534,7 +27848,7 @@
               0
               2
               1)
-            ""))
+            compiler-reg-id-invalid))
         ;; The same solver supports the XMM register file.
         (array-set!
           items
@@ -27548,7 +27862,7 @@
               0
               2
               2)
-            ""))
+            compiler-reg-id-invalid))
         ;; A simultaneous fixed-RCX request fails explicitly.
         (array-set!
           items
@@ -27562,7 +27876,7 @@
               2
               3
               3)
-            ""))
+            compiler-reg-id-invalid))
         ;; A later non-overlapping slot can reuse r10.
         (array-set!
           items
@@ -27576,7 +27890,7 @@
               3
               4
               4)
-            ""))
+            compiler-reg-id-invalid))
         (let
           [i : i64 0]
           (while (< i 5)
@@ -27601,11 +27915,13 @@
           (array-length registers)
           5)
         (and
-          (string.eq (struct-get (array-ref items 0) register) "%rcx")
-          (string.eq (struct-get (array-ref items 1) register) "%r10")
-          (string.eq (struct-get (array-ref items 2) register) "%xmm2")
-          (string.eq (struct-get (array-ref items 3) register) "")
-          (string.eq (struct-get (array-ref items 4) register) "%r10"))))
+          (= (struct-get (array-ref items 0) register) compiler-reg-id-rcx)
+          (= (struct-get (array-ref items 1) register) compiler-reg-id-r10)
+          (=
+            (struct-get (array-ref items 2) register)
+            (compiler-abi-xmm-register-id 2))
+          (= (struct-get (array-ref items 3) register) compiler-reg-id-invalid)
+          (= (struct-get (array-ref items 4) register) compiler-reg-id-r10))))
     true))
 
 (define (compiler-backend-scavenge-emergency-respects-exclude-ok?) : bool
@@ -27616,7 +27932,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         CompilerRegAssignmentList.Nil)]
     [exclude : (Array String)
       (compiler-backend-scavenge-emergency-exclude-fallback)]
@@ -27642,7 +27958,7 @@
           (and
             (string.eq reg "%r12")
             compiler-backend-emergency-pending
-            (string.eq compiler-backend-emergency-reg "%r12")
+            (= compiler-backend-emergency-reg compiler-reg-id-r12)
             (= compiler-backend-emergency-pending-count 1)
             (= compiler-backend-emergency-used-count 1))]
         (begin
@@ -27871,57 +28187,57 @@
 (define (compiler-backend-const-hoist-candidates-abi-ok?) : bool
   (and
     (=
-      (compiler-reg-string-list-count
+      (compiler-reg-id-list-count
         (compiler-backend-const-hoist-candidate-regs
           (CompilerBackendTarget.Linux)))
       5)
-    (compiler-reg-string-list-contains?
+    (compiler-reg-id-list-contains?
       (compiler-backend-const-hoist-candidate-regs
         (CompilerBackendTarget.Linux))
-      "%rsi")
-    (compiler-reg-string-list-contains?
+      compiler-reg-id-rsi)
+    (compiler-reg-id-list-contains?
       (compiler-backend-const-hoist-candidate-regs
         (CompilerBackendTarget.Linux))
-      "%rdi")
-    (compiler-reg-string-list-contains?
+      compiler-reg-id-rdi)
+    (compiler-reg-id-list-contains?
       (compiler-backend-const-hoist-candidate-regs
         (CompilerBackendTarget.Linux))
-      "%r8")
-    (compiler-reg-string-list-contains?
+      compiler-reg-id-r8)
+    (compiler-reg-id-list-contains?
       (compiler-backend-const-hoist-candidate-regs
         (CompilerBackendTarget.Linux))
-      "%r9")
-    (compiler-reg-string-list-contains?
+      compiler-reg-id-r9)
+    (compiler-reg-id-list-contains?
       (compiler-backend-const-hoist-candidate-regs
         (CompilerBackendTarget.Linux))
-      "%rbx")
+      compiler-reg-id-rbx)
     (=
-      (compiler-reg-string-list-count
+      (compiler-reg-id-list-count
         (compiler-backend-const-hoist-candidate-regs
           (CompilerBackendTarget.Windows)))
       3)
-    (compiler-reg-string-list-contains?
+    (compiler-reg-id-list-contains?
       (compiler-backend-const-hoist-candidate-regs
         (CompilerBackendTarget.Windows))
-      "%r8")
-    (compiler-reg-string-list-contains?
+      compiler-reg-id-r8)
+    (compiler-reg-id-list-contains?
       (compiler-backend-const-hoist-candidate-regs
         (CompilerBackendTarget.Windows))
-      "%r9")
-    (compiler-reg-string-list-contains?
+      compiler-reg-id-r9)
+    (compiler-reg-id-list-contains?
       (compiler-backend-const-hoist-candidate-regs
         (CompilerBackendTarget.Windows))
-      "%rbx")
+      compiler-reg-id-rbx)
     (not
-      (compiler-reg-string-list-contains?
+      (compiler-reg-id-list-contains?
         (compiler-backend-const-hoist-candidate-regs
           (CompilerBackendTarget.Windows))
-        "%rsi"))
+        compiler-reg-id-rsi))
     (not
-      (compiler-reg-string-list-contains?
+      (compiler-reg-id-list-contains?
         (compiler-backend-const-hoist-candidate-regs
           (CompilerBackendTarget.Windows))
-        "%rdi"))))
+        compiler-reg-id-rdi))))
 
 ;; The scratch-vreg result publishes caller-saved homes only through its
 ;; per-instruction plan. Const-hoist admission extends that plan into synthetic
@@ -27945,20 +28261,20 @@
             (CompilerRegScratchRole.ScalarPrimary)
             (CompilerRegScratchConstraint
               (CompilerRegScratchClass.Gp)
-              CompilerRegStringList.Nil
-              CompilerRegStringList.Nil
-              "")
+              CompilerRegIdList.Nil
+              CompilerRegIdList.Nil
+              compiler-reg-id-invalid)
             4
             8
             1)
-          "%r9"))]
+          compiler-reg-id-r9))]
     [scratch : CompilerRegScratchPlan
       (CompilerRegScratchPlan items first slots)]
     [base-assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r8"))
+          (CompilerRegLocation.Register compiler-reg-id-r8))
         CompilerRegAssignmentList.Nil)]
     [base-intervals : CompilerRegIntervalSeq
       (compiler-reg-interval-seq-prepend
@@ -27979,8 +28295,8 @@
       (compiler-reg-interval-index-build intervals vars)
       (compiler-reg-loop-split-region-interval -1 4 8)
       -1)
-      [(CompilerRegMaybeString.Some reg) (string.eq reg "%rbx")]
-      [(CompilerRegMaybeString.No) false])))
+      [(CompilerRegMaybeId.Some reg) (= reg compiler-reg-id-rbx)]
+      [(CompilerRegMaybeId.No) false])))
 
 ;; Regression for the opt1-built compiler crash exposed by
 ;; integration_spmd_gather_read/fill-lane-offset-gather. The reduced IR keeps
@@ -27990,7 +28306,7 @@
 ;; per-function preparation has established an empty table.
 (define (compiler-backend-shrinkwrap-admission-state-ok?) : bool
   (let
-    [stale-regs : (Array String) (make-array String 1)]
+    [stale-regs : (Array i64) (make-array i64 1)]
     (begin
       (set! compiler-backend-const-hoist-site-count 1)
       (set! compiler-backend-const-hoist-site-regs stale-regs)
@@ -28088,21 +28404,23 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
-            (CompilerRegLocation.Register "%r10"))
+            (CompilerRegLocation.Register compiler-reg-id-r10))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.RegisterPair "%r11" "%xmm2"))
+              (CompilerRegLocation.RegisterPair
+                compiler-reg-id-r11
+                (compiler-abi-xmm-register-id 2)))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment 3 (CompilerRegLocation.Spill 0))
               (compiler-reg-assignment-cons
                 (CompilerRegAssignment.Assignment
                   4
-                  (CompilerRegLocation.Register "%r9"))
+                  (CompilerRegLocation.Register compiler-reg-id-r9))
                 CompilerRegAssignmentList.Nil)))))]
     [assignment-index : CompilerRegAssignmentIndex
       (compiler-reg-assignment-index-build assignments 5)]
@@ -28251,7 +28569,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r8"))
+          (CompilerRegLocation.Register compiler-reg-id-r8))
         CompilerRegAssignmentList.Nil)]
     (begin
       (compiler-backend-test-scavenge-install-ctx!
@@ -28300,7 +28618,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           0
-          (CompilerRegLocation.Register "%r13"))
+          (CompilerRegLocation.Register compiler-reg-id-r13))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             1
@@ -28311,7 +28629,7 @@
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               2
-              (CompilerRegLocation.Register "%r13"))
+              (CompilerRegLocation.Register compiler-reg-id-r13))
             CompilerRegAssignmentList.Nil)))]
     (begin
       ;; var 0: the dividend definition -- dead after point 10
@@ -28409,7 +28727,7 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           3
-          (CompilerRegLocation.Register "%r9"))
+          (CompilerRegLocation.Register compiler-reg-id-r9))
         CompilerRegAssignmentList.Nil)]
     (match (compiler-backend-emit-param-spills
       (ast-node-pool-reader-type-segment-bases)
@@ -28451,9 +28769,13 @@
 
 (define (compiler-backend-scratch-vreg-scalar-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-r12))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-r13))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -24))
         CompilerRegAssignmentList.Nil))))
@@ -28672,17 +28994,21 @@
 ;; value before cmovne reads it.
 (define (compiler-backend-scratch-vreg-select-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
+    (CompilerRegAssignment.Assignment
+      0
+      (CompilerRegLocation.Register compiler-reg-id-rdi))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rax"))
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register compiler-reg-id-rax))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.Register "%r12"))
+          (CompilerRegLocation.Register compiler-reg-id-r12))
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             3
-            (CompilerRegLocation.Register "%rax"))
+            (CompilerRegLocation.Register compiler-reg-id-rax))
           CompilerRegAssignmentList.Nil)))))
 
 (define (compiler-backend-scratch-vreg-select-plan-ok?) : bool
@@ -28764,15 +29090,15 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%r12"))
+            (CompilerRegLocation.Register compiler-reg-id-r12))
           (compiler-reg-assignment-cons
             (CompilerRegAssignment.Assignment
               1
-              (CompilerRegLocation.Register "%r13"))
+              (CompilerRegLocation.Register compiler-reg-id-r13))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment.Assignment
                 2
-                (CompilerRegLocation.Register "%rcx"))
+                (CompilerRegLocation.Register compiler-reg-id-rcx))
               CompilerRegAssignmentList.Nil)))]
       [fallthrough : CompilerBackendMaybeLabel (CompilerBackendMaybeLabel.No)]
       [div-guard : String

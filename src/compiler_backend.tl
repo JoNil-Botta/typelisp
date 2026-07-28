@@ -218,6 +218,10 @@
   (Ok String)
   (Err String))
 
+(defenum ResultBackendRegId
+  (Ok i64)
+  (Err String))
+
 (define (compiler-backend-result-reg [reg : String] [message : String]) : ResultBackendReg
   (if (string.eq reg "")
     (ResultBackendReg.Err message)
@@ -232,13 +236,12 @@
   (Some CompilerIrValue))
 
 ;; BackendPhiSourceTemp carries the location its saved value lives in while the
-;; cycle is being broken: "" = the reserved frame temp slot, or a register name
-;; (e.g. "%r10") when the outermost cycle break scavenged a free GP register
-;; instead of staging on the stack. The single Temp consumer reads it back from
-;; that location.
+;; cycle is being broken: invalid = the reserved frame temp slot, or a canonical
+;; register ID when the outermost cycle break scavenged a free register instead
+;; of staging on the stack. The single Temp consumer reads it back from there.
 (defenum CompilerBackendPhiSource
   (Value CompilerIrValue)
-  (Temp String))
+  (Temp i64))
 
 (defenum CompilerBackendPhiCopy
   (Copy i64 CompilerBackendPhiSource AstType))
@@ -850,7 +853,7 @@
 
 (defstruct CompilerBackendAddressBase
   (asm String)
-  (reg String))
+  (reg i64))
 
 (defenum ResultCompilerBackendAddressBase
   (Ok CompilerBackendAddressBase)
@@ -2093,7 +2096,7 @@
     "%zmm30"
     "%zmm31"))
 
-(define (compiler-backend-xmm-family-register [home : String] [width : String]) : String
+(define (compiler-backend-xmm-family-register [home : i64] [width : String]) : String
   (let
     [index : i64 (compiler-reg-xmm-family-index home)]
     (cond
@@ -2106,34 +2109,43 @@
         (array-ref compiler-backend-xmm-family-ymm index)]
       [else ""])))
 
-(define (compiler-backend-vector-home-to-ymm [home : String]) : String
+(define (compiler-backend-vector-home-to-ymm [home : i64]) : String
   (compiler-backend-xmm-family-register home "ymm"))
 
-(define (compiler-backend-vector-home-to-xmm [home : String]) : String
+(define (compiler-backend-vector-home-to-xmm [home : i64]) : String
   (compiler-backend-xmm-family-register home "xmm"))
 
 (define (compiler-backend-xmm-to-ymm [reg : String]) : String
-  (compiler-backend-xmm-family-register reg "ymm"))
+  (compiler-backend-xmm-family-register
+    (compiler-abi-register-id-from-spelling reg)
+    "ymm"))
 
-(define (compiler-backend-vector-home-to-zmm [home : String]) : String
+(define (compiler-backend-xmm-spelling-family-register
+  [reg : String]
+  [width : String]) : String
+  (compiler-backend-xmm-family-register
+    (compiler-abi-register-id-from-spelling reg)
+    width))
+
+(define (compiler-backend-vector-home-to-zmm [home : i64]) : String
   (compiler-backend-xmm-family-register home "zmm"))
 
-(define (compiler-backend-vector-temp-candidates) : (Array String)
+(define (compiler-backend-vector-temp-candidates) : (Array i64)
   (make-array
-    "%vec6"
-    "%vec7"
-    "%vec8"
-    "%vec9"
-    "%vec10"
-    "%vec11"
-    "%vec12"
-    "%vec13"
-    "%vec14"
-    "%vec15"
-    "%vec2"
-    "%vec3"
-    "%vec4"
-    "%vec5"))
+    (compiler-abi-vector-register-id 6)
+    (compiler-abi-vector-register-id 7)
+    (compiler-abi-vector-register-id 8)
+    (compiler-abi-vector-register-id 9)
+    (compiler-abi-vector-register-id 10)
+    (compiler-abi-vector-register-id 11)
+    (compiler-abi-vector-register-id 12)
+    (compiler-abi-vector-register-id 13)
+    (compiler-abi-vector-register-id 14)
+    (compiler-abi-vector-register-id 15)
+    (compiler-abi-vector-register-id 2)
+    (compiler-abi-vector-register-id 3)
+    (compiler-abi-vector-register-id 4)
+    (compiler-abi-vector-register-id 5)))
 
 (define (compiler-backend-vector-temp-zmm-excluded?
   [reg : String]
@@ -2155,13 +2167,13 @@
   [exclude1 : String]
   [exclude2 : String]
   [role : String]
-  [candidates : (Array String)]
+  [candidates : (Array i64)]
   [i : i64]) : ResultBackendReg
   (if (>= i (array-length candidates))
     (ResultBackendReg.Err
       (str-cat "backend: no free AVX-512 vector temp for " role))
     (let
-      [home : String (array-ref candidates i)]
+      [home : i64 (array-ref candidates i)]
       [reg : String (compiler-backend-vector-home-to-zmm home)]
       (if (and
         (not
@@ -2214,14 +2226,14 @@
     role
     "; unsupported spill, call, or ABI lifetime"))
 
-(define (compiler-backend-vector-home-to-reg [home : String] [width : String]) : String
+(define (compiler-backend-vector-home-to-reg [home : i64] [width : String]) : String
   (if (string.eq width "xmm")
     (compiler-backend-vector-home-to-xmm home)
     (if (string.eq width "zmm")
       (compiler-backend-vector-home-to-zmm home)
       (compiler-backend-vector-home-to-ymm home))))
 
-(define (compiler-backend-vector-home-valid? [home : String]) : bool
+(define (compiler-backend-vector-home-valid? [home : i64]) : bool
   (let
     [index : i64 (compiler-reg-xmm-family-index home)]
     (and (>= index 2) (<= index 15))))
@@ -2260,19 +2272,19 @@
 ;; and small functions still use the assignment list directly).
 (define compiler-backend-emit-home-override0-var : i64
   -1)
-(define compiler-backend-emit-home-override0-reg : String
-  "")
+(define compiler-backend-emit-home-override0-reg : i64
+  compiler-reg-id-invalid)
 (define compiler-backend-emit-home-override1-var : i64
   -1)
-(define compiler-backend-emit-home-override1-reg : String
-  "")
+(define compiler-backend-emit-home-override1-reg : i64
+  compiler-reg-id-invalid)
 
 (define (compiler-backend-emit-home-overrides-disable!) : unit
   (begin
     (set! compiler-backend-emit-home-override0-var -1)
-    (set! compiler-backend-emit-home-override0-reg "")
+    (set! compiler-backend-emit-home-override0-reg compiler-reg-id-invalid)
     (set! compiler-backend-emit-home-override1-var -1)
-    (set! compiler-backend-emit-home-override1-reg "")))
+    (set! compiler-backend-emit-home-override1-reg compiler-reg-id-invalid)))
 
 (define (compiler-backend-emit-assignment-lookup
   [assignments : CompilerRegAssignmentList]
@@ -2292,7 +2304,8 @@
       (if (and
         (>= compiler-backend-rax-override-var 0)
         (= var compiler-backend-rax-override-var))
-        (CompilerRegMaybeLocation.Some (CompilerRegLocation.Register "%rax"))
+        (CompilerRegMaybeLocation.Some
+          (CompilerRegLocation.Register compiler-reg-id-rax))
         (compiler-reg-assignment-index-lookup
           compiler-backend-emit-assignment-index
           var))]
@@ -2301,27 +2314,29 @@
 (define (compiler-backend-vector-var-home
   [assignments : CompilerRegAssignmentList]
   [var : i64]
-  [role : String]) : ResultBackendReg
+  [role : String]) : ResultBackendRegId
   (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
           (if (compiler-backend-vector-home-valid? home)
-            (ResultBackendReg.Ok home)
-            (ResultBackendReg.Err
+            (ResultBackendRegId.Ok home)
+            (ResultBackendRegId.Err
               (compiler-backend-vector-home-unavailable role)))]
         [(CompilerRegLocation.RegisterPair _ _)
-          (ResultBackendReg.Err (compiler-backend-vector-home-unavailable role))]
+          (ResultBackendRegId.Err
+            (compiler-backend-vector-home-unavailable role))]
         [(CompilerRegLocation.Spill _)
-          (ResultBackendReg.Err
+          (ResultBackendRegId.Err
             (string.append
               "backend: vector spills are not implemented for "
               role))]
         ;; A rematerialised value is an i64-class constant/address, never a vector.
         [(CompilerRegLocation.Remat _)
-          (ResultBackendReg.Err (compiler-backend-vector-home-unavailable role))])]
+          (ResultBackendRegId.Err
+            (compiler-backend-vector-home-unavailable role))])]
     [(CompilerRegMaybeLocation.No)
-      (ResultBackendReg.Err (compiler-backend-vector-home-unavailable role))]))
+      (ResultBackendRegId.Err (compiler-backend-vector-home-unavailable role))]))
 
 (define (compiler-backend-mask-home-unavailable [role : String]) : String
   (str_cat.str-cat
@@ -2335,13 +2350,13 @@
   [role : String]
   [width : String]) : ResultBackendReg
   (match (compiler-backend-vector-var-home assignments var role)
-    [(ResultBackendReg.Ok home)
+    [(ResultBackendRegId.Ok home)
       (let
         [reg : String (compiler-backend-vector-home-to-reg home width)]
         (if (= (string.string-length reg) 0)
           (ResultBackendReg.Err (compiler-backend-vector-home-unavailable role))
           (ResultBackendReg.Ok reg)))]
-    [(ResultBackendReg.Err message) (ResultBackendReg.Err message)]))
+    [(ResultBackendRegId.Err message) (ResultBackendReg.Err message)]))
 
 (define (compiler-backend-mask-var-reg
   [assignments : CompilerRegAssignmentList]
@@ -2351,10 +2366,10 @@
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
-          (if (compiler-reg-string-list-contains?
+          (if (compiler-reg-id-list-contains?
             (compiler-reg-mask-registers)
             home)
-            (ResultBackendReg.Ok home)
+            (ResultBackendReg.Ok (compiler-abi-register-spelling home))
             (ResultBackendReg.Err (compiler-backend-mask-home-unavailable role)))]
         [(CompilerRegLocation.RegisterPair _ _)
           (ResultBackendReg.Err (compiler-backend-mask-home-unavailable role))]
@@ -2671,7 +2686,8 @@
         (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegLocation.Register home) home]
+              [(CompilerRegLocation.Register home)
+                (compiler-abi-register-spelling home)]
               [_ ""])]
           [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
@@ -2687,9 +2703,9 @@
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
-                (if (string.eq home "%rsp")
+                (if (= home compiler-reg-id-rsp)
                   ""
-                  home)]
+                  (compiler-abi-register-spelling home))]
               [_ ""])]
           [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
@@ -3595,10 +3611,10 @@
       "%ymm15")))
 
 (define (compiler-backend-vector-reg-lower-ymm [reg : String]) : String
-  (compiler-backend-xmm-family-register reg "ymm"))
+  (compiler-backend-xmm-spelling-family-register reg "ymm"))
 
 (define (compiler-backend-vector-reg-lower-xmm [reg : String]) : String
-  (compiler-backend-xmm-family-register reg "xmm"))
+  (compiler-backend-xmm-spelling-family-register reg "xmm"))
 
 (define (compiler-backend-vector-unsupported-message
   [width : String]
@@ -6200,7 +6216,7 @@
     [_ false]))
 
 (define (compiler-backend-vector-prefix-work [xmm : String] [family : String]) : String
-  (compiler-backend-xmm-family-register xmm family))
+  (compiler-backend-xmm-spelling-family-register xmm family))
 
 (define (compiler-backend-avx2-vector-prefix-numeric-combine
   [op : CompilerIrVectorPrefixOp]
@@ -6691,7 +6707,7 @@
           (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm15")
           planned-xmm)]
       [dst-scratch : String
-        (compiler-backend-xmm-family-register dst-scratch-xmm "ymm")]
+        (compiler-backend-xmm-spelling-family-register dst-scratch-xmm "ymm")]
       (match (compiler-backend-vector-dst-reg
         assignments
         dst
@@ -7181,7 +7197,7 @@
         (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm15")
         planned-xmm)]
     [dst-scratch : String
-      (compiler-backend-xmm-family-register dst-scratch-xmm "zmm")]
+      (compiler-backend-xmm-spelling-family-register dst-scratch-xmm "zmm")]
     (match (compiler-backend-vector-dst-reg
       assignments
       dst
@@ -10028,7 +10044,7 @@
 
 (define (compiler-backend-plan-uses-reg?
   [assignments : CompilerRegAssignmentList]
-  [reg : String]) : bool
+  [reg : i64]) : bool
   (compiler-reg-assignments-use-register? assignments reg))
 
 (define (compiler-backend-plan-uses-callee-regs?
@@ -10602,7 +10618,8 @@
                       (compiler-reg-assignment-table-insert
                         table
                         var
-                        (CompilerRegLocation.Register reg))
+                        (CompilerRegLocation.Register
+                          (compiler-abi-register-id-from-spelling reg)))
                       (compiler-backend-shrinkwrap-incoming-fill!
                         type-segment-bases
                         target
@@ -10908,28 +10925,32 @@
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Register home)
-              (if (string.eq home reg)
-                unit
-                (compiler-backend-asm-append5
-                  out
-                  "    movq "
-                  home
-                  ", "
-                  reg
-                  "\n"))]
+              (let
+                [home-name : String (compiler-abi-register-spelling home)]
+                (if (string.eq home-name reg)
+                  unit
+                  (compiler-backend-asm-append5
+                    out
+                    "    movq "
+                    home-name
+                    ", "
+                    reg
+                    "\n")))]
             [(CompilerRegLocation.RegisterPair home _)
               ;; Loading a whole register-group var into one register is not a
               ;; scalar op; word extraction goes through IrInstrWord. Word0's home is
               ;; the low register -- used only by the (unreached here) group paths.
-              (if (string.eq home reg)
-                unit
-                (compiler-backend-asm-append5
-                  out
-                  "    movq "
-                  home
-                  ", "
-                  reg
-                  "\n"))]
+              (let
+                [home-name : String (compiler-abi-register-spelling home)]
+                (if (string.eq home-name reg)
+                  unit
+                  (compiler-backend-asm-append5
+                    out
+                    "    movq "
+                    home-name
+                    ", "
+                    reg
+                    "\n")))]
             [(CompilerRegLocation.Spill offset)
               (compiler-backend-asm-append5
                 out
@@ -10965,13 +10986,29 @@
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
-          (if (string.eq home reg)
-            unit
-            (compiler-backend-asm-append5 out "    movq " reg ", " home "\n"))]
+          (let
+            [home-name : String (compiler-abi-register-spelling home)]
+            (if (string.eq home-name reg)
+              unit
+              (compiler-backend-asm-append5
+                out
+                "    movq "
+                reg
+                ", "
+                home-name
+                "\n")))]
         [(CompilerRegLocation.RegisterPair home _)
-          (if (string.eq home reg)
-            unit
-            (compiler-backend-asm-append5 out "    movq " reg ", " home "\n"))]
+          (let
+            [home-name : String (compiler-abi-register-spelling home)]
+            (if (string.eq home-name reg)
+              unit
+              (compiler-backend-asm-append5
+                out
+                "    movq "
+                reg
+                ", "
+                home-name
+                "\n")))]
         [(CompilerRegLocation.Spill offset)
           (compiler-backend-asm-append5
             out
@@ -11019,9 +11056,11 @@
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register home)
-            (if (string.eq home reg)
-              ""
-              (str_cat.str-cat "    " mov " " home ", " reg "\n"))]
+            (let
+              [home-name : String (compiler-abi-register-spelling home)]
+              (if (string.eq home-name reg)
+                ""
+                (str_cat.str-cat "    " mov " " home-name ", " reg "\n")))]
           ;; A register-group var is never float-class; unreachable.
           [(CompilerRegLocation.RegisterPair _ _) ""]
           [(CompilerRegLocation.Spill offset)
@@ -11067,9 +11106,11 @@
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register home)
-            (if (string.eq home reg)
-              ""
-              (str_cat.str-cat "    " mov " " reg ", " home "\n"))]
+            (let
+              [home-name : String (compiler-abi-register-spelling home)]
+              (if (string.eq home-name reg)
+                ""
+                (str_cat.str-cat "    " mov " " reg ", " home-name "\n")))]
           ;; A register-group var is never float-class; unreachable.
           [(CompilerRegLocation.RegisterPair _ _) ""]
           [(CompilerRegLocation.Spill offset)
@@ -11107,13 +11148,13 @@
 ;; membership predicate all derive from this list, so the set lives in one place
 ;; instead of being hardcoded in 4-5 spots. Behavior-identical: same registers,
 ;; same order, same indices (r12=0 .. rbx=4).
-(define compiler-backend-scavenge-callee-list : CompilerRegStringList
+(define compiler-backend-scavenge-callee-list : CompilerRegIdList
   (compiler-reg-sysv-integer-registers))
 
 (define (compiler-backend-scavenge-callee-idx [reg : String]) : i64
-  (compiler-reg-string-list-index-of
+  (compiler-reg-id-list-index-of
     compiler-backend-scavenge-callee-list
-    reg
+    (compiler-abi-register-id-from-spelling reg)
     0))
 
 ;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
@@ -11137,8 +11178,8 @@
 (define (compiler-backend-set-absolute-switch-ok! [ok : bool]) : unit
   (set! compiler-backend-absolute-switch-ok ok))
 
-(define compiler-backend-emergency-reg : String
-  "")
+(define compiler-backend-emergency-reg : i64
+  compiler-reg-id-invalid)
 (define compiler-backend-emergency-used : bool
   false)
 (define compiler-backend-emergency-slot-offset : i64
@@ -11147,8 +11188,8 @@
   0)
 (define compiler-backend-emergency-used-count : i64
   0)
-(define compiler-backend-emergency-regs : (Array String)
-  (make-array String 16))
+(define compiler-backend-emergency-regs : (Array i64)
+  (make-array i64 16))
 (cfg
   scavenge-census
   (define compiler-backend-scavenge-census-total : i64
@@ -11336,7 +11377,7 @@
     compiler-backend-emergency-slot-offset
     (* (compiler-backend-emergency-slot-size) index)))
 
-(define (compiler-backend-emergency-index [reg : String]) : i64
+(define (compiler-backend-emergency-index [reg : i64]) : i64
   (let
     [index : i64 0]
     [found : i64 -1]
@@ -11345,17 +11386,17 @@
         (< index compiler-backend-emergency-pending-count)
         (< found 0))
         (begin
-          (if (string.eq (array-ref compiler-backend-emergency-regs index) reg)
+          (if (= (array-ref compiler-backend-emergency-regs index) reg)
             (set! found index)
             unit)
           (set! index (+ index 1))))
       found)))
 
-(define (compiler-backend-emergency-add! [reg : String]) : unit
+(define (compiler-backend-emergency-add-id! [reg : i64]) : unit
   (let
     [existing : i64 (compiler-backend-emergency-index reg)]
     (begin
-      (set! compiler-backend-emergency-reg (string.copy (& reg)))
+      (set! compiler-backend-emergency-reg reg)
       (if (>= existing 0)
         (begin
           (set! compiler-backend-emergency-pending true)
@@ -11367,7 +11408,7 @@
             (array-set!
               compiler-backend-emergency-regs
               compiler-backend-emergency-pending-count
-              (string.copy (& reg)))
+              reg)
             (set!
               compiler-backend-emergency-pending-count
               (+ compiler-backend-emergency-pending-count 1))
@@ -11382,38 +11423,42 @@
               unit))
           (panic "backend: emergency scratch register capacity exceeded"))))))
 
-(define (compiler-backend-emergency-reg-save-asm [reg : String] [offset : i64]) : String
-  (let
-    [slot : String (compiler-backend-frame-offset offset)]
-    (if (>= (compiler-reg-xmm-family-index reg) 0)
-      (match compiler-backend-current-mode
-        [(CompilerBackendMode.Scalar)
-          (str-cat "    movdqu " reg ", " slot "\n")]
-        [(CompilerBackendMode.Avx2)
-          (str-cat
-            "    vmovdqu "
-            (compiler-backend-vector-home-to-reg reg "ymm")
-            ", "
-            slot
-            "\n")]
-        [(CompilerBackendMode.Avx512)
-          (str-cat
-            "    vmovdqu64 "
-            (compiler-backend-vector-home-to-reg reg "zmm")
-            ", "
-            slot
-            "\n")])
-      (str-cat "    movq " reg ", " slot "\n"))))
+(define (compiler-backend-emergency-add! [reg : String]) : unit
+  (compiler-backend-emergency-add-id!
+    (compiler-abi-register-id-from-spelling reg)))
 
-(define (compiler-backend-emergency-reg-restore-asm
-  [reg : String]
-  [offset : i64]) : String
+(define (compiler-backend-emergency-reg-save-asm [reg : i64] [offset : i64]) : String
   (let
     [slot : String (compiler-backend-frame-offset offset)]
+    [reg-name : String (compiler-abi-register-spelling reg)]
     (if (>= (compiler-reg-xmm-family-index reg) 0)
       (match compiler-backend-current-mode
         [(CompilerBackendMode.Scalar)
-          (str-cat "    movdqu " slot ", " reg "\n")]
+          (str-cat "    movdqu " reg-name ", " slot "\n")]
+        [(CompilerBackendMode.Avx2)
+          (str-cat
+            "    vmovdqu "
+            (compiler-backend-vector-home-to-reg reg "ymm")
+            ", "
+            slot
+            "\n")]
+        [(CompilerBackendMode.Avx512)
+          (str-cat
+            "    vmovdqu64 "
+            (compiler-backend-vector-home-to-reg reg "zmm")
+            ", "
+            slot
+            "\n")])
+      (str-cat "    movq " reg-name ", " slot "\n"))))
+
+(define (compiler-backend-emergency-reg-restore-asm [reg : i64] [offset : i64]) : String
+  (let
+    [slot : String (compiler-backend-frame-offset offset)]
+    [reg-name : String (compiler-abi-register-spelling reg)]
+    (if (>= (compiler-reg-xmm-family-index reg) 0)
+      (match compiler-backend-current-mode
+        [(CompilerBackendMode.Scalar)
+          (str-cat "    movdqu " slot ", " reg-name "\n")]
         [(CompilerBackendMode.Avx2)
           (str-cat
             "    vmovdqu "
@@ -11428,7 +11473,7 @@
             ", "
             (compiler-backend-vector-home-to-reg reg "zmm")
             "\n")])
-      (str-cat "    movq " slot ", " reg "\n"))))
+      (str-cat "    movq " slot ", " reg-name "\n"))))
 
 (define (compiler-backend-emergency-save-asm [index : i64] [count : i64]) : String
   (if (>= index count)
@@ -11535,7 +11580,9 @@
   [assignments : CompilerRegAssignmentList]
   [reg : String]) : bool
   (or
-    (compiler-backend-plan-uses-reg? assignments reg)
+    (compiler-backend-plan-uses-reg?
+      assignments
+      (compiler-abi-register-id-from-spelling reg))
     (compiler-backend-const-hoist-uses-reg? reg)))
 
 (define (compiler-backend-emit-save-callee-reg
@@ -12959,8 +13006,8 @@
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Register home)
-              (if (compiler-backend-string-prefix-at? home "%xmm" 0)
-                home
+              (if (compiler-abi-xmm-register-id? home)
+                (compiler-abi-register-spelling home)
                 "")]
             [_ ""])]
         [(CompilerRegMaybeLocation.No) ""])]
@@ -13257,7 +13304,7 @@
         [(CompilerRegLocation.Register home)
           (compiler-backend-emit-load-register-to-reg
             type-segment-bases
-            home
+            (compiler-abi-register-spelling home)
             ty
             reg)]
         ;; A whole register-group is loaded word-wise by the group
@@ -13265,7 +13312,7 @@
         [(CompilerRegLocation.RegisterPair home _)
           (compiler-backend-emit-load-register-to-reg
             type-segment-bases
-            home
+            (compiler-abi-register-spelling home)
             ty
             reg)]
         [(CompilerRegLocation.Spill offset)
@@ -13342,12 +13389,14 @@
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
-                (if (compiler-backend-address-base-register-ok?
-                  home
-                  avoid
-                  allow-rbp)
-                  home
-                  "")]
+                (let
+                  [home-name : String (compiler-abi-register-spelling home)]
+                  (if (compiler-backend-address-base-register-ok?
+                    home-name
+                    avoid
+                    allow-rbp)
+                    home-name
+                    ""))]
               [_ ""])]
           [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
@@ -13368,10 +13417,15 @@
         fallback-reg)
         [(ResultCompilerBackend.Ok asm)
           (ResultCompilerBackendAddressBase.Ok
-            (CompilerBackendAddressBase asm fallback-reg))]
+            (CompilerBackendAddressBase
+              asm
+              (compiler-abi-register-id-from-spelling fallback-reg)))]
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackendAddressBase.Err message)])
-      (ResultCompilerBackendAddressBase.Ok (CompilerBackendAddressBase "" home)))))
+      (ResultCompilerBackendAddressBase.Ok
+        (CompilerBackendAddressBase
+          ""
+          (compiler-abi-register-id-from-spelling home))))))
 
 ;; The plain (avoid-free) address base is only ever consumed by CONST-offset
 ;; callers (store-ptr, store-to-gep const, store-ptr-pair, load-deref -- each
@@ -13666,10 +13720,14 @@
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Register home)
-              (compiler-backend-emit-load-immediate-to-reg value home)]
+              (compiler-backend-emit-load-immediate-to-reg
+                value
+                (compiler-abi-register-spelling home))]
             ;; An immediate never targets a whole register-group; unreached.
             [(CompilerRegLocation.RegisterPair home _)
-              (compiler-backend-emit-load-immediate-to-reg value home)]
+              (compiler-backend-emit-load-immediate-to-reg
+                value
+                (compiler-abi-register-spelling home))]
             [(CompilerRegLocation.Spill offset)
               (CompilerBackendMaybeAsm.Some
                 (str_cat.str-cat
@@ -13727,9 +13785,19 @@
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
-          (str_cat.str-cat "    vmovq " xmm-reg ", " home "\n")]
+          (str_cat.str-cat
+            "    vmovq "
+            xmm-reg
+            ", "
+            (compiler-abi-register-spelling home)
+            "\n")]
         [(CompilerRegLocation.RegisterPair home _)
-          (str_cat.str-cat "    vmovq " xmm-reg ", " home "\n")]
+          (str_cat.str-cat
+            "    vmovq "
+            xmm-reg
+            ", "
+            (compiler-abi-register-spelling home)
+            "\n")]
         [(CompilerRegLocation.Spill offset)
           (str_cat.str-cat
             "    vmovq "
@@ -14824,8 +14892,8 @@
                       assignments
                       w0
                       w1
-                      reg-a
-                      reg-b
+                      (compiler-abi-register-spelling reg-a)
+                      (compiler-abi-register-spelling reg-b)
                       w0-sse
                       w1-sse
                       planned0
@@ -14998,9 +15066,10 @@
         (match location
           [(CompilerRegLocation.RegisterPair reg-a reg-b)
             (ResultCompilerBackend.Ok
-              (if (= index 0)
-                reg-a
-                reg-b))]
+              (compiler-abi-register-spelling
+                (if (= index 0)
+                  reg-a
+                  reg-b)))]
           [(CompilerRegLocation.Spill offset)
             (if (compiler-backend-group-var? var)
               (ResultCompilerBackend.Ok
@@ -15621,7 +15690,7 @@
                 (ResultCompilerBackend.Ok
                   (compiler-backend-emit-load-register
                     type-segment-bases
-                    home
+                    (compiler-abi-register-spelling home)
                     ty))]
               ;; A whole register-group is loaded word-wise by the group
               ;; ABI paths; reaching the generic scalar load means word0's home.
@@ -15629,7 +15698,7 @@
                 (ResultCompilerBackend.Ok
                   (compiler-backend-emit-load-register
                     type-segment-bases
-                    home
+                    (compiler-abi-register-spelling home)
                     ty))]
               [(CompilerRegLocation.Spill offset)
                 (ResultCompilerBackend.Ok
@@ -16533,7 +16602,7 @@
 (defenum CompilerBackendConstHoistHome
   (CompilerBackendNoConstHoistHome)
   ;; Register, expected bits, ordinary-wide-binop site?
-  (CompilerBackendConstHoistHomeReg String i64 bool)
+  (CompilerBackendConstHoistHomeReg i64 i64 bool)
   ;; Frame operand, expected bits. Frame homes are only selected for divmod
   ;; magic; ordinary wide-binop hoists retain their register-only contract.
   (CompilerBackendConstHoistHomeFrame String i64))
@@ -16541,13 +16610,15 @@
 ;; Synthetic occupancy entries for the scavenge context: count + per-entry
 ;; register / start point / end point.
 (defenum CompilerBackendConstHoistSynth
-  (CompilerBackendConstHoistSynth i64 (Array String) (Array i64) (Array i64)))
+  (CompilerBackendConstHoistSynth i64 (Array i64) (Array i64) (Array i64)))
 
 (define compiler-backend-const-hoist-site-count : i64
   0)
 (define compiler-backend-const-hoist-site-points : (Array i64)
   (make-array i64 1))
-(define compiler-backend-const-hoist-site-regs : (Array String)
+(define compiler-backend-const-hoist-site-regs : (Array i64)
+  (make-array i64 1))
+(define compiler-backend-const-hoist-site-frame-operands : (Array String)
   (make-array String 1))
 (define compiler-backend-const-hoist-site-values : (Array i64)
   (make-array i64 1))
@@ -16590,7 +16661,7 @@
     (set! compiler-backend-const-hoist-frame-count 0)
     (CompilerBackendConstHoistSynth
       0
-      (make-array String 1)
+      (make-array i64 1)
       (make-array i64 1)
       (make-array i64 1))))
 
@@ -16621,31 +16692,33 @@
 ;; is free. For divmod magic, selecting %rbx becomes a frame-home hoist initialized
 ;; through %rbx; the register is then free for the one dividend copy at each site.
 (define (compiler-backend-const-hoist-candidate-regs
-  [target : CompilerBackendTarget]) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%r8"
-    (compiler-reg-string-cons
-      "%r9"
+  [target : CompilerBackendTarget]) : CompilerRegIdList
+  (compiler-reg-id-cons
+    compiler-reg-id-r8
+    (compiler-reg-id-cons
+      compiler-reg-id-r9
       (match target
         [(CompilerBackendTarget.Windows)
-          (compiler-reg-string-cons "%rbx" CompilerRegStringList.Nil)]
+          (compiler-reg-id-cons compiler-reg-id-rbx CompilerRegIdList.Nil)]
         [(CompilerBackendTarget.Linux)
-          (compiler-reg-string-cons
-            "%rsi"
-            (compiler-reg-string-cons
-              "%rdi"
-              (compiler-reg-string-cons "%rbx" CompilerRegStringList.Nil)))]))))
+          (compiler-reg-id-cons
+            compiler-reg-id-rsi
+            (compiler-reg-id-cons
+              compiler-reg-id-rdi
+              (compiler-reg-id-cons compiler-reg-id-rbx CompilerRegIdList.Nil)))]))))
 
-(define (compiler-backend-const-hoist-uses-reg-from? [reg : String] [i : i64]) : bool
+(define (compiler-backend-const-hoist-uses-reg-id-from? [reg : i64] [i : i64]) : bool
   (if (>= i compiler-backend-const-hoist-site-count)
     false
     (or
-      (string.eq (array-ref compiler-backend-const-hoist-site-regs i) reg)
-      (compiler-backend-const-hoist-uses-reg-from? reg (+ i 1)))))
+      (= (array-ref compiler-backend-const-hoist-site-regs i) reg)
+      (compiler-backend-const-hoist-uses-reg-id-from? reg (+ i 1)))))
 
 (define (compiler-backend-const-hoist-uses-reg? [reg : String]) : bool
   (or
-    (compiler-backend-const-hoist-uses-reg-from? reg 0)
+    (compiler-backend-const-hoist-uses-reg-id-from?
+      (compiler-abi-register-id-from-spelling reg)
+      0)
     (and compiler-backend-const-hoist-frame-rbx (string.eq reg "%rbx"))))
 
 ;; The register carrying this site's hoisted magic, or "" when the site has no
@@ -16661,7 +16734,7 @@
     [(CompilerBackendNoConstHoistHome) ""]
     [(CompilerBackendConstHoistHomeReg reg expect wide?)
       (if (and (not wide?) (= expect (cast magic : i64)))
-        reg
+        (compiler-abi-register-spelling reg)
         "")]
     [(CompilerBackendConstHoistHomeFrame operand expect)
       (if (= expect (cast magic : i64))
@@ -16675,7 +16748,7 @@
     [(CompilerBackendConstHoistHomeReg reg _ wide?)
       (if wide?
         ""
-        reg)]
+        (compiler-abi-register-spelling reg))]
     [(CompilerBackendConstHoistHomeFrame _ _) ""]))
 
 ;; The current site's planned home when `value` is the exact wide literal the
@@ -16687,7 +16760,7 @@
       (match (compiler-backend-const-hoist-here)
         [(CompilerBackendConstHoistHomeReg reg expect wide?)
           (if (and wide? (= expect n))
-            reg
+            (compiler-abi-register-spelling reg)
             "")]
         [(CompilerBackendConstHoistHomeFrame _ _) ""]
         [(CompilerBackendNoConstHoistHome) ""])]
@@ -16718,7 +16791,7 @@
           (CompilerBackendNoConstHoistHome)
           (if (array-ref compiler-backend-const-hoist-site-frame found)
             (CompilerBackendConstHoistHomeFrame
-              (array-ref compiler-backend-const-hoist-site-regs found)
+              (array-ref compiler-backend-const-hoist-site-frame-operands found)
               (array-ref compiler-backend-const-hoist-site-values found))
             (CompilerBackendConstHoistHomeReg
               (array-ref compiler-backend-const-hoist-site-regs found)
@@ -17201,16 +17274,16 @@
 ;; Filter the candidate list: drop registers already reserved by an earlier
 ;; hoist whose synthetic span overlaps [lo, hi].
 (define (compiler-backend-const-hoist-free-candidates
-  [cands : CompilerRegStringList]
-  [synth-regs : (Array String)]
+  [cands : CompilerRegIdList]
+  [synth-regs : (Array i64)]
   [synth-lo : (Array i64)]
   [synth-hi : (Array i64)]
   [synth-count : i64]
   [lo : i64]
-  [hi : i64]) : CompilerRegStringList
+  [hi : i64]) : CompilerRegIdList
   (match cands
-    [(CompilerRegStringList.Nil) CompilerRegStringList.Nil]
-    [(CompilerRegStringList.Cons reg rest)
+    [(CompilerRegIdList.Nil) CompilerRegIdList.Nil]
+    [(CompilerRegIdList.Cons reg rest)
       (let
         [i : i64 0]
         [taken : bool false]
@@ -17218,7 +17291,7 @@
           (while (and (< i synth-count) (not taken))
             (begin
               (if (and
-                (string.eq (array-ref synth-regs i) reg)
+                (= (array-ref synth-regs i) reg)
                 (<= (array-ref synth-lo i) hi)
                 (>= (array-ref synth-hi i) lo))
                 (set! taken true)
@@ -17233,7 +17306,7 @@
               synth-count
               lo
               hi)
-            (compiler-reg-string-cons
+            (compiler-reg-id-cons
               reg
               (compiler-backend-const-hoist-free-candidates
                 (box-get rest)
@@ -17316,7 +17389,8 @@
             [site-cap : i64 (compiler-backend-const-hoist-site-cap)]
             [synth-cap : i64 (compiler-backend-const-hoist-synth-cap)]
             [site-points : (Array i64) (make-array i64 site-cap)]
-            [site-regs : (Array String) (make-array String site-cap)]
+            [site-regs : (Array i64) (make-array i64 site-cap)]
+            [site-frame-operands : (Array String) (make-array String site-cap)]
             [site-values : (Array i64) (make-array i64 site-cap)]
             [site-wide : (Array bool) (make-array bool site-cap)]
             [site-frame : (Array bool) (make-array bool site-cap)]
@@ -17325,7 +17399,7 @@
             [inject-texts : (Array String) (make-array String synth-cap)]
             [inject-pres : (Array bool) (make-array bool synth-cap)]
             [inject-count : i64 0]
-            [synth-regs : (Array String) (make-array String synth-cap)]
+            [synth-regs : (Array i64) (make-array i64 synth-cap)]
             [synth-lo : (Array i64) (make-array i64 synth-cap)]
             [synth-hi : (Array i64) (make-array i64 synth-cap)]
             [synth-count : i64 0]
@@ -17517,13 +17591,16 @@
                                               lo
                                               hi)
                                             (- 0 1))
-                                            [(CompilerRegMaybeString.No) unit]
-                                            [(CompilerRegMaybeString.Some reg)
+                                            [(CompilerRegMaybeId.No) unit]
+                                            [(CompilerRegMaybeId.Some reg)
                                               (let
                                                 [frame? : bool
                                                   (and
                                                     (not wide?)
-                                                    (string.eq reg "%rbx"))]
+                                                    (= reg compiler-reg-id-rbx))]
+                                                [reg-name : String
+                                                  (compiler-abi-register-spelling
+                                                    reg)]
                                                 [home : String
                                                   (if frame?
                                                     (compiler-backend-frame-offset
@@ -17535,14 +17612,14 @@
                                                             frame-base-slots
                                                             frame-count
                                                             1))))
-                                                    reg)]
+                                                    reg-name)]
                                                 (begin
                                                   ;; synthetic occupancy entry
                                                   (array-set!
                                                     synth-regs
                                                     synth-count
                                                     (if frame?
-                                                      ""
+                                                      compiler-reg-id-invalid
                                                       reg))
                                                   (array-set!
                                                     synth-lo
@@ -17574,7 +17651,7 @@
                                                           "\n"))
                                                       (compiler-backend-emit-load-i64-absolute
                                                         magic
-                                                        reg)))
+                                                        reg-name)))
                                                   (array-set!
                                                     inject-pres
                                                     inject-count
@@ -17611,7 +17688,15 @@
                                                             (array-set!
                                                               site-regs
                                                               site-count
-                                                              home)
+                                                              (if frame?
+                                                                compiler-reg-id-invalid
+                                                                reg))
+                                                            (array-set!
+                                                              site-frame-operands
+                                                              site-count
+                                                              (if frame?
+                                                                home
+                                                                ""))
                                                             (array-set!
                                                               site-values
                                                               site-count
@@ -17647,6 +17732,9 @@
               (set! compiler-backend-const-hoist-site-count site-count)
               (set! compiler-backend-const-hoist-site-points site-points)
               (set! compiler-backend-const-hoist-site-regs site-regs)
+              (set!
+                compiler-backend-const-hoist-site-frame-operands
+                site-frame-operands)
               (set! compiler-backend-const-hoist-site-values site-values)
               (set! compiler-backend-const-hoist-site-wide site-wide)
               (set! compiler-backend-const-hoist-site-frame site-frame)
@@ -17668,7 +17756,7 @@
     [(CompilerBackendConstHoistSynth n _ _ _) (+ vars n)]))
 
 (define (compiler-backend-const-hoist-extend-assignments-from
-  [regs : (Array String)]
+  [regs : (Array i64)]
   [n : i64]
   [i : i64]
   [vars : i64]
@@ -17678,7 +17766,7 @@
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment
         (+ vars i)
-        (if (string.eq (array-ref regs i) "")
+        (if (= (array-ref regs i) compiler-reg-id-invalid)
           (CompilerRegLocation.Spill
             (compiler-reg-stack-slot-offset (+ vars i)))
           (CompilerRegLocation.Register (array-ref regs i))))
@@ -17756,7 +17844,9 @@
     (compiler-backend-scratch-plan-success-count-from
       items
       (+ index 1)
-      (if (string.eq (struct-get (array-ref items index) register) "")
+      (if (=
+        (struct-get (array-ref items index) register)
+        compiler-reg-id-invalid)
         count
         (+ count 1)))))
 
@@ -17768,9 +17858,10 @@
   [masks : (Array i64)]
   [lo : i64]
   [hi : i64]
-  [reg : String]) : unit
+  [reg : i64]) : unit
   (let
-    [bit : i64 (compiler-backend-scavenge-reg-bit reg)]
+    [bit : i64
+      (compiler-backend-scavenge-reg-bit (compiler-abi-register-spelling reg))]
     [i : i64
       (if (< lo 0)
         0
@@ -17788,9 +17879,9 @@
     unit
     (let
       [item : CompilerRegScratchAssignment (array-ref items index)]
-      [reg : String (struct-get item register)]
+      [reg : i64 (struct-get item register)]
       (begin
-        (if (string.eq reg "")
+        (if (= reg compiler-reg-id-invalid)
           unit
           (let
             [requirement : CompilerRegScratchRequirement
@@ -17830,8 +17921,8 @@
     assignments
     (let
       [item : CompilerRegScratchAssignment (array-ref items index)]
-      [reg : String (struct-get item register)]
-      (if (string.eq reg "")
+      [reg : i64 (struct-get item register)]
+      (if (= reg compiler-reg-id-invalid)
         (compiler-backend-scratch-plan-extend-assignments-from
           items
           (+ index 1)
@@ -17874,11 +17965,11 @@
       (while (< item-index (array-length items))
         (let
           [item : CompilerRegScratchAssignment (array-ref items item-index)]
-          [reg : String (struct-get item register)]
+          [reg : i64 (struct-get item register)]
           [requirement : CompilerRegScratchRequirement
             (struct-get item requirement)]
           (begin
-            (if (string.eq reg "")
+            (if (= reg compiler-reg-id-invalid)
               unit
               (begin
                 (set!
@@ -17908,14 +17999,15 @@
   [plan : CompilerRegScratchPlan]
   [ordinal : i64]) : String
   (if (compiler-backend-scratch-vreg-enabled?)
-    (compiler-reg-scratch-plan-register
-      plan
-      (*
-        2
-        (-
-          compiler-backend-emit-instr-post-base
-          compiler-backend-emit-current-count))
-      ordinal)
+    (compiler-abi-register-spelling
+      (compiler-reg-scratch-plan-register
+        plan
+        (*
+          2
+          (-
+            compiler-backend-emit-instr-post-base
+            compiler-backend-emit-current-count))
+        ordinal))
     ""))
 
 (define (compiler-backend-scratch-plan-register-ahead
@@ -17923,16 +18015,17 @@
   [instruction-offset : i64]
   [ordinal : i64]) : String
   (if (compiler-backend-scratch-vreg-enabled?)
-    (compiler-reg-scratch-plan-register
-      plan
-      (+
-        (*
-          2
-          (-
-            compiler-backend-emit-instr-post-base
-            compiler-backend-emit-current-count))
-        (* 2 instruction-offset))
-      ordinal)
+    (compiler-abi-register-spelling
+      (compiler-reg-scratch-plan-register
+        plan
+        (+
+          (*
+            2
+            (-
+              compiler-backend-emit-instr-post-base
+              compiler-backend-emit-current-count))
+          (* 2 instruction-offset))
+        ordinal))
     ""))
 
 ;; Planned scratch is authoritative when constrained allocation succeeded. An
@@ -20433,7 +20526,8 @@
         (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegLocation.Register r) r]
+              [(CompilerRegLocation.Register r)
+                (compiler-abi-register-spelling r)]
               [_ ""])]
           [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
@@ -20977,7 +21071,7 @@
             (compiler-reg-assignment-index-var-uses-register?
               compiler-backend-scavenge-ctx-assignment-index
               v
-              home))
+              (compiler-abi-register-id-from-spelling home)))
             (set! carried true)
             unit)
           (set! v (+ v 1))))
@@ -22679,7 +22773,9 @@
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register home)
-            (str_cat.str-cat "    testq " home ", " home "\n")]
+            (let
+              [home-name : String (compiler-abi-register-spelling home)]
+              (str_cat.str-cat "    testq " home-name ", " home-name "\n"))]
           [(CompilerRegLocation.RegisterPair _ _) ""]
           [(CompilerRegLocation.Spill offset)
             (str_cat.str-cat
@@ -23003,7 +23099,8 @@
         (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegLocation.Register r) r]
+              [(CompilerRegLocation.Register r)
+                (compiler-abi-register-spelling r)]
               [_ ""])]
           [_ ""]))]
     [_ ""]))
@@ -23978,9 +24075,19 @@
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
-                (str_cat.str-cat "    leaq " slot ", " home "\n")]
+                (str_cat.str-cat
+                  "    leaq "
+                  slot
+                  ", "
+                  (compiler-abi-register-spelling home)
+                  "\n")]
               [(CompilerRegLocation.RegisterPair home _)
-                (str_cat.str-cat "    leaq " slot ", " home "\n")]
+                (str_cat.str-cat
+                  "    leaq "
+                  slot
+                  ", "
+                  (compiler-abi-register-spelling home)
+                  "\n")]
               [(CompilerRegLocation.Spill offset)
                 (let
                   [addr-reg : String
@@ -24440,7 +24547,8 @@
       [(ResultCompilerBackendAddressBase.Ok base-plan)
         (let
           [ptr-asm : String (struct-get base-plan asm)]
-          [base : String (struct-get base-plan reg)]
+          [base : String
+            (compiler-abi-register-spelling (struct-get base-plan reg))]
           [base-mem : String (compiler-backend-base-deref base)]
           (ResultCompilerBackend.Ok
             (if (compiler-backend-float-type? ty)
@@ -24654,12 +24762,12 @@
   (match location
     [(CompilerRegLocation.Register reg)
       (begin
-        (array-set! out index reg)
+        (array-set! out index (compiler-abi-register-spelling reg))
         (+ index 1))]
     [(CompilerRegLocation.RegisterPair first second)
       (begin
-        (array-set! out index first)
-        (array-set! out (+ index 1) second)
+        (array-set! out index (compiler-abi-register-spelling first))
+        (array-set! out (+ index 1) (compiler-abi-register-spelling second))
         (+ index 2))]
     [_ index]))
 
@@ -26174,7 +26282,9 @@
         (let
           [ptr-asm : String (struct-get base asm)]
           [addr : String
-            (compiler-backend-copy-address 0 (struct-get base reg))]
+            (compiler-backend-copy-address
+              0
+              (compiler-abi-register-spelling (struct-get base reg)))]
           (match (compiler-backend-emit-store-value-to-address
             type-segment-bases
             assignments
@@ -26182,7 +26292,8 @@
             ty
             addr
             program-index
-            (compiler-backend-one-exclude (struct-get base reg))
+            (compiler-backend-one-exclude
+              (compiler-abi-register-spelling (struct-get base reg)))
             1
             planned-value)
             [(ResultCompilerBackend.Ok store-asm)
@@ -26230,7 +26341,9 @@
             (let
               [base-asm : String (struct-get base-plan asm)]
               [addr : String
-                (compiler-backend-copy-address disp (struct-get base-plan reg))]
+                (compiler-backend-copy-address
+                  disp
+                  (compiler-abi-register-spelling (struct-get base-plan reg)))]
               (match (compiler-backend-emit-store-value-to-address
                 type-segment-bases
                 assignments
@@ -26238,7 +26351,8 @@
                 store-ty
                 addr
                 program-index
-                (compiler-backend-one-exclude (struct-get base-plan reg))
+                (compiler-backend-one-exclude
+                  (compiler-abi-register-spelling (struct-get base-plan reg)))
                 1
                 planned-value)
                 [(ResultCompilerBackend.Ok store-asm)
@@ -26363,7 +26477,8 @@
           scav-idx)
           [(ResultCompilerBackend.Ok offset-asm)
             (let
-              [base-reg : String (struct-get base-plan reg)]
+              [base-reg : String
+                (compiler-abi-register-spelling (struct-get base-plan reg))]
               [addr : String
                 (compiler-backend-gep-index-address-disp
                   gep-disp
@@ -26453,7 +26568,8 @@
       [(ResultCompilerBackendAddressBase.Ok base-plan)
         (let
           [base-asm : String (struct-get base-plan asm)]
-          [base-reg : String (struct-get base-plan reg)]
+          [base-reg : String
+            (compiler-abi-register-spelling (struct-get base-plan reg))]
           [addr0 : String (compiler-backend-copy-address 0 base-reg)]
           [addr1 : String (compiler-backend-copy-address disp base-reg)]
           (match (compiler-backend-emit-store-value-to-address
@@ -30382,14 +30498,14 @@
 ;; (self-moves / memory sources) falls through to the byte-identical naive path.
 (defenum CompilerBackendArgMoveSource
   (BackendArgMoveValue CompilerIrValue)
-  (BackendArgMoveReg String)
+  (BackendArgMoveReg i64)
   ;; The register-free cycle break: the move's source value was saved in the
   ;; reserved cycle-temp frame slot and is loaded into `dest` here. Behaves like
-  ;; a memory source (source-reg "" -- never blocks another move).
+  ;; a memory source (source-reg invalid -- never blocks another move).
   (BackendArgMoveStackPop))
 
 (defenum CompilerBackendArgMove
-  (BackendArgMove String CompilerBackendArgMoveSource))
+  (BackendArgMove i64 CompilerBackendArgMoveSource))
 
 (defstruct CompilerBackendArgMoveSeq
   (slots (Array CompilerBackendArgMove))
@@ -30441,27 +30557,27 @@
 
 (define (compiler-backend-arg-move-source-reg
   [assignments : CompilerRegAssignmentList]
-  [source : CompilerBackendArgMoveSource]) : String
+  [source : CompilerBackendArgMoveSource]) : i64
   (match source
     [(BackendArgMoveReg r) r]
-    [(BackendArgMoveStackPop) ""]
+    [(BackendArgMoveStackPop) compiler-reg-id-invalid]
     [(BackendArgMoveValue value)
       (match value
         [(CompilerIrValue.Var id)
           (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
-            ""
+            compiler-reg-id-invalid
             (match (compiler-backend-emit-assignment-lookup assignments id)
               [(CompilerRegMaybeLocation.Some loc)
                 (match loc
                   [(CompilerRegLocation.Register home) home]
-                  [_ ""])]
-              [(CompilerRegMaybeLocation.No) ""]))]
-        [_ ""])]))
+                  [_ compiler-reg-id-invalid])]
+              [(CompilerRegMaybeLocation.No) compiler-reg-id-invalid]))]
+        [_ compiler-reg-id-invalid])]))
 
-(define (compiler-backend-parallel-reg-resource [reg : String]) : i64
-  (if (string.eq reg "")
+(define (compiler-backend-parallel-reg-id-resource [reg : i64]) : i64
+  (if (= reg compiler-reg-id-invalid)
     0
-    (+ (stdlib.hash.string-key (& reg)) 1)))
+    (+ reg 1)))
 
 (define (compiler-backend-parallel-spill-resource [offset : i64]) : i64
   (if (< offset 0)
@@ -30485,10 +30601,10 @@
   (match move
     [(BackendArgMove dest source)
       (pmove.ParallelMoveEdge
-        (compiler-backend-parallel-reg-resource dest)
-        (compiler-backend-parallel-reg-resource dest)
+        (compiler-backend-parallel-reg-id-resource dest)
+        (compiler-backend-parallel-reg-id-resource dest)
         0
-        (compiler-backend-parallel-reg-resource
+        (compiler-backend-parallel-reg-id-resource
           (compiler-backend-arg-move-source-reg assignments source))
         0)]))
 
@@ -30531,7 +30647,7 @@
           (match (array-ref (struct-get moves slots) i)
             [(BackendArgMove dest _)
               (when
-                (= (compiler-backend-parallel-reg-resource dest) want)
+                (= (compiler-backend-parallel-reg-id-resource dest) want)
                 (return
                   (BackendSomeArgMove (array-ref (struct-get moves slots) i))))])
           (set! i (+ i 1))))
@@ -30541,7 +30657,7 @@
 ;; tail on a match); any later same-dest move stays.
 (define (compiler-backend-arg-move-list-remove
   [moves : CompilerBackendArgMoveSeq]
-  [dest : String]) : CompilerBackendArgMoveSeq
+  [dest : i64]) : CompilerBackendArgMoveSeq
   (let
     [out : CompilerBackendArgMoveSeq
       (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
@@ -30552,7 +30668,7 @@
         (begin
           (match (array-ref (struct-get moves slots) i)
             [(BackendArgMove d _)
-              (if (and (not removed) (string.eq d dest))
+              (if (and (not removed) (= d dest))
                 (set! removed true)
                 (compiler-backend-arg-move-push!
                   (&mut out)
@@ -30563,8 +30679,8 @@
 (define (compiler-backend-arg-move-list-redirect
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveSeq]
-  [oldreg : String]
-  [newreg : String]) : CompilerBackendArgMoveSeq
+  [oldreg : i64]
+  [newreg : i64]) : CompilerBackendArgMoveSeq
   (let
     [out : CompilerBackendArgMoveSeq
       (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
@@ -30578,7 +30694,7 @@
               [(BackendArgMove dest source)
                 (compiler-backend-arg-move-push!
                   (&mut out)
-                  (if (string.eq
+                  (if (=
                     (compiler-backend-arg-move-source-reg assignments source)
                     oldreg)
                     (BackendArgMove dest (BackendArgMoveReg newreg))
@@ -30593,7 +30709,7 @@
 (define (compiler-backend-arg-move-list-redirect-to-stack
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveSeq]
-  [oldreg : String]) : CompilerBackendArgMoveSeq
+  [oldreg : i64]) : CompilerBackendArgMoveSeq
   (let
     [out : CompilerBackendArgMoveSeq
       (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
@@ -30607,7 +30723,7 @@
               [(BackendArgMove dest source)
                 (compiler-backend-arg-move-push!
                   (&mut out)
-                  (if (string.eq
+                  (if (=
                     (compiler-backend-arg-move-source-reg assignments source)
                     oldreg)
                     (BackendArgMove dest (BackendArgMoveStackPop))
@@ -30622,25 +30738,33 @@
     [(BackendArgMove dest source)
       (match source
         [(BackendArgMoveReg r)
-          (if (string.eq r dest)
+          (if (= r dest)
             (ResultCompilerBackend.Ok "")
             (ResultCompilerBackend.Ok
-              (str_cat.str-cat "    movq " r ", " dest "\n")))]
+              (str_cat.str-cat
+                "    movq "
+                (compiler-abi-register-spelling r)
+                ", "
+                (compiler-abi-register-spelling dest)
+                "\n")))]
         [(BackendArgMoveStackPop)
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
               "    movq "
               (compiler-backend-cycle-temp-slot 0)
               ", "
-              dest
+              (compiler-abi-register-spelling dest)
               "\n"))]
         [(BackendArgMoveValue value)
-          (compiler-backend-emit-load-value-with-plan assignments value dest)])]))
+          (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            (compiler-abi-register-spelling dest))])]))
 
-(define (compiler-backend-emit-arg-cycle-temp-save [srcreg : String]) : String
+(define (compiler-backend-emit-arg-cycle-temp-save [srcreg : i64]) : String
   (str_cat.str-cat
     "    movq "
-    srcreg
+    (compiler-abi-register-spelling srcreg)
     ", "
     (compiler-backend-cycle-temp-slot 0)
     "\n"))
@@ -30668,24 +30792,24 @@
                 (bit-or
                   mask
                   (bit-or
-                    (compiler-backend-scavenge-reg-bit dest)
-                    (compiler-backend-scavenge-reg-bit
+                    (compiler-backend-scavenge-reg-id-bit dest)
+                    (compiler-backend-scavenge-reg-id-bit
                       (compiler-backend-arg-move-source-reg assignments source)))))])
           (set! i (+ i 1))))
       mask)))
 
 ;; Scavenge a GP register for the arg parallel-move cycle-break Temp instead of
 ;; hardcoding %r11: free in the occupancy mask at the call-setup point and not a
-;; dest/source of any pending arg move (mirrors phi-temp-pick-reg). "" if none,
+;; dest/source of any pending arg move (mirrors phi-temp-pick-reg). Invalid if none,
 ;; in which case the caller breaks the cycle through a reserved frame temp -- a
 ;; sound register-free swap, NOT the old raw %r11 fallback (SCAV1). In practice
 ;; the pool always has a free scratch here (%r10/%r11 are caller-saved and never
-;; participate in a gp-parallel arg cycle nor hold a call-survivor), so "" is a
-;; saturation guard reached only under --cfg arg-cycle-stack for the forcing test.
+;; participate in a gp-parallel arg cycle nor hold a call-survivor), so invalid is
+;; a saturation guard reached only under --cfg arg-cycle-stack for the forcing test.
 (define (compiler-backend-arg-temp-pick-reg
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveSeq]
-  [all : CompilerBackendArgMoveSeq]) : String
+  [all : CompilerBackendArgMoveSeq]) : i64
   (let
     [point : i64
       (*
@@ -30711,7 +30835,7 @@
         (bit-or
           (compiler-backend-arg-move-list-exclude-mask assignments moves)
           (compiler-backend-arg-move-list-exclude-mask assignments all)))]
-    [cands : (Array String) compiler-backend-scavenge-candidate-pool]
+    [cands : (Array i64) compiler-backend-scavenge-candidate-pool]
     (compiler-backend-phi-temp-pick-reg-iter
       occupied-mask
       exclude-mask
@@ -30759,11 +30883,11 @@
           (match move
             [(BackendArgMove dest source)
               (let
-                [srcreg : String
+                [srcreg : i64
                   (compiler-backend-arg-move-source-reg assignments source)]
                 ;; Cycle decisions should name a register-sourced move; this
                 ;; branch is defensive if a malformed graph reaches the emitter.
-                (if (string.eq srcreg "")
+                (if (= srcreg compiler-reg-id-invalid)
                   (match (compiler-backend-emit-arg-move assignments move)
                     [(ResultCompilerBackend.Ok head)
                       (match (compiler-backend-emit-arg-move-list-with-all
@@ -30778,18 +30902,18 @@
                       (ResultCompilerBackend.Err m)])
                   (let
                     [picked
-                      : String
+                      : i64
                       ;; --cfg arg-cycle-stack forces the register-free break so a
                       ;; forcing fixture can exercise the (otherwise cold) saturation
                       ;; path -- see the SCAV1 note. Off, self-host is byte-identical.
                       (cfg
                         arg-cycle-stack
-                        ""
+                        compiler-reg-id-invalid
                         (compiler-backend-arg-temp-pick-reg
                           assignments
                           moves
                           all))]
-                    (if (string.eq picked "")
+                    (if (= picked compiler-reg-id-invalid)
                       ;; No free scratch register at saturation: break the cycle
                       ;; through the reserved frame temp. This saves `srcreg`
                       ;; before any move overwrites it, and its single consumer
@@ -30825,9 +30949,9 @@
                             (string.append
                               (str_cat.str-cat
                                 "    movq "
-                                srcreg
+                                (compiler-abi-register-spelling srcreg)
                                 ", "
-                                picked
+                                (compiler-abi-register-spelling picked)
                                 "\n")
                               tail))]
                         [(ResultCompilerBackend.Err m)
@@ -30851,14 +30975,18 @@
     (begin
       (while (< i count)
         (begin
-          (match (compiler-backend-target-arg-reg-for-banks target ints pos)
-            [(ResultBackendReg.Ok reg)
+          (let
+            [reg : i64
+              (compiler-abi-gp-arg-register-id
+                (compiler-backend-target-abi target)
+                (compiler-backend-call-bank-index target ints pos))]
+            (if (= reg compiler-reg-id-invalid)
+              unit
               (compiler-backend-arg-move-push!
                 (&mut out)
                 (BackendArgMove
                   reg
-                  (BackendArgMoveValue (compiler-backend-call-arg-at args i))))]
-            [(ResultBackendReg.Err _) unit])
+                  (BackendArgMoveValue (compiler-backend-call-arg-at args i))))))
           (set! i (+ i 1))
           (set! ints (+ ints 1))
           (set! pos (+ pos 1))))
@@ -31486,7 +31614,7 @@
     (compiler-reg-assignment-insert
       assignments
       rax-var
-      (CompilerRegLocation.Register "%rax"))
+      (CompilerRegLocation.Register compiler-reg-id-rax))
     assignments))
 
 (define (compiler-backend-tail-final-stack-slot
@@ -31761,9 +31889,9 @@
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register reg)
-          (compiler-backend-parallel-reg-resource reg)]
+          (compiler-backend-parallel-reg-id-resource reg)]
         [(CompilerRegLocation.RegisterPair first _)
-          (compiler-backend-parallel-reg-resource first)]
+          (compiler-backend-parallel-reg-id-resource first)]
         [(CompilerRegLocation.Spill offset)
           (compiler-backend-parallel-spill-resource offset)]
         [(CompilerRegLocation.Remat _) 0])]
@@ -31776,7 +31904,7 @@
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.RegisterPair _ second)
-          (compiler-backend-parallel-reg-resource second)]
+          (compiler-backend-parallel-reg-id-resource second)]
         [_ 0])]
     [(CompilerRegMaybeLocation.No) 0]))
 
@@ -31875,13 +32003,13 @@
           (set! i (+ i 1))))
       out)))
 
-;; `loc` is the staging location threaded into the Temp this break creates: ""
-;; for the stack, or a register name when the outermost break scavenged one.
+;; `loc` is the staging location threaded into the Temp this break creates:
+;; invalid for the stack, or a canonical register ID for an outermost break.
 (define (compiler-backend-phi-source-replace-home
   [assignments : CompilerRegAssignmentList]
   [source : CompilerBackendPhiSource]
   [dst : i64]
-  [loc : String]) : CompilerBackendPhiSource
+  [loc : i64]) : CompilerBackendPhiSource
   (match source
     [(CompilerBackendPhiSource.Value value)
       (match value
@@ -31896,7 +32024,7 @@
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopySeq]
   [dst-home-var : i64]
-  [loc : String]) : CompilerBackendPhiCopySeq
+  [loc : i64]) : CompilerBackendPhiCopySeq
   (let
     [out : CompilerBackendPhiCopySeq
       (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
@@ -32054,11 +32182,13 @@
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
-                (if (string.eq planned home)
+                (if (string.eq planned (compiler-abi-register-spelling home))
                   ""
                   planned)]
               [(CompilerRegLocation.RegisterPair lo hi)
-                (if (or (string.eq planned lo) (string.eq planned hi))
+                (if (or
+                  (string.eq planned (compiler-abi-register-spelling lo))
+                  (string.eq planned (compiler-abi-register-spelling hi)))
                   ""
                   planned)]
               [_ planned])]
@@ -32077,9 +32207,10 @@
     (match (compiler-backend-emit-assignment-lookup assignments var-id)
       [(CompilerRegMaybeLocation.Some location)
         (match location
-          [(CompilerRegLocation.Register home) (ResultCompilerBackend.Ok home)]
+          [(CompilerRegLocation.Register home)
+            (ResultCompilerBackend.Ok (compiler-abi-register-spelling home))]
           [(CompilerRegLocation.RegisterPair home _)
-            (ResultCompilerBackend.Ok home)]
+            (ResultCompilerBackend.Ok (compiler-abi-register-spelling home))]
           [(CompilerRegLocation.Spill offset)
             (ResultCompilerBackend.Ok (compiler-backend-frame-offset offset))]
           [(CompilerRegLocation.Remat _)
@@ -32432,11 +32563,11 @@
   [occupied-mask : i64]
   [exclude-mask : i64]
   [plan-mask : i64]
-  [cands : (Array String)]
+  [cands : (Array i64)]
   [i : i64]
-  [n : i64]) : String
+  [n : i64]) : i64
   (if (>= i n)
-    ""
+    compiler-reg-id-invalid
     (if (compiler-backend-scavenge-candidate-ok?
       occupied-mask
       exclude-mask
@@ -32489,8 +32620,8 @@
           (bit-or
             (compiler-backend-phi-copy-list-dst-home-mask assignments copies)
             (compiler-backend-phi-copy-list-dst-home-mask assignments all)))]
-      [cands : (Array String) compiler-backend-scavenge-candidate-pool]
-      [reg : String
+      [cands : (Array i64) compiler-backend-scavenge-candidate-pool]
+      [reg-id : i64
         (compiler-backend-phi-temp-pick-reg-iter
           occupied-mask
           exclude-mask
@@ -32498,6 +32629,7 @@
           cands
           0
           (array-length cands))]
+      [reg : String (compiler-abi-register-spelling reg-id)]
       (begin
         ;; Same freeness self-check the sibling scavengers run: prove the picked
         ;; register really is free at this point (a no-op for "" / sound picks).
@@ -32715,13 +32847,13 @@
                 (match src-location
                   [(CompilerRegLocation.Register src-home)
                     (CompilerBackendMaybeAsm.Some
-                      (if (string.eq src-home dst-home)
+                      (if (= src-home dst-home)
                         ""
                         (str_cat.str-cat
                           "    movq "
-                          src-home
+                          (compiler-abi-register-spelling src-home)
                           ", "
-                          dst-home
+                          (compiler-abi-register-spelling dst-home)
                           "\n")))]
                   [(CompilerRegLocation.RegisterPair _ _)
                     (CompilerBackendMaybeAsm.No)]
@@ -32731,7 +32863,7 @@
                         "    movq "
                         (compiler-backend-frame-offset src-offset)
                         ", "
-                        dst-home
+                        (compiler-abi-register-spelling dst-home)
                         "\n"))]
                   ;; Remat src: no slot/register to copy from -> defer to the
                   ;; load-store fallback, which recomputes it.
@@ -32742,7 +32874,7 @@
                     "    movq "
                     (compiler-backend-slot src-id)
                     ", "
-                    dst-home
+                    (compiler-abi-register-spelling dst-home)
                     "\n"))])]
           [(CompilerRegLocation.RegisterPair dst-lo dst-hi)
             (match (compiler-backend-emit-assignment-lookup assignments src-id)
@@ -32755,29 +32887,27 @@
                     ;; the rax:rdx staging path (both reads before both
                     ;; writes, swap-safe). dst-hi == src-lo is fine: src-lo
                     ;; is read by the first copy before the second writes.
-                    (if (and
-                      (not (string.eq src-lo dst-lo))
-                      (string.eq dst-lo src-hi))
+                    (if (and (not (= src-lo dst-lo)) (= dst-lo src-hi))
                       (CompilerBackendMaybeAsm.No)
                       (CompilerBackendMaybeAsm.Some
                         (let
                           [lo-move : String
-                            (if (string.eq src-lo dst-lo)
+                            (if (= src-lo dst-lo)
                               ""
                               (str_cat.str-cat
                                 "    movq "
-                                src-lo
+                                (compiler-abi-register-spelling src-lo)
                                 ", "
-                                dst-lo
+                                (compiler-abi-register-spelling dst-lo)
                                 "\n"))]
                           [hi-move : String
-                            (if (string.eq src-hi dst-hi)
+                            (if (= src-hi dst-hi)
                               ""
                               (str_cat.str-cat
                                 "    movq "
-                                src-hi
+                                (compiler-abi-register-spelling src-hi)
                                 ", "
-                                dst-hi
+                                (compiler-abi-register-spelling dst-hi)
                                 "\n"))]
                           (string.append lo-move hi-move))))]
                   [_ (CompilerBackendMaybeAsm.No)])]
@@ -32791,7 +32921,7 @@
                     (CompilerBackendMaybeAsm.Some
                       (str_cat.str-cat
                         "    movq "
-                        src-home
+                        (compiler-abi-register-spelling src-home)
                         ", "
                         (compiler-backend-frame-offset dst-offset)
                         "\n"))]
@@ -32805,7 +32935,7 @@
                 (CompilerBackendMaybeAsm.Some
                   (str_cat.str-cat
                     "    movq "
-                    src-home
+                    (compiler-abi-register-spelling src-home)
                     ", "
                     (compiler-backend-slot dst)
                     "\n"))]
@@ -32882,7 +33012,7 @@
   [vars : i64]) : ResultCompilerBackend
   (match source
     [(CompilerBackendPhiSource.Temp loc)
-      (if (string.eq loc "")
+      (if (= loc compiler-reg-id-invalid)
         (compiler-backend-emit-phi-temp-restore
           type-segment-bases
           assignments
@@ -32890,9 +33020,11 @@
           ty
           program-index
           vars)
-        (if (compiler-backend-float-type? ty)
-          (compiler-backend-emit-phi-temp-restore-xmm assignments dst loc ty)
-          (compiler-backend-emit-phi-temp-restore-reg assignments dst loc)))]
+        (let
+          [reg : String (compiler-abi-register-spelling loc)]
+          (if (compiler-backend-float-type? ty)
+            (compiler-backend-emit-phi-temp-restore-xmm assignments dst reg ty)
+            (compiler-backend-emit-phi-temp-restore-reg assignments dst reg))))]
     [(CompilerBackendPhiSource.Value value)
       (if (compiler-backend-phi-same-home? assignments dst value)
         (ResultCompilerBackend.Ok "")
@@ -33110,7 +33242,7 @@
                               copies
                               dst)
                             dst
-                            reg)
+                            (compiler-abi-register-id-from-spelling reg))
                           all
                           program-index
                           vars
@@ -34874,8 +35006,9 @@
   (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegLocation.Register r) r]
-        [(CompilerRegLocation.RegisterPair r _) r]
+        [(CompilerRegLocation.Register r) (compiler-abi-register-spelling r)]
+        [(CompilerRegLocation.RegisterPair r _)
+          (compiler-abi-register-spelling r)]
         [_ ""])]
     [_ ""]))
 
@@ -34887,7 +35020,8 @@
       (match (compiler-backend-emit-assignment-lookup assignments id)
         [(CompilerRegMaybeLocation.Some location)
           (match location
-            [(CompilerRegLocation.Register home) home]
+            [(CompilerRegLocation.Register home)
+              (compiler-abi-register-spelling home)]
             [_ ""])]
         [(CompilerRegMaybeLocation.No) ""])]
     [_ ""]))
@@ -36600,19 +36734,9 @@
 (define (compiler-backend-assignments-use-reg?
   [assignments : CompilerRegAssignmentList]
   [reg : String]) : bool
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) false]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment _ location)
-          (or
-            (match location
-              [(CompilerRegLocation.Register home) (string.eq home reg)]
-              [(CompilerRegLocation.RegisterPair lo hi)
-                (or (string.eq lo reg) (string.eq hi reg))]
-              [(CompilerRegLocation.Spill _) false]
-              [(CompilerRegLocation.Remat _) false])
-            (compiler-backend-assignments-use-reg? (box-get rest) reg))])]))
+  (compiler-reg-assignments-use-register?
+    assignments
+    (compiler-abi-register-id-from-spelling reg)))
 
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]
@@ -36659,7 +36783,7 @@
                 "    movq "
                 (compiler-ir-label-text label)
                 "(%rip), "
-                home
+                (compiler-abi-register-spelling home)
                 "\n"))]
           [_ (ResultCompilerBackend.Ok scratch-asm)])]
       [(CompilerRegMaybeLocation.No) (ResultCompilerBackend.Ok scratch-asm)])))
@@ -36743,16 +36867,16 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 ;; Linux syscall argument register for operand position: 0=number, 1..6=args.
-(define (compiler-backend-syscall-reg [pos : i64]) : String
+(define (compiler-backend-syscall-reg [pos : i64]) : i64
   (cond
-    [(= pos 0) "%rax"]
-    [(= pos 1) "%rdi"]
-    [(= pos 2) "%rsi"]
-    [(= pos 3) "%rdx"]
-    [(= pos 4) "%r10"]
-    [(= pos 5) "%r8"]
-    [(= pos 6) "%r9"]
-    [else "%rax"]))
+    [(= pos 0) compiler-reg-id-rax]
+    [(= pos 1) compiler-reg-id-rdi]
+    [(= pos 2) compiler-reg-id-rsi]
+    [(= pos 3) compiler-reg-id-rdx]
+    [(= pos 4) compiler-reg-id-r10]
+    [(= pos 5) compiler-reg-id-r8]
+    [(= pos 6) compiler-reg-id-r9]
+    [else compiler-reg-id-rax]))
 
 ;; Build the syscall operand -> kernel-arg-register parallel move list. The Linux
 ;; syscall registers (%rdi/%rsi/%rdx/%r10/%r8/%r9 for args, %rax for the number)
@@ -40493,13 +40617,13 @@
                 [saved-reserved : i64
                   compiler-backend-current-instr-reserved-mask]
                 [saved0-var : i64 compiler-backend-emit-home-override0-var]
-                [saved0-reg : String compiler-backend-emit-home-override0-reg]
+                [saved0-reg : i64 compiler-backend-emit-home-override0-reg]
                 [saved1-var : i64 compiler-backend-emit-home-override1-var]
-                [saved1-reg : String compiler-backend-emit-home-override1-reg]
+                [saved1-reg : i64 compiler-backend-emit-home-override1-reg]
                 [continuation : CompilerIrInstrList (box-get after-div)]
                 [emitted : ResultCompilerBackend
                   (begin
-                    (compiler-backend-divmod-overrides-install!
+                    (compiler-backend-divmod-overrides-install-spellings!
                       alu-dst
                       src
                       (match direct-store
@@ -42777,7 +42901,7 @@
   (if (>= index compiler-backend-emergency-pending-count)
     ""
     (let
-      [reg : String (array-ref compiler-backend-emergency-regs index)]
+      [reg : i64 (array-ref compiler-backend-emergency-regs index)]
       [base-home : String
         (compiler-backend-value-scalar-register assignments base)]
       [offset-home : String
@@ -42787,8 +42911,10 @@
             (compiler-backend-value-scalar-register assignments offset)])]
       (str_cat.str-cat
         (if (and
-          (not (string.eq reg src))
-          (or (string.eq reg base-home) (string.eq reg offset-home)))
+          (not (= reg (compiler-abi-register-id-from-spelling src)))
+          (or
+            (= reg (compiler-abi-register-id-from-spelling base-home))
+            (= reg (compiler-abi-register-id-from-spelling offset-home))))
           (compiler-backend-emergency-reg-restore-asm
             reg
             (compiler-backend-emergency-reg-offset index))
@@ -42950,14 +43076,25 @@
 
 (define (compiler-backend-divmod-overrides-install!
   [first-var : i64]
-  [first-reg : String]
+  [first-reg : i64]
   [second-var : i64]
-  [second-reg : String]) : unit
+  [second-reg : i64]) : unit
   (begin
     (set! compiler-backend-emit-home-override0-var first-var)
     (set! compiler-backend-emit-home-override0-reg first-reg)
     (set! compiler-backend-emit-home-override1-var second-var)
     (set! compiler-backend-emit-home-override1-reg second-reg)))
+
+(define (compiler-backend-divmod-overrides-install-spellings!
+  [first-var : i64]
+  [first-reg : String]
+  [second-var : i64]
+  [second-reg : String]) : unit
+  (compiler-backend-divmod-overrides-install!
+    first-var
+    (compiler-abi-register-id-from-spelling first-reg)
+    second-var
+    (compiler-abi-register-id-from-spelling second-reg)))
 
 ;; Emit a Gep+StorePtr as the already-existing direct fused store, but return
 ;; only its assembly so the surrounding divmod bundle can own one emergency
@@ -43032,12 +43169,12 @@
     [saved-count : i64 compiler-backend-emit-current-count]
     [saved-reserved : i64 compiler-backend-current-instr-reserved-mask]
     [saved0-var : i64 compiler-backend-emit-home-override0-var]
-    [saved0-reg : String compiler-backend-emit-home-override0-reg]
+    [saved0-reg : i64 compiler-backend-emit-home-override0-reg]
     [saved1-var : i64 compiler-backend-emit-home-override1-var]
-    [saved1-reg : String compiler-backend-emit-home-override1-reg]
+    [saved1-reg : i64 compiler-backend-emit-home-override1-reg]
     [result : ResultCompilerBackend
       (begin
-        (compiler-backend-divmod-overrides-install! div-dst src -1 "")
+        (compiler-backend-divmod-overrides-install-spellings! div-dst src -1 "")
         (match (compiler-backend-emit-instr
           ctx
           (CompilerBackendMaybeLabel.No)
@@ -43099,12 +43236,16 @@
     [saved-count : i64 compiler-backend-emit-current-count]
     [saved-reserved : i64 compiler-backend-current-instr-reserved-mask]
     [saved0-var : i64 compiler-backend-emit-home-override0-var]
-    [saved0-reg : String compiler-backend-emit-home-override0-reg]
+    [saved0-reg : i64 compiler-backend-emit-home-override0-reg]
     [saved1-var : i64 compiler-backend-emit-home-override1-var]
-    [saved1-reg : String compiler-backend-emit-home-override1-reg]
+    [saved1-reg : i64 compiler-backend-emit-home-override1-reg]
     [result : ResultCompilerBackend
       (begin
-        (compiler-backend-divmod-overrides-install! producer-dst src -1 "")
+        (compiler-backend-divmod-overrides-install-spellings!
+          producer-dst
+          src
+          -1
+          "")
         (match (match producer-instr
           [(CompilerIrInstr.BinOp _ op lhs rhs _)
             (compiler-backend-emit-divmod-producer-to-src
@@ -43169,12 +43310,12 @@
     [saved-count : i64 compiler-backend-emit-current-count]
     [saved-reserved : i64 compiler-backend-current-instr-reserved-mask]
     [saved0-var : i64 compiler-backend-emit-home-override0-var]
-    [saved0-reg : String compiler-backend-emit-home-override0-reg]
+    [saved0-reg : i64 compiler-backend-emit-home-override0-reg]
     [saved1-var : i64 compiler-backend-emit-home-override1-var]
-    [saved1-reg : String compiler-backend-emit-home-override1-reg]
+    [saved1-reg : i64 compiler-backend-emit-home-override1-reg]
     [result : ResultCompilerBackend
       (begin
-        (compiler-backend-divmod-overrides-install!
+        (compiler-backend-divmod-overrides-install-spellings!
           producer-dst
           src
           div-dst
@@ -46267,6 +46408,32 @@
     (string.eq reg "%rax")
     (not (= (compiler-backend-scavenge-reg-bit reg) 0))))
 
+(define (compiler-backend-scavenge-reg-id-bit [reg : i64]) : i64
+  (cond
+    [(= reg compiler-reg-id-r9) 1]
+    [(= reg compiler-reg-id-rcx) 2]
+    [(= reg compiler-reg-id-rdx) 4]
+    [(= reg compiler-reg-id-r10) 8]
+    [(= reg compiler-reg-id-r11) 16]
+    [(= reg compiler-reg-id-r8) 32]
+    [(= reg compiler-reg-id-r12) 64]
+    [(= reg compiler-reg-id-r13) 128]
+    [(= reg compiler-reg-id-r14) 256]
+    [(= reg compiler-reg-id-r15) 512]
+    [(= reg compiler-reg-id-rbx) 1024]
+    [(= reg compiler-reg-id-rax) 32768]
+    [(= reg compiler-reg-id-rsi) 65536]
+    [(= reg compiler-reg-id-rdi) 131072]
+    [else
+      (let
+        [family : i64 (compiler-abi-register-vector-family-index reg)]
+        (cond
+          [(= family 2) 2048]
+          [(= family 3) 4096]
+          [(= family 4) 8192]
+          [(= family 5) 16384]
+          [else 0]))]))
+
 (define compiler-backend-scavenge-reg-bit-count : i64
   18)
 
@@ -46295,11 +46462,12 @@
 (define (compiler-backend-scavenge-location-mask
   [location : CompilerRegLocation]) : i64
   (match location
-    [(CompilerRegLocation.Register reg) (compiler-backend-scavenge-reg-bit reg)]
+    [(CompilerRegLocation.Register reg)
+      (compiler-backend-scavenge-reg-id-bit reg)]
     [(CompilerRegLocation.RegisterPair a b)
       (bit-or
-        (compiler-backend-scavenge-reg-bit a)
-        (compiler-backend-scavenge-reg-bit b))]
+        (compiler-backend-scavenge-reg-id-bit a)
+        (compiler-backend-scavenge-reg-id-bit b))]
     [_ 0]))
 
 (define (compiler-backend-scavenge-mask-bit-count [mask : i64]) : i64
@@ -46604,7 +46772,8 @@
 (define (compiler-backend-var-register-home-index
   [assignment-index : CompilerRegAssignmentIndex]
   [var : i64]) : String
-  (compiler-reg-assignment-index-primary-register-home assignment-index var))
+  (compiler-abi-register-spelling
+    (compiler-reg-assignment-index-primary-register-home assignment-index var)))
 
 (defstruct CompilerBackendScavengeAssignmentIndex
   (index CompilerRegAssignmentIndex)
@@ -47094,44 +47263,53 @@
 ;; Scavenge candidate pool. The first 11 entries are the legacy pool; ABI-special
 ;; %rsi/%rdi/%rax come last so they are only used when the older pool is occupied
 ;; and the point-local occupancy/exclude masks prove them free.
-(define (compiler-backend-scavenge-candidates) : (Array String)
+(define (compiler-backend-scavenge-candidates) : (Array i64)
   (make-array
-    "%r9"
-    "%rcx"
-    "%rdx"
-    "%r10"
-    "%r11"
-    "%r8"
-    "%r12"
-    "%r13"
-    "%r14"
-    "%r15"
-    "%rbx"
-    "%rsi"
-    "%rdi"
-    "%rax"))
+    compiler-reg-id-r9
+    compiler-reg-id-rcx
+    compiler-reg-id-rdx
+    compiler-reg-id-r10
+    compiler-reg-id-r11
+    compiler-reg-id-r8
+    compiler-reg-id-r12
+    compiler-reg-id-r13
+    compiler-reg-id-r14
+    compiler-reg-id-r15
+    compiler-reg-id-rbx
+    compiler-reg-id-rsi
+    compiler-reg-id-rdi
+    compiler-reg-id-rax))
 
-(define compiler-backend-scavenge-candidate-pool : (Array String)
+(define compiler-backend-scavenge-candidate-pool : (Array i64)
   (compiler-backend-scavenge-candidates))
 
-(define (compiler-backend-scavenge-rcx-candidates) : (Array String)
-  (make-array "%rcx"))
+(define (compiler-backend-scavenge-rcx-candidates) : (Array i64)
+  (make-array compiler-reg-id-rcx))
 
-(define compiler-backend-scavenge-rcx-candidate-pool : (Array String)
+(define compiler-backend-scavenge-rcx-candidate-pool : (Array i64)
   (compiler-backend-scavenge-rcx-candidates))
 
-(define (compiler-backend-scavenge-xmm-candidates) : (Array String)
-  (make-array "%xmm2" "%xmm3" "%xmm4" "%xmm5"))
+(define (compiler-backend-scavenge-xmm-candidates) : (Array i64)
+  (make-array
+    (compiler-abi-xmm-register-id 2)
+    (compiler-abi-xmm-register-id 3)
+    (compiler-abi-xmm-register-id 4)
+    (compiler-abi-xmm-register-id 5)))
 
-(define compiler-backend-scavenge-xmm-candidate-pool : (Array String)
+(define compiler-backend-scavenge-xmm-candidate-pool : (Array i64)
   (compiler-backend-scavenge-xmm-candidates))
 
-(define (compiler-backend-callee-saved-reg? [reg : String]) : bool
+(define (compiler-backend-callee-saved-reg? [reg : i64]) : bool
   (or
-    (>= (compiler-backend-scavenge-callee-idx reg) 0)
+    (>=
+      (compiler-reg-id-list-index-of
+        compiler-backend-scavenge-callee-list
+        reg
+        0)
+      0)
     (and
       (compiler-backend-current-fn-win64?)
-      (or (string.eq reg "%rsi") (string.eq reg "%rdi")))))
+      (or (= reg compiler-reg-id-rsi) (= reg compiler-reg-id-rdi)))))
 
 ;; A candidate is usable as scratch iff: free at `point`, not excluded, and
 ;; (caller-saved OR already saved by the prologue).
@@ -47181,9 +47359,9 @@
   [occupied-mask : i64]
   [exclude-mask : i64]
   [plan-mask : i64]
-  [reg : String]) : bool
+  [reg : i64]) : bool
   (let
-    [bit : i64 (compiler-backend-scavenge-reg-bit reg)]
+    [bit : i64 (compiler-backend-scavenge-reg-id-bit reg)]
     (and
       (not (= bit 0))
       (=
@@ -47197,7 +47375,7 @@
         ;; A frame-home divmod hoist makes %rbx part of the same immutable
         ;; function plan: the prologue saves it, but no synthetic interval owns
         ;; it after the preheader store, so sites may use it as their one copy.
-        (and compiler-backend-const-hoist-frame-rbx (string.eq reg "%rbx")))
+        (and compiler-backend-const-hoist-frame-rbx (= reg compiler-reg-id-rbx)))
       (= (bit-and occupied-mask bit) 0))))
 
 ;; Emergency scratch register when no candidate is free. Soundness rule: the
@@ -47235,7 +47413,7 @@
   [exclude-mask : i64]
   [occupied-mask : i64]
   [fallback : String]
-  [cands : (Array String)]
+  [cands : (Array i64)]
   [n : i64]) : i64
   (if (compiler-backend-scavenge-emergency-fallback-free?
     exclude
@@ -47252,13 +47430,13 @@
             (if (and
               (or
                 (not compiler-backend-divmod-src-emergency-avoid-r10)
-                (not (string.eq (array-ref cands i) "%r10")))
+                (not (= (array-ref cands i) compiler-reg-id-r10)))
               (=
                 (bit-and
                   (bit-or
                     exclude-mask
                     compiler-backend-current-instr-reserved-mask)
-                  (compiler-backend-scavenge-reg-bit (array-ref cands i)))
+                  (compiler-backend-scavenge-reg-id-bit (array-ref cands i)))
                 0))
               (set! found i)
               unit)
@@ -47272,7 +47450,7 @@
   [occupied-mask : i64]
   [plan-mask : i64]
   [fallback : String]
-  [cands : (Array String)]
+  [cands : (Array i64)]
   [i : i64]
   [n : i64]) : String
   (if (>= i n)
@@ -47314,8 +47492,8 @@
             scavenge-census
             (compiler-backend-scavenge-census-record-occupied-candidate!)
             unit)
-          (compiler-backend-emergency-add! (array-ref cands emidx))
-          (array-ref cands emidx))))
+          (compiler-backend-emergency-add-id! (array-ref cands emidx))
+          (compiler-abi-register-spelling (array-ref cands emidx)))))
     (if (compiler-backend-scavenge-candidate-ok?
       occupied-mask
       exclude-mask
@@ -47325,7 +47503,7 @@
       ;; saves -- so the prologue/epilogue (driven by the stable plan set) already
       ;; preserve it for the caller. No dynamic save-set growth (that was unsound:
       ;; post-body save vs inline partial-set restores).
-      (array-ref cands i)
+      (compiler-abi-register-spelling (array-ref cands i))
       (compiler-backend-scavenge-pick-iter
         exclude
         exclude-n
@@ -47354,7 +47532,7 @@
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
       fallback
       (let
-        [cands : (Array String) compiler-backend-scavenge-candidate-pool]
+        [cands : (Array i64) compiler-backend-scavenge-candidate-pool]
         (compiler-backend-scavenge-pick-iter
           exclude
           exclude-n
@@ -47371,7 +47549,7 @@
   [exclude : (Array String)]
   [exclude-n : i64]
   [fallback : String]
-  [cands : (Array String)]) : String
+  [cands : (Array i64)]) : String
   (let
     [exclude-mask : i64
       (compiler-backend-scavenge-exclude-mask exclude exclude-n)]
@@ -47478,7 +47656,7 @@
   [exclude-mask : i64]
   [plan-mask : i64]
   [fallback : String]
-  [cands : (Array String)]
+  [cands : (Array i64)]
   [i : i64]
   [n : i64]) : String
   (if (>= i n)
@@ -47494,13 +47672,13 @@
           n)]
       (if (< emidx 0)
         fallback
-        (array-ref cands emidx)))
+        (compiler-abi-register-spelling (array-ref cands emidx))))
     (if (compiler-backend-scavenge-candidate-ok?
       occupied-mask
       exclude-mask
       plan-mask
       (array-ref cands i))
-      (array-ref cands i)
+      (compiler-abi-register-spelling (array-ref cands i))
       (compiler-backend-scavenge-pick-iter-peek
         occupied-mask
         exclude
@@ -49505,7 +49683,7 @@
             compiler-backend-fpo-push-count
             (+ compiler-backend-fpo-push-count 1))
           unit)
-        (if (compiler-backend-plan-uses-reg? assignments "%rbp")
+        (if (compiler-backend-plan-uses-reg? assignments compiler-reg-id-rbp)
           (set!
             compiler-backend-fpo-rbp-plan-count
             (+ compiler-backend-fpo-rbp-plan-count 1))
@@ -52153,7 +52331,9 @@
                           [fpo-ok : bool (and fpo-attempt rebase-ok)]
                           (if (and
                             (not fpo-ok)
-                            (compiler-backend-plan-uses-reg? assignments "%rbp"))
+                            (compiler-backend-plan-uses-reg?
+                              assignments
+                              compiler-reg-id-rbp))
                             ;; DEMOTE: the FPO audit failed but the plan homes a
                             ;; value in %rbp (which has no frame base to fall
                             ;; back to) -- re-plan and re-emit without %rbp in
@@ -52183,7 +52363,7 @@
                                 crt-entry
                                 false
                                 shrinkwrap-enabled))
-                            (let
+                             (let
                               [final-body : String
                                 (if fpo-ok
                                   rebased
@@ -52376,7 +52556,7 @@
     (set! compiler-backend-emergency-restore-suppressed false)
     (set! compiler-backend-emergency-used-count 0)
     (set! compiler-backend-emergency-pending-count 0)
-    (set! compiler-backend-emergency-reg "")))
+    (set! compiler-backend-emergency-reg compiler-reg-id-invalid)))
 
 (define (compiler-backend-clear-scratch-escaped-emit-state!) : unit
   (begin

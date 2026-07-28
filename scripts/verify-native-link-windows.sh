@@ -190,6 +190,10 @@ run_windows_link_smoke() {
     fi
 
     cat > "$SRC" <<'EOF'
+(extern (unused-direct [value : i64]) : i64
+  (:symbol "typelisp_unused_direct"))
+(extern unused-data (:symbol "typelisp_unused_data") : i64)
+(extern unused-fnptr (:symbol "typelisp_unused_fnptr") : (-> i64 i64))
 (define (main) : i64
   42)
 EOF

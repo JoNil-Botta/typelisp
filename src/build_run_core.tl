@@ -1282,7 +1282,11 @@
 
 (define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
-    "(define (main) : i64 0)"
+    "(extern (unused-direct [value : i64]) : i64
+  (:symbol \"typelisp_unused_direct\"))
+(extern unused-data (:symbol \"typelisp_unused_data\") : i64)
+(extern unused-fnptr (:symbol \"typelisp_unused_fnptr\") : (-> i64 i64))
+(define (main) : i64 0)"
     (CompilerBackendTarget.Windows))
     [(ResultCompilerBackendObject.Ok image)
       (if (source-tool-windows-direct-object-linkable? image)

@@ -59047,32 +59047,61 @@
     [(CompilerIrExternList.Nil) parts]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern name-id _ name _ _ link-symbol-id _ provided)
-          (compiler-backend-object-externs
-            (if (and
-              (not
-                (compiler-backend-object-runtime-symbol-provided-id?
-                  plan
-                  link-symbol-id))
-              (compiler-backend-emits-extern-symbol?
-                name-id
-                link-symbol-id
-                provided
-                plan)
-              (compiler-backend-extern-symbol-referenced?
-                runtime-index
-                referenced-functions
-                name-id
-                link-symbol-id))
-              (object_target.compiler-backend-object-symbol-extern
-                parts
-                (compiler-backend-link-symbol-id link-symbol-id plan)
-                (cobj.CompilerObjectSymbolKind.Function))
-              parts)
-            (box-get rest)
-            plan
-            runtime-index
-            referenced-functions)])]
+        [(CompilerIrExtern.Extern
+            name-id
+            source-name-id
+            _
+            _
+            _
+            link-symbol-id
+            _
+            provided)
+          (let
+            [link-symbol : String
+              (compiler-backend-link-symbol-id link-symbol-id plan)]
+            [relocations : cobj.CompilerObjectRelocationBuilder
+              (struct-get parts relocations)]
+            ;; Direct calls relocate through the exact link symbol. Bare extern
+            ;; values can relocate through a resolved or parser source identity,
+            ;; notably in generated TLCI entry modules.
+            [has-relocation : bool
+              (backend-or4
+                (cobj.compiler-object-relocation-builder-targets?
+                  relocations
+                  link-symbol)
+                (cobj.compiler-object-relocation-builder-targets?
+                  relocations
+                  (compiler-backend-user-symbol-id name-id))
+                (cobj.compiler-object-relocation-builder-targets?
+                  relocations
+                  (compiler-backend-user-symbol-id source-name-id))
+                false)]
+            (compiler-backend-object-externs
+              (if (and
+                (not
+                  (compiler-backend-object-runtime-symbol-provided-id?
+                    plan
+                    link-symbol-id))
+                (compiler-backend-emits-extern-symbol?
+                  name-id
+                  link-symbol-id
+                  provided
+                  plan)
+                (compiler-backend-extern-symbol-referenced?
+                  runtime-index
+                  referenced-functions
+                  name-id
+                  link-symbol-id)
+                has-relocation)
+                (object_target.compiler-backend-object-symbol-extern
+                  parts
+                  link-symbol
+                  (cobj.CompilerObjectSymbolKind.Function))
+                parts)
+              (box-get rest)
+              plan
+              runtime-index
+              referenced-functions))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-object-externs
         parts

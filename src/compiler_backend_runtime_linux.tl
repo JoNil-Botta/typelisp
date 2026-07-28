@@ -959,6 +959,10 @@ tl_tlci_call_macro_entry:
       (if profile
         (runtime_common.compiler-backend-runtime-profile-functions)
         "")]
+    [startup-profile-asm : String
+      (runtime_common.compiler-backend-runtime-startup-profile-functions
+        (runtime_common.compiler-backend-runtime-features-startup-profile?
+          features))]
     [memcpy-asm : String (compiler-backend-runtime-memcpy-functions)]
     [memchr-asm : String (compiler-backend-runtime-memchr-functions)]
     [array-zero-asm : String (compiler-backend-runtime-array-zero-functions)]
@@ -983,11 +987,13 @@ tl_tlci_call_macro_entry:
                   arena-asm
                   (string.append
                     profile-asm
-                    (str_cat.str-cat
-                      alloc-asm
-                      region-mark-asm
-                      region-reset-asm
-                      ""))))))))]
+                    (string.append
+                      startup-profile-asm
+                      (str_cat.str-cat
+                        alloc-asm
+                        region-mark-asm
+                        region-reset-asm
+                        "")))))))))]
     [libc-shims-asm : String
       (compiler-backend-runtime-linux-libc-shim-functions)]
     [thread-asm : String ""]

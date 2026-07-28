@@ -49,7 +49,7 @@ src/format_cst.tl	1
 src/format_rules_doc_compat.tl	1
 src/format_rules.tl	3
 src/inspect_cli_core.tl	1
-src/lint_core.tl	2
+src/lint_core.tl	1
 src/lint_driver_core.tl	4
 src/lsp_frame_core.tl	5
 src/main.tl	13

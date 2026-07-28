@@ -16,7 +16,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import token)
-(import "lex.tl")
+(import lex as lexer)
 
 ;: A single lint finding: stable rule id, human-readable message, rule-specific
 ;: depth metadata, and the source span of the flagged node (the `lint-no-span`
@@ -1904,9 +1904,9 @@
 (define (lint-deprecated-string-concat-scan
   [source : String]
   [acc : LintFindings]) : LintFindings
-  (match (lex-spanned-result source)
-    [(ResultSpannedTokens.Err _) acc]
-    [(ResultSpannedTokens.Ok toks)
+  (match (lexer.lex-spanned-result source)
+    [(lexer.ResultSpannedTokens.Err _) acc]
+    [(lexer.ResultSpannedTokens.Ok toks)
       (let
         [i : i64 0]
         [done : bool false]
@@ -7879,7 +7879,7 @@
       true
       (if (>= idx source-len)
         true
-        (not (is-symbol-char (string.string-ref source idx)))))))
+        (not (lexer.is-symbol-char (string.string-ref source idx)))))))
 
 (define (lint-source-name-at? [source : String] [idx : i64] [name : String]) : bool
   (let

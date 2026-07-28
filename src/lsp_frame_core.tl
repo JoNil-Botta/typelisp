@@ -1889,6 +1889,31 @@
     0
     (json.list-empty)))
 
+(define (lsp-compiler-diagnostics-for-uri
+  [uri : String]
+  [fallback-path : String]
+  [text : String]
+  [version : i64]
+  [diagnostics : CompilerDiagnosticList]
+  [tail : json.JsonSeq]) : json.JsonSeq
+  (match diagnostics
+    [(CompilerDiagnosticList.Nil) tail]
+    [(CompilerDiagnosticList.Cons diag rest)
+      (let
+        [next : json.JsonSeq
+          (lsp-compiler-diagnostics-for-uri
+            uri
+            fallback-path
+            text
+            version
+            (box-get rest)
+            tail)]
+        (if (string.eq (lsp-diagnostic-uri uri fallback-path diag) uri)
+          (lsp-json-list-cons
+            (lsp-compiler-diagnostic-versioned fallback-path text version diag)
+            next)
+          next))]))
+
 (define (lsp-analyze-document
   [uri : String]
   [path : String]
@@ -1929,31 +1954,34 @@
               (LspAnalyzeResult "" LspCheckCacheOk))]
           [(ResultCompilerCheck.Err diag)
             (let
-              [diag-uri : String (lsp-diagnostic-uri uri path (box-get diag))]
+              [diagnostics : CompilerDiagnosticList (box-get diag)]
+              [first-diag : CompilerDiagnostic
+                (compiler-diagnostic-list-first diagnostics)]
+              [diag-uri : String (lsp-diagnostic-uri uri path first-diag)]
               [check-cache : LspCheckCache
-                (LspCheckCacheErr (compiler-diagnostic-message (box-get diag)))]
+                (LspCheckCacheErr (compiler-diagnostic-message first-diag))]
+              [uri-diags : json.JsonSeq
+                (lsp-compiler-diagnostics-for-uri
+                  uri
+                  path
+                  text
+                  version
+                  diagnostics
+                  lint-diags)]
               (if (string.eq diag-uri uri)
                 (begin
-                  (lsp-publish-diagnostics
-                    uri
-                    (lsp-json-list-cons
-                      (lsp-compiler-diagnostic-versioned
-                        path
-                        text
-                        version
-                        (box-get diag))
-                      lint-diags))
+                  (lsp-publish-diagnostics uri uri-diags)
                   (LspAnalyzeResult uri check-cache))
                 (begin
-                  (lsp-publish-diagnostics uri lint-diags)
+                  (lsp-publish-diagnostics uri uri-diags)
                   (lsp-publish-diagnostics
                     diag-uri
-                    (lsp-json-list-cons
-                      (lsp-compiler-diagnostic-versioned
-                        path
-                        text
-                        version
-                        (box-get diag))
+                    (lsp-compiler-diagnostics-for-uri
+                      diag-uri
+                      path
+                      text
+                      version
+                      diagnostics
                       (json.list-empty)))
                   (LspAnalyzeResult diag-uri check-cache))))]))]))
 
@@ -2567,7 +2595,8 @@
     [(ResultCompilerCheck.Ok _) acc]
     [(ResultCompilerCheck.Err diagnostic-box)
       (let
-        [diagnostic : CompilerDiagnostic (box-get diagnostic-box)]
+        [diagnostic : CompilerDiagnostic
+          (compiler-diagnostic-list-first (box-get diagnostic-box))]
         [diagnostic-uri : String (lsp-diagnostic-uri uri path diagnostic)]
         [diagnostic-kind : String (lsp-compiler-diagnostic-kind diagnostic)]
         (if (not (string.eq diagnostic-uri uri))
@@ -6718,7 +6747,9 @@
         (lsp-language-cfgs))
         [(ResultCompilerCheck.Ok _) LspCheckCacheOk]
         [(ResultCompilerCheck.Err diag)
-          (LspCheckCacheErr (compiler-diagnostic-message (box-get diag)))])]
+          (LspCheckCacheErr
+            (compiler-diagnostic-message
+              (compiler-diagnostic-list-first (box-get diag))))])]
     [(LspValidationResult.Invalid line col msg ctx)
       (LspCheckCacheErr (lsp-validation-error-message line col msg ctx))]))
 

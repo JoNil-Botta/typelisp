@@ -12,11 +12,11 @@
 
 (defenum ResultCompilerCheck
   (Ok CompilerTypecheckSummary)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box CompilerDiagnosticList)))
 
 (defenum ResultCompilerCheckWithPaths
   (Ok CompilerTypecheckSummary AstDeclPathList)
-  (Err (Box CompilerDiagnostic)))
+  (Err (Box CompilerDiagnosticList)))
 
 (cfg
   compile-profile
@@ -55,6 +55,17 @@
     (compiler-diagnostic-with-path diag path)
     diag))
 
+(define (compiler-check-diagnostics-with-fallback-path
+  [diagnostics : CompilerDiagnosticList]
+  [path : String]) : CompilerDiagnosticList
+  (match diagnostics
+    [(CompilerDiagnosticList.Nil) CompilerDiagnosticList.Nil]
+    [(CompilerDiagnosticList.Cons diag rest)
+      (CompilerDiagnosticList.Cons
+        (compiler-check-diagnostic-with-fallback-path diag path)
+        (box
+          (compiler-check-diagnostics-with-fallback-path (box-get rest) path)))]))
+
 (define (compiler-check-reset-pools!) : unit
   (compiler-load-session-reset-pools!))
 
@@ -85,7 +96,9 @@
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheck.Err
             (box
-              (compiler-check-diagnostic-with-fallback-path (box-get diag) path))))])))
+              (compiler-check-diagnostics-with-fallback-path
+                (box-get diag)
+                path))))])))
 
 (define (compiler-check-program-with-paths
   [path : String]
@@ -123,7 +136,7 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err diag))]))
+        (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))]))
 
 (define (compiler-check-loaded-cache-with-paths
   [path : String]
@@ -150,7 +163,8 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheckWithPaths.Err diag))]))
+        (ResultCompilerCheckWithPaths.Err
+          (compiler-diagnostic-list-box-single diag)))]))
 
 (define (compiler-check-loaded-with-prelude
   [path : String]
@@ -193,7 +207,7 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err diag))]))
+        (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))]))
 
 (define (compiler-check-file [path : String]) : ResultCompilerCheck
   (begin
@@ -283,7 +297,7 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err diag))])))
+          (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))])))
 
 (define (compiler-check-package-source-with-roots
   [path : String]
@@ -353,11 +367,12 @@
             [(ResultAstProgramDiagnostic.Err diag)
               (begin
                 (cfg compile-profile (compiler-check-profile-finish "load"))
-                (ResultCompilerCheck.Err diag))]))]
+                (ResultCompilerCheck.Err
+                  (compiler-diagnostic-list-box-single diag)))]))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err diag))])))
+          (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))])))
 
 (define (compiler-check-package-entry-file-with-roots
   [path : String]
@@ -440,7 +455,7 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ResultCompilerCheck.Err diag))])))
+          (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag)))])))
 
 (define (compiler-check-source-with-roots
   [path : String]
@@ -464,7 +479,10 @@
   (match (compiler-check-source path source)
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (string.eq (compiler-diagnostic-message (box-get diag)) want)]))
+      (string.eq
+        (compiler-diagnostic-message
+          (compiler-diagnostic-list-first (box-get diag)))
+        want)]))
 
 (define (compiler-check-virtual-import-source) : String
   "(import \"compiler_ast_types.tl\")
@@ -498,7 +516,8 @@
                 "typecheck-prefix-check"
                 (svec.new)
                 (compiler-check-language-cfgs)))])]
-      [(ResultAstProgramDiagnostic.Err diag) (ResultCompilerCheck.Err diag)])))
+      [(ResultAstProgramDiagnostic.Err diag)
+        (ResultCompilerCheck.Err (compiler-diagnostic-list-box-single diag))])))
 
 (define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-direct-source path source)
@@ -512,7 +531,10 @@
   (match (compiler-check-direct-source path source)
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (string.eq (compiler-diagnostic-message (box-get diag)) want)]))
+      (string.eq
+        (compiler-diagnostic-message
+          (compiler-diagnostic-list-first (box-get diag)))
+        want)]))
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
   "(module a)
@@ -707,11 +729,16 @@
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
       (if (string.eq
-        (compiler-diagnostic-path (box-get diag))
+        (compiler-diagnostic-path
+          (compiler-diagnostic-list-first (box-get diag)))
         "docs/examples/bad_type.tl")
-        (if (= (compiler-diagnostic-line (box-get diag)) 1)
+        (if (=
+          (compiler-diagnostic-line
+            (compiler-diagnostic-list-first (box-get diag)))
+          1)
           (string.eq
-            (compiler-diagnostic-message (box-get diag))
+            (compiler-diagnostic-message
+              (compiler-diagnostic-list-first (box-get diag)))
             "typecheck: return type mismatch: expected i64, found bool")
           false)
         false)]))

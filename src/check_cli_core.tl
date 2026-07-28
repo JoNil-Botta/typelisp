@@ -229,6 +229,15 @@
       deps
       cfgs)))
 
+(define (selfhost-check-report-diagnostics
+  [diagnostics : CompilerDiagnosticList]) : unit
+  (match diagnostics
+    [(CompilerDiagnosticList.Nil) unit]
+    [(CompilerDiagnosticList.Cons diag rest)
+      (begin
+        (io.print-error (compiler-driver-render-source-diagnostic diag))
+        (selfhost-check-report-diagnostics (box-get rest)))]))
+
 (define (selfhost-check-file
   [input-path : String]
   [stdlib-roots : cli_svec.Vec]
@@ -259,8 +268,7 @@
           inline-test-status))]
     [(ResultCompilerCheck.Err diag)
       (begin
-        (io.print-error
-          (compiler-driver-render-source-diagnostic (box-get diag)))
+        (selfhost-check-report-diagnostics (box-get diag))
         1)]))
 
 (define (selfhost-check-package-kind-entry? [kind : CompilerPkgKind]) : bool
@@ -361,8 +369,7 @@
                 inline-test-status))]
           [(ResultCompilerCheckWithPaths.Err diag)
             (begin
-              (io.print-error
-                (compiler-driver-render-source-diagnostic (box-get diag)))
+              (selfhost-check-report-diagnostics (box-get diag))
               1)]))]))
 
 ;; Run the `check` command over arguments starting at `start`.

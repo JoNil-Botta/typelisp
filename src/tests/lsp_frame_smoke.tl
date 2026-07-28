@@ -72,6 +72,21 @@
   [needle : String]) : bool
   (string.contains (& (struct-get result stdout)) (& needle)))
 
+(define (lsp-smoke-count-substring [text : String] [needle : String]) : i64
+  (let
+    [text-len : i64 (string.string-length text)]
+    [needle-len : i64 (string.string-length needle)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (<= (+ index needle-len) text-len)
+        (if (string.is-string-prefix-at (& text) (& needle) index)
+          (begin
+            (set! count (+ count 1))
+            (set! index (+ index needle-len)))
+          (set! index (+ index 1))))
+      count)))
+
 (define (lsp-transcript-framing-smoke-ok?) : bool
   (let
     [clean : LspTranscriptResult (lsp-transcript-run "")]
@@ -201,6 +216,21 @@
       (lsp-transcript-result-contains? missing unreadable)
       (not lsp-frame-memory-active)
       (= lsp-document-cache-arena 0))))
+
+(define (lsp-multiple-diagnostics-smoke-ok?) : bool
+  (let
+    [path : String "target/lsp_multiple_diagnostics.tl"]
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [source : String
+      "(define (a) : i64 missing-a) (define (b) : i64 missing-b) (define (main) : i64 0)"]
+    [result : LspTranscriptResult (lsp-transcript-check-session uri source 74)]
+    [compiler-source : String "\"source\":\"typelisp\""]
+    (and
+      (= (struct-get result status) 0)
+      (string.eq (struct-get result stderr) "")
+      (=
+        (lsp-smoke-count-substring (struct-get result stdout) compiler-source)
+        2))))
 
 (define (lsp-transcript-arena-escape-smoke-ok?) : bool
   (let
@@ -1046,5 +1076,6 @@
         (unless (lsp-transcript-framing-smoke-ok?) (return 18))
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))
+        (unless (lsp-multiple-diagnostics-smoke-ok?) (return 36))
         (unless (lsp-transcript-arena-escape-smoke-ok?) (return 21))
         42))))

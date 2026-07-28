@@ -1210,7 +1210,8 @@
         (begin
           (set!
             selfhost-lint-typed-unused-unsafe-error
-            (compiler-diagnostic-render (box-get diag)))
+            (compiler-diagnostic-render
+              (compiler-diagnostic-list-first (box-get diag))))
           (tc-unused-unsafe-tracking-disable!)
           (lint-findings-empty))])))
 

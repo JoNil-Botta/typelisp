@@ -74,7 +74,8 @@
       [(ResultCompilerCheck.Ok _) false]
       [(ResultCompilerCheck.Err diag-box)
         (let
-          [diag : CompilerDiagnostic (box-get diag-box)]
+          [diag : CompilerDiagnostic
+            (compiler-diagnostic-list-first (box-get diag-box))]
           [fixes : CompilerDiagnosticFixSeq (compiler-diagnostic-fixes diag)]
           (and
             (= (struct-get fixes len) 1)
@@ -120,7 +121,12 @@
     "(define (main) : i64 (begin (print 1) 0))")
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (= (struct-get (compiler-diagnostic-fixes (box-get diag)) len) 0)]))
+      (=
+        (struct-get
+          (compiler-diagnostic-fixes
+            (compiler-diagnostic-list-first (box-get diag)))
+          len)
+        0)]))
 
 (define (compiler-check-duplicate-type-location-ok?) : bool
   (let
@@ -133,7 +139,8 @@
       [(ResultCompilerCheck.Ok _) false]
       [(ResultCompilerCheck.Err diag-box)
         (let
-          [diag : CompilerDiagnostic (box-get diag-box)]
+          [diag : CompilerDiagnostic
+            (compiler-diagnostic-list-first (box-get diag-box))]
           (and
             (string.eq
               (compiler-diagnostic-message diag)
@@ -141,6 +148,64 @@
             (string.eq (compiler-diagnostic-path diag) path)
             (= (compiler-diagnostic-line diag) 2)
             (= (compiler-diagnostic-col diag) 1)))])))
+
+(define (compiler-check-independent-diagnostics-ok?) : bool
+  (match (compiler-check-source
+    "tests/multiple_diagnostics.tl"
+    "(define (a) : i64 (unknown-one 1))
+(define (b) : i64 (unknown-two 2))
+(define (c) : i64 (+ \"str\" 1))
+(define (main) : i64 0)")
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diagnostics-box)
+      (let
+        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
+        (and
+          (= (compiler-diagnostic-list-count diagnostics) 3)
+          (match diagnostics
+            [(CompilerDiagnosticList.Cons first first-rest)
+              (match (box-get first-rest)
+                [(CompilerDiagnosticList.Cons second second-rest)
+                  (match (box-get second-rest)
+                    [(CompilerDiagnosticList.Cons third third-rest)
+                      (and
+                        (string.eq
+                          (compiler-diagnostic-message first)
+                          "typecheck: unbound name unknown-one")
+                        (= (compiler-diagnostic-line first) 1)
+                        (string.eq
+                          (compiler-diagnostic-message second)
+                          "typecheck: unbound name unknown-two")
+                        (= (compiler-diagnostic-line second) 2)
+                        (string.eq
+                          (compiler-diagnostic-message third)
+                          "typecheck: integer operator expects matching integer operands")
+                        (= (compiler-diagnostic-line third) 3)
+                        (match (box-get third-rest)
+                          [(CompilerDiagnosticList.Nil) true]
+                          [_ false]))]
+                    [_ false])]
+                [_ false])]
+            [_ false])))]))
+
+(define (compiler-check-poison-suppresses-derived-diagnostics-ok?) : bool
+  (match (compiler-check-source
+    "tests/poison_diagnostics.tl"
+    "(define (broken) : i64 (unknown-origin 1))
+(define (derived-one) : i64 (broken))
+(define (derived-two) : i64 (+ (derived-one) 1))
+(define (derived-three) : i64 (derived-two))
+(define (main) : i64 0)")
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diagnostics-box)
+      (let
+        [diagnostics : CompilerDiagnosticList (box-get diagnostics-box)]
+        (and
+          (= (compiler-diagnostic-list-count diagnostics) 1)
+          (string.eq
+            (compiler-diagnostic-message
+              (compiler-diagnostic-list-first diagnostics))
+            "typecheck: unbound name unknown-origin")))]))
 
 (define (main) : i64
   (begin
@@ -151,6 +216,8 @@
           (compiler-check-near-miss-fix-ok?)
           (compiler-check-import-help-not-machine-fix-ok?)
           (compiler-check-duplicate-type-location-ok?)
+          (compiler-check-independent-diagnostics-ok?)
+          (compiler-check-poison-suppresses-derived-diagnostics-ok?)
           (compiler-check-semantic-index-ok?))
         42]
       [else 1])))

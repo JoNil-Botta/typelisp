@@ -1247,17 +1247,29 @@
 ;: Arena for the embedded-provenance set and the content-equivalence cache.
 ;: These outlive every session floor reset (their contents are re-derived
 ;: per session, but the bindings must never point into memory another reset
-;: can free), so they get their own arena that is created once and only
-;: grows.
+;: can free), so they get their own arena that is created once and only grows.
+;: The retained payload is small even for selfhost; start with the runtime's
+;: small reservation while preserving the ordinary overflow path.
 (define (compiler-load-provenance-arena) : i64
   (begin
     (if (= compiler-load-provenance-arena-handle 0)
       (begin
-        (set! compiler-load-provenance-arena-handle (arena.tl_arena_make))
+        (set! compiler-load-provenance-arena-handle (arena.tl_arena_make_small))
         (compiler-arena-debug-protect-never-reset!
           compiler-load-provenance-arena-handle))
       unit)
-    compiler-load-provenance-arena-handle))
+    ;; Re-enter the root-tracked newest segment after an overflow. Selecting
+    ;; the full root again would fork an unreachable sibling chain.
+    (let
+      [head : i64
+        (unsafe
+          (ptr-read
+            (ptr-offset
+              (int->ptr compiler-load-provenance-arena-handle : (Ptr i64))
+              7)))]
+      (if (= head 0)
+        compiler-load-provenance-arena-handle
+        head))))
 
 (define compiler-load-embedded-module-ids : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))

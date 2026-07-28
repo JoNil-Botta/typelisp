@@ -1335,6 +1335,8 @@
 (define (tc-agg-layout-cache-storage-handle) : i64
   (begin
     (if (= tc-agg-layout-cache-storage-arena 0)
+      ;; Selfhost retains less than 1 MiB here. A small root leaves ample
+      ;; headroom and still grows through the ordinary arena overflow path.
       (set! tc-agg-layout-cache-storage-arena (arena.tl_arena_make_small))
       unit)
     tc-agg-layout-cache-storage-arena))

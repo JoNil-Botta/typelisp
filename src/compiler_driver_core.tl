@@ -94,6 +94,17 @@
       (array.make-array CompilerLowerArenaState 1)]
     [pool-arena-cell : (Array i64) (array.make-array i64 1)]
     [surface-arena : i64 (arena.tl_arena_make)]
+    ;; The typecheck caches share the driver's lifetime with hydrated surface
+    ;; data. Allocate them in that already-reserved arena instead of extending
+    ;; the process entry arena by a full segment near its capacity boundary.
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [_set-surface-arena : unit
+      (unsafe
+        (arena.tl_arena_set surface-arena))]
+    [typecheck-state : TcJobState (tc-job-state-new)]
+    [_restore-previous-arena : unit
+      (unsafe
+        (arena.tl_arena_set previous-arena))]
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
@@ -109,7 +120,7 @@
         builtin-cell
         lower-cell
         (compiler-load-session-state-new)
-        (tc-job-state-new)
+        typecheck-state
         (tc-prefix-snapshot-cache-state-new)
         pool-arena-cell
         surface-arena

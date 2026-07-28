@@ -45171,6 +45171,16 @@
                   [(CompilerIrInstrList.Nil) unit])
                 unit)
               (set! compiler-backend-emit-instrs-continue-pending false)
+              ;; Fast and fused emitters can bypass compiler-backend-emit-instr.
+              ;; Install the head instruction's source context at the shared
+              ;; dispatch seam so every abort guard sees the correct site.
+              ;; Fusions that emit a later div/mod instruction still enter
+              ;; compiler-backend-emit-instr for that instruction and replace
+              ;; this state with its exact source location.
+              (match current-instrs
+                [(CompilerIrInstrList.Cons head-instr _)
+                  (compiler-backend-runtime-abort-site-install! ctx head-instr)]
+                [(CompilerIrInstrList.Nil) unit])
               (match current-mode
                 [(CompilerBackendEmitInstrsMode.Normal)
                   (compiler-backend-emit-instrs-divmod-polish-step
@@ -49471,6 +49481,59 @@
       em-hi
       true)))
 
+;; Commit census and sweep state only for the layout that emit-function returns.
+;; Shrink-wrap fallback retries can change the prologue push count and frame
+;; displacement, so a discarded attempt must never enter the ordered sweep
+;; metadata stream.
+(define (compiler-backend-commit-frame-layout!
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [symbol : String]
+  [frame : i64]
+  [push-count : i64]
+  [slot-vars : i64]
+  [outgoing : i64]
+  [fpo-ok : bool]
+  [rebase-ok : bool]
+  [shrinkwrap-active? : bool]) : unit
+  (begin
+    (if fpo-ok
+      (begin
+        (set! compiler-backend-fpo-count (+ compiler-backend-fpo-count 1))
+        (if (> push-count 0)
+          (set!
+            compiler-backend-fpo-push-count
+            (+ compiler-backend-fpo-push-count 1))
+          unit)
+        (if (compiler-backend-plan-uses-reg? assignments "%rbp")
+          (set!
+            compiler-backend-fpo-rbp-plan-count
+            (+ compiler-backend-fpo-rbp-plan-count 1))
+          unit))
+      unit)
+    ;; The sweep's displacement model starts at a function-entry prologue.
+    ;; Keep shrink-wrapped interior prologues conservatively excluded.
+    (if shrinkwrap-active?
+      unit
+      (if fpo-ok
+        (compiler-backend-sweep-record-fpo!
+          symbol
+          frame
+          push-count
+          slot-vars
+          compiler-backend-emergency-slot-offset
+          compiler-backend-emergency-used-count
+          outgoing)
+        (if (and (compiler-backend-target-windows? target) rebase-ok)
+          (compiler-backend-sweep-record-win64!
+            symbol
+            frame
+            slot-vars
+            compiler-backend-emergency-slot-offset
+            compiler-backend-emergency-used-count
+            outgoing)
+          unit)))))
+
 ;; Append `v` at `count` into a growable i64 scratch array; returns the
 ;; (possibly reallocated) array. The caller advances its own count.
 (define (compiler-backend-sweep-i64-push
@@ -52121,61 +52184,6 @@
                                 false
                                 shrinkwrap-enabled))
                             (let
-                              [_fpo-census : unit
-                                (if fpo-ok
-                                  (begin
-                                    (set!
-                                      compiler-backend-fpo-count
-                                      (+ compiler-backend-fpo-count 1))
-                                    (if (> push-count 0)
-                                      (set!
-                                        compiler-backend-fpo-push-count
-                                        (+ compiler-backend-fpo-push-count 1))
-                                      unit)
-                                    (if (compiler-backend-plan-uses-reg?
-                                      assignments
-                                      "%rbp")
-                                      (set!
-                                        compiler-backend-fpo-rbp-plan-count
-                                        (+
-                                          compiler-backend-fpo-rbp-plan-count
-                                          1))
-                                      unit)
-                                    ;; GAP5: record this FPO function's var-region
-                                    ;; slot span so the post-peephole sweep can
-                                    ;; drop never-read local frame stores. Slots
-                                    ;; are rsp-relative here; keep-rbp functions
-                                    ;; (audit failed) are NOT recorded and stay
-                                    ;; untouched -- conservative by design.
-                                    ;; The dead-store sweep's displacement model
-                                    ;; starts at a function-entry prologue. A
-                                    ;; shrink-wrapped prologue begins at an
-                                    ;; interior label, so leave that optional
-                                    ;; cleanup out rather than enqueue metadata
-                                    ;; that could block later function records.
-                                    (if shrinkwrap-active?
-                                      unit
-                                      (compiler-backend-sweep-record-fpo!
-                                        symbol
-                                        frame
-                                        push-count
-                                        slot-vars
-                                        compiler-backend-emergency-slot-offset
-                                        compiler-backend-emergency-used-count
-                                        outgoing-frame-space)))
-                                  (if (and
-                                    (compiler-backend-target-windows? target)
-                                    rebase-ok)
-                                    (if shrinkwrap-active?
-                                      unit
-                                      (compiler-backend-sweep-record-win64!
-                                        symbol
-                                        frame
-                                        slot-vars
-                                        compiler-backend-emergency-slot-offset
-                                        compiler-backend-emergency-used-count
-                                        outgoing-frame-space))
-                                    unit))]
                               [final-body : String
                                 (if fpo-ok
                                   rebased
@@ -52264,44 +52272,56 @@
                                   crt-entry
                                   allow-rbp
                                   false)
-                                (ResultCompilerBackend.Ok
-                                  (str_cat.str-cat
-                                    (compiler-backend-function-symbol-map-comment
-                                      program-index
-                                      name)
-                                    ".globl "
+                                (begin
+                                  (compiler-backend-commit-frame-layout!
+                                    target
+                                    assignments
                                     symbol
-                                    "\n"
-                                    (compiler-backend-debug-function-location
-                                      target
-                                      program-index
-                                      span-index
-                                      spans
-                                      name)
-                                    (if shrinkwrap-active?
-                                      (str_cat.str-cat symbol ":\n" "")
-                                      selected-prologue)
-                                    ""
-                                    ""
-                                    ;; Last body rewrite: the text is final
-                                    ;; here (prologue spliced, rsp rebased, FPO
-                                    ;; decided) and every text target shares
-                                    ;; this seam, so the scan sees exactly the
-                                    ;; bytes the assembler will.
-                                    (compiler-backend-drop-fallthrough-jumps
-                                      emitted-body)
-                                    (compiler-backend-debug-function-end-label
-                                      target
-                                      program-index
-                                      name)
-                                    (if (and
-                                      (compiler-debug-info-enabled?)
-                                      (compiler-backend-target-linux? target))
-                                      "    .cfi_endproc\n"
-                                      "")
-                                    (compiler-backend-emit-windows-seh-endproc
-                                      target)
-                                    "\n")))))))]
+                                    frame
+                                    push-count
+                                    slot-vars
+                                    outgoing-frame-space
+                                    fpo-ok
+                                    rebase-ok
+                                    shrinkwrap-active?)
+                                  (ResultCompilerBackend.Ok
+                                    (str_cat.str-cat
+                                      (compiler-backend-function-symbol-map-comment
+                                        program-index
+                                        name)
+                                      ".globl "
+                                      symbol
+                                      "\n"
+                                      (compiler-backend-debug-function-location
+                                        target
+                                        program-index
+                                        span-index
+                                        spans
+                                        name)
+                                      (if shrinkwrap-active?
+                                        (str_cat.str-cat symbol ":\n" "")
+                                        selected-prologue)
+                                      ""
+                                      ""
+                                      ;; Last body rewrite: the text is final
+                                      ;; here (prologue spliced, rsp rebased, FPO
+                                      ;; decided) and every text target shares
+                                      ;; this seam, so the scan sees exactly the
+                                      ;; bytes the assembler will.
+                                      (compiler-backend-drop-fallthrough-jumps
+                                        emitted-body)
+                                      (compiler-backend-debug-function-end-label
+                                        target
+                                        program-index
+                                        name)
+                                      (if (and
+                                        (compiler-debug-info-enabled?)
+                                        (compiler-backend-target-linux? target))
+                                        "    .cfi_endproc\n"
+                                        "")
+                                      (compiler-backend-emit-windows-seh-endproc
+                                        target)
+                                      "\n"))))))))]
                     [(ResultCompilerBackend.Err message)
                       (let
                         [_addr-forward-done : unit

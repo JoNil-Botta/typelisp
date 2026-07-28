@@ -17676,7 +17676,7 @@
   (if (>= i n)
     assignments
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment
+      (CompilerRegAssignment
         (+ vars i)
         (if (string.eq (array-ref regs i) "")
           (CompilerRegLocation.Spill
@@ -17719,7 +17719,7 @@
             out
             (compiler-reg-interval-seq-append
               out
-              (CompilerRegInterval.Interval
+              (CompilerRegInterval
                 (+ vars index)
                 (array-ref lo index)
                 (array-ref hi index))))
@@ -17839,7 +17839,7 @@
           vars
           assignments)
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment.Assignment
+          (CompilerRegAssignment
             (+ vars success)
             (CompilerRegLocation.Register reg))
           (compiler-backend-scratch-plan-extend-assignments-from
@@ -17885,7 +17885,7 @@
                   out
                   (compiler-reg-interval-seq-append
                     out
-                    (CompilerRegInterval.Interval
+                    (CompilerRegInterval
                       (+ vars success-index)
                       (struct-get requirement lo)
                       (struct-get requirement hi))))
@@ -36603,16 +36603,14 @@
   (match assignments
     [(CompilerRegAssignmentList.Nil) false]
     [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment _ location)
-          (or
-            (match location
-              [(CompilerRegLocation.Register home) (string.eq home reg)]
-              [(CompilerRegLocation.RegisterPair lo hi)
-                (or (string.eq lo reg) (string.eq hi reg))]
-              [(CompilerRegLocation.Spill _) false]
-              [(CompilerRegLocation.Remat _) false])
-            (compiler-backend-assignments-use-reg? (box-get rest) reg))])]))
+      (or
+        (match (struct-get item location)
+          [(CompilerRegLocation.Register home) (string.eq home reg)]
+          [(CompilerRegLocation.RegisterPair lo hi)
+            (or (string.eq lo reg) (string.eq hi reg))]
+          [(CompilerRegLocation.Spill _) false]
+          [(CompilerRegLocation.Remat _) false])
+        (compiler-backend-assignments-use-reg? (box-get rest) reg))]))
 
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]
@@ -46618,24 +46616,25 @@
   (match assignments
     [(CompilerRegAssignmentList.Nil) mask]
     [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment var location)
-          (compiler-backend-scavenge-assignment-index-fill!
-            (box-get rest)
-            present
-            items
-            (if (or
-              (< var 0)
-              (>= var (array-length present))
-              (not (= (array-ref present var) 0)))
-              mask
-              (let
-                [loc-mask : i64
-                  (compiler-backend-scavenge-location-mask location)]
-                (begin
-                  (array-set! present var 1)
-                  (array-set! items var location)
-                  (bit-or mask loc-mask)))))])]))
+      (let
+        [var : i64 (struct-get item var)]
+        [location : CompilerRegLocation (struct-get item location)]
+        (compiler-backend-scavenge-assignment-index-fill!
+          (box-get rest)
+          present
+          items
+          (if (or
+            (< var 0)
+            (>= var (array-length present))
+            (not (= (array-ref present var) 0)))
+            mask
+            (let
+              [loc-mask : i64
+                (compiler-backend-scavenge-location-mask location)]
+              (begin
+                (array-set! present var 1)
+                (array-set! items var location)
+                (bit-or mask loc-mask))))))]))
 
 (define (compiler-backend-scavenge-assignment-index-build
   [assignments : CompilerRegAssignmentList]
@@ -46666,13 +46665,10 @@
   (match assignments
     [(CompilerRegAssignmentList.Nil) false]
     [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment _ location)
-          (match location
-            [(CompilerRegLocation.Register _) true]
-            [(CompilerRegLocation.RegisterPair _ _) true]
-            [_
-              (compiler-backend-assignments-have-register-home? (box-get rest))])])]))
+      (match (struct-get item location)
+        [(CompilerRegLocation.Register _) true]
+        [(CompilerRegLocation.RegisterPair _ _) true]
+        [_ (compiler-backend-assignments-have-register-home? (box-get rest))])]))
 
 (cfg
   scavenge-self-check

@@ -337,6 +337,60 @@ verify_reduce_accumulator_shape() {
         echo "[spmd-simd] reduce-accumulator $_mode function lacks the post-loop horizontal reduction" >&2
         echo "tests/integration/spmd_reduce_scalar.tl $_mode (missing post-loop horizontal reduce)" >> "$FAILURES"
     fi
+
+    for _op in min max; do
+        _func="$WORKDIR/$_tag.$_mode.reduce-$_op.s"
+        sed -n "/^_tl_spmd_reduce_scalar_reduce_${_op}:/,/^$/p" "$_asm" > "$_func"
+        if ! grep -F -- "spmd_reduce_avx2_body" "$_func" > /dev/null; then
+            echo "[spmd-simd] i64 $_op reduction lacks a SIMD gang in $_mode" >&2
+            echo "tests/integration/spmd_reduce_scalar.tl $_mode (i64 $_op SIMD gang)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx2 ]; then
+            for _shape in vextracti128 vpcmpgtq vpblendvb; do
+                if ! grep -F -- "$_shape" "$_func" > /dev/null; then
+                    echo "[spmd-simd] i64 $_op AVX2 reduction missing $_shape" >&2
+                    echo "tests/integration/spmd_reduce_scalar.tl avx2 (i64 $_op missing $_shape)" >> "$FAILURES"
+                fi
+            done
+        else
+            if ! grep -F -- "vp${_op}sq" "$_func" > /dev/null; then
+                echo "[spmd-simd] i64 $_op AVX-512 reduction missing vp${_op}sq" >&2
+                echo "tests/integration/spmd_reduce_scalar.tl avx512 (i64 $_op missing vp${_op}sq)" >> "$FAILURES"
+            fi
+        fi
+    done
+
+    for _op in all any; do
+        _func="$WORKDIR/$_tag.$_mode.reduce-$_op-bool.s"
+        sed -n "/^_tl_spmd_reduce_scalar_reduce_${_op}_bool:/,/^$/p" "$_asm" > "$_func"
+        if ! grep -F -- "spmd_reduce_avx2_body" "$_func" > /dev/null; then
+            echo "[spmd-simd] bool $_op reduction lacks a SIMD gang in $_mode" >&2
+            echo "tests/integration/spmd_reduce_scalar.tl $_mode (bool $_op SIMD gang)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx2 ]; then
+            if ! grep -F -- "vpmovmskb" "$_func" > /dev/null; then
+                echo "[spmd-simd] bool $_op AVX2 reduction missing vpmovmskb" >&2
+                echo "tests/integration/spmd_reduce_scalar.tl avx2 (bool $_op missing vpmovmskb)" >> "$FAILURES"
+            fi
+            _predicate=setne
+            if [ "$_op" = all ]; then
+                _predicate=sete
+            fi
+        else
+            if ! grep -F -- "kortestq" "$_func" > /dev/null; then
+                echo "[spmd-simd] bool $_op AVX-512 reduction missing kortestq" >&2
+                echo "tests/integration/spmd_reduce_scalar.tl avx512 (bool $_op missing kortestq)" >> "$FAILURES"
+            fi
+            _predicate=setne
+            if [ "$_op" = all ]; then
+                _predicate=setc
+            fi
+        fi
+        if ! grep -F -- "$_predicate" "$_func" > /dev/null; then
+            echo "[spmd-simd] bool $_op reduction in $_mode missing $_predicate" >&2
+            echo "tests/integration/spmd_reduce_scalar.tl $_mode (bool $_op missing $_predicate)" >> "$FAILURES"
+        fi
+    done
 }
 
 verify_map_fused_reduce_shape() {

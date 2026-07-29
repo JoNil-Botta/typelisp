@@ -13927,6 +13927,7 @@
             elem-ty))))))
 
 (define (compiler-backend-avx2-vector-reduce-horizontal-asm
+  [op : CompilerIrVectorReduceOp]
   [mnemonic : String]
   [ymm : String]
   [xmm : String]
@@ -14013,36 +14014,95 @@
           acc-xmm
           "\n"))]
     [(AstType.I64)
-      (string.append
-        (str_cat.str-cat
-          "    vextracti128 $1, "
-          ymm
-          ", "
-          acc-xmm
-          "\n    "
-          mnemonic
-          " "
-          acc-xmm
-          ", "
-          xmm
-          ", "
-          acc-xmm
-          "\n")
-        (str-cat
-          "    vpsrldq $8, "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          ""))]
+      (match op
+        [(CompilerIrVectorReduceOp.Sum)
+          (string.append
+            (str_cat.str-cat
+              "    vextracti128 $1, "
+              ymm
+              ", "
+              acc-xmm
+              "\n    "
+              mnemonic
+              " "
+              acc-xmm
+              ", "
+              xmm
+              ", "
+              acc-xmm
+              "\n")
+            (str-cat
+              "    vpsrldq $8, "
+              acc-xmm
+              ", "
+              scratch-xmm
+              "\n    "
+              mnemonic
+              " "
+              scratch-xmm
+              ", "
+              acc-xmm
+              ", "
+              acc-xmm
+              "\n"
+              ""))]
+        [_
+          (let
+            [high-compare-left : String
+              (match op
+                [(CompilerIrVectorReduceOp.Min) acc-xmm]
+                [_ xmm])]
+            [high-compare-right : String
+              (match op
+                [(CompilerIrVectorReduceOp.Min) xmm]
+                [_ acc-xmm])]
+            [lane-compare-left : String
+              (match op
+                [(CompilerIrVectorReduceOp.Min) scratch-xmm]
+                [_ acc-xmm])]
+            [lane-compare-right : String
+              (match op
+                [(CompilerIrVectorReduceOp.Min) acc-xmm]
+                [_ scratch-xmm])]
+            (str-cat
+              "    vextracti128 $1, "
+              ymm
+              ", "
+              acc-xmm
+              "\n    vpcmpgtq "
+              high-compare-left
+              ", "
+              high-compare-right
+              ", "
+              scratch-xmm
+              "\n    vpblendvb "
+              scratch-xmm
+              ", "
+              acc-xmm
+              ", "
+              xmm
+              ", "
+              acc-xmm
+              "\n    vpsrldq $8, "
+              acc-xmm
+              ", "
+              scratch-xmm
+              "\n    vpcmpgtq "
+              lane-compare-left
+              ", "
+              lane-compare-right
+              ", "
+              xmm
+              "\n    vpblendvb "
+              xmm
+              ", "
+              scratch-xmm
+              ", "
+              acc-xmm
+              ", "
+              acc-xmm
+              "\n"
+              ""))])]
     [(AstType.I32)
       (string.append
         (str_cat.str-cat
@@ -14107,7 +14167,17 @@
     (let
       [mnemonic : String
         (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]
-      (if (= (string.string-length mnemonic) 0)
+      (if (and
+        (= (string.string-length mnemonic) 0)
+        (not
+          (and
+            (match elem-ty
+              [(AstType.I64) true]
+              [_ false])
+            (match op
+              [(CompilerIrVectorReduceOp.Min) true]
+              [(CompilerIrVectorReduceOp.Max) true]
+              [_ false]))))
         (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
@@ -14152,6 +14222,7 @@
                       (str_cat.str-cat
                         src-asm
                         (compiler-backend-avx2-vector-reduce-horizontal-asm
+                          op
                           mnemonic
                           ymm
                           xmm

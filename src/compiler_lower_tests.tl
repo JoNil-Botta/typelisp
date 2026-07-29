@@ -9510,14 +9510,27 @@
             (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-spmd-reduce-stays-scalar-ok?
+(define (compiler-lower-spmd-bool-reduce-shape-ok?
   [src : String]
-  [mode : CompilerLowerMode]) : bool
+  [mode : CompilerLowerMode]
+  [lanes : i64]) : bool
   (match (lower-compiler-source-with-mode src mode)
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
-          (= (lower-test-function-vector-reduce-count functions "f") 0)])]
+          (and
+            (= (lower-test-function-vector-load-count functions "f") 0)
+            (= (lower-test-function-vector-reduce-count functions "f") 0)
+            (= (lower-test-function-predicated-load-count functions "f") 1)
+            (= (lower-test-function-tail-mask-count functions "f") 1)
+            (=
+              (lower-test-function-vector-shape-count
+                functions
+                "f"
+                lanes
+                (AstType.Bool))
+              1)
+            (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-reduce-map-fused-shape-ok?
@@ -9667,13 +9680,21 @@
         4
         2
         0)
-      (compiler-lower-spmd-reduce-stays-scalar-ok?
+      (compiler-lower-avx2-spmd-reduce-shape-ok?
+        "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+        (AstType.I64)
+        4
+        4
+        0)
+      (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
-        (CompilerLowerMode.Avx2))
+        (AstType.I64)
+        4
+        4
+        0)
       (compiler-lower-spmd-reduce-lane-identity-shape-ok?
         (CompilerLowerMode.Avx2)
-        4)
-      true)
+        4))
     (compiler-lower-avx2-spmd-reduce-shape-ok?
       "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
       (AstType.F32)
@@ -9681,7 +9702,15 @@
       2
       0)
     (compiler-lower-spmd-reduce-map-fused-shape-ok? (CompilerLowerMode.Avx2) 4)
-    (compiler-lower-spmd-reduce-gather-shape-ok? (CompilerLowerMode.Avx2) 8)))
+    (compiler-lower-spmd-reduce-gather-shape-ok? (CompilerLowerMode.Avx2) 8)
+    (compiler-lower-spmd-bool-reduce-shape-ok?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
+      (CompilerLowerMode.Avx2)
+      32)
+    (compiler-lower-spmd-bool-reduce-shape-ok?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
+      (CompilerLowerMode.Avx2)
+      32)))
 
 (define (compiler-lower-avx512-spmd-reduce-tests-ok?) : bool
   (and
@@ -9734,7 +9763,15 @@
     (compiler-lower-spmd-reduce-map-fused-shape-ok?
       (CompilerLowerMode.Avx512)
       8)
-    (compiler-lower-spmd-reduce-gather-shape-ok? (CompilerLowerMode.Avx512) 16)))
+    (compiler-lower-spmd-reduce-gather-shape-ok? (CompilerLowerMode.Avx512) 16)
+    (compiler-lower-spmd-bool-reduce-shape-ok?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
+      (CompilerLowerMode.Avx512)
+      64)
+    (compiler-lower-spmd-bool-reduce-shape-ok?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
+      (CompilerLowerMode.Avx512)
+      64)))
 
 ;; `spmd-reduce` lowering: integer, f32, and f64 sum reductions lower (to
 ;; an accumulator loop, so `main` holds the guard branch + fold/increment

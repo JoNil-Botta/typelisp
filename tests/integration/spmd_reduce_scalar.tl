@@ -40,6 +40,12 @@
 (define (reduce-min [xs : (Array i64)] [n : i64] [seed : i64]) : i64
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))
 
+(define (reduce-all-bool [values : (Array bool)] [n : i64]) : bool
+  (spmd-reduce all ([i : i64 0 n]) true (array-ref values i)))
+
+(define (reduce-any-bool [values : (Array bool)] [n : i64]) : bool
+  (spmd-reduce any ([i : i64 0 n]) false (array-ref values i)))
+
 ; f64 sum over an array of 1.0..n.
 (define (reduce-sum-f64 [fs : (Array f64)] [n : i64]) : f64
   (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref fs i)))
@@ -152,6 +158,26 @@
     (array-set! hs 9 (cast 6 : i32))
     (array-set! hs 10 (cast (- 0 20) : i32))))
 
+(define (fill-signed-i64 [values : (Array i64)]) : unit
+  (begin
+    (array-set! values 0 3)
+    (array-set! values 1 -7)
+    (array-set! values 2 12)
+    (array-set! values 3 -1)
+    (array-set! values 4 0)
+    (array-set! values 5 40)
+    (array-set! values 6 -20)
+    (array-set! values 7 8)
+    (array-set! values 8 -4)))
+
+(define (fill-bool [values : (Array bool)] [n : i64] [value : bool]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! values i value)
+        (set! i (+ i 1))))))
+
 (define (main) : i64
   (let
     [n : i64 5]
@@ -160,6 +186,9 @@
     [n32 : i64 11]
     [gs : (Array i32) (array.make-array i32 11)]
     [hs : (Array i32) (array.make-array i32 11)]
+    [signed-xs : (Array i64) (array.make-array i64 9)]
+    [all-values : (Array bool) (array.make-array bool 67)]
+    [any-values : (Array bool) (array.make-array bool 67)]
     ;; Long enough to enter the x16 vector-gang unroller in both AVX2 and
     ;; AVX-512 modes, with a non-divisible scalar tail.
     [long-xs : (Array i64) (array.make-array i64 143)]
@@ -173,6 +202,11 @@
       (fill-f64 fs)
       (fill-i32 gs n32)
       (fill-signed-i32 hs)
+      (fill-signed-i64 signed-xs)
+      (fill-bool all-values 67 true)
+      (fill-bool any-values 67 false)
+      (array-set! all-values 40 false)
+      (array-set! any-values 40 true)
       (fill-i64 long-xs 143)
       (fill-f32 f32-values 19)
       (fill-f32-negative-zero f32-zeros 16)
@@ -236,4 +270,28 @@
           37]
         [(!= (reduce-sum long-xs 143) 10296) 38]
         [(!= (reduce-sum long-xs 143) (manual-sum long-xs 143)) 39]
+        ; AVX2 i64 min/max: empty, sub-gang, exact gang, and partial tail.
+        [(!= (reduce-min signed-xs 0 99) 99) 40]
+        [(!= (reduce-max signed-xs 0 -99) -99) 41]
+        [(!= (reduce-min signed-xs 3 99) -7) 62]
+        [(!= (reduce-max signed-xs 3 -99) 12) 43]
+        [(!= (reduce-min signed-xs 4 99) -7) 44]
+        [(!= (reduce-max signed-xs 4 -99) 12) 45]
+        [(!= (reduce-min signed-xs 9 99) -20) 46]
+        [(!= (reduce-max signed-xs 9 -99) 40) 47]
+        [(!= (reduce-min signed-xs 9 -100) -100) 48]
+        [(!= (reduce-max signed-xs 9 100) 100) 49]
+        ; Bool all/any: empty, sub-gang, exact AVX2/AVX-512 gangs, and tail.
+        [(not (reduce-all-bool all-values 0)) 50]
+        [(reduce-any-bool any-values 0) 51]
+        [(not (reduce-all-bool all-values 3)) 52]
+        [(reduce-any-bool any-values 3) 53]
+        [(not (reduce-all-bool all-values 32)) 54]
+        [(reduce-any-bool any-values 32) 55]
+        [(reduce-all-bool all-values 41) 56]
+        [(not (reduce-any-bool any-values 41)) 57]
+        [(reduce-all-bool all-values 64) 58]
+        [(not (reduce-any-bool any-values 64)) 59]
+        [(reduce-all-bool all-values 67) 60]
+        [(not (reduce-any-bool any-values 67)) 61]
         [else 42]))))

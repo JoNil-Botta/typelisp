@@ -41360,7 +41360,7 @@
     [_ (LowerMaybeVectorMap.No)]))
 
 (define (lower-simple-vector-reduce-op-supported?
-  [mode : CompilerLowerMode]
+  [_mode : CompilerLowerMode]
   [op : AstReduceOp]
   [elem : AstType]) : bool
   (match op
@@ -41374,14 +41374,21 @@
     [(AstReduceOp.Min)
       (match elem
         [(AstType.I32) true]
-        [(AstType.I64) (lower-mode-avx512? mode)]
+        [(AstType.I64) true]
         [_ false])]
     [(AstReduceOp.Max)
       (match elem
         [(AstType.I32) true]
-        [(AstType.I64) (lower-mode-avx512? mode)]
+        [(AstType.I64) true]
         [_ false])]
-    [_ false]))
+    [(AstReduceOp.All)
+      (match elem
+        [(AstType.Bool) true]
+        [_ false])]
+    [(AstReduceOp.Any)
+      (match elem
+        [(AstType.Bool) true]
+        [_ false])]))
 
 (define (lower-simple-vector-scan-op-supported?
   [op : AstReduceOp]
@@ -41545,7 +41552,10 @@
           [(LowerMaybeArrayVar.Some array-var elem-ty)
             (let
               [elem : AstType (tc-type-without-regions elem-ty)]
-              [lanes : i64 (lower-simd-lanes-for-elem mode elem)]
+              [lanes : i64
+                (if (lower-type-bool? elem)
+                  (lower-avx512-bool-lanes mode)
+                  (lower-simd-lanes-for-elem mode elem))]
               (if (and
                 (> lanes 0)
                 (lower-simple-vector-reduce-op-supported? mode op elem))
@@ -41558,7 +41568,10 @@
           [(LowerMaybeArrayVar.No)
             (let
               [elem : AstType (tc-type-without-regions value-ty)]
-              [lanes : i64 (lower-simd-lanes-for-elem mode elem)]
+              [lanes : i64
+                (if (lower-type-bool? elem)
+                  (lower-avx512-bool-lanes mode)
+                  (lower-simd-lanes-for-elem mode elem))]
               (if (and
                 (> lanes 0)
                 (lower-simple-vector-reduce-op-supported? mode op elem))
@@ -42304,6 +42317,50 @@
         (CompilerIrValue.Var v)
         elem-ty)]))
 
+(define (lower-spmd-reduce-mask-op [op : AstReduceOp]) : CompilerIrMaskReduceOp
+  (match op
+    [(AstReduceOp.All) (CompilerIrMaskReduceOp.All)]
+    [_ (CompilerIrMaskReduceOp.Any)]))
+
+(define (lower-spmd-reduce-chunk
+  [state : LowerState]
+  [op : AstReduceOp]
+  [vector-op : CompilerIrVectorReduceOp]
+  [src : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (if (lower-type-bool? elem-ty)
+    (lower-emit-mask-reduce state (lower-spmd-reduce-mask-op op) src lanes)
+    (lower-emit-vector-reduce state vector-op src lanes elem-ty)))
+
+(define (lower-spmd-reduce-array-chunk
+  [state : LowerState]
+  [index-var : i64]
+  [next-index : CompilerIrValue]
+  [data-ptr : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (if (lower-type-bool? elem-ty)
+    (match (lower-emit-tail-mask
+      state
+      (CompilerIrValue.Var index-var)
+      next-index
+      lanes)
+      [(LowerExpr.Expr mask-state full-mask _)
+        (lower-emit-predicated-load-data
+          mask-state
+          data-ptr
+          (CompilerIrValue.Var index-var)
+          full-mask
+          lanes
+          elem-ty)])
+    (lower-emit-vector-load-data
+      state
+      data-ptr
+      (CompilerIrValue.Var index-var)
+      lanes
+      elem-ty)))
+
 (define (lower-spmd-reduce-apply-update
   [ctx : TcContext]
   [state : LowerState]
@@ -42456,10 +42513,11 @@
   [vector-op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]
   [lanes : i64]) : ResultLowerExpr
-  (match (lower-emit-vector-load-data
+  (match (lower-spmd-reduce-array-chunk
     state
+    index-var
+    next-index
     data-ptr
-    (CompilerIrValue.Var index-var)
     lanes
     elem-ty)
     [(LowerExpr.Expr load-state chunk-vec _)
@@ -42477,8 +42535,9 @@
               (CompilerIrInstr.Mov index-var next-index (AstType.I64)))
             CompilerIrValue.Unit
             (AstType.Unit)))
-        (match (lower-emit-vector-reduce
+        (match (lower-spmd-reduce-chunk
           load-state
+          op
           vector-op
           chunk-vec
           lanes
@@ -42552,8 +42611,9 @@
               (CompilerIrInstr.Mov index-var next-index (AstType.I64)))
             CompilerIrValue.Unit
             (AstType.Unit)))
-        (match (lower-emit-vector-reduce
+        (match (lower-spmd-reduce-chunk
           value-state
+          op
           vector-op
           chunk-vec
           lanes

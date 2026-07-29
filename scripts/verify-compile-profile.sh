@@ -1011,13 +1011,16 @@ fi
 #
 # Current headroom, used against capacity, measured directly on Windows after
 # the AstExpr row narrowing landed:
-# expr macro_expand 2859302/2883584, expr typecheck 1704980/1769472,
-# type macro_expand 20702/21504, and type typecheck 6180/7168. #5980 added the
+# expr macro_expand 2883702/2949120, expr typecheck 1712650/1769472,
+# type macro_expand 20858/21504, and type typecheck 6256/7168. #5980 added the
 # LSP code-action source and transcript coverage. Transformer-owned hygiene
 # nodes still reuse their CTFE slots instead of retaining a second complete
 # expression tree. The combined #6012/#6035 main tree crossed the expr
 # typecheck boundary from 26 to 27 segments after #6012's last PR run; the
 # other three values are retained from their latest direct measurements.
+# #6090's dense macro type-kind storage crossed the expr macro_expand boundary
+# from 44 to 45 segments; the Windows probe measured the complete family
+# directly, including 94371840 physical payload bytes.
 # All four sit within a few percent of their next step, so expect these to move.
 # #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
@@ -1063,7 +1066,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # for expr-type inspection, so its macro-walk type footprint is part of the
     # intentional exact selfhost allocation boundary.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 44 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 45 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 27 65536 32 \

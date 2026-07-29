@@ -15,8 +15,8 @@ export LC_ALL
 #   clang_scalar clang -O2 -fno-vectorize -fno-slp-vectorize
 #
 # Timing writes stable metadata.tsv, runs.tsv, and summary.tsv schemas. Linux
-# runs use a small waitpid/clock_gettime helper so an ordinary exit above 128 is
-# never confused with signal termination.
+# runs use a small TypeLisp wait4/monotonic-clock helper so an ordinary exit
+# above 128 is never confused with signal termination.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -144,6 +144,39 @@ case "$(uname -s)" in
         exit 1
         ;;
 esac
+
+COMPILER=
+resolve_benchmark_compiler() {
+    [ -z "$COMPILER" ] || return 0
+    if [ -n "${TYPELISP_BIN:-}" ]; then
+        COMPILER=$TYPELISP_BIN
+    else
+        . "$ROOT/scripts/lib-stage0.sh"
+        COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
+    fi
+    case "$COMPILER" in
+        /*) ;;
+        [A-Za-z]:/*) ;;
+        *) COMPILER="$ROOT/$COMPILER" ;;
+    esac
+    [ -x "$COMPILER" ] || {
+        echo "typelisp compiler is not executable: $COMPILER" >&2
+        exit 1
+    }
+}
+
+build_wall_clock_runner() {
+    _runner=$1
+    resolve_benchmark_compiler
+    if ! "$COMPILER" build benchmarks/wall_clock_runner.tl \
+        --target linux-x86_64 --opt-level 2 --stdlib-root stdlib \
+        -o "$_runner" \
+        >"$_runner.build.stdout" 2>"$_runner.build.stderr"; then
+        echo "FAIL: TypeLisp wall-clock runner build failed" >&2
+        sed 's/^/  /' "$_runner.build.stderr" >&2 || true
+        exit 1
+    fi
+}
 
 # Validate runs.tsv and derive summary.tsv. The validator is deliberately
 # strict: a partial run must never look like a complete performance report.
@@ -471,23 +504,18 @@ run_self_tests() {
     expect_invalid_fixture malformed-time "$_self_root/time.tsv" "$_summary"
 
     if [ "$HOST_OS" = linux ]; then
-        command -v clang >/dev/null 2>&1 || {
-            echo "self-test FAIL: clang is required for Linux runner tests" >&2
-            exit 1
-        }
-        clang -std=c11 -O2 -Wall -Wextra -Werror \
-            benchmarks/wall_clock_runner.c -o "$_self_root/runner"
+        build_wall_clock_runner "$_self_root/runner"
         _line=$("$_self_root/runner" "$_self_root/out" "$_self_root/err" -- \
-            sh -c 'printf output; printf error >&2; exit 172')
+            /bin/sh -c 'printf output; printf error >&2; exit 172')
         set -- $_line
         [ "$#" -eq 4 ] && [ "$2" -eq 172 ] && [ "$3" -eq 0 ] && [ "$4" -eq 0 ] &&
             [ "$(cat "$_self_root/out")" = output ] &&
             [ "$(cat "$_self_root/err")" = error ] || {
                 echo "self-test FAIL: ordinary exit/status capture" >&2
                 exit 1
-            }
+        }
         _line=$("$_self_root/runner" "$_self_root/out" "$_self_root/err" -- \
-            sh -c 'kill -TERM $$')
+            /bin/sh -c 'kill -TERM $$')
         set -- $_line
         [ "$#" -eq 4 ] && [ "$2" -eq -1 ] && [ "$3" -eq 15 ] && [ "$4" -eq 0 ] || {
             echo "self-test FAIL: signal capture" >&2
@@ -536,21 +564,7 @@ if [ -n "$CPU" ]; then
     fi
 fi
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-case "$COMPILER" in
-    /*) ;;
-    [A-Za-z]:/*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
-[ -x "$COMPILER" ] || {
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-}
+resolve_benchmark_compiler
 
 command -v clang >/dev/null 2>&1 || {
     echo "missing clang (C baseline compiler)" >&2
@@ -798,8 +812,7 @@ fi
 
 if [ "$HOST_OS" = linux ]; then
     RUNNER="$WORKDIR/wall-clock-runner"
-    clang -std=c11 -O2 -Wall -Wextra -Werror \
-        benchmarks/wall_clock_runner.c -o "$RUNNER"
+    build_wall_clock_runner "$RUNNER"
     TIMER='clock_gettime(CLOCK_MONOTONIC)'
 else
     RUNNER=
@@ -872,7 +885,7 @@ metadata_row compiler_path "$COMPILER"
 metadata_row compiler_version "$COMPILER_VERSION"
 metadata_row compiler_sha256 "$(fingerprint "$COMPILER")"
 metadata_row harness_sha256 "$(fingerprint "$ROOT/scripts/bench.sh")"
-metadata_row timing_runner_source_sha256 "$(fingerprint "$ROOT/benchmarks/wall_clock_runner.c")"
+metadata_row timing_runner_source_sha256 "$(fingerprint "$ROOT/benchmarks/wall_clock_runner.tl")"
 if [ -n "$RUNNER" ]; then
     metadata_row timing_runner_binary_sha256 "$(fingerprint "$RUNNER")"
 else

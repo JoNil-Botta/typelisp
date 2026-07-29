@@ -250,6 +250,9 @@ TypeLisp/clang-auto/clang-scalar, clang-auto/clang-scalar/TypeLisp, and
 clang-scalar/TypeLisp/clang-auto. Every execution retains stdout and stderr
 under the report's `logs/` directory. A changed byte, changed exit status,
 signal termination, or launch failure aborts the report.
+On Linux, the harness builds `benchmarks/wall_clock_runner.tl` with the selected
+TypeLisp compiler; that helper uses the monotonic clock and raw `wait4` status
+so ordinary exits above 128 remain distinct from signal termination.
 
 The console table is a compact view of three stable TSV files:
 

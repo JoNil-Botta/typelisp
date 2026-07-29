@@ -23,6 +23,7 @@
 (define (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -44,8 +45,9 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-then-build-envs-with-load-state
+              (match (macro-expand-then-build-envs-with-load-state-and-job-state
                 load-state
+                job-state
                 generated
                 generated-paths
                 pools
@@ -86,6 +88,7 @@
                                         (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
                                           load-state
                                           prefix-cache
+                                          job-state
                                           specialized
                                           specialized-paths
                                           stdlib-roots
@@ -101,6 +104,7 @@
                               (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
                                 load-state
                                 prefix-cache
+                                job-state
                                 normalized
                                 normalized-paths
                                 stdlib-roots
@@ -112,6 +116,7 @@
                       (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
                         load-state
                         prefix-cache
+                        job-state
                         expanded
                         expanded-paths
                         stdlib-roots
@@ -125,7 +130,7 @@
                 (compiler-diagnostic-list-box-single diag))]))))))
 
 ;; Serial/test adapter for callers migrated to explicit loader state before the
-;; prefix-cache state seam existed.
+;; prefix-cache and typecheck-job state seams existed.
 (define (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
   [load-state : CompilerLoadSessionState]
   [program : AstProgram]
@@ -136,6 +141,7 @@
   (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
     load-state
     tc-prefix-snapshot-serial-test-cache-state
+    (tc-serial-job-state)
     program
     paths
     stdlib-roots
@@ -143,7 +149,7 @@
     pools))
 
 ;; Serial/test compatibility adapter. Production callers with a job context use
-;; the explicit load-state plus prefix-cache-state entry above.
+;; the explicit load-state, prefix-cache-state, and job-state entry above.
 (define (typecheck-compiler-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -183,8 +189,9 @@
   (Ok AstProgram AstDeclPathList)
   (Err (Box CompilerDiagnostic)))
 
-(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
+(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools
   [load-state : CompilerLoadSessionState]
+  [job-state : TcJobState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -198,8 +205,9 @@
         (ast-node-pool-context-install! pools)
         (match generated-result
           [(ResultGenProgramWithPaths.Ok generated generated-paths)
-            (match (macro-expand-then-build-envs-with-load-state
+            (match (macro-expand-then-build-envs-with-load-state-and-job-state
               load-state
+              job-state
               generated
               generated-paths
               pools
@@ -212,6 +220,20 @@
               [(ResultMacroExpand.Err diag) (ResultCompilerDocExpand.Err diag)])]
           [(ResultGenProgramWithPaths.Err diag)
             (ResultCompilerDocExpand.Err diag)])))))
+
+(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
+  [load-state : CompilerLoadSessionState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [pools : AstNodePoolContext]) : ResultCompilerDocExpand
+  (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools
+    load-state
+    (tc-serial-job-state)
+    program
+    paths
+    stdlib-roots
+    pools))
 
 ;; Serial/test compatibility adapter.
 (define (typecheck-compiler-doc-expand-program-with-paths-and-pools
@@ -229,6 +251,7 @@
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -244,8 +267,9 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-then-build-envs-with-load-state
+              (match (macro-expand-then-build-envs-with-load-state-and-job-state
                 load-state
+                job-state
                 generated
                 generated-paths
                 pools
@@ -286,6 +310,7 @@
                                         (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
                                           load-state
                                           prefix-cache
+                                          job-state
                                           specialized
                                           specialized-paths
                                           stdlib-roots
@@ -301,6 +326,7 @@
                               (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
                                 load-state
                                 prefix-cache
+                                job-state
                                 normalized
                                 normalized-paths
                                 stdlib-roots
@@ -312,6 +338,7 @@
                       (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
                         load-state
                         prefix-cache
+                        job-state
                         expanded
                         expanded-paths
                         stdlib-roots
@@ -335,6 +362,7 @@
   (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
     load-state
     tc-prefix-snapshot-serial-test-cache-state
+    (tc-serial-job-state)
     program
     paths
     stdlib-roots

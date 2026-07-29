@@ -174,6 +174,109 @@
   (Done)
   (Bind i64 AstType TcTypeEnvScopedMarkerCursor))
 
+;; Mutable source-lookup caches belong to one compiler job. Keep the carrier in
+;; the typecheck layer so driver jobs can own it without teaching the loader
+;; about typecheck internals.
+(defstruct TcSourceKeyCacheState
+  (dotted-alias-module-keys (Array i64))
+  (dotted-alias-name-keys (Array i64))
+  (dotted-alias-values (Array i64))
+  (dotted-full-path-module-keys (Array i64))
+  (dotted-full-path-name-keys (Array i64))
+  (dotted-full-path-values (Array i64))
+  (qualified-variant-module-keys (Array i64))
+  (qualified-variant-name-keys (Array i64))
+  (qualified-variant-values (Array i64))
+  (qualified-variant-handles (Array i64))
+  ;; alias table-id, generation, ready;
+  ;; full-path table-id, generation, ready;
+  ;; qualified table-id, generation, registry-id, ready.
+  (control (Array i64)))
+
+(defstruct TcJobState
+  ;; Small immutable capability; the pointed-to cell and its tables are
+  ;; allocated in the owning driver's lifetime arena.
+  (address i64))
+
+(define (tc-source-key-cache-state-new) : TcSourceKeyCacheState
+  (TcSourceKeyCacheState
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 8192)
+    (array.make-array i64 10)))
+
+(define (tc-job-state-new) : TcJobState
+  (let
+    [cell : (Array TcSourceKeyCacheState)
+      (array.make-array TcSourceKeyCacheState 1)]
+    (begin
+      (array-set! cell 0 (tc-source-key-cache-state-new))
+      (TcJobState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (array-data cell) : (Ptr TcSourceKeyCacheState))))
+          : i64)))))
+
+(define (tc-job-state-source-key-cache [state : TcJobState]) : TcSourceKeyCacheState
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (struct-get state address) : u64)
+        : (Ptr TcSourceKeyCacheState)))))
+
+(define (tc-source-key-cache-state-reset! [state : TcSourceKeyCacheState]) : unit
+  (begin
+    (array-set! (struct-get state control) 2 0)
+    (array-set! (struct-get state control) 5 0)
+    (array-set! (struct-get state control) 9 0)))
+
+(define (tc-job-state-reset-file-state! [state : TcJobState]) : unit
+  (tc-source-key-cache-state-reset! (tc-job-state-source-key-cache state)))
+
+;; Standalone source APIs and direct tests are serial compatibility surfaces.
+;; Allocate their state only when one of those adapters is called; production
+;; compiler jobs always pass their CompilerDriverState-owned TcJobState.
+(define tc-serial-job-state-cell : (Array TcJobState)
+  (array.make-array TcJobState 1))
+(define tc-serial-job-state-ready : bool
+  false)
+(define tc-serial-job-state-arena : i64
+  0)
+
+(define (tc-serial-job-state) : TcJobState
+  (begin
+    (if tc-serial-job-state-ready
+      unit
+      (let
+        [previous-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (if (= tc-serial-job-state-arena 0)
+            (set! tc-serial-job-state-arena (arena.tl_arena_make_small))
+            unit)
+          (unsafe
+            (arena.tl_arena_set tc-serial-job-state-arena))
+          (array-set! tc-serial-job-state-cell 0 (tc-job-state-new))
+          ;; Large table allocation can grow and replace the current arena
+          ;; segment, so retain the updated handle before restoring the caller.
+          (set! tc-serial-job-state-arena (arena.tl_arena_current))
+          (unsafe
+            (arena.tl_arena_set previous-arena))
+          (set! tc-serial-job-state-ready true))))
+    (array-ref tc-serial-job-state-cell 0)))
+
+(define (tc-serial-job-state-reset-if-ready!) : unit
+  (if tc-serial-job-state-ready
+    (tc-job-state-reset-file-state! (array-ref tc-serial-job-state-cell 0))
+    unit))
+
 (defstruct TcBodyStateData
   (type-facts-recording bool)
   (type-facts-consuming bool)
@@ -196,7 +299,13 @@
 ;; derived context for one job observes the same state without consulting a
 ;; process-global selector.
 (defstruct TcBodyState
-  (data (Array TcBodyStateData)))
+  (data (Array TcBodyStateData))
+  (job-state TcJobState)
+  ;; The source-name owner is immutable for one typecheck body. Cache it here
+  ;; so hot source-key lookups do not repeatedly traverse TcContext and the
+  ;; intern session handle just to validate the job-owned tables.
+  (intern-table-id i64)
+  (intern-generation i64))
 
 (defenum TcContext
   (TcContext
@@ -232,14 +341,15 @@
       env
       name-id)))
 
-(define (tc-context-new-with-source-names
+(define (tc-context-new-with-source-names-and-job-state
   [program : AstProgram]
   [symbols : CompilerSymbols]
   [registries : CompilerRegistries]
   [module : String]
   [module-id : i64]
   [pools : AstNodePoolContext]
-  [source-names : ci.InternSourceNameSessionHandle]) : TcContext
+  [source-names : ci.InternSourceNameSessionHandle]
+  [job-state : TcJobState]) : TcContext
   (TcContext
     program
     symbols
@@ -249,7 +359,25 @@
     module-id
     pools
     source-names
-    (tc-body-state-new)))
+    (tc-body-state-new-with-job-state-and-source-names job-state source-names)))
+
+(define (tc-context-new-with-source-names
+  [program : AstProgram]
+  [symbols : CompilerSymbols]
+  [registries : CompilerRegistries]
+  [module : String]
+  [module-id : i64]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : TcContext
+  (tc-context-new-with-source-names-and-job-state
+    program
+    symbols
+    registries
+    module
+    module-id
+    pools
+    source-names
+    (tc-serial-job-state)))
 
 (define (tc-context-new-with-source-names-and-body-state
   [program : AstProgram]
@@ -362,9 +490,13 @@
 ;; bit there avoids a second recursive AST walk in lower. Facts are keyed by the
 ;; stable body node id. Bodies synthesized after source typecheck are absent and
 ;; lower falls back to its conservative scanner for those only.
-(define (tc-body-state-new) : TcBodyState
+(define (tc-body-state-new-with-job-state-and-source-names
+  [job-state : TcJobState]
+  [source-names : ci.InternSourceNameSessionHandle]) : TcBodyState
   (let
     [cell : (Array TcBodyStateData) (array.make-array TcBodyStateData 1)]
+    [source-session : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session source-names)]
     (begin
       (array-set!
         cell
@@ -385,7 +517,19 @@
           -1
           (array.make-array i64 1)
           (array.make-array i64 1)))
-      (TcBodyState cell))))
+      (TcBodyState
+        cell
+        job-state
+        (struct-get source-session table-id)
+        (struct-get source-session reset-generation)))))
+
+(define (tc-body-state-new-with-job-state [job-state : TcJobState]) : TcBodyState
+  (tc-body-state-new-with-job-state-and-source-names
+    job-state
+    (ci.intern-source-name-session-capture-active-handle)))
+
+(define (tc-body-state-new) : TcBodyState
+  (tc-body-state-new-with-job-state (tc-serial-job-state)))
 
 (define (tc-body-state-data-value [state : TcBodyState]) : TcBodyStateData
   (array.ref (struct-get state data) 0))
@@ -1209,6 +1353,8 @@
 (define (tc-agg-layout-cache-storage-handle) : i64
   (begin
     (if (= tc-agg-layout-cache-storage-arena 0)
+      ;; Selfhost retains less than 1 MiB here. A small root leaves ample
+      ;; headroom and still grows through the ordinary arena overflow path.
       (set! tc-agg-layout-cache-storage-arena (arena.tl_arena_make_small))
       unit)
     tc-agg-layout-cache-storage-arena))
@@ -1912,6 +2058,9 @@
 (define (tc-context-body-state [ctx : TcContext]) : TcBodyState
   (match ctx
     [(TcContext _ _ _ _ _ _ _ _ body-state) body-state]))
+
+(define (tc-context-job-state [ctx : TcContext]) : TcJobState
+  (struct-get (tc-context-body-state ctx) job-state))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (if (ast-node-pool-compat-context-active?)
@@ -15150,98 +15299,85 @@
 
 (define tc-source-dotted-alias-key-cache-capacity : i64
   8192)
-(define tc-source-dotted-alias-key-cache-module-keys : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-dotted-alias-key-cache-name-keys : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-dotted-alias-key-cache-values : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-dotted-alias-key-cache-generation : i64
-  -1)
-(define tc-source-dotted-alias-key-cache-ready : bool
-  false)
 (define tc-source-dotted-full-path-key-cache-capacity : i64
   8192)
-(define tc-source-dotted-full-path-key-cache-module-keys : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-dotted-full-path-key-cache-name-keys : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-dotted-full-path-key-cache-values : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-dotted-full-path-key-cache-generation : i64
-  -1)
-(define tc-source-dotted-full-path-key-cache-ready : bool
-  false)
 (define tc-source-qualified-variant-key-cache-capacity : i64
   8192)
-(define tc-source-qualified-variant-key-cache-module-keys : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-qualified-variant-key-cache-name-keys : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-qualified-variant-key-cache-values : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-qualified-variant-handle-cache-values : (Array i64)
-  (array.make-array i64 8192))
-(define tc-source-qualified-variant-key-cache-registry-id : i64
-  -1)
-(define tc-source-qualified-variant-key-cache-ready : bool
-  false)
 
-(define (tc-source-dotted-alias-key-cache-reset!) : unit
-  (set! tc-source-dotted-alias-key-cache-ready false))
+(define (tc-source-dotted-alias-key-cache-reset-for-state!
+  [state : TcSourceKeyCacheState]) : unit
+  (array-set! (struct-get state control) 2 0))
 
-(define (tc-source-dotted-full-path-key-cache-reset!) : unit
-  (set! tc-source-dotted-full-path-key-cache-ready false))
+(define (tc-source-dotted-full-path-key-cache-reset-for-state!
+  [state : TcSourceKeyCacheState]) : unit
+  (array-set! (struct-get state control) 5 0))
 
-(define (tc-source-qualified-variant-key-cache-reset!) : unit
-  (set! tc-source-qualified-variant-key-cache-ready false))
+(define (tc-source-qualified-variant-key-cache-reset-for-state!
+  [state : TcSourceKeyCacheState]) : unit
+  (array-set! (struct-get state control) 9 0))
 
-(define (tc-source-dotted-alias-key-cache-ensure!) : unit
+(define (tc-source-dotted-alias-key-cache-ensure-for-state!
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]) : unit
   (if (and
-    tc-source-dotted-alias-key-cache-ready
-    (= tc-source-dotted-alias-key-cache-generation (intern-generation)))
+    (= (array-ref (struct-get state control) 2) 1)
+    (= (array-ref (struct-get state control) 0) table-id)
+    (= (array-ref (struct-get state control) 1) generation))
     unit
     (let
       [i : i64 0]
       (begin
         (while (< i tc-source-dotted-alias-key-cache-capacity)
           (begin
-            (array-set! tc-source-dotted-alias-key-cache-module-keys i 0)
+            (array-set! (struct-get state dotted-alias-module-keys) i 0)
             (set! i (+ i 1))))
-        (set! tc-source-dotted-alias-key-cache-generation (intern-generation))
-        (set! tc-source-dotted-alias-key-cache-ready true)))))
+        (array-set! (struct-get state control) 0 table-id)
+        (array-set! (struct-get state control) 1 generation)
+        (array-set! (struct-get state control) 2 1)))))
 
-(define (tc-source-dotted-full-path-key-cache-ensure!) : unit
+(define (tc-source-dotted-full-path-key-cache-ensure-for-state!
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]) : unit
   (if (and
-    tc-source-dotted-full-path-key-cache-ready
-    (= tc-source-dotted-full-path-key-cache-generation (intern-generation)))
+    (= (array-ref (struct-get state control) 5) 1)
+    (= (array-ref (struct-get state control) 3) table-id)
+    (= (array-ref (struct-get state control) 4) generation))
     unit
     (let
       [i : i64 0]
       (begin
         (while (< i tc-source-dotted-full-path-key-cache-capacity)
           (begin
-            (array-set! tc-source-dotted-full-path-key-cache-module-keys i 0)
+            (array-set! (struct-get state dotted-full-path-module-keys) i 0)
             (set! i (+ i 1))))
-        (set!
-          tc-source-dotted-full-path-key-cache-generation
-          (intern-generation))
-        (set! tc-source-dotted-full-path-key-cache-ready true)))))
+        (array-set! (struct-get state control) 3 table-id)
+        (array-set! (struct-get state control) 4 generation)
+        (array-set! (struct-get state control) 5 1)))))
 
-(define (tc-source-qualified-variant-key-cache-ensure! [registry-id : i64]) : unit
+(define (tc-source-qualified-variant-key-cache-ensure-for-state!
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]
+  [registry-id : i64]) : unit
   (if (and
-    tc-source-qualified-variant-key-cache-ready
-    (= tc-source-qualified-variant-key-cache-registry-id registry-id))
+    (= (array-ref (struct-get state control) 9) 1)
+    (= (array-ref (struct-get state control) 6) table-id)
+    (= (array-ref (struct-get state control) 7) generation)
+    (= (array-ref (struct-get state control) 8) registry-id))
     unit
     (let
       [i : i64 0]
       (begin
         (while (< i tc-source-qualified-variant-key-cache-capacity)
           (begin
-            (array-set! tc-source-qualified-variant-key-cache-name-keys i 0)
+            (array-set! (struct-get state qualified-variant-name-keys) i 0)
             (set! i (+ i 1))))
-        (set! tc-source-qualified-variant-key-cache-registry-id registry-id)
-        (set! tc-source-qualified-variant-key-cache-ready true)))))
+        (array-set! (struct-get state control) 6 table-id)
+        (array-set! (struct-get state control) 7 generation)
+        (array-set! (struct-get state control) 8 registry-id)
+        (array-set! (struct-get state control) 9 1)))))
 
 (define (tc-source-dotted-alias-key-cache-bucket
   [module-id : i64]
@@ -15265,29 +15401,43 @@
     (- tc-source-qualified-variant-key-cache-capacity 1)))
 
 ;; Returns the cached lookup-name id, -1 for no alias import, or -2 when absent.
-(define (tc-source-dotted-alias-key-cache-get [module-id : i64] [name-id : i64]) : i64
+(define (tc-source-dotted-alias-key-cache-get-for-state
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]
+  [module-id : i64]
+  [name-id : i64]) : i64
   (begin
-    (tc-source-dotted-alias-key-cache-ensure!)
+    (tc-source-dotted-alias-key-cache-ensure-for-state!
+      state
+      table-id
+      generation)
     (let
       [cursor : i64 (tc-source-dotted-alias-key-cache-bucket module-id name-id)]
       [module-key : i64 (+ module-id 1)]
       [name-key : i64 (+ name-id 1)]
       (if (and
         (=
-          (array-ref tc-source-dotted-alias-key-cache-module-keys cursor)
+          (array-ref (struct-get state dotted-alias-module-keys) cursor)
           module-key)
         (=
-          (array-ref tc-source-dotted-alias-key-cache-name-keys cursor)
+          (array-ref (struct-get state dotted-alias-name-keys) cursor)
           name-key))
-        (array-ref tc-source-dotted-alias-key-cache-values cursor)
+        (array-ref (struct-get state dotted-alias-values) cursor)
         -2))))
 
 ;; Returns the cached lookup-name id, -1 for no full path, or -2 when absent.
-(define (tc-source-dotted-full-path-key-cache-get
+(define (tc-source-dotted-full-path-key-cache-get-for-state
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]
   [module-id : i64]
   [name-id : i64]) : i64
   (begin
-    (tc-source-dotted-full-path-key-cache-ensure!)
+    (tc-source-dotted-full-path-key-cache-ensure-for-state!
+      state
+      table-id
+      generation)
     (let
       [cursor : i64
         (tc-source-dotted-full-path-key-cache-bucket module-id name-id)]
@@ -15295,96 +15445,228 @@
       [name-key : i64 (+ name-id 1)]
       (if (and
         (=
-          (array-ref tc-source-dotted-full-path-key-cache-module-keys cursor)
+          (array-ref (struct-get state dotted-full-path-module-keys) cursor)
           module-key)
         (=
-          (array-ref tc-source-dotted-full-path-key-cache-name-keys cursor)
+          (array-ref (struct-get state dotted-full-path-name-keys) cursor)
           name-key))
-        (array-ref tc-source-dotted-full-path-key-cache-values cursor)
+        (array-ref (struct-get state dotted-full-path-values) cursor)
         -2))))
 
 ;; Returns the cached lookup-name id, -1 for no variant, or -2 when absent.
+(define (tc-source-qualified-variant-key-cache-get-for-state
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]
+  [registry-id : i64]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (begin
+    (tc-source-qualified-variant-key-cache-ensure-for-state!
+      state
+      table-id
+      generation
+      registry-id)
+    (let
+      [cursor : i64
+        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      (if (and
+        (=
+          (array-ref (struct-get state qualified-variant-module-keys) cursor)
+          module-key)
+        (=
+          (array-ref (struct-get state qualified-variant-name-keys) cursor)
+          name-key))
+        (array-ref (struct-get state qualified-variant-values) cursor)
+        -2))))
+
+;; Returns the cached registry handle, -1 for no variant, or -2 when absent.
+(define (tc-source-qualified-variant-handle-cache-get-for-state
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]
+  [registry-id : i64]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (begin
+    (tc-source-qualified-variant-key-cache-ensure-for-state!
+      state
+      table-id
+      generation
+      registry-id)
+    (let
+      [cursor : i64
+        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      (if (and
+        (=
+          (array-ref (struct-get state qualified-variant-module-keys) cursor)
+          module-key)
+        (=
+          (array-ref (struct-get state qualified-variant-name-keys) cursor)
+          name-key))
+        (array-ref (struct-get state qualified-variant-handles) cursor)
+        -2))))
+
+(define (tc-source-dotted-alias-key-cache-put-for-state!
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]) : unit
+  (begin
+    (tc-source-dotted-alias-key-cache-ensure-for-state!
+      state
+      table-id
+      generation)
+    (let
+      [cursor : i64 (tc-source-dotted-alias-key-cache-bucket module-id name-id)]
+      (begin
+        (array-set!
+          (struct-get state dotted-alias-module-keys)
+          cursor
+          (+ module-id 1))
+        (array-set!
+          (struct-get state dotted-alias-name-keys)
+          cursor
+          (+ name-id 1))
+        (array-set! (struct-get state dotted-alias-values) cursor value)))))
+
+(define (tc-source-dotted-full-path-key-cache-put-for-state!
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]) : unit
+  (begin
+    (tc-source-dotted-full-path-key-cache-ensure-for-state!
+      state
+      table-id
+      generation)
+    (let
+      [cursor : i64
+        (tc-source-dotted-full-path-key-cache-bucket module-id name-id)]
+      (begin
+        (array-set!
+          (struct-get state dotted-full-path-module-keys)
+          cursor
+          (+ module-id 1))
+        (array-set!
+          (struct-get state dotted-full-path-name-keys)
+          cursor
+          (+ name-id 1))
+        (array-set! (struct-get state dotted-full-path-values) cursor value)))))
+
+(define (tc-source-qualified-variant-key-cache-put-for-state!
+  [state : TcSourceKeyCacheState]
+  [table-id : i64]
+  [generation : i64]
+  [registry-id : i64]
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]
+  [handle : i64]) : unit
+  (begin
+    (tc-source-qualified-variant-key-cache-ensure-for-state!
+      state
+      table-id
+      generation
+      registry-id)
+    (let
+      [cursor : i64
+        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
+      (begin
+        (array-set!
+          (struct-get state qualified-variant-module-keys)
+          cursor
+          (+ module-id 1))
+        (array-set!
+          (struct-get state qualified-variant-name-keys)
+          cursor
+          (+ name-id 1))
+        (array-set! (struct-get state qualified-variant-values) cursor value)
+        (array-set! (struct-get state qualified-variant-handles) cursor handle)))))
+
+;; Serial/test adapters. Production helpers use the explicit-state forms above.
+(define (tc-source-dotted-alias-key-cache-reset!) : unit
+  (tc-serial-job-state-reset-if-ready!))
+
+(define (tc-source-dotted-full-path-key-cache-reset!) : unit
+  (tc-serial-job-state-reset-if-ready!))
+
+(define (tc-source-qualified-variant-key-cache-reset!) : unit
+  (tc-serial-job-state-reset-if-ready!))
+
+(define (tc-source-dotted-alias-key-cache-get [module-id : i64] [name-id : i64]) : i64
+  (tc-source-dotted-alias-key-cache-get-for-state
+    (tc-job-state-source-key-cache (tc-serial-job-state))
+    (ci.intern-active-table-id)
+    (ci.intern-generation)
+    module-id
+    name-id))
+
+(define (tc-source-dotted-full-path-key-cache-get
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (tc-source-dotted-full-path-key-cache-get-for-state
+    (tc-job-state-source-key-cache (tc-serial-job-state))
+    (ci.intern-active-table-id)
+    (ci.intern-generation)
+    module-id
+    name-id))
+
 (define (tc-source-qualified-variant-key-cache-get
   [registry-id : i64]
   [module-id : i64]
   [name-id : i64]) : i64
-  (begin
-    (tc-source-qualified-variant-key-cache-ensure! registry-id)
-    (let
-      [cursor : i64
-        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
-      [module-key : i64 (+ module-id 1)]
-      [name-key : i64 (+ name-id 1)]
-      (if (and
-        (=
-          (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
-          module-key)
-        (=
-          (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
-          name-key))
-        (array-ref tc-source-qualified-variant-key-cache-values cursor)
-        -2))))
+  (tc-source-qualified-variant-key-cache-get-for-state
+    (tc-job-state-source-key-cache (tc-serial-job-state))
+    (ci.intern-active-table-id)
+    (ci.intern-generation)
+    registry-id
+    module-id
+    name-id))
 
-;; Returns the cached registry handle, -1 for no variant, or -2 when absent.
 (define (tc-source-qualified-variant-handle-cache-get
   [registry-id : i64]
   [module-id : i64]
   [name-id : i64]) : i64
-  (begin
-    (tc-source-qualified-variant-key-cache-ensure! registry-id)
-    (let
-      [cursor : i64
-        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
-      [module-key : i64 (+ module-id 1)]
-      [name-key : i64 (+ name-id 1)]
-      (if (and
-        (=
-          (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
-          module-key)
-        (=
-          (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
-          name-key))
-        (array-ref tc-source-qualified-variant-handle-cache-values cursor)
-        -2))))
+  (tc-source-qualified-variant-handle-cache-get-for-state
+    (tc-job-state-source-key-cache (tc-serial-job-state))
+    (ci.intern-active-table-id)
+    (ci.intern-generation)
+    registry-id
+    module-id
+    name-id))
 
 (define (tc-source-dotted-alias-key-cache-put!
   [module-id : i64]
   [name-id : i64]
   [value : i64]) : unit
-  (begin
-    (tc-source-dotted-alias-key-cache-ensure!)
-    (let
-      [cursor : i64 (tc-source-dotted-alias-key-cache-bucket module-id name-id)]
-      (begin
-        (array-set!
-          tc-source-dotted-alias-key-cache-module-keys
-          cursor
-          (+ module-id 1))
-        (array-set!
-          tc-source-dotted-alias-key-cache-name-keys
-          cursor
-          (+ name-id 1))
-        (array-set! tc-source-dotted-alias-key-cache-values cursor value)))))
+  (tc-source-dotted-alias-key-cache-put-for-state!
+    (tc-job-state-source-key-cache (tc-serial-job-state))
+    (ci.intern-active-table-id)
+    (ci.intern-generation)
+    module-id
+    name-id
+    value))
 
 (define (tc-source-dotted-full-path-key-cache-put!
   [module-id : i64]
   [name-id : i64]
   [value : i64]) : unit
-  (begin
-    (tc-source-dotted-full-path-key-cache-ensure!)
-    (let
-      [cursor : i64
-        (tc-source-dotted-full-path-key-cache-bucket module-id name-id)]
-      (begin
-        (array-set!
-          tc-source-dotted-full-path-key-cache-module-keys
-          cursor
-          (+ module-id 1))
-        (array-set!
-          tc-source-dotted-full-path-key-cache-name-keys
-          cursor
-          (+ name-id 1))
-        (array-set! tc-source-dotted-full-path-key-cache-values cursor value)))))
+  (tc-source-dotted-full-path-key-cache-put-for-state!
+    (tc-job-state-source-key-cache (tc-serial-job-state))
+    (ci.intern-active-table-id)
+    (ci.intern-generation)
+    module-id
+    name-id
+    value))
 
 (define (tc-source-qualified-variant-key-cache-put!
   [registry-id : i64]
@@ -15392,25 +15674,120 @@
   [name-id : i64]
   [value : i64]
   [handle : i64]) : unit
-  (begin
-    (tc-source-qualified-variant-key-cache-ensure! registry-id)
-    (let
-      [cursor : i64
-        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
-      (begin
-        (array-set!
-          tc-source-qualified-variant-key-cache-module-keys
-          cursor
-          (+ module-id 1))
-        (array-set!
-          tc-source-qualified-variant-key-cache-name-keys
-          cursor
-          (+ name-id 1))
-        (array-set! tc-source-qualified-variant-key-cache-values cursor value)
-        (array-set!
-          tc-source-qualified-variant-handle-cache-values
-          cursor
-          handle)))))
+  (tc-source-qualified-variant-key-cache-put-for-state!
+    (tc-job-state-source-key-cache (tc-serial-job-state))
+    (ci.intern-active-table-id)
+    (ci.intern-generation)
+    registry-id
+    module-id
+    name-id
+    value
+    handle))
+
+(define (tc-context-source-dotted-alias-key-cache-get
+  [ctx : TcContext]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-dotted-alias-key-cache-get-for-state
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      module-id
+      name-id)))
+
+(define (tc-context-source-dotted-full-path-key-cache-get
+  [ctx : TcContext]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-dotted-full-path-key-cache-get-for-state
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      module-id
+      name-id)))
+
+(define (tc-context-source-qualified-variant-key-cache-get
+  [ctx : TcContext]
+  [registry-id : i64]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-qualified-variant-key-cache-get-for-state
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      registry-id
+      module-id
+      name-id)))
+
+(define (tc-context-source-qualified-variant-handle-cache-get
+  [ctx : TcContext]
+  [registry-id : i64]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-qualified-variant-handle-cache-get-for-state
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      registry-id
+      module-id
+      name-id)))
+
+(define (tc-context-source-dotted-alias-key-cache-put!
+  [ctx : TcContext]
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]) : unit
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-dotted-alias-key-cache-put-for-state!
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      module-id
+      name-id
+      value)))
+
+(define (tc-context-source-dotted-full-path-key-cache-put!
+  [ctx : TcContext]
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]) : unit
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-dotted-full-path-key-cache-put-for-state!
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      module-id
+      name-id
+      value)))
+
+(define (tc-context-source-qualified-variant-key-cache-put!
+  [ctx : TcContext]
+  [registry-id : i64]
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]
+  [handle : i64]) : unit
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-qualified-variant-key-cache-put-for-state!
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      registry-id
+      module-id
+      name-id
+      value
+      handle)))
 
 (define (tc-lazy-import-stub-list-empty) : TcLazyImportStubList
   (TcLazyImportStubList (array.make-array TcLazyImportStub 0) 0))
@@ -15541,7 +15918,8 @@
       tc-lazy-import-summary-macro-force-record-count
       (+ tc-lazy-import-summary-macro-force-record-count 1))))
 
-(define (tc-lazy-import-stub-record!
+(define (tc-lazy-import-stub-record-for-job!
+  [job-state : TcJobState]
   [importer-module-id : i64]
   [alias-id : i64]
   [target-module-id : i64]
@@ -15568,9 +15946,19 @@
         tc-lazy-import-summary-backed-count
         (+ tc-lazy-import-summary-backed-count 1))
       unit)
-    (tc-source-dotted-alias-key-cache-reset!)
-    (tc-source-dotted-full-path-key-cache-reset!)
-    (tc-source-qualified-variant-key-cache-reset!)))
+    (tc-job-state-reset-file-state! job-state)))
+
+(define (tc-lazy-import-stub-record!
+  [importer-module-id : i64]
+  [alias-id : i64]
+  [target-module-id : i64]
+  [summary-backed : bool]) : unit
+  (tc-lazy-import-stub-record-for-job!
+    (tc-serial-job-state)
+    importer-module-id
+    alias-id
+    target-module-id
+    summary-backed))
 
 (define (tc-lazy-import-stub-target-indexed
   [importer-module-id : i64]
@@ -15693,7 +16081,10 @@
       (let
         [alias-id : i64 (intern-leading-dot-id name-id)]
         [cached : i64
-          (tc-source-dotted-alias-key-cache-get current-module-id name-id)]
+          (tc-context-source-dotted-alias-key-cache-get
+            ctx
+            current-module-id
+            name-id)]
         (if (= cached -2)
           (let
             [base-id : i64 (intern-dotted-tail-id name-id)]
@@ -15714,14 +16105,16 @@
                         [lookup-id : i64
                           (tc-qualified-name-key-id target-module-id base-id)]
                         (begin
-                          (tc-source-dotted-alias-key-cache-put!
+                          (tc-context-source-dotted-alias-key-cache-put!
+                            ctx
                             current-module-id
                             name-id
                             lookup-id)
                           (TcMaybeString.Some lookup-name))))]
                   [(TcMaybeNameId.No)
                     (begin
-                      (tc-source-dotted-alias-key-cache-put!
+                      (tc-context-source-dotted-alias-key-cache-put!
+                        ctx
                         current-module-id
                         name-id
                         -1)
@@ -15813,7 +16206,10 @@
   [current-module-id : i64]) : TcMaybeString
   (let
     [cached : i64
-      (tc-source-dotted-full-path-key-cache-get current-module-id name-id)]
+      (tc-context-source-dotted-full-path-key-cache-get
+        ctx
+        current-module-id
+        name-id)]
     (if (= cached -2)
       (let
         [candidate-id : i64 (intern-dotted-prefix-id name-id)]
@@ -15837,13 +16233,15 @@
                   (intern-str base-id))]
               [lookup-id : i64 (tc-qualified-name-key-id module-id base-id)]
               (begin
-                (tc-source-dotted-full-path-key-cache-put!
+                (tc-context-source-dotted-full-path-key-cache-put!
+                  ctx
                   current-module-id
                   name-id
                   lookup-id)
                 (TcMaybeString.Some lookup-name)))
             (begin
-              (tc-source-dotted-full-path-key-cache-put!
+              (tc-context-source-dotted-full-path-key-cache-put!
+                ctx
                 current-module-id
                 name-id
                 -1)
@@ -15983,12 +16381,15 @@
   (let
     [module-id : i64 (tc-context-module-id ctx)]
     [alias-key-id : i64
-      (tc-source-dotted-alias-key-cache-get module-id name-id)]
+      (tc-context-source-dotted-alias-key-cache-get ctx module-id name-id)]
     (if (>= alias-key-id 0)
       alias-key-id
       (let
         [full-key-id : i64
-          (tc-source-dotted-full-path-key-cache-get module-id name-id)]
+          (tc-context-source-dotted-full-path-key-cache-get
+            ctx
+            module-id
+            name-id)]
         (if (>= full-key-id 0)
           full-key-id
           fallback)))))
@@ -16050,7 +16451,8 @@
       (let
         [registry-id : i64 (compiler-registries-identity registries)]
         [cached-handle : i64
-          (tc-source-qualified-variant-handle-cache-get
+          (tc-context-source-qualified-variant-handle-cache-get
+            ctx
             registry-id
             module-id
             name-id)]
@@ -16065,7 +16467,8 @@
               [(option_i64.Some key-id)
                 (let
                   [resolved-handle : i64
-                    (tc-source-qualified-variant-handle-cache-get
+                    (tc-context-source-qualified-variant-handle-cache-get
+                      ctx
                       registry-id
                       module-id
                       name-id)]
@@ -16159,7 +16562,8 @@
         (let
           [registry-id : i64 (compiler-registries-identity registries)]
           [cached : i64
-            (tc-source-qualified-variant-key-cache-get
+            (tc-context-source-qualified-variant-key-cache-get
+              ctx
               registry-id
               module-id
               name-id)]
@@ -16210,7 +16614,8 @@
                   module-handle
                   fallback-handle)]
               (begin
-                (tc-source-qualified-variant-key-cache-put!
+                (tc-context-source-qualified-variant-key-cache-put!
+                  ctx
                   registry-id
                   module-id
                   name-id
@@ -16354,7 +16759,8 @@
                   [(TcMaybeString.Some key)
                     (TcNameLookup.Ok
                       key
-                      (tc-source-dotted-alias-key-cache-get
+                      (tc-context-source-dotted-alias-key-cache-get
+                        ctx
                         current-module-id
                         name-id))]
                   [(TcMaybeString.No)
@@ -16377,7 +16783,8 @@
                           [(TcMaybeString.Some key)
                             (TcNameLookup.Ok
                               key
-                              (tc-source-dotted-full-path-key-cache-get
+                              (tc-context-source-dotted-full-path-key-cache-get
+                                ctx
                                 current-module-id
                                 name-id))]
                           [(TcMaybeString.No)
@@ -23825,7 +24232,8 @@
                             (tc-import-alias-summary-backed?
                               summary-index
                               target-module)]
-                          (tc-lazy-import-stub-record!
+                          (tc-lazy-import-stub-record-for-job!
+                            (tc-context-job-state ctx)
                             cur-module-id
                             alias
                             target-module
@@ -25641,7 +26049,8 @@
             (let
               [registry-id : i64 (compiler-registries-identity registries)]
               [cached : i64
-                (tc-source-qualified-variant-key-cache-get
+                (tc-context-source-qualified-variant-key-cache-get
+                  ctx
                   registry-id
                   ctx-module-id
                   name-id)]
@@ -25651,7 +26060,8 @@
                   (compiler-symbol-name-id-key variant-key))
                   [(option_i64.Some variant-handle)
                     (begin
-                      (tc-source-qualified-variant-key-cache-put!
+                      (tc-context-source-qualified-variant-key-cache-put!
+                        ctx
                         registry-id
                         ctx-module-id
                         name-id
@@ -25660,7 +26070,8 @@
                       true)]
                   [(option_i64.None)
                     (begin
-                      (tc-source-qualified-variant-key-cache-put!
+                      (tc-context-source-qualified-variant-key-cache-put!
+                        ctx
                         registry-id
                         ctx-module-id
                         name-id
@@ -72190,7 +72601,8 @@
               module-id
               true)
             (begin
-              (tc-lazy-import-stub-record!
+              (tc-lazy-import-stub-record-for-job!
+                (tc-context-job-state ctx)
                 module-id
                 (compiler-symbols-import-alias-key-id module-id alias)
                 target-module
@@ -74750,6 +75162,7 @@
       ;; answers and refer to the replaced flat program view. Keep their shared
       ;; invalidation until they gain an insert API of their own.
       (macro-alias-derived-cache-reset!)
+      (tc-job-state-reset-file-state! (tc-context-job-state cur-ctx))
       ;; Do not reset ctfe-module-macro-export here: the export set is stable
       ;; across the splice (additive-inert) and is owned by macro-live-prescan-
       ;; ensure!, which repopulates it when the prescan is recomputed. Clearing it
@@ -75032,6 +75445,8 @@
                                             (begin
                                               (tc-nominal-owner-cache-reset!)
                                               (macro-alias-derived-cache-reset!)
+                                              (tc-job-state-reset-file-state!
+                                                (tc-context-job-state cur-ctx))
                                               (if defer-refresh?
                                                 (begin
                                                   (cfg
@@ -75865,6 +76280,7 @@
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
+  [job-state : TcJobState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
@@ -75913,6 +76329,7 @@
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.
             (macro-alias-derived-cache-reset!)
+            (tc-job-state-reset-file-state! job-state)
             ;; The ctfe-module-macro-export map is not reset per pass: it is owned
             ;; by macro-live-prescan-ensure!, which populates it once (with the
             ;; cached visible-name prescan) and repopulates it on the non-inert
@@ -75969,14 +76386,15 @@
                             macro-live-prescan-visible-names)
                           (let
                             [ctx : TcContext
-                              (tc-context-new-with-source-names
+                              (tc-context-new-with-source-names-and-job-state
                                 active-program
                                 symbols
                                 registries
                                 ""
                                 cbi.compiler-builtin-id-fix-empty
                                 pools
-                                source-names)]
+                                source-names
+                                job-state)]
                             (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
                               [(ResultTcUnit.Ok)
                                 (match (tc-build-top-env ctx active-program)
@@ -76265,12 +76683,13 @@
             (ResultMacroMaterializeImport.Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
-(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
+(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
   [load-state : CompilerLoadSessionState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
+  [job-state : TcJobState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
@@ -76334,6 +76753,7 @@
       paths
       pools
       source-names
+      job-state
       stdlib-roots
       cfgs)
       [(ResultMacroExpand.Ok expanded expanded-paths)
@@ -76344,7 +76764,10 @@
           (let
             [_profile-owners : unit
               (macro-expand-allocation-profile-snapshot! 0)]
-            [_release-scratch : unit (macro-expand-scratch-release!)]
+            [_release-scratch : unit
+              (begin
+                (macro-expand-scratch-release!)
+                (tc-job-state-reset-file-state! job-state))]
             (if (compiler-specialize-needed? expanded)
               (begin
                 (macro-expand-program-structural-change-note! 8)
@@ -76365,7 +76788,44 @@
             (compiler-embedded-stdlib-tlci-session-close!))
           (macro-expand-allocation-profile-snapshot! 0)
           (macro-expand-scratch-release!)
+          (tc-job-state-reset-file-state! job-state)
           (ResultMacroExpand.Err diag))])))
+
+(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
+  [load-state : CompilerLoadSessionState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
+    load-state
+    program
+    paths
+    pools
+    source-names
+    (tc-serial-job-state)
+    stdlib-roots
+    cfgs))
+
+(define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
+  [load-state : CompilerLoadSessionState]
+  [job-state : TcJobState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
+    load-state
+    program
+    paths
+    pools
+    (ci.intern-source-name-session-capture-active-handle)
+    job-state
+    stdlib-roots
+    cfgs))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
   [load-state : CompilerLoadSessionState]
@@ -76374,17 +76834,17 @@
   [pools : AstNodePoolContext]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
+  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
     load-state
+    (tc-serial-job-state)
     program
     paths
     pools
-    (ci.intern-source-name-session-capture-active-handle)
     stdlib-roots
     cfgs))
 
 ;; Serial/test compatibility adapter. Production macro-expansion jobs call the
-;; explicit load-state entry above.
+;; explicit load-state plus job-state entry above.
 (define (macro-expand-program-with-paths-and-pools-roots-cfg
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -76405,6 +76865,23 @@
 ;; caller. The typecheck entry then builds the heavy top-env once over the
 ;; expanded program and reuses the CTFE env the expansion left cached, instead
 ;; of rebuilding either per pass.
+(define (macro-expand-then-build-envs-with-load-state-and-job-state
+  [load-state : CompilerLoadSessionState]
+  [job-state : TcJobState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
+    load-state
+    job-state
+    program
+    paths
+    pools
+    stdlib-roots
+    cfgs))
+
 (define (macro-expand-then-build-envs-with-load-state
   [load-state : CompilerLoadSessionState]
   [program : AstProgram]
@@ -76412,8 +76889,9 @@
   [pools : AstNodePoolContext]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
+  (macro-expand-then-build-envs-with-load-state-and-job-state
     load-state
+    (tc-serial-job-state)
     program
     paths
     pools
@@ -76421,7 +76899,7 @@
     cfgs))
 
 ;; Serial/test compatibility adapter. Production typecheck jobs call the
-;; explicit load-state entry above.
+;; explicit load-state plus job-state entry above.
 (define (macro-expand-program-with-paths-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -78519,6 +78997,7 @@
     (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
       (compiler-load-serial-test-session-state)
       tc-prefix-snapshot-serial-test-cache-state
+      (tc-serial-job-state)
       program
       paths
       stdlib-roots
@@ -78529,6 +79008,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -78536,7 +79016,8 @@
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
   (let
-    [body-state : TcBodyState (tc-body-state-new)]
+    [body-state : TcBodyState
+      (tc-body-state-new-with-job-state-and-source-names job-state source-names)]
     [_start-body-state : unit
       (tc-body-early-exit-facts-start! body-state pools)]
     [checked : ResultCompilerTypecheckChecked
@@ -78564,6 +79045,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -78572,6 +79054,7 @@
   (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
     load-state
     prefix-cache
+    job-state
     program
     paths
     stdlib-roots
@@ -78582,6 +79065,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -78590,6 +79074,7 @@
   (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
     load-state
     prefix-cache
+    job-state
     program
     paths
     stdlib-roots

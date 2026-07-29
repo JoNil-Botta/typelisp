@@ -7617,13 +7617,14 @@
 ;; Caches that may capture scratch-arena values produced by the handoff
 ;; expansion. Each is a pure memo rebuilt on demand; resetting them before the
 ;; scratch arena is destroyed mirrors the macro-walk boundary clears.
-(define (lower-clone-handoff-expansion-cache-clear!) : unit
+(define (lower-clone-handoff-expansion-cache-clear! [job-state : TcJobState]) : unit
   (begin
     (macro-generated-decls-memo-reset!)
     (macro-generated-module-memo-reset!)
     (tc-macro-helper-env-cache-reset!)
     (tc-nominal-owner-cache-reset!)
     (macro-alias-derived-cache-reset!)
+    (tc-job-state-reset-file-state! job-state)
     (ctfe-module-macro-export-reset!)))
 
 ;; The handoff expansion runs the full macro/CTFE machinery for every clone
@@ -7689,7 +7690,8 @@
             [escaped : ResultMacroDeclExpansion
               (lower-clone-handoff-expansion-copy-out pools raw)]
             (begin
-              (lower-clone-handoff-expansion-cache-clear!)
+              (lower-clone-handoff-expansion-cache-clear!
+                (tc-context-job-state ctx))
               (unsafe
                 (arena.tl_arena_destroy scratch))
               (ast-node-pool-context-install! pools)
@@ -58426,6 +58428,7 @@
 (define (lower-typecheck-clone-and-lower-with-source-names
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -58440,6 +58443,7 @@
   (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
     load-state
     prefix-cache
+    job-state
     program
     paths
     stdlib-roots
@@ -58610,6 +58614,7 @@
   (lower-typecheck-clone-and-lower-with-source-names
     (compiler-load-serial-test-session-state)
     tc-prefix-snapshot-serial-test-cache-state
+    (tc-serial-job-state)
     entry-path
     program
     paths
@@ -58625,6 +58630,7 @@
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -58747,6 +58753,7 @@
                       (lower-typecheck-clone-and-lower-with-source-names
                         load-state
                         prefix-cache
+                        job-state
                         source-entry-path
                         source-program
                         source-paths
@@ -58767,6 +58774,7 @@
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -58788,6 +58796,7 @@
           (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
             load-state
             prefix-cache
+            job-state
             entry-path
             program
             paths
@@ -58822,6 +58831,7 @@
 (define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
   [load-state : CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
+  [job-state : TcJobState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -58896,12 +58906,13 @@
               (compiler-lower-profile-finish "macro_handoff"))]
           [_macro-expand-profile-start : unit
             (cfg compile-profile (compiler-lower-profile-start))]
-          (match (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
+          (match (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
             load-state
             macro-program
             macro-paths
             committed-macro-pools
             source-names
+            job-state
             stdlib-roots
             (typecheck-compiler-source-language-cfgs))
             [(ResultMacroExpand.Ok expanded expanded-paths)
@@ -59010,6 +59021,7 @@
                   (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
                     load-state
                     prefix-cache
+                    job-state
                     detached-entry-path
                     detached-program
                     detached-paths
@@ -59049,6 +59061,7 @@
   (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
     (compiler-load-serial-test-session-state)
     tc-prefix-snapshot-serial-test-cache-state
+    (tc-serial-job-state)
     entry-path
     program
     paths

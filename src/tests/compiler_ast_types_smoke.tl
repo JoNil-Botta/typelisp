@@ -550,6 +550,28 @@
             (ast.ast-node-pool-context-install! active-before)
             (and shape-ok installed-ok)))])))
 
+(define (compiler-ast-macro-type-kind-dense-compaction-smoke?) : bool
+  (let
+    [source : ast.AstMacroTypeKindList
+      (ast.ast-macro-type-kind-list-with-length 3)]
+    (begin
+      (ast.ast-macro-type-kind-list-set! (&mut source) 0 11)
+      (ast.ast-macro-type-kind-list-set! (&mut source) 1 22)
+      (ast.ast-macro-type-kind-list-set! (&mut source) 2 33)
+      (let
+        [copied : ast.AstMacroTypeKindList
+          (ast.ast-compaction-copy-macro-type-kind-list (& source))]
+        (begin
+          ;; Compaction owns an independent dense allocation, so mutating the
+          ;; source after the copy must not alter its ordered constraints.
+          (ast.ast-macro-type-kind-list-set! (&mut source) 0 99)
+          (and
+            (= (ast.ast-macro-type-kind-list-len (& copied)) 3)
+            (= (ast.ast-macro-type-kind-list-get (& copied) 0 0) 11)
+            (= (ast.ast-macro-type-kind-list-get (& copied) 1 0) 22)
+            (= (ast.ast-macro-type-kind-list-get (& copied) 2 0) 33)
+            (not (ast.ast-macro-type-kind-list-eq? (& source) (& copied)))))))))
+
 (define (compiler-ast-program-copy-append-smoke?) : bool
   (let
     [source-pools : ast.AstNodePoolContext
@@ -1284,4 +1306,5 @@
     (unless (compiler-ast-context-owned-arena-smoke?) (return 13))
     (unless (compiler-ast-compaction-borrow-child-smoke?) (return 14))
     (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
+    (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
     42))

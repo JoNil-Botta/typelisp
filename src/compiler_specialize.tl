@@ -1057,7 +1057,7 @@
             (= a-name b-name)
             (ctfe-type-eq a-ty b-ty)
             (= a-variadic b-variadic)
-            (ast-macro-type-kind-list-eq? a-type-kinds b-type-kinds))])]))
+            (ast-macro-type-kind-list-eq? (& a-type-kinds) (& b-type-kinds)))])]))
 
 (define (gen-macro-param-list-eq?
   [a : AstMacroParamList]

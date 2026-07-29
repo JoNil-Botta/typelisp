@@ -325,9 +325,9 @@
   (slots (Array AstParam))
   (len i64))
 
-(defenum AstMacroTypeKindList
-  (Nil)
-  (Cons i64 (Box AstMacroTypeKindList)))
+(defstruct AstMacroTypeKindList
+  (slots (Array i64))
+  (len i64))
 
 (defenum AstMacroParam
   (Param i64 AstType bool AstMacroTypeKindList))
@@ -3414,43 +3414,83 @@
       out)))
 
 (define (ast-macro-type-kind-list-empty) : AstMacroTypeKindList
-  AstMacroTypeKindList.Nil)
+  (AstMacroTypeKindList (array.make-array i64 0) 0))
 
-(define (ast-macro-type-kind-list-cons-id
-  [kind : i64]
-  [rest : AstMacroTypeKindList]) : AstMacroTypeKindList
-  (AstMacroTypeKindList.Cons kind (box rest)))
+(define (ast-macro-type-kind-list-with-length [len : i64]) : AstMacroTypeKindList
+  (let
+    [count : i64
+      (if (< len 0)
+        0
+        len)]
+    (AstMacroTypeKindList (array.make-array i64 count) count)))
 
-(define (ast-macro-type-kind-list-cons
-  [kind : i64]
-  [rest : AstMacroTypeKindList]) : AstMacroTypeKindList
-  (ast-macro-type-kind-list-cons-id kind rest))
+(define (ast-macro-type-kind-list-len [kinds : (& kinds AstMacroTypeKindList)]) : i64
+  (struct-get kinds len))
 
-(define (ast-macro-type-kind-list-contains-id?
-  [kinds : AstMacroTypeKindList]
-  [kind : i64]) : bool
-  (match kinds
-    [(AstMacroTypeKindList.Nil) false]
-    [(AstMacroTypeKindList.Cons head rest)
-      (or
-        (= head kind)
-        (ast-macro-type-kind-list-contains-id? (box-get rest) kind))]))
+(define (ast-macro-type-kind-list-empty?
+  [kinds : (& kinds AstMacroTypeKindList)]) : bool
+  (= (ast-macro-type-kind-list-len kinds) 0))
+
+(define (ast-macro-type-kind-list-get
+  [kinds : (& kinds AstMacroTypeKindList)]
+  [index : i64]
+  [fallback : i64]) : i64
+  (if (and (>= index 0) (< index (ast-macro-type-kind-list-len kinds)))
+    (array-ref (struct-get kinds slots) index)
+    fallback))
+
+(define (ast-macro-type-kind-list-set!
+  [kinds : (&mut kinds AstMacroTypeKindList)]
+  [index : i64]
+  [kind : i64]) : unit
+  (let
+    [count : i64 (struct-get kinds len)]
+    (if (and (>= index 0) (< index count))
+      (array-set! (struct-get kinds slots) index kind)
+      unit)))
+
+(define (ast-macro-type-kind-list-eq-at?
+  [a : (& a AstMacroTypeKindList)]
+  [b : (& b AstMacroTypeKindList)]
+  [index : i64]) : bool
+  (if (not
+    (= (ast-macro-type-kind-list-len a) (ast-macro-type-kind-list-len b)))
+    false
+    (if (>= index (ast-macro-type-kind-list-len a))
+      true
+      (and
+        (=
+          (ast-macro-type-kind-list-get a index 0)
+          (ast-macro-type-kind-list-get b index 0))
+        (ast-macro-type-kind-list-eq-at? a b (+ index 1))))))
 
 (define (ast-macro-type-kind-list-eq?
-  [a : AstMacroTypeKindList]
-  [b : AstMacroTypeKindList]) : bool
-  (match a
-    [(AstMacroTypeKindList.Nil)
-      (match b
-        [(AstMacroTypeKindList.Nil) true]
-        [_ false])]
-    [(AstMacroTypeKindList.Cons a-head a-rest)
-      (match b
-        [(AstMacroTypeKindList.Cons b-head b-rest)
-          (and
-            (= a-head b-head)
-            (ast-macro-type-kind-list-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]))
+  [a : (& a AstMacroTypeKindList)]
+  [b : (& b AstMacroTypeKindList)]) : bool
+  (ast-macro-type-kind-list-eq-at? a b 0))
+
+(define (ast-macro-type-kind-list-copy-from
+  [source : (& source AstMacroTypeKindList)]
+  [out : (&mut out AstMacroTypeKindList)]
+  [index : i64]) : unit
+  (if (>= index (ast-macro-type-kind-list-len source))
+    unit
+    (begin
+      (ast-macro-type-kind-list-set!
+        out
+        index
+        (ast-macro-type-kind-list-get source index 0))
+      (ast-macro-type-kind-list-copy-from source out (+ index 1)))))
+
+(define (ast-macro-type-kind-list-copy
+  [source : (& source AstMacroTypeKindList)]) : AstMacroTypeKindList
+  (let
+    [out : AstMacroTypeKindList
+      (ast-macro-type-kind-list-with-length
+        (ast-macro-type-kind-list-len source))]
+    (begin
+      (ast-macro-type-kind-list-copy-from source (&mut out) 0)
+      out)))
 
 (define (ast-macro-param-with-type-kinds
   [name : i64]
@@ -6914,16 +6954,11 @@
         name
         (ast-compaction-remap-type remap ty)
         variadic
-        (ast-compaction-copy-macro-type-kind-list type-kinds))]))
+        (ast-compaction-copy-macro-type-kind-list (& type-kinds)))]))
 
 (define (ast-compaction-copy-macro-type-kind-list
-  [kinds : AstMacroTypeKindList]) : AstMacroTypeKindList
-  (match kinds
-    [(AstMacroTypeKindList.Nil) AstMacroTypeKindList.Nil]
-    [(AstMacroTypeKindList.Cons kind rest)
-      (AstMacroTypeKindList.Cons
-        kind
-        (box (ast-compaction-copy-macro-type-kind-list (box-get rest))))]))
+  [kinds : (& kinds AstMacroTypeKindList)]) : AstMacroTypeKindList
+  (ast-macro-type-kind-list-copy kinds))
 
 (define (ast-compaction-remap-macro-param-list
   [remap : AstProgramCompactionRemap]

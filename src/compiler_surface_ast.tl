@@ -30,6 +30,9 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 3: macro type-kind constraints use a count followed by dense ordered name
+  ;; ids instead of recursive Nil/Cons wire tags.
+  ;;
   ;; 2: eight AstExpr variants carry AstTypeIds instead of inline AstTypes, so
   ;; their wire tags now reference the serialized type pool. `Init` similarly
   ;; carries an AstMaybeTypeId sentinel. `Borrow` also narrowed in memory, but
@@ -40,44 +43,40 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  2)
+  3)
 
 (define (surface-ast-write-macro-type-kind-list!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [context : SurfaceAstWriteContext]
-  [items : AstMacroTypeKindList]) : unit
+  [items : (& items AstMacroTypeKindList)]) : unit
   (let
-    [cursor : AstMacroTypeKindList items]
-    [done : bool false]
+    [count : i64 (ast-macro-type-kind-list-len items)]
+    [index : i64 0]
     (begin
-      (while (not done)
-        (match cursor
-          [(AstMacroTypeKindList.Nil)
-            (begin
-              (surface-ast-write-i64! out 0)
-              (set! done true))]
-          [(AstMacroTypeKindList.Cons name rest)
-            (begin
-              (surface-ast-write-i64! out 1)
-              (surface-ast-write-name! out context name)
-              (set! cursor (box-get rest)))]))
+      (surface-ast-write-i64! out count)
+      (while (< index count)
+        (begin
+          (surface-ast-write-name!
+            out
+            context
+            (ast-macro-type-kind-list-get items index 0))
+          (set! index (+ index 1))))
       unit)))
 
 (define (surface-ast-read-macro-type-kind-list! [reader : SurfaceAstReader]) : AstMacroTypeKindList
   (let
-    [tag : i64 (surface-ast-read-i64! reader)]
-    (cond
-      [(= tag 0) AstMacroTypeKindList.Nil]
-      [(= tag 1)
-        (AstMacroTypeKindList.Cons
-          (surface-ast-read-name! reader)
-          (box (surface-ast-read-macro-type-kind-list! reader)))]
-      [else
+    [count : i64 (surface-ast-read-count! reader)]
+    [out : AstMacroTypeKindList (ast-macro-type-kind-list-with-length count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
         (begin
-          (surface-ast-reader-fail!
-            reader
-            "surface ast: invalid macro type-kind list")
-          AstMacroTypeKindList.Nil)])))
+          (ast-macro-type-kind-list-set!
+            (&mut out)
+            index
+            (surface-ast-read-name! reader))
+          (set! index (+ index 1))))
+      out)))
 
 (define (surface-ast-write-macro-param-list!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -95,7 +94,10 @@
               (surface-ast-write-name! out context name)
               (surface-ast-write-type! out context ty)
               (surface-ast-write-bool! out variadic)
-              (surface-ast-write-macro-type-kind-list! out context type-kinds))])
+              (surface-ast-write-macro-type-kind-list!
+                out
+                context
+                (& type-kinds)))])
         (set! index (+ index 1))))))
 
 (define (surface-ast-read-macro-param-list! [reader : SurfaceAstReader]) : AstMacroParamList
@@ -1430,6 +1432,12 @@
       [module-id : i64 (ci.intern "test.module")]
       [path-id : i64 (ci.intern "test.tl")]
       [fn-id : i64 (ci.intern "main")]
+      [macro-id : i64 (ci.intern "catalog")]
+      [macro-param-id : i64 (ci.intern "T")]
+      [macro-type-id : i64 (ci.intern "type")]
+      [kind-i64-id : i64 (ci.intern "i64")]
+      [kind-struct-id : i64 (ci.intern "struct")]
+      [kind-type-var-id : i64 (ci.intern "type-var")]
       [source-pools : AstNodePoolContext
         (ast-node-pool-context-new-with-capacities 8 8)]
       [left : i64
@@ -1453,12 +1461,29 @@
             (ast-borrow-lifetime-to-id
               (AstBorrowLifetime.Named borrow-lifetime-id))
             sum))]
-      [decl-slots : (Array AstDecl) (make-array AstDecl 1)]
-      [path-slots : (Array String) (make-array String 1)]
-      [owner-slots : (Array i64) (make-array i64 1)]
-      [module-slots : (Array i64) (make-array i64 1)]
+      [macro-type-kinds : AstMacroTypeKindList
+        (ast-macro-type-kind-list-with-length 3)]
+      [macro-param-slots : (Array AstMacroParam) (make-array AstMacroParam 1)]
+      [decl-slots : (Array AstDecl) (make-array AstDecl 2)]
+      [path-slots : (Array String) (make-array String 2)]
+      [owner-slots : (Array i64) (make-array i64 2)]
+      [module-slots : (Array i64) (make-array i64 2)]
       [key-modules : (Array String) (make-array String 1)]
       (begin
+        (ast-macro-type-kind-list-set! (&mut macro-type-kinds) 0 kind-i64-id)
+        (ast-macro-type-kind-list-set! (&mut macro-type-kinds) 1 kind-struct-id)
+        (ast-macro-type-kind-list-set!
+          (&mut macro-type-kinds)
+          2
+          kind-type-var-id)
+        (array-set!
+          macro-param-slots
+          0
+          (AstMacroParam.Param
+            macro-param-id
+            (AstType.Var macro-type-id)
+            false
+            macro-type-kinds))
         (array-set!
           decl-slots
           0
@@ -1469,16 +1494,28 @@
             AstType.I64
             body
             AstFnMetadata.No))
+        (array-set!
+          decl-slots
+          1
+          (AstDecl.DefMacro
+            ast-decl-meta-runtime
+            macro-id
+            (AstMacroParamList macro-param-slots 1)
+            AstType.Unit
+            sum))
         (array-set! path-slots 0 "test.tl")
+        (array-set! path-slots 1 "test.tl")
         (array-set! owner-slots 0 module-id)
+        (array-set! owner-slots 1 module-id)
         (array-set! module-slots 0 module-id)
+        (array-set! module-slots 1 module-id)
         (array-set! key-modules 0 "test.tl")
         (let
-          [decls : AstDeclList (AstDeclList decl-slots 0 1 true)]
+          [decls : AstDeclList (AstDeclList decl-slots 0 2 true)]
           [paths : AstDeclPathList
-            (AstDeclPathList path-slots owner-slots 0 1 true)]
+            (AstDeclPathList path-slots owner-slots 0 2 true)]
           [modules : AstDeclModuleList
-            (AstDeclModuleList module-slots 0 1 true)]
+            (AstDeclModuleList module-slots 0 2 true)]
           [seen : sym_i64_env.SymI64Env
             (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) path-id 1)]
           [key : surface_identity.SurfaceIdentityKey
@@ -1540,7 +1577,7 @@
                                   (=
                                     (ast-decl-list-len
                                       (& (struct-get hydration decls)))
-                                    1)
+                                    2)
                                   (match (array-ref
                                     (struct-get
                                       (struct-get hydration decls)
@@ -1581,6 +1618,70 @@
                                                     [(AstBinOp.Add) true]
                                                     [_ false])]
                                                 [_ false]))]
+                                          [_ false]))]
+                                    [_ false])
+                                  (match (array-ref
+                                    (struct-get
+                                      (struct-get hydration decls)
+                                      slots)
+                                    1)
+                                    [(AstDecl.DefMacro
+                                        _
+                                        hydrated-macro-name
+                                        hydrated-params
+                                        _
+                                        _)
+                                      (and
+                                        (surface_identity.surface-identity-string-eq?
+                                          (ci.intern-str hydrated-macro-name)
+                                          "catalog")
+                                        (=
+                                          (ast-macro-param-list-len
+                                            (& hydrated-params))
+                                          1)
+                                        (match (ast-macro-param-list-get
+                                          (& hydrated-params)
+                                          0
+                                          (ast-macro-param-fallback))
+                                          [(AstMacroParam.Param
+                                              hydrated-param-name
+                                              (AstType.Var hydrated-type-name)
+                                              false
+                                              hydrated-kinds)
+                                            (and
+                                              (surface_identity.surface-identity-string-eq?
+                                                (ci.intern-str
+                                                  hydrated-param-name)
+                                                "T")
+                                              (surface_identity.surface-identity-string-eq?
+                                                (ci.intern-str
+                                                  hydrated-type-name)
+                                                "type")
+                                              (=
+                                                (ast-macro-type-kind-list-len
+                                                  (& hydrated-kinds))
+                                                3)
+                                              (surface_identity.surface-identity-string-eq?
+                                                (ci.intern-str
+                                                  (ast-macro-type-kind-list-get
+                                                    (& hydrated-kinds)
+                                                    0
+                                                    0))
+                                                "i64")
+                                              (surface_identity.surface-identity-string-eq?
+                                                (ci.intern-str
+                                                  (ast-macro-type-kind-list-get
+                                                    (& hydrated-kinds)
+                                                    1
+                                                    0))
+                                                "struct")
+                                              (surface_identity.surface-identity-string-eq?
+                                                (ci.intern-str
+                                                  (ast-macro-type-kind-list-get
+                                                    (& hydrated-kinds)
+                                                    2
+                                                    0))
+                                                "type-var"))]
                                           [_ false]))]
                                     [_ false]))]))])))])]))))))
 

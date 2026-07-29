@@ -6484,6 +6484,90 @@
     [got : String (compiler-backend-peephole-asm input)]
     (string.eq got want)))
 
+;; The folded fallthrough-`jmp` deletion: a candidate whose target is reached
+;; across label definitions only is excised; anything else keeps it.
+(define (compiler-backend-peephole-drop-fallthrough-chain-ok?) : bool
+  (let
+    [chain-input : String
+      "    movq $1, %rax
+    jmp .Lmerge
+.Lelse:
+.Lmerge:
+    movq %rax, -8(%rbp)
+"]
+    [chain-want : String
+      "    movq $1, %rax
+.Lelse:
+.Lmerge:
+    movq %rax, -8(%rbp)
+"]
+    [kept-input : String
+      "    movq $1, %rax
+    jmp .Lmerge
+.Lelse:
+    movq $2, %rax
+.Lmerge:
+    movq %rax, -8(%rbp)
+"]
+    [end-input : String "    movq $1, %rax
+    jmp .Lmerge
+"]
+    [backward-input : String ".Lloop:
+    movq $1, %rax
+    jmp .Lloop
+"]
+    [_carry-safe-reset : unit (compiler-backend-peephole-carry-safe-reset!)]
+    [chain-got : String
+      (compiler-backend-peephole-asm-drop-fallthrough chain-input)]
+    [kept-got : String
+      (compiler-backend-peephole-asm-drop-fallthrough kept-input)]
+    [end-got : String
+      (compiler-backend-peephole-asm-drop-fallthrough end-input)]
+    [backward-got : String
+      (compiler-backend-peephole-asm-drop-fallthrough backward-input)]
+    (and
+      (string.eq chain-got chain-want)
+      (string.eq kept-got kept-input)
+      (string.eq end-got end-input)
+      (string.eq backward-got backward-input))))
+
+;; Sharpest edge of the folded deletion: with the `jmp` suppressed the guard-ok
+;; label must still see prev-abort? = true, so the owner map carries and the
+;; reload after the label is elided.
+(define (compiler-backend-peephole-drop-fallthrough-abort-guard-ok?) : bool
+  (let
+    [input : String
+      "    movq -8(%rbp), %r10
+    cmpq $5, 16(%rbp)
+    ja .Lf0_bounds_ok.1
+    pushq 16(%rbp)
+    pushq $5
+    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    popq %rsi
+    popq %rdx
+    call tl_oob_abort_at
+    jmp .Lf0_bounds_ok.1
+.Lf0_bounds_ok.1:
+    movq -8(%rbp), %r10
+    movq (%r10), %rax
+"]
+    [want : String
+      "    movq -8(%rbp), %r10
+    cmpq $5, 16(%rbp)
+    ja .Lf0_bounds_ok.1
+    pushq 16(%rbp)
+    pushq $5
+    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    popq %rsi
+    popq %rdx
+    call tl_oob_abort_at
+.Lf0_bounds_ok.1:
+    movq (%r10), %rax
+"]
+    [_carry-safe-reset : unit (compiler-backend-peephole-carry-safe-reset!)]
+    [got : String (compiler-backend-peephole-asm-drop-fallthrough input)]
+    (string.eq got want)))
+
 (define (compiler-backend-deadstore-sweep-win64-rbp-frame-ok?) : bool
   (let
     [input : String
@@ -6734,7 +6818,8 @@
         [(ResultCompilerBackendBuffer.Ok raw)
           (let
             [legacy : String
-              (compiler-backend-peephole-asm (text_buf.render raw))]
+              (compiler-backend-peephole-asm-drop-fallthrough
+                (text_buf.render raw))]
             (match (lower-compiler-source src)
               [(ResultCompilerLower.Ok second-program second-spans)
                 (match (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
@@ -7581,6 +7666,8 @@
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-peephole-vector-gp-owners-ok?)
     (compiler-backend-peephole-detailed-abort-guard-ok?)
+    (compiler-backend-peephole-drop-fallthrough-chain-ok?)
+    (compiler-backend-peephole-drop-fallthrough-abort-guard-ok?)
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)

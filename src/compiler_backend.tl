@@ -52971,13 +52971,12 @@
                                         selected-prologue)
                                       ""
                                       ""
-                                      ;; Last body rewrite: the text is final
-                                      ;; here (prologue spliced, rsp rebased, FPO
-                                      ;; decided) and every text target shares
-                                      ;; this seam, so the scan sees exactly the
-                                      ;; bytes the assembler will.
-                                      (compiler-backend-drop-fallthrough-jumps
-                                        emitted-body)
+                                      ;; The text is final here (prologue
+                                      ;; spliced, rsp rebased, FPO decided);
+                                      ;; the fallthrough-`jmp` deletion runs
+                                      ;; later, folded into the streaming
+                                      ;; records parse, over the same bytes.
+                                      emitted-body
                                       (compiler-backend-debug-function-end-label
                                         target
                                         program-index
@@ -62728,7 +62727,7 @@
           [chunks : CompilerBackendPeepholeChunkArray
             (compiler-backend-peephole-chunk-array (struct-get state group))]
           [records : CompilerBackendPeepholeLineVec
-            (compiler-backend-peephole-asm-once-records-chunks chunks)]
+            (compiler-backend-peephole-asm-once-records-chunks chunks false)]
           (begin
             (unsafe
               (arena.set! output-arena))
@@ -62831,7 +62830,7 @@
       [chunks : CompilerBackendPeepholeChunkArray
         (compiler-backend-peephole-chunk-array (struct-get state group))]
       [records : CompilerBackendPeepholeLineVec
-        (compiler-backend-peephole-asm-once-records-chunks chunks)]
+        (compiler-backend-peephole-asm-once-records-chunks chunks true)]
       [cursor : i64
         (compiler-backend-deadstore-sweep-records!
           records
@@ -63056,125 +63055,6 @@
                   (set! i (+ i 1)))))
             ok))))))
 
-;; Delete every unconditional `jmp` whose target execution would reach anyway by
-;; falling through nothing but label definitions.
-;;
-;; `compiler-backend-jump-target-is-fallthrough?` can only suppress a
-;; terminator's `jmp` when the target is the IMMEDIATELY next block. When the
-;; target is instead reached through a CHAIN of blocks that each emit zero
-;; instructions, the `jmp` survives and jumps to the very next instruction. That
-;; shape is pervasive: source-level `(if c (begin ...) unit)` leaves an else
-;; block whose own jump was already fallthrough-suppressed and whose phi-edge
-;; copies coalesced to nothing, so the then block's `jmp` lands on `else:`
-;; `merge:` and falls straight through.
-;;
-;; The rewrite is unconditionally correct at the machine level: deleting the
-;; `jmp` makes execution fall through zero emitted bytes to the exact same
-;; label. It runs on the fully assembled function body -- after the prologue
-;; splice, rsp rebase and FPO audit -- so every emitted byte is visible,
-;; including the assembler directives (`.p2align`, `.seh_*`, `.cfi_*`) that must
-;; inhibit it, and both text targets share the one seam. Only a run of pure
-;; label-definition lines may separate the `jmp` from its target; anything else
-;; (instruction, directive, comment, blank line) keeps it, as does a target
-;; never seen scanning forward -- backward jumps, i.e. loop back edges and the
-;; `call tl_oob_abort` / `jmp self` trap loops.
-;;
-;; One forward pass over the lines, examining each exactly once (linear, no
-;; rescans; the self-compile body text is megabytes). At most one candidate
-;; `jmp` is deferred at a time, and it is resolved before the next can start, so
-;; the deleted line ranges are discovered in increasing position order.
-;;
-;; The rewrite only ever DELETES whole lines, so the output is the input minus
-;; those ranges: the buffer is fed the COMPLEMENT, one slice per deletion,
-;; rather than one slice per line. Appending line by line rebuilt the immutable
-;; buffer and its head chunk on every one of the ~10^6 lines of a large module,
-;; which cost more than the pass saved at `--opt-level 1` (few empty blocks, so
-;; few deletions) and moved the gated self_compile row. A body with no deletion
-;; now allocates nothing at all and is returned unchanged, and an unresolved
-;; candidate needs no special case: a backward jump is simply never excised.
-(define (compiler-backend-drop-fallthrough-jumps [asm : String]) : String
-  (let
-    [n : i64 (string.string-length asm)]
-    [asm-data : (Ptr u8)
-      (unsafe
-        (string-data asm))]
-    [i : i64 0]
-    [out : (text_buf_borrowed.TextBufBorrowed asm)
-      (text_buf_borrowed.empty-like (& asm))]
-    ;; First byte not yet handed to `out`; deletions advance it past the
-    ;; excised line.
-    [copy-start : i64 0]
-    ;; Deferred candidate: its own line range and its target operand range.
-    [pending? : bool false]
-    [jmp-start : i64 0]
-    [jmp-stop : i64 0]
-    [target-start : i64 0]
-    [target-stop : i64 0]
-    ;; Did the pending-candidate arm already account for the current line?
-    [consumed? : bool false]
-    [dropped : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
-          [next-start : i64
-            (if (< end n)
-              (+ end 1)
-              end)]
-          (begin
-            (set! consumed? false)
-            (if pending?
-              (if (compiler-backend-asm-label-def-line? asm-data i end)
-                (begin
-                  (set! consumed? true)
-                  (if (compiler-backend-peephole-ranges-eq?
-                    asm-data
-                    target-start
-                    target-stop
-                    asm-data
-                    i
-                    (- end 1))
-                    ;; Target reached across label definitions only: excise the
-                    ;; `jmp` line by copying everything before it and resuming
-                    ;; after it.
-                    (begin
-                      (set!
-                        out
-                        (text_buf_borrowed.append-slice
-                          out
-                          (& asm)
-                          copy-start
-                          (- jmp-start copy-start)))
-                      (set! copy-start jmp-stop)
-                      (set! dropped (+ dropped 1))
-                      (set! pending? false))
-                    unit))
-                ;; Emitted bytes intervene: the `jmp` stays (it is still inside
-                ;; the uncopied region), and the arm below reconsiders this line.
-                (set! pending? false))
-              unit)
-            (if consumed?
-              unit
-              (if (compiler-backend-asm-direct-jmp-line? asm-data i end)
-                (begin
-                  (set! pending? true)
-                  (set! jmp-start i)
-                  (set! jmp-stop next-start)
-                  (set!
-                    target-start
-                    (+ i (compiler-backend-asm-jmp-prefix-len)))
-                  (set! target-stop end))
-                unit))
-            (set! i next-start))))
-      (if (= dropped 0)
-        asm
-        (text_buf_borrowed.render
-          (text_buf_borrowed.append-slice
-            out
-            (& asm)
-            copy-start
-            (- n copy-start)))))))
-
 ;; Streaming peephole over line RECORDS: identical rule set, pair state and
 ;; owner-map handling to the text pass it replaces, except that each surviving
 ;; emit step pushes its record into a dense arena-backed array instead of
@@ -63186,8 +63066,48 @@
 ;; pass boundaries: `pending`, the owner map and `prev-abort?` all carry across
 ;; them, so a pair whose two lines sit in different chunks still forms exactly
 ;; as it did when the group was flattened first.
+;;
+;; With `drop-fallthrough?` the fallthrough-`jmp` deletion of the former
+;; standalone text pass folds into this same walk, over exactly the bytes that
+;; pass saw (one .globl unit per group). At most one candidate direct `jmp`
+;; is deferred at a time: its descriptor and target operand range are held,
+;; and the label-definition lines seen since are buffered unprocessed. A
+;; buffered label matching the held target deletes the `jmp` -- it never
+;; reaches emit-line-desc-record, so the owner map and prev-abort? evolve
+;; exactly as if the line were absent -- and the buffered labels are replayed
+;; through the ordinary rule set. Any other line keeps the `jmp`: it is
+;; emitted before the buffered labels, in the same record position the
+;; deleted-before-parse world produced. A candidate still held at group end
+;; is emitted like ordinary pending, matching the old pass's end-of-text
+;; keep. Intervening label definitions never pair (not movq/zext), and a held
+;; `jmp` is neither a guard-ok branch (desc-guard-ok-branch? excludes jmp)
+;; nor a guard-ok label, so the held emit and the replay need no guard-owner
+;; snapshot handling.
+(define (compiler-backend-peephole-held-labels-push
+  [labels : (Array CompilerBackendPeepholeLine)]
+  [count : i64]
+  [line : CompilerBackendPeepholeLine]) : (Array CompilerBackendPeepholeLine)
+  (if (< count (array-length labels))
+    (begin
+      (array-set! labels count line)
+      labels)
+    (let
+      [bigger : (Array CompilerBackendPeepholeLine)
+        (array.make-array
+          CompilerBackendPeepholeLine
+          (* 2 (array-length labels)))]
+      [j : i64 0]
+      (begin
+        (while (< j count)
+          (begin
+            (array-set! bigger j (array-ref labels j))
+            (set! j (+ j 1))))
+        (array-set! bigger count line)
+        bigger))))
+
 (define (compiler-backend-peephole-asm-once-records-chunks
-  [chunks : CompilerBackendPeepholeChunkArray]) : CompilerBackendPeepholeLineVec
+  [chunks : CompilerBackendPeepholeChunkArray]
+  [drop-fallthrough? : bool]) : CompilerBackendPeepholeLineVec
   (let
     [items : (Array String) (struct-get chunks items)]
     [chunk-count : i64 (struct-get chunks count)]
@@ -63205,6 +63125,14 @@
     [guard-owners-active? : bool false]
     [guard-owners : CompilerBackendPeepholeOwners
       (compiler-backend-peephole-owners-empty)]
+    [held-jmp? : bool false]
+    [held-line : CompilerBackendPeepholeLine
+      (compiler-backend-peephole-empty-line)]
+    [held-target-start : i64 0]
+    [held-target-stop : i64 0]
+    [held-labels : (Array CompilerBackendPeepholeLine)
+      (array.make-array CompilerBackendPeepholeLine 8)]
+    [held-label-count : i64 0]
     [c : i64 0]
     (begin
       (compiler-backend-peephole-owner-global-reset!)
@@ -63225,67 +63153,76 @@
                     (+ end 1)
                     end)]
                 [line-newline : bool (< end n)]
+                [line : CompilerBackendPeepholeLine
+                  (compiler-backend-peephole-parse-line
+                    asm
+                    asm-data
+                    i
+                    end
+                    line-newline
+                    false)]
+                [consumed? : bool false]
                 (begin
-                  (if has-pending
-                    (let
-                      [line : CompilerBackendPeepholeLine
-                        (compiler-backend-peephole-parse-line
-                          asm
-                          asm-data
-                          i
-                          end
-                          line-newline
-                          false)]
-                      [action : i64
-                        (compiler-backend-peephole-pair-action-desc
-                          chunks
-                          c
-                          pending
-                          line)]
-                      (cond
-                        [(= action 1)
+                  (if held-jmp?
+                    (if (compiler-backend-asm-label-def-line? asm-data i end)
+                      (if (compiler-backend-peephole-ranges-eq?
+                        (struct-get held-line data)
+                        held-target-start
+                        held-target-stop
+                        asm-data
+                        i
+                        (- end 1))
+                        ;; Target reached across label definitions only: the
+                        ;; `jmp` is deleted (never emitted, so the owner map
+                        ;; and prev-abort? evolve exactly as if it were
+                        ;; absent); the buffered labels replay below.
+                        (begin
+                          (set! held-jmp? false)
+                          (set! has-pending false))
+                        ;; Not the target: candidacy stays alive; buffer the
+                        ;; label and take no further action on it.
+                        (begin
                           (set!
-                            pending
-                            (compiler-backend-peephole-line-copy line))]
-                        [(= action 2) unit]
-                        [(= action 3)
-                          (let
-                            [forwarded-line : String
-                              (compiler-backend-peephole-forward-frame-load-line-desc
-                                pending
-                                line)]
-                            (begin
-                              (let
-                                [emit : CompilerBackendPeepholeEmitRecordResult
-                                  (compiler-backend-peephole-emit-line-desc-record
-                                    out
-                                    pending
-                                    owners
-                                    prev-abort?)]
-                                (begin
-                                  (set! out (struct-get emit lines))
-                                  (set! owners (struct-get emit owners))))
-                              (set!
-                                prev-abort?
-                                (compiler-backend-peephole-desc-noreturn-abort?
-                                  pending))
-                              (set!
-                                pending
-                                (compiler-backend-peephole-owned-line
-                                  forwarded-line
-                                  line-newline))))]
-                        [(= action 4)
-                          (let
-                            [folded-line : String
-                              (compiler-backend-peephole-r10-base-fold-line-desc
-                                pending
-                                line)]
-                            (set!
-                              pending
-                              (compiler-backend-peephole-owned-line
-                                folded-line
-                                line-newline)))]
-                        [else
+                            held-labels
+                            (compiler-backend-peephole-held-labels-push
+                              held-labels
+                              held-label-count
+                              line))
+                          (set! held-label-count (+ held-label-count 1))
+                          (set! consumed? true)))
+                      ;; Emitted bytes intervene: the `jmp` stays. Emit it
+                      ;; before the buffered labels (replayed below), then
+                      ;; let the ordinary walk process this line.
+                      (let
+                        [held-emit : CompilerBackendPeepholeEmitRecordResult
+                          (compiler-backend-peephole-emit-line-desc-record
+                            out
+                            held-line
+                            owners
+                            prev-abort?)]
+                        (begin
+                          (set! out (struct-get held-emit lines))
+                          (set! owners (struct-get held-emit owners))
+                          (set!
+                            prev-abort?
+                            (compiler-backend-peephole-desc-noreturn-abort?
+                              held-line))
+                          (set! held-jmp? false)
+                          (set! has-pending false))))
+                    unit)
+                  (if (and (not held-jmp?) (> held-label-count 0))
+                    ;; Replay the buffered label definitions through the
+                    ;; ordinary emit rule; labels never pair, never snapshot
+                    ;; guard owners and are never abort calls.
+                    (let
+                      [replay-j : i64 1]
+                      (begin
+                        (set!
+                          pending
+                          (compiler-backend-peephole-line-copy
+                            (array-ref held-labels 0)))
+                        (set! has-pending true)
+                        (while (< replay-j held-label-count)
                           (let
                             [restore-guard-owners? : bool
                               (and
@@ -63307,38 +63244,200 @@
                               (when
                                 restore-guard-owners?
                                 (set! guard-owners-active? false))
-                              (when
-                                (and
-                                  (compiler-backend-peephole-desc-pushq? line)
-                                  (compiler-backend-peephole-desc-guard-ok-branch?
-                                    pending))
-                                (begin
-                                  (set!
-                                    guard-owners
-                                    (compiler-backend-peephole-owners-copy
-                                      owners))
-                                  (set! guard-owners-active? true)))
                               (set!
                                 prev-abort?
                                 (compiler-backend-peephole-desc-noreturn-abort?
                                   pending))
                               (set!
                                 pending
-                                (compiler-backend-peephole-line-copy line))))]))
+                                (compiler-backend-peephole-line-copy
+                                  (array-ref held-labels replay-j)))
+                              (set! replay-j (+ replay-j 1))))))
+                      (set! held-label-count 0))
+                    unit)
+                  (if consumed?
+                    unit
                     (begin
-                      (set! has-pending true)
-                      (set!
-                        pending
-                        (compiler-backend-peephole-line-copy
-                          (compiler-backend-peephole-parse-line
-                            asm
-                            asm-data
-                            i
-                            end
-                            line-newline
-                            false)))))
+                      (if has-pending
+                        (let
+                          [action : i64
+                            (compiler-backend-peephole-pair-action-desc
+                              chunks
+                              c
+                              pending
+                              line)]
+                          (cond
+                            [(= action 1)
+                              (set!
+                                pending
+                                (compiler-backend-peephole-line-copy line))]
+                            [(= action 2) unit]
+                            [(= action 3)
+                              (let
+                                [forwarded-line : String
+                                  (compiler-backend-peephole-forward-frame-load-line-desc
+                                    pending
+                                    line)]
+                                (begin
+                                  (let
+                                    [emit : CompilerBackendPeepholeEmitRecordResult
+                                      (compiler-backend-peephole-emit-line-desc-record
+                                        out
+                                        pending
+                                        owners
+                                        prev-abort?)]
+                                    (begin
+                                      (set! out (struct-get emit lines))
+                                      (set! owners (struct-get emit owners))))
+                                  (set!
+                                    prev-abort?
+                                    (compiler-backend-peephole-desc-noreturn-abort?
+                                      pending))
+                                  (set!
+                                    pending
+                                    (compiler-backend-peephole-owned-line
+                                      forwarded-line
+                                      line-newline))))]
+                            [(= action 4)
+                              (let
+                                [folded-line : String
+                                  (compiler-backend-peephole-r10-base-fold-line-desc
+                                    pending
+                                    line)]
+                                (set!
+                                  pending
+                                  (compiler-backend-peephole-owned-line
+                                    folded-line
+                                    line-newline)))]
+                            [else
+                              (let
+                                [restore-guard-owners? : bool
+                                  (and
+                                    guard-owners-active?
+                                    (compiler-backend-peephole-desc-guard-ok-label?
+                                      pending))]
+                                [emit : CompilerBackendPeepholeEmitRecordResult
+                                  (compiler-backend-peephole-emit-line-desc-record
+                                    out
+                                    pending
+                                    (if restore-guard-owners?
+                                      (compiler-backend-peephole-owners-copy
+                                        guard-owners)
+                                      owners)
+                                    (or prev-abort? restore-guard-owners?))]
+                                (begin
+                                  (set! out (struct-get emit lines))
+                                  (set! owners (struct-get emit owners))
+                                  (when
+                                    restore-guard-owners?
+                                    (set! guard-owners-active? false))
+                                  (when
+                                    (and
+                                      (compiler-backend-peephole-desc-pushq?
+                                        line)
+                                      (compiler-backend-peephole-desc-guard-ok-branch?
+                                        pending))
+                                    (begin
+                                      (set!
+                                        guard-owners
+                                        (compiler-backend-peephole-owners-copy
+                                          owners))
+                                      (set! guard-owners-active? true)))
+                                  (set!
+                                    prev-abort?
+                                    (compiler-backend-peephole-desc-noreturn-abort?
+                                      pending))
+                                  (set!
+                                    pending
+                                    (compiler-backend-peephole-line-copy line))))]))
+                        (begin
+                          (set! has-pending true)
+                          (set!
+                            pending
+                            (compiler-backend-peephole-line-copy line))))
+                      (if (and
+                        drop-fallthrough?
+                        (=
+                          (compiler-backend-peephole-desc-mnemonic-len pending)
+                          3)
+                        (compiler-backend-asm-direct-jmp-line?
+                          (struct-get pending data)
+                          (compiler-backend-peephole-desc-start pending)
+                          (compiler-backend-peephole-desc-end pending)))
+                        (begin
+                          (set! held-jmp? true)
+                          (set!
+                            held-line
+                            (compiler-backend-peephole-line-copy pending))
+                          (set!
+                            held-target-start
+                            (+
+                              (compiler-backend-peephole-desc-start pending)
+                              (compiler-backend-asm-jmp-prefix-len)))
+                          (set!
+                            held-target-stop
+                            (compiler-backend-peephole-desc-end pending)))
+                        unit)))
                   (set! i next-start))))
             (set! c (+ c 1)))))
+      (if held-jmp?
+        ;; Group end with a candidate still deferred: the old pass kept it,
+        ;; so emit it before any buffered labels, like ordinary pending.
+        (let
+          [held-emit : CompilerBackendPeepholeEmitRecordResult
+            (compiler-backend-peephole-emit-line-desc-record
+              out
+              held-line
+              owners
+              prev-abort?)]
+          (begin
+            (set! out (struct-get held-emit lines))
+            (set! owners (struct-get held-emit owners))
+            (set!
+              prev-abort?
+              (compiler-backend-peephole-desc-noreturn-abort? held-line))
+            (set! has-pending false)
+            (if (> held-label-count 0)
+              (let
+                [replay-j : i64 1]
+                (begin
+                  (set!
+                    pending
+                    (compiler-backend-peephole-line-copy
+                      (array-ref held-labels 0)))
+                  (set! has-pending true)
+                  (while (< replay-j held-label-count)
+                    (let
+                      [restore-guard-owners? : bool
+                        (and
+                          guard-owners-active?
+                          (compiler-backend-peephole-desc-guard-ok-label?
+                            pending))]
+                      [emit : CompilerBackendPeepholeEmitRecordResult
+                        (compiler-backend-peephole-emit-line-desc-record
+                          out
+                          pending
+                          (if restore-guard-owners?
+                            (compiler-backend-peephole-owners-copy guard-owners)
+                            owners)
+                          (or prev-abort? restore-guard-owners?))]
+                      (begin
+                        (set! out (struct-get emit lines))
+                        (set! owners (struct-get emit owners))
+                        (when
+                          restore-guard-owners?
+                          (set! guard-owners-active? false))
+                        (set!
+                          prev-abort?
+                          (compiler-backend-peephole-desc-noreturn-abort?
+                            pending))
+                        (set!
+                          pending
+                          (compiler-backend-peephole-line-copy
+                            (array-ref held-labels replay-j)))
+                        (set! replay-j (+ replay-j 1)))))))
+              unit)))
+        unit)
       (if (and
         has-pending
         (not (compiler-backend-peephole-line-self-move-desc? pending)))
@@ -63355,9 +63454,12 @@
         unit)
       out)))
 
-(define (compiler-backend-peephole-asm-once-records [asm : String]) : CompilerBackendPeepholeLineVec
+(define (compiler-backend-peephole-asm-once-records
+  [asm : String]
+  [drop-fallthrough? : bool]) : CompilerBackendPeepholeLineVec
   (compiler-backend-peephole-asm-once-records-chunks
-    (compiler-backend-peephole-single-chunk-array asm)))
+    (compiler-backend-peephole-single-chunk-array asm)
+    drop-fallthrough?))
 
 ;; The single render of the group: append each surviving record's exact bytes
 ;; plus its newline flag. Runs of adjacent surviving asm lines coalesce into
@@ -63400,10 +63502,12 @@
   (text_buf_borrowed.render
     (compiler-backend-peephole-records-buffer
       (text_buf_borrowed.empty-like (& asm))
-      (compiler-backend-peephole-asm-once-records asm)
+      (compiler-backend-peephole-asm-once-records asm false)
       asm)))
 
-(define (compiler-backend-peephole-asm-buffer [asm : String]) : text_buf.TextBuf
+(define (compiler-backend-peephole-asm-buffer
+  [asm : String]
+  [drop-fallthrough? : bool]) : text_buf.TextBuf
   ;; The streaming pass runs the complete rule set while each line pair and its
   ;; owner state are hot. Re-running it used to parse and copy the whole ~40MB
   ;; self-compile assembly again to remove only ~1% as many bytes as the first
@@ -63413,7 +63517,7 @@
   ;; over the same records, so the text is rendered exactly once.
   (let
     [records : CompilerBackendPeepholeLineVec
-      (compiler-backend-peephole-asm-once-records asm)]
+      (compiler-backend-peephole-asm-once-records asm drop-fallthrough?)]
     [_swept : i64 (compiler-backend-deadstore-sweep-records! records 0)]
     [buf : text_buf.TextBuf
       (compiler-backend-borrowed-copy-to-owned
@@ -63426,7 +63530,12 @@
       buf)))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
-  (text_buf.render (compiler-backend-peephole-asm-buffer asm)))
+  (text_buf.render (compiler-backend-peephole-asm-buffer asm false)))
+
+;; Production entry: same whole-text pass with the fallthrough-`jmp` deletion
+;; folded in, matching what the streaming emission walk applies per group.
+(define (compiler-backend-peephole-asm-drop-fallthrough [asm : String]) : String
+  (text_buf.render (compiler-backend-peephole-asm-buffer asm true)))
 
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state
   [type-segment-bases : i64]
@@ -64220,7 +64329,8 @@
               (ResultCompilerBackendPic.Ok
                 (CompilerBackendPicOutput
                   (compiler-backend-pic-asm
-                    (compiler-backend-peephole-asm (text_buf.render buf))
+                    (compiler-backend-peephole-asm-drop-fallthrough
+                      (text_buf.render buf))
                     image)
                   (compiler-backend-pic-fixup-table image)))
               (ResultCompilerBackendPic.Err

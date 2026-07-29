@@ -488,6 +488,7 @@ if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 regalloc/backend asm shape gates" scripts/verify-asm-shape-gates.sh
 fi
 run_with_compiler "$STAGE2_BIN" "stage2 examples" scripts/verify-examples.sh
+run_gate "benchmark wall-clock harness self-tests" scripts/bench.sh --self-test
 run_with_compiler "$STAGE2_BIN" "stage2 benchmark comparison correctness" scripts/bench.sh --correctness
 run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus correctness" scripts/run-optimization-benchmarks.sh --correctness
 run_with_compiler "$STAGE2_BIN" "stage2 optimization corpus opt2 runtime correctness" \

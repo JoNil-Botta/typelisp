@@ -11,8 +11,11 @@ case-specific parity gate before emitting kernel-symbol-only static codegen
 comparisons, and records missing ISPC as an explicit support state.
 
 Full timing benchmark runs are manual because wall-clock measurements are noisy.
-Required CI runs a timing-free comparison correctness gate that builds every
-TypeLisp/C benchmark pair once and checks their documented observable output.
+They compare TypeLisp opt2 with both clang's normal `-O2` vectorizing pipeline
+and a scalar `-O2` leg, using paired interleaved rounds and machine-readable
+dispersion reports. Required CI runs a timing-free comparison correctness gate
+that builds every TypeLisp/C benchmark pair once and checks exact stdout,
+stderr, and exit status.
 
 ## Layout
 
@@ -95,22 +98,37 @@ stores its category and space-separated command-line arguments.
 ## Running
 
 ```sh
-# Linux (native ELF via typelisp -> as/ld) or Windows Git Bash
-#   (native windows-x86_64 via typelisp -> clang/lld-link):
-bash scripts/bench.sh
+# Linux (native ELF via typelisp -> as/ld), three recorded rounds,
+# pinned to logical CPU 2:
+bash scripts/bench.sh --runs 3 --cpu 2
+
+# Exact ordered subset and explicit report directory:
+bash scripts/bench.sh --cases arith_loop,array_sum --output target/my-bench
 ```
 
 For required CI correctness coverage, `--correctness` builds and runs every
 comparison benchmark directory that has both `bench.tl` and `baseline.c`, then
-asserts the TypeLisp and C binaries agree on observable output. It skips all
-timing, size, and ratio work:
+asserts the TypeLisp and clang-auto binaries have identical stdout, stderr, and
+exit status. On Windows only, CRLF is normalized to LF for parity because
+clang's C stdio translates newlines while the TypeLisp runtime writes LF
+directly; the raw streams remain retained. The gate skips all timing, size, and
+ratio work:
 
 ```sh
 bash scripts/bench.sh --correctness
 ```
 
-The required CI gate is `scripts/ci-verify.sh` running
-`scripts/bench.sh --correctness` (#2439).
+The required CI gates run both the fast harness validator self-tests and the
+full correctness corpus:
+
+```sh
+bash scripts/bench.sh --self-test
+bash scripts/bench.sh --correctness
+```
+
+The self-tests exercise the report validator with three interleaved rounds and
+deliberately corrupt fixtures. On Linux they also verify that the timing helper
+distinguishes a normal exit above 128 from real signal termination.
 
 SPMD scalar/AVX2 deterministic performance uses the separate cachegrind mode
 matrix. AVX-512 cachegrind numbers are invalid because Valgrind 3.22 SIGILLs;
@@ -140,15 +158,25 @@ Requirements:
 - a `typelisp` compiler (set `TYPELISP_BIN`, else the published stage0 is fetched),
 - `clang` (the C baseline compiler),
 - on Linux, `as` and `ld` (used by `typelisp build`).
+- `sha256sum` for output and tool fingerprints,
+- `taskset` when `--cpu`/`BENCH_CPU` requests Linux CPU affinity.
 
 Environment knobs:
 
-| Variable          | Default | Meaning                                       |
-|-------------------|---------|-----------------------------------------------|
-| `TYPELISP_BIN`    | (built) | Path to the `typelisp` compiler binary.       |
-| `BENCH_RUNS`      | `5`     | Timed runs per program; min and median reported. |
-| `BENCH_CLANG_OPT` | `-O2`   | clang optimization level for the C baseline.  |
-| `BENCH_FILTER`    | (empty) | Only run benchmarks whose name contains this. |
+| Variable       | Default | Meaning |
+|----------------|---------|---------|
+| `TYPELISP_BIN` | (built) | Path to the `typelisp` compiler binary. |
+| `BENCH_RUNS`   | `5` | Recorded interleaved rounds per implementation; must be at least 3. |
+| `BENCH_CPU`    | (empty) | Linux logical CPU for `taskset -c`; empty records pinning as disabled. |
+| `BENCH_OUT`    | `target/bench-report` | Report, retained-output, and build directory. |
+| `BENCH_CASES`  | (empty) | Exact comma-separated, ordered case list. |
+| `BENCH_FILTER` | (empty) | Only run discovered benchmarks whose name contains this text. |
+
+`BENCH_CASES` and `BENCH_FILTER` are mutually exclusive. Command-line options
+`--runs`, `--cpu`, `--output`, `--cases`, and `--filter` override their
+environment counterparts. The compiler flags are intentionally fixed rather
+than configurable: TypeLisp uses `--opt-level 2`, `clang_auto` uses `-O2`, and
+`clang_scalar` uses `-O2 -fno-vectorize -fno-slp-vectorize`.
 
 ## Bootstrap compiler benchmark
 
@@ -217,16 +245,40 @@ Useful knobs:
 
 ## Reading the results
 
-For each benchmark the harness prints wall-clock runtime (min and median),
-executable size, TypeLisp compile time, and emitted assembly size, with a
-`tl / c` ratio column (TypeLisp value divided by the clang value). A runtime
-ratio of `6.50x` means TypeLisp took 6.5x as long as clang `-O2`.
+Each binary runs one warm-up. Recorded rounds then rotate positions:
+TypeLisp/clang-auto/clang-scalar, clang-auto/clang-scalar/TypeLisp, and
+clang-scalar/TypeLisp/clang-auto. Every execution retains stdout and stderr
+under the report's `logs/` directory. A changed byte, changed exit status,
+signal termination, or launch failure aborts the report.
+On Linux, the harness builds `benchmarks/wall_clock_runner.tl` with the selected
+TypeLisp compiler; that helper uses the monotonic clock and raw `wait4` status
+so ordinary exits above 128 remain distinct from signal termination.
+
+The console table is a compact view of three stable TSV files:
+
+- `metadata.tsv` records the commit and dirty state; compiler/clang paths,
+  versions, and SHA-256 fingerprints; assembler/linker paths and versions;
+  harness/runner fingerprints; host, CPU, and kernel; fixed target/optimization
+  flags; discovery/selection mode and exact case lists; run count; timer;
+  rotation; and CPU-pinning state.
+- `runs.tsv` contains every warm-up and measured execution with benchmark,
+  implementation, phase, round, order, elapsed seconds, exit/signal/launch
+  status, stdout/stderr SHA-256 parity fingerprints, and parity result. The
+  metadata states whether those fingerprints are raw or CRLF-normalized.
+- `summary.tsv` contains sample count, minimum, median, arithmetic mean, sample
+  standard deviation, coefficient of variation, interquartile range, median
+  absolute deviation, and the TypeLisp median divided by each clang median.
+
+Quartiles use the nearest-rank definition; standard deviation uses the `n-1`
+sample denominator. `builds.tsv` preserves the previous informational compile
+time, executable size, and TypeLisp assembly size measurements. A ratio of
+`6.50` on a clang row means the TypeLisp median took 6.5 times as long as that
+specific clang leg.
 
 ## Expected variance and caveats
 
-- Wall-clock timing is noisy. The harness reports the **minimum** (least
-  perturbed run) alongside the median; prefer the minimum for run-to-run
-  comparisons and expect double-digit-percent jitter on a loaded machine.
+- Wall-clock timing is noisy. Prefer the median and inspect CV, IQR, and MAD
+  before interpreting a ratio; pin to one available CPU where practical.
 - Process-startup overhead is included in wall-clock time and is larger on
   Windows than Linux. Keep workloads large enough that startup is negligible.
 - Ratios are only comparable **within a single host and toolchain**; do not

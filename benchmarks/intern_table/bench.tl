@@ -57,7 +57,6 @@
 ;# folded, and all arithmetic wraps modulo 2^64 in both languages, so the
 ;# printed decimal matches the C baseline's `%lld`.
 (import stdlib.array)
-(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -377,11 +376,29 @@
         (set! capacity (* capacity 2)))
       capacity)))
 
+(define (it-string-to-array [source : String]) : (Array u8)
+  (let
+    [n : i64 (string-length source)]
+    [out : (Array u8) (array.make-array u8 n)]
+    [src : (Ptr u8)
+      (unsafe
+        (string-data (& source)))]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set!
+            out
+            i
+            (unsafe
+              (ptr-read (ptr-offset src i))))
+          (set! i (+ i 1))))
+      out)))
+
 (define (it-bench [path : String] [rounds : i64]) : i64
   (let
     [source : String (io.read-file path)]
-    [text : (Array u8)
-      (byte_buf.bytes-to-array (byte_buf.str-as-bytes (& source)))]
+    [text : (Array u8) (it-string-to-array source)]
     [n : i64 (array-length text)]
     [line-count : i64 (it-count-lines text n)]
     [starts : (Array i64) (array.make-array i64 (+ line-count 1))]

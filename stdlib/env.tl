@@ -82,7 +82,7 @@
       [n : i64
         (unsafe
           (c-string-length ptr))]
-      [buf : (Array u8) (array.make-array u8 n)]
+      [buf : (__tl_dyn-array u8) (array.make-array u8 n)]
       [i : i64 0]
       (begin
         (while (< i n)
@@ -277,10 +277,10 @@
   (not (contains-char? value '\0')))
 
 ;: Copy borrowed text into a NUL-terminated active-arena byte array.
-(define (c-string-bytes [text : (& text str)]) : (Array u8)
+(define (c-string-bytes [text : (& text str)]) : (__tl_dyn-array u8)
   (let
     [n : i64 (string-length text)]
-    [bytes : (Array u8) (array.make-array u8 (+ n 1))]
+    [bytes : (__tl_dyn-array u8) (array.make-array u8 (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -292,13 +292,13 @@
 
 ;: Return a read-only byte pointer to an array's backing storage.
 (unsafe
-  (define (array-u8-ptr [bytes : (Array u8)]) : (Ptr u8)
+  (define (array-u8-ptr [bytes : (__tl_dyn-array u8)]) : (Ptr u8)
     (unsafe
       (ptr-cast (array-data bytes) : (Ptr u8)))))
 
 ;: Return the integer address of an array's backing storage.
 (unsafe
-  (define (array-u64-addr [slots : (Array u64)]) : i64
+  (define (array-u64-addr [slots : (__tl_dyn-array u64)]) : i64
     (unsafe
       (cast (ptr->int (ptr-cast (array-data slots) : (Ptr u8))) : i64))))
 
@@ -332,7 +332,8 @@
   (let
     [name-len : i64 (string-length name)]
     [value-len : i64 (string-length value)]
-    [bytes : (Array u8) (array.make-array u8 (+ (+ name-len value-len) 2))]
+    [bytes : (__tl_dyn-array u8)
+      (array.make-array u8 (+ (+ name-len value-len) 2))]
     [i : i64 0]
     (begin
       (while (< i name-len)
@@ -363,7 +364,7 @@
       (unsafe
         (linux-environ))]
     [kept : i64 (linux-nonmatching-count environ name)]
-    [slots : (Array u64)
+    [slots : (__tl_dyn-array u64)
       (array.make-array
         u64
         (+
@@ -433,8 +434,8 @@
   windows
   (define (windows-set! [name : (& name str)] [value : (& value str)]) : bool
     (let
-      [name-bytes : (Array u8) (c-string-bytes name)]
-      [value-bytes : (Array u8) (c-string-bytes value)]
+      [name-bytes : (__tl_dyn-array u8) (c-string-bytes name)]
+      [value-bytes : (__tl_dyn-array u8) (c-string-bytes value)]
       (not
         (=
           (env-win-set-environment-variable
@@ -452,7 +453,7 @@
     (if (not (var-exists? (string.copy name)))
       true
       (let
-        [name-bytes : (Array u8) (c-string-bytes name)]
+        [name-bytes : (__tl_dyn-array u8) (c-string-bytes name)]
         (not
           (=
             (env-win-set-environment-variable
@@ -492,7 +493,7 @@
 ;: persistently, so helpers that extend one copy into a right-sized array
 ;: instead of mutating storage another value still observes.
 (defstruct EnvStringList
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 ;: Optional PATH-style list result. Missing variables use `EnvNoStringList`;
@@ -538,7 +539,7 @@
 (define (string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
   (let
     [n : i64 (struct-get rest len)]
-    [slots : (Array String) (array.make-array String (+ n 1))]
+    [slots : (__tl_dyn-array String) (array.make-array String (+ n 1))]
     [i : i64 0]
     (begin
       (array-set! slots 0 value)
@@ -552,7 +553,7 @@
 (define (string-list-from-vec [items : svec.Vec]) : EnvStringList
   (let
     [n : i64 (svec.len (& items))]
-    [slots : (Array String) (array.make-array String n)]
+    [slots : (__tl_dyn-array String) (array.make-array String n)]
     [i : i64 0]
     (begin
       (while (< i n)

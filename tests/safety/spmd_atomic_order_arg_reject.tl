@@ -1,5 +1,5 @@
 ;: Atomic helpers are sequentially consistent only and expose no ordering arg.
 (import stdlib.atomic)
 
-(define (main [out : (Array i64)] [n : i64]) : unit
+(define (main [out : (& out atomic.AtomicI64Buffer)] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (atomic.atomic-i64-add! out i 1 0)))

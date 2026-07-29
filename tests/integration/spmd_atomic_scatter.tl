@@ -5,9 +5,9 @@
   (foreach ([i : i64 0 n]) (array-set! ix i (% i 4))))
 
 (define (clear-buckets
-  [out64 : (Array i64)]
-  [out32 : (Array i32)]
-  [serial32 : (Array i32)]) : unit
+  [out64 : (& out64 atomic.AtomicI64Buffer)]
+  [out32 : (& out32 atomic.AtomicI32Buffer)]
+  [serial32 : (& serial32 atomic.AtomicI32Buffer)]) : unit
   (begin
     (foreach
       ([i : i64 0 4])
@@ -16,7 +16,9 @@
         (atomic.atomic-i32-store! out32 i (cast 0 : i32))))
     (atomic.atomic-i32-store! serial32 0 (cast 0 : i32))))
 
-(define (inactive-oob-body [out64 : (Array i64)] [out32 : (Array i32)]) : unit
+(define (inactive-oob-body
+  [out64 : (& out64 atomic.AtomicI64Buffer)]
+  [out32 : (& out32 atomic.AtomicI32Buffer)]) : unit
   (foreach
     ([i : i64 0 0])
     (begin
@@ -25,9 +27,9 @@
 
 (define (atomic-accumulate
   [ix : (Array i64)]
-  [out64 : (Array i64)]
-  [out32 : (Array i32)]
-  [serial32 : (Array i32)]
+  [out64 : (& out64 atomic.AtomicI64Buffer)]
+  [out32 : (& out32 atomic.AtomicI32Buffer)]
+  [serial32 : (& serial32 atomic.AtomicI32Buffer)]
   [old64 : (Array i64)]
   [old32 : (Array i32)]
   [n : i64]) : unit
@@ -45,14 +47,17 @@
 
 (define (snapshot-loads
   [ix : (Array i64)]
-  [out64 : (Array i64)]
+  [out64 : (& out64 atomic.AtomicI64Buffer)]
   [snapshot : (Array i64)]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! snapshot i (atomic.atomic-i64-load out64 (array-ref ix i)))))
 
-(define (masked-even-add [ix : (Array i64)] [out64 : (Array i64)] [n : i64]) : unit
+(define (masked-even-add
+  [ix : (Array i64)]
+  [out64 : (& out64 atomic.AtomicI64Buffer)]
+  [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (= (% i 2) 0)
@@ -60,9 +65,9 @@
       unit)))
 
 (define (check-accumulated
-  [out64 : (Array i64)]
-  [out32 : (Array i32)]
-  [serial32 : (Array i32)]
+  [out64 : (& out64 atomic.AtomicI64Buffer)]
+  [out32 : (& out32 atomic.AtomicI32Buffer)]
+  [serial32 : (& serial32 atomic.AtomicI32Buffer)]
   [old64 : (Array i64)]
   [old32 : (Array i32)]
   [snapshot : (Array i64)]) : bool
@@ -122,7 +127,7 @@
         (set! ok false))
       ok)))
 
-(define (check-after-mask [out64 : (Array i64)]) : bool
+(define (check-after-mask [out64 : (& out64 atomic.AtomicI64Buffer)]) : bool
   (let
     [ok : bool true]
     (begin
@@ -144,27 +149,33 @@
   (let
     [n : i64 17]
     [ix : (Array i64) (array.make-array i64 n)]
-    [out64 : (Array i64) (array.make-array i64 4)]
-    [out32 : (Array i32) (array.make-array i32 4)]
-    [serial32 : (Array i32) (array.make-array i32 1)]
+    [out64 : atomic.AtomicI64Buffer (atomic.i64-buffer 4)]
+    [out32 : atomic.AtomicI32Buffer (atomic.i32-buffer 4)]
+    [serial32 : atomic.AtomicI32Buffer (atomic.i32-buffer 1)]
     [old64 : (Array i64) (array.make-array i64 n)]
     [old32 : (Array i32) (array.make-array i32 n)]
     [snapshot : (Array i64) (array.make-array i64 n)]
     (begin
       (fill-indexes ix n)
-      (atomic.atomic-i64-store! out64 0 7)
-      (if (!= (atomic.atomic-i64-load out64 0) 7)
+      (atomic.atomic-i64-store! (& out64) 0 7)
+      (if (!= (atomic.atomic-i64-load (& out64) 0) 7)
         1
         (begin
-          (clear-buckets out64 out32 serial32)
-          (inactive-oob-body out64 out32)
-          (atomic-accumulate ix out64 out32 serial32 old64 old32 n)
-          (snapshot-loads ix out64 snapshot n)
+          (clear-buckets (& out64) (& out32) (& serial32))
+          (inactive-oob-body (& out64) (& out32))
+          (atomic-accumulate ix (& out64) (& out32) (& serial32) old64 old32 n)
+          (snapshot-loads ix (& out64) snapshot n)
           (if (not
-            (check-accumulated out64 out32 serial32 old64 old32 snapshot))
+            (check-accumulated
+              (& out64)
+              (& out32)
+              (& serial32)
+              old64
+              old32
+              snapshot))
             2
             (begin
-              (masked-even-add ix out64 n)
-              (if (check-after-mask out64)
+              (masked-even-add ix (& out64) n)
+              (if (check-after-mask (& out64))
                 42
                 3))))))))

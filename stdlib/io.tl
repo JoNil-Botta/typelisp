@@ -125,7 +125,7 @@
   (define (io-windows-write [fd : i32] [buf : (Ptr u8)] [count : i32]) : i32
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [written : (Array i32) (array.make-array i32 1)]
+      [written : (__tl_dyn-array i32) (array.make-array i32 1)]
       [ok : i32
         (io-win-write-file
           handle
@@ -144,7 +144,7 @@
   (define (io-windows-read [fd : i32] [buf : (MutPtr u8)] [count : i32]) : i32
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [nread : (Array i32) (array.make-array i32 1)]
+      [nread : (__tl_dyn-array i32) (array.make-array i32 1)]
       [ok : i32
         (io-win-read-file
           handle
@@ -176,7 +176,7 @@
   (define (io-windows-lseek [fd : i32] [offset : i64] [whence : i32]) : i64
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [newpos : (Array i64) (array.make-array i64 1)]
+      [newpos : (__tl_dyn-array i64) (array.make-array i64 1)]
       [ok : i32
         (io-win-set-file-pointer-ex
           handle
@@ -248,11 +248,11 @@
 (define io-stdin-eof-state : bool
   false)
 
-;: Copy `text` into a NUL-terminated byte array for C library calls.
-(define (c-string [text : String]) : (Array u8)
+;: Copy `text` into NUL-terminated private storage for C library calls.
+(define (c-string [text : String]) : (__tl_dyn-array u8)
   (let
     [n : i64 (string-length text)]
-    [buf : (Array u8) (array.make-array u8 (+ n 1))]
+    [buf : (__tl_dyn-array u8) (array.make-array u8 (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -262,13 +262,13 @@
       (array-set! buf n (cast '\0' : u8))
       buf)))
 
-;: Return a mutable pointer to an Array u8 backing buffer.
-(define (array-ptr [buf : (Array u8)]) : (MutPtr u8)
+;: Return a mutable pointer to private byte storage.
+(define (array-ptr [buf : (__tl_dyn-array u8)]) : (MutPtr u8)
   (unsafe
     (array-data buf)))
 
-;: Return a const pointer to an Array u8 backing buffer.
-(define (array-const-ptr [buf : (Array u8)]) : (Ptr u8)
+;: Return a const pointer to private byte storage.
+(define (array-const-ptr [buf : (__tl_dyn-array u8)]) : (Ptr u8)
   (unsafe
     (ptr-cast (array-data buf) : (Ptr u8))))
 
@@ -281,7 +281,7 @@
 (define (copy-c-string [ptr : (Ptr u8)]) : String
   (let
     [n : i64 (c-string-length ptr)]
-    [buf : (Array u8) (array.make-array u8 n)]
+    [buf : (__tl_dyn-array u8) (array.make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -708,7 +708,7 @@
 ;: Write one character byte to stdout without adding a newline.
 (define (print-char [ch : char]) : unit
   (let
-    [buf : (Array u8) (array.make-array u8 1)]
+    [buf : (__tl_dyn-array u8) (array.make-array u8 1)]
     (begin
       (array-set! buf 0 (cast ch : u8))
       (if (= (write-all-fd-status 1 (array-const-ptr buf) 1) 0)
@@ -717,7 +717,7 @@
 
 ;: Fixed-capacity base-2^32 bignum backing the pure-TL f64 formatter.
 (defstruct BigNum
-  (limbs (Array u64))
+  (limbs (__tl_dyn-array u64))
   (len i64))
 
 ;: Limb capacity of formatter bignum scratch buffers.
@@ -779,7 +779,7 @@
             res))))))
 
 ;: Limb count of arr with high zero limbs trimmed, starting from hint.
-(define (bn-norm-len [arr : (Array u64)] [hint : i64]) : i64
+(define (bn-norm-len [arr : (__tl_dyn-array u64)] [hint : i64]) : i64
   (let
     [i : i64 hint]
     (begin
@@ -790,7 +790,7 @@
 ;: Sum of BigNums a and b.
 (define (bn-add [a : BigNum] [b : BigNum]) : BigNum
   (let
-    [r : (Array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
+    [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 (struct-get a len)]
     [lb : i64 (struct-get b len)]
     [n : i64
@@ -825,7 +825,7 @@
 ;: Product of BigNum a and a value m that fits in 32 bits.
 (define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
   (let
-    [r : (Array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
+    [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 (struct-get a len)]
     [carry : u64 (cast 0 : u64)]
     [i : i64 0]
@@ -851,7 +851,7 @@
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
-      [r : (Array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
+      [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
       [la : i64 (struct-get a len)]
       [carry : u64 (cast 0 : u64)]
       [i : i64 0]
@@ -1272,7 +1272,7 @@
 ;: A string of n zero characters.
 (define (ftoa-zeros [n : i64]) : String
   (let
-    [out : (Array u8) (array.make-array u8 n)]
+    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -1322,7 +1322,7 @@
 ;: Render value as a shortest round-tripping decimal string (printf %.17g style).
 (define (format-float-core [value : f64]) : String
   (let
-    [buf : (Array f64) (array.make-array f64 1)]
+    [buf : (__tl_dyn-array f64) (array.make-array f64 1)]
     (begin
       (array-set! buf 0 value)
       (let
@@ -1465,7 +1465,7 @@
           (panic "tl: read-file failed\n")
           unit)
         (let
-          [buf : (Array u8) (array.make-array u8 end)]
+          [buf : (__tl_dyn-array u8) (array.make-array u8 end)]
           [offset : i64 0]
           [done : bool false]
           (begin
@@ -1490,7 +1490,7 @@
 ;: Return the host status code for reading `path`.
 (define (read-file-status [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (stdlib.io.c-string path)]
+    [path-bytes : (__tl_dyn-array u8) (stdlib.io.c-string path)]
     [fd : i64
       (stdlib.io.platform-open
         (stdlib.io.array-const-ptr path-bytes)
@@ -1499,7 +1499,7 @@
     (if (< fd 0)
       (stdlib.io.last-error-code)
       (let
-        [probe : (Array u8) (array.make-array u8 1)]
+        [probe : (__tl_dyn-array u8) (array.make-array u8 1)]
         [read-count : i64
           (stdlib.io.platform-read fd (stdlib.io.array-ptr probe) 1)]
         [status : i64
@@ -1513,7 +1513,7 @@
 ;: Read a whole file, aborting on host read failure.
 (define (read-file [path : String]) : String
   (let
-    [path-bytes : (Array u8) (c-string path)]
+    [path-bytes : (__tl_dyn-array u8) (c-string path)]
     [fd : i64 (platform-open (array-const-ptr path-bytes) (open-read-flags) 0)]
     (if (< fd 0)
       (panic "tl: read-file failed\n")
@@ -1526,7 +1526,7 @@
 ;: Write `contents` to `path` using platform `flags`, returning a host status code.
 (define (write-path-status [path : String] [contents : String] [flags : i64]) : i64
   (let
-    [path-bytes : (Array u8) (c-string path)]
+    [path-bytes : (__tl_dyn-array u8) (c-string path)]
     [fd : i64 (platform-open (array-const-ptr path-bytes) flags (open-mode))]
     (if (< fd 0)
       (last-error-code)
@@ -1571,7 +1571,7 @@
 ;: Return the host status code for probing `path`.
 (define (file-exists-status [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (stdlib.io.c-string path)]
+    [path-bytes : (__tl_dyn-array u8) (stdlib.io.c-string path)]
     [status : i64
       (stdlib.io.platform-access (stdlib.io.array-const-ptr path-bytes) 0)]
     (if (= status 0)
@@ -1599,7 +1599,7 @@
   (begin
     (io_core.io-file-table-init!)
     (let
-      [path-bytes : (Array u8) (stdlib.io.c-string path)]
+      [path-bytes : (__tl_dyn-array u8) (stdlib.io.c-string path)]
       [fd : i64
         (stdlib.io.platform-open
           (stdlib.io.array-const-ptr path-bytes)
@@ -1653,7 +1653,7 @@
         0)]
     [else
       (let
-        [buf : (Array u8) (array.make-array u8 count)]
+        [buf : (__tl_dyn-array u8) (array.make-array u8 count)]
         [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
         [read-count : i64
           (stdlib.io.platform-read fd (stdlib.io.array-ptr buf) count)]
@@ -1713,7 +1713,7 @@
     (if (= count 0)
       ""
       (let
-        [buf : (Array u8) (array.make-array u8 count)]
+        [buf : (__tl_dyn-array u8) (array.make-array u8 count)]
         [offset : i64 0]
         [done : bool false]
         (begin
@@ -1744,7 +1744,7 @@
   (let
     [bytes : byte_buf_core.ByteBufBuilder
       (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
-    [one : (Array u8) (array.make-array u8 1)]
+    [one : (__tl_dyn-array u8) (array.make-array u8 1)]
     [done : bool false]
     (begin
       (while (not done)

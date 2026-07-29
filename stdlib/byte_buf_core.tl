@@ -9,7 +9,7 @@
 
 ;: Append-only owned binary byte buffer. Only the prefix `[0, len)` is live.
 (defstruct ByteBufBuilder
-  (slots (Array u8))
+  (slots (__tl_dyn-array u8))
   (len i64))
 
 ;: Trap when `[start, start + count)` is outside a sequence of `length` bytes.
@@ -59,9 +59,9 @@
 
 ;: Copy `count` bytes from `src[src-start..]` into `dst[dst-start..]`.
 (define (byte-buf-builder-copy-array-range-into
-  [dst : (&mut dst (Array u8))]
+  [dst : (&mut dst (__tl_dyn-array u8))]
   [dst-start : i64]
-  [src : (& src (Array u8))]
+  [src : (& src (__tl_dyn-array u8))]
   [src-start : i64]
   [count : i64]) : unit
   (begin
@@ -96,7 +96,7 @@
         (if (< doubled min-capacity)
           min-capacity
           doubled)]
-      [bigger : (Array u8) (array.make-array u8 new-capacity)]
+      [bigger : (__tl_dyn-array u8) (array.make-array u8 new-capacity)]
       (begin
         (byte-buf-builder-copy-array-range-into
           (&mut bigger)
@@ -135,7 +135,7 @@
 ;: Append `count` bytes from `src` starting at `start`.
 (define (byte-buf-builder-append-array-range
   [buf : (&mut buf ByteBufBuilder)]
-  [src : (& src (Array u8))]
+  [src : (& src (__tl_dyn-array u8))]
   [start : i64]
   [count : i64]) : unit
   (begin
@@ -155,7 +155,7 @@
 ;: Append every byte from `src`.
 (define (byte-buf-builder-append-array
   [buf : (&mut buf ByteBufBuilder)]
-  [src : (& src (Array u8))]) : unit
+  [src : (& src (__tl_dyn-array u8))]) : unit
   (byte-buf-builder-append-array-range buf src 0 (array-length src)))
 
 ;: Append `count` bytes from `src` starting at `start`.
@@ -190,15 +190,15 @@
   [src : String]) : unit
   (byte-buf-builder-append-string-range buf src 0 (string.string-length src)))
 
-;: Copy a live byte range into a fresh `(Array u8)` snapshot.
+;: Copy a live byte range into private compatibility storage.
 (define (byte-buf-builder-copy-range
   [buf : (& buf ByteBufBuilder)]
   [start : i64]
-  [count : i64]) : (Array u8)
+  [count : i64]) : (__tl_dyn-array u8)
   (begin
     (byte-buf-builder-check-range (byte-buf-builder-len buf) start count)
     (let
-      [out : (Array u8) (array.make-array u8 count)]
+      [out : (__tl_dyn-array u8) (array.make-array u8 count)]
       (begin
         (byte-buf-builder-copy-array-range-into
           (&mut out)
@@ -208,8 +208,9 @@
           count)
         out))))
 
-;: Copy all live bytes into a fresh `(Array u8)` snapshot.
-(define (byte-buf-builder-to-array [buf : (& buf ByteBufBuilder)]) : (Array u8)
+;: Copy all live bytes into private compatibility storage.
+(define (byte-buf-builder-to-array [buf : (& buf ByteBufBuilder)]) : (__tl_dyn-array
+    u8)
   (byte-buf-builder-copy-range buf 0 (byte-buf-builder-len buf)))
 
 ;: Copy all live bytes into a fresh `String`.
@@ -219,15 +220,15 @@
     (if (= n 0)
       ""
       (let
-        [out : (Array u8) (byte-buf-builder-to-array buf)]
+        [out : (__tl_dyn-array u8) (byte-buf-builder-to-array buf)]
         [dst : (MutPtr u8)
           (unsafe
             (array-data out))]
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) n))))))
 
-;: Explicit append-builder finish boundary to a fresh byte array.
-(define (byte-buf-builder-finish-array [buf : (& buf ByteBufBuilder)]) : (Array
+;: Finish into private compatibility storage for compiler/runtime internals.
+(define (byte-buf-builder-finish-array [buf : (& buf ByteBufBuilder)]) : (__tl_dyn-array
     u8)
   (byte-buf-builder-to-array buf))
 

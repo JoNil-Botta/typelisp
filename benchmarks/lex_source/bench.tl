@@ -53,7 +53,7 @@
 ;# arguments, so nothing can be constant folded. All arithmetic wraps modulo
 ;# 2^64 in both languages, so the printed decimal matches the C baseline's
 ;# `%lld`.
-(import stdlib.byte_buf)
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -504,11 +504,29 @@
 ;; Load the corpus once, then tokenize it `rounds` times. The corpus text is
 ;; copied into an `(Array u8)` so both implementations walk the same bytes
 ;; through the same kind of indexed byte access.
+(define (ls-string-to-array [text : String]) : (Array u8)
+  (let
+    [n : i64 (string-length text)]
+    [out : (Array u8) (array.make-array u8 n)]
+    [src : (Ptr u8)
+      (unsafe
+        (string-data (& text)))]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set!
+            out
+            i
+            (unsafe
+              (ptr-read (ptr-offset src i))))
+          (set! i (+ i 1))))
+      out)))
+
 (define (ls-bench [path : String] [rounds : i64]) : i64
   (let
     [text : String (io.read-file path)]
-    [buf : (Array u8)
-      (byte_buf.bytes-to-array (byte_buf.str-as-bytes (& text)))]
+    [buf : (Array u8) (ls-string-to-array text)]
     [n : i64 (array-length buf)]
     [round : i64 0]
     [acc : i64 0]

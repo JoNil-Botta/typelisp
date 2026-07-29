@@ -101,7 +101,7 @@
     (let
       [needed : i64 (c-bytes-required-bytes view)]
       [n : i64 (byte_buf.bytes-length view)]
-      [buf : (Array u8) (array.make-array u8 needed)]
+      [buf : (__tl_dyn-array u8) (array.make-array u8 needed)]
       [dst : (MutPtr u8)
         (unsafe
           (array-data buf))]
@@ -201,7 +201,7 @@
 ;: Inline test helper that builds a string containing an interior NUL byte.
 (define (test-string-with-nul) : String
   (let
-    [data : (Array u8) (array.make-array u8 3)]
+    [data : (__tl_dyn-array u8) (array.make-array u8 3)]
     [dst : (MutPtr u8)
       (unsafe
         (array-data data))]
@@ -235,7 +235,7 @@
       unit
       (test-fail))
     (let
-      [empty-storage : (Array u8) (array.make-array u8 1)]
+      [empty-storage : (__tl_dyn-array u8) (array.make-array u8 1)]
       [empty-buf : (MutPtr u8)
         (unsafe
           (array-data empty-storage))]
@@ -243,7 +243,7 @@
         (test-assert-copy-ok (c-string-copy! "" empty-buf 1) 1)
         (test-assert-u8-eq (test-read-u8 empty-buf 0) 0)))
     (let
-      [exact-storage : (Array u8) (array.make-array u8 4)]
+      [exact-storage : (__tl_dyn-array u8) (array.make-array u8 4)]
       [exact : (MutPtr u8)
         (unsafe
           (array-data exact-storage))]
@@ -256,7 +256,7 @@
     (let
       [bytes-text : String "buf"]
       [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
-      [bytes-storage : (Array u8) (array.make-array u8 4)]
+      [bytes-storage : (__tl_dyn-array u8) (array.make-array u8 4)]
       [bytes-dst : (MutPtr u8)
         (unsafe
           (array-data bytes-storage))]
@@ -267,7 +267,7 @@
         (test-assert-u8-eq (test-read-u8 bytes-dst 2) 102)
         (test-assert-u8-eq (test-read-u8 bytes-dst 3) 0)))
     (let
-      [small-storage : (Array u8) (array.make-array u8 3)]
+      [small-storage : (__tl_dyn-array u8) (array.make-array u8 3)]
       [small : (MutPtr u8)
         (unsafe
           (array-data small-storage))]
@@ -277,7 +277,7 @@
         (test-assert-u8-eq (test-read-u8 small 0) 77)))
     (let
       [with-nul : String (test-string-with-nul)]
-      [nul-storage : (Array u8) (array.make-array u8 4)]
+      [nul-storage : (__tl_dyn-array u8) (array.make-array u8 4)]
       [nul-buf : (MutPtr u8)
         (unsafe
           (array-data nul-storage))]
@@ -294,7 +294,7 @@
           (byte_buf.push (byte_buf.new) (cast 97 : u8))
           (cast 0 : u8))]
       [binary-view : (& binary bytes) (byte_buf.as-bytes (& binary))]
-      [binary-storage : (Array u8) (array.make-array u8 3)]
+      [binary-storage : (__tl_dyn-array u8) (array.make-array u8 3)]
       [binary-buf : (MutPtr u8)
         (unsafe
           (array-data binary-storage))]

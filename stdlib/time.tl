@@ -50,20 +50,22 @@
 (define (sleep-unavailable [message : String]) : ResultTimeUnit
   (ErrTimeUnit (TimeUnavailable message)))
 
-;: Convert a `timespec {sec,nsec}` array to milliseconds.
-(define (timespec-ms [timespec : (Array i64)]) : i64
+;: Convert private `timespec {sec,nsec}` storage to milliseconds.
+(define (timespec-ms [timespec : (__tl_dyn-array i64)]) : i64
   (+ (* (array-ref timespec 0) 1000) (/ (array-ref timespec 1) 1000000)))
 
 ;: Fill a Linux `timespec {sec,nsec}` without overflowing for any nonnegative i64 milliseconds.
-(define (timespec-from-ms! [timespec : (Array i64)] [milliseconds : i64]) : unit
+(define (timespec-from-ms!
+  [timespec : (__tl_dyn-array i64)]
+  [milliseconds : i64]) : unit
   (begin
     (array-set! timespec 0 (/ milliseconds 1000))
     (array-set! timespec 1 (* (% milliseconds 1000) 1000000))))
 
-;: Return the raw data address of an `i64` array for Linux syscalls.
+;: Return the raw data address of private `i64` storage for Linux syscalls.
 (cfg
   (not windows)
-  (define (array-addr [items : (Array i64)]) : i64
+  (define (array-addr [items : (__tl_dyn-array i64)]) : i64
     (unsafe
       (cast (ptr->int (ptr-cast (array-data items) : (Ptr u8))) : i64))))
 
@@ -72,7 +74,7 @@
   (not windows)
   (define (linux-clock-ms [clock-id : i64]) : ResultTimeMs
     (let
-      [timespec : (Array i64) (array.make-array i64 2)]
+      [timespec : (__tl_dyn-array i64) (array.make-array i64 2)]
       [status : i64
         (unsafe
           (syscall 228 clock-id (stdlib.time.array-addr timespec)))]
@@ -91,8 +93,8 @@
   (not windows)
   (define (linux-sleep-ms [milliseconds : i64]) : ResultTimeUnit
     (let
-      [request : (Array i64) (array.make-array i64 2)]
-      [remaining : (Array i64) (array.make-array i64 2)]
+      [request : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [remaining : (__tl_dyn-array i64) (array.make-array i64 2)]
       [done : bool false]
       [ok : bool false]
       (begin
@@ -147,7 +149,7 @@
   windows
   (define (windows-unix-ms) : ResultTimeMs
     (let
-      [file-time : (Array i64) (array.make-array i64 1)]
+      [file-time : (__tl_dyn-array i64) (array.make-array i64 1)]
       [_ok : unit
         (stdlib.time.windows-get-system-time-as-file-time
           (unsafe
@@ -165,8 +167,8 @@
   windows
   (define (windows-monotonic-ms) : ResultTimeMs
     (let
-      [counter : (Array i64) (array.make-array i64 1)]
-      [freq : (Array i64) (array.make-array i64 1)]
+      [counter : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [freq : (__tl_dyn-array i64) (array.make-array i64 1)]
       [counter-ok : i32
         (stdlib.time.windows-query-performance-counter
           (unsafe
@@ -234,8 +236,8 @@
   windows
   (define (windows-sleep-ms [milliseconds : i64]) : ResultTimeUnit
     (let
-      [counter : (Array i64) (array.make-array i64 1)]
-      [frequency-buffer : (Array i64) (array.make-array i64 1)]
+      [counter : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [frequency-buffer : (__tl_dyn-array i64) (array.make-array i64 1)]
       [counter-ok : i32
         (stdlib.time.windows-query-performance-counter
           (unsafe
@@ -385,7 +387,7 @@
       "time: sleep duration must be nonnegative")
     (stdlib.time.test-assert-unit-ok (stdlib.time.sleep-ms 0))
     (let
-      [converted : (Array i64) (array.make-array i64 2)]
+      [converted : (__tl_dyn-array i64) (array.make-array i64 2)]
       (begin
         (stdlib.time.timespec-from-ms! converted 9223372036854775807)
         (stdlib.time.test-assert-i64-eq

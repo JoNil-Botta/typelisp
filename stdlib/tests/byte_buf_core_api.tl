@@ -17,7 +17,7 @@
   (let
     [buf : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 2)]
-    [src : (Array u8) (array.make-array u8 4)]
+    [src : (__tl_dyn-array u8) (array.make-array u8 4)]
     (begin
       (test.assert-i64-eq
         (byte_buf_core.byte-buf-builder-len (& buf))
@@ -56,7 +56,7 @@
         7
         "reserve keeps len")
       (let
-        [snap : (Array u8)
+        [snap : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-finish-array (& buf))]
         (begin
           (test.assert-i64-eq (array-length snap) 7 "snapshot len")
@@ -69,7 +69,7 @@
           (assert-u8-eq (array-ref snap 6) 107 "snapshot string k")
           (array-set! snap 0 (make-u8 7))
           (let
-            [again : (Array u8)
+            [again : (__tl_dyn-array u8)
               (byte_buf_core.byte-buf-builder-copy-range (& buf) 0 1)]
             (assert-u8-eq (array-ref again 0) 65 "snapshot copies"))))
       (let

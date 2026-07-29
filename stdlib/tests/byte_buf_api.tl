@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.string)
 (import stdlib.test)
@@ -54,57 +53,45 @@
         (test.assert-i64-eq (byte_buf.len buf) 1 "reuse after clear")
         (assert-u8-eq (byte_buf.ref buf 0) 7 "reuse value")))))
 
-(define (assert-array-copy) : unit
+(define (assert-borrowed-copy) : unit
   (let
-    [src : (Array u8) (array.make-array u8 4)]
+    [src : byte_buf.ByteBuf
+      (byte_buf.push
+        (byte_buf.push
+          (byte_buf.push (byte_buf.push (byte_buf.new) (make-u8 1)) (make-u8 0))
+          (make-u8 200))
+        (make-u8 255))]
+    [view : (& src bytes) (byte_buf.as-bytes (& src))]
+    [buf : byte_buf.ByteBuf (byte_buf.from-bytes view)]
     (begin
-      (array-set! src 0 (make-u8 1))
-      (array-set! src 1 (make-u8 0))
-      (array-set! src 2 (make-u8 200))
-      (array-set! src 3 (make-u8 255))
+      (test.assert-i64-eq (byte_buf.len buf) 4 "from-bytes len")
+      (assert-u8-eq (byte_buf.ref buf 2) 200 "from-bytes copies")
       (let
-        [buf : byte_buf.ByteBuf (byte_buf.from-array src)]
+        [slice : byte_buf.ByteBuf (byte_buf.from-bytes-range view 1 2)]
         (begin
-          (test.assert-i64-eq (byte_buf.len buf) 4 "from-array len")
-          (array-set! src 2 (make-u8 2))
-          (assert-u8-eq (byte_buf.ref buf 2) 200 "from-array copies")
-          (let
-            [slice : (Array u8) (byte_buf.copy-range buf 1 2)]
-            (begin
-              (test.assert-i64-eq (array-length slice) 2 "copy-range len")
-              (assert-u8-eq (array-ref slice 0) 0 "copy-range first")
-              (assert-u8-eq (array-ref slice 1) 200 "copy-range second")))
-          (let
-            [snap : (Array u8) (byte_buf.to-array buf)]
-            (begin
-              (test.assert-i64-eq (array-length snap) 4 "to-array len")
-              (assert-u8-eq (array-ref snap 3) 255 "to-array last")
-              (array-set! snap 3 (make-u8 3))
-              (assert-u8-eq (byte_buf.ref buf 3) 255 "to-array copies"))))))))
+          (test.assert-i64-eq (byte_buf.len slice) 2 "range copy len")
+          (assert-u8-eq (byte_buf.ref slice 0) 0 "range copy first")
+          (assert-u8-eq (byte_buf.ref slice 1) 200 "range copy second"))))))
 
 (define (assert-mixed-append) : unit
   (let
-    [src : (Array u8) (array.make-array u8 3)]
+    [src : String "ABC"]
+    [view : (& src bytes) (byte_buf.str-as-bytes (& src))]
+    [buf : byte_buf.ByteBuf
+      (byte_buf.append-bytes-range
+        (byte_buf.append-string (byte_buf.new) "xy")
+        view
+        1
+        2)]
     (begin
-      (array-set! src 0 (make-u8 65))
-      (array-set! src 1 (make-u8 66))
-      (array-set! src 2 (make-u8 67))
       (let
-        [buf : byte_buf.ByteBuf
-          (byte_buf.append-array-range
-            (byte_buf.append-string (byte_buf.new) "xy")
-            src
-            1
-            2)]
-        (begin
-          (let
-            [actual : String (byte_buf.to-string buf)]
-            [expected : String "xyBC"]
-            (test.assert-string-eq
-              (& actual)
-              (& expected)
-              "append string and array range"))
-          (test.assert-i64-eq (byte_buf.len buf) 4 "append mixed len"))))))
+        [actual : String (byte_buf.to-string buf)]
+        [expected : String "xyBC"]
+        (test.assert-string-eq
+          (& actual)
+          (& expected)
+          "append string and bytes range"))
+      (test.assert-i64-eq (byte_buf.len buf) 4 "append mixed len"))))
 
 (define (assert-string-roundtrip) : unit
   (let
@@ -116,6 +103,32 @@
         [out : String (byte_buf.to-string buf)]
         [expected : String "hello"]
         (test.assert-string-eq (& out) (& expected) "to-string text")))))
+
+(define (assert-string-copy-boundaries) : unit
+  (begin
+    (let
+      [buf : byte_buf.ByteBuf (byte_buf.from-string "owner")]
+      [copy : String (byte_buf.to-string buf)]
+      [expected : String "owner"]
+      (begin
+        (set! buf (byte_buf.set! buf 0 (make-u8 88)))
+        (test.assert-string-eq
+          (& copy)
+          (& expected)
+          "to-string owns copied storage")))
+    (let
+      [buf : byte_buf.ByteBuf (byte_buf.from-string "borrow")]
+      [copy : String
+        (let
+          [view : (& buf bytes) (byte_buf.as-bytes (& buf))]
+          (byte_buf.bytes-to-string view))]
+      [expected : String "borrow"]
+      (begin
+        (set! buf (byte_buf.set! buf 0 (make-u8 88)))
+        (test.assert-string-eq
+          (& copy)
+          (& expected)
+          "bytes-to-string owns copied storage")))))
 
 (define (assert-borrowed-bytes) : unit
   (let
@@ -134,11 +147,6 @@
         3
         "bytes sub-slice len")
       (assert-u8-eq (byte_buf.bytes-ref middle 0) 99 "bytes sub-slice first")
-      (let
-        [arr : (Array u8) (byte_buf.bytes-to-array middle)]
-        (begin
-          (test.assert-i64-eq (array-length arr) 3 "bytes to-array len")
-          (assert-u8-eq (array-ref arr 2) 101 "bytes to-array last")))
       (let
         [copy : String (byte_buf.bytes-to-string middle)]
         [expected : String "cde"]
@@ -203,52 +211,47 @@
       (assert-u8-eq (string-byte text 1) 128 "binary high byte")
       (assert-u8-eq (string-byte text 2) 255 "binary max byte"))))
 
-(define (assert-legacy-public-api) : unit
+(define (assert-public-copy-api) : unit
   (let
-    [src : (Array u8) (array.make-array u8 4)]
+    [src : byte_buf.ByteBuf
+      (byte_buf.push
+        (byte_buf.push
+          (byte_buf.push
+            (byte_buf.push (byte_buf.new) (make-u8 65))
+            (make-u8 0))
+          (make-u8 128))
+        (make-u8 255))]
+    [view : (& src bytes) (byte_buf.as-bytes (& src))]
+    [buf : byte_buf.ByteBuf
+      (byte_buf.append-string (byte_buf.from-bytes view) "ok")]
     (begin
-      (array-set! src 0 (make-u8 65))
-      (array-set! src 1 (make-u8 0))
-      (array-set! src 2 (make-u8 128))
-      (array-set! src 3 (make-u8 255))
+      (test.assert-i64-eq (byte_buf.len buf) 6 "append len")
+      (test.assert-true (>= (byte_buf.capacity buf) 6) "append capacity")
+      (assert-u8-eq (byte_buf.ref buf 0) 65 "first byte")
+      (assert-u8-eq (byte_buf.ref buf 1) 0 "nul byte")
+      (assert-u8-eq (byte_buf.ref buf 2) 128 "high byte")
+      (assert-u8-eq (byte_buf.ref buf 3) 255 "max byte")
+      (assert-u8-eq (byte_buf.ref buf 4) 111 "string o")
+      (assert-u8-eq (byte_buf.ref buf 5) 107 "string k")
       (let
-        [buf : byte_buf.ByteBuf
-          (byte_buf.append-string
-            (byte_buf.append-array (byte_buf.with-capacity 1) src)
-            "ok")]
+        [text-buf : byte_buf.ByteBuf (byte_buf.from-string "text")]
+        [text : String (byte_buf.to-string text-buf)]
+        [expected : String "text"]
         (begin
-          (test.assert-i64-eq (byte_buf.len buf) 6 "append len")
-          (test.assert-true (>= (byte_buf.capacity buf) 6) "append capacity")
-          (assert-u8-eq (byte_buf.ref buf 0) 65 "first byte")
-          (assert-u8-eq (byte_buf.ref buf 1) 0 "nul byte")
-          (assert-u8-eq (byte_buf.ref buf 2) 128 "high byte")
-          (assert-u8-eq (byte_buf.ref buf 3) 255 "max byte")
-          (assert-u8-eq (byte_buf.ref buf 4) 111 "string o")
-          (assert-u8-eq (byte_buf.ref buf 5) 107 "string k")
-          (let
-            [snap : (Array u8) (byte_buf.to-array buf)]
-            (begin
-              (test.assert-i64-eq (array-length snap) 6 "snapshot len")
-              (array-set! snap 0 (make-u8 1))
-              (assert-u8-eq (byte_buf.ref buf 0) 65 "snapshot copies")))
-          (let
-            [text-buf : byte_buf.ByteBuf (byte_buf.from-string "text")]
-            [text : String (byte_buf.to-string text-buf)]
-            [expected : String "text"]
-            (begin
-              (test.assert-string-eq (& text) (& expected) "string round trip")
-              (test.assert-true
-                (byte_buf.empty? (byte_buf.clear! text-buf))
-                "clear empties buffer"))))))))
+          (test.assert-string-eq (& text) (& expected) "string round trip")
+          (test.assert-true
+            (byte_buf.empty? (byte_buf.clear! text-buf))
+            "clear empties buffer"))))))
 
 (define (main) : i64
   (begin
     (assert-basic-growth)
-    (assert-array-copy)
+    (assert-borrowed-copy)
     (assert-mixed-append)
     (assert-string-roundtrip)
+    (assert-string-copy-boundaries)
     (assert-borrowed-bytes)
     (assert-byte-buf-views)
     (assert-binary-string)
-    (assert-legacy-public-api)
+    (assert-public-copy-api)
     42))

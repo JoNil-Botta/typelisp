@@ -103,10 +103,6 @@
   (uses CompilerLiveI64Set)
   (defs CompilerLiveI64Set))
 
-(defstruct CompilerLiveInstrScan
-  (instr-after CompilerLiveInstrSetVec)
-  (live-before CompilerLiveI64Set))
-
 (define (compiler-live-instr-set-vec-empty) : CompilerLiveInstrSetVec
   (CompilerLiveInstrSetVec (make-array CompilerLiveI64Set 0)))
 
@@ -456,6 +452,186 @@
           (set! same false)))
       same)))
 
+;; Mutable liveness scratch keeps the changing dataflow facts in one
+;; function-sized word row. CompilerLiveI64Set remains the canonical stored
+;; representation: scratch is copied and trimmed only when a block fact or
+;; instruction point must outlive the current walk.
+(define (compiler-live-scratch-clear! [words : (Array i64)]) : unit
+  (let
+    [data : (MutPtr i64)
+      (unsafe
+        (array-data words))]
+    [count : i64 (array-length words)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (unsafe
+          (ptr-write! (ptr-offset data index) 0))
+        (set! index (+ index 1))))))
+
+(define (compiler-live-scratch-copy-set!
+  [words : (Array i64)]
+  [set : CompilerLiveI64Set]) : i64
+  (let
+    [dst : (MutPtr i64)
+      (unsafe
+        (array-data words))]
+    [src-words : (Array i64) (compiler-live-set-words set)]
+    [src : (MutPtr i64)
+      (unsafe
+        (array-data src-words))]
+    [src-count : i64 (array-length src-words)]
+    [count : i64 (array-length words)]
+    [index : i64 0]
+    (begin
+      (while (< index src-count)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst index)
+              (ptr-read (ptr-offset src index))))
+          (set! index (+ index 1))))
+      (while (< index count)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset dst index) 0))
+          (set! index (+ index 1))))
+      src-count)))
+
+(define (compiler-live-scratch-union-set!
+  [words : (Array i64)]
+  [active-count : i64]
+  [set : CompilerLiveI64Set]) : i64
+  (let
+    [dst : (MutPtr i64)
+      (unsafe
+        (array-data words))]
+    [src-words : (Array i64) (compiler-live-set-words set)]
+    [src : (MutPtr i64)
+      (unsafe
+        (array-data src-words))]
+    [count : i64 (array-length src-words)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst index)
+              (bit-or
+                (ptr-read (ptr-offset dst index))
+                (ptr-read (ptr-offset src index)))))
+          (set! index (+ index 1))))
+      (compiler-live-set-max active-count count))))
+
+(define (compiler-live-scratch-step!
+  [words : (Array i64)]
+  [active-count : i64]
+  [uses : CompilerLiveI64Set]
+  [defs : CompilerLiveI64Set]) : i64
+  (let
+    [dst : (MutPtr i64)
+      (unsafe
+        (array-data words))]
+    [use-words : (Array i64) (compiler-live-set-words uses)]
+    [def-words : (Array i64) (compiler-live-set-words defs)]
+    [use-data : (MutPtr i64)
+      (unsafe
+        (array-data use-words))]
+    [def-data : (MutPtr i64)
+      (unsafe
+        (array-data def-words))]
+    [use-count : i64 (array-length use-words)]
+    [def-count : i64 (array-length def-words)]
+    [count : i64
+      (compiler-live-set-max
+        active-count
+        (compiler-live-set-max use-count def-count))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [use-bits : i64
+            (if (< index use-count)
+              (unsafe
+                (ptr-read (ptr-offset use-data index)))
+              0)]
+          [def-bits : i64
+            (if (< index def-count)
+              (unsafe
+                (ptr-read (ptr-offset def-data index)))
+              0)]
+          (begin
+            (unsafe
+              (ptr-write!
+                (ptr-offset dst index)
+                (bit-or
+                  (bit-and
+                    (ptr-read (ptr-offset dst index))
+                    (bit-xor def-bits -1))
+                  use-bits)))
+            (set! index (+ index 1)))))
+      (compiler-live-set-trim-length words count))))
+
+(define (compiler-live-scratch-eq-set?
+  [words : (Array i64)]
+  [active-count : i64]
+  [set : CompilerLiveI64Set]) : bool
+  (let
+    [set-count : i64 (compiler-live-set-word-count set)]
+    [data : (MutPtr i64)
+      (unsafe
+        (array-data words))]
+    [set-words : (Array i64) (compiler-live-set-words set)]
+    [set-data : (MutPtr i64)
+      (unsafe
+        (array-data set-words))]
+    [index : i64 0]
+    [same : bool (= active-count set-count)]
+    (begin
+      (while (and same (< index active-count))
+        (begin
+          (if (=
+            (unsafe
+              (ptr-read (ptr-offset data index)))
+            (unsafe
+              (ptr-read (ptr-offset set-data index))))
+            unit
+            (set! same false))
+          (set! index (+ index 1))))
+      same)))
+
+(define (compiler-live-scratch-freeze
+  [words : (Array i64)]
+  [active-count : i64]) : CompilerLiveI64Set
+  (let
+    [count : i64 (compiler-live-set-trim-length words active-count)]
+    (if (<= count 0)
+      (compiler-live-set-empty)
+      (let
+        [out : (Array i64) (make-array i64 count)]
+        [src : (MutPtr i64)
+          (unsafe
+            (array-data words))]
+        [dst : (MutPtr i64)
+          (unsafe
+            (array-data out))]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (unsafe
+                (ptr-write!
+                  (ptr-offset dst index)
+                  (ptr-read (ptr-offset src index))))
+              (set! index (+ index 1))))
+          (CompilerLiveI64Set out))))))
+
+(define (compiler-live-var-word-count [vars : i64]) : i64
+  (if (<= vars 0)
+    0
+    (+ (compiler-live-set-word-index (- vars 1)) 1)))
+
 (define (compiler-live-set-word-count-bits [bits : i64] [bit : i64]) : i64
   (if (>= bit (compiler-live-set-word-bits))
     0
@@ -677,6 +853,61 @@
         ok
         (and ok (compiler-live-set-eq? deduplicated (compiler-live-set2 31 66))))
       ok)))
+
+(define (compiler-live-scratch-ops-ok?) : bool
+  (let
+    [words : (Array i64) (make-array i64 6)]
+    [copy-count : i64
+      (compiler-live-scratch-copy-set! words (compiler-live-set3 1 64 130))]
+    [copy-ok : bool
+      (and
+        (= copy-count 5)
+        (compiler-live-scratch-eq-set?
+          words
+          copy-count
+          (compiler-live-set3 1 64 130)))]
+    [union-count : i64
+      (compiler-live-scratch-union-set!
+        words
+        copy-count
+        (compiler-live-set2 65 191))]
+    [union-ok : bool
+      (and
+        (= union-count 6)
+        (compiler-live-scratch-eq-set?
+          words
+          union-count
+          (compiler-live-set5 1 64 65 130 191)))]
+    [step-count : i64
+      (compiler-live-scratch-step!
+        words
+        union-count
+        (compiler-live-set1 0)
+        (compiler-live-set2 1 130))]
+    [step-ok : bool
+      (and
+        (= step-count 6)
+        (compiler-live-scratch-eq-set?
+          words
+          step-count
+          (compiler-live-set4 0 64 65 191))
+        (compiler-live-set-eq?
+          (compiler-live-scratch-freeze words step-count)
+          (compiler-live-set4 0 64 65 191)))]
+    [short-count : i64
+      (compiler-live-scratch-copy-set! words (compiler-live-set1 7))]
+    [short-ok : bool
+      (and
+        (= short-count 1)
+        (compiler-live-scratch-eq-set? words short-count (compiler-live-set1 7))
+        (= (compiler-live-set-trim-length words 6) 1))]
+    [_cleared : unit (compiler-live-scratch-clear! words)]
+    (and
+      copy-ok
+      union-ok
+      step-ok
+      short-ok
+      (= (compiler-live-set-trim-length words 6) 0))))
 
 (define (compiler-live-label-set-contains?
   [set : CompilerLiveLabelSet]
@@ -1033,29 +1264,95 @@
     (compiler-live-set-empty)
     (compiler-live-set-empty)))
 
-(define (compiler-live-block-use-def-seq-from
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [uses : CompilerLiveI64Set]
-  [defs : CompilerLiveI64Set]) : CompilerLiveUseDef
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (CompilerLiveUseDef uses defs)
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      [instr-uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
-      [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
-      (compiler-live-block-use-def-seq-from
-        instrs
-        (+ index 1)
-        (compiler-live-set-union uses (compiler-live-set-minus instr-uses defs))
-        (compiler-live-set-union defs instr-defs)))))
+(define (compiler-live-block-use-def-step!
+  [uses : (Array i64)]
+  [defs : (Array i64)]
+  [instr-uses : CompilerLiveI64Set]
+  [instr-defs : CompilerLiveI64Set]) : unit
+  (let
+    [use-data : (MutPtr i64)
+      (unsafe
+        (array-data uses))]
+    [def-data : (MutPtr i64)
+      (unsafe
+        (array-data defs))]
+    [instr-use-words : (Array i64) (compiler-live-set-words instr-uses)]
+    [instr-def-words : (Array i64) (compiler-live-set-words instr-defs)]
+    [instr-use-data : (MutPtr i64)
+      (unsafe
+        (array-data instr-use-words))]
+    [instr-def-data : (MutPtr i64)
+      (unsafe
+        (array-data instr-def-words))]
+    [instr-use-count : i64 (array-length instr-use-words)]
+    [instr-def-count : i64 (array-length instr-def-words)]
+    [count : i64 (compiler-live-set-max instr-use-count instr-def-count)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [instr-use-bits : i64
+          (if (< index instr-use-count)
+            (unsafe
+              (ptr-read (ptr-offset instr-use-data index)))
+            0)]
+        [instr-def-bits : i64
+          (if (< index instr-def-count)
+            (unsafe
+              (ptr-read (ptr-offset instr-def-data index)))
+            0)]
+        [old-def-bits : i64
+          (unsafe
+            (ptr-read (ptr-offset def-data index)))]
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset use-data index)
+              (bit-or
+                (ptr-read (ptr-offset use-data index))
+                (bit-and instr-use-bits (bit-xor old-def-bits -1)))))
+          (unsafe
+            (ptr-write!
+              (ptr-offset def-data index)
+              (bit-or old-def-bits instr-def-bits)))
+          (set! index (+ index 1)))))))
 
-(define (compiler-live-block-use-def-seq [instrs : CompilerIrInstrSeq]) : CompilerLiveUseDef
-  (compiler-live-block-use-def-seq-from
-    instrs
-    0
-    (compiler-live-set-empty)
-    (compiler-live-set-empty)))
+(define (compiler-live-block-use-def-seq-with-scratch
+  [instrs : CompilerIrInstrSeq]
+  [uses : (Array i64)]
+  [defs : (Array i64)]
+  [edge-precise? : bool]) : CompilerLiveUseDef
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [use-count : i64 0]
+    [def-count : i64 0]
+    [index : i64 0]
+    (begin
+      (compiler-live-scratch-clear! uses)
+      (compiler-live-scratch-clear! defs)
+      (while (< index count)
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+          [instr-uses : CompilerLiveI64Set
+            (if edge-precise?
+              (compiler-live-instr-uses-nophi instr)
+              (compiler-live-instr-uses instr))]
+          [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+          (begin
+            (compiler-live-block-use-def-step! uses defs instr-uses instr-defs)
+            (set!
+              use-count
+              (compiler-live-set-max
+                use-count
+                (compiler-live-set-word-count instr-uses)))
+            (set!
+              def-count
+              (compiler-live-set-max
+                def-count
+                (compiler-live-set-word-count instr-defs)))
+            (set! index (+ index 1)))))
+      (CompilerLiveUseDef
+        (compiler-live-scratch-freeze uses use-count)
+        (compiler-live-scratch-freeze defs def-count)))))
 
 (define (compiler-live-instr-seq-last [instrs : CompilerIrInstrSeq]) : CompilerLiveMaybeInstr
   (if (compiler-ir-instr-seq-empty? instrs)
@@ -1101,13 +1398,6 @@
         (compiler-live-set-empty)
         (compiler-live-block-successors block)
         (compiler-live-instr-set-vec-empty))]))
-
-(define (compiler-live-build-block [block : CompilerIrBlock]) : CompilerLiveBlock
-  (match block
-    [(CompilerIrBlock.Block _ instrs)
-      (compiler-live-build-block-from-use-def
-        block
-        (compiler-live-block-use-def-seq instrs))]))
 
 (define (compiler-live-label-id-map-get
   [ids : (& ids live_label_map.Map)]
@@ -1238,48 +1528,65 @@
       (compiler-live-predecessor-fill! successors out next 0)
       out)))
 
-(define (compiler-live-successor-live-out-graph-loop
-  [items : (Array i64)]
-  [graph : CompilerLiveBlockGraph]
-  [index : i64]
-  [acc : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (if (>= index (array-length items))
-    acc
-    (let
-      [successor : CompilerLiveBlock
-        (array-ref (struct-get graph blocks) (array-ref items index))]
-      (compiler-live-successor-live-out-graph-loop
-        items
-        graph
-        (+ index 1)
-        (compiler-live-set-union (struct-get successor live-in) acc)))))
-
-(define (compiler-live-successor-live-out-graph
+(define (compiler-live-successor-live-out-graph-into!
   [successors : CompilerLiveIndexVec]
-  [graph : CompilerLiveBlockGraph]) : CompilerLiveI64Set
-  (compiler-live-successor-live-out-graph-loop
-    (struct-get successors items)
-    graph
-    0
-    (compiler-live-set-empty)))
+  [graph : CompilerLiveBlockGraph]
+  [words : (Array i64)]) : i64
+  (let
+    [items : (Array i64) (struct-get successors items)]
+    [active-count : i64 0]
+    [index : i64 0]
+    (begin
+      (compiler-live-scratch-clear! words)
+      (while (< index (array-length items))
+        (let
+          [successor : CompilerLiveBlock
+            (array-ref (struct-get graph blocks) (array-ref items index))]
+          (begin
+            (set!
+              active-count
+              (compiler-live-scratch-union-set!
+                words
+                active-count
+                (struct-get successor live-in)))
+            (set! index (+ index 1)))))
+      active-count)))
 
 (define (compiler-live-recompute-block-graph
   [block : CompilerLiveBlock]
   [graph : CompilerLiveBlockGraph]
-  [index : i64]) : CompilerLiveBlock
+  [index : i64]
+  [words : (Array i64)]) : CompilerLiveBlock
   (let
-    [uses : CompilerLiveI64Set (struct-get block uses)]
-    [defs : CompilerLiveI64Set (struct-get block defs)]
-    [live-out : CompilerLiveI64Set
-      (compiler-live-successor-live-out-graph
+    [live-out-count : i64
+      (compiler-live-successor-live-out-graph-into!
         (array-ref (struct-get graph successors) index)
-        graph)]
+        graph
+        words)]
+    [live-out : CompilerLiveI64Set
+      (if (compiler-live-scratch-eq-set?
+        words
+        live-out-count
+        (struct-get block live-out))
+        (struct-get block live-out)
+        (compiler-live-scratch-freeze words live-out-count))]
+    [live-in-count : i64
+      (compiler-live-scratch-step!
+        words
+        live-out-count
+        (struct-get block uses)
+        (struct-get block defs))]
     [live-in : CompilerLiveI64Set
-      (compiler-live-set-union uses (compiler-live-set-minus live-out defs))]
+      (if (compiler-live-scratch-eq-set?
+        words
+        live-in-count
+        (struct-get block live-in))
+        (struct-get block live-in)
+        (compiler-live-scratch-freeze words live-in-count))]
     (CompilerLiveBlock
       (struct-get block label)
-      uses
-      defs
+      (struct-get block uses)
+      (struct-get block defs)
       live-in
       live-out
       (struct-get block successors)
@@ -1331,72 +1638,84 @@
         (array-set! pending (array-ref items i) true)
         (set! i (+ i 1))))))
 
-(define (compiler-live-before-instr
-  [live-after : CompilerLiveI64Set]
-  [instr : CompilerIrInstr]) : CompilerLiveI64Set
-  (compiler-live-set-union
-    (compiler-live-instr-uses instr)
-    (compiler-live-set-minus live-after (compiler-live-instr-defs instr))))
-
-(define (compiler-live-instr-seq-scan-from
+(define (compiler-live-instr-seq-fill-after!
   [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [live-after : CompilerLiveI64Set]
-  [out : (Array CompilerLiveI64Set)]) : CompilerLiveI64Set
-  (if (< index 0)
-    live-after
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (begin
-        (array-set! out index live-after)
-        (compiler-live-instr-seq-scan-from
-          instrs
-          (- index 1)
-          (compiler-live-before-instr live-after instr)
-          out)))))
-
-(define (compiler-live-instr-seq-scan
-  [instrs : CompilerIrInstrSeq]
-  [live-out : CompilerLiveI64Set]) : CompilerLiveInstrScan
+  [live-out : CompilerLiveI64Set]
+  [out : (Array CompilerLiveI64Set)]
+  [words : (Array i64)]
+  [edge-precise? : bool]) : unit
   (let
     [count : i64 (compiler-ir-instr-seq-count instrs)]
-    [items : (Array CompilerLiveI64Set) (make-array CompilerLiveI64Set count)]
-    [live-before : CompilerLiveI64Set
-      (compiler-live-instr-seq-scan-from instrs (- count 1) live-out items)]
-    (CompilerLiveInstrScan (CompilerLiveInstrSetVec items) live-before)))
+    [index : i64 (- count 1)]
+    [at-live-out? : bool true]
+    [active-count : i64 (compiler-live-scratch-copy-set! words live-out)]
+    (while (>= index 0)
+      (let
+        [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        [uses : CompilerLiveI64Set
+          (if edge-precise?
+            (compiler-live-instr-uses-nophi instr)
+            (compiler-live-instr-uses instr))]
+        [defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+        (begin
+          ;; The final point is already a stored immutable set. Reuse it
+          ;; rather than copying scratch once more at every block boundary.
+          (array-set!
+            out
+            index
+            (if at-live-out?
+              live-out
+              (compiler-live-scratch-freeze words active-count)))
+          (set! at-live-out? false)
+          (set!
+            active-count
+            (compiler-live-scratch-step! words active-count uses defs))
+          (set! index (- index 1)))))))
 
 (define (compiler-live-fill-instr-after-block
   [ir-block : CompilerIrBlock]
-  [block : CompilerLiveBlock]) : CompilerLiveBlock
+  [block : CompilerLiveBlock]
+  [words : (Array i64)]
+  [edge-precise? : bool]) : CompilerLiveBlock
   (match ir-block
     [(CompilerIrBlock.Block _ instrs)
       (let
-        [scan : CompilerLiveInstrScan
-          (compiler-live-instr-seq-scan instrs (struct-get block live-out))]
-        (CompilerLiveBlock
-          (struct-get block label)
-          (struct-get block uses)
-          (struct-get block defs)
-          (struct-get block live-in)
-          (struct-get block live-out)
-          (struct-get block successors)
-          (struct-get scan instr-after)))]))
+        [items : (Array CompilerLiveI64Set)
+          (make-array CompilerLiveI64Set (compiler-ir-instr-seq-count instrs))]
+        (begin
+          (compiler-live-instr-seq-fill-after!
+            instrs
+            (struct-get block live-out)
+            items
+            words
+            edge-precise?)
+          (CompilerLiveBlock
+            (struct-get block label)
+            (struct-get block uses)
+            (struct-get block defs)
+            (struct-get block live-in)
+            (struct-get block live-out)
+            (struct-get block successors)
+            (CompilerLiveInstrSetVec items))))]))
 
 (define (compiler-live-analyze-function [func : CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+        [word-count : i64 (compiler-live-var-word-count vars)]
         [build : CompilerLiveFunctionGraphBuild
           (compiler-live-function-graph-build
             seq
-            (compiler-live-build-block-array seq))]
+            (compiler-live-build-block-array seq vars))]
         [graph : CompilerLiveBlockGraph
-          (compiler-live-fixpoint (struct-get build graph))]
+          (compiler-live-fixpoint (struct-get build graph) word-count)]
         (begin
           (compiler-live-fill-instr-after-graph-seq!
             (struct-get build seq)
-            (struct-get graph blocks))
+            (struct-get graph blocks)
+            word-count
+            false)
           (CompilerFunctionLiveness.Liveness
             (struct-get graph ids)
             (struct-get graph blocks))))]))
@@ -1427,34 +1746,6 @@
   (match instr
     [(CompilerIrInstr.Phi _ _ _) (compiler-live-set-empty)]
     [_ (compiler-live-instr-uses instr)]))
-
-(define (compiler-live-block-use-def-nophi-seq-from
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [uses : CompilerLiveI64Set]
-  [defs : CompilerLiveI64Set]) : CompilerLiveUseDef
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (CompilerLiveUseDef uses defs)
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      [instr-uses : CompilerLiveI64Set (compiler-live-instr-uses-nophi instr)]
-      [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
-      (compiler-live-block-use-def-nophi-seq-from
-        instrs
-        (+ index 1)
-        (compiler-live-set-union uses (compiler-live-set-minus instr-uses defs))
-        (compiler-live-set-union defs instr-defs)))))
-
-(define (compiler-live-build-block-nophi [block : CompilerIrBlock]) : CompilerLiveBlock
-  (match block
-    [(CompilerIrBlock.Block _ instrs)
-      (compiler-live-build-block-from-use-def
-        block
-        (compiler-live-block-use-def-nophi-seq-from
-          instrs
-          0
-          (compiler-live-set-empty)
-          (compiler-live-set-empty)))]))
 
 ;; Accumulate every phi input (V, predLabel) of one phi into phi-out[ids[predLabel]].
 (define (compiler-live-phi-out-add-inputs!
@@ -1507,24 +1798,47 @@
   [block : CompilerLiveBlock]
   [graph : CompilerLiveBlockGraph]
   [index : i64]
-  [phi-out : (Array CompilerLiveI64Set)]) : CompilerLiveBlock
+  [phi-out : (Array CompilerLiveI64Set)]
+  [words : (Array i64)]) : CompilerLiveBlock
   (let
-    [uses : CompilerLiveI64Set (struct-get block uses)]
-    [defs : CompilerLiveI64Set (struct-get block defs)]
-    [succ-out : CompilerLiveI64Set
-      (compiler-live-successor-live-out-graph
+    [live-out-count : i64
+      (compiler-live-successor-live-out-graph-into!
         (array-ref (struct-get graph successors) index)
-        graph)]
-    [live-out : CompilerLiveI64Set
+        graph
+        words)]
+    [_phi : unit
       (if (and (>= index 0) (< index (array-length phi-out)))
-        (compiler-live-set-union succ-out (array-ref phi-out index))
-        succ-out)]
+        (set!
+          live-out-count
+          (compiler-live-scratch-union-set!
+            words
+            live-out-count
+            (array-ref phi-out index)))
+        unit)]
+    [live-out : CompilerLiveI64Set
+      (if (compiler-live-scratch-eq-set?
+        words
+        live-out-count
+        (struct-get block live-out))
+        (struct-get block live-out)
+        (compiler-live-scratch-freeze words live-out-count))]
+    [live-in-count : i64
+      (compiler-live-scratch-step!
+        words
+        live-out-count
+        (struct-get block uses)
+        (struct-get block defs))]
     [live-in : CompilerLiveI64Set
-      (compiler-live-set-union uses (compiler-live-set-minus live-out defs))]
+      (if (compiler-live-scratch-eq-set?
+        words
+        live-in-count
+        (struct-get block live-in))
+        (struct-get block live-in)
+        (compiler-live-scratch-freeze words live-in-count))]
     (CompilerLiveBlock
       (struct-get block label)
-      uses
-      defs
+      (struct-get block uses)
+      (struct-get block defs)
       live-in
       live-out
       (struct-get block successors)
@@ -1532,11 +1846,13 @@
 
 (define (compiler-live-fixpoint-ep
   [graph : CompilerLiveBlockGraph]
-  [phi-out : (Array CompilerLiveI64Set)]) : CompilerLiveBlockGraph
+  [phi-out : (Array CompilerLiveI64Set)]
+  [word-count : i64]) : CompilerLiveBlockGraph
   (let
     [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
     [pending : (Array bool)
       (make-array bool (array-length (struct-get graph blocks)))]
+    [words : (Array i64) (make-array i64 word-count)]
     [done : bool false]
     (begin
       (compiler-live-worklist-seed! pending 0)
@@ -1552,7 +1868,8 @@
                   block
                   graph
                   index
-                  phi-out)]
+                  phi-out
+                  words)]
               (if (compiler-live-block-liveness-eq? block updated)
                 unit
                 (begin
@@ -1563,84 +1880,19 @@
                     pending)))))))
       graph)))
 
-(define (compiler-live-before-instr-nophi
-  [live-after : CompilerLiveI64Set]
-  [instr : CompilerIrInstr]) : CompilerLiveI64Set
-  (compiler-live-set-union
-    (compiler-live-instr-uses-nophi instr)
-    (compiler-live-set-minus live-after (compiler-live-instr-defs instr))))
-
-(define (compiler-live-instr-seq-scan-nophi-from
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [live-after : CompilerLiveI64Set]
-  [out : (Array CompilerLiveI64Set)]) : CompilerLiveI64Set
-  (if (< index 0)
-    live-after
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (begin
-        (array-set! out index live-after)
-        (compiler-live-instr-seq-scan-nophi-from
-          instrs
-          (- index 1)
-          (compiler-live-before-instr-nophi live-after instr)
-          out)))))
-
-(define (compiler-live-fill-instr-after-block-ep
-  [ir-block : CompilerIrBlock]
-  [block : CompilerLiveBlock]) : CompilerLiveBlock
-  (match ir-block
-    [(CompilerIrBlock.Block _ instrs)
-      (let
-        [count : i64 (compiler-ir-instr-seq-count instrs)]
-        [items : (Array CompilerLiveI64Set)
-          (make-array CompilerLiveI64Set count)]
-        (begin
-          (compiler-live-instr-seq-scan-nophi-from
-            instrs
-            (- count 1)
-            (struct-get block live-out)
-            items)
-          (CompilerLiveBlock
-            (struct-get block label)
-            (struct-get block uses)
-            (struct-get block defs)
-            (struct-get block live-in)
-            (struct-get block live-out)
-            (struct-get block successors)
-            (CompilerLiveInstrSetVec items))))]))
-
-(define (compiler-live-fill-instr-after-graph-ep-seq!
-  [ir-blocks : CompilerIrBlockSeq]
-  [blocks : (Array CompilerLiveBlock)]) : unit
-  (let
-    [count : i64
-      (compiler-live-set-min
-        (compiler-ir-block-seq-count ir-blocks)
-        (array-length blocks))]
-    [i : i64 0]
-    (while (< i count)
-      (begin
-        (array-set!
-          blocks
-          i
-          (compiler-live-fill-instr-after-block-ep
-            (compiler-ir-block-seq-ref ir-blocks i)
-            (array-ref blocks i)))
-        (set! i (+ i 1))))))
-
 ;; The analysis reads nothing but the block list, so callers holding blocks
 ;; without a whole CompilerIrFunction (the backend's stack-slot colorer runs on
 ;; the final rewritten blocks) enter here directly.
 (define (compiler-live-analyze-blocks-edge-precise
-  [blocks : CompilerIrBlockList]) : CompilerFunctionLiveness
+  [blocks : CompilerIrBlockList]
+  [vars : i64]) : CompilerFunctionLiveness
   (let
     [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+    [word-count : i64 (compiler-live-var-word-count vars)]
     [build : CompilerLiveFunctionGraphBuild
       (compiler-live-function-graph-build
         seq
-        (compiler-live-build-block-array-nophi seq))]
+        (compiler-live-build-block-array-nophi seq vars))]
     [graph0 : CompilerLiveBlockGraph (struct-get build graph)]
     [phi-out : (Array CompilerLiveI64Set)
       (make-array CompilerLiveI64Set (array-length (struct-get graph0 blocks)))]
@@ -1655,11 +1907,13 @@
       (compiler-live-phi-out-build-seq! seq (& (struct-get graph0 ids)) phi-out)
       (let
         [graph : CompilerLiveBlockGraph
-          (compiler-live-fixpoint-ep graph0 phi-out)]
+          (compiler-live-fixpoint-ep graph0 phi-out word-count)]
         (begin
-          (compiler-live-fill-instr-after-graph-ep-seq!
+          (compiler-live-fill-instr-after-graph-seq!
             seq
-            (struct-get graph blocks))
+            (struct-get graph blocks)
+            word-count
+            true)
           (CompilerFunctionLiveness.Liveness
             (struct-get graph ids)
             (struct-get graph blocks)))))))
@@ -1667,8 +1921,8 @@
 (define (compiler-live-analyze-function-edge-precise
   [func : CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-live-analyze-blocks-edge-precise blocks)]))
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
+      (compiler-live-analyze-blocks-edge-precise blocks vars)]))
 
 (define (compiler-live-function-block-index
   [liveness : CompilerFunctionLiveness]
@@ -2170,6 +2424,7 @@
 (define (compiler-live-self-test) : i64
   (if (and
     (compiler-live-set-ops-ok?)
+    (compiler-live-scratch-ops-ok?)
     (compiler-live-use-def-ok?)
     (compiler-live-memory-use-def-ok?)
     (compiler-live-vector-mask-use-def-ok?)
@@ -2188,38 +2443,46 @@
     [(CompilerIrBlockList.Array seq) seq]
     [_ (compiler-ir-block-seq-from-list blocks)]))
 
-(define (compiler-live-build-block-array [blocks : CompilerIrBlockSeq]) : (Array
-    CompilerLiveBlock)
+(define (compiler-live-build-block-array-with
+  [blocks : CompilerIrBlockSeq]
+  [vars : i64]
+  [edge-precise? : bool]) : (Array CompilerLiveBlock)
   (let
     [count : i64 (compiler-ir-block-seq-count blocks)]
     [out : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
+    [word-count : i64 (compiler-live-var-word-count vars)]
+    [uses : (Array i64) (make-array i64 word-count)]
+    [defs : (Array i64) (make-array i64 word-count)]
     [i : i64 0]
     (begin
       (while (< i count)
-        (begin
-          (array-set!
-            out
-            i
-            (compiler-live-build-block (compiler-ir-block-seq-ref blocks i)))
-          (set! i (+ i 1))))
+        (let
+          [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks i)]
+          (begin
+            (match block
+              [(CompilerIrBlock.Block _ instrs)
+                (array-set!
+                  out
+                  i
+                  (compiler-live-build-block-from-use-def
+                    block
+                    (compiler-live-block-use-def-seq-with-scratch
+                      instrs
+                      uses
+                      defs
+                      edge-precise?)))])
+            (set! i (+ i 1)))))
       out)))
 
-(define (compiler-live-build-block-array-nophi [blocks : CompilerIrBlockSeq]) : (Array
-    CompilerLiveBlock)
-  (let
-    [count : i64 (compiler-ir-block-seq-count blocks)]
-    [out : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
-    [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (array-set!
-            out
-            i
-            (compiler-live-build-block-nophi
-              (compiler-ir-block-seq-ref blocks i)))
-          (set! i (+ i 1))))
-      out)))
+(define (compiler-live-build-block-array
+  [blocks : CompilerIrBlockSeq]
+  [vars : i64]) : (Array CompilerLiveBlock)
+  (compiler-live-build-block-array-with blocks vars false))
+
+(define (compiler-live-build-block-array-nophi
+  [blocks : CompilerIrBlockSeq]
+  [vars : i64]) : (Array CompilerLiveBlock)
+  (compiler-live-build-block-array-with blocks vars true))
 
 (define (compiler-live-phi-out-build-seq!
   [blocks : CompilerIrBlockSeq]
@@ -2297,12 +2560,15 @@
 
 (define (compiler-live-fill-instr-after-graph-seq!
   [ir-blocks : CompilerIrBlockSeq]
-  [blocks : (Array CompilerLiveBlock)]) : unit
+  [blocks : (Array CompilerLiveBlock)]
+  [word-count : i64]
+  [edge-precise? : bool]) : unit
   (let
     [count : i64
       (compiler-live-set-min
         (compiler-ir-block-seq-count ir-blocks)
         (array-length blocks))]
+    [words : (Array i64) (make-array i64 word-count)]
     [i : i64 0]
     (while (< i count)
       (begin
@@ -2311,14 +2577,19 @@
           i
           (compiler-live-fill-instr-after-block
             (compiler-ir-block-seq-ref ir-blocks i)
-            (array-ref blocks i)))
+            (array-ref blocks i)
+            words
+            edge-precise?))
         (set! i (+ i 1))))))
 
-(define (compiler-live-fixpoint [graph : CompilerLiveBlockGraph]) : CompilerLiveBlockGraph
+(define (compiler-live-fixpoint
+  [graph : CompilerLiveBlockGraph]
+  [word-count : i64]) : CompilerLiveBlockGraph
   (let
     [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
     [pending : (Array bool)
       (make-array bool (array-length (struct-get graph blocks)))]
+    [words : (Array i64) (make-array i64 word-count)]
     [done : bool false]
     (begin
       (compiler-live-worklist-seed! pending 0)
@@ -2330,7 +2601,7 @@
             (let
               [block : CompilerLiveBlock (array-ref blocks index)]
               [updated : CompilerLiveBlock
-                (compiler-live-recompute-block-graph block graph index)]
+                (compiler-live-recompute-block-graph block graph index words)]
               (if (compiler-live-block-liveness-eq? block updated)
                 unit
                 (begin

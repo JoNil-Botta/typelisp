@@ -1011,7 +1011,7 @@ fi
 #
 # Current headroom, used against capacity, measured directly on Windows after
 # the AstExpr row narrowing landed:
-# expr macro_expand 2859302/2883584, expr typecheck 1703981/1769472,
+# expr macro_expand 2859302/2883584, expr typecheck 1704980/1769472,
 # type macro_expand 20702/21504, and type typecheck 6180/7168. #5980 added the
 # LSP code-action source and transcript coverage. Transformer-owned hygiene
 # nodes still reuse their CTFE slots instead of retaining a second complete
@@ -1021,7 +1021,8 @@ fi
 # All four sit within a few percent of their next step, so expect these to move.
 # #5701 landed while
 # this was in review and consumed 4177 of the expr macro_expand headroom without
-# crossing, which is the normal case this shape is meant to make cheap.
+# crossing, which is the normal case this shape is meant to make cheap. #6069's
+# load-CSE source crossed the expr typecheck boundary from 26 to 27 segments.
 #
 # type typecheck DID cross on the AstExpr row narrowing, 6 -> 7 segments. That
 # commit moves nine variants' inline AstType payloads into the type pool, so the

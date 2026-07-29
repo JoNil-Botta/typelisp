@@ -10051,15 +10051,91 @@
 (define (compiler-backend-frame-slot-referenced-reset!) : unit
   (set! compiler-backend-frame-slot-referenced false))
 
+;; Lazily-filled cache of rendered slot operands covering var-ids 0..16383
+;; (displacements -8..-131072), the window stack-homed operand streams stay
+;; within. The rendered text depends only on var-id and strings are
+;; immutable, so within one emission arena generation every emission of a
+;; slot can share one rendered instance. Like the user-symbol cache the
+;; cached strings are arena-owned transients -- per-function emission runs
+;; in a scratch arena and the streaming raw arena is rewound per batch --
+;; so entries are epoch-guarded and compiler-backend-slot-cache-reset!
+;; retires them wherever the user-symbol cache is reset and from
+;; compiler-backend-clear-function-emit-state!, before their arena dies.
+;; Var-ids outside the window fall back to rendering fresh.
+(define compiler-backend-slot-cache-capacity : i64
+  16384)
+(define compiler-backend-slot-cache-values : (Array String)
+  (array.make-array String 16384))
+(define compiler-backend-slot-cache-epochs : (Array i64)
+  (array.make-array i64 16384))
+
+;; Shared by the frame-offset cache below: one bump retires both caches.
+(define compiler-backend-slot-cache-epoch : i64
+  1)
+
+(define (compiler-backend-slot-cache-reset!) : unit
+  (set!
+    compiler-backend-slot-cache-epoch
+    (+ compiler-backend-slot-cache-epoch 1)))
+
 (define (compiler-backend-slot [var-id : i64]) : String
   (begin
     (set! compiler-backend-frame-slot-referenced true)
-    (string.append (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)")))
+    (if (and (>= var-id 0) (< var-id compiler-backend-slot-cache-capacity))
+      (if (=
+        (array-ref compiler-backend-slot-cache-epochs var-id)
+        compiler-backend-slot-cache-epoch)
+        (array-ref compiler-backend-slot-cache-values var-id)
+        (let
+          [text : String
+            (string.append
+              (string.int->string (- 0 (* 8 (+ var-id 1))))
+              "(%rbp)")]
+          (begin
+            (array-set! compiler-backend-slot-cache-values var-id text)
+            (array-set!
+              compiler-backend-slot-cache-epochs
+              var-id
+              compiler-backend-slot-cache-epoch)
+            text)))
+      (string.append (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)"))))
+
+;; Same lazy-cache treatment keyed by the offset value, over the same
+;; window and guarded by the same epoch: an offset that is a negative
+;; multiple of 8 down to -131072 shares one rendered instance per offset;
+;; anything else (non-negative or not slot-aligned) falls back to rendering
+;; fresh.
+(define compiler-backend-frame-offset-cache-values : (Array String)
+  (array.make-array String 16384))
+(define compiler-backend-frame-offset-cache-epochs : (Array i64)
+  (array.make-array i64 16384))
 
 (define (compiler-backend-frame-offset [offset : i64]) : String
   (begin
     (set! compiler-backend-frame-slot-referenced true)
-    (string.append (string.int->string offset) "(%rbp)")))
+    (let
+      [magnitude : i64 (- 0 offset)]
+      (if (and
+        (> magnitude 0)
+        (= (% magnitude 8) 0)
+        (<= magnitude (* 8 compiler-backend-slot-cache-capacity)))
+        (let
+          [idx : i64 (- (/ magnitude 8) 1)]
+          (if (=
+            (array-ref compiler-backend-frame-offset-cache-epochs idx)
+            compiler-backend-slot-cache-epoch)
+            (array-ref compiler-backend-frame-offset-cache-values idx)
+            (let
+              [text : String
+                (string.append (string.int->string offset) "(%rbp)")]
+              (begin
+                (array-set! compiler-backend-frame-offset-cache-values idx text)
+                (array-set!
+                  compiler-backend-frame-offset-cache-epochs
+                  idx
+                  compiler-backend-slot-cache-epoch)
+                text))))
+        (string.append (string.int->string offset) "(%rbp)")))))
 
 (define (compiler-backend-plan-uses-reg?
   [assignments : CompilerRegAssignmentList]
@@ -52908,6 +52984,7 @@
 
 (define (compiler-backend-clear-function-emit-state!) : unit
   (begin
+    (compiler-backend-slot-cache-reset!)
     (set! compiler-backend-emit-assignment-index-active false)
     (set! compiler-backend-rax-override-var -1)
     (set! compiler-backend-rax-forward-pending-var -1)
@@ -52969,9 +53046,11 @@
   [crt-entry : bool]
   [scratch : i64]) : ResultCompilerBackend
   (let
-    ;; The symbol cache stores generated strings. Per-function emission runs in
-    ;; a scratch arena, so cached values must not survive across functions.
+    ;; The symbol and slot caches store generated strings. Per-function
+    ;; emission runs in a scratch arena, so cached values must not survive
+    ;; across functions.
     [_cache-before : unit (compiler-backend-user-symbol-cache-reset!)]
+    [_slot-cache-before : unit (compiler-backend-slot-cache-reset!)]
     [result : ResultCompilerBackend
       (with-escape
         (arena.Arena scratch)
@@ -52994,6 +53073,7 @@
           true))]
     (begin
       (compiler-backend-user-symbol-cache-reset!)
+      (compiler-backend-slot-cache-reset!)
       result)))
 
 ;; Keep the direct path available for A/B experiments by raising
@@ -56363,6 +56443,7 @@
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
   (begin
     (compiler-backend-user-symbol-cache-reset!)
+    (compiler-backend-slot-cache-reset!)
     (compiler-backend-peephole-carry-safe-reset!)
     (set! compiler-backend-abort-site-counter 0)
     (compiler-backend-set-absolute-switch-ok!
@@ -59305,6 +59386,7 @@
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendObject
   (begin
     (compiler-backend-user-symbol-cache-reset!)
+    (compiler-backend-slot-cache-reset!)
     (match (compiler-backend-runtime-plan program)
       [(ResultBackendRuntimePlan.Ok plan)
         (match program

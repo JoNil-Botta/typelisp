@@ -459,6 +459,12 @@
 (define (compiler-driver-state-destroy-uncommitted-pools!
   [pools : AstNodePoolContext]) : unit
   (begin
+    ;; Checked lowering installs its destination pools into the compatibility
+    ;; globals before it can fail. On an uncommitted error, detach that active
+    ;; view before destroying the pool; otherwise batch cleanup can capture the
+    ;; now-unmapped context cells after the diagnostic has been emitted.
+    ;; Refs #5448.
+    (compiler-driver-state-detach-active-pools-if-owned! pools)
     (ast-node-pool-context-destroy-storage! pools)
     (unsafe
       (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools)))))

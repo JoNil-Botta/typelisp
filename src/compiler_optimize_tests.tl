@@ -25221,6 +25221,255 @@
                       (AstType.I64))
                     (CompilerIrInstrList.Nil)))))))))))
 
+;; Canonical GLOBAL-base keys: the descriptor fetch group `gep @g, 1` spends a
+;; fresh temp per copy, and a BoundsCheck (effect ControlFlow) sits between the
+;; copies. The second load must fold to a Mov of the first.
+(define (opt-load-cse-global-canonical-gep-instrs [global : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      1
+      (CompilerIrValue.GlobalAddr global)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (CompilerIrValue.I64 0)
+          (CompilerIrValue.Var 2)
+          (opt-test-symbol "bounds_ok"))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.GlobalAddr global)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+;; MUST-INVALIDATE: an intervening StorePtr through an unclassified pointer may
+;; alias the global's storage, so the re-load stays a load.
+(define (opt-load-cse-global-store-barrier-instrs [global : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      1
+      (CompilerIrValue.GlobalAddr global)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 99)
+          (CompilerIrValue.I64 9)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.GlobalAddr global)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+;; Chained const offsets sum: `gep (gep @g 1) 1` and the flat `gep @g 2` are one
+;; canonical key, so the second load folds.
+(define (opt-load-cse-global-gep-chain-instrs [global : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      1
+      (CompilerIrValue.GlobalAddr global)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        2
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            4
+            (CompilerIrValue.GlobalAddr global)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+;; A VARIABLE offset off a global ends the canonical resolution: the gep keeps
+;; its own temp's raw identity. A repeat load through the SAME temp still folds
+;; (var 3); a load through a gep at a DIFFERENT index var must not (var 6).
+(define (opt-load-cse-global-var-offset-instrs [global : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      1
+      (CompilerIrValue.GlobalAddr global)
+      (CompilerIrValue.Var 0)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            5
+            (CompilerIrValue.GlobalAddr global)
+            (CompilerIrValue.Var 4)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 6 (CompilerIrValue.Var 5) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+;; The shape every access to a global array emits: the gep base is the POINTER
+;; STORED IN the global (`Global`, a fresh `movq g(%rip)` per copy), not the
+;; global's address. Distinct temps of one slot must fold across a BoundsCheck.
+(define (opt-load-cse-global-value-base-instrs [global : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      1
+      (CompilerIrValue.Global global)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (CompilerIrValue.I64 0)
+          (CompilerIrValue.Var 2)
+          (opt-test-symbol "bounds_ok"))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.Global global)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+;; MUST-INVALIDATE, and the reason the value-base map is dropped by every write:
+;; a Store to the global replaces the pointer the gep base reads, so the second
+;; group addresses a DIFFERENT descriptor and the re-load must stay a load.
+(define (opt-load-cse-global-value-base-store-instrs [global : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      1
+      (CompilerIrValue.Global global)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Store global (CompilerIrValue.I64 9) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 5 (CompilerIrValue.Var 1) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              3
+              (CompilerIrValue.Global global)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+              (CompilerIrInstrList.Nil))))))))
+
+;; The two spellings are DIFFERENT addresses -- `Global g` is [g]+8, `GlobalAddr
+;; g` is &g+8 -- so one offset off one symbol must not fold across them.
+(define (opt-load-cse-global-base-form-mismatch-instrs [global : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      1
+      (CompilerIrValue.Global global)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          3
+          (CompilerIrValue.GlobalAddr global)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+          (CompilerIrInstrList.Nil))))))
+
+(define (opt-load-global-base-test-eq?
+  [base : OptMaybeGlobalBase]
+  [global : i64]
+  [off : i64]
+  [value-base? : bool]) : bool
+  (match base
+    [(OptMaybeGlobalBase.Some actual-global actual-off actual-value-base?)
+      (and
+        (= actual-global global)
+        (= actual-off off)
+        (=
+          (if actual-value-base?
+            1
+            0)
+          (if value-base?
+            1
+            0)))]
+    [(OptMaybeGlobalBase.No) false]))
+
+;; Dense global-base state is mutable within a block, but predecessor snapshots
+;; must remain isolated across clone/drop/bind and joins must retain only exact
+;; agreements.
+(define (opt-load-global-bases-self-test?) : bool
+  (let
+    [seed : OptLoadGlobalBases
+      (opt-load-global-bases-bind (opt-load-global-bases-empty) 1 10 8 true)]
+    [left : OptLoadGlobalBases (opt-load-global-bases-clone seed)]
+    [left2 : OptLoadGlobalBases (opt-load-global-bases-bind left 2 20 16 false)]
+    [right : OptLoadGlobalBases (opt-load-global-bases-clone seed)]
+    [right2 : OptLoadGlobalBases
+      (opt-load-global-bases-bind right 2 20 16 false)]
+    [joined : OptLoadGlobalBases (opt-load-global-bases-intersect left2 right2)]
+    [different : OptLoadGlobalBases (opt-load-global-bases-clone seed)]
+    [different2 : OptLoadGlobalBases
+      (opt-load-global-bases-bind different 2 20 24 false)]
+    [narrowed : OptLoadGlobalBases
+      (opt-load-global-bases-intersect left2 different2)]
+    [dropped : OptLoadGlobalBases (opt-load-global-bases-drop-var left2 1)]
+    (and
+      ;; Mutating the cloned left branch did not alter the retained seed.
+      (= (struct-get seed len) 1)
+      (opt-load-global-base-test-eq?
+        (opt-load-global-bases-lookup seed 1)
+        10
+        8
+        true)
+      ;; Exact bindings from both branches survive a join.
+      (= (struct-get joined len) 2)
+      (opt-load-global-base-test-eq?
+        (opt-load-global-bases-lookup joined 2)
+        20
+        16
+        false)
+      ;; A conflicting offset is dropped while the common binding remains.
+      (= (struct-get narrowed len) 1)
+      (opt-load-global-base-test-eq?
+        (opt-load-global-bases-lookup narrowed 1)
+        10
+        8
+        true)
+      ;; In-place compaction removes only the selected binding.
+      (= (struct-get dropped len) 1)
+      (match (opt-load-global-bases-lookup dropped 1)
+        [(OptMaybeGlobalBase.No) true]
+        [_ false])
+      (opt-load-global-base-test-eq?
+        (opt-load-global-bases-lookup dropped 2)
+        20
+        16
+        false))))
+
 (define (opt-load-cse-cap-self-test?) : bool
   (let
     [key0 : OptLoadKey
@@ -25267,6 +25516,7 @@
     [field-bad : OptLoadLocKind
       (opt-load-loc-field-checked opt-load-loc-field-base-limit 0 8 false)]
     (and
+      (opt-load-global-bases-self-test?)
       (= (opt-load-cse-table-cap-for-size 8) opt-load-cse-table-cap-floor)
       (= (opt-load-cse-kinds-cap-for-size 8) opt-load-cse-kinds-cap-floor)
       (=
@@ -25553,6 +25803,25 @@
     [element-gep-chain-store : CompilerIrInstrList
       (opt-load-cse-run-with-array-param
         (opt-load-cse-element-gep-chain-store-instrs))]
+    [global-tokens : i64 (opt-test-symbol "gvn_tokens")]
+    [global-canonical-gep : CompilerIrInstrList
+      (opt-load-cse-run
+        (opt-load-cse-global-canonical-gep-instrs global-tokens))]
+    [global-store-barrier : CompilerIrInstrList
+      (opt-load-cse-run
+        (opt-load-cse-global-store-barrier-instrs global-tokens))]
+    [global-gep-chain : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-global-gep-chain-instrs global-tokens))]
+    [global-var-offset : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-global-var-offset-instrs global-tokens))]
+    [global-value-base : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-global-value-base-instrs global-tokens))]
+    [global-value-base-store : CompilerIrInstrList
+      (opt-load-cse-run
+        (opt-load-cse-global-value-base-store-instrs global-tokens))]
+    [global-base-form-mismatch : CompilerIrInstrList
+      (opt-load-cse-run
+        (opt-load-cse-global-base-form-mismatch-instrs global-tokens))]
     [global-store : bool
       (opt-load-cse-barrier-blocked?
         (CompilerIrInstr.Store
@@ -25775,4 +26044,36 @@
         79]
       [(not (= (opt-count-load-instrs fresh-alloc-epoch-tie) 2)) 80]
       [(not (= (opt-count-mov-dst-instrs fresh-alloc-epoch-tie 6) 0)) 81]
+      ;; Canonical global-base keys: distinct gep temps of one (global, byte
+      ;; offset) slot fold across a BoundsCheck; a may-alias store still blocks;
+      ;; const-offset gep chains sum into the flat key; a variable offset keeps
+      ;; the gep temp's own raw identity in both directions.
+      [(not (= (opt-count-load-instrs global-canonical-gep) 1)) 82]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src global-canonical-gep 4 2 (AstType.I64))
+            1))
+        83]
+      [(not (= (opt-count-load-instrs global-store-barrier) 2)) 84]
+      [(not (= (opt-count-mov-dst-instrs global-store-barrier 4) 0)) 85]
+      [(not (= (opt-count-load-instrs global-gep-chain) 1)) 86]
+      [(not
+          (= (opt-count-mov-dst-var-src global-gep-chain 5 3 (AstType.I64)) 1))
+        87]
+      [(not (= (opt-count-load-instrs global-var-offset) 2)) 88]
+      [(not
+          (= (opt-count-mov-dst-var-src global-var-offset 3 2 (AstType.I64)) 1))
+        89]
+      [(not (= (opt-count-mov-dst-instrs global-var-offset 6) 0)) 90]
+      ;; The `Global` (value) base form: folds within a write-free run, and the
+      ;; fold dies the moment the global slot is written.
+      [(not (= (opt-count-load-instrs global-value-base) 1)) 91]
+      [(not
+          (= (opt-count-mov-dst-var-src global-value-base 4 2 (AstType.I64)) 1))
+        92]
+      [(not (= (opt-count-load-instrs global-value-base-store) 3)) 93]
+      [(not (= (opt-count-mov-dst-instrs global-value-base-store 4) 0)) 94]
+      [(not (= (opt-count-mov-dst-instrs global-value-base-store 5) 0)) 95]
+      [(not (= (opt-count-load-instrs global-base-form-mismatch) 2)) 96]
+      [(not (= (opt-count-mov-dst-instrs global-base-form-mismatch 4) 0)) 97]
       [else 44])))

@@ -2183,18 +2183,77 @@
   [type-pool : (Array AstTypeNodePoolState)]) : AstNodePoolContext
   (AstNodePoolContext expr-pool type-pool))
 
+;; R3-P2b: these two cells are POOL STATE, not caller state. Any context that is
+;; later installed hands them to `ast-node-pool-context-install!`, which points
+;; the process-global `ast-node-pool-active-context` straight at them; from then
+;; on every push, every `ast-node-pool-context-capture-active!` and every
+;; `ast-node-pool-context-active-live` reader writes THROUGH these arrays. They
+;; therefore have to outlive every transient arena that can be current while a
+;; context is built -- the same invariant `node-pool-base-arena` above states
+;; for the pool backing arrays, one level up.
+;;
+;; It was invisible while every transient arena that could be current here was
+;; REWOUND rather than DESTROYED. It becomes a hard use-after-free the moment
+;; macro expansion runs under a per-declaration generation that is
+;; `tl_arena_destroy`d: an import-placeholder expansion rebases the active pools
+;; onto captured CTFE syntax pools, the context it installs owns cells in that
+;; declaration's generation, and the next `capture-active!` -- two splices later,
+;; after the generation is gone -- writes into freed pages. Reproducer:
+;; `tests/integration/compile_profile_cross_file_single_compilation`; the class
+;; is pinned by `tests/integration/arena_pool_context_escape.tl`.
+;;
+;; `ast-node-pool-context-cells-pin-base` gates the redirect to exactly the
+;; window where a generation can be current. Unconditionally pinning the cells
+;; to the base arena is NOT correct: this constructor also runs at global init
+;; and on the CTFE capture path, and republishing `node-pool-base-arena` on
+;; every call moves the handle out from under callers that captured it for
+;; `node-pool-restore-arena-after-base-alloc!` -- the H4 sibling-chain trap.
+;; Measured: doing it unconditionally SIGSEGVs on every input.
+;;
+;; The base-arena head is republished after the allocation (H4): keeping the
+;; pre-allocation handle would restart the next base allocation on a filled
+;; segment and grow a sibling chain that destroy-from-head never reaches.
+(define ast-node-pool-context-cells-pin-base : bool
+  false)
+
+(define (ast-node-pool-context-cells-pin-base! [on : bool]) : unit
+  (set! ast-node-pool-context-cells-pin-base on))
+
 (define (ast-node-pool-context-new
   [expr-pool : AstExprNodePoolState]
   [type-pool : AstTypeNodePoolState]) : AstNodePoolContext
-  (let
-    [expr-cell : (Array AstExprNodePoolState)
-      (array.make-array AstExprNodePoolState 1)]
-    [type-cell : (Array AstTypeNodePoolState)
-      (array.make-array AstTypeNodePoolState 1)]
-    (begin
-      (array-set! expr-cell 0 expr-pool)
-      (array-set! type-cell 0 type-pool)
-      (AstNodePoolContext expr-cell type-cell))))
+  (if (or (not ast-node-pool-context-cells-pin-base) (= node-pool-base-arena 0))
+    (let
+      [expr-cell : (Array AstExprNodePoolState)
+        (array.make-array AstExprNodePoolState 1)]
+      [type-cell : (Array AstTypeNodePoolState)
+        (array.make-array AstTypeNodePoolState 1)]
+      (begin
+        (array-set! expr-cell 0 expr-pool)
+        (array-set! type-cell 0 type-pool)
+        (AstNodePoolContext expr-cell type-cell)))
+    (let
+      [prev-arena : i64 (arena.tl_arena_current)]
+      [base-arena : i64 node-pool-base-arena]
+      [_set-arena : unit
+        (unsafe
+          (arena.tl_arena_set base-arena))]
+      [expr-cell : (Array AstExprNodePoolState)
+        (array.make-array AstExprNodePoolState 1)]
+      [type-cell : (Array AstTypeNodePoolState)
+        (array.make-array AstTypeNodePoolState 1)]
+      [head-arena : i64 (arena.tl_arena_current)]
+      [_restore-arena : unit
+        (begin
+          (set! node-pool-base-arena head-arena)
+          (node-pool-restore-arena-after-base-alloc!
+            prev-arena
+            base-arena
+            head-arena))]
+      (begin
+        (array-set! expr-cell 0 expr-pool)
+        (array-set! type-cell 0 type-pool)
+        (AstNodePoolContext expr-cell type-cell)))))
 
 (define (ast-node-pool-context-capture-active-raw) : AstNodePoolContext
   (ast-node-pool-context-new

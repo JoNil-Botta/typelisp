@@ -3735,7 +3735,7 @@
     [macro-name : String]
     [arity : i64]
     [elapsed-ms : i64]) : unit
-    (if (= macro-decl-generation-arena 0)
+    (if (not (macro-generation-any-live?))
       (set!
         compiler-tc-macro-profile-entries
         (compiler-tc-macro-profile-record-in
@@ -60502,6 +60502,135 @@
         (set! macro-decl-generation-batch-used 1)
         next))))
 
+;; R3-P2b: import-placeholder expansions get their OWN two-generation ring, not
+;; a slot in the 32-declaration batch ring above, and the difference is a
+;; soundness argument rather than a tuning knob.
+;;
+;; Every splice arm resets the whole per-splice cache family before it hands the
+;; walk on -- `macro-alias-derived-cache-reset!` (module/enum index, alias,
+;; unqualified-import, flat-import targets, surface call-decl, the three source
+;; key caches, imported-module identity), plus `tc-nominal-owner-cache-reset!`,
+;; `tc-resolve-type-name-cache-reset!` and `tc-job-state-reset-file-state!`. So
+;; anything splice N's expansion left in one of those caches is unreachable
+;; from splice N+1 onwards BY CONSTRUCTION. Retiring one splice behind puts the
+;; destroy at splice N+2 -- a full reset past the last instant any of it can be
+;; read.
+;;
+;; That is the cadence rule this packet is built on: A GENERATION'S DESTROY
+;; CADENCE MUST BE THE RESET CADENCE OF THE CACHES THAT ALLOCATE INTO IT. The
+;; 32-declaration batch ring destroys on a counter with no relation to the
+;; splice cadence, and putting the placeholder arm on it SIGSEGVs the
+;; linux-x86_64 self-compile between the 4th splice and the next.
+;;
+;; State that outlives the reset -- the two generated-module/decls memos, which
+;; are per-RUN, not per-splice -- is not covered by the cadence argument and is
+;; handled explicitly by the escape list below.
+(define macro-splice-generation-arena : i64
+  0)
+(define macro-splice-generation-retired-arena : i64
+  0)
+
+(define (macro-splice-generation-enter!) : i64
+  (let
+    [previous : i64 macro-splice-generation-arena]
+    [retired : i64 macro-splice-generation-retired-arena]
+    [next : i64 (arena.tl_arena_make)]
+    (begin
+      (set! macro-splice-generation-arena next)
+      (set! macro-splice-generation-retired-arena previous)
+      (if (= retired 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired)))
+      next)))
+
+;: True while either ring holds a live generation, i.e. while an "allocate into
+;: whatever arena is current" cache can capture per-declaration storage.
+(define (macro-generation-any-live?) : bool
+  (not
+    (and (= macro-decl-generation-arena 0) (= macro-splice-generation-arena 0))))
+
+(define (macro-splice-generations-release!) : unit
+  (let
+    [current : i64 macro-splice-generation-arena]
+    [retired : i64 macro-splice-generation-retired-arena]
+    (begin
+      (set! macro-splice-generation-arena 0)
+      (set! macro-splice-generation-retired-arena 0)
+      (if (= current 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy current)))
+      (if (or (= retired 0) (= retired current))
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
+
+;; R3-P2b generation escapes.
+;;
+;; R3-P1's generation covers ordinary firing declarations, whose entire product
+;; is the survivor the copy-out persists. An IMPORT-PLACEHOLDER expansion is
+;; different: besides its survivor it records the generated module in a
+;; whole-RUN memo (`macro-generated-module-memo-*`,
+;; `macro-generated-decls-memo-*`), and a later splice reads that entry -- and,
+;; on a module-memo hit, SPLICES the recorded catalog straight into the program.
+;; Those entries are built from the arena current at record time, so without
+;; this they are a use-after-free two splices later. It reproduces immediately
+;; as `tl: array index out of bounds` on the self-compile.
+;;
+;; The memo puts stay exactly where they are -- so a nested read inside the same
+;; expansion still sees the entry it just wrote -- but they NOTE their key here,
+;; and the copy-out re-persists each noted entry's declaration lists with the
+;; SAME id maps it used for the survivor. A node shared between the survivor and
+;; a memo entry is therefore persisted once, and every memo entry ends up owned
+;; by the pool's base arena, which outlives the walk.
+;;
+;; Fail-closed on overflow: a declaration that records more entries than this
+;; list holds cannot have all of them persisted, so its generation is orphaned
+;; instead of destroyed. That leaks one generation and is the safe direction.
+(define macro-decl-generation-escape-capacity : i64
+  32)
+(define macro-decl-generation-escape-kinds : (Array i64)
+  (array.make-array i64 32))
+(define macro-decl-generation-escape-keys : (Array i64)
+  (array.make-array i64 32))
+(define macro-decl-generation-escape-count : i64
+  0)
+(define macro-decl-generation-escape-overflow : bool
+  false)
+
+;; True only while a declaration's expansion is running with its generation
+;; current. Every other memo put already lands in a long-lived arena.
+(define macro-decl-generation-active : bool
+  false)
+
+(define (macro-decl-generation-escape-reset!) : unit
+  (begin
+    (set! macro-decl-generation-escape-count 0)
+    (set! macro-decl-generation-escape-overflow false)))
+
+;: Record that memo `kind` (1 = generated-module memo, 2 = generated-decls memo)
+;: now holds declaration lists owned by the live declaration generation.
+(define (macro-decl-generation-escape-note! [kind : i64] [key : i64]) : unit
+  (if (not macro-decl-generation-active)
+    unit
+    (if (>=
+      macro-decl-generation-escape-count
+      macro-decl-generation-escape-capacity)
+      (set! macro-decl-generation-escape-overflow true)
+      (begin
+        (array-set!
+          macro-decl-generation-escape-kinds
+          macro-decl-generation-escape-count
+          kind)
+        (array-set!
+          macro-decl-generation-escape-keys
+          macro-decl-generation-escape-count
+          key)
+        (set!
+          macro-decl-generation-escape-count
+          (+ macro-decl-generation-escape-count 1))))))
+
 (define (macro-decl-generations-release!) : unit
   (let
     [current : i64 macro-decl-generation-arena]
@@ -60510,6 +60639,9 @@
       (set! macro-decl-generation-arena 0)
       (set! macro-decl-generation-retired-arena 0)
       (set! macro-decl-generation-batch-used 0)
+      (set! macro-decl-generation-active false)
+      (macro-decl-generation-escape-reset!)
+      (macro-splice-generations-release!)
       (if (= current 0)
         unit
         (unsafe
@@ -62610,6 +62742,11 @@
   [import-path : String]) : unit
   (let
     [identity-id : i64 (macro-generated-identity-id identity)]
+    ;; R3-P2b: the stored lists and provenance strings are built from whatever
+    ;; arena is current, which under a declaration generation is that
+    ;; declaration's. Note the key so the copy-out re-persists this entry into
+    ;; the pool's base arena before the generation dies.
+    [_escape : unit (macro-decl-generation-escape-note! 1 (+ identity-id 1))]
     (begin
       (macro-generated-module-memo-ensure!)
       (if (>=
@@ -62858,6 +62995,8 @@
   [decls : AstDeclList]) : unit
   (let
     [identity-id : i64 (macro-generated-identity-id identity)]
+    ;; R3-P2b: see macro-generated-module-memo-put!.
+    [_escape : unit (macro-decl-generation-escape-note! 2 (+ identity-id 1))]
     (begin
       (macro-generated-decls-memo-ensure!)
       (if (>=
@@ -62895,6 +63034,211 @@
                           (- macro-generated-decls-memo-capacity 1)))
                       (set! steps (+ steps 1)))))))
             unit))))))
+
+;; R3-P2b: move one memoized declaration list out of the live declaration
+;; generation and into the pool's base arena, in place, with the caller's id
+;; maps. Sharing the maps with the survivor's copy-out is what keeps a node that
+;; appears in both from being persisted (and re-allocated) twice.
+;;
+;; Sequencing mirrors `macro-decl-generation-copy-out`: resume from the head the
+;; pool recorded, allocate the program shell there, publish the new head, and
+;; only then call the copy -- which reads that head, works from it, and restores
+;; the caller's arena itself.
+(define (macro-decl-generation-persist-decls
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]
+  [expr-map : (Array i32)]
+  [type-map : (Array i32)]) : AstDeclList
+  (let
+    [_resume : unit
+      (unsafe
+        (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))]
+    [program : AstProgram (ast-program decls)]
+    [_sync : unit
+      (ast-node-pool-context-sync-base-arena! pools (arena.tl_arena_current))]
+    (match (ast-program-copy-append-above-with-maps
+      pools
+      pools
+      program
+      shared-expr-base
+      shared-type-base
+      expr-map
+      type-map
+      true)
+      [(AstProgramCompaction copied _)
+        (match copied
+          [(AstProgram.Program decls-box) (box-get decls-box)])])))
+
+(define (macro-generated-module-memo-persist-entry!
+  [key : i64]
+  [pools : AstNodePoolContext]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]
+  [expr-map : (Array i32)]
+  [type-map : (Array i32)]) : unit
+  (let
+    [cursor : i64 (macro-generated-module-memo-bucket (- key 1))]
+    [steps : i64 0]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps macro-generated-module-memo-capacity))
+        (let
+          [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (= slot key)
+              (begin
+                (match (array-ref
+                  macro-generated-module-memo-catalog-entries
+                  cursor)
+                  [(MacroGeneratedModuleCatalogEntry.Catalog
+                      target-id
+                      catalog
+                      generator
+                      import-path
+                      summary
+                      closure)
+                    (let
+                      [owned-catalog : AstDeclList
+                        (macro-decl-generation-persist-decls
+                          pools
+                          catalog
+                          shared-expr-base
+                          shared-type-base
+                          expr-map
+                          type-map)]
+                      [owned-summary : AstDeclList
+                        (macro-decl-generation-persist-decls
+                          pools
+                          summary
+                          shared-expr-base
+                          shared-type-base
+                          expr-map
+                          type-map)]
+                      [_resume : unit
+                        (unsafe
+                          (arena.tl_arena_set
+                            (ast-node-pool-context-base-arena pools)))]
+                      [owned-generator : String (string.copy (& generator))]
+                      [owned-path : String (string.copy (& import-path))]
+                      [_store : unit
+                        (array-set!
+                          macro-generated-module-memo-catalog-entries
+                          cursor
+                          (MacroGeneratedModuleCatalogEntry.Catalog
+                            target-id
+                            owned-catalog
+                            owned-generator
+                            owned-path
+                            owned-summary
+                            closure))]
+                      [_sync : unit
+                        (ast-node-pool-context-sync-base-arena!
+                          pools
+                          (arena.tl_arena_current))]
+                      unit)]
+                  [(MacroGeneratedModuleCatalogEntry.Empty) unit])
+                (set! done true))
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- macro-generated-module-memo-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      unit)))
+
+(define (macro-generated-decls-memo-persist-entry!
+  [key : i64]
+  [pools : AstNodePoolContext]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]
+  [expr-map : (Array i32)]
+  [type-map : (Array i32)]) : unit
+  (let
+    [cursor : i64 (macro-generated-decls-memo-bucket (- key 1))]
+    [steps : i64 0]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps macro-generated-decls-memo-capacity))
+        (let
+          [slot : i64 (array-ref macro-generated-decls-memo-keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (= slot key)
+              (let
+                [owned : AstDeclList
+                  (macro-decl-generation-persist-decls
+                    pools
+                    (array-ref macro-generated-decls-memo-decls cursor)
+                    shared-expr-base
+                    shared-type-base
+                    expr-map
+                    type-map)]
+                (begin
+                  (array-set! macro-generated-decls-memo-decls cursor owned)
+                  (set! done true)))
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- macro-generated-decls-memo-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      unit)))
+
+;: Re-persist every memo entry this declaration's expansion recorded. Runs after
+;: the survivor's copy-out, with the same maps, and leaves the pool's base arena
+;: head published.
+(define (macro-decl-generation-escapes-persist!
+  [pools : AstNodePoolContext]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]
+  [expr-map : (Array i32)]
+  [type-map : (Array i32)]
+  [splice? : bool]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index macro-decl-generation-escape-count)
+        (let
+          [kind : i64 (array-ref macro-decl-generation-escape-kinds index)]
+          [key : i64 (array-ref macro-decl-generation-escape-keys index)]
+          (begin
+            (if (= kind 1)
+              (macro-generated-module-memo-persist-entry!
+                key
+                pools
+                shared-expr-base
+                shared-type-base
+                expr-map
+                type-map)
+              (macro-generated-decls-memo-persist-entry!
+                key
+                pools
+                shared-expr-base
+                shared-type-base
+                expr-map
+                type-map))
+            (set! index (+ index 1)))))
+      ;; Fail-closed: a declaration that recorded more escapes than the list
+      ;; holds has entries this pass could not reach, so its generation must not
+      ;; be destroyed. Orphan it -- the next enter cuts a fresh arena and the
+      ;; ring never sees this one again.
+      (if macro-decl-generation-escape-overflow
+        (if splice?
+          (set! macro-splice-generation-arena 0)
+          (begin
+            (set! macro-decl-generation-arena 0)
+            (set! macro-decl-generation-batch-used 0)))
+        unit)
+      (macro-decl-generation-escape-reset!))))
 
 ;; Structural equality between two Decls-macro splices, mirroring the
 ;; per-declaration gen-decl-eq? comparison gen-register-generated-decl applies
@@ -65183,7 +65527,7 @@
     (match (macro-surface-call-decl-cache-get target-module-id base-id)
       [(MacroSurfaceCallDeclCacheLookup.Hit cached) cached]
       [(MacroSurfaceCallDeclCacheLookup.Miss)
-        (if (= macro-decl-generation-arena 0)
+        (if (not (macro-generation-any-live?))
           (macro-surface-call-decl-fill-in-module target-module-id base-id)
           (let
             [enclosing : i64 (arena.tl_arena_current)]
@@ -68451,7 +68795,7 @@
 (define (macro-flat-import-targets
   [decls : AstDeclList]
   [current-module-id : i64]) : MacroFlatImportTargetList
-  (if (= macro-decl-generation-arena 0)
+  (if (not (macro-generation-any-live?))
     (macro-flat-import-targets-into-current decls current-module-id)
     (let
       [enclosing : i64 (arena.tl_arena_current)]
@@ -74035,6 +74379,47 @@
   [module-id : i64]
   [decl : AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
+  (macro-expand-decl-with-path-in-generation
+    ctx
+    top-env
+    orig-decls
+    module
+    module-id
+    decl
+    decl-path
+    false))
+
+;: R3-P2b: the same mechanism on the splice ring. `splice?` selects which of the
+;: two rings owns this expansion's generation; everything else -- the shared
+;: bases, the persist-in-place copy-out, the arena-head discipline -- is
+;: identical.
+(define (macro-expand-decl-with-path-splice-generational
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [module-id : i64]
+  [decl : AstDecl]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (macro-expand-decl-with-path-in-generation
+    ctx
+    top-env
+    orig-decls
+    module
+    module-id
+    decl
+    decl-path
+    true))
+
+(define (macro-expand-decl-with-path-in-generation
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [module-id : i64]
+  [decl : AstDecl]
+  [decl-path : String]
+  [splice? : bool]) : ResultMacroDeclExpansion
   (if (not
     (and macro-expand-scratch-enabled (ast-node-pool-has-active-context?)))
     (begin
@@ -74051,10 +74436,25 @@
       [enclosing : i64 (arena.tl_arena_current)]
       [entry-base-arena : i64 (ast-node-pool-base-arena-handle)]
       [entry-expr-len : i64 (ast-node-pool-len)]
-      [generation : i64 (macro-decl-generation-enter!)]
+      [generation : i64
+        (if splice?
+          (macro-splice-generation-enter!)
+          (macro-decl-generation-enter!))]
+      ;; R3-P2b: whatever this expansion records in a splice memo is noted and
+      ;; re-persisted below. The window is exactly the expansion call -- a memo
+      ;; put from anywhere else already lands in a long-lived arena and must not
+      ;; be re-persisted with these maps.
+      [_escape-reset : unit (macro-decl-generation-escape-reset!)]
       [_enter : unit
         (unsafe
           (arena.tl_arena_set generation))]
+      [_escape-open : unit (set! macro-decl-generation-active true)]
+      ;; R3-P2b: any AstNodePoolContext this expansion builds can be INSTALLED,
+      ;; which points the process-global active context at that context's cells.
+      ;; Pin those cells to the pool base arena for the duration, or the global
+      ;; ends up aliasing storage this generation owns and the next
+      ;; `capture-active!` after the destroy writes into freed pages.
+      [_pin-cells : unit (ast-node-pool-context-cells-pin-base! true)]
       [raw : ResultMacroDeclExpansion
         (macro-expand-decl-with-path
           ctx
@@ -74064,6 +74464,8 @@
           module-id
           decl
           decl-path)]
+      [_escape-close : unit (set! macro-decl-generation-active false)]
+      [_unpin-cells : unit (ast-node-pool-context-cells-pin-base! false)]
       ;; Clamped: the walk never truncates the pool below the length it entered
       ;; with, but a base above the live length would make the id map read out
       ;; of range, and a shorter pool has nothing above the base to copy anyway.
@@ -74082,7 +74484,9 @@
       ;; `make` root would restart the next declaration on a filled segment and
       ;; grow a sibling chain the retiring destroy never reaches (H4).
       [_track-head : unit
-        (set! macro-decl-generation-arena (arena.tl_arena_current))]
+        (if splice?
+          (set! macro-splice-generation-arena (arena.tl_arena_current))
+          (set! macro-decl-generation-arena (arena.tl_arena_current)))]
       ;; The expansion can install a different pool context -- captured CTFE
       ;; syntax pools rebase the active pools -- so the context to append into
       ;; must be re-read HERE. Carrying a context across the call and installing
@@ -74096,14 +74500,25 @@
           entry-base-arena
           (ast-node-pool-context-base-arena pools))]
       [_copy-start-len : i64 (ast-node-pool-context-expr-len pools)]
+      ;; Every existing type id is shared, so the copy-out and the escape pass
+      ;; push no type node at all. Read once so both passes see the same base.
+      [shared-type-base : i64 (ast-node-pool-context-type-len pools)]
       [escaped : ResultMacroDeclExpansion
         (macro-decl-generation-copy-out
           pools
           raw
           shared-expr-base
-          (ast-node-pool-context-type-len pools)
+          shared-type-base
           expr-map
           type-map)]
+      [_escapes : unit
+        (macro-decl-generation-escapes-persist!
+          pools
+          shared-expr-base
+          shared-type-base
+          expr-map
+          type-map
+          splice?)]
       (begin
         (cfg
           compile-profile
@@ -75793,7 +76208,15 @@
                           (cfg
                             compile-profile
                             (compiler-tc-walk-decl-sample-note! 3))
-                          (match (macro-expand-decl-with-path
+                          ;; R3-P2b: an import placeholder's expansion is
+                          ;; the single largest allocator left in the splice
+                          ;; family (measured 113.1 MB retained over 88 events
+                          ;; on the opt1 self-compile, 53% of the family) and
+                          ;; R3-P1 left it on the ambient arena. Run it in its
+                          ;; own generation, on the SPLICE ring -- see
+                          ;; macro-splice-generation-enter! for why the ring,
+                          ;; and not R3-P1's batch ring, is the sound one.
+                          (match (macro-expand-decl-with-path-splice-generational
                             cur-ctx
                             cur-top-env
                             cur-orig-decls

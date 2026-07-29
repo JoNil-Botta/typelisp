@@ -25399,6 +25399,77 @@
           (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
           (CompilerIrInstrList.Nil))))))
 
+(define (opt-load-global-base-test-eq?
+  [base : OptMaybeGlobalBase]
+  [global : i64]
+  [off : i64]
+  [value-base? : bool]) : bool
+  (match base
+    [(OptMaybeGlobalBase.Some actual-global actual-off actual-value-base?)
+      (and
+        (= actual-global global)
+        (= actual-off off)
+        (=
+          (if actual-value-base?
+            1
+            0)
+          (if value-base?
+            1
+            0)))]
+    [(OptMaybeGlobalBase.No) false]))
+
+;; Dense global-base state is mutable within a block, but predecessor snapshots
+;; must remain isolated across clone/drop/bind and joins must retain only exact
+;; agreements.
+(define (opt-load-global-bases-self-test?) : bool
+  (let
+    [seed : OptLoadGlobalBases
+      (opt-load-global-bases-bind (opt-load-global-bases-empty) 1 10 8 true)]
+    [left : OptLoadGlobalBases (opt-load-global-bases-clone seed)]
+    [left2 : OptLoadGlobalBases (opt-load-global-bases-bind left 2 20 16 false)]
+    [right : OptLoadGlobalBases (opt-load-global-bases-clone seed)]
+    [right2 : OptLoadGlobalBases
+      (opt-load-global-bases-bind right 2 20 16 false)]
+    [joined : OptLoadGlobalBases (opt-load-global-bases-intersect left2 right2)]
+    [different : OptLoadGlobalBases (opt-load-global-bases-clone seed)]
+    [different2 : OptLoadGlobalBases
+      (opt-load-global-bases-bind different 2 20 24 false)]
+    [narrowed : OptLoadGlobalBases
+      (opt-load-global-bases-intersect left2 different2)]
+    [dropped : OptLoadGlobalBases (opt-load-global-bases-drop-var left2 1)]
+    (and
+      ;; Mutating the cloned left branch did not alter the retained seed.
+      (= (struct-get seed len) 1)
+      (opt-load-global-base-test-eq?
+        (opt-load-global-bases-lookup seed 1)
+        10
+        8
+        true)
+      ;; Exact bindings from both branches survive a join.
+      (= (struct-get joined len) 2)
+      (opt-load-global-base-test-eq?
+        (opt-load-global-bases-lookup joined 2)
+        20
+        16
+        false)
+      ;; A conflicting offset is dropped while the common binding remains.
+      (= (struct-get narrowed len) 1)
+      (opt-load-global-base-test-eq?
+        (opt-load-global-bases-lookup narrowed 1)
+        10
+        8
+        true)
+      ;; In-place compaction removes only the selected binding.
+      (= (struct-get dropped len) 1)
+      (match (opt-load-global-bases-lookup dropped 1)
+        [(OptMaybeGlobalBase.No) true]
+        [_ false])
+      (opt-load-global-base-test-eq?
+        (opt-load-global-bases-lookup dropped 2)
+        20
+        16
+        false))))
+
 (define (opt-load-cse-cap-self-test?) : bool
   (let
     [key0 : OptLoadKey
@@ -25445,6 +25516,7 @@
     [field-bad : OptLoadLocKind
       (opt-load-loc-field-checked opt-load-loc-field-base-limit 0 8 false)]
     (and
+      (opt-load-global-bases-self-test?)
       (= (opt-load-cse-table-cap-for-size 8) opt-load-cse-table-cap-floor)
       (= (opt-load-cse-kinds-cap-for-size 8) opt-load-cse-kinds-cap-floor)
       (=

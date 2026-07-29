@@ -59668,8 +59668,11 @@
   (Cons OptLoadEntry (Box OptLoadTable)))
 
 ;; Resolved global-based addresses: var -> (global symbol, byte offset,
-;; value-base?), as a persistent list so the cross-block walk shares spines
-;; instead of cloning a table per edge.
+;; value-base?), in a bounded dense table. Block-local CSE mutates one table
+;; linearly. Cross-block GVN clones it when a predecessor state becomes a new
+;; block's entry state, just like the mutable alias facts and pointer-kind
+;; tables; joins build a fresh intersection. This keeps retained predecessor
+;; snapshots isolated without introducing a boxed binding chain.
 ;;
 ;; This is deliberately NOT part of OptLoadPtrKinds, because it does not have a
 ;; pointer kind's lifetime. A kind is a property of a pointer VALUE and survives
@@ -59684,9 +59687,12 @@
 ;;
 ;; `gep (GlobalAddr g) k` needs no such care -- g's own address is a link-time
 ;; constant -- but it rides the same map and the same conservative clearing.
-(defenum OptLoadGlobalBases
-  (Nil)
-  (Cons i64 i64 i64 bool (Box OptLoadGlobalBases)))
+(defenum OptLoadGlobalBaseEntry
+  (Entry i64 i64 i64 bool))
+
+(defstruct OptLoadGlobalBases
+  (slots (Array OptLoadGlobalBaseEntry))
+  (len i64))
 
 (defenum OptMaybeGlobalBase
   (No)
@@ -59705,52 +59711,95 @@
 ;; global accesses.
 (define opt-load-global-bases-cap : i64
   32)
+(define opt-load-global-bases-initial-cap : i64
+  4)
+
+(define (opt-load-global-bases-empty) : OptLoadGlobalBases
+  (OptLoadGlobalBases (array.make-array OptLoadGlobalBaseEntry 0) 0))
+
+(define (opt-load-global-bases-clear [bases : OptLoadGlobalBases]) : OptLoadGlobalBases
+  (OptLoadGlobalBases (struct-get bases slots) 0))
+
+(define (opt-load-global-bases-copy-slots
+  [slots : (Array OptLoadGlobalBaseEntry)]
+  [len : i64]
+  [capacity : i64]) : (Array OptLoadGlobalBaseEntry)
+  (let
+    [out : (Array OptLoadGlobalBaseEntry)
+      (array.make-array OptLoadGlobalBaseEntry capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index len)
+        (begin
+          (array-set! out index (array-ref slots index))
+          (set! index (+ index 1))))
+      out)))
+
+(define (opt-load-global-bases-clone [bases : OptLoadGlobalBases]) : OptLoadGlobalBases
+  (let
+    [len : i64 (struct-get bases len)]
+    (if (= len 0)
+      (opt-load-global-bases-empty)
+      (let
+        [slots : (Array OptLoadGlobalBaseEntry) (struct-get bases slots)]
+        (OptLoadGlobalBases
+          (opt-load-global-bases-copy-slots slots len (array-length slots))
+          len)))))
+
+(define (opt-load-global-bases-lookup-from
+  [slots : (Array OptLoadGlobalBaseEntry)]
+  [index : i64]
+  [var : i64]) : OptMaybeGlobalBase
+  (if (< index 0)
+    (OptMaybeGlobalBase.No)
+    (match (array-ref slots index)
+      [(OptLoadGlobalBaseEntry.Entry bound global off value-base?)
+        (if (= bound var)
+          (OptMaybeGlobalBase.Some global off value-base?)
+          (opt-load-global-bases-lookup-from slots (- index 1) var))])))
 
 (define (opt-load-global-bases-lookup [bases : OptLoadGlobalBases] [var : i64]) : OptMaybeGlobalBase
-  (match bases
-    [(OptLoadGlobalBases.Nil) (OptMaybeGlobalBase.No)]
-    [(OptLoadGlobalBases.Cons bound global off value-base? rest)
-      (if (= bound var)
-        (OptMaybeGlobalBase.Some global off value-base?)
-        (opt-load-global-bases-lookup (box-get rest) var))]))
+  (opt-load-global-bases-lookup-from
+    (struct-get bases slots)
+    (- (struct-get bases len) 1)
+    var))
 
-(define (opt-load-global-bases-mentions-var?
-  [bases : OptLoadGlobalBases]
-  [var : i64]) : bool
-  (match bases
-    [(OptLoadGlobalBases.Nil) false]
-    [(OptLoadGlobalBases.Cons bound _ _ _ rest)
-      (if (= bound var)
-        true
-        (opt-load-global-bases-mentions-var? (box-get rest) var))]))
-
-(define (opt-load-global-bases-drop-var-scan
-  [bases : OptLoadGlobalBases]
-  [var : i64]) : OptLoadGlobalBases
-  (match bases
-    [(OptLoadGlobalBases.Nil) (OptLoadGlobalBases.Nil)]
-    [(OptLoadGlobalBases.Cons bound global off value-base? rest)
-      (let
-        [tail : OptLoadGlobalBases
-          (opt-load-global-bases-drop-var-scan (box-get rest) var)]
-        (if (= bound var)
-          tail
-          (OptLoadGlobalBases.Cons bound global off value-base? (box tail))))]))
-
-;; Every defining instruction runs this, so the no-match case returns the map
-;; unchanged instead of re-boxing the spine (see opt-load-table-invalidate-var).
+;; Tables are unique within one block walk. Compacting in place is safe because
+;; the cross-block entry path clones retained predecessor tables first.
 (define (opt-load-global-bases-drop-var
   [bases : OptLoadGlobalBases]
   [var : i64]) : OptLoadGlobalBases
-  (if (opt-load-global-bases-mentions-var? bases var)
-    (opt-load-global-bases-drop-var-scan bases var)
-    bases))
+  (let
+    [slots : (Array OptLoadGlobalBaseEntry) (struct-get bases slots)]
+    [count : i64 (struct-get bases len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [entry : OptLoadGlobalBaseEntry (array-ref slots read)]
+          (begin
+            (match entry
+              [(OptLoadGlobalBaseEntry.Entry bound _ _ _)
+                (if (= bound var)
+                  unit
+                  (begin
+                    (if (not (= write read))
+                      (array-set! slots write entry)
+                      unit)
+                    (set! write (+ write 1))))])
+            (set! read (+ read 1)))))
+      (OptLoadGlobalBases slots write))))
 
-(define (opt-load-global-bases-len [bases : OptLoadGlobalBases]) : i64
-  (match bases
-    [(OptLoadGlobalBases.Nil) 0]
-    [(OptLoadGlobalBases.Cons _ _ _ _ rest)
-      (+ 1 (opt-load-global-bases-len (box-get rest)))]))
+(define (opt-load-global-bases-next-capacity [current : i64]) : i64
+  (let
+    [candidate : i64
+      (if (= current 0)
+        opt-load-global-bases-initial-cap
+        (* current 2))]
+    (if (> candidate opt-load-global-bases-cap)
+      opt-load-global-bases-cap
+      candidate)))
 
 (define (opt-load-global-bases-bind
   [bases : OptLoadGlobalBases]
@@ -59760,13 +59809,43 @@
   [value-base? : bool]) : OptLoadGlobalBases
   (let
     [dropped : OptLoadGlobalBases (opt-load-global-bases-drop-var bases var)]
-    (if (or
-      (< var 0)
-      (< global 0)
-      (< off 0)
-      (>= (opt-load-global-bases-len dropped) opt-load-global-bases-cap))
+    [len : i64 (struct-get dropped len)]
+    (if (or (< var 0) (< global 0) (< off 0) (>= len opt-load-global-bases-cap))
       dropped
-      (OptLoadGlobalBases.Cons var global off value-base? (box dropped)))))
+      (let
+        [old-slots : (Array OptLoadGlobalBaseEntry) (struct-get dropped slots)]
+        [slots : (Array OptLoadGlobalBaseEntry)
+          (if (< len (array-length old-slots))
+            old-slots
+            (opt-load-global-bases-copy-slots
+              old-slots
+              len
+              (opt-load-global-bases-next-capacity (array-length old-slots))))]
+        (begin
+          (array-set!
+            slots
+            len
+            (OptLoadGlobalBaseEntry.Entry var global off value-base?))
+          (OptLoadGlobalBases slots (+ len 1)))))))
+
+(define (opt-load-global-base-fields-eq?
+  [global : i64]
+  [off : i64]
+  [value-base? : bool]
+  [other : OptMaybeGlobalBase]) : bool
+  (match other
+    [(OptMaybeGlobalBase.Some other-global other-off other-value-base?)
+      (and
+        (= global other-global)
+        (= off other-off)
+        (=
+          (if value-base?
+            1
+            0)
+          (if other-value-base?
+            1
+            0)))]
+    [(OptMaybeGlobalBase.No) false]))
 
 ;; Control-flow join: keep only bindings identical on both edges. A var bound on
 ;; both edges is bound by its single definition, so agreement is the common case;
@@ -59774,27 +59853,31 @@
 (define (opt-load-global-bases-intersect
   [a : OptLoadGlobalBases]
   [b : OptLoadGlobalBases]) : OptLoadGlobalBases
-  (match a
-    [(OptLoadGlobalBases.Nil) (OptLoadGlobalBases.Nil)]
-    [(OptLoadGlobalBases.Cons var global off value-base? rest)
-      (let
-        [tail : OptLoadGlobalBases
-          (opt-load-global-bases-intersect (box-get rest) b)]
-        (match (opt-load-global-bases-lookup b var)
-          [(OptMaybeGlobalBase.Some bglobal boff bvalue-base?)
-            (if (and
-              (= global bglobal)
-              (= off boff)
-              (=
-                (if value-base?
-                  1
-                  0)
-                (if bvalue-base?
-                  1
-                  0)))
-              (OptLoadGlobalBases.Cons var global off value-base? (box tail))
-              tail)]
-          [(OptMaybeGlobalBase.No) tail]))]))
+  (let
+    [a-slots : (Array OptLoadGlobalBaseEntry) (struct-get a slots)]
+    [a-len : i64 (struct-get a len)]
+    [out-slots : (Array OptLoadGlobalBaseEntry)
+      (array.make-array OptLoadGlobalBaseEntry a-len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read a-len)
+        (let
+          [entry : OptLoadGlobalBaseEntry (array-ref a-slots read)]
+          (begin
+            (match entry
+              [(OptLoadGlobalBaseEntry.Entry var global off value-base?)
+                (if (opt-load-global-base-fields-eq?
+                  global
+                  off
+                  value-base?
+                  (opt-load-global-bases-lookup b var))
+                  (begin
+                    (array-set! out-slots write entry)
+                    (set! write (+ write 1)))
+                  unit)])
+            (set! read (+ read 1)))))
+      (OptLoadGlobalBases out-slots write))))
 
 ;; The global operand a gep base names, if any: `Global g` addresses the pointer
 ;; stored in g, `GlobalAddr g` addresses g itself. Everything else (vars,
@@ -59859,12 +59942,11 @@
           (opt-load-global-bases-bind bases dst global off value-base?)]
         [(OptMaybeGlobalBase.No) (opt-load-global-bases-drop-var bases dst)])]
     [_
-      (match bases
-        [(OptLoadGlobalBases.Nil) bases]
-        [_
-          (match (opt-instr-def-var instr)
-            [(option_i64.Some dst) (opt-load-global-bases-drop-var bases dst)]
-            [(option_i64.None) bases])])]))
+      (if (= (struct-get bases len) 0)
+        bases
+        (match (opt-instr-def-var instr)
+          [(option_i64.Some dst) (opt-load-global-bases-drop-var bases dst)]
+          [(option_i64.None) bases]))]))
 
 ;; How a classified store writes memory (Unknown clears the whole table).
 (defenum OptLoadStoreClass
@@ -60772,7 +60854,7 @@
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts _ kinds table-cap epoch _)
+    [(OptLoadCseState.State facts _ kinds table-cap epoch bases)
       (let
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         (OptLoadCseState.State
@@ -60786,7 +60868,7 @@
           (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (OptLoadGlobalBases.Nil)))]))
+          (opt-load-global-bases-clear bases)))]))
 
 ;; Apply one callee parameter-write bit to the cached load table. The callee
 ;; summary carries no byte-range fact, so filtering is root-only: a write
@@ -60839,7 +60921,7 @@
     ;; summary lets table entries live: those entries survive only where the
     ;; callee provably cannot reach them, while a base map binding would have to
     ;; re-prove that the global SLOT is untouched, which no summary states.
-    [(OptLoadCseState.State facts table kinds table-cap epoch _)
+    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (let
         ;; Filtering reads the PRE-call facts and table, so a tl_alloc call
         ;; cannot use its own (not yet bound) fresh root to keep entries.
@@ -60875,7 +60957,7 @@
           (opt-load-kinds-step type-segment-bases kinds hs instr)
           table-cap
           next-epoch
-          (OptLoadGlobalBases.Nil)))]))
+          (opt-load-global-bases-clear bases)))]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
 ;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
@@ -60926,7 +61008,7 @@
               kinds
               table-cap
               next-epoch
-              (OptLoadGlobalBases.Nil))]
+              (opt-load-global-bases-clear bases))]
           [_
             (let
               [key : OptLoadKey (opt-load-key-for-address kinds bases ptr ty)]
@@ -60964,7 +61046,7 @@
                 kinds
                 table-cap
                 next-epoch
-                (OptLoadGlobalBases.Nil)))]))]))
+                (opt-load-global-bases-clear bases)))]))]))
 
 ;; CopyBytes writes `size` bytes through its dst pointer: same granular
 ;; invalidation, plus conservative field-to-field forwarding when source and
@@ -60981,7 +61063,7 @@
   (match state
     ;; Same reasoning as the StorePtr arm: a copy through an unclassified
     ;; pointer may write a global slot, so the base map clears here too.
-    [(OptLoadCseState.State facts table kinds table-cap epoch _)
+    [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (let
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
         [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
@@ -61009,7 +61091,7 @@
               kinds
               table-cap
               next-epoch
-              (OptLoadGlobalBases.Nil))]
+              (opt-load-global-bases-clear bases))]
           [(OptLoadStoreElement)
             (OptLoadCseState.State
               facts2
@@ -61017,7 +61099,7 @@
               kinds
               table-cap
               next-epoch
-              (OptLoadGlobalBases.Nil))]
+              (opt-load-global-bases-clear bases))]
           [(OptLoadStoreField dst-base dst-off _ dst-header?)
             (let
               [copied : OptLoadTable
@@ -61055,7 +61137,7 @@
                 kinds
                 table-cap
                 next-epoch
-                (OptLoadGlobalBases.Nil)))]))]))
+                (opt-load-global-bases-clear bases)))]))]))
 
 (define (opt-load-cse-core-load
   [type-segment-bases : i64]
@@ -61274,7 +61356,7 @@
       (opt-load-kinds-empty-with-cap kinds-cap)
       table-cap
       0
-      (OptLoadGlobalBases.Nil))))
+      (opt-load-global-bases-empty))))
 
 (define (opt-load-cse-empty-state-with-caps [table-cap : i64] [kinds-cap : i64]) : OptLoadCseState
   (opt-load-cse-state-with-caps-and-facts table-cap kinds-cap (opt-alias-empty)))
@@ -61302,14 +61384,13 @@
           (opt-load-cse-kinds-cap-for-size instr-count))
         table-cap
         0
-        (OptLoadGlobalBases.Nil)))))
+        (opt-load-global-bases-empty)))))
 
-;; The load table is a persistent list, but the alias facts and pointer kinds
-;; are mutable tables; entering a block through a single predecessor must
-;; process a copy.
+;; The load table is persistent, but alias facts, pointer kinds, and global
+;; bases are mutable tables; entering a block through a single predecessor must
+;; process copies.
 (define (opt-load-cse-state-clone-facts [state : OptLoadCseState]) : OptLoadCseState
   (match state
-    ;; The base map is persistent too, so it shares its spine like the table.
     [(OptLoadCseState.State facts table kinds table-cap epoch bases)
       (OptLoadCseState.State
         (opt-alias-clone facts)
@@ -61317,7 +61398,7 @@
         (opt-load-kinds-clone kinds)
         table-cap
         epoch
-        bases)]))
+        (opt-load-global-bases-clone bases))]))
 
 (defenum OptMaybeLoadEntry
   (No)
@@ -61623,7 +61704,7 @@
                 ;; zero would let a loop-body allocation claim an epoch that a
                 ;; surviving entry already used.
                 acc-epoch
-                (OptLoadGlobalBases.Nil))])])
+                (opt-load-global-bases-empty))])])
       acc)
     (let
       [pred : i64 (array-ref (struct-get (struct-get index preds) edges) edge)]

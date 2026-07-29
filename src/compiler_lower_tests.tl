@@ -11470,7 +11470,7 @@
         [(InternLookupMissing) true])]
     [env : TcTypeEnv
       (tc-bind-id
-        (tc-bind-id TcTypeEnv.Nil qualified-id (AstType.I64))
+        (tc-bind-id (tc-empty-env) qualified-id (AstType.I64))
         fallback-id
         (AstType.Bool))]
     [cache : LowerTypeCache (lower-type-cache-from-env env)]

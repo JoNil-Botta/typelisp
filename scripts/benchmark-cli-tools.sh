@@ -24,7 +24,7 @@ native_link_detect_host
 
 usage() {
     cat <<'EOF'
-usage: scripts/benchmark-cli-tools.sh [typelisp-seed]
+usage: scripts/benchmark-cli-tools.sh [--self-test | typelisp-seed]
 
 Environment:
   TYPELISP_BIN                         Seed compiler when no argument is given.
@@ -40,6 +40,7 @@ Timings include setup, measured, and all totals. Setup covers the rebuilt CLI.
 EOF
 }
 
+SELF_TEST=0
 if [ "$#" -gt 1 ]; then
     usage >&2
     exit 2
@@ -50,10 +51,15 @@ if [ "$#" -eq 1 ]; then
             usage
             exit 0
             ;;
+        --self-test)
+            SELF_TEST=1
+            ;;
     esac
 fi
 
-if [ "$#" -eq 1 ]; then
+if [ "$SELF_TEST" -eq 1 ]; then
+    SEED=
+elif [ "$#" -eq 1 ]; then
     SEED=$1
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     SEED=$TYPELISP_BIN
@@ -67,12 +73,16 @@ case "$SEED" in
     *) SEED="$ROOT/$SEED" ;;
 esac
 
-if [ ! -x "$SEED" ]; then
+if [ "$SELF_TEST" -eq 0 ] && [ ! -x "$SEED" ]; then
     echo "typelisp seed is not executable: $SEED" >&2
     exit 1
 fi
 
-RUNS=${TYPELISP_TOOL_BENCH_RUNS:-1}
+if [ "$SELF_TEST" -eq 1 ]; then
+    RUNS=3
+else
+    RUNS=${TYPELISP_TOOL_BENCH_RUNS:-1}
+fi
 case "$RUNS" in
     "" | *[!0-9]* | 0)
         echo "TYPELISP_TOOL_BENCH_RUNS must be a positive integer" >&2
@@ -90,7 +100,12 @@ case "$OPT_LEVEL" in
 esac
 
 FILTER=${TYPELISP_TOOL_BENCH_FILTER:-}
-WORKROOT=${TYPELISP_TOOL_BENCH_OUT:-"$ROOT/target/cli-tool-benchmark"}
+if [ "$SELF_TEST" -eq 1 ]; then
+    FILTER=
+    WORKROOT="$ROOT/target/cli-tool-benchmark-self-test"
+else
+    WORKROOT=${TYPELISP_TOOL_BENCH_OUT:-"$ROOT/target/cli-tool-benchmark"}
+fi
 RUNDIR="$WORKROOT/run"
 BASELINE_DIR="$WORKROOT/baseline"
 BUILDDIR="$RUNDIR/build"
@@ -108,7 +123,9 @@ SETUP_MS=0
 
 rm -rf "$RUNDIR"
 mkdir -p "$BUILDDIR" "$OUTPUTS" "$ARTIFACTS" "$TMPDIR_BENCH" "$BASELINE_DIR"
-configure_toolchain
+if [ "$SELF_TEST" -eq 0 ]; then
+    configure_toolchain
+fi
 
 CLI_ASM="$BUILDDIR/cli.s"
 CLI_OBJ="$BUILDDIR/cli.$NL_OBJ_EXT"
@@ -247,14 +264,15 @@ measure_setup_step_no_total() {
 }
 
 compare_text() {
-    label=$1
-    left=$2
-    right=$3
-    if ! cmp -s "$left" "$right"; then
-        echo "[tool-bench] mismatch: $label" >&2
-        sha_files "$left" "$right"
+    compare_text_label=$1
+    compare_text_left=$2
+    compare_text_right=$3
+    if ! cmp -s "$compare_text_left" "$compare_text_right"; then
+        echo "[tool-bench] mismatch: $compare_text_label" >&2
+        sha_files "$compare_text_left" "$compare_text_right"
         if command -v diff >/dev/null 2>&1; then
-            diff -u "$left" "$right" | sed -n '1,200p' >&2 || true
+            diff -u "$compare_text_left" "$compare_text_right" \
+                | sed -n '1,200p' >&2 || true
         fi
         exit 1
     fi
@@ -357,6 +375,118 @@ measure_case_unstable_stdout() {
         run=$((run + 1))
     done
 }
+
+benchmark_cli_tools_self_test() {
+    stable_runner="$TMPDIR_BENCH/self-test-stable.sh"
+    varying_runner="$TMPDIR_BENCH/self-test-varying.sh"
+    mismatch_runner="$TMPDIR_BENCH/self-test-mismatch.sh"
+    varying_state="$TMPDIR_BENCH/varying-state"
+    mismatch_state="$TMPDIR_BENCH/mismatch-state"
+    timing_projection="$TMPDIR_BENCH/timing-projection.tsv"
+    timing_expected="$TMPDIR_BENCH/timing-expected.tsv"
+    case_expected="$TMPDIR_BENCH/cases-expected.txt"
+    mismatch_stdout="$TMPDIR_BENCH/mismatch.stdout"
+    mismatch_stderr="$TMPDIR_BENCH/mismatch.stderr"
+    mismatch_outputs="$TMPDIR_BENCH/mismatch-outputs"
+
+    cat > "$stable_runner" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+printf 'stable stdout\n'
+printf 'stable stderr\n' >&2
+EOF
+    cat > "$varying_runner" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+state=$1
+iteration=0
+if [ -f "$state" ]; then
+    iteration=$(cat "$state")
+fi
+iteration=$((iteration + 1))
+printf '%s\n' "$iteration" > "$state"
+printf 'varying stdout run %s\n' "$iteration"
+printf 'stable stderr\n' >&2
+EOF
+    cat > "$mismatch_runner" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+state=$1
+iteration=0
+if [ -f "$state" ]; then
+    iteration=$(cat "$state")
+fi
+iteration=$((iteration + 1))
+printf '%s\n' "$iteration" > "$state"
+case "$iteration" in
+    1 | 2) printf 'run-one baseline\n' ;;
+    *) printf 'run-three mismatch\n' ;;
+esac
+EOF
+    chmod +x "$stable_runner" "$varying_runner" "$mismatch_runner"
+
+    printf 'step\titeration\telapsed_ms\n' > "$TIMINGS"
+    : > "$CASE_LIST"
+    measure_case "stable-case" "$stable_runner"
+    measure_case_unstable_stdout "unstable-case" "$varying_runner" "$varying_state"
+
+    for self_test_label in stable-case unstable-case; do
+        self_test_run=1
+        while [ "$self_test_run" -le 3 ]; do
+            [ -f "$OUTPUTS/$self_test_label.$self_test_run.stdout" ] \
+                || fail "self-test missing stdout for $self_test_label run $self_test_run"
+            [ -f "$OUTPUTS/$self_test_label.$self_test_run.stderr" ] \
+                || fail "self-test missing stderr for $self_test_label run $self_test_run"
+            self_test_run=$((self_test_run + 1))
+        done
+    done
+    if cmp -s "$OUTPUTS/unstable-case.1.stdout" "$OUTPUTS/unstable-case.2.stdout"; then
+        fail "self-test unstable stdout did not vary between repetitions"
+    fi
+
+    printf 'stable-case\nunstable-case\n' > "$case_expected"
+    compare_text "self-test case labels" "$case_expected" "$CASE_LIST"
+    awk -F '\t' '
+        $1 == "stable-case" || $1 == "unstable-case" {
+            print $1 "\t" $2
+        }
+    ' "$TIMINGS" > "$timing_projection"
+    printf 'stable-case\t1\nstable-case\t2\nstable-case\t3\n' \
+        > "$timing_expected"
+    printf 'unstable-case\t1\nunstable-case\t2\nunstable-case\t3\n' \
+        >> "$timing_expected"
+    compare_text \
+        "self-test timing labels and iterations" \
+        "$timing_expected" \
+        "$timing_projection"
+
+    mkdir -p "$mismatch_outputs"
+    if (
+        OUTPUTS="$mismatch_outputs"
+        TIMINGS="$TMPDIR_BENCH/mismatch-timings.tsv"
+        CASE_LIST="$TMPDIR_BENCH/mismatch-cases.txt"
+        TOTAL_MS=0
+        printf 'step\titeration\telapsed_ms\n' > "$TIMINGS"
+        : > "$CASE_LIST"
+        measure_case "baseline-probe" "$mismatch_runner" "$mismatch_state"
+    ) > "$mismatch_stdout" 2> "$mismatch_stderr"; then
+        fail "self-test run-three mismatch was not detected"
+    fi
+    if ! grep -F \
+        '[tool-bench] mismatch: baseline-probe stdout run 1 vs 3' \
+        "$mismatch_stderr" >/dev/null; then
+        echo "self-test did not compare run 3 against the original run 1:" >&2
+        sed 's/^/  /' "$mismatch_stderr" >&2 || true
+        exit 1
+    fi
+
+    echo "benchmark CLI tools repetition self-test passed"
+}
+
+if [ "$SELF_TEST" -eq 1 ]; then
+    benchmark_cli_tools_self_test
+    exit 0
+fi
 
 copy_corpus_to() {
     dest=$1

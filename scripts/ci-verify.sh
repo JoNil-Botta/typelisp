@@ -206,6 +206,11 @@ run_gate \
     scripts/check-instruction-counts.sh \
     --self-test
 run_gate \
+    "CLI tools benchmark repetition self-test" \
+    sh \
+    scripts/benchmark-cli-tools.sh \
+    --self-test
+run_gate \
     "stage0 release publication verifier self-tests" \
     scripts/verify-stage0-release.sh \
     --self-test

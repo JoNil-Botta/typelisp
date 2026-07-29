@@ -11994,10 +11994,41 @@
 (define (compiler-backend-imm32? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
 
+;; Lazily-filled cache of rendered "$N" immediates covering n in
+;; [-4096, 4095] -- the window holding >99% of immediate uses (228k uses
+;; but under 1k distinct values on the opt1 self-compile). The rendered
+;; text depends only on n and strings are immutable, so within one emission
+;; arena generation every use can share one rendered instance. Like the
+;; slot cache the cached strings are arena-owned transients, so entries are
+;; guarded by the same compiler-backend-slot-cache-epoch and retired by the
+;; same reset boundaries. Out-of-window values render fresh.
+(define compiler-backend-immediate-cache-values : (Array String)
+  (array.make-array String 8192))
+(define compiler-backend-immediate-cache-epochs : (Array i64)
+  (array.make-array i64 8192))
+
+(define (compiler-backend-immediate-render [n : i64]) : String
+  (if (and (>= n -4096) (< n 4096))
+    (let
+      [idx : i64 (+ n 4096)]
+      (if (=
+        (array-ref compiler-backend-immediate-cache-epochs idx)
+        compiler-backend-slot-cache-epoch)
+        (array-ref compiler-backend-immediate-cache-values idx)
+        (let
+          [text : String (string.append "$" (string.int->string n))]
+          (begin
+            (array-set! compiler-backend-immediate-cache-values idx text)
+            (array-set!
+              compiler-backend-immediate-cache-epochs
+              idx
+              compiler-backend-slot-cache-epoch)
+            text))))
+    (string.append "$" (string.int->string n))))
+
 (define (compiler-backend-immediate-i64 [n : i64]) : CompilerBackendMaybeImmediate
   (if (compiler-backend-imm32? n)
-    (CompilerBackendMaybeImmediate.Some
-      (string.append "$" (string.int->string n)))
+    (CompilerBackendMaybeImmediate.Some (compiler-backend-immediate-render n))
     (CompilerBackendMaybeImmediate.No)))
 
 (define (compiler-backend-immediate-operand [value : CompilerIrValue]) : CompilerBackendMaybeImmediate
@@ -12009,7 +12040,7 @@
         (CompilerBackendMaybeImmediate.Some "$0"))]
     [(CompilerIrValue.Char c)
       (CompilerBackendMaybeImmediate.Some
-        (string.append "$" (string.int->string (compiler-backend-char-code c))))]
+        (compiler-backend-immediate-render (compiler-backend-char-code c)))]
     [(CompilerIrValue.Unit) (CompilerBackendMaybeImmediate.Some "$0")]
     [_ (CompilerBackendMaybeImmediate.No)]))
 

@@ -114,6 +114,7 @@
   (top-env TcTypeEnv)
   (path String)
   (source String)
+  (form-start i64)
   (module-id i64)
   (declaration-ordinal i64)
   (generated bool)
@@ -334,66 +335,179 @@
           (set! matches false)))
       matches)))
 
-(define (compiler-semantic-top-level-form-start
+(define (compiler-semantic-single-quote-end
   [source : String]
-  [before : i64]) : i64
+  [start : i64]
+  [limit : i64]) : i64
+  (cond
+    [(and
+        (<= (+ start 2) limit)
+        (not (= (string.string-ref source (+ start 1)) '\\'))
+        (= (string.string-ref source (+ start 2)) '\''))
+      (+ start 2)]
+    [(and
+        (<= (+ start 3) limit)
+        (= (string.string-ref source (+ start 1)) '\\')
+        (= (string.string-ref source (+ start 3)) '\''))
+      (+ start 3)]
+    [else -1]))
+
+(define (compiler-semantic-double-quote-end
+  [source : String]
+  [start : i64]
+  [limit : i64]) : i64
   (let
-    [cursor : i64
-      (if (< before (string.string-length source))
-        before
-        (string.string-length source))]
-    [found : i64 0]
+    [cursor : i64 (+ start 1)]
+    [escaped : bool false]
     [done : bool false]
     (begin
-      (while (and (not done) (> cursor 0))
-        (begin
-          (set! cursor (- cursor 1))
-          (if (and
-            (= (string.string-ref source cursor) '(')
-            (or (= cursor 0) (= (string.string-ref source (- cursor 1)) '\n')))
-            (begin
-              (set! found cursor)
-              (set! done true))
-            unit)))
+      (while (and (not done) (< cursor limit))
+        (let
+          [current : char (string.string-ref source cursor)]
+          (begin
+            (set! cursor (+ cursor 1))
+            (if (and (not escaped) (= current '"'))
+              (set! done true)
+              (set! escaped (and (not escaped) (= current '\\')))))))
+      cursor)))
+
+(define (compiler-semantic-name-offset-in-range
+  [source : String]
+  [name : String]
+  [start : i64]
+  [limit : i64]) : i64
+  (let
+    [cursor : i64
+      (if (< start 0)
+        0
+        start)]
+    [bounded-limit : i64
+      (if (> limit (string.string-length source))
+        (string.string-length source)
+        limit)]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< cursor bounded-limit))
+        (let
+          [current : char (string.string-ref source cursor)]
+          (cond
+            [(= current ';')
+              (begin
+                (while (and
+                  (< cursor bounded-limit)
+                  (not (= (string.string-ref source cursor) '\n')))
+                  (set! cursor (+ cursor 1)))
+                (set! cursor (+ cursor 1)))]
+            [(= current '"')
+              (set!
+                cursor
+                (compiler-semantic-double-quote-end source cursor bounded-limit))]
+            [(= current '\'')
+              (let
+                [char-end : i64
+                  (compiler-semantic-single-quote-end
+                    source
+                    cursor
+                    (- bounded-limit 1))]
+                (if (>= char-end 0)
+                  (set! cursor (+ char-end 1))
+                  (set! cursor (+ cursor 1))))]
+            [(compiler-semantic-source-name-at?
+                source
+                name
+                cursor
+                bounded-limit)
+              (set! found cursor)]
+            [else (set! cursor (+ cursor 1))])))
+      found)))
+
+(define (compiler-semantic-top-level-form-start
+  [source : String]
+  [before : i64]
+  [search-start : i64]) : i64
+  (let
+    [source-len : i64 (string.string-length source)]
+    [limit : i64
+      (cond
+        [(= source-len 0) -1]
+        [(< before 0) 0]
+        [(< before source-len) before]
+        [else (- source-len 1)])]
+    [cursor : i64
+      (if (and (>= search-start 0) (<= search-start limit))
+        search-start
+        0)]
+    [depth : i64 0]
+    [found : i64 0]
+    (begin
+      (while (<= cursor limit)
+        (let
+          [current : char (string.string-ref source cursor)]
+          (cond
+            [(= current ';')
+              (begin
+                (while (and
+                  (<= cursor limit)
+                  (not (= (string.string-ref source cursor) '\n')))
+                  (set! cursor (+ cursor 1)))
+                (set! cursor (+ cursor 1)))]
+            [(= current '"')
+              (set!
+                cursor
+                (compiler-semantic-double-quote-end source cursor (+ limit 1)))]
+            [(= current '\'')
+              (let
+                [char-end : i64
+                  (compiler-semantic-single-quote-end source cursor limit)]
+                (if (>= char-end 0)
+                  (set! cursor (+ char-end 1))
+                  (set! cursor (+ cursor 1))))]
+            [(= current '(')
+              (begin
+                (if (= depth 0)
+                  (set! found cursor)
+                  unit)
+                (set! depth (+ depth 1))
+                (set! cursor (+ cursor 1)))]
+            [(= current ')')
+              (begin
+                (if (> depth 0)
+                  (set! depth (- depth 1))
+                  unit)
+                (set! cursor (+ cursor 1)))]
+            [else (set! cursor (+ cursor 1))])))
       found)))
 
 (define (compiler-semantic-definition-span
   [path : String]
   [source : String]
   [name : String]
-  [origin : AstSourceSpan]) : CompilerSemanticSpan
+  [origin : AstSourceSpan]
+  [form-start : i64]) : CompilerSemanticSpan
   (let
-    [origin-start : i64
-      (compiler-semantic-source-offset
-        source
-        (ast-source-span-start-line origin)
-        (ast-source-span-start-col origin))]
-    [start : i64 (compiler-semantic-top-level-form-start source origin-start)]
+    [start : i64
+      (if (>= form-start 0)
+        form-start
+        0)]
     [end : i64
       (compiler-semantic-source-offset
         source
         (ast-source-span-end-line origin)
         (ast-source-span-end-col origin))]
-    [cursor : i64 start]
-    [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< cursor end))
-        (if (compiler-semantic-source-name-at? source name cursor end)
-          (set! found cursor)
-          (set! cursor (+ cursor 1))))
-      (if (< found 0)
-        (CompilerSemanticSpan (string.copy (& path)) start end origin)
-        (let
-          [name-len : i64 (string.string-length name)]
-          [position : AstSourceSpan
-            (compiler-semantic-source-position source found)]
-          [line : i64 (ast-source-span-start-line position)]
-          [col : i64 (ast-source-span-start-col position)]
-          (CompilerSemanticSpan
-            (string.copy (& path))
-            found
-            (+ found name-len)
-            (ast-source-span line col line (+ col name-len))))))))
+    [found : i64 (compiler-semantic-name-offset-in-range source name start end)]
+    (if (< found 0)
+      (CompilerSemanticSpan (string.copy (& path)) start end origin)
+      (let
+        [name-len : i64 (string.string-length name)]
+        [position : AstSourceSpan
+          (compiler-semantic-source-position source found)]
+        [line : i64 (ast-source-span-start-line position)]
+        [col : i64 (ast-source-span-start-col position)]
+        (CompilerSemanticSpan
+          (string.copy (& path))
+          found
+          (+ found name-len)
+          (ast-source-span line col line (+ col name-len)))))))
 
 (define (compiler-semantic-decl-origin
   [decls : (& decls AstDeclList)]
@@ -502,37 +616,29 @@
   [start : i64]
   [limit : i64]) : CompilerSemanticSpan
   (let
-    [cursor : i64
-      (if (< start 0)
-        0
-        start)]
     [bounded-limit : i64
       (if (> limit (string.string-length source))
         (string.string-length source)
         limit)]
-    [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< cursor bounded-limit))
-        (if (compiler-semantic-source-name-at? source name cursor bounded-limit)
-          (set! found cursor)
-          (set! cursor (+ cursor 1))))
-      (if (< found 0)
+    [found : i64
+      (compiler-semantic-name-offset-in-range source name start bounded-limit)]
+    (if (< found 0)
+      (CompilerSemanticSpan
+        (string.copy (& path))
+        -1
+        -1
+        (ast-source-span 1 1 1 1))
+      (let
+        [name-len : i64 (string.string-length name)]
+        [position : AstSourceSpan
+          (compiler-semantic-source-position source found)]
+        [line : i64 (ast-source-span-start-line position)]
+        [col : i64 (ast-source-span-start-col position)]
         (CompilerSemanticSpan
           (string.copy (& path))
-          -1
-          -1
-          (ast-source-span 1 1 1 1))
-        (let
-          [name-len : i64 (string.string-length name)]
-          [position : AstSourceSpan
-            (compiler-semantic-source-position source found)]
-          [line : i64 (ast-source-span-start-line position)]
-          [col : i64 (ast-source-span-start-col position)]
-          (CompilerSemanticSpan
-            (string.copy (& path))
-            found
-            (+ found name-len)
-            (ast-source-span line col line (+ col name-len))))))))
+          found
+          (+ found name-len)
+          (ast-source-span line col line (+ col name-len)))))))
 
 (define (compiler-semantic-form-head-end [source : String] [start : i64]) : i64
   (let
@@ -1088,6 +1194,84 @@
           env
           (ast-expr-list-get (& items) index 0))
         (set! index (+ index 1))))))
+
+(define (compiler-semantic-walk-quasiquote-list!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingList]
+  [env : TcTypeEnv]
+  [items : AstExprList]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast-expr-list-len (& items)))
+      (begin
+        (compiler-semantic-walk-quasiquote-node!
+          state
+          scope
+          env
+          (ast-expr-list-get (& items) index 0))
+        (set! index (+ index 1))))))
+
+(define (compiler-semantic-walk-quasiquote-node!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingList]
+  [env : TcTypeEnv]
+  [node-id : i64]) : unit
+  (match (ast-node-get node-id)
+    [(AstExpr.Spanned inner _)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Unquote inner)
+      (compiler-semantic-walk-node! state scope env inner)]
+    [(AstExpr.UnquoteSplicing inner)
+      (compiler-semantic-walk-node! state scope env inner)]
+    [(AstExpr.Binary _ left right)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env left)
+        (compiler-semantic-walk-quasiquote-node! state scope env right))]
+    [(AstExpr.Unary _ inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Call callee args)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env callee)
+        (compiler-semantic-walk-quasiquote-list! state scope env args))]
+    [(AstExpr.BracketClause items)
+      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.If condition then-expr else-expr)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env condition)
+        (compiler-semantic-walk-quasiquote-node! state scope env then-expr)
+        (compiler-semantic-walk-quasiquote-node! state scope env else-expr))]
+    [(AstExpr.Tuple items)
+      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.Array items)
+      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.DynArray items)
+      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.Begin items)
+      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.Unsafe items)
+      (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.Ann inner _)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Cast inner _)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Box inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.BoxGet inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.BoxTake inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.BoxSet target value)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env target)
+        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+    [(AstExpr.Comptime inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Return inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Quote _) unit]
+    [(AstExpr.Quasiquote inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [_ unit]))
 
 (define (compiler-semantic-walk-let!
   [state : CompilerSemanticWalkState]
@@ -1773,6 +1957,9 @@
         (compiler-semantic-walk-node! state scope env value))]
     [(AstExpr.Comptime inner)
       (compiler-semantic-walk-node! state scope env inner)]
+    [(AstExpr.Quote _) unit]
+    [(AstExpr.Quasiquote inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
     [(AstExpr.Unquote inner)
       (compiler-semantic-walk-node! state scope env inner)]
     [(AstExpr.UnquoteSplicing inner)
@@ -1841,9 +2028,9 @@
         body-id
         (string.string-length (struct-get state source)))]
     [form-start : i64
-      (compiler-semantic-top-level-form-start
-        (struct-get state source)
-        body-start)]
+      (if (>= (struct-get state form-start) 0)
+        (struct-get state form-start)
+        0)]
     [name-span : CompilerSemanticSpan
       (compiler-semantic-name-span-in-range
         (struct-get state path)
@@ -1937,6 +2124,7 @@
             env
             ""
             ""
+            -1
             cbi.compiler-builtin-id-fix-empty
             -1
             false
@@ -1951,6 +2139,7 @@
         [index : i64 0]
         [cached-path : String ""]
         [cached-source : String ""]
+        [form-search-start : i64 0]
         (begin
           (while (< index (ast-decl-list-len (& decls)))
             (let
@@ -1984,6 +2173,7 @@
                 (if path-changed
                   (begin
                     (set! cached-path (string.copy (& path)))
+                    (set! form-search-start 0)
                     (set!
                       cached-source
                       (cond
@@ -1999,6 +2189,7 @@
                 (set!
                   (struct-get walk-state source)
                   (string.copy (& cached-source)))
+                (set! (struct-get walk-state form-start) -1)
                 (set! (struct-get walk-state module-id) module-id)
                 (set! (struct-get walk-state declaration-ordinal) index)
                 (set! (struct-get walk-state generated) generated)
@@ -2010,6 +2201,24 @@
                       [name : String (tc-env-key-name-text name-id)]
                       [maybe-origin : CompilerParseMaybeDeclSpan
                         (compiler-semantic-decl-origin (& decls) index decl)]
+                      [form-start : i64
+                        (match maybe-origin
+                          [(CompilerParseMaybeDeclSpan.Some origin)
+                            (if (or generated (string.eq cached-source ""))
+                              -1
+                              (compiler-semantic-top-level-form-start
+                                cached-source
+                                (compiler-semantic-source-offset
+                                  cached-source
+                                  (ast-source-span-start-line origin)
+                                  (ast-source-span-start-col origin))
+                                form-search-start))]
+                          [(CompilerParseMaybeDeclSpan.None)
+                            (if (and
+                              (not generated)
+                              (not (string.eq cached-source "")))
+                              0
+                              -1)])]
                       [has-origin : bool
                         (match maybe-origin
                           [(CompilerParseMaybeDeclSpan.Some _) true]
@@ -2030,7 +2239,8 @@
                                 path
                                 cached-source
                                 name
-                                origin))]
+                                origin
+                                form-start))]
                           [(CompilerParseMaybeDeclSpan.None)
                             (if (and
                               (not generated)
@@ -2048,7 +2258,8 @@
                                     1
                                     1
                                     (ast-source-span-start-line end-position)
-                                    (ast-source-span-start-col end-position))))
+                                    (ast-source-span-start-col end-position))
+                                  form-start))
                               (CompilerSemanticSpan
                                 (string.copy (& path))
                                 -1
@@ -2076,11 +2287,13 @@
                           (>= (struct-get span start-byte) 0))
                           (compiler-semantic-documentation-above
                             cached-source
-                            (compiler-semantic-top-level-form-start
-                              cached-source
-                              (struct-get span start-byte)))
+                            form-start)
                           "")]
                       (begin
+                        (set! (struct-get walk-state form-start) form-start)
+                        (if (>= form-start 0)
+                          (set! form-search-start form-start)
+                          unit)
                         ;; Local identities are anchored to the resolved
                         ;; declaration handle, not the flattened AST position.
                         (set!
@@ -2367,11 +2580,21 @@
 (defmacro (emit-generated) : Decls
   `(define generated-value : i64 7))
 (emit-generated)
+(define prior-text : String \"(answer)\")
+(define prior-char : char '(')
+; ordinary source text mentions an unmatched (answer
 ;: Top answer documentation.
 ;# Additional answer detail.
-(define answer : i64 42)
-(define (use [answer : i64]) : i64
-  (let [answer : i64 (+ answer dep.imported-value)]
+  (define answer : i64 42)
+(defmacro (wrap [value : Expr]) : Expr
+  `(begin ,value))
+(define wrapped-answer : i64 (wrap 8))
+(define (use
+  ; answer appears in a comment before the parameter binder.
+  [answer : i64]) : i64
+  (let
+    ; answer appears in a comment before the local binder.
+    [answer : i64 (+ answer dep.imported-value)]
     answer))
 (define (call-use) : i64 (use answer))
 (define (match-use [value : i64]) : i64
@@ -2423,6 +2646,20 @@
               "answer"
               CompilerSemanticRecordRole.Use
               1)]
+          [macro-param-definition-index : i64
+            (compiler-semantic-source-index-find-record
+              (& first)
+              path
+              "value"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [macro-param-use-index : i64
+            (compiler-semantic-source-index-find-record
+              (& first)
+              path
+              "value"
+              CompilerSemanticRecordRole.Use
+              0)]
           [import-definition-index : i64
             (compiler-semantic-source-index-find-record
               (& first)
@@ -2481,6 +2718,8 @@
             (< param-use-index 0)
             (< local-definition-index 0)
             (< local-use-index 0)
+            (< macro-param-definition-index 0)
+            (< macro-param-use-index 0)
             (< import-definition-index 0)
             (< import-use-index 0)
             (< answer-use-index 0)
@@ -2510,6 +2749,14 @@
                   local-definition-index)]
               [local-use : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& first) local-use-index)]
+              [macro-param-definition : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  macro-param-definition-index)]
+              [macro-param-use : CompilerSemanticRecord
+                (compiler-semantic-source-index-get
+                  (& first)
+                  macro-param-use-index)]
               [import-definition : CompilerSemanticRecord
                 (compiler-semantic-source-index-get
                   (& first)
@@ -2582,6 +2829,14 @@
                           answer
                           "answer"
                           CompilerSemanticSymbolKind.Value)
+                        (=
+                          (ast-source-span-start-line
+                            (struct-get (struct-get answer span) source))
+                          12)
+                        (=
+                          (ast-source-span-start-col
+                            (struct-get (struct-get answer span) source))
+                          11)
                         (compiler-check-semantic-index-record-ok?
                           source
                           use
@@ -2601,6 +2856,9 @@
                         (compiler-semantic-symbol-id-eq?
                           (struct-get local-definition symbol)
                           (struct-get local-use symbol))
+                        (compiler-semantic-symbol-id-eq?
+                          (struct-get macro-param-definition symbol)
+                          (struct-get macro-param-use symbol))
                         (=
                           (struct-get (struct-get use symbol) module-id)
                           (struct-get
@@ -2625,6 +2883,18 @@
                           source
                           param-definition
                           "answer")
+                        (=
+                          (ast-source-span-start-line
+                            (struct-get
+                              (struct-get param-definition span)
+                              source))
+                          18)
+                        (=
+                          (ast-source-span-start-col
+                            (struct-get
+                              (struct-get param-definition span)
+                              source))
+                          4)
                         (compiler-semantic-record-span-text-eq?
                           source
                           param-use
@@ -2633,10 +2903,30 @@
                           source
                           local-definition
                           "answer")
+                        (=
+                          (ast-source-span-start-line
+                            (struct-get
+                              (struct-get local-definition span)
+                              source))
+                          21)
+                        (=
+                          (ast-source-span-start-col
+                            (struct-get
+                              (struct-get local-definition span)
+                              source))
+                          6)
                         (compiler-semantic-record-span-text-eq?
                           source
                           local-use
                           "answer")
+                        (compiler-semantic-record-span-text-eq?
+                          source
+                          macro-param-definition
+                          "value")
+                        (compiler-semantic-record-span-text-eq?
+                          source
+                          macro-param-use
+                          "value")
                         (string.eq
                           (struct-get param-definition resolved-type)
                           "i64")

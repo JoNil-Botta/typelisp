@@ -1106,6 +1106,8 @@ if [ "$NL_HOST_OS" = windows ]; then
         "typecheck.env.borrow_lifetime_scan_max")
     [ "$BORROW_LIFETIME_SCAN_MAX" -le 256 ] ||
         fail "borrow lifetime scan crossed lexical boundary: $BORROW_LIFETIME_SCAN_MAX bindings"
+else
+    echo "[compile-profile] selfhost allocation probe and pool pins SKIPPED (windows-gated)"
 fi
 
 echo "[compile-profile] compile deep string concat fixture"

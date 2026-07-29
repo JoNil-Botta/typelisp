@@ -9916,56 +9916,70 @@
   (match copy
     [(CompilerRegEdgeCopy.Copy _ _ _ _ _ _ placement) placement]))
 
-(define (compiler-reg-edge-copy-insert-before-last
-  [instrs : CompilerIrInstrList]
-  [copy-instr : CompilerIrInstr]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (compiler-ir-instr-cons copy-instr CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (box-get rest)
-        [(CompilerIrInstrList.Nil)
-          (compiler-ir-instr-cons
-            copy-instr
-            (compiler-ir-instr-cons instr CompilerIrInstrList.Nil))]
-        [_
-          (compiler-ir-instr-cons
-            instr
-            (compiler-reg-edge-copy-insert-before-last
-              (box-get rest)
-              copy-instr))])]))
+;; Insertion slot for an edge copy: PredEnd lands before the terminator (an
+;; empty block has none, so the copy becomes the whole block), SuccEntry lands
+;; after the leading phis. Computed directly on the dense sequence (refs
+;; #5726).
+(define (compiler-reg-edge-copy-insert-index
+  [instrs : CompilerIrInstrSeq]
+  [placement : CompilerRegEdgeCopyPlacement]) : i64
+  (match placement
+    [(CompilerRegEdgeCopyPlacement.PredEnd)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 1)
+          0
+          (- count 1)))]
+    [(CompilerRegEdgeCopyPlacement.SuccEntry)
+      (let
+        [index : i64 0]
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        [done : bool false]
+        (begin
+          (while (and (< index count) (not done))
+            (match (compiler-ir-instr-seq-ref instrs index)
+              [(CompilerIrInstr.Phi _ _ _) (set! index (+ index 1))]
+              [_ (set! done true)]))
+          index))]))
 
-(define (compiler-reg-edge-copy-insert-after-phis
-  [instrs : CompilerIrInstrList]
-  [copy-instr : CompilerIrInstr]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (compiler-ir-instr-cons copy-instr CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(CompilerIrInstr.Phi _ _ _)
-          (compiler-ir-instr-cons
-            instr
-            (compiler-reg-edge-copy-insert-after-phis (box-get rest) copy-instr))]
-        [_ (compiler-ir-instr-cons copy-instr instrs)])]))
+;; The output is exactly one instruction longer than the input, so it is
+;; written straight into a right-sized dense sequence instead of through a
+;; cons spine (refs #5726).
+(define (compiler-reg-edge-copy-insert-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [insert-at : i64]
+  [copy-instr : CompilerIrInstr]) : CompilerIrInstrSeq
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr)
+      (array.make-array CompilerIrInstr (+ count 1))]
+    [index : i64 0]
+    (begin
+      (while (< index insert-at)
+        (begin
+          (array-set! out index (array-ref slots index))
+          (set! index (+ index 1))))
+      (array-set! out insert-at copy-instr)
+      (while (< index count)
+        (begin
+          (array-set! out (+ index 1) (array-ref slots index))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out (+ count 1)))))
 
 (define (compiler-reg-edge-copy-insert-in-block
   [block : CompilerIrBlock]
   [copy : CompilerRegEdgeCopy]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (let
-        [copy-instr : CompilerIrInstr (compiler-reg-edge-copy-instr copy)]
-        [items : CompilerIrInstrList (compiler-ir-instr-seq-to-list instrs)]
-        [rewritten : CompilerIrInstrList
-          (match (compiler-reg-edge-copy-placement copy)
-            [(CompilerRegEdgeCopyPlacement.PredEnd)
-              (compiler-reg-edge-copy-insert-before-last items copy-instr)]
-            [(CompilerRegEdgeCopyPlacement.SuccEntry)
-              (compiler-reg-edge-copy-insert-after-phis items copy-instr)])]
-        (CompilerIrBlock.Block
-          label
-          (compiler-ir-instr-seq-from-list rewritten)))]))
+      (CompilerIrBlock.Block
+        label
+        (compiler-reg-edge-copy-insert-instr-seq
+          instrs
+          (compiler-reg-edge-copy-insert-index
+            instrs
+            (compiler-reg-edge-copy-placement copy))
+          (compiler-reg-edge-copy-instr copy)))]))
 
 (define (compiler-reg-edge-copy-insert-one
   [blocks : CompilerIrBlockList]
@@ -10997,19 +11011,24 @@
         s)]
     [(reg_label_i64_map.LookupMissing) s]))
 
-(define (compiler-reg-preheader-list-replace-last
-  [instrs : CompilerIrInstrList]
-  [new-last : CompilerIrInstr]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (box-get rest)
-        [(CompilerIrInstrList.Nil)
-          (compiler-ir-instr-cons new-last CompilerIrInstrList.Nil)]
-        [_
-          (compiler-ir-instr-cons
-            instr
-            (compiler-reg-preheader-list-replace-last (box-get rest) new-last))])]))
+;; A 1:1 copy with the last instruction replaced: the output is exactly as
+;; long as the input, so it is written straight into a right-sized dense
+;; sequence instead of through a cons spine (refs #5726).
+(define (compiler-reg-preheader-replace-last-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [new-last : CompilerIrInstr]) : CompilerIrInstrSeq
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index (- count 1))
+        (begin
+          (array-set! out index (array-ref slots index))
+          (set! index (+ index 1))))
+      (array-set! out (- count 1) new-last)
+      (CompilerIrInstrSeq out count))))
 
 ;; Redirect the conditional-branch terminator of `block` (at `index`) for any
 ;; target that is a preheader-getting header whose single out-of-loop
@@ -11036,10 +11055,9 @@
                   block
                   (CompilerIrBlock.Block
                     label
-                    (compiler-ir-instr-seq-from-list
-                      (compiler-reg-preheader-list-replace-last
-                        (compiler-ir-instr-seq-to-list instrs)
-                        (CompilerIrInstr.Branch cond nt nf))))))]
+                    (compiler-reg-preheader-replace-last-instr-seq
+                      instrs
+                      (CompilerIrInstr.Branch cond nt nf)))))]
             [_ block])))]))
 
 ;; Relabel a header's phi inputs that came from `pred-label` to `ph-label`
@@ -11066,28 +11084,42 @@
           pred-label
           ph-label))]))
 
-(define (compiler-reg-preheader-relabel-instr-list
-  [instrs : CompilerIrInstrList]
+(define (compiler-reg-preheader-relabel-instr
+  [instr : CompilerIrInstr]
   [pred-label : i64]
-  [ph-label : i64]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (match instr
-          [(CompilerIrInstr.Phi dst inputs ty)
-            (CompilerIrInstr.Phi
-              dst
-              (compiler-reg-preheader-relabel-phi-inputs
-                inputs
-                pred-label
-                ph-label)
-              ty)]
-          [_ instr])
-        (compiler-reg-preheader-relabel-instr-list
-          (box-get rest)
-          pred-label
-          ph-label))]))
+  [ph-label : i64]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstr.Phi
+        dst
+        (compiler-reg-preheader-relabel-phi-inputs inputs pred-label ph-label)
+        ty)]
+    [_ instr]))
+
+;; A 1:1 phi-input relabel: the output is exactly as long as the input, so it
+;; is written straight into a right-sized dense sequence instead of through a
+;; cons spine (refs #5726).
+(define (compiler-reg-preheader-relabel-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [pred-label : i64]
+  [ph-label : i64]) : CompilerIrInstrSeq
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            out
+            index
+            (compiler-reg-preheader-relabel-instr
+              (array-ref slots index)
+              pred-label
+              ph-label))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
 
 (define (compiler-reg-preheader-relabel-header
   [block : CompilerIrBlock]
@@ -11097,11 +11129,7 @@
     [(CompilerIrBlock.Block label instrs)
       (CompilerIrBlock.Block
         label
-        (compiler-ir-instr-seq-from-list
-          (compiler-reg-preheader-relabel-instr-list
-            (compiler-ir-instr-seq-to-list instrs)
-            pred-label
-            ph-label)))]))
+        (compiler-reg-preheader-relabel-instr-seq instrs pred-label ph-label))]))
 
 ;; Walk the block list: redirect each block's terminator, and immediately
 ;; before each preheader-getting header splice an empty `jmp header` preheader
@@ -13054,16 +13082,30 @@
         [_ instr])]
     [_ instr]))
 
-(define (compiler-reg-leaf-csr-boundary-instrs
-  [instrs : CompilerIrInstrList]
+;; A 1:1 Mov->Bitcast/Cast rewrite: the output is exactly as long as the
+;; input, so it is written straight into a right-sized dense sequence instead
+;; of through a cons spine (refs #5726).
+(define (compiler-reg-leaf-csr-boundary-instr-seq
+  [instrs : CompilerIrInstrSeq]
   [src-var : i64]
-  [dst-var : i64]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (compiler-reg-leaf-csr-boundary-instr instr src-var dst-var)
-        (compiler-reg-leaf-csr-boundary-instrs (box-get rest) src-var dst-var))]))
+  [dst-var : i64]) : CompilerIrInstrSeq
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            out
+            index
+            (compiler-reg-leaf-csr-boundary-instr
+              (array-ref slots index)
+              src-var
+              dst-var))
+          (set! index (+ index 1))))
+      (CompilerIrInstrSeq out count))))
 
 (define (compiler-reg-leaf-csr-boundary-blocks
   [blocks : CompilerIrBlockList]
@@ -13077,11 +13119,7 @@
           (compiler-ir-block-cons
             (CompilerIrBlock.Block
               label
-              (compiler-ir-instr-seq-from-list
-                (compiler-reg-leaf-csr-boundary-instrs
-                  (compiler-ir-instr-seq-to-list instrs)
-                  src-var
-                  dst-var)))
+              (compiler-reg-leaf-csr-boundary-instr-seq instrs src-var dst-var))
             (compiler-reg-leaf-csr-boundary-blocks
               (box-get rest)
               src-var
@@ -13102,11 +13140,10 @@
                     index
                     (CompilerIrBlock.Block
                       label
-                      (compiler-ir-instr-seq-from-list
-                        (compiler-reg-leaf-csr-boundary-instrs
-                          (compiler-ir-instr-seq-to-list instrs)
-                          src-var
-                          dst-var))))])
+                      (compiler-reg-leaf-csr-boundary-instr-seq
+                        instrs
+                        src-var
+                        dst-var)))])
               (set! index (+ index 1))))
           (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count))))]))
 
@@ -29513,6 +29550,8 @@
 
 ;; Exit stores for every active root whose region ends at `point` (emitted
 ;; only when the region redefined the value and it lives on -- exit-flag).
+;; Pushed in increasing `active` order, matching the program order the old
+;; reversed-cons accumulator produced after its final flip (refs #5726).
 (define (compiler-reg-call-region-exit-stores
   [active : (Array i64)]
   [active-n : i64]
@@ -29521,30 +29560,25 @@
   [act-w : (Array i64)]
   [point : i64]
   [type-info : CompilerRegVarTypes]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
   (let
     [j : i64 0]
-    [out : CompilerIrInstrList acc]
-    (begin
-      (while (< j active-n)
-        (let
-          [root : i64 (array-ref active j)]
-          (begin
-            (if (and
-              (= (array-ref act-hi root) point)
-              (= (array-ref act-exit root) 1)
-              (>= (array-ref act-w root) 0))
-              (set!
-                out
-                (compiler-ir-instr-cons
-                  (CompilerIrInstr.Mov
-                    root
-                    (CompilerIrValue.Var (array-ref act-w root))
-                    (compiler-reg-caller-save-var-type type-info root))
-                  out))
-              unit)
-            (set! j (+ j 1)))))
-      out)))
+    (while (< j active-n)
+      (let
+        [root : i64 (array-ref active j)]
+        (begin
+          (if (and
+            (= (array-ref act-hi root) point)
+            (= (array-ref act-exit root) 1)
+            (>= (array-ref act-w root) 0))
+            (compiler-ir-instr-builder-push!
+              (&mut builder)
+              (CompilerIrInstr.Mov
+                root
+                (CompilerIrValue.Var (array-ref act-w root))
+                (compiler-reg-caller-save-var-type type-info root)))
+            unit)
+          (set! j (+ j 1)))))))
 
 (define (compiler-reg-caller-save-rewrite-blocks
   [blocks : CompilerIrBlockList]
@@ -29641,7 +29675,16 @@
                         [islots : (Array CompilerIrInstr)
                           (struct-get instrs slots)]
                         [i : i64 0]
-                        [acc : CompilerIrInstrList CompilerIrInstrList.Nil]
+                        ;; Forward scan into a builder, interleaving
+                        ;; region-entry movs and control-flow exit stores in
+                        ;; program order. The old shape built a REVERSED cons
+                        ;; accumulator and flipped it with
+                        ;; `compiler-ir-instr-list-reverse-onto`; the forward
+                        ;; scan emits the same final order with no list at all
+                        ;; (refs #5726). Seeded at the block's own length:
+                        ;; caller-save only ever appends those movs/stores.
+                        [builder : CompilerIrInstrBuilder
+                          (compiler-ir-instr-builder-with-capacity ilen)]
                         (begin
                           (while (< i ilen)
                             (let
@@ -29694,14 +29737,12 @@
                                               w
                                               ty))
                                           (if (= (array-ref r-entry cursor) 1)
-                                            (set!
-                                              acc
-                                              (compiler-ir-instr-cons
-                                                (CompilerIrInstr.Mov
-                                                  w
-                                                  (CompilerIrValue.Var root)
-                                                  ty)
-                                                acc))
+                                            (compiler-ir-instr-builder-push!
+                                              (&mut builder)
+                                              (CompilerIrInstr.Mov
+                                                w
+                                                (CompilerIrValue.Var root)
+                                                ty))
                                             unit)
                                           (array-set! act-w root w)
                                           (array-set!
@@ -29730,35 +29771,31 @@
                                   (begin
                                     (if cf
                                       (begin
-                                        (set!
-                                          acc
-                                          (compiler-reg-call-region-exit-stores
-                                            active
-                                            active-n
-                                            act-hi
-                                            act-exit
-                                            act-w
-                                            point
-                                            type-info
-                                            acc))
-                                        (set!
-                                          acc
-                                          (compiler-ir-instr-cons out-instr acc)))
+                                        (compiler-reg-call-region-exit-stores
+                                          active
+                                          active-n
+                                          act-hi
+                                          act-exit
+                                          act-w
+                                          point
+                                          type-info
+                                          (&mut builder))
+                                        (compiler-ir-instr-builder-push!
+                                          (&mut builder)
+                                          out-instr))
                                       (begin
-                                        (set!
-                                          acc
-                                          (compiler-ir-instr-cons out-instr acc))
-                                        (set!
-                                          acc
-                                          (compiler-reg-call-region-exit-stores
-                                            active
-                                            active-n
-                                            act-hi
-                                            act-exit
-                                            act-w
-                                            point
-                                            type-info
-                                            acc))))
+                                        (compiler-ir-instr-builder-push!
+                                          (&mut builder)
+                                          out-instr)
+                                        (compiler-reg-call-region-exit-stores
+                                          active
+                                          active-n
+                                          act-hi
+                                          act-exit
+                                          act-w
+                                          point
+                                          type-info
+                                          (&mut builder))))
                                     ;; deactivate the regions ending here
                                     (let
                                       [j : i64 0]
@@ -29790,10 +29827,7 @@
                             (compiler-ir-block-cons
                               (CompilerIrBlock.Block
                                 label
-                                (compiler-ir-instr-seq-from-list
-                                  (compiler-ir-instr-list-reverse-onto
-                                    acc
-                                    CompilerIrInstrList.Nil)))
+                                (compiler-ir-instr-builder-to-seq builder))
                               out-rev))))))])
               (set! b (+ b 1))))
           (CompilerRegCallSaveRewrite.Rewrite

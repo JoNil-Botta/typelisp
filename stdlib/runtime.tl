@@ -472,7 +472,6 @@
       (abort-write "\n"))
     (begin
       (abort-write message)
-      (abort-write "\n")
       (os-exit 134))))
 
 (define (runtime-test-case-finish!) : bool

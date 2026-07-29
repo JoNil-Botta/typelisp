@@ -3011,6 +3011,42 @@
   (define compiler-tc-walk-decl-fire-count : i64
     0))
 
+;; R3-P1 observability: how many firing declarations got their own arena
+;; generation, how many fell back to the ambient arena (no scratch pipeline or
+;; no installed pool context), and how many expression rows the per-declaration
+;; copy-out had to re-push. The last one is the whole cost of the scheme --
+;; type nodes are never re-pushed because their payloads persist at push time.
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-generations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-generation-skips : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-generation-expr-copies : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-generation-note! [expr-copies : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-walk-decl-generations
+        (+ compiler-tc-walk-decl-generations 1))
+      (set!
+        compiler-tc-walk-decl-generation-expr-copies
+        (+ compiler-tc-walk-decl-generation-expr-copies expr-copies)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-generation-skip!) : unit
+    (set!
+      compiler-tc-walk-decl-generation-skips
+      (+ compiler-tc-walk-decl-generation-skips 1))))
+
 (cfg
   compile-profile
   (define (compiler-tc-walk-decl-sample-note! [kind : i64]) : unit
@@ -3681,14 +3717,53 @@
           compiler-tc-macro-walk-eval-live-bytes
           (- (profile.alloc-live) compiler-tc-macro-walk-eval-live-start)))
       (if compiler-tc-macro-profile-active
-        (set!
-          compiler-tc-macro-profile-entries
-          (compiler-tc-macro-profile-record-in
-            compiler-tc-macro-profile-entries
-            macro-name
-            arity
-            elapsed-ms))
+        (compiler-tc-macro-profile-record-entry! macro-name arity elapsed-ms)
         unit))))
+
+;; R3-P1: `compiler-tc-macro-profile-record-in` rebuilds the entry spine on
+;; every macro call, and the list outlives the declaration whose expansion
+;; appended to it -- so under the per-declaration macro generation it must not
+;; be built in the ambient arena, which is that declaration's generation.
+;; Its owner is the macro-expansion scratch arena, which is what
+;; `macro-expand-scratch-release!` already documents ("macro timing entries
+;; ... live in scratch") and which is cleared, by
+;; `compiler-tc-macro-profile-clear`, immediately before that arena is
+;; destroyed. Profile builds only; the shipped compiler compiles none of this.
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-record-entry!
+    [macro-name : String]
+    [arity : i64]
+    [elapsed-ms : i64]) : unit
+    (if (= macro-decl-generation-arena 0)
+      (set!
+        compiler-tc-macro-profile-entries
+        (compiler-tc-macro-profile-record-in
+          compiler-tc-macro-profile-entries
+          macro-name
+          arity
+          elapsed-ms))
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [scratch : i64 (macro-expand-scratch-arena-get)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set scratch))
+          ;; The name a new entry keeps is compared against on every later
+          ;; call, so it must be owned by the entry's arena and not by the
+          ;; generation the call site happened to be expanding in.
+          (let
+            [owned-name : String (string.copy (& macro-name))]
+            (set!
+              compiler-tc-macro-profile-entries
+              (compiler-tc-macro-profile-record-in
+                compiler-tc-macro-profile-entries
+                owned-name
+                arity
+                elapsed-ms)))
+          (set! macro-expand-scratch-arena (arena.tl_arena_current))
+          (unsafe
+            (arena.tl_arena_set enclosing)))))))
 
 (cfg
   compile-profile
@@ -5403,6 +5478,15 @@
       (compiler-tc-macro-counter-profile-line
         "walk_decl_fire_count"
         compiler-tc-walk-decl-fire-count)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_generations"
+        compiler-tc-walk-decl-generations)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_generation_skips"
+        compiler-tc-walk-decl-generation-skips)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_generation_expr_copies"
+        compiler-tc-walk-decl-generation-expr-copies)
       (compiler-tc-macro-counter-profile-line
         "walk_hygiene_us"
         (/ compiler-tc-walk-hygiene-ns 1000))
@@ -60347,6 +60431,94 @@
         (unsafe
           (arena.tl_arena_destroy retired))))))
 
+;; R3-P1: a firing declaration's expansion allocates superseded intermediate
+;; forms -- hygiene copies and re-walk products -- into the ambient macro
+;; arena, where they stay live for the whole walk and are only reclaimed by the
+;; whole-program compaction at `macro_finalize`. Give each firing declaration
+;; its own generation instead: expand into generation G, copy the surviving
+;; declaration into the committed pool, and destroy G-1. The committed pool
+;; then grows by the survivors only, and the existing `macro_finalize`
+;; compaction becomes incremental rather than the sole reclamation point.
+;;
+;; Two generations, not one, for the same reason as the splice-view ring above:
+;; the copy-out reads the generation it is retiring, and the walk's own step
+;; (`out-rev` prepend, module-id update, path reversal) runs after the copy but
+;; before the next expansion begins. Retiring one behind keeps a whole
+;; declaration boundary of slack over any reader the copy-out cannot see.
+;;
+;; A generation spans a BATCH of firing declarations, not one. The survivor is
+;; still copied out at every declaration boundary -- that is what makes the
+;; garbage droppable -- but a fresh arena is only cut every
+;; `macro-decl-generation-batch-size` declarations. One arena costs a reserve
+;; and a release syscall pair, and the self-compile fires 9,061 declaration
+;; expansions: per-declaration arenas cost more wall time than the retention is
+;; worth, while the memory they hold back is a batch of expansion garbage
+;; (measured mean 45 KB per firing declaration, so ~1.4 MB per live batch at
+;; 32) against a 225 MB owner. Retention is bounded by 2 batches, not by the
+;; walk.
+(define macro-decl-generation-arena : i64
+  0)
+(define macro-decl-generation-retired-arena : i64
+  0)
+(define macro-decl-generation-batch-size : i64
+  32)
+(define macro-decl-generation-batch-used : i64
+  0)
+
+;; Make `next` the live generation and destroy the one retired a batch ago.
+;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
+;; flag that disables the virgin-arena zero-fill elision permanently for
+;; everything later allocated in it (#5599). `macro-decl-generation-arena`
+;; tracks the generation's newest HEAD, not its `make` root, so the destroy
+;; walks the whole overflow chain instead of leaking every grown segment.
+(define (macro-decl-generation-rotate! [next : i64]) : unit
+  (let
+    [previous : i64 macro-decl-generation-arena]
+    [retired : i64 macro-decl-generation-retired-arena]
+    (begin
+      (set! macro-decl-generation-arena next)
+      (set! macro-decl-generation-retired-arena previous)
+      (if (= retired 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
+
+;: The arena this declaration's expansion runs in: the live generation while
+;: its batch has room, otherwise a fresh one (which retires the batch before
+;: last).
+(define (macro-decl-generation-enter!) : i64
+  (if (and
+    (not (= macro-decl-generation-arena 0))
+    (< macro-decl-generation-batch-used macro-decl-generation-batch-size))
+    (begin
+      (set!
+        macro-decl-generation-batch-used
+        (+ macro-decl-generation-batch-used 1))
+      macro-decl-generation-arena)
+    (let
+      [next : i64 (arena.tl_arena_make)]
+      (begin
+        (macro-decl-generation-rotate! next)
+        (set! macro-decl-generation-batch-used 1)
+        next))))
+
+(define (macro-decl-generations-release!) : unit
+  (let
+    [current : i64 macro-decl-generation-arena]
+    [retired : i64 macro-decl-generation-retired-arena]
+    (begin
+      (set! macro-decl-generation-arena 0)
+      (set! macro-decl-generation-retired-arena 0)
+      (set! macro-decl-generation-batch-used 0)
+      (if (= current 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy current)))
+      (if (or (= retired 0) (= retired current))
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
+
 ;; The checked-lowering pipeline compacts its parsed program before macro
 ;; expansion.  Keep an explicit proof of whether expansion changed the program
 ;; so lowering can retain that first compact generation when the walk only
@@ -60527,6 +60699,7 @@
   (if (= macro-expand-scratch-arena 0)
     (begin
       (set! macro-expand-scratch-enabled false)
+      (macro-decl-generations-release!)
       (macro-splice-view-arenas-release!))
     (let
       [scratch : i64 macro-expand-scratch-arena]
@@ -60541,6 +60714,7 @@
         (set! macro-expand-scratch-enabled false)
         (set! macro-expand-scratch-arena 0)
         (macro-expand-scratch-clear-owned-caches!)
+        (macro-decl-generations-release!)
         (macro-splice-view-arenas-release!)
         ;; Macro timing entries were emitted before this boundary and live in
         ;; scratch. Clear the global before destroying their backing storage so
@@ -68201,7 +68375,37 @@
         (struct-get decls offset))
       (set! macro-flat-import-target-cache-complete (not truncated)))))
 
+;; R3-P1: this cache outlives the declaration whose expansion first populated
+;; it, but its per-module lists are built from whatever arena happens to be
+;; current -- during a firing declaration's expansion that is that
+;; declaration's generation, which is destroyed a declaration later. Build them
+;; in the macro-expansion scratch arena instead. That owner's lifetime is
+;; exactly the cache's: `macro-expand-scratch-clear-owned-caches!` runs
+;; `macro-alias-derived-cache-reset!` immediately before the scratch is
+;; destroyed. Only redirected while a generation is live, so every non-
+;; generational caller keeps its existing owner.
 (define (macro-flat-import-targets
+  [decls : AstDeclList]
+  [current-module-id : i64]) : MacroFlatImportTargetList
+  (if (= macro-decl-generation-arena 0)
+    (macro-flat-import-targets-into-current decls current-module-id)
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : MacroFlatImportTargetList
+            (macro-flat-import-targets-into-current decls current-module-id)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))))
+
+(define (macro-flat-import-targets-into-current
   [decls : AstDeclList]
   [current-module-id : i64]) : MacroFlatImportTargetList
   (begin
@@ -73651,6 +73855,203 @@
               [(ResultTcEnv.Err message)
                 (ResultMacroDeclExpansion.Err (box (tc-decl-diag decl message)))]))))]))
 
+;; R3-P1 copy-out. Rebuild the declaration paths in the arena that is current on
+;; entry; the path strings themselves can be generation-resident.
+(define (macro-decl-generation-copy-paths [paths : AstDeclPathList]) : AstDeclPathList
+  (let
+    [count : i64 (ast-decl-path-list-len (& paths))]
+    [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [path : String (ast-decl-path-list-get (& paths) index "")]
+          [owned-path : String (string.copy (& path))]
+          (begin
+            (ast-decl-path-list-push-with-owner-id
+              (&mut out)
+              owned-path
+              (ast-decl-path-list-owner-id
+                (& paths)
+                index
+                cbi.compiler-builtin-id-fix-empty))
+            (set! index (+ index 1)))))
+      out)))
+
+;; Move one expansion result out of its generation and into the committed pool.
+;; Everything the survivor still owns in the generation is rebuilt in the pool's
+;; base arena; every node id below the shared bases is left alone. Leaves the
+;; base arena's newest head synced into `pools` and current.
+;;
+;; PERSIST IN PLACE, not copy-append: the expression rows this expansion created
+;; are rewritten where they already are, so the pool does not grow and the
+;; survivor keeps its ids. It is the expansion's own transient scope that
+;; created every id at or above `shared-expr-base`, and the walk has not
+;; committed any of them yet, so rewriting one with an equal-valued,
+;; base-arena-owned copy is unobservable. The declaration shells and the path
+;; list are still rebuilt -- those live in the generation's slot arrays, not in
+;; the pool, so there is nothing to rewrite in place.
+(define (macro-decl-generation-copy-out
+  [pools : AstNodePoolContext]
+  [raw : ResultMacroDeclExpansion]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]
+  [expr-map : (Array i32)]
+  [type-map : (Array i32)]) : ResultMacroDeclExpansion
+  (match raw
+    [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
+      (match (ast-program-copy-append-above-with-maps
+        pools
+        pools
+        (ast-program expanded)
+        shared-expr-base
+        shared-type-base
+        expr-map
+        type-map
+        true)
+        [(AstProgramCompaction copied _)
+          (let
+            ;; The program copy restores the arena it was called with, which can
+            ;; be a segment the copy itself filled. Resume from the head the
+            ;; copy synced into the pool before allocating the paths.
+            [_resume : unit
+              (unsafe
+                (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))]
+            [paths : AstDeclPathList
+              (macro-decl-generation-copy-paths expanded-paths)]
+            [_sync : unit
+              (ast-node-pool-context-sync-base-arena!
+                pools
+                (arena.tl_arena_current))]
+            (match copied
+              [(AstProgram.Program decls-box)
+                (ResultMacroDeclExpansion.Ok (box-get decls-box) paths)]))])]
+    [(ResultMacroDeclExpansion.Err diag)
+      (let
+        [_resume : unit
+          (unsafe
+            (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))]
+        [owned : CompilerDiagnostic (compiler-diagnostic-copy (box-get diag))]
+        [boxed : (Box CompilerDiagnostic) (box owned)]
+        [_sync : unit
+          (ast-node-pool-context-sync-base-arena!
+            pools
+            (arena.tl_arena_current))]
+        (ResultMacroDeclExpansion.Err boxed))]))
+
+;; R3-P1: run one firing declaration's expansion inside its own arena generation
+;; and copy the surviving declaration back into the committed pool.
+;;
+;; Only the ambient arena changes. The node pools stay installed and shared, so
+;; the type pool's hash-consing table keeps seeing every declaration -- and
+;; because `ast-type-node-pool-state-push-raw` persists a type node's payload
+;; into the pool's base arena BEFORE writing the row, a type node pushed while
+;; the generation is current is already committed. The copy-out therefore shares
+;; every type id and pushes no new type node at all; only expression rows, whose
+;; 32-byte row copy does not persist boxed children, have to be re-pushed.
+;;
+;; The shared expression base is the pool length taken before the expansion:
+;; ids below it are pre-existing committed nodes that must not be copied (that
+;; is what keeps the id map per-declaration sized instead of whole-pool sized),
+;; and every node the expansion creates is at or above it. The in-place hygiene
+;; rewrite in `macro-hygiene-expr` only touches ids at or above
+;; `macro-hygiene-produced-floor`, which is itself taken during the expansion,
+;; so it can never mutate a shared node into the generation.
+;;
+;; The pool's base arena IS the enclosing arena here, and a type push can grow
+;; it while the generation is current, so the enclosing handle is restored
+;; through `node-pool-restore-arena-after-base-alloc!` rather than written back
+;; raw -- restoring a filled segment head would start a sibling chain that the
+;; owner's destroy-from-head never reaches.
+(define (macro-expand-decl-with-path-generational
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [module-id : i64]
+  [decl : AstDecl]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (if (not
+    (and macro-expand-scratch-enabled (ast-node-pool-has-active-context?)))
+    (begin
+      (cfg compile-profile (compiler-tc-walk-decl-generation-skip!))
+      (macro-expand-decl-with-path
+        ctx
+        top-env
+        orig-decls
+        module
+        module-id
+        decl
+        decl-path))
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [entry-base-arena : i64 (ast-node-pool-base-arena-handle)]
+      [entry-expr-len : i64 (ast-node-pool-len)]
+      [generation : i64 (macro-decl-generation-enter!)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set generation))]
+      [raw : ResultMacroDeclExpansion
+        (macro-expand-decl-with-path
+          ctx
+          top-env
+          orig-decls
+          module
+          module-id
+          decl
+          decl-path)]
+      ;; Clamped: the walk never truncates the pool below the length it entered
+      ;; with, but a base above the live length would make the id map read out
+      ;; of range, and a shorter pool has nothing above the base to copy anyway.
+      [shared-expr-base : i64
+        (if (< (ast-node-pool-len) entry-expr-len)
+          (ast-node-pool-len)
+          entry-expr-len)]
+      ;; Built while the generation is still current: the maps are dead the
+      ;; moment the copy-out returns, and putting them here saves the private
+      ;; map arena's reserve/release pair on every firing declaration.
+      [expr-map : (Array i32)
+        (ast-compaction-id-map-create (- (ast-node-pool-len) shared-expr-base))]
+      [type-map : (Array i32) (ast-compaction-id-map-create 0)]
+      ;; The generation is reused by the rest of its batch, so its newest head
+      ;; has to be published before the arena is switched away -- keeping the
+      ;; `make` root would restart the next declaration on a filled segment and
+      ;; grow a sibling chain the retiring destroy never reaches (H4).
+      [_track-head : unit
+        (set! macro-decl-generation-arena (arena.tl_arena_current))]
+      ;; The expansion can install a different pool context -- captured CTFE
+      ;; syntax pools rebase the active pools -- so the context to append into
+      ;; must be re-read HERE. Carrying a context across the call and installing
+      ;; it afterwards re-points the pool globals at the pre-expansion cells and
+      ;; silently corrupts the walk.
+      [pools : AstNodePoolContext (ast-node-pool-context-active-live)]
+      [_capture-expanded : unit (ast-node-pool-context-capture-active! pools)]
+      [_leave : unit
+        (node-pool-restore-arena-after-base-alloc!
+          enclosing
+          entry-base-arena
+          (ast-node-pool-context-base-arena pools))]
+      [_copy-start-len : i64 (ast-node-pool-context-expr-len pools)]
+      [escaped : ResultMacroDeclExpansion
+        (macro-decl-generation-copy-out
+          pools
+          raw
+          shared-expr-base
+          (ast-node-pool-context-type-len pools)
+          expr-map
+          type-map)]
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-walk-decl-generation-note!
+            (- (ast-node-pool-context-expr-len pools) _copy-start-len)))
+        (node-pool-restore-arena-after-base-alloc!
+          enclosing
+          entry-base-arena
+          (ast-node-pool-context-base-arena pools))
+        (ast-node-pool-context-install! pools)
+        escaped))))
+
 (define (macro-module-generated-key? [key : String]) : bool
   (and
     (> (string.string-length key) 0)
@@ -75975,7 +76376,11 @@
                           (cfg
                             compile-profile
                             (compiler-tc-walk-decl-sample-note! 2))
-                          (match (macro-expand-decl-with-path
+                          ;; R3-P1: this is the only arm that runs a macro over
+                          ;; a declaration body, and its superseded intermediate
+                          ;; forms are the macro arena's dominant owner. Expand
+                          ;; it in its own generation and commit the survivor.
+                          (match (macro-expand-decl-with-path-generational
                             cur-ctx
                             cur-top-env
                             cur-orig-decls

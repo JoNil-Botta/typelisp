@@ -2295,6 +2295,19 @@
 (define (ast-node-pool-active-context-clear!) : unit
   (set! ast-node-pool-active-context-installed? false))
 
+;: Whether an explicit pool context is installed, i.e. whether
+;: `ast-node-pool-context-active-live` shares cells with the pushers.
+(define (ast-node-pool-has-active-context?) : bool
+  ast-node-pool-active-context-installed?)
+
+;: The installed pool context, SHARING its cells with the globals the pushers
+;: read. `ast-node-pool-context-capture-active` snapshots into fresh cells, so a
+;: push through it is invisible to the installed pool; a caller that must append
+;: to the live pool and then hand the result back to the walk needs these cells.
+;: Only meaningful while `ast-node-pool-has-active-context?` holds.
+(define (ast-node-pool-context-active-live) : AstNodePoolContext
+  ast-node-pool-active-context)
+
 ;; The newest segment of the active node-pool chain. The pool arena's live
 ;; chain is only reachable from this head (overflow segments link newest->root
 ;; by `prev`), so a reset/destroy that starts from the make() root handle leaks
@@ -6512,12 +6525,43 @@
 ;; cell every time; compaction only reads `source-pools`, and the pointer is
 ;; stable across reads (see `ast-node-pool-context-expr-segment-bases`), so one
 ;; resolution serves the whole walk.
+;; `shared-expr-base` / `shared-type-base` split the source id space in two. An
+;; id below its base is ALREADY in the destination with destination-owned
+;; payloads, so the walk returns it unchanged and never descends into it; only
+;; ids at or above the base are copied, and the id maps are indexed relative to
+;; the base so they cover `[base, len)` rather than the whole pool. Whole-pool
+;; callers pass 0 and get the original behaviour. The per-declaration macro
+;; generation (`macro-expand-decl-with-path-generational`) passes the pool
+;; lengths taken before the expansion, which bounds one copy-out to the nodes
+;; that expansion actually created.
+;;
+;; `persist-in-place` changes what happens to an id AT OR ABOVE the expression
+;; base. Normally the walk pushes a rebuilt row at the pool tail and returns the
+;; new id. In persist mode it rebuilds the row's out-of-line payloads in the
+;; destination arena and writes the row back to the SAME id, returning that id
+;; unchanged: the pool does not grow at all. That is sound exactly because an id
+;; at or above the base was created by the caller's own transient scope -- no
+;; committed structure can reference it yet -- so overwriting it with an
+;; equal-valued, destination-owned copy is unobservable. `expr-map` degrades to
+;; a visited set (1 = already persisted), which is what stops a shared subgraph
+;; from being walked, or re-entered, twice.
+;;
+;; LOAD-BEARING: both `ast-compaction-remap-expr` (79 arms for 79 `AstExpr`
+;; variants) and `ast-compaction-remap-decl` (18 for 18) are EXHAUSTIVE matches
+;; with NO catch-all arm, and persist mode inherits that property because it
+;; reuses those two walks rather than duplicating them. A new variant added to
+;; either enum breaks this file at build time. Do not add a `[_ ...]` arm to
+;; either match: a variant that fell through would silently keep a payload in
+;; the caller's transient arena, and the failure mode is a use-after-free.
 (defstruct AstProgramCompactionRemap
   (source-pools AstNodePoolContext)
   (dest-pools AstNodePoolContext)
   (expr-map (Array i32))
   (type-map (Array i32))
-  (source-expr-bases i64))
+  (source-expr-bases i64)
+  (shared-expr-base i64)
+  (shared-type-base i64)
+  (persist-in-place bool))
 
 (define (ast-compaction-id-map-create [count : i64]) : (Array i32)
   (let
@@ -6651,21 +6695,27 @@
   [remap : AstProgramCompactionRemap]
   [id : i64]) : i64
   (let
-    [type-map : (Array i32) (struct-get remap type-map)]
-    [cached : i32 (array-ref type-map id)]
-    (if (> cached 0)
-      (cast (- cached 1) : i64)
+    [base : i64 (struct-get remap shared-type-base)]
+    (if (< id base)
+      id
       (let
-        [source-pools : AstNodePoolContext
-          (ast-compaction-remap-source-pools remap)]
-        [dest-pools : AstNodePoolContext
-          (ast-compaction-remap-dest-pools remap)]
-        [source-ty : AstType (ast-node-pool-context-type-get source-pools id)]
-        [new-ty : AstType (ast-compaction-remap-type remap source-ty)]
-        [new-id : i64 (ast-node-pool-context-type-push dest-pools new-ty)]
-        (begin
-          (array-set! type-map id (cast (+ new-id 1) : i32))
-          new-id)))))
+        [type-map : (Array i32) (struct-get remap type-map)]
+        [slot : i64 (- id base)]
+        [cached : i32 (array-ref type-map slot)]
+        (if (> cached 0)
+          (cast (- cached 1) : i64)
+          (let
+            [source-pools : AstNodePoolContext
+              (ast-compaction-remap-source-pools remap)]
+            [dest-pools : AstNodePoolContext
+              (ast-compaction-remap-dest-pools remap)]
+            [source-ty : AstType
+              (ast-node-pool-context-type-get source-pools id)]
+            [new-ty : AstType (ast-compaction-remap-type remap source-ty)]
+            [new-id : i64 (ast-node-pool-context-type-push dest-pools new-ty)]
+            (begin
+              (array-set! type-map slot (cast (+ new-id 1) : i32))
+              new-id)))))))
 
 (define (ast-compaction-remap-maybe-type
   [remap : AstProgramCompactionRemap]
@@ -7513,20 +7563,51 @@
   [remap : AstProgramCompactionRemap]
   [id : i64]) : i64
   (let
-    [expr-map : (Array i32) (struct-get remap expr-map)]
-    [cached : i32 (array-ref expr-map id)]
-    (if (> cached 0)
-      (cast (- cached 1) : i64)
+    [base : i64 (struct-get remap shared-expr-base)]
+    (if (< id base)
+      id
       (let
-        [dest-pools : AstNodePoolContext
-          (ast-compaction-remap-dest-pools remap)]
-        [source-expr : AstExpr
-          (ast-expr-segment-bases-get (struct-get remap source-expr-bases) id)]
-        [new-expr : AstExpr (ast-compaction-remap-expr remap source-expr)]
-        [new-id : i64 (ast-node-pool-context-expr-push dest-pools new-expr)]
-        (begin
-          (array-set! expr-map id (cast (+ new-id 1) : i32))
-          new-id)))))
+        [expr-map : (Array i32) (struct-get remap expr-map)]
+        [slot : i64 (- id base)]
+        [cached : i32 (array-ref expr-map slot)]
+        [persist? : bool (struct-get remap persist-in-place)]
+        (if (> cached 0)
+          (if persist?
+            id
+            (cast (- cached 1) : i64))
+          (if persist?
+            ;; Mark BEFORE descending: a shared subgraph reached twice must
+            ;; return its id on the second visit rather than rebuild, and a
+            ;; re-entrant edge must not recurse forever. The row is read into a
+            ;; local first, so writing it back after the children are done can
+            ;; never race the read.
+            (let
+              [_mark : unit (array-set! expr-map slot (cast 1 : i32))]
+              [source-expr : AstExpr
+                (ast-expr-segment-bases-get
+                  (struct-get remap source-expr-bases)
+                  id)]
+              [owned-expr : AstExpr
+                (ast-compaction-remap-expr remap source-expr)]
+              (begin
+                (ast-node-pool-context-expr-set!
+                  (ast-compaction-remap-dest-pools remap)
+                  id
+                  owned-expr)
+                id))
+            (let
+              [dest-pools : AstNodePoolContext
+                (ast-compaction-remap-dest-pools remap)]
+              [source-expr : AstExpr
+                (ast-expr-segment-bases-get
+                  (struct-get remap source-expr-bases)
+                  id)]
+              [new-expr : AstExpr (ast-compaction-remap-expr remap source-expr)]
+              [new-id : i64
+                (ast-node-pool-context-expr-push dest-pools new-expr)]
+              (begin
+                (array-set! expr-map slot (cast (+ new-id 1) : i32))
+                new-id))))))))
 
 (define (ast-compaction-remap-generated-meta
   [remap : AstProgramCompactionRemap]
@@ -7696,7 +7777,10 @@
           dest-pools
           expr-map
           type-map
-          (ast-node-pool-context-expr-segment-bases source-pools))]
+          (ast-node-pool-context-expr-segment-bases source-pools)
+          0
+          0
+          false)]
       [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
       [out-program : AstProgram
         (begin
@@ -7718,13 +7802,18 @@
           out-program
           (ast-node-pool-context-snapshot dest-pools))))))
 
-;: Copy `program` into the existing tail of `dest-pools`, remapping every
-;: reachable source id without discarding declarations already copied there.
-;: This is the per-file loader counterpart to whole-program compaction.
-(define (ast-program-copy-append-with-pools
+;: Copy `program` into the existing tail of `dest-pools`, sharing every source
+;: id below the given bases and remapping the rest. Ids below a base are
+;: already resident in `dest-pools` with destination-owned payloads, so they are
+;: returned unchanged and never descended into; the id maps only cover
+;: `[base, len)`. `ast-program-copy-append-with-pools` is this with both bases
+;: at zero.
+(define (ast-program-copy-append-above-with-pools
   [source-pools : AstNodePoolContext]
   [dest-pools : AstNodePoolContext]
-  [program : AstProgram]) : AstProgramCompaction
+  [program : AstProgram]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]) : AstProgramCompaction
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     [map-arena : i64 (arena.tl_arena_make)]
@@ -7733,17 +7822,60 @@
         (arena.tl_arena_set map-arena))]
     [expr-map : (Array i32)
       (ast-compaction-id-map-create
-        (ast-node-pool-context-expr-len source-pools))]
+        (- (ast-node-pool-context-expr-len source-pools) shared-expr-base))]
     [type-map : (Array i32)
       (ast-compaction-id-map-create
-        (ast-node-pool-context-type-len source-pools))]
+        (- (ast-node-pool-context-type-len source-pools) shared-type-base))]
+    [_restore-map-arena : unit
+      (unsafe
+        (arena.tl_arena_set prev-arena))]
+    [out : AstProgramCompaction
+      (ast-program-copy-append-above-with-maps
+        source-pools
+        dest-pools
+        program
+        shared-expr-base
+        shared-type-base
+        expr-map
+        type-map
+        false)]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy map-arena))
+      out)))
+
+;: `ast-program-copy-append-above-with-pools` with the id maps supplied by the
+;: caller. A caller that already owns a short-lived arena (the per-declaration
+;: macro generation) allocates them there and saves the reserve/release syscall
+;: pair a private map arena costs -- 9,061 of them on a self-compile.
+;: The maps must be zero-filled: zero is the "unseen"/"unvisited" sentinel.
+;:
+;: With `persist-in-place`, expression rows at or above `shared-expr-base` are
+;: rewritten in place instead of appended, so `dest-pools` does not grow and
+;: every id in `program` survives unchanged. Only a caller that owns those ids
+;: outright -- because its own transient scope created them and nothing
+;: committed can reference them yet -- may pass true.
+(define (ast-program-copy-append-above-with-maps
+  [source-pools : AstNodePoolContext]
+  [dest-pools : AstNodePoolContext]
+  [program : AstProgram]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]
+  [expr-map : (Array i32)]
+  [type-map : (Array i32)]
+  [persist-in-place : bool]) : AstProgramCompaction
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
     [remap : AstProgramCompactionRemap
       (AstProgramCompactionRemap
         source-pools
         dest-pools
         expr-map
         type-map
-        (ast-node-pool-context-expr-segment-bases source-pools))]
+        (ast-node-pool-context-expr-segment-bases source-pools)
+        shared-expr-base
+        shared-type-base
+        persist-in-place)]
     [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
     [out-program : AstProgram
       (begin
@@ -7758,12 +7890,18 @@
             (unsafe
               (arena.tl_arena_set prev-arena))
             out)))]
-    (begin
-      (unsafe
-        (arena.tl_arena_destroy map-arena))
-      (AstProgramCompaction
-        out-program
-        (ast-node-pool-context-snapshot dest-pools)))))
+    (AstProgramCompaction
+      out-program
+      (ast-node-pool-context-snapshot dest-pools))))
+
+;: Copy `program` into the existing tail of `dest-pools`, remapping every
+;: reachable source id without discarding declarations already copied there.
+;: This is the per-file loader counterpart to whole-program compaction.
+(define (ast-program-copy-append-with-pools
+  [source-pools : AstNodePoolContext]
+  [dest-pools : AstNodePoolContext]
+  [program : AstProgram]) : AstProgramCompaction
+  (ast-program-copy-append-above-with-pools source-pools dest-pools program 0 0))
 
 (define (ast-type-tag [ty : AstType]) : i64
   (match ty

@@ -32,7 +32,7 @@
 (test
   lexer-basic-tokens
   (let
-    [r : lex.ResultTokens (lex.lex-result "(define x 42)")]
+    [r : lex.ResultTokens (lex.result "(define x 42)")]
     (match r
       [(lex.ResultTokens.Ok toks)
         (let
@@ -72,7 +72,7 @@
 (test
   lexer-arrow-type-tokens
   (let
-    [r : lex.ResultTokens (lex.lex-result "(-> i64 i64)")]
+    [r : lex.ResultTokens (lex.result "(-> i64 i64)")]
     (match r
       [(lex.ResultTokens.Ok toks)
         (let
@@ -111,7 +111,7 @@
 (test
   lexer-duplicate-symbols-share-intern-id
   (let
-    [r : lex.ResultTokens (lex.lex-result "(x x y)")]
+    [r : lex.ResultTokens (lex.result "(x x y)")]
     (match r
       [(lex.ResultTokens.Ok toks)
         (lexer-assert-true
@@ -187,7 +187,7 @@
 (test
   lexer-legacy-escaped-char-literal-rejected
   (let
-    [r : lex.ResultTokens (lex.lex-result "#\\a'")]
+    [r : lex.ResultTokens (lex.result "#\\a'")]
     (match r
       [(lex.ResultTokens.Ok _)
         (lexer-assert-true false "legacy escaped char should error")]
@@ -239,7 +239,7 @@
 (test
   lexer-apostrophe-invalid-escape-errors
   (let
-    [r : lex.ResultTokens (lex.lex-result "'\\x'")]
+    [r : lex.ResultTokens (lex.result "'\\x'")]
     (match r
       [(lex.ResultTokens.Ok _) (lexer-assert-true false "should error")]
       [(lex.ResultTokens.Err msg)
@@ -253,7 +253,7 @@
 
 (test
   lexer-apostrophe-quote-vs-char
-  (match (lex.lex-result "'form")
+  (match (lex.result "'form")
     [(lex.ResultTokens.Ok toks)
       (lexer-assert-true
         (and
@@ -268,7 +268,7 @@
 (test
   lexer-char-literal-in-context
   (let
-    [r : lex.ResultTokens (lex.lex-result "(= c ' ')")]
+    [r : lex.ResultTokens (lex.result "(= c ' ')")]
     (match r
       [(lex.ResultTokens.Ok toks)
         (let
@@ -308,7 +308,7 @@
 (test
   lexer-single-line-spans
   (let
-    [r : lex.ResultSpannedTokens (lex.lex-spanned-result "(define x 42)")]
+    [r : lex.ResultSpannedTokens (lex.spanned-result "(define x 42)")]
     (match r
       [(lex.ResultSpannedTokens.Ok s)
         (let
@@ -366,7 +366,7 @@
 (test
   lexer-multi-line-blank-spans
   (let
-    [r : lex.ResultSpannedTokens (lex.lex-spanned-result "(a\n\n  bb)")]
+    [r : lex.ResultSpannedTokens (lex.spanned-result "(a\n\n  bb)")]
     (match r
       [(lex.ResultSpannedTokens.Ok s)
         (let
@@ -405,7 +405,7 @@
 (test
   lexer-legacy-named-char-rejected
   (let
-    [r : lex.ResultTokens (lex.lex-result "#\\spcae'")]
+    [r : lex.ResultTokens (lex.result "#\\spcae'")]
     (match r
       [(lex.ResultTokens.Ok _) (lexer-assert-true false "should error")]
       [(lex.ResultTokens.Err msg)

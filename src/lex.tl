@@ -18,7 +18,7 @@
 ;; reader (which also needs a `main`) would clash.
 ;;
 ;; The fix is this `main`-less module: it holds the lexer's scanners, the
-;; recoverable `lex-result` entry, the legacy `lex` wrapper, `(import)`s the
+;; recoverable `result` entry, the legacy `lex` wrapper, `(import)`s the
 ;; shared `main`-less `token` module, and declares NO `main`. The reader
 ;; imports this module for `lex` and imports `token` directly for token types,
 ;; so the concatenated program has exactly one
@@ -68,7 +68,7 @@
   (Ok char i64)
   (Err String))
 
-(define (lex-ok? [message : String]) : bool
+(define (ok? [message : String]) : bool
   (string.eq message ""))
 
 ;; Numeric code point of a char, used only when a code value is intentionally
@@ -413,7 +413,7 @@
           (begin
             (set! message "lexer: unterminated string literal")
             (set! keep false))))
-      (if (lex-ok? message)
+      (if (ok? message)
         (result_lex_i64.Ok j)
         (result_lex_i64.Err message)))))
 
@@ -502,7 +502,7 @@
                 [(ResultLexChar.Ok c)
                   (let
                     [message : String (char-close-error src (+ i 3) n)]
-                    (if (lex-ok? message)
+                    (if (ok? message)
                       (ResultMaybeLexCharLiteral.Ok c (+ i 4))
                       (ResultMaybeLexCharLiteral.Err message)))]
                 [(ResultLexChar.Err message)
@@ -519,7 +519,7 @@
             (ResultMaybeLexCharLiteral.No))]))
     (ResultMaybeLexCharLiteral.No)))
 
-(define (lex-check-step [src : String] [i : i64] [n : i64]) : result_lex_i64.Result
+(define (check-step [src : String] [i : i64] [n : i64]) : result_lex_i64.Result
   (let
     [c : char (__tl_string_ref src i)]
     (cond
@@ -550,37 +550,37 @@
       [(is-symbol-char c) (result_lex_i64.Ok (scan-symbol-end src i n))]
       [else (result_lex_i64.Err "lexer: unexpected character")])))
 
-(define (lex-check-spanned [src : String]) : ResultLexCheck
+(define (check-spanned [src : String]) : ResultLexCheck
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
     [message : String ""]
     [err-pos : i64 0]
     (begin
-      (while (and (< i n) (lex-ok? message))
-        (match (lex-check-step src i n)
+      (while (and (< i n) (ok? message))
+        (match (check-step src i n)
           [(result_lex_i64.Ok next) (set! i next)]
           [(result_lex_i64.Err err)
             (begin
               (set! message err)
               (set! err-pos i)
               (set! i n))]))
-      (if (lex-ok? message)
+      (if (ok? message)
         (ResultLexCheck.Ok i)
         (ResultLexCheck.Err (source-error-at src err-pos message))))))
 
-(define (lex-check [src : String]) : result_lex_i64.Result
-  (match (lex-check-spanned src)
+(define (check [src : String]) : result_lex_i64.Result
+  (match (check-spanned src)
     [(ResultLexCheck.Ok end) (result_lex_i64.Ok end)]
     [(ResultLexCheck.Err err)
       (result_lex_i64.Err (token.source-error-message err))]))
 
 ;; Core scanner. Fills `toks` with the token stream and, in parallel, records
 ;; each token's starting byte index into `starts[count]`. The plain token
-;; path uses this through `lex-result`; `lex-spanned-result` uses a direct
+;; path uses this through `result`; `spanned-result` uses a direct
 ;; scanner that records line/column positions while tokenizing. Returns the
 ;; token count (excluding the trailing `token.Token.End`).
-(define (lex-into-spanned-result
+(define (into-spanned-result
   [src : String]
   [toks : (Array token.Token)]
   [starts : (Array i64)]) : ResultLexIntoSpanned
@@ -754,7 +754,7 @@
 (defenum LexPosition
   (Position i64 i64))
 
-(define (lex-advance-position
+(define (advance-position
   [src : String]
   [start : i64]
   [end : i64]
@@ -780,7 +780,7 @@
 ;; the guard at the top of the loop reserves room for this iteration's token AND
 ;; the trailing `token.Token.End`, so every `array-set!` below is in range
 ;; without a per-write capacity test.
-(define (lex-into-spanned-tokens-result [src : String]) : ResultLexIntoSpanned
+(define (into-spanned-tokens-result [src : String]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -798,7 +798,7 @@
         (begin
           (if (> (+ count 2) limit)
             (begin
-              (lex-spanned-token-buffer-ensure! (+ count 2) count)
+              (spanned-token-buffer-ensure! (+ count 2) count)
               (set! stoks lex-spanned-token-buffer)
               (set! limit (array-length stoks)))
             unit)
@@ -938,7 +938,7 @@
                               token-line
                               token-col))
                           (set! count (+ count 1))
-                          (match (lex-advance-position src i (+ end 1) line col)
+                          (match (advance-position src i (+ end 1) line col)
                             [(LexPosition.Position next-line next-col)
                               (begin
                                 (set! line next-line)
@@ -1039,7 +1039,7 @@
         (begin
           (if (>= count limit)
             (begin
-              (lex-spanned-token-buffer-ensure! (+ count 1) count)
+              (spanned-token-buffer-ensure! (+ count 1) count)
               (set! stoks lex-spanned-token-buffer))
             unit)
           (array-set!
@@ -1054,23 +1054,23 @@
 ;; `token.Token.End` sentinel), lex into it, then return that exact array. The trailing
 ;; `token.Token.End` marks
 ;; the logical end even though the backing array may be larger.
-(define (lex-result [src : String]) : ResultTokens
+(define (result [src : String]) : ResultTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
     [toks : (Array token.Token) (make-array token.Token cap)]
     [starts : (Array i64) (make-array i64 cap)]
-    (match (lex-into-spanned-result src toks starts)
+    (match (into-spanned-result src toks starts)
       [(ResultLexIntoSpanned.Ok _) (ResultTokens.Ok toks)]
       [(ResultLexIntoSpanned.Err err)
         (ResultTokens.Err (token.source-error-message err))])))
 
 (define (lex [src : String]) : (Array token.Token)
-  (match (lex-result src)
+  (match (result src)
     [(ResultTokens.Ok toks) toks]
     [(ResultTokens.Err message) (io.panic message)]))
 
 ;; ---- Spanned token stream ----------------------------------------------------
-;; A position-bearing token stream parallel to `lex`/`lex-result`. Each token is
+;; A position-bearing token stream parallel to `lex`/`result`. Each token is
 ;; paired with the 1-based line/column of its starting byte; the trailing
 ;; `token.Token.End`
 ;; carries the position one past the last character. The plain `token.Token` path
@@ -1136,10 +1136,10 @@
 (define lex-spanned-token-buffer-arena : i64
   0)
 
-(define (lex-spanned-token-buffer-arena-handle-value) : i64
+(define (spanned-token-buffer-arena-handle-value) : i64
   lex-spanned-token-buffer-arena)
 
-(define (lex-spanned-token-buffer-next-capacity [required : i64]) : i64
+(define (spanned-token-buffer-next-capacity [required : i64]) : i64
   (let
     [current : i64 (array-length lex-spanned-token-buffer)]
     [next : i64
@@ -1154,7 +1154,7 @@
 ;; Install a larger buffer holding at least `required` slots, preserving the
 ;; first `used` records. The arena is restored before the copy so the copy
 ;; cannot extend the storage arena.
-(define (lex-spanned-token-buffer-grow-to! [required : i64] [used : i64]) : unit
+(define (spanned-token-buffer-grow-to! [required : i64] [used : i64]) : unit
   (let
     [previous-arena : i64 (arena.tl_arena_current)]
     [old-storage-arena : i64 lex-spanned-token-buffer-arena]
@@ -1169,7 +1169,7 @@
     [new-buffer : (Array token.SpannedToken)
       (make-array
         token.SpannedToken
-        (lex-spanned-token-buffer-next-capacity required))]
+        (spanned-token-buffer-next-capacity required))]
     [new-storage-arena : i64 (arena.tl_arena_current)]
     [j : i64 0]
     (begin
@@ -1185,12 +1185,12 @@
       (set! lex-spanned-token-buffer-arena new-storage-arena)
       (set! lex-spanned-token-buffer new-buffer))))
 
-(define (lex-spanned-token-buffer-ensure! [required : i64] [used : i64]) : unit
+(define (spanned-token-buffer-ensure! [required : i64] [used : i64]) : unit
   (if (> required (array-length lex-spanned-token-buffer))
-    (lex-spanned-token-buffer-grow-to! required used)
+    (spanned-token-buffer-grow-to! required used)
     unit))
 
-(define (lex-spanned-token-buffer-arena-ownership-ok?) : bool
+(define (spanned-token-buffer-arena-ownership-ok?) : bool
   (let
     [home : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
@@ -1201,15 +1201,15 @@
       (unsafe
         (arena.set! scratch))
       (array-set! lex-spanned-token-buffer 0 witness)
-      (lex-spanned-token-buffer-grow-to! required 1)
+      (spanned-token-buffer-grow-to! required 1)
       (unsafe
         (begin
           (arena.set! home)
           (arena.destroy scratch)))
       (and
         (>= (array-length lex-spanned-token-buffer) required)
-        (lex-spanned-token-buffer-grow-preserves-records?)
-        (match (lex-spanned-result "(arena-ok)")
+        (spanned-token-buffer-grow-preserves-records?)
+        (match (spanned-result "(arena-ok)")
           [(ResultSpannedTokens.Ok tokens)
             (and
               (=
@@ -1222,7 +1222,7 @@
 
 ;; The record the ownership check parked at slot 0 must survive the grow above:
 ;; mid-scan growth relies on it.
-(define (lex-spanned-token-buffer-grow-preserves-records?) : bool
+(define (spanned-token-buffer-grow-preserves-records?) : bool
   (let
     [kept : token.SpannedToken (array-ref lex-spanned-token-buffer 0)]
     (and
@@ -1230,26 +1230,26 @@
       (= (token.spanned-token-line kept) 7)
       (= (token.spanned-token-col kept) 11))))
 
-;; `lex-spanned-result : (-> String ResultSpannedTokens)` - lex into the shared
+;; `spanned-result : (-> String ResultSpannedTokens)` - lex into the shared
 ;; spanned-token buffer and hand back that buffer; slot `count` holds the
 ;; trailing `token.Token.End`. The buffer identity can change during the scan
 ;; (growth), so it is re-read from the global here rather than captured before.
-(define (lex-spanned-result [src : String]) : ResultSpannedTokens
-  (match (lex-into-spanned-tokens-result src)
+(define (spanned-result [src : String]) : ResultSpannedTokens
+  (match (into-spanned-tokens-result src)
     [(ResultLexIntoSpanned.Ok _)
       (ResultSpannedTokens.Ok lex-spanned-token-buffer)]
     [(ResultLexIntoSpanned.Err err) (ResultSpannedTokens.Err err)]))
 
-(define (lex-percent-symbol-ok?) : bool
-  (match (lex-result "(% n 16)")
+(define (percent-symbol-ok?) : bool
+  (match (result "(% n 16)")
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-ref toks 1)) (token.tag-sym))
         (string.eq (token.sym (array-ref toks 1)) "%"))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-ampersand-symbol-ok?) : bool
-  (match (lex-result "(& r String) (&mut r String)")
+(define (ampersand-symbol-ok?) : bool
+  (match (result "(& r String) (&mut r String)")
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-ref toks 1)) (token.tag-sym))
@@ -1258,16 +1258,16 @@
         (string.eq (token.sym (array-ref toks 6)) "&mut"))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-float-token-ok?) : bool
-  (match (lex-result "(3.14)")
+(define (float-token-ok?) : bool
+  (match (result "(3.14)")
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-ref toks 1)) (token.tag-float))
         (string.eq (token.float (array-ref toks 1)) "3.14"))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-negative-int-token-ok?) : bool
-  (match (lex-result "(-1 - x)")
+(define (negative-int-token-ok?) : bool
+  (match (result "(-1 - x)")
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-ref toks 1)) (token.tag-int))
@@ -1276,15 +1276,12 @@
         (string.eq (token.sym (array-ref toks 2)) "-"))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-token-int-eq?
-  [toks : (Array token.Token)]
-  [idx : i64]
-  [value : i64]) : bool
+(define (token-int-eq? [toks : (Array token.Token)] [idx : i64] [value : i64]) : bool
   (and
     (= (token.tag (array-ref toks idx)) (token.tag-int))
     (= (token.int (array-ref toks idx)) value)))
 
-(define (lex-token-sym-eq?
+(define (token-sym-eq?
   [toks : (Array token.Token)]
   [idx : i64]
   [value : String]) : bool
@@ -1292,15 +1289,15 @@
     (= (token.tag (array-ref toks idx)) (token.tag-sym))
     (string.eq (token.sym (array-ref toks idx)) value)))
 
-(define (lex-prefixed-int-token-ok?) : bool
-  (match (lex-result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
+(define (prefixed-int-token-ok?) : bool
+  (match (result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
     [(ResultTokens.Ok toks)
       (and
-        (lex-token-int-eq? toks 1 42)
-        (lex-token-int-eq? toks 2 42)
-        (lex-token-int-eq? toks 3 -42)
-        (lex-token-int-eq? toks 4 42)
-        (lex-token-int-eq? toks 5 -42)
+        (token-int-eq? toks 1 42)
+        (token-int-eq? toks 2 42)
+        (token-int-eq? toks 3 -42)
+        (token-int-eq? toks 4 42)
+        (token-int-eq? toks 5 -42)
         (= (token.tag (array-ref toks 7)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
@@ -1309,14 +1306,14 @@
 ;; Source `"(a\n  (b c))"` lexes to:
 ;;   0:'(' 1:1   1:'a' 1:2   2:'(' 2:3   3:'b' 2:4   4:'c' 2:6
 ;;   5:')' 2:7   6:')' 2:8   7:token.Token.End 2:9
-(define (lex-quote-text) : String
+(define (quote-text) : String
   "\"")
 
-(define (lex-backslash-text) : String
+(define (backslash-text) : String
   "\\")
 
-(define (lex-basic-token-sequence-ok?) : bool
-  (match (lex-result "(define [x : i64] -42 \"ok\" '\\n')")
+(define (basic-token-sequence-ok?) : bool
+  (match (result "(define [x : i64] -42 \"ok\" '\\n')")
     [(ResultTokens.Ok toks)
       (let
         [ok : bool true]
@@ -1363,25 +1360,25 @@
           ok))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-colon-annotation-tokens-ok?) : bool
-  (match (lex-result
+(define (colon-annotation-tokens-ok?) : bool
+  (match (result
     "[x:i64] [y :i32] (:link \"m\") ( :unknown 1) (import pkg:math.core :as math)")
     [(ResultTokens.Ok toks)
       (and
-        (lex-token-sym-eq? toks 1 "x")
-        (lex-token-sym-eq? toks 2 ":")
-        (lex-token-sym-eq? toks 3 "i64")
-        (lex-token-sym-eq? toks 6 "y")
-        (lex-token-sym-eq? toks 7 ":")
-        (lex-token-sym-eq? toks 8 "i32")
-        (lex-token-sym-eq? toks 11 ":link")
-        (lex-token-sym-eq? toks 15 ":unknown")
-        (lex-token-sym-eq? toks 20 "pkg:math.core")
-        (lex-token-sym-eq? toks 21 ":as")
+        (token-sym-eq? toks 1 "x")
+        (token-sym-eq? toks 2 ":")
+        (token-sym-eq? toks 3 "i64")
+        (token-sym-eq? toks 6 "y")
+        (token-sym-eq? toks 7 ":")
+        (token-sym-eq? toks 8 "i32")
+        (token-sym-eq? toks 11 ":link")
+        (token-sym-eq? toks 15 ":unknown")
+        (token-sym-eq? toks 20 "pkg:math.core")
+        (token-sym-eq? toks 21 ":as")
         (= (token.tag (array-ref toks 24)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-spanned-token-sym-eq?
+(define (spanned-token-sym-eq?
   [toks : (Array token.SpannedToken)]
   [idx : i64]
   [value : String]) : bool
@@ -1389,25 +1386,25 @@
     [tok : token.Token (token.spanned-token-tok (array-ref toks idx))]
     (and (= (token.tag tok) (token.tag-sym)) (string.eq (token.sym tok) value))))
 
-(define (lex-spanned-colon-annotation-tokens-ok?) : bool
-  (match (lex-spanned-result "[x:i64] (:link \"m\")")
+(define (spanned-colon-annotation-tokens-ok?) : bool
+  (match (spanned-result "[x:i64] (:link \"m\")")
     [(ResultSpannedTokens.Ok toks)
       (and
-        (lex-spanned-token-sym-eq? toks 1 "x")
-        (lex-spanned-token-sym-eq? toks 2 ":")
-        (lex-spanned-token-sym-eq? toks 3 "i64")
-        (lex-spanned-token-sym-eq? toks 6 ":link")
+        (spanned-token-sym-eq? toks 1 "x")
+        (spanned-token-sym-eq? toks 2 ":")
+        (spanned-token-sym-eq? toks 3 "i64")
+        (spanned-token-sym-eq? toks 6 ":link")
         (=
           (token.tag (token.spanned-token-tok (array-ref toks 9)))
           (token.tag-end)))]
     [(ResultSpannedTokens.Err _) false]))
 
-(define (lex-apostrophe-char-source [body : String]) : String
+(define (apostrophe-char-source [body : String]) : String
   (string.append "'" (string.append body "'")))
 
-(define (lex-quote-vs-apostrophe-char-ok?) : bool
+(define (quote-vs-apostrophe-char-ok?) : bool
   (and
-    (match (lex-result "'form")
+    (match (result "'form")
       [(ResultTokens.Ok toks)
         (and
           (= (token.tag (array-ref toks 0)) (token.tag-quote))
@@ -1415,7 +1412,7 @@
           (string.eq (token.sym (array-ref toks 1)) "form")
           (= (token.tag (array-ref toks 2)) (token.tag-end)))]
       [(ResultTokens.Err _) false])
-    (match (lex-result "'ab'")
+    (match (result "'ab'")
       [(ResultTokens.Ok toks)
         (and
           (= (token.tag (array-ref toks 0)) (token.tag-quote))
@@ -1424,7 +1421,7 @@
           (= (token.tag (array-ref toks 2)) (token.tag-quote))
           (= (token.tag (array-ref toks 3)) (token.tag-end)))]
       [(ResultTokens.Err _) false])
-    (match (lex-result "'a'")
+    (match (result "'a'")
       [(ResultTokens.Ok toks)
         (and
           (= (token.tag (array-ref toks 0)) (token.tag-char))
@@ -1432,8 +1429,8 @@
           (= (token.tag (array-ref toks 1)) (token.tag-end)))]
       [(ResultTokens.Err _) false])))
 
-(define (lex-one-apostrophe-char-ok? [body : String] [want : char]) : bool
-  (match (lex-result (lex-apostrophe-char-source body))
+(define (one-apostrophe-char-ok? [body : String] [want : char]) : bool
+  (match (result (apostrophe-char-source body))
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-ref toks 0)) (token.tag-char))
@@ -1441,37 +1438,37 @@
         (= (token.tag (array-ref toks 1)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-legacy-char-rejected? [src : String]) : bool
-  (match (lex-result src)
+(define (legacy-char-rejected? [src : String]) : bool
+  (match (result src)
     [(ResultTokens.Ok _) false]
     [(ResultTokens.Err message)
       (string.eq message "lexer: unexpected character")]))
 
-(define (lex-char-literals-ok?) : bool
+(define (char-literals-ok?) : bool
   (let
-    [slash : String (lex-backslash-text)]
+    [slash : String (backslash-text)]
     (and
-      (lex-one-apostrophe-char-ok? "a" 'a')
-      (lex-one-apostrophe-char-ok? "Z" 'Z')
-      (lex-one-apostrophe-char-ok? "0" '0')
-      (lex-one-apostrophe-char-ok? "+" '+')
-      (lex-one-apostrophe-char-ok? " " ' ')
-      (lex-one-apostrophe-char-ok? (string.append slash "n") '\n')
-      (lex-one-apostrophe-char-ok? (string.append slash "t") '\t')
-      (lex-one-apostrophe-char-ok? (string.append slash "r") '\r')
-      (lex-one-apostrophe-char-ok? (string.append slash "0") '\0')
-      (lex-one-apostrophe-char-ok? (string.append slash slash) '\\')
-      (lex-one-apostrophe-char-ok? (string.append slash "'") '\'')
-      (lex-legacy-char-rejected? "#x'")
-      (lex-legacy-char-rejected? "#\\n'")
-      (lex-legacy-char-rejected? "#\\space'"))))
+      (one-apostrophe-char-ok? "a" 'a')
+      (one-apostrophe-char-ok? "Z" 'Z')
+      (one-apostrophe-char-ok? "0" '0')
+      (one-apostrophe-char-ok? "+" '+')
+      (one-apostrophe-char-ok? " " ' ')
+      (one-apostrophe-char-ok? (string.append slash "n") '\n')
+      (one-apostrophe-char-ok? (string.append slash "t") '\t')
+      (one-apostrophe-char-ok? (string.append slash "r") '\r')
+      (one-apostrophe-char-ok? (string.append slash "0") '\0')
+      (one-apostrophe-char-ok? (string.append slash slash) '\\')
+      (one-apostrophe-char-ok? (string.append slash "'") '\'')
+      (legacy-char-rejected? "#x'")
+      (legacy-char-rejected? "#\\n'")
+      (legacy-char-rejected? "#\\space'"))))
 
-(define (lex-error-ok?
+(define (error-ok?
   [src : String]
   [want-line : i64]
   [want-col : i64]
   [want-message : String]) : bool
-  (match (lex-spanned-result src)
+  (match (spanned-result src)
     [(ResultSpannedTokens.Ok _) false]
     [(ResultSpannedTokens.Err err)
       (and
@@ -1483,44 +1480,44 @@
           want-line
           want-col))]))
 
-(define (lex-error-spans-ok?) : bool
+(define (error-spans-ok?) : bool
   (let
-    [slash : String (lex-backslash-text)]
+    [slash : String (backslash-text)]
     (and
-      (lex-error-ok? "\n#\\bogus'" 2 1 "lexer: unexpected character")
-      (lex-error-ok?
-        (lex-apostrophe-char-source (string.append slash "x"))
+      (error-ok? "\n#\\bogus'" 2 1 "lexer: unexpected character")
+      (error-ok?
+        (apostrophe-char-source (string.append slash "x"))
         1
         1
         "lexer: unknown character escape")
-      (lex-error-ok?
+      (error-ok?
         (string.append "'" (string.append slash "n"))
         1
         1
         "lexer: unterminated character literal")
-      (lex-error-ok? "ok\n@" 2 1 "lexer: unexpected character"))))
+      (error-ok? "ok\n@" 2 1 "lexer: unexpected character"))))
 
-(define (lex-prefixed-int-errors-ok?) : bool
+(define (prefixed-int-errors-ok?) : bool
   (and
-    (lex-error-ok? "0x" 1 1 "lexer: malformed integer literal")
-    (lex-error-ok? "0xg" 1 1 "lexer: malformed integer literal")
-    (lex-error-ok? "0b102" 1 1 "lexer: malformed integer literal")))
+    (error-ok? "0x" 1 1 "lexer: malformed integer literal")
+    (error-ok? "0xg" 1 1 "lexer: malformed integer literal")
+    (error-ok? "0b102" 1 1 "lexer: malformed integer literal")))
 
-(define (lex-check-prefixed-int-ok?) : bool
-  (match (lex-check "(0x2a -0b101010)")
+(define (check-prefixed-int-ok?) : bool
+  (match (check "(0x2a -0b101010)")
     [(result_lex_i64.Ok _) true]
     [(result_lex_i64.Err _) false]))
 
-(define (lex-check-prefixed-int-error-ok?) : bool
-  (match (lex-check "0b102")
+(define (check-prefixed-int-error-ok?) : bool
+  (match (check "0b102")
     [(result_lex_i64.Ok _) false]
     [(result_lex_i64.Err message)
       (string.eq message "lexer: malformed integer literal")]))
 
-(define (lex-string-source [inner : String]) : String
-  (string.append (lex-quote-text) (string.append inner (lex-quote-text))))
+(define (string-source [inner : String]) : String
+  (string.append (quote-text) (string.append inner (quote-text))))
 
-(define (lex-string-token-ok? [src : String] [expected : String]) : bool
+(define (string-token-ok? [src : String] [expected : String]) : bool
   (let
     [toks : (Array token.Token) (lex src)]
     (and
@@ -1528,9 +1525,9 @@
       (string.eq (token.str (array-ref toks 0)) expected)
       (= (token.tag (array-ref toks 1)) (token.tag-end)))))
 
-(define (lex-string-token-retains-id?) : bool
+(define (string-token-retains-id?) : bool
   (let
-    [toks : (Array token.Token) (lex (lex-string-source "literal-id"))]
+    [toks : (Array token.Token) (lex (string-source "literal-id"))]
     [literal : token.Token (array-ref toks 0)]
     [literal-id : i64 (token.str-id literal)]
     (and
@@ -1538,42 +1535,38 @@
       (string.eq (ci.intern-str literal-id) "literal-id")
       (= (token.str-id literal) literal-id))))
 
-(define (lex-escaped-quote-source-inner) : String
+(define (escaped-quote-source-inner) : String
   (string.append
     "say "
     (string.append
-      (lex-backslash-text)
+      (backslash-text)
       (string.append
-        (lex-quote-text)
-        (string.append
-          "hi"
-          (string.append (lex-backslash-text) (lex-quote-text)))))))
+        (quote-text)
+        (string.append "hi" (string.append (backslash-text) (quote-text)))))))
 
-(define (lex-backslash-quote-source-inner) : String
+(define (backslash-quote-source-inner) : String
   (string.append
-    (lex-backslash-text)
+    (backslash-text)
     (string.append
-      (lex-backslash-text)
-      (string.append (lex-backslash-text) (lex-quote-text)))))
+      (backslash-text)
+      (string.append (backslash-text) (quote-text)))))
 
-(define (lex-string-escapes-ok?) : bool
+(define (string-escapes-ok?) : bool
   (let
-    [slash : String (lex-backslash-text)]
-    [quote : String (lex-quote-text)]
+    [slash : String (backslash-text)]
+    [quote : String (quote-text)]
     (and
-      (lex-string-token-ok? (lex-string-source "hello\\nworld") "hello\nworld")
-      (lex-string-token-ok?
-        (lex-string-source (lex-escaped-quote-source-inner))
+      (string-token-ok? (string-source "hello\\nworld") "hello\nworld")
+      (string-token-ok?
+        (string-source (escaped-quote-source-inner))
         (string.append "say " (string.append quote (string.append "hi" quote))))
-      (lex-string-token-ok?
-        (lex-string-source (string.append slash slash))
-        slash)
-      (lex-string-token-ok?
-        (lex-string-source (lex-backslash-quote-source-inner))
+      (string-token-ok? (string-source (string.append slash slash)) slash)
+      (string-token-ok?
+        (string-source (backslash-quote-source-inner))
         (string.append slash quote)))))
 
-(define (lex-quote-prefix-tokens-ok?) : bool
-  (match (lex-result "`(if ,x ,@xs)")
+(define (quote-prefix-tokens-ok?) : bool
+  (match (result "`(if ,x ,@xs)")
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-ref toks 0)) (token.tag-backtick))
@@ -1583,7 +1576,7 @@
         (= (token.tag (array-ref toks 8)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-span-positions-ok? [s : (Array token.SpannedToken)]) : bool
+(define (span-positions-ok? [s : (Array token.SpannedToken)]) : bool
   (let
     [ok : bool true]
     (begin
@@ -1621,67 +1614,67 @@
         (set! ok false))
       ok)))
 
-(define (lex-span-self-test) : i64
-  (match (lex-spanned-result "(a\n  (b c))")
+(define (span-self-test) : i64
+  (match (spanned-result "(a\n  (b c))")
     [(ResultSpannedTokens.Ok s)
       (let
         [ok : bool true]
         (begin
-          (if (lex-span-positions-ok? s)
+          (if (span-positions-ok? s)
             unit
             (set! ok false))
-          (if (lex-string-escapes-ok?)
+          (if (string-escapes-ok?)
             unit
             (set! ok false))
-          (if (lex-string-token-retains-id?)
+          (if (string-token-retains-id?)
             unit
             (set! ok false))
-          (if (lex-basic-token-sequence-ok?)
+          (if (basic-token-sequence-ok?)
             unit
             (set! ok false))
-          (if (lex-colon-annotation-tokens-ok?)
+          (if (colon-annotation-tokens-ok?)
             unit
             (set! ok false))
-          (if (lex-spanned-colon-annotation-tokens-ok?)
+          (if (spanned-colon-annotation-tokens-ok?)
             unit
             (set! ok false))
-          (if (lex-char-literals-ok?)
+          (if (char-literals-ok?)
             unit
             (set! ok false))
-          (if (lex-quote-vs-apostrophe-char-ok?)
+          (if (quote-vs-apostrophe-char-ok?)
             unit
             (set! ok false))
-          (if (lex-error-spans-ok?)
+          (if (error-spans-ok?)
             unit
             (set! ok false))
-          (if (lex-percent-symbol-ok?)
+          (if (percent-symbol-ok?)
             unit
             (set! ok false))
-          (if (lex-ampersand-symbol-ok?)
+          (if (ampersand-symbol-ok?)
             unit
             (set! ok false))
-          (if (lex-float-token-ok?)
+          (if (float-token-ok?)
             unit
             (set! ok false))
-          (if (lex-negative-int-token-ok?)
+          (if (negative-int-token-ok?)
             unit
             (set! ok false))
-          (if (lex-prefixed-int-token-ok?)
+          (if (prefixed-int-token-ok?)
             unit
             (set! ok false))
-          (if (lex-prefixed-int-errors-ok?)
+          (if (prefixed-int-errors-ok?)
             unit
             (set! ok false))
-          (if (lex-check-prefixed-int-ok?)
+          (if (check-prefixed-int-ok?)
             unit
             (set! ok false))
-          (if (lex-check-prefixed-int-error-ok?)
+          (if (check-prefixed-int-error-ok?)
             unit
             (set! ok false))
-          (if (lex-quote-prefix-tokens-ok?)
+          (if (quote-prefix-tokens-ok?)
             unit
             (set! ok false))
-          (if (lex-spanned-token-buffer-arena-ownership-ok?)
+          (if (spanned-token-buffer-arena-ownership-ok?)
             unit
             (set! ok false))
           (if ok

@@ -1904,7 +1904,7 @@
 (define (lint-deprecated-string-concat-scan
   [source : String]
   [acc : LintFindings]) : LintFindings
-  (match (lexer.lex-spanned-result source)
+  (match (lexer.spanned-result source)
     [(lexer.ResultSpannedTokens.Err _) acc]
     [(lexer.ResultSpannedTokens.Ok toks)
       (let

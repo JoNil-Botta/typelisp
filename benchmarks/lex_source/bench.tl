@@ -11,7 +11,7 @@
 ;# numeric literals, escaped string literals, comment blocks, and nesting.
 ;#
 ;# What it mirrors, function for function:
-;#   src/lex.tl `lex-into-spanned-tokens-result`  the main `cond` dispatch over
+;#   src/lex.tl `into-spanned-tokens-result`  the main `cond` dispatch over
 ;#     the byte under the cursor, in its source order (whitespace, `(`, `[`,
 ;#     `)`, `]`, `'`, backtick, `,`, `"`, `;`, digit-or-negative-number, `:`,
 ;#     symbol char, else), together with its 1-based line/column tracking.
@@ -27,12 +27,12 @@
 ;#     `negative-number-start?`, `scan-str-end-result`, `scan-comment-end`,
 ;#     `colon-symbol-head?`, `colon-token-end`,
 ;#     `apostrophe-char-literal-result`, `apostrophe-escaped-char-result`,
-;#     `lex-advance-position`.
+;#     `advance-position`.
 ;#   src/token.tl `tag` and the `tag-*` constants  the token-kind numbering
 ;#     (LParen 1, RParen 2, Int 3, Sym 4, End 5, Str 6, Char 7, Float 8,
 ;#     LBracket 9, RBracket 10, Quote 11, Backtick 12, Comma 13, CommaAt 14),
 ;#     which is the number folded into the checksum as the token's kind.
-;#   src/read.tl `peek-tag` / `read-form-result`  the reason the kind tag is
+;#   src/read.tl `peek-tag` / `form-result`  the reason the kind tag is
 ;#     the observable: the reader classifies each token by `token.tag` alone,
 ;#     so a kind-plus-extent fold is exactly what the consumer sees.
 ;#
@@ -364,7 +364,7 @@
 
 ;; ---- the tokenizer ----
 ;; One pass over the corpus. Line and column advance exactly as they do in
-;; `lex-into-spanned-tokens-result`, including the `lex-advance-position` rescan
+;; `into-spanned-tokens-result`, including the `advance-position` rescan
 ;; a string literal needs because it may contain newlines.
 (define (ls-tokenize [buf : (Array u8)] [n : i64] [seed-acc : i64]) : i64
   (let

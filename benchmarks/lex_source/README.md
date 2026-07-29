@@ -3,7 +3,7 @@
 The compiler's own tokenizer hot loop, over real compiler source text.
 
 `bench.tl` and `baseline.c` implement the byte-class dispatch of `src/lex.tl`
-(`lex-into-spanned-tokens-result` and its scanners) with the token-kind
+(`into-spanned-tokens-result` and its scanners) with the token-kind
 numbering of `src/token.tl` (`tag`). Every token folds its `(kind, length,
 first byte)` into a wrapping 64-bit accumulator; after each pass the final line,
 column, and token count fold in too. See the header comment of either file for

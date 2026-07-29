@@ -117,19 +117,19 @@
 ;; Source symbols remain ids from lexer through reader and parser. Consumers
 ;; request display text explicitly only when diagnostics or data formats need it.
 ;: Preserve the lexer-assigned id across the reader/parser boundary.
-(define (read-symbol-id [name-id : i64]) : i64
+(define (symbol-id [name-id : i64]) : i64
   name-id)
 
 ;: Parser metadata may deliberately promote a string literal to a symbol.
 ;: Assign that spelling its sole source id while the frontend is still writable.
-(define (read-string-symbol-id [text : String]) : i64
+(define (string-symbol-id [text : String]) : i64
   (ci.intern-source-slice text 0 (ci.intern-private-string-length text)))
 
 ;: Intern a process-stable parser literal once and memoize its String object.
-(define (read-stable-symbol-id [text : String]) : i64
+(define (stable-symbol-id [text : String]) : i64
   (ci.intern-source-slice text 0 (ci.intern-private-string-length text)))
 
-(define (read-symbol-text-for-id [id : i64]) : String
+(define (symbol-text-for-id [id : i64]) : String
   (ci.intern-str id))
 
 (define (sp-node-pool-len) : i64
@@ -294,25 +294,25 @@
 (define (advance [cur : (Array i64)]) : unit
   (array-set! cur 0 (+ (cur-pos cur) 1)))
 
-(define (read-prefix-tag? [t : i64]) : bool
+(define (prefix-tag? [t : i64]) : bool
   (or
     (= t (token.tag-quote))
     (= t (token.tag-backtick))
     (= t (token.tag-comma))
     (= t (token.tag-comma-at))))
 
-(define (read-prefix-symbol [t : i64]) : i64
+(define (prefix-symbol [t : i64]) : i64
   (cond
-    [(= t (token.tag-quote)) (read-stable-symbol-id "quote")]
-    [(= t (token.tag-backtick)) (read-stable-symbol-id "quasiquote")]
-    [(= t (token.tag-comma)) (read-stable-symbol-id "unquote")]
-    [(= t (token.tag-comma-at)) (read-stable-symbol-id "unquote-splicing")]
-    [else (read-stable-symbol-id "quote")]))
+    [(= t (token.tag-quote)) (stable-symbol-id "quote")]
+    [(= t (token.tag-backtick)) (stable-symbol-id "quasiquote")]
+    [(= t (token.tag-comma)) (stable-symbol-id "unquote")]
+    [(= t (token.tag-comma-at)) (stable-symbol-id "unquote-splicing")]
+    [else (stable-symbol-id "quote")]))
 
-(define (read-prefix-form [name : i64] [form : Sexpr]) : Sexpr
+(define (prefix-form [name : i64] [form : Sexpr]) : Sexpr
   (sexpr-cons (Sexpr.Sym name) (sexpr-cons form Sexpr.Nil)))
 
-(define (read-prefix-spanned-form
+(define (prefix-spanned-form
   [name : i64]
   [prefix-span : token.SourceSpan]
   [form : SpannedSexpr]) : SpannedSexpr
@@ -327,46 +327,46 @@
         span)
       span)))
 
-(define (read-close-delimiter-text [tag : i64]) : String
+(define (close-delimiter-text [tag : i64]) : String
   (if (= tag (token.tag-rparen))
     ")"
     (if (= tag (token.tag-rbracket))
       "]"
       "?")))
 
-(define (read-quoted-close-delimiter [tag : i64]) : String
-  (string.append "'" (string.append (read-close-delimiter-text tag) "'")))
+(define (quoted-close-delimiter [tag : i64]) : String
+  (string.append "'" (string.append (close-delimiter-text tag) "'")))
 
-(define (read-opposite-close-delimiter? [tag : i64] [expected : i64]) : bool
+(define (opposite-close-delimiter? [tag : i64] [expected : i64]) : bool
   (if (= expected (token.tag-rparen))
     (= tag (token.tag-rbracket))
     (if (= expected (token.tag-rbracket))
       (= tag (token.tag-rparen))
       false)))
 
-(define (read-span-location [span : token.SourceSpan]) : String
+(define (span-location [span : token.SourceSpan]) : String
   (string.append
     (string.int->string (token.span-start-line span))
     (string.append ":" (string.int->string (token.span-start-col span)))))
 
-(define (read-unterminated-list-message [expected : i64]) : String
+(define (unterminated-list-message [expected : i64]) : String
   (string.append
     "reader: unterminated list: reached end of input before "
-    (read-quoted-close-delimiter expected)))
+    (quoted-close-delimiter expected)))
 
-(define (read-mismatched-close-message
+(define (mismatched-close-message
   [expected : i64]
   [actual : i64]
   [actual-span : token.SourceSpan]) : String
   (string.append
     "reader: mismatched delimiter: expected "
     (string.append
-      (read-quoted-close-delimiter expected)
+      (quoted-close-delimiter expected)
       (string.append
         " but found "
         (string.append
-          (read-quoted-close-delimiter actual)
-          (string.append " at " (read-span-location actual-span)))))))
+          (quoted-close-delimiter actual)
+          (string.append " at " (span-location actual-span)))))))
 
 ;; --------------------------------------------------------------------------
 ;; The reader proper: `read-form` and `read-list`, mutually recursive.
@@ -378,13 +378,13 @@
 ;;   token.Token.Sym s -> Sexpr.Sym s            a symbol atom
 ;;   token.Token.Str s -> Sexpr.Str s            a string-literal atom (`"..."`)
 ;;   token.Token.Char c -> Sexpr.Char c          a character-literal atom (`'x'`)
-;;   token.Token.LParen -> read-list-result      consume '(' then read a list to its ')'
+;;   token.Token.LParen -> list-result      consume '(' then read a list to its ')'
 ;;   token.Token.RParen -> error                 a stray ')' with no opening '(' is malformed
 ;;   token.Token.End -> error                    end of stream where a form was expected
 ;; A grammar violation returns a recoverable `ErrSexpr String`; the public
 ;; `read` wrapper below still panics for callers that have not moved to
-;; `read-result`.
-(define (read-form-spanned-result
+;; `result`.
+(define (form-spanned-result
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : ResultSpannedSexpr
   (let
@@ -427,20 +427,19 @@
       [(= t (token.tag-lparen))
         (begin
           (advance cur)
-          (read-list-spanned-result toks cur span))]
+          (list-spanned-result toks cur span))]
       [(= t (token.tag-lbracket))
         (begin
           (advance cur)
-          (read-bracket-list-spanned-result toks cur span))]
-      [(read-prefix-tag? t)
+          (bracket-list-spanned-result toks cur span))]
+      [(prefix-tag? t)
         (let
-          [name : i64 (read-prefix-symbol t)]
+          [name : i64 (prefix-symbol t)]
           (begin
             (advance cur)
-            (match (read-form-spanned-result toks cur)
+            (match (form-spanned-result toks cur)
               [(ResultSpannedSexpr.Ok form)
-                (ResultSpannedSexpr.Ok
-                  (read-prefix-spanned-form name span form))]
+                (ResultSpannedSexpr.Ok (prefix-spanned-form name span form))]
               [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])))]
       [(= t (token.tag-rparen))
         (ResultSpannedSexpr.Err
@@ -452,7 +451,7 @@
         (ResultSpannedSexpr.Err
           (token.SourceError "reader: unexpected end of input" span))])))
 
-(define (read-list-spanned-items-result
+(define (list-spanned-items-result
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [open-span : token.SourceSpan]
@@ -469,18 +468,14 @@
             (SpannedSexpr.Nil (token.merge-spans open-span span))))]
       [(= t (token.tag-end))
         (ResultSpannedSexpr.Err
-          (token.SourceError
-            (read-unterminated-list-message close-tag)
-            open-span))]
-      [(read-opposite-close-delimiter? t close-tag)
+          (token.SourceError (unterminated-list-message close-tag) open-span))]
+      [(opposite-close-delimiter? t close-tag)
         (ResultSpannedSexpr.Err
-          (token.SourceError
-            (read-mismatched-close-message close-tag t span)
-            span))]
+          (token.SourceError (mismatched-close-message close-tag t span) span))]
       [else
-        (match (read-form-spanned-result toks cur)
+        (match (form-spanned-result toks cur)
           [(ResultSpannedSexpr.Ok head)
-            (match (read-list-spanned-items-result toks cur open-span close-tag)
+            (match (list-spanned-items-result toks cur open-span close-tag)
               [(ResultSpannedSexpr.Ok tail)
                 (ResultSpannedSexpr.Ok
                   (spanned-sexpr-cons
@@ -490,27 +485,23 @@
               [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])]
           [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])])))
 
-(define (read-list-spanned-result
+(define (list-spanned-result
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [open-span : token.SourceSpan]) : ResultSpannedSexpr
-  (read-list-spanned-items-result toks cur open-span (token.tag-rparen)))
+  (list-spanned-items-result toks cur open-span (token.tag-rparen)))
 
-(define (read-bracket-list-spanned-result
+(define (bracket-list-spanned-result
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [open-span : token.SourceSpan]) : ResultSpannedSexpr
-  (match (read-list-spanned-items-result
-    toks
-    cur
-    open-span
-    (token.tag-rbracket))
+  (match (list-spanned-items-result toks cur open-span (token.tag-rbracket))
     [(ResultSpannedSexpr.Ok items)
       (ResultSpannedSexpr.Ok
         (spanned-sexpr-bracket-list items (spanned-sexpr-span items)))]
     [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
 
-(define (read-form-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
+(define (form-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
   (let
     [t : i64 (peek-tag toks cur)]
     (cond
@@ -549,19 +540,18 @@
       [(= t (token.tag-lparen))
         (begin
           (advance cur)
-          (read-list-result toks cur))]
+          (list-result toks cur))]
       [(= t (token.tag-lbracket))
         (begin
           (advance cur)
-          (read-bracket-list-result toks cur))]
-      [(read-prefix-tag? t)
+          (bracket-list-result toks cur))]
+      [(prefix-tag? t)
         (let
-          [name : i64 (read-prefix-symbol t)]
+          [name : i64 (prefix-symbol t)]
           (begin
             (advance cur)
-            (match (read-form-result toks cur)
-              [(ResultSexpr.Ok form)
-                (ResultSexpr.Ok (read-prefix-form name form))]
+            (match (form-result toks cur)
+              [(ResultSexpr.Ok form) (ResultSexpr.Ok (prefix-form name form))]
               [(ResultSexpr.Err message) (ResultSexpr.Err message)])))]
       [(= t (token.tag-rparen)) (ResultSexpr.Err "reader: unexpected ')'")]
       [(= t (token.tag-rbracket)) (ResultSexpr.Err "reader: unexpected ']'")]
@@ -575,10 +565,10 @@
 ;; list, and cons the two. The base case is the ')' that closes this list -
 ;; consume it and return `Sexpr.Nil`. Hitting `token.Token.End` before a ')' is an unterminated
 ;; list and returns `ErrSexpr`. Nesting is handled for free: a head form that is
-;; itself a '(' re-enters `read-form-result` -> `read-list-result`, which reads
+;; itself a '(' re-enters `form-result` -> `list-result`, which reads
 ;; the inner list to ITS ')' and advances the shared cursor past it before this
 ;; level reads its next sibling.
-(define (read-list-result-with-close
+(define (list-result-with-close
   [toks : (Array token.Token)]
   [cur : (Array i64)]
   [close-tag : i64]
@@ -594,9 +584,9 @@
         (ResultSexpr.Err unterminated-message)
         ;; A list element: read the head form (which advances the cursor past
         ;; it, however deeply nested), then recurse for the tail and cons.
-        (match (read-form-result toks cur)
+        (match (form-result toks cur)
           [(ResultSexpr.Ok head)
-            (match (read-list-result-with-close
+            (match (list-result-with-close
               toks
               cur
               close-tag
@@ -605,17 +595,15 @@
               [(ResultSexpr.Err message) (ResultSexpr.Err message)])]
           [(ResultSexpr.Err message) (ResultSexpr.Err message)])))))
 
-(define (read-list-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
-  (read-list-result-with-close
+(define (list-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
+  (list-result-with-close
     toks
     cur
     (token.tag-rparen)
     "reader: unterminated list (missing ')')"))
 
-(define (read-bracket-list-result
-  [toks : (Array token.Token)]
-  [cur : (Array i64)]) : ResultSexpr
-  (read-list-result-with-close
+(define (bracket-list-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
+  (list-result-with-close
     toks
     cur
     (token.tag-rbracket)
@@ -625,22 +613,22 @@
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
 ;; tokens after the first form are ignored here, as a top-level `read` returns
 ;; one datum at a time.)
-(define (read-result [toks : (Array token.Token)]) : ResultSexpr
+(define (result [toks : (Array token.Token)]) : ResultSexpr
   (let
     [cur : (Array i64) (make-array i64 1)]
     (begin
       (array-set! cur 0 0)
-      (read-form-result toks cur))))
+      (form-result toks cur))))
 
-(define (read-spanned-result [toks : (Array token.SpannedToken)]) : ResultSpannedSexpr
+(define (spanned-result [toks : (Array token.SpannedToken)]) : ResultSpannedSexpr
   (let
     [cur : (Array i64) (make-array i64 1)]
     (begin
       (array-set! cur 0 0)
-      (read-form-spanned-result toks cur))))
+      (form-spanned-result toks cur))))
 
-(define (read-symbol-id-preservation-ok?) : bool
-  (match (lexer.lex-spanned-result "(alpha alpha)")
+(define (symbol-id-preservation-ok?) : bool
+  (match (lexer.spanned-result "(alpha alpha)")
     [(lexer.ResultSpannedTokens.Ok toks)
       (let
         [first-id : i64
@@ -650,7 +638,7 @@
         [pool-len-before : i64 (ci.intern-pool-len)]
         (begin
           (sp-node-pool-reset!)
-          (match (read-spanned-result toks)
+          (match (spanned-result toks)
             [(ResultSpannedSexpr.Ok form)
               (and
                 (= pool-len-before (ci.intern-pool-len))
@@ -664,8 +652,8 @@
                             (match (sp-node-get second-node)
                               [(SpannedSexpr.Sym second-text _)
                                 (and
-                                  (= (read-symbol-id first-text) first-id)
-                                  (= (read-symbol-id second-text) second-id))]
+                                  (= (symbol-id first-text) first-id)
+                                  (= (symbol-id second-text) second-id))]
                               [_ false])]
                           [_ false])]
                       [_ false])]
@@ -674,6 +662,6 @@
     [(lexer.ResultSpannedTokens.Err _) false]))
 
 (define (read [toks : (Array token.Token)]) : Sexpr
-  (match (read-result toks)
+  (match (result toks)
     [(ResultSexpr.Ok form) form]
     [(ResultSexpr.Err message) (io.panic message)]))

@@ -4564,7 +4564,7 @@
 (define (lsp-validate-forms-result [text : String]) : LspValidationResult
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (match (lexer.lex-spanned-result text)
+    (match (lexer.spanned-result text)
       [(lexer.ResultSpannedTokens.Err err)
         (let
           [span : token.SourceSpan (token.source-error-span err)]
@@ -4583,7 +4583,7 @@
             (while (and
               (not done)
               (not (= (reader.peek-spanned-tag toks cur) (token.tag-end))))
-              (match (reader.read-form-spanned-result toks cur)
+              (match (reader.form-spanned-result toks cur)
                 [(reader.ResultSpannedSexpr.Err err)
                   (let
                     [span : token.SourceSpan (token.source-error-span err)]

@@ -603,20 +603,21 @@
     0
     (ast-param-list-len (& params))))
 
-(define (doc-ast-macro-type-kind-items-source [kinds : AstMacroTypeKindList]) : String
-  (match kinds
-    [(AstMacroTypeKindList.Nil) ""]
-    [(AstMacroTypeKindList.Cons kind rest)
-      (doc-cat3
-        " "
-        (intern-str kind)
-        (doc-ast-macro-type-kind-items-source (box-get rest)))]))
+(define (doc-ast-macro-type-kind-items-source-from
+  [kinds : (& kinds AstMacroTypeKindList)]
+  [index : i64]) : String
+  (if (>= index (ast-macro-type-kind-list-len kinds))
+    ""
+    (doc-cat3
+      " "
+      (intern-str (ast-macro-type-kind-list-get kinds index 0))
+      (doc-ast-macro-type-kind-items-source-from kinds (+ index 1)))))
 
 (define (doc-ast-macro-type-kind-constraint-source
-  [kinds : AstMacroTypeKindList]) : String
-  (match kinds
-    [(AstMacroTypeKindList.Nil) ""]
-    [_ (doc-cat3 " (:kind" (doc-ast-macro-type-kind-items-source kinds) ")")]))
+  [kinds : (& kinds AstMacroTypeKindList)]) : String
+  (if (ast-macro-type-kind-list-empty? kinds)
+    ""
+    (doc-cat3 " (:kind" (doc-ast-macro-type-kind-items-source-from kinds 0) ")")))
 
 (define (doc-ast-macro-param-source
   [type-segment-bases : i64]
@@ -628,7 +629,7 @@
         (intern-str name)
         " : "
         (doc-ast-type-source type-segment-bases ty)
-        (doc-ast-macro-type-kind-constraint-source type-kinds)
+        (doc-ast-macro-type-kind-constraint-source (& type-kinds))
         "]")]))
 
 (define (doc-ast-macro-param-list-source-from

@@ -519,6 +519,10 @@
   (Ok AstMacroTypeKindList)
   (Err String))
 
+(defenum ResultAstMacroTypeKindCount
+  (Ok i64)
+  (Err String))
+
 (defenum ResultAstMacroParamList
   (Ok AstMacroParamList)
   (Err String))
@@ -3508,41 +3512,89 @@
     operand-name
     (string.append " constraint :kind " detail)))
 
-(define (parse-ast-macro-type-kind-list
-  [operand-name : String]
-  [s : reader.Sexpr]) : ResultAstMacroTypeKindList
+(define (parse-ast-macro-type-kind-sexpr-contains-id?
+  [s : reader.Sexpr]
+  [kind : i64]) : bool
   (match s
-    [(reader.Sexpr.Nil)
-      (ResultAstMacroTypeKindList.Ok (ast-macro-type-kind-list-empty))]
+    [(reader.Sexpr.Nil) false]
+    [(reader.Sexpr.Cons head tail)
+      (match (box-get head)
+        [(reader.Sexpr.Sym found)
+          (or
+            (= found kind)
+            (parse-ast-macro-type-kind-sexpr-contains-id? (box-get tail) kind))]
+        [_ false])]
+    [_ false]))
+
+(define (parse-ast-macro-type-kind-list-count
+  [operand-name : String]
+  [s : reader.Sexpr]) : ResultAstMacroTypeKindCount
+  (match s
+    [(reader.Sexpr.Nil) (ResultAstMacroTypeKindCount.Ok 0)]
     [(reader.Sexpr.Cons head tail)
       (match (box-get head)
         [(reader.Sexpr.Sym kind-name)
           (if (parse-ast-macro-type-kind-known? kind-name)
-            (match (parse-ast-macro-type-kind-list operand-name (box-get tail))
-              [(ResultAstMacroTypeKindList.Ok rest)
-                (if (ast-macro-type-kind-list-contains-id? rest kind-name)
-                  (ResultAstMacroTypeKindList.Err
+            (match (parse-ast-macro-type-kind-list-count
+              operand-name
+              (box-get tail))
+              [(ResultAstMacroTypeKindCount.Ok count)
+                (if (parse-ast-macro-type-kind-sexpr-contains-id?
+                  (box-get tail)
+                  kind-name)
+                  (ResultAstMacroTypeKindCount.Err
                     (parse-ast-macro-type-kind-error
                       operand-name
                       (string.append
                         "has duplicate kind "
                         (ci.intern-str kind-name))))
-                  (ResultAstMacroTypeKindList.Ok
-                    (ast-macro-type-kind-list-cons-id kind-name rest)))]
-              [(ResultAstMacroTypeKindList.Err message)
-                (ResultAstMacroTypeKindList.Err message)])
-            (ResultAstMacroTypeKindList.Err
+                  (ResultAstMacroTypeKindCount.Ok (+ count 1)))]
+              [(ResultAstMacroTypeKindCount.Err message)
+                (ResultAstMacroTypeKindCount.Err message)])
+            (ResultAstMacroTypeKindCount.Err
               (parse-ast-macro-type-kind-error
                 operand-name
                 (string.append "has unknown kind " (ci.intern-str kind-name)))))]
         [_
-          (ResultAstMacroTypeKindList.Err
+          (ResultAstMacroTypeKindCount.Err
             (parse-ast-macro-type-kind-error
               operand-name
               "expects unquoted kind names"))])]
     [_
-      (ResultAstMacroTypeKindList.Err
+      (ResultAstMacroTypeKindCount.Err
         (parse-ast-macro-type-kind-error operand-name "is malformed"))]))
+
+(define (parse-ast-macro-type-kind-list-fill!
+  [out : (&mut out AstMacroTypeKindList)]
+  [s : reader.Sexpr]
+  [index : i64]) : unit
+  (match s
+    [(reader.Sexpr.Nil) unit]
+    [(reader.Sexpr.Cons head tail)
+      (match (box-get head)
+        [(reader.Sexpr.Sym kind-name)
+          (begin
+            (ast-macro-type-kind-list-set! out index kind-name)
+            (parse-ast-macro-type-kind-list-fill!
+              out
+              (box-get tail)
+              (+ index 1)))]
+        [_ unit])]
+    [_ unit]))
+
+(define (parse-ast-macro-type-kind-list
+  [operand-name : String]
+  [s : reader.Sexpr]) : ResultAstMacroTypeKindList
+  (match (parse-ast-macro-type-kind-list-count operand-name s)
+    [(ResultAstMacroTypeKindCount.Ok count)
+      (let
+        [out : AstMacroTypeKindList
+          (ast-macro-type-kind-list-with-length count)]
+        (begin
+          (parse-ast-macro-type-kind-list-fill! (&mut out) s 0)
+          (ResultAstMacroTypeKindList.Ok out)))]
+    [(ResultAstMacroTypeKindCount.Err message)
+      (ResultAstMacroTypeKindList.Err message)]))
 
 (define (parse-ast-macro-type-kind-constraint
   [operand-name : String]
@@ -13394,44 +13446,35 @@
                           first
                           (AstType.Bool)
                           false
-                          (AstMacroTypeKindList.Nil))
-                        (= first (reader.stable-symbol-id "first"))]
+                          first-kinds)
+                        (and
+                          (= first (reader.stable-symbol-id "first"))
+                          (ast-macro-type-kind-list-empty? (& first-kinds)))]
                       [_ false])
                     (match (ast-macro-param-list-get
                       (& params)
                       1
                       (ast-macro-param-fallback))
-                      [(AstMacroParam.Param
-                          rest
-                          (AstType.Bool)
-                          true
-                          (AstMacroTypeKindList.Nil))
-                        (= rest (reader.stable-symbol-id "rest"))]
+                      [(AstMacroParam.Param rest (AstType.Bool) true rest-kinds)
+                        (and
+                          (= rest (reader.stable-symbol-id "rest"))
+                          (ast-macro-type-kind-list-empty? (& rest-kinds)))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-macro-type-kind-list-shape-ok?
-  [kinds : AstMacroTypeKindList]) : bool
-  (match kinds
-    [(AstMacroTypeKindList.Cons i64-kind i64-rest)
-      (and
-        (string.eq (ci.intern-str i64-kind) "i64")
-        (match (box-get i64-rest)
-          [(AstMacroTypeKindList.Cons struct-kind struct-rest)
-            (and
-              (string.eq (ci.intern-str struct-kind) "struct")
-              (match (box-get struct-rest)
-                [(AstMacroTypeKindList.Cons type-var-kind end)
-                  (and
-                    (string.eq (ci.intern-str type-var-kind) "type-var")
-                    (match (box-get end)
-                      [(AstMacroTypeKindList.Nil) true]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
+  [kinds : (& kinds AstMacroTypeKindList)]) : bool
+  (and
+    (= (ast-macro-type-kind-list-len kinds) 3)
+    (string.eq (ci.intern-str (ast-macro-type-kind-list-get kinds 0 0)) "i64")
+    (string.eq
+      (ci.intern-str (ast-macro-type-kind-list-get kinds 1 0))
+      "struct")
+    (string.eq
+      (ci.intern-str (ast-macro-type-kind-list-get kinds 2 0))
+      "type-var")))
 
 (define (compiler-parse-defmacro-type-kind-constraint-shape-ok?) : bool
   (match (parse-ast-source
@@ -13459,10 +13502,122 @@
                 (and
                   (string.eq (ci.intern-str param-name) "T")
                   (string.eq (ci.intern-str type-name) "type")
-                  (compiler-parse-macro-type-kind-list-shape-ok? type-kinds))]
+                  (compiler-parse-macro-type-kind-list-shape-ok? (& type-kinds)))]
               [_ false]))]
         [_ false])]
     [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-macro-type-kind-expected-all-id [index : i64]) : i64
+  (cond
+    [(= index 0) (cbi.compiler-builtin-ctfe-ref 159)]
+    [(= index 1) (cbi.compiler-builtin-ctfe-ref 160)]
+    [(= index 2) (cbi.compiler-builtin-ctfe-ref 161)]
+    [(= index 3) (cbi.compiler-builtin-ctfe-ref 162)]
+    [(= index 4) (cbi.compiler-builtin-ctfe-ref 163)]
+    [(= index 5) (cbi.compiler-builtin-ctfe-ref 164)]
+    [(= index 6) (cbi.compiler-builtin-ctfe-ref 165)]
+    [(= index 7) (cbi.compiler-builtin-ctfe-ref 166)]
+    [(= index 8) (cbi.compiler-builtin-ctfe-ref 167)]
+    [(= index 9) (cbi.compiler-builtin-ctfe-ref 168)]
+    [(= index 10) (cbi.compiler-builtin-ctfe-ref 169)]
+    [(= index 11) (cbi.compiler-builtin-ctfe-ref 170)]
+    [(= index 12) (cbi.compiler-builtin-ctfe-ref 223)]
+    [(= index 13) (cbi.compiler-builtin-ctfe-ref 173)]
+    [(= index 14) (cbi.compiler-builtin-ctfe-ref 174)]
+    [(= index 15) (cbi.compiler-builtin-ctfe-ref 125)]
+    [(= index 16) (cbi.compiler-builtin-ctfe-ref 224)]
+    [(= index 17) (cbi.compiler-builtin-ctfe-ref 225)]
+    [(= index 18) (cbi.compiler-builtin-ctfe-ref 124)]
+    [(= index 19) (cbi.compiler-builtin-ctfe-ref 226)]
+    [(= index 20) (cbi.compiler-builtin-ctfe-ref 227)]
+    [(= index 21) (cbi.compiler-builtin-ctfe-ref 171)]
+    [(= index 22) (cbi.compiler-builtin-ctfe-ref 228)]
+    [(= index 23) (cbi.compiler-builtin-ctfe-ref 229)]
+    [(= index 24) (cbi.compiler-builtin-ctfe-ref 230)]
+    [(= index 25) (cbi.compiler-builtin-ctfe-ref 231)]
+    [(= index 26) (cbi.compiler-builtin-ctfe-ref 232)]
+    [(= index 27) (cbi.compiler-builtin-ctfe-ref 233)]
+    [(= index 28) (cbi.compiler-builtin-ctfe-ref 132)]
+    [else 0]))
+
+(define (compiler-parse-macro-type-kind-all-order-ok?
+  [kinds : (& kinds AstMacroTypeKindList)]
+  [index : i64]) : bool
+  (if (>= index 29)
+    (= (ast-macro-type-kind-list-len kinds) 29)
+    (and
+      (=
+        (ast-macro-type-kind-list-get kinds index 0)
+        (compiler-parse-macro-type-kind-expected-all-id index))
+      (compiler-parse-macro-type-kind-all-order-ok? kinds (+ index 1)))))
+
+(define (compiler-parse-defmacro-type-kind-storage-case-ok?
+  [source : String]
+  [expected-count : i64]
+  [expected-first : String]
+  [expected-last : String]
+  [verify-all : bool]) : bool
+  (match (parse-ast-source source)
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons (AstDecl.DefMacro _ _ params _ _) rest)
+          (and
+            (match (ast-decl-list-step rest)
+              [(AstDeclListStep.Nil) true]
+              [_ false])
+            (= (ast-macro-param-list-len (& params)) 1)
+            (match (ast-macro-param-list-get
+              (& params)
+              0
+              (ast-macro-param-fallback))
+              [(AstMacroParam.Param _ _ _ type-kinds)
+                (let
+                  [count : i64 (ast-macro-type-kind-list-len (& type-kinds))]
+                  (and
+                    (= count expected-count)
+                    (if (= count 0)
+                      true
+                      (and
+                        (string.eq
+                          (ci.intern-str
+                            (ast-macro-type-kind-list-get (& type-kinds) 0 0))
+                          expected-first)
+                        (string.eq
+                          (ci.intern-str
+                            (ast-macro-type-kind-list-get
+                              (& type-kinds)
+                              (- count 1)
+                              0))
+                          expected-last)))
+                    (if verify-all
+                      (compiler-parse-macro-type-kind-all-order-ok?
+                        (& type-kinds)
+                        0)
+                      true)))]
+              [_ false]))]
+        [_ false])]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-defmacro-type-kind-storage-shapes-ok?) : bool
+  (and
+    (compiler-parse-defmacro-type-kind-storage-case-ok?
+      "(defmacro (empty [T : type]) : Module unit)"
+      0
+      ""
+      ""
+      false)
+    (compiler-parse-defmacro-type-kind-storage-case-ok?
+      "(defmacro (single [T : type (:kind box)]) : Module unit)"
+      1
+      "box"
+      "box"
+      false)
+    (compiler-parse-defmacro-type-kind-storage-case-ok?
+      "(defmacro (all-kinds [T : type (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char string unit never array dyn-array function tuple struct enum str ptr mut-ptr ref mut-ref region type-var box)]) : Module unit)"
+      29
+      "i64"
+      "box"
+      true)))
 
 (define (compiler-parse-fixed-source-id-only-ok?
   [text : String]
@@ -13529,6 +13684,7 @@
   (and
     (compiler-parse-defmacro-shape-ok?)
     (compiler-parse-defmacro-type-kind-constraint-shape-ok?)
+    (compiler-parse-defmacro-type-kind-storage-shapes-ok?)
     (compiler-parse-fixed-syntax-name-provenance-ok?)
     (compiler-parse-ok?
       "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool (expr-if lhs rhs (expr-bool false)))")

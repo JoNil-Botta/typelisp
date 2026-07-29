@@ -48604,13 +48604,19 @@
     [(string.eq kind "box") (shl 1 28)]
     [else (shl 1 29)]))
 
-(define (tc-macro-abstract-kind-list-mask [kinds : AstMacroTypeKindList]) : i64
-  (match kinds
-    [(AstMacroTypeKindList.Nil) 0]
-    [(AstMacroTypeKindList.Cons head rest)
-      (bit-or
-        (tc-macro-abstract-kind-bit (intern-str head))
-        (tc-macro-abstract-kind-list-mask (box-get rest)))]))
+(define (tc-macro-abstract-kind-list-mask-from
+  [kinds : (& kinds AstMacroTypeKindList)]
+  [index : i64]) : i64
+  (if (>= index (ast-macro-type-kind-list-len kinds))
+    0
+    (bit-or
+      (tc-macro-abstract-kind-bit
+        (intern-str (ast-macro-type-kind-list-get kinds index 0)))
+      (tc-macro-abstract-kind-list-mask-from kinds (+ index 1)))))
+
+(define (tc-macro-abstract-kind-list-mask
+  [kinds : (& kinds AstMacroTypeKindList)]) : i64
+  (tc-macro-abstract-kind-list-mask-from kinds 0))
 
 (define (tc-macro-abstract-mask-allows? [allowed : i64]) : bool
   (= (bit-and tc-macro-abstract-kind-mask (bit-xor allowed -1)) 0))
@@ -48911,7 +48917,7 @@
   [macro-name : String]
   [macro-key : String]
   [param-name : String]
-  [kinds : AstMacroTypeKindList]
+  [kinds : (& kinds AstMacroTypeKindList)]
   [body : AstExpr]) : ResultTcUnit
   (let
     [saved : TcMacroAbstractState (tc-macro-abstract-state-save)]
@@ -48957,17 +48963,14 @@
       [(AstMacroParam.Param param-name ty _ type-kinds)
         (match (if (and
           (tc-macro-type-param-kind? ty)
-          (not
-            (match type-kinds
-              [(AstMacroTypeKindList.Nil) true]
-              [_ false])))
+          (not (ast-macro-type-kind-list-empty? (& type-kinds))))
           (tc-check-defmacro-abstract-param
             ctx
             env
             macro-name
             macro-key
             (tc-env-key-name-text param-name)
-            type-kinds
+            (& type-kinds)
             body)
           ResultTcUnit.Ok)
           [(ResultTcUnit.Ok)
@@ -62944,7 +62947,7 @@
             macro-name
             param-name
             resolved-ty
-            type-kinds
+            (& type-kinds)
             head-expr)
             [(ResultMacroCheck.Ok)
               (ResultGenKey.Ok
@@ -70919,33 +70922,43 @@
             (ResultMacroTypeArg.Ok resolved-ty)]
           [(ResultMacroTypeArg.Err _) (ResultMacroTypeArg.Err primary-diag)]))]))
 
-(define (macro-type-kind-list-render [kinds : AstMacroTypeKindList]) : String
-  (match kinds
-    [(AstMacroTypeKindList.Nil) ""]
-    [(AstMacroTypeKindList.Cons head rest)
-      (let
-        [tail : AstMacroTypeKindList (box-get rest)]
-        (str_cat.str-cat
-          (intern-str head)
-          (match tail
-            [(AstMacroTypeKindList.Nil) ""]
-            [_ (str_cat.str-cat ", " (macro-type-kind-list-render tail))])))]))
+(define (macro-type-kind-list-render-from
+  [kinds : (& kinds AstMacroTypeKindList)]
+  [index : i64]) : String
+  (if (>= index (ast-macro-type-kind-list-len kinds))
+    ""
+    (str_cat.str-cat
+      (if (= index 0)
+        ""
+        ", ")
+      (intern-str (ast-macro-type-kind-list-get kinds index 0))
+      (macro-type-kind-list-render-from kinds (+ index 1)))))
+
+(define (macro-type-kind-list-render [kinds : (& kinds AstMacroTypeKindList)]) : String
+  (macro-type-kind-list-render-from kinds 0))
+
+(define (macro-type-kind-list-contains-text-from?
+  [kinds : (& kinds AstMacroTypeKindList)]
+  [index : i64]
+  [kind : String]) : bool
+  (if (>= index (ast-macro-type-kind-list-len kinds))
+    false
+    (if (string.eq
+      (intern-str (ast-macro-type-kind-list-get kinds index 0))
+      kind)
+      true
+      (macro-type-kind-list-contains-text-from? kinds (+ index 1) kind))))
 
 (define (macro-type-kind-list-contains-text?
-  [kinds : AstMacroTypeKindList]
+  [kinds : (& kinds AstMacroTypeKindList)]
   [kind : String]) : bool
-  (match kinds
-    [(AstMacroTypeKindList.Nil) false]
-    [(AstMacroTypeKindList.Cons head rest)
-      (if (string.eq (intern-str head) kind)
-        true
-        (macro-type-kind-list-contains-text? (box-get rest) kind))]))
+  (macro-type-kind-list-contains-text-from? kinds 0 kind))
 
 (define (macro-type-kind-constraint-message
   [macro-name : String]
   [param-name : i64]
   [resolved-ty : AstType]
-  [type-kinds : AstMacroTypeKindList]) : String
+  [type-kinds : (& type-kinds AstMacroTypeKindList)]) : String
   (str_cat.str-cat
     "typecheck: macro "
     (tc-name-slashes-to-dots macro-name)
@@ -70961,28 +70974,27 @@
   [macro-name : String]
   [param-name : i64]
   [resolved-ty : AstType]
-  [type-kinds : AstMacroTypeKindList]
+  [type-kinds : (& type-kinds AstMacroTypeKindList)]
   [arg-expr : AstExpr]) : ResultMacroCheck
-  (match type-kinds
-    [(AstMacroTypeKindList.Nil) ResultMacroCheck.Ok]
-    [_
-      (let
-        [actual-kind : String
-          (ctfe-type-kind-with-reflections-and-pools
-            (tc-context-pools ctx)
-            (ctfe-reflect-info-list-empty)
-            resolved-ty)]
-        (if (macro-type-kind-list-contains-text? type-kinds actual-kind)
-          ResultMacroCheck.Ok
-          (ResultMacroCheck.Err
-            (box
-              (ctfe-diagnostic-at-expr
-                arg-expr
-                (macro-type-kind-constraint-message
-                  macro-name
-                  param-name
-                  resolved-ty
-                  type-kinds))))))]))
+  (if (ast-macro-type-kind-list-empty? type-kinds)
+    ResultMacroCheck.Ok
+    (let
+      [actual-kind : String
+        (ctfe-type-kind-with-reflections-and-pools
+          (tc-context-pools ctx)
+          (ctfe-reflect-info-list-empty)
+          resolved-ty)]
+      (if (macro-type-kind-list-contains-text? type-kinds actual-kind)
+        ResultMacroCheck.Ok
+        (ResultMacroCheck.Err
+          (box
+            (ctfe-diagnostic-at-expr
+              arg-expr
+              (macro-type-kind-constraint-message
+                macro-name
+                param-name
+                resolved-ty
+                type-kinds))))))))
 
 (define (macro-module-strategy-unknown-message [name : String]) : String
   (str_cat.str-cat
@@ -71635,7 +71647,7 @@
             macro-name
             name
             resolved-ty
-            type-kinds
+            (& type-kinds)
             arg-expr)
             [(ResultMacroCheck.Ok)
               (ResultMacroEnv.Ok

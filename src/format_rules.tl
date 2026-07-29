@@ -6,74 +6,76 @@
 ;; compatibility coverage lives in format_rules_doc_compat.tl so production CLI
 ;; builds do not import the full document algebra.
 (import stdlib.io)
-(import "format_tokens.tl")
-(import "format_cst.tl")
-(import "format_render_buf.tl")
+(import format_tokens as tokens)
+(import format_cst as cst)
+(import format_render_buf as fmt_buf)
 (import stdlib.string)
 
 (defenum ResultFormatString
   (Ok String)
-  (Err FormatSourceError))
+  (Err tokens.FormatSourceError))
 
-(define (format-rules-node-colon? [node : FormatCst]) : bool
+(define (format-rules-node-colon? [node : cst.FormatCst]) : bool
   (match node
-    [(FormatCst.Atom tok) (= (format-token-tag tok) (fmt-tag-colon))]
+    [(cst.FormatCst.Atom tok)
+      (= (tokens.format-token-tag tok) (tokens.fmt-tag-colon))]
     [_ false]))
 
-(define (format-rules-node-symbol-name [node : FormatCst]) : String
+(define (format-rules-node-symbol-name [node : cst.FormatCst]) : String
   (match node
-    [(FormatCst.Atom tok)
+    [(cst.FormatCst.Atom tok)
       (match tok
-        [(FormatToken.Symbol name) name]
+        [(tokens.FormatToken.Symbol name) name]
         [_ ""])]
     [_ ""]))
 
-(define (format-rules-node-comment? [node : FormatCst]) : bool
+(define (format-rules-node-comment? [node : cst.FormatCst]) : bool
   (match node
-    [(FormatCst.Comment _) true]
+    [(cst.FormatCst.Comment _) true]
     [_ false]))
 
-(define (format-rules-node-colon-list? [node : FormatCst]) : bool
+(define (format-rules-node-colon-list? [node : cst.FormatCst]) : bool
   (match node
-    [(FormatCst.List items)
-      (match (fmt-cst-list-step (box-get items))
-        [(FormatCstListStep.Item head _) (format-rules-node-colon? head)]
+    [(cst.FormatCst.List items)
+      (match (cst.fmt-cst-list-step (box-get items))
+        [(cst.FormatCstListStep.Item head _) (format-rules-node-colon? head)]
         [_ false])]
     [_ false]))
 
-(define (format-rules-node-spmd-callable? [node : FormatCst]) : bool
+(define (format-rules-node-spmd-callable? [node : cst.FormatCst]) : bool
   (match node
-    [(FormatCst.List items)
-      (match (fmt-cst-list-step (box-get items))
-        [(FormatCstListStep.Item colon rest)
+    [(cst.FormatCst.List items)
+      (match (cst.fmt-cst-list-step (box-get items))
+        [(cst.FormatCstListStep.Item colon rest)
           (and
             (format-rules-node-colon? colon)
-            (match (fmt-cst-list-step rest)
-              [(FormatCstListStep.Item key _)
+            (match (cst.fmt-cst-list-step rest)
+              [(cst.FormatCstListStep.Item key _)
                 (string.eq (format-rules-node-symbol-name key) "spmd-callable")]
               [_ false]))]
         [_ false])]
     [_ false]))
 
-(define (format-rules-define-value-rest? [rest : FormatCstList]) : bool
-  (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Item target _)
+(define (format-rules-define-value-rest? [rest : cst.FormatCstList]) : bool
+  (match (cst.fmt-cst-list-step rest)
+    [(cst.FormatCstListStep.Item target _)
       (match target
-        [(FormatCst.List _) false]
+        [(cst.FormatCst.List _) false]
         [_ true])]
     [_ false]))
 
-(define (format-rules-cfg-top-form-family [rest : FormatCstList]) : String
-  (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Item _ after-predicate)
-      (match (fmt-cst-list-step after-predicate)
-        [(FormatCstListStep.Item inner _) (format-rules-top-form-family inner)]
+(define (format-rules-cfg-top-form-family [rest : cst.FormatCstList]) : String
+  (match (cst.fmt-cst-list-step rest)
+    [(cst.FormatCstListStep.Item _ after-predicate)
+      (match (cst.fmt-cst-list-step after-predicate)
+        [(cst.FormatCstListStep.Item inner _)
+          (format-rules-top-form-family inner)]
         [_ ""])]
     [_ ""]))
 
-(define (format-rules-top-form-family-list [items : FormatCstList]) : String
-  (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Item head rest)
+(define (format-rules-top-form-family-list [items : cst.FormatCstList]) : String
+  (match (cst.fmt-cst-list-step items)
+    [(cst.FormatCstListStep.Item head rest)
       (let
         [head-name : String (format-rules-node-symbol-name head)]
         (cond
@@ -88,14 +90,15 @@
           [else ""]))]
     [_ ""]))
 
-(define (format-rules-top-form-family [node : FormatCst]) : String
+(define (format-rules-top-form-family [node : cst.FormatCst]) : String
   (match node
-    [(FormatCst.List items) (format-rules-top-form-family-list (box-get items))]
+    [(cst.FormatCst.List items)
+      (format-rules-top-form-family-list (box-get items))]
     [_ ""]))
 
 (define (format-rules-adjacent-top-forms?
-  [previous : FormatCst]
-  [node : FormatCst]) : bool
+  [previous : cst.FormatCst]
+  [node : cst.FormatCst]) : bool
   (let
     [previous-family : String (format-rules-top-form-family previous)]
     [node-family : String (format-rules-top-form-family node)]
@@ -104,39 +107,40 @@
       (string.eq previous-family node-family))))
 
 (define (format-rules-list-append
-  [left : FormatCstList]
-  [right : FormatCstList]) : FormatCstList
+  [left : cst.FormatCstList]
+  [right : cst.FormatCstList]) : cst.FormatCstList
   (let
-    [out : FormatCstVec (format-cst-vec-new)]
+    [out : cst.FormatCstVec (cst.format-cst-vec-new)]
     (begin
-      (fmt-cst-vec-push-list! (&mut out) left)
-      (fmt-cst-vec-push-list! (&mut out) right)
-      (fmt-cst-list-from-vec out))))
+      (cst.fmt-cst-vec-push-list! (&mut out) left)
+      (cst.fmt-cst-vec-push-list! (&mut out) right)
+      (cst.fmt-cst-list-from-vec out))))
 
 (define (format-rules-bracket-binding-items?
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [seen : bool]) : bool
-  (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) seen]
-    [(FormatCstListStep.Item node rest)
+  (match (cst.fmt-cst-list-step items)
+    [(cst.FormatCstListStep.Empty) seen]
+    [(cst.FormatCstListStep.Item node rest)
       (match node
-        [(FormatCst.Comment _) (format-rules-bracket-binding-items? rest seen)]
-        [(FormatCst.BracketList _)
+        [(cst.FormatCst.Comment _)
+          (format-rules-bracket-binding-items? rest seen)]
+        [(cst.FormatCst.BracketList _)
           (format-rules-bracket-binding-items? rest true)]
         [_ false])]))
 
-(define (format-rules-bracket-binding-list? [items : FormatCstList]) : bool
+(define (format-rules-bracket-binding-list? [items : cst.FormatCstList]) : bool
   (format-rules-bracket-binding-items? items false))
 
-(define (format-rules-let-rest [rest : FormatCstList]) : FormatCstList
-  (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Item first tail)
+(define (format-rules-let-rest [rest : cst.FormatCstList]) : cst.FormatCstList
+  (match (cst.fmt-cst-list-step rest)
+    [(cst.FormatCstListStep.Item first tail)
       (match first
-        [(FormatCst.List bindings)
-          (match (fmt-cst-list-step (box-get bindings))
-            [(FormatCstListStep.Empty)
-              (fmt-cst-list-cons
-                (FormatCst.BracketList (box (fmt-cst-list-nil)))
+        [(cst.FormatCst.List bindings)
+          (match (cst.fmt-cst-list-step (box-get bindings))
+            [(cst.FormatCstListStep.Empty)
+              (cst.fmt-cst-list-cons
+                (cst.FormatCst.BracketList (box (cst.fmt-cst-list-nil)))
                 tail)]
             [_
               (if (format-rules-bracket-binding-list? (box-get bindings))
@@ -158,12 +162,12 @@
   [col : i64]
   [_flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if emit
     (let
       [text-width : i64 (string.string-length text)]
       (begin
-        (fmt-render-buf-append buf text)
+        (fmt_buf.fmt-render-buf-append buf text)
         (+ col text-width)))
     (if (> col limit)
       col
@@ -176,14 +180,14 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if emit
     (if flat
       (begin
-        (fmt-render-buf-append buf " ")
+        (fmt_buf.fmt-render-buf-append buf " ")
         (+ col 1))
       (begin
-        (render-newline-into! buf indent)
+        (fmt_buf.render-newline-into! buf indent)
         indent))
     (if (> col limit)
       col
@@ -196,28 +200,28 @@
   [col : i64]
   [_flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if emit
     (begin
-      (render-newline-into! buf indent)
+      (fmt_buf.render-newline-into! buf indent)
       indent)
     (if (> col limit)
       col
       (+ col 1000000))))
 
 (define (format-rules-layout-cst
-  [node : FormatCst]
+  [node : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (match node
-    [(FormatCst.Atom tok)
+    [(cst.FormatCst.Atom tok)
       (format-rules-layout-text
-        (format-token-text tok)
+        (tokens.format-token-text tok)
         emit
         width
         indent
@@ -225,16 +229,16 @@
         flat
         limit
         buf)]
-    [(FormatCst.Comment text)
+    [(cst.FormatCst.Comment text)
       (format-rules-layout-text text emit width indent col flat limit buf)]
-    [(FormatCst.Prefix tok child)
+    [(cst.FormatCst.Prefix tok child)
       (format-rules-layout-cst
         (box-get child)
         emit
         width
         indent
         (format-rules-layout-text
-          (format-token-text tok)
+          (tokens.format-token-text tok)
           emit
           width
           indent
@@ -245,7 +249,7 @@
         flat
         limit
         buf)]
-    [(FormatCst.List items)
+    [(cst.FormatCst.List items)
       (format-rules-layout-list
         (box-get items)
         emit
@@ -255,7 +259,7 @@
         flat
         limit
         buf)]
-    [(FormatCst.BracketList items)
+    [(cst.FormatCst.BracketList items)
       (format-rules-layout-delimited
         "["
         (box-get items)
@@ -267,7 +271,7 @@
         flat
         limit
         buf)]
-    [(FormatCst.Forms items)
+    [(cst.FormatCst.Forms items)
       (format-rules-layout-forms
         (box-get items)
         emit
@@ -279,14 +283,14 @@
         buf)]))
 
 (define (format-rules-layout-space-cst
-  [node : FormatCst]
+  [node : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-cst
     node
     emit
@@ -298,15 +302,15 @@
     buf))
 
 (define (format-rules-layout-colon-pair
-  [colon : FormatCst]
-  [next : FormatCst]
+  [colon : cst.FormatCst]
+  [next : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-space-cst
     next
     emit
@@ -318,15 +322,15 @@
     buf))
 
 (define (format-rules-layout-return-type-tail
-  [colon : FormatCst]
-  [typ : FormatCst]
+  [colon : cst.FormatCst]
+  [typ : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-colon-pair
     colon
     typ
@@ -339,15 +343,15 @@
     buf))
 
 (define (format-rules-layout-return-type-breakable-tail-inner
-  [colon : FormatCst]
-  [typ : FormatCst]
+  [colon : cst.FormatCst]
+  [typ : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-colon-pair
     colon
     typ
@@ -360,15 +364,15 @@
     buf))
 
 (define (format-rules-layout-return-type-breakable-tail
-  [colon : FormatCst]
-  [typ : FormatCst]
+  [colon : cst.FormatCst]
+  [typ : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -405,16 +409,16 @@
       buf)))
 
 (define (format-rules-layout-metadata-return-type-tail
-  [metadata : FormatCst]
-  [colon : FormatCst]
-  [typ : FormatCst]
+  [metadata : cst.FormatCst]
+  [colon : cst.FormatCst]
+  [typ : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if (format-rules-node-spmd-callable? metadata)
     (format-rules-layout-colon-pair
       colon
@@ -438,7 +442,7 @@
       buf)))
 
 (define (format-rules-layout-inline-tail-dense
-  [slots : (Array FormatCst)]
+  [slots : (Array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -447,7 +451,7 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (let
     [index : i64 start]
     [end : i64 (+ start count)]
@@ -470,14 +474,14 @@
       out)))
 
 (define (format-rules-layout-inline-tail
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-inline-tail-dense
     (struct-get items slots)
     (struct-get items start)
@@ -491,7 +495,7 @@
     buf))
 
 (define (format-rules-layout-hard-tail-dense
-  [slots : (Array FormatCst)]
+  [slots : (Array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -500,7 +504,7 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (let
     [index : i64 start]
     [end : i64 (+ start count)]
@@ -509,14 +513,14 @@
     (begin
       (while (< index end)
         (let
-          [node : FormatCst (array-ref slots index)]
+          [node : cst.FormatCst (array-ref slots index)]
           [after-line : i64
             (format-rules-layout-hard-line emit width indent out flat limit buf)]
           (if (if (format-rules-node-colon? node)
             (< (+ index 1) end)
             false)
             (let
-              [next : FormatCst (array-ref slots (+ index 1))]
+              [next : cst.FormatCst (array-ref slots (+ index 1))]
               (if (format-rules-node-comment? next)
                 (begin
                   (set!
@@ -566,14 +570,14 @@
         out))))
 
 (define (format-rules-layout-hard-tail
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-hard-tail-dense
     (struct-get items slots)
     (struct-get items start)
@@ -588,21 +592,21 @@
 
 (define (format-rules-layout-tail-separator
   [previous-comment : bool]
-  [node : FormatCst]
+  [node : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if (or previous-comment (format-rules-node-comment? node))
     (format-rules-layout-hard-line emit width indent col flat limit buf)
     (format-rules-layout-soft-line emit width indent col flat limit buf)))
 
 (define (format-rules-layout-list-tail-dense
   [previous-comment : bool]
-  [slots : (Array FormatCst)]
+  [slots : (Array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -611,7 +615,7 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (let
     [index : i64 start]
     [end : i64 (+ start count)]
@@ -621,7 +625,7 @@
     (begin
       (while (< index end)
         (let
-          [node : FormatCst (array-ref slots index)]
+          [node : cst.FormatCst (array-ref slots index)]
           [after-separator : i64
             (format-rules-layout-tail-separator
               prev-comment
@@ -637,7 +641,7 @@
             (< (+ index 1) end)
             false)
             (let
-              [next : FormatCst (array-ref slots (+ index 1))]
+              [next : cst.FormatCst (array-ref slots (+ index 1))]
               (if (format-rules-node-comment? next)
                 (begin
                   (set!
@@ -690,7 +694,7 @@
         out))))
 
 (define (format-rules-layout-list-items-dense
-  [slots : (Array FormatCst)]
+  [slots : (Array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -699,11 +703,11 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if (<= count 0)
     col
     (let
-      [first : FormatCst (array-ref slots start)]
+      [first : cst.FormatCst (array-ref slots start)]
       [after-first : i64
         (format-rules-layout-cst first emit width indent col flat limit buf)]
       (if (<= count 1)
@@ -731,14 +735,14 @@
           buf)))))
 
 (define (format-rules-layout-list-items
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-list-items-dense
     (struct-get items slots)
     (struct-get items start)
@@ -753,7 +757,7 @@
 
 (define (format-rules-layout-delimited-inner
   [open : String]
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [close : String]
   [emit : bool]
   [width : i64]
@@ -761,7 +765,7 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     close
     emit
@@ -782,7 +786,7 @@
 
 (define (format-rules-layout-delimited
   [open : String]
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [close : String]
   [emit : bool]
   [width : i64]
@@ -790,7 +794,7 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -831,14 +835,14 @@
 
 (define (format-rules-layout-inline-form-inner
   [head : String]
-  [rest : FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -867,14 +871,14 @@
 
 (define (format-rules-layout-inline-form
   [head : String]
-  [rest : FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -912,14 +916,14 @@
 
 (define (format-rules-layout-line-form
   [head : String]
-  [rest : FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -948,15 +952,15 @@
 
 (define (format-rules-layout-first-line-form
   [head : String]
-  [first : FormatCst]
-  [rest : FormatCstList]
+  [first : cst.FormatCst]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -993,16 +997,16 @@
 
 (define (format-rules-layout-first-or-line-form
   [head : String]
-  [rest : FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Empty)
+  [buf : fmt_buf.FmtRenderBuf]) : i64
+  (match (cst.fmt-cst-list-step rest)
+    [(cst.FormatCstListStep.Empty)
       (format-rules-layout-inline-form
         head
         rest
@@ -1013,7 +1017,7 @@
         flat
         limit
         buf)]
-    [(FormatCstListStep.Item first tail)
+    [(cst.FormatCstListStep.Item first tail)
       (format-rules-layout-first-line-form
         head
         first
@@ -1027,17 +1031,17 @@
         buf)]))
 
 (define (format-rules-layout-let-binding-annotated-inner
-  [name : FormatCst]
-  [colon : FormatCst]
-  [typ : FormatCst]
-  [init : FormatCst]
+  [name : cst.FormatCst]
+  [colon : cst.FormatCst]
+  [typ : cst.FormatCst]
+  [init : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     "]"
     emit
@@ -1096,17 +1100,17 @@
     buf))
 
 (define (format-rules-layout-let-binding-annotated
-  [name : FormatCst]
-  [colon : FormatCst]
-  [typ : FormatCst]
-  [init : FormatCst]
+  [name : cst.FormatCst]
+  [colon : cst.FormatCst]
+  [typ : cst.FormatCst]
+  [init : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -1149,15 +1153,15 @@
       buf)))
 
 (define (format-rules-layout-let-binding-unannotated-inner
-  [name : FormatCst]
-  [init : FormatCst]
+  [name : cst.FormatCst]
+  [init : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     "]"
     emit
@@ -1192,15 +1196,15 @@
     buf))
 
 (define (format-rules-layout-let-binding-unannotated
-  [name : FormatCst]
-  [init : FormatCst]
+  [name : cst.FormatCst]
+  [init : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if emit
     (let
       [remaining : i64 (- width col)]
@@ -1237,20 +1241,20 @@
       buf)))
 
 (define (format-rules-layout-let-item-list
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Item name after-name)
-      (match (fmt-cst-list-step after-name)
-        [(FormatCstListStep.Item second after-second)
-          (match (fmt-cst-list-step after-second)
-            [(FormatCstListStep.Empty)
+  [buf : fmt_buf.FmtRenderBuf]) : i64
+  (match (cst.fmt-cst-list-step items)
+    [(cst.FormatCstListStep.Item name after-name)
+      (match (cst.fmt-cst-list-step after-name)
+        [(cst.FormatCstListStep.Item second after-second)
+          (match (cst.fmt-cst-list-step after-second)
+            [(cst.FormatCstListStep.Empty)
               (format-rules-layout-let-binding-unannotated
                 name
                 second
@@ -1261,10 +1265,10 @@
                 flat
                 limit
                 buf)]
-            [(FormatCstListStep.Item typ after-typ)
-              (match (fmt-cst-list-step after-typ)
-                [(FormatCstListStep.Item init after-init)
-                  (if (fmt-cst-list-empty? after-init)
+            [(cst.FormatCstListStep.Item typ after-typ)
+              (match (cst.fmt-cst-list-step after-typ)
+                [(cst.FormatCstListStep.Item init after-init)
+                  (if (cst.fmt-cst-list-empty? after-init)
                     (if (format-rules-node-colon? second)
                       (format-rules-layout-let-binding-annotated
                         name
@@ -1350,16 +1354,16 @@
         buf)]))
 
 (define (format-rules-layout-let-item
-  [node : FormatCst]
+  [node : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (match node
-    [(FormatCst.BracketList items)
+    [(cst.FormatCst.BracketList items)
       (format-rules-layout-let-item-list
         (box-get items)
         emit
@@ -1372,7 +1376,7 @@
     [_ (format-rules-layout-cst node emit width indent col flat limit buf)]))
 
 (define (format-rules-layout-let-tail-dense
-  [slots : (Array FormatCst)]
+  [slots : (Array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -1381,7 +1385,7 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (let
     [index : i64 start]
     [end : i64 (+ start count)]
@@ -1390,7 +1394,7 @@
     (begin
       (while (< index end)
         (let
-          [node : FormatCst (array-ref slots index)]
+          [node : cst.FormatCst (array-ref slots index)]
           (begin
             (set!
               out
@@ -1417,14 +1421,14 @@
         out))))
 
 (define (format-rules-layout-let-tail
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-let-tail-dense
     (struct-get items slots)
     (struct-get items start)
@@ -1438,14 +1442,14 @@
     buf))
 
 (define (format-rules-layout-let
-  [rest : FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1474,17 +1478,17 @@
 
 (define (format-rules-layout-signature-annotated
   [head : String]
-  [target : FormatCst]
-  [colon : FormatCst]
-  [typ : FormatCst]
-  [body-items : FormatCstList]
+  [target : cst.FormatCst]
+  [colon : cst.FormatCst]
+  [typ : cst.FormatCst]
+  [body-items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1529,18 +1533,18 @@
     buf))
 
 (define (format-rules-layout-define-metadata-annotated
-  [target : FormatCst]
-  [metadata : FormatCst]
-  [colon : FormatCst]
-  [typ : FormatCst]
-  [body-items : FormatCstList]
+  [target : cst.FormatCst]
+  [metadata : cst.FormatCst]
+  [colon : cst.FormatCst]
+  [typ : cst.FormatCst]
+  [body-items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1609,15 +1613,15 @@
     buf))
 
 (define (format-rules-layout-define-body
-  [target : FormatCst]
-  [body-items : FormatCstList]
+  [target : cst.FormatCst]
+  [body-items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-text
     ")"
     emit
@@ -1653,22 +1657,22 @@
     buf))
 
 (define (format-rules-layout-define
-  [rest : FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Item target after-target)
-      (match (fmt-cst-list-step after-target)
-        [(FormatCstListStep.Item second after-second)
+  [buf : fmt_buf.FmtRenderBuf]) : i64
+  (match (cst.fmt-cst-list-step rest)
+    [(cst.FormatCstListStep.Item target after-target)
+      (match (cst.fmt-cst-list-step after-target)
+        [(cst.FormatCstListStep.Item second after-second)
           (if (format-rules-node-colon? second)
-            (match (fmt-cst-list-step after-second)
-              [(FormatCstListStep.Item typ body)
-                (if (fmt-cst-list-empty? body)
+            (match (cst.fmt-cst-list-step after-second)
+              [(cst.FormatCstListStep.Item typ body)
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "define"
                     rest
@@ -1704,12 +1708,12 @@
                   limit
                   buf)])
             (if (format-rules-node-colon-list? second)
-              (match (fmt-cst-list-step after-second)
-                [(FormatCstListStep.Item colon after-colon)
+              (match (cst.fmt-cst-list-step after-second)
+                [(cst.FormatCstListStep.Item colon after-colon)
                   (if (format-rules-node-colon? colon)
-                    (match (fmt-cst-list-step after-colon)
-                      [(FormatCstListStep.Item typ body)
-                        (if (fmt-cst-list-empty? body)
+                    (match (cst.fmt-cst-list-step after-colon)
+                      [(cst.FormatCstListStep.Item typ body)
+                        (if (cst.fmt-cst-list-empty? body)
                           (format-rules-layout-first-or-line-form
                             "define"
                             rest
@@ -1799,22 +1803,22 @@
         buf)]))
 
 (define (format-rules-layout-defmacro
-  [rest : FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Item target after-target)
-      (match (fmt-cst-list-step after-target)
-        [(FormatCstListStep.Item colon after-colon)
+  [buf : fmt_buf.FmtRenderBuf]) : i64
+  (match (cst.fmt-cst-list-step rest)
+    [(cst.FormatCstListStep.Item target after-target)
+      (match (cst.fmt-cst-list-step after-target)
+        [(cst.FormatCstListStep.Item colon after-colon)
           (if (format-rules-node-colon? colon)
-            (match (fmt-cst-list-step after-colon)
-              [(FormatCstListStep.Item typ body)
-                (if (fmt-cst-list-empty? body)
+            (match (cst.fmt-cst-list-step after-colon)
+              [(cst.FormatCstListStep.Item typ body)
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "defmacro"
                     rest
@@ -1883,22 +1887,22 @@
         buf)]))
 
 (define (format-rules-layout-lambda
-  [rest : FormatCstList]
+  [rest : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Item target after-target)
-      (match (fmt-cst-list-step after-target)
-        [(FormatCstListStep.Item colon after-colon)
+  [buf : fmt_buf.FmtRenderBuf]) : i64
+  (match (cst.fmt-cst-list-step rest)
+    [(cst.FormatCstListStep.Item target after-target)
+      (match (cst.fmt-cst-list-step after-target)
+        [(cst.FormatCstListStep.Item colon after-colon)
           (if (format-rules-node-colon? colon)
-            (match (fmt-cst-list-step after-colon)
-              [(FormatCstListStep.Item typ body)
-                (if (fmt-cst-list-empty? body)
+            (match (cst.fmt-cst-list-step after-colon)
+              [(cst.FormatCstListStep.Item typ body)
+                (if (cst.fmt-cst-list-empty? body)
                   (format-rules-layout-first-or-line-form
                     "lambda"
                     rest
@@ -1967,16 +1971,16 @@
         buf)]))
 
 (define (format-rules-layout-special-list
-  [head : FormatCst]
-  [rest : FormatCstList]
-  [items : FormatCstList]
+  [head : cst.FormatCst]
+  [rest : cst.FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (let
     [head-name : String (format-rules-node-symbol-name head)]
     (cond
@@ -2123,17 +2127,17 @@
           buf)])))
 
 (define (format-rules-layout-colon-list
-  [rest : FormatCstList]
-  [items : FormatCstList]
+  [rest : cst.FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step rest)
-    [(FormatCstListStep.Item key tail)
+  [buf : fmt_buf.FmtRenderBuf]) : i64
+  (match (cst.fmt-cst-list-step rest)
+    [(cst.FormatCstListStep.Item key tail)
       (let
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string.string-length name) 0)
@@ -2183,16 +2187,16 @@
         buf)]))
 
 (define (format-rules-layout-list
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty)
+  [buf : fmt_buf.FmtRenderBuf]) : i64
+  (match (cst.fmt-cst-list-step items)
+    [(cst.FormatCstListStep.Empty)
       (format-rules-layout-delimited
         "("
         items
@@ -2204,7 +2208,7 @@
         flat
         limit
         buf)]
-    [(FormatCstListStep.Item head rest)
+    [(cst.FormatCstListStep.Item head rest)
       (if (format-rules-node-colon? head)
         (format-rules-layout-colon-list
           rest
@@ -2231,14 +2235,14 @@
 (define (format-rules-layout-forms-separator-state
   [previous-comment : bool]
   [previous-family : String]
-  [node : FormatCst]
+  [node : cst.FormatCst]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if previous-comment
     (format-rules-layout-hard-line emit width indent col flat limit buf)
     (let
@@ -2257,7 +2261,7 @@
           buf)))))
 
 (define (format-rules-layout-forms-dense
-  [slots : (Array FormatCst)]
+  [slots : (Array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -2266,11 +2270,11 @@
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if (<= count 0)
     col
     (let
-      [first : FormatCst (array-ref slots start)]
+      [first : cst.FormatCst (array-ref slots start)]
       [index : i64 (+ start 1)]
       [end : i64 (+ start count)]
       [out : i64
@@ -2280,7 +2284,7 @@
       (begin
         (while (< index end)
           (let
-            [node : FormatCst (array-ref slots index)]
+            [node : cst.FormatCst (array-ref slots index)]
             (begin
               (set!
                 out
@@ -2309,14 +2313,14 @@
         out))))
 
 (define (format-rules-layout-forms
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
   [indent : i64]
   [col : i64]
   [flat : bool]
   [limit : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-forms-dense
     (struct-get items slots)
     (struct-get items start)
@@ -2329,12 +2333,16 @@
     limit
     buf))
 
-(define (format-rules-render-hard-line-into [indent : i64] [buf : FmtRenderBuf]) : i64
+(define (format-rules-render-hard-line-into
+  [indent : i64]
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (begin
-    (render-newline-into! buf indent)
+    (fmt_buf.render-newline-into! buf indent)
     indent))
 
-(define (format-rules-render-gap-into [indent : i64] [buf : FmtRenderBuf]) : i64
+(define (format-rules-render-gap-into
+  [indent : i64]
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-render-hard-line-into
     (format-rules-render-hard-line-into indent buf)
     buf))
@@ -2342,9 +2350,9 @@
 (define (format-rules-render-forms-separator-state-into
   [previous-comment : bool]
   [previous-family : String]
-  [node : FormatCst]
+  [node : cst.FormatCst]
   [indent : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if previous-comment
     (format-rules-render-hard-line-into indent buf)
     (let
@@ -2356,25 +2364,25 @@
         (format-rules-render-gap-into indent buf)))))
 
 (define (format-rules-render-node-fragment-into
-  [node : FormatCst]
+  [node : cst.FormatCst]
   [width : i64]
   [indent : i64]
   [col : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-layout-cst node true width indent col false 0 buf))
 
 (define (format-rules-render-forms-into-dense
-  [slots : (Array FormatCst)]
+  [slots : (Array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [width : i64]
   [indent : i64]
   [col : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (if (<= count 0)
     col
     (let
-      [first : FormatCst (array-ref slots start)]
+      [first : cst.FormatCst (array-ref slots start)]
       [index : i64 (+ start 1)]
       [end : i64 (+ start count)]
       [out : i64
@@ -2384,7 +2392,7 @@
       (begin
         (while (< index end)
           (let
-            [node : FormatCst (array-ref slots index)]
+            [node : cst.FormatCst (array-ref slots index)]
             [after-separator : i64
               (format-rules-render-forms-separator-state-into
                 previous-comment
@@ -2407,11 +2415,11 @@
         out))))
 
 (define (format-rules-render-forms-into
-  [items : FormatCstList]
+  [items : cst.FormatCstList]
   [width : i64]
   [indent : i64]
   [col : i64]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (format-rules-render-forms-into-dense
     (struct-get items slots)
     (struct-get items start)
@@ -2421,29 +2429,30 @@
     col
     buf))
 
-(define (format-rules-render-cst-width [node : FormatCst] [width : i64]) : String
+(define (format-rules-render-cst-width [node : cst.FormatCst] [width : i64]) : String
   (let
-    [buf : FmtRenderBuf (fmt-render-buf-new)]
+    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
     (begin
       (match node
-        [(FormatCst.Forms items)
+        [(cst.FormatCst.Forms items)
           (format-rules-render-forms-into (box-get items) width 0 0 buf)]
         [_ (format-rules-render-node-fragment-into node width 0 0 buf)])
-      (fmt-render-buf-string buf))))
+      (fmt_buf.fmt-render-buf-string buf))))
 
 (define (format-rules-render-source-width-result [src : String] [width : i64]) : ResultFormatString
-  (match (parse-format-source-result src)
-    [(ResultFormatCst.Ok tree)
+  (match (cst.parse-format-source-result src)
+    [(cst.ResultFormatCst.Ok tree)
       (ResultFormatString.Ok (format-rules-render-cst-width tree width))]
-    [(ResultFormatCst.Err err) (ResultFormatString.Err err)]))
+    [(cst.ResultFormatCst.Err err) (ResultFormatString.Err err)]))
 
-(define (format-rules-render-width [node : FormatCst] [width : i64]) : String
+(define (format-rules-render-width [node : cst.FormatCst] [width : i64]) : String
   (format-rules-render-cst-width node width))
 
 (define (format-rules-render-source-width [src : String] [width : i64]) : String
   (match (format-rules-render-source-width-result src width)
     [(ResultFormatString.Ok formatted) formatted]
-    [(ResultFormatString.Err err) (io.panic (format-source-error-message err))]))
+    [(ResultFormatString.Err err)
+      (io.panic (tokens.format-source-error-message err))]))
 
 (define (format-rules-decls-source) : String
   "(import \"std.tl\") (import \"ffi.tl\") (extern (io.print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)")
@@ -2556,11 +2565,11 @@
 
 (define (format-rules-offset-slice-preserved?) : bool
   (let
-    [head : FormatCst (FormatCst.Atom (FormatToken.Symbol "x"))]
-    [colon : FormatCst (FormatCst.Atom (FormatToken.Colon))]
-    [typ : FormatCst (FormatCst.Atom (FormatToken.Symbol "i64"))]
-    [dense-slots : (Array FormatCst) (make-array FormatCst 3)]
-    [offset-slots : (Array FormatCst) (make-array FormatCst 5)]
+    [head : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "x"))]
+    [colon : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Colon))]
+    [typ : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "i64"))]
+    [dense-slots : (Array cst.FormatCst) (make-array cst.FormatCst 3)]
+    [offset-slots : (Array cst.FormatCst) (make-array cst.FormatCst 5)]
     (begin
       (array-set! dense-slots 0 head)
       (array-set! dense-slots 1 colon)
@@ -2571,11 +2580,11 @@
       (let
         [dense-render : String
           (format-rules-render-width
-            (FormatCst.List (box (FormatCstList dense-slots 0 3)))
+            (cst.FormatCst.List (box (cst.FormatCstList dense-slots 0 3)))
             80)]
         [offset-render : String
           (format-rules-render-width
-            (FormatCst.List (box (FormatCstList offset-slots 1 3)))
+            (cst.FormatCst.List (box (cst.FormatCstList offset-slots 1 3)))
             80)]
         (and
           (string.eq dense-render "(x : i64)")

@@ -1,11 +1,11 @@
 ;; Self-hosted formatter special-form rule smoke test.
-(import "../format_rules.tl")
-(import "../format_rules_doc_compat.tl")
+(import format_rules as rules)
+(import format_rules_doc_compat as compat)
 
 (define (main) : i64
   (let
-    [rules : i64 (format-rules-self-test)]
-    [compat : i64 (format-rules-doc-compat-self-test)]
-    (if (= rules 42)
-      compat
-      rules)))
+    [rules-status : i64 (rules.format-rules-self-test)]
+    [compat-status : i64 (compat.format-rules-doc-compat-self-test)]
+    (if (= rules-status 42)
+      compat-status
+      rules-status)))

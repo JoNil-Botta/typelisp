@@ -13,8 +13,9 @@
 ;# `(handle T)` emits the safe scalar task-threading surface. Generated
 ;# modules accept direct nullary closures whose captures are checked by the
 ;# structural thread-safety classifier and consume typed handles on join. The
-;# concrete aggregate `spawn-*` wrappers copy current aggregate results
-;# into atomic arenas that span the worker and joiner.
+;# concrete aggregate `spawn-*` wrappers copy current aggregate results into
+;# atomic arenas that span the worker and joiner. The growable integer result
+;# surface uses the owned generated `(vector i64)` family.
 ;#
 ;# Usage: `(import stdlib.thread)`
 ;#
@@ -28,6 +29,8 @@
 (import stdlib.arena)
 (import stdlib.comptime)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector i64) as thread-i64-vec)
 
 ;: Opaque native thread handle plus runtime-owned join state.
 (defstruct Thread
@@ -153,8 +156,8 @@
   (raw Thread)
   (result-addr i64))
 
-;: Typed handle returned by `spawn-array-i64`.
-(defstruct ThreadArrayI64
+;: Typed handle returned by `spawn-i64-vec`.
+(defstruct ThreadI64Vec
   (raw Thread)
   (result-addr i64))
 
@@ -169,10 +172,10 @@
   (ThreadStringSpawnOk ThreadString)
   (ThreadStringSpawnErr String))
 
-;: Result returned by `spawn-array-i64`.
-(defenum ThreadArrayI64SpawnResult
-  (ThreadArrayI64SpawnOk ThreadArrayI64)
-  (ThreadArrayI64SpawnErr String))
+;: Result returned by `spawn-i64-vec`.
+(defenum ThreadI64VecSpawnResult
+  (ThreadI64VecSpawnOk ThreadI64Vec)
+  (ThreadI64VecSpawnErr String))
 
 ;: Result returned by `spawn-box-i64`.
 (defenum ThreadBoxI64SpawnResult
@@ -184,10 +187,10 @@
   (ThreadStringJoinOk String)
   (ThreadStringJoinErr String))
 
-;: Result returned by `join-array-i64`.
-(defenum ThreadArrayI64JoinResult
-  (ThreadArrayI64JoinOk (Array i64))
-  (ThreadArrayI64JoinErr String))
+;: Result returned by `join-i64-vec`.
+(defenum ThreadI64VecJoinResult
+  (ThreadI64VecJoinOk thread-i64-vec.Vec)
+  (ThreadI64VecJoinErr String))
 
 ;: Result returned by `join-box-i64`.
 (defenum ThreadBoxI64JoinResult
@@ -321,8 +324,8 @@
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
-;: Return the integer address of an `Array i64` backing buffer.
-(define (array-i64-addr [buf : (Array i64)]) : i64
+;: Return the integer address of a private dynamic i64 backing buffer.
+(define (array-i64-addr [buf : (__tl_dyn-array i64)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
@@ -336,8 +339,8 @@
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
-;: Return the integer address of an `Array (Array i64)` backing buffer.
-(define (array-array-i64-addr [buf : (Array (Array i64))]) : i64
+;: Return the integer address of a private i64 Vec result cell.
+(define (array-i64-vec-addr [buf : (__tl_dyn-array thread-i64-vec.Vec)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
 
@@ -356,10 +359,10 @@
   (unsafe
     (int->ptr (cast addr : u64) : (MutPtr String))))
 
-;: Convert an integer address into a mutable `(Array i64)` pointer.
-(define (addr->mut-array-i64 [addr : i64]) : (MutPtr (Array i64))
+;: Convert an integer address into a mutable i64 Vec pointer.
+(define (addr->mut-i64-vec [addr : i64]) : (MutPtr thread-i64-vec.Vec)
   (unsafe
-    (int->ptr (cast addr : u64) : (MutPtr (Array i64)))))
+    (int->ptr (cast addr : u64) : (MutPtr thread-i64-vec.Vec))))
 
 ;: Read an i32 from `addr`.
 (define (read-i32 [addr : i64]) : i32
@@ -391,26 +394,26 @@
   (unsafe
     (ptr-write! (addr->mut-string addr) value)))
 
-;: Read an `(Array i64)` from `addr`.
-(define (read-array-i64 [addr : i64]) : (Array i64)
+;: Read an owned i64 Vec from `addr`.
+(define (read-i64-vec [addr : i64]) : thread-i64-vec.Vec
   (unsafe
-    (ptr-read (ptr-cast (addr->mut-array-i64 addr) : (Ptr (Array i64))))))
+    (ptr-read (ptr-cast (addr->mut-i64-vec addr) : (Ptr thread-i64-vec.Vec)))))
 
-;: Write an `(Array i64)` to `addr`.
-(define (write-array-i64! [addr : i64] [value : (Array i64)]) : unit
+;: Write an owned i64 Vec to `addr`.
+(define (write-i64-vec! [addr : i64] [value : thread-i64-vec.Vec]) : unit
   (unsafe
-    (ptr-write! (addr->mut-array-i64 addr) value)))
+    (ptr-write! (addr->mut-i64-vec addr) value)))
 
-;: Copy a dynamic `i64` array into fresh active-arena storage.
-(define (array-i64-copy [src : (Array i64)]) : (Array i64)
+;: Consume an i64 Vec and copy its live prefix into fresh active-arena storage.
+(define (i64-vec-copy [src : thread-i64-vec.Vec]) : thread-i64-vec.Vec
   (let
-    [n : i64 (array-length src)]
-    [out : (Array i64) (array.make-array i64 n)]
+    [n : i64 (thread-i64-vec.len (& src))]
+    [out : thread-i64-vec.Vec (thread-i64-vec.with-capacity n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set! out i (array-ref src i))
+          (thread-i64-vec.push (&mut out) (thread-i64-vec.get (& src) i 0))
           (set! i (+ i 1))))
       out)))
 
@@ -464,7 +467,7 @@
     [stack : (Array u8) (array.make-array u8 default-stack-size)]
     [clear-cell : (Array i32) (array.make-array i32 1)]
     [started-cell : (Array i32) (array.make-array i32 1)]
-    [result-cell : (Array i64) (array.make-array i64 1)]
+    [result-cell : (__tl_dyn-array i64) (make-array i64 1)]
     [clear-addr : i64 (array-i32-addr clear-cell)]
     [started-addr : i64 (array-i32-addr started-cell)]
     [result-addr : i64 (array-i64-addr result-cell)]
@@ -499,7 +502,7 @@
     (let
       [context : (Array u64) (array.make-array u64 4)]
       [started-cell : (Array i32) (array.make-array i32 1)]
-      [result-cell : (Array i64) (array.make-array i64 1)]
+      [result-cell : (__tl_dyn-array i64) (make-array i64 1)]
       [context-addr : i64 (array-u64-addr context)]
       [started-addr : i64 (array-i32-addr started-cell)]
       [result-addr : i64 (array-i64-addr result-cell)]
@@ -579,29 +582,29 @@
       [(ThreadSpawnOk raw) (ThreadStringSpawnOk (ThreadString raw result-addr))]
       [(ThreadSpawnErr message) (ThreadStringSpawnErr message)])))
 
-;: Spawn a compiler-checked direct nullary closure returning `(Array i64)`.
+;: Spawn a compiler-checked direct nullary closure returning an owned i64 Vec.
 ;:
 ;: The task runs with a fresh atomic arena as the active allocation target, then
-;: copies the returned dynamic array into that arena before publishing it to the
-;: joiner. The handle must be joined exactly once.
-(define (spawn-array-i64 [task : (-> (Array i64))]) : ThreadArrayI64SpawnResult
+;: copies the Vec's live prefix once into that arena before publishing it to the
+;: joiner. The explicit copy prevents a task from laundering storage returned
+;: from a non-spanning owner. The handle must be joined exactly once.
+(define (spawn-i64-vec [task : (-> thread-i64-vec.Vec)]) : ThreadI64VecSpawnResult
   (let
     [owner : arena.Arena (arena.make-atomic)]
-    [result : (Array (Array i64))
-      (in-arena owner (array.make-array (Array i64) 1))]
-    [result-addr : i64 (array-array-i64-addr result)]
+    [result : (__tl_dyn-array thread-i64-vec.Vec)
+      (in-arena owner (make-array thread-i64-vec.Vec 1))]
+    [result-addr : i64 (array-i64-vec-addr result)]
     (match (spawn
       (lambda ([_ignored : i64]) : i64
         (let
-          [value : (Array i64) (in-arena owner (task))]
-          [copied : (Array i64) (in-arena owner (array-i64-copy value))]
+          [value : thread-i64-vec.Vec (in-arena owner (task))]
+          [copied : thread-i64-vec.Vec (in-arena owner (i64-vec-copy value))]
           (begin
-            (write-array-i64! result-addr copied)
+            (write-i64-vec! result-addr copied)
             0)))
       0)
-      [(ThreadSpawnOk raw)
-        (ThreadArrayI64SpawnOk (ThreadArrayI64 raw result-addr))]
-      [(ThreadSpawnErr message) (ThreadArrayI64SpawnErr message)])))
+      [(ThreadSpawnOk raw) (ThreadI64VecSpawnOk (ThreadI64Vec raw result-addr))]
+      [(ThreadSpawnErr message) (ThreadI64VecSpawnErr message)])))
 
 ;: Spawn a compiler-checked direct nullary closure returning `(Box i64)`.
 ;:
@@ -611,7 +614,7 @@
 (define (spawn-box-i64 [task : (-> (Box i64))]) : ThreadBoxI64SpawnResult
   (let
     [owner : arena.Arena (arena.make-atomic)]
-    [result : (Array i64) (in-arena owner (array.make-array i64 1))]
+    [result : (__tl_dyn-array i64) (in-arena owner (make-array i64 1))]
     [result-addr : i64 (array-i64-addr result)]
     (match (spawn
       (lambda ([_ignored : i64]) : i64
@@ -660,12 +663,12 @@
       (ThreadStringJoinOk (read-string (struct-get thread result-addr)))]
     [(ThreadJoinErr message) (ThreadStringJoinErr message)]))
 
-;: Join a typed `(Array i64)` thread and return its closure result.
-(define (join-array-i64 [thread : ThreadArrayI64]) : ThreadArrayI64JoinResult
+;: Join a typed i64 Vec thread and return its owned closure result.
+(define (join-i64-vec [thread : ThreadI64Vec]) : ThreadI64VecJoinResult
   (match (join (struct-get thread raw))
     [(ThreadJoinOk _)
-      (ThreadArrayI64JoinOk (read-array-i64 (struct-get thread result-addr)))]
-    [(ThreadJoinErr message) (ThreadArrayI64JoinErr message)]))
+      (ThreadI64VecJoinOk (read-i64-vec (struct-get thread result-addr)))]
+    [(ThreadJoinErr message) (ThreadI64VecJoinErr message)]))
 
 ;: Join a typed `(Box i64)` thread and return its closure result.
 (define (join-box-i64 [thread : ThreadBoxI64]) : ThreadBoxI64JoinResult

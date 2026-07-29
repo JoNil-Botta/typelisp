@@ -290,7 +290,7 @@ thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/a
 thread_safe_unit|tests/integration/thread_safe_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_string|tests/integration/thread_safe_string.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
-thread_safe_array_i64|tests/integration/thread_safe_array_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+thread_safe_i64_vec|tests/integration/thread_safe_i64_vec.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl stdlib/vector.tl
 thread_safe_box_i64|tests/integration/thread_safe_box_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 safe_threading_example|examples/safe_threading.tl|42|safe threading score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/thread.tl stdlib/string.tl stdlib/str_cat.tl
 arena_lifetimes_example|examples/arena_lifetimes.tl|42|arena lifetime score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/profile.tl stdlib/thread.tl stdlib/string.tl stdlib/test.tl

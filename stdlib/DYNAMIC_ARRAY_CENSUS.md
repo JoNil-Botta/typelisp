@@ -41,9 +41,8 @@ surfaces replace them.
   byte streams, and serialized metadata in `src/*.tl`. These are not public
   source APIs and should move only when a private dynamic-buffer abstraction is
   available.
-- Thread runtime context/result cells that intentionally use scalar arrays as
-  raw shared storage until the thread API grows vector/owned-buffer join
-  variants.
+- Thread runtime context/result cells that use compiler-private
+  `__tl_dyn-array` storage behind owned public wrappers.
 
 ## Feature Coverage That Must Remain
 
@@ -60,8 +59,8 @@ array-backed storage.
   low-level contiguous source/destination surface. The public
   `vector_slice_surface_i64.tl` fixture instead takes Vec/Slice values and
   infers private backing borrows without caller-authored dynamic-array types.
-- `tests/integration/thread_safe_array_i64.tl` and thread runtime fixtures cover
-  the currently implemented `thread.spawn-array-i64` / `thread.join-array-i64`
+- `tests/integration/thread_safe_i64_vec.tl` and thread runtime fixtures cover
+  the owned generated `thread.spawn-i64-vec` / `thread.join-i64-vec`
   aggregate transfer surface.
 - `stdlib/tests/vector_slice_escape.tl` and vector/slice inline tests cover
   Vec-backed slice lifetimes, traversal, mutation, and the owned `to-vec` copy

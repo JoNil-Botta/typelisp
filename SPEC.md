@@ -5882,6 +5882,14 @@ API performs an explicit, specified clone/move into a caller-selected
 spanning owner. Returning a value allocated in the worker's default arena is
 rejected.
 
+`thread.spawn-i64-vec` and `thread.join-i64-vec` provide the concrete owned
+growable-integer result path. The spawn task returns a generated
+`(vector i64)` value. Before publishing the result, the runtime copies its
+live prefix exactly once into a fresh spanning atomic arena; this explicit
+copy prevents a task from laundering backing storage owned by a non-spanning
+owner. Private runtime cells may use compiler-private dynamic-array storage,
+but the public API does not expose `(Array i64)`.
+
 #### Mutexes and guards
 
 The safe mutex surface protects shared mutable state through a lexical

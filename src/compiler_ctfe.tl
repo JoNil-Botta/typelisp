@@ -15795,7 +15795,9 @@
     [foreign-pools : AstNodePoolContext
       (ast-node-pool-context-new
         (ast-expr-node-pool-state-create 2)
-        (ast-type-node-pool-state-create 2))]
+        (ast-type-node-pool-state-create 2)
+        ;; Self-test scratch pool: never installed, owned by the caller arena.
+        (arena.tl_arena_current))]
     (and
       (ctfe-node-pools-share-storage? pools pools)
       (not (ctfe-node-pools-share-storage? pools foreign-pools))
@@ -16119,15 +16121,21 @@
     [definition-pools : AstNodePoolContext
       (ast-node-pool-context-new
         (ast-expr-node-pool-state-create 8)
-        (ast-type-node-pool-state-create 8))]
+        (ast-type-node-pool-state-create 8)
+        ;; Self-test scratch pool: never installed, owned by the caller arena.
+        (arena.tl_arena_current))]
     [rebased-pools : AstNodePoolContext
       (ast-node-pool-context-new
         (ast-expr-node-pool-state-create 8)
-        (ast-type-node-pool-state-create 8))]
+        (ast-type-node-pool-state-create 8)
+        ;; Self-test scratch pool: never installed, owned by the caller arena.
+        (arena.tl_arena_current))]
     [syntax-pools : AstNodePoolContext
       (ast-node-pool-context-new
         (ast-expr-node-pool-state-create 8)
-        (ast-type-node-pool-state-create 8))]
+        (ast-type-node-pool-state-create 8)
+        ;; Self-test scratch pool: never installed, owned by the caller arena.
+        (arena.tl_arena_current))]
     [layout-name : i64 cbi.compiler-builtin-id-fix-Packet]
     [layouts : CtfeLayoutInfoList
       (ctfe-layout-info-list-push-id

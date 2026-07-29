@@ -1138,7 +1138,10 @@
         ;; not just its large backing pools, survive frontend retirement.
         (set!
           lower-checked-dest-pools-context
-          (ast-node-pool-context-new final-expr-state final-type-state))
+          (ast-node-pool-context-new
+            final-expr-state
+            final-type-state
+            dest-arena))
         (ast-node-pool-context-install! lower-checked-dest-pools-context)
         (ast-node-pool-storage-arenas-destroy!
           old-expr-storage-arena

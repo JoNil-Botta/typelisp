@@ -18,6 +18,8 @@
 (import "compiler_ctfe.tl")
 (import compiler_intern as ci)
 (import stdlib.array)
+(import stdlib.arena)
+(import stdlib.string)
 
 (defenum CompilerEmbeddedStdlibTlciValidation
   (Ok i64)
@@ -42,6 +44,57 @@
   (array.make-array TlciLoadedImage 1))
 (define compiler-embedded-stdlib-tlci-session-error : (Array String)
   (make-array ""))
+
+;; R3-P2d. The session is opened LAZILY, from inside whatever the compiler
+;; happens to be doing when the first embedded-stdlib macro fires, and it is
+;; then read by every later macro call in the pass. Under the R3-P1 macro walk
+;; that first call lands inside a firing declaration's arena generation, which
+;; is destroyed a couple of batches later -- so anything the session retains
+;; that was allocated in "whatever arena is current" is a use-after-free at the
+;; next dispatch. Measured: the image was mapped in the generation covering
+;; declarations 33-64, that generation was destroyed entering declaration 97,
+;; and declaration 98's dispatch read the freed host callback table.
+;;
+;; The session therefore owns an arena, and that arena is created once and
+;; NEVER destroyed or reset -- the same shape, and for the same reason, as
+;; `compiler-load-provenance-arena`. Two consequences are deliberate:
+;;
+;; * Nothing allocated here can ever dangle, whatever a later packet does to
+;;   the arenas around it. The bug being fixed is a dangling read; an owner
+;;   that is never released cannot reintroduce one, and it needs no
+;;   head-tracking to keep an overflow segment reachable for a destroy that
+;;   does not happen (H4).
+;; * The retention is exactly two 8-word arrays and, at most, one failure
+;;   message per process. Transient load working memory -- the payload byte
+;;   copy and the parse, which are megabytes -- deliberately stays in the
+;;   caller's current arena and is still dropped with it, so this does not move
+;;   the macro-walk peak.
+(define compiler-embedded-stdlib-tlci-session-arena-handle : i64
+  0)
+
+(define (compiler-embedded-stdlib-tlci-session-arena) : i64
+  (begin
+    (if (= compiler-embedded-stdlib-tlci-session-arena-handle 0)
+      (set!
+        compiler-embedded-stdlib-tlci-session-arena-handle
+        (arena.tl_arena_make_small))
+      unit)
+    compiler-embedded-stdlib-tlci-session-arena-handle))
+
+;: A copy of `text` owned by the session arena. Loader messages are built in
+;: whatever arena was current at the load, and the load-failure state is sticky
+;: for the whole pass, so the message it hands back must not be.
+(define (compiler-embedded-stdlib-tlci-session-own-text [text : String]) : String
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [_enter : unit
+      (unsafe
+        (arena.tl_arena_set (compiler-embedded-stdlib-tlci-session-arena)))]
+    [owned : String (string.substring (& text) 0 (string.string-length text))]
+    [_restore : unit
+      (unsafe
+        (arena.tl_arena_set previous))]
+    owned))
 
 (define (compiler-embedded-stdlib-tlci-length) : i64
   (array-length payload.embedded-stdlib-tlci-bytes))
@@ -92,7 +145,12 @@
               0
               "embedded stdlib tlci is unavailable in the seed/test build")
             false)
+          ;; The owner is the session's own arena, not the arena that happens
+          ;; to be current on the first embedded-stdlib macro call: this image
+          ;; is retained for the rest of the pass and dispatched from
+          ;; declarations that outlive any macro-walk generation.
           (match (tlci-loader-load-from-bytes-with-host
+            (compiler-embedded-stdlib-tlci-session-arena)
             (compiler-embedded-stdlib-tlci-copy)
             (compiler-comptime-host-table))
             [(ResultTlciLoadedImage.Err message)
@@ -101,7 +159,7 @@
                 (array-set!
                   compiler-embedded-stdlib-tlci-session-error
                   0
-                  message)
+                  (compiler-embedded-stdlib-tlci-session-own-text message))
                 false)]
             [(ResultTlciLoadedImage.Ok loaded)
               (begin
@@ -161,7 +219,10 @@
   (if (= (compiler-embedded-stdlib-tlci-length) 0)
     (CompilerEmbeddedStdlibTlciValidation.Err
       "embedded stdlib tlci is unavailable in the seed/test build")
+    ;; This image is released before this function returns, so the caller's
+    ;; current arena already outlives it and is the honest owner.
     (match (tlci-loader-load-from-bytes-with-host
+      (arena.tl_arena_current)
       (compiler-embedded-stdlib-tlci-copy)
       (compiler-embedded-stdlib-tlci-host-table))
       [(ResultTlciLoadedImage.Err message)

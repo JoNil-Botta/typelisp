@@ -11,6 +11,7 @@
 (import "../../src/compiler_ctfe.tl")
 (import compiler_intern as ci)
 (import stdlib.array)
+(import stdlib.arena)
 (import stdlib.io)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -39,6 +40,7 @@
 
 (define (embedded-verify-native-array-length-ok?) : bool
   (match (tlci-loader-load-from-bytes-with-host
+    (arena.tl_arena_current)
     (compiler-embedded-stdlib-tlci-copy)
     (compiler-comptime-host-table))
     [(ResultTlciLoadedImage.Err _) false]
@@ -86,6 +88,7 @@
   [operand-count : i64]
   [expected-status : i64]) : bool
   (match (tlci-loader-load-from-bytes-with-host
+    (arena.tl_arena_current)
     (compiler-embedded-stdlib-tlci-copy)
     (compiler-comptime-host-table))
     [(ResultTlciLoadedImage.Err _) false]

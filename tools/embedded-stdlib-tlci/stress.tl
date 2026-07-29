@@ -34,6 +34,7 @@
 (import "../../src/compiler_ctfe.tl")
 (import compiler_intern as ci)
 (import stdlib.array)
+(import stdlib.arena)
 (import stdlib.io)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -486,6 +487,7 @@
       [progress-path : String (io.arg 3)]
       [failed-at : (Array i64) (make-array -1)]
       (match (tlci-loader-load-from-bytes-with-host
+        (arena.tl_arena_current)
         (compiler-embedded-stdlib-tlci-copy)
         (compiler-comptime-host-table))
         [(ResultTlciLoadedImage.Err _)

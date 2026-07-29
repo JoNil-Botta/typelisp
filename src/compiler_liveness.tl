@@ -854,6 +854,61 @@
         (and ok (compiler-live-set-eq? deduplicated (compiler-live-set2 31 66))))
       ok)))
 
+(define (compiler-live-scratch-ops-ok?) : bool
+  (let
+    [words : (Array i64) (make-array i64 6)]
+    [copy-count : i64
+      (compiler-live-scratch-copy-set! words (compiler-live-set3 1 64 130))]
+    [copy-ok : bool
+      (and
+        (= copy-count 5)
+        (compiler-live-scratch-eq-set?
+          words
+          copy-count
+          (compiler-live-set3 1 64 130)))]
+    [union-count : i64
+      (compiler-live-scratch-union-set!
+        words
+        copy-count
+        (compiler-live-set2 65 191))]
+    [union-ok : bool
+      (and
+        (= union-count 6)
+        (compiler-live-scratch-eq-set?
+          words
+          union-count
+          (compiler-live-set5 1 64 65 130 191)))]
+    [step-count : i64
+      (compiler-live-scratch-step!
+        words
+        union-count
+        (compiler-live-set1 0)
+        (compiler-live-set2 1 130))]
+    [step-ok : bool
+      (and
+        (= step-count 6)
+        (compiler-live-scratch-eq-set?
+          words
+          step-count
+          (compiler-live-set4 0 64 65 191))
+        (compiler-live-set-eq?
+          (compiler-live-scratch-freeze words step-count)
+          (compiler-live-set4 0 64 65 191)))]
+    [short-count : i64
+      (compiler-live-scratch-copy-set! words (compiler-live-set1 7))]
+    [short-ok : bool
+      (and
+        (= short-count 1)
+        (compiler-live-scratch-eq-set? words short-count (compiler-live-set1 7))
+        (= (compiler-live-set-trim-length words 6) 1))]
+    [_cleared : unit (compiler-live-scratch-clear! words)]
+    (and
+      copy-ok
+      union-ok
+      step-ok
+      short-ok
+      (= (compiler-live-set-trim-length words 6) 0))))
+
 (define (compiler-live-label-set-contains?
   [set : CompilerLiveLabelSet]
   [value : i64]) : bool
@@ -2369,6 +2424,7 @@
 (define (compiler-live-self-test) : i64
   (if (and
     (compiler-live-set-ops-ok?)
+    (compiler-live-scratch-ops-ok?)
     (compiler-live-use-def-ok?)
     (compiler-live-memory-use-def-ok?)
     (compiler-live-vector-mask-use-def-ok?)

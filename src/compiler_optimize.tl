@@ -3875,55 +3875,53 @@
   [base : i64]) : option_i64.Option
   (opt-aggregate-promote-lookup-from slots base 0))
 
-(define (opt-aggregate-promote-rewrite-instr
-  [slots : opt_aggregate_promote_slot_vec.Vec]
-  [instr : CompilerIrInstr]) : CompilerIrInstrList
-  (match (opt-aggregate-direct-alloc instr)
-    [(OptMaybeAggregateAlloc.Some base ty _)
-      (match (opt-aggregate-promote-lookup slots base)
-        [(option_i64.Some storage)
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Alloc storage ty)
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.AddrOf base storage)
-              CompilerIrInstrList.Nil))]
-        [(option_i64.None)
-          (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)])]
-    [(OptMaybeAggregateAlloc.No)
-      (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)]))
-
-(define (opt-aggregate-promote-instr-seq-from
-  [slots : opt_aggregate_promote_slot_vec.Vec]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
-  (if (< index 0)
-    acc
-    (opt-aggregate-promote-instr-seq-from
-      slots
-      instrs
-      (- index 1)
-      (opt-aggregate-instr-list-append
-        (opt-aggregate-promote-rewrite-instr
-          slots
-          (compiler-ir-instr-seq-ref instrs index))
-        acc))))
-
-(define (opt-aggregate-promote-instr-seq
-  [slots : opt_aggregate_promote_slot_vec.Vec]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (opt-aggregate-promote-instr-seq-from
-    slots
-    instrs
-    (- (compiler-ir-instr-seq-count instrs) 1)
-    CompilerIrInstrList.Nil))
-
+;; Dense forward rebuild of one block under the slot plan: a promotable direct
+;; alloc becomes the pair `alloc storage ty` / `addr_of base storage` -- the
+;; same two instrs, in the same order, the old cons-list rewrite produced --
+;; and every other instr is kept. Blocks without a stack-promotable
+;; alloc, or whose allocs all escaped the slot plan, keep the ORIGINAL block
+;; value by reference. refs #5726
 (define (opt-aggregate-promote-block
   [slots : opt_aggregate_promote_slot_vec.Vec]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-aggregate-promote-instr-seq slots instrs))]))
+      (if (not (opt-aggregate-stack-promote-block-candidate? block))
+        block
+        (let
+          [count : i64 (compiler-ir-instr-seq-count instrs)]
+          [builder : CompilerIrInstrBuilder
+            (compiler-ir-instr-builder-with-capacity count)]
+          [changed : bool false]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (let
+                [instr : CompilerIrInstr
+                  (compiler-ir-instr-seq-ref instrs index)]
+                (begin
+                  (match (opt-aggregate-direct-alloc instr)
+                    [(OptMaybeAggregateAlloc.Some base ty _)
+                      (match (opt-aggregate-promote-lookup slots base)
+                        [(option_i64.Some storage)
+                          (begin
+                            (compiler-ir-instr-builder-push!
+                              (&mut builder)
+                              (CompilerIrInstr.Alloc storage ty))
+                            (compiler-ir-instr-builder-push!
+                              (&mut builder)
+                              (CompilerIrInstr.AddrOf base storage))
+                            (set! changed true))]
+                        [(option_i64.None)
+                          (compiler-ir-instr-builder-push! (&mut builder) instr)])]
+                    [(OptMaybeAggregateAlloc.No)
+                      (compiler-ir-instr-builder-push! (&mut builder) instr)])
+                  (set! index (+ index 1)))))
+            (if changed
+              (CompilerIrBlock.Block
+                label
+                (compiler-ir-instr-builder-to-seq builder))
+              block))))]))
 
 (define (opt-aggregate-promote-blocks
   [slots : opt_aggregate_promote_slot_vec.Vec]
@@ -3934,8 +3932,25 @@
       (compiler-ir-block-cons
         (opt-aggregate-promote-block slots block)
         (opt-aggregate-promote-blocks slots (box-get rest)))]
+    ;; Dense driver: scan the block sequence in place and write a dense output
+    ;; sequence (refs #5726). opt-aggregate-promote-block keeps blocks it does
+    ;; not rewrite by reference, so unchanged blocks are never re-sequenced.
     [(CompilerIrBlockList.Array seq)
-      (opt-aggregate-promote-blocks slots (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [out : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (array-set!
+                out
+                index
+                (opt-aggregate-promote-block
+                  slots
+                  (compiler-ir-block-seq-ref seq index)))
+              (set! index (+ index 1))))
+          (CompilerIrBlockList.Array (CompilerIrBlockSeq out count))))]))
 
 (define (opt-aggregate-stack-promote-function
   [type-segment-bases : i64]
@@ -45871,33 +45886,39 @@
                         true)
                       false)))))])))))
 
-(define (opt-ctor-fwd-rebuild-from
+;; Dense forward rebuild of a planned block: plan action -2 drops the instr,
+;; an action >= 0 replaces it with the forwarded `gep base, action : u8`, and
+;; anything else keeps the instr -- the same output the old backward cons walk
+;; produced, in the same program order, without a cons spine or the re-counting
+;; `compiler-ir-block` wrapper. refs #5726
+(define (opt-ctor-fwd-rewrite-instr-seq
   [instrs : CompilerIrInstrSeq]
   [plan : (Array i64)]
-  [bases : (Array i64)]
-  [index : i64]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
-  (if (< index 0)
-    acc
-    (let
-      [action : i64 (array-ref plan index)]
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (opt-ctor-fwd-rebuild-from
-        instrs
-        plan
-        bases
-        (- index 1)
-        (cond
-          [(= action -2) acc]
-          [(>= action 0)
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Gep
-                (opt-ctor-fwd-gep-dst instr)
-                (CompilerIrValue.Var (array-ref bases index))
-                (CompilerIrValue.I64 action)
-                (AstType.U8))
-              acc)]
-          [else (compiler-ir-instr-cons instr acc)])))))
+  [bases : (Array i64)]) : CompilerIrInstrSeq
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [action : i64 (array-ref plan index)]
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+          (begin
+            (cond
+              [(= action -2) unit]
+              [(>= action 0)
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (CompilerIrInstr.Gep
+                    (opt-ctor-fwd-gep-dst instr)
+                    (CompilerIrValue.Var (array-ref bases index))
+                    (CompilerIrValue.I64 action)
+                    (AstType.U8)))]
+              [else (compiler-ir-instr-builder-push! (&mut builder) instr)])
+            (set! index (+ index 1)))))
+      (compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-ctor-fwd-block [uses : (Array i64)] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
@@ -45937,14 +45958,9 @@
                   [(OptCtorFwdCopy.NoCopy) unit])
                 (set! i (+ i 1))))
             (if changed
-              (compiler-ir-block
+              (CompilerIrBlock.Block
                 label
-                (opt-ctor-fwd-rebuild-from
-                  instrs
-                  plan
-                  bases
-                  (- count 1)
-                  CompilerIrInstrList.Nil))
+                (opt-ctor-fwd-rewrite-instr-seq instrs plan bases))
               block))))]))
 
 (define (opt-ctor-fwd-blocks
@@ -45956,8 +45972,25 @@
       (compiler-ir-block-cons
         (opt-ctor-fwd-block uses block)
         (opt-ctor-fwd-blocks uses (box-get rest)))]
+    ;; Dense driver: scan the block sequence in place and write a dense output
+    ;; sequence (refs #5726). opt-ctor-fwd-block returns the ORIGINAL block by
+    ;; reference for blocks it does not rewrite, so unchanged blocks are never
+    ;; re-sequenced.
     [(CompilerIrBlockList.Array seq)
-      (opt-ctor-fwd-blocks uses (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [slots : (Array CompilerIrBlock)
+          (array.make-array CompilerIrBlock count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (array-set!
+                slots
+                index
+                (opt-ctor-fwd-block uses (compiler-ir-block-seq-ref seq index)))
+              (set! index (+ index 1))))
+          (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count))))]))
 
 (define (opt-ctor-fwd-function-blocks
   [frame : i64]

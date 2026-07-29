@@ -350,29 +350,23 @@
   [batch-list : TestMaybeString]) : ResultTestConfig
   (match batch-list
     [(TestMaybeString.Some list-path)
-      (if (and tltest-list-only tltest-prefix-cache-stats)
-        (ResultTestConfig.Err
-          "test: --prefix-cache-stats cannot be combined with --list")
-        (if has-manifest
+      (cond
+        [(and tltest-list-only tltest-prefix-cache-stats)
           (ResultTestConfig.Err
-            "test: cannot combine --batch with --manifest-path")
-          (if has-source
-            (ResultTestConfig.Err
-              "test: cannot combine input paths with --batch")
-            (match (tltest-batch-paths list-path)
-              [(ResultTestBatchPaths.Ok paths)
-                (if (cli_svec.is-empty? (& paths))
-                  (ResultTestConfig.Err "test: --batch list is empty")
-                  (ResultTestConfig.Ok
-                    (TestConfig.Batch
-                      paths
-                      target
-                      mode
-                      roots
-                      opt-level
-                      test-mode)))]
-              [(ResultTestBatchPaths.Err message)
-                (ResultTestConfig.Err message)]))))]
+            "test: --prefix-cache-stats cannot be combined with --list")]
+        [has-manifest
+          (ResultTestConfig.Err
+            "test: cannot combine --batch with --manifest-path")]
+        [has-source
+          (ResultTestConfig.Err "test: cannot combine input paths with --batch")]
+        [else
+          (match (tltest-batch-paths list-path)
+            [(ResultTestBatchPaths.Ok paths)
+              (if (cli_svec.is-empty? (& paths))
+                (ResultTestConfig.Err "test: --batch list is empty")
+                (ResultTestConfig.Ok
+                  (TestConfig.Batch paths target mode roots opt-level test-mode)))]
+            [(ResultTestBatchPaths.Err message) (ResultTestConfig.Err message)])])]
     [(TestMaybeString.No)
       (if tltest-prefix-cache-stats
         (ResultTestConfig.Err "test: --prefix-cache-stats requires --batch")

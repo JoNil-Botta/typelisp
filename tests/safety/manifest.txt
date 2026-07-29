@@ -51,6 +51,7 @@ reborrow_stored_dead_sibling_after_use_ok|check-ok|tests/safety/reborrow_stored_
 reborrow_stored_generated_vector_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_generated_vector_item_after_last_use_ok.tl|-|-
 
 # Static rejection areas.
+compiler_intern_structural_to_name_reject|check-fail|tests/safety/compiler_intern_structural_to_name_reject.tl|-|expected InternId, found i64
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
 stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
 stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type

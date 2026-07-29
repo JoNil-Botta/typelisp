@@ -37,10 +37,12 @@
 ;;   generated IDs. Equal numeric IDs in two driver states do not imply equal
 ;;   spelling; install the owner before rendering or consuming either one.
 ;;
-;; `InternId` is the compact u32 storage representation for real intern IDs.
-;; Structural keys remain i64 so the type cannot accidentally bless them as
+;; `InternId` is the compact public representation for a renderable name.
+;; `InternSlotId` is the separate id+1 encoding used by optional table slots.
+;; Structural keys remain i64 so neither type can accidentally bless them as
 ;; renderable names. The compiler call graph still exposes some i64 boundaries
-;; while that distinction is migrated outward from this authoritative table.
+;; while the public `InternId` distinction migrates outward from this
+;; authoritative table.
 ;: Local arena hooks keep this module import-free while letting persistent
 ;: intern entries survive scoped compile arenas.
 (extern (tl_arena_make) : i64)
@@ -402,18 +404,32 @@
 (defmacro (intern-id-value [id : Expr]) : i64
   `(cast (struct-get ,id value) : i64))
 
+(define (intern-id-from-renderable [id : i64]) : InternId
+  (if (intern-renderable-id? id)
+    (InternId (cast id : u32))
+    (tl_oob_abort)))
+
+;; Optional table lanes reserve zero for missing and store raw id+1. Keeping
+;; this encoding nominally separate prevents a missing slot from reaching a
+;; render API as if it were the source name with id zero.
+(defstruct InternSlotId
+  (encoded u32))
+
+(defmacro (intern-slot-id-value [id : Expr]) : i64
+  `(cast (struct-get ,id encoded) : i64))
+
 ;; Compact lanes reserve zero for an empty/missing slot and store id+1.
-(define (intern-id-slot-empty) : InternId
-  (InternId (cast 0 : u32)))
+(define (intern-id-slot-empty) : InternSlotId
+  (InternSlotId (cast 0 : u32)))
 
-(define (intern-id-slot-empty? [id : InternId]) : bool
-  (= (struct-get id value) (cast 0 : u32)))
+(define (intern-id-slot-empty? [id : InternSlotId]) : bool
+  (= (struct-get id encoded) (cast 0 : u32)))
 
-(define (intern-id-slot-encode [id : i64]) : InternId
-  (InternId (cast (+ id 1) : u32)))
+(define (intern-id-slot-encode [id : i64]) : InternSlotId
+  (InternSlotId (cast (+ id 1) : u32)))
 
 (defmacro (intern-id-slot-decode [encoded : Expr]) : i64
-  `(- (intern-id-value ,encoded) 1))
+  `(- (intern-slot-id-value ,encoded) 1))
 
 (defenum InternLookup
   (InternLookupMissing)
@@ -427,14 +443,14 @@
   (make-array i32 (intern-capacity)))
 (define intern-pool-first-dot-slots : (Array i32)
   (make-array i32 (intern-capacity)))
-(define intern-pool-leading-dot-id-slots : (Array InternId)
-  (make-array InternId (intern-capacity)))
-(define intern-pool-dotted-prefix-id-slots : (Array InternId)
-  (make-array InternId (intern-capacity)))
-(define intern-pool-module-id-slots : (Array InternId)
-  (make-array InternId (intern-capacity)))
-(define intern-pool-base-id-slots : (Array InternId)
-  (make-array InternId (intern-capacity)))
+(define intern-pool-leading-dot-id-slots : (Array InternSlotId)
+  (make-array InternSlotId (intern-capacity)))
+(define intern-pool-dotted-prefix-id-slots : (Array InternSlotId)
+  (make-array InternSlotId (intern-capacity)))
+(define intern-pool-module-id-slots : (Array InternSlotId)
+  (make-array InternSlotId (intern-capacity)))
+(define intern-pool-base-id-slots : (Array InternSlotId)
+  (make-array InternSlotId (intern-capacity)))
 (define intern-pool-count : i64
   0)
 (define intern-generated-next-id : i64
@@ -861,17 +877,17 @@
   [table-cell : (Array InternStructuralTable)]) : unit
   (intern-structural-table-reset! table-cell))
 
-;; Bucket IDs use the compact encoded `InternId` representation. The pool owns
+;; Bucket IDs use the compact encoded `InternSlotId` representation. The pool owns
 ;; each spelling, so the hash table needs only identity and hash lanes rather
 ;; than a second String-bearing enum table.
-(define intern-map-id-slots : (Array InternId)
-  (make-array InternId (intern-capacity)))
+(define intern-map-id-slots : (Array InternSlotId)
+  (make-array InternSlotId (intern-capacity)))
 (define intern-map-hash-slots : (Array i64)
   (make-array i64 (intern-capacity)))
 (define intern-generated-map-capacity : i64
   32768)
-(define intern-generated-map-id-slots : (Array InternId)
-  (make-array InternId intern-generated-map-capacity))
+(define intern-generated-map-id-slots : (Array InternSlotId)
+  (make-array InternSlotId intern-generated-map-capacity))
 (define intern-generated-map-hash-slots : (Array i64)
   (make-array i64 intern-generated-map-capacity))
 (define intern-map-ready : bool
@@ -916,15 +932,15 @@
   (pool-qualified-slots (Array bool))
   (pool-last-slash-slots (Array i32))
   (pool-first-dot-slots (Array i32))
-  (pool-leading-dot-id-slots (Array InternId))
-  (pool-dotted-prefix-id-slots (Array InternId))
-  (pool-module-id-slots (Array InternId))
-  (pool-base-id-slots (Array InternId))
+  (pool-leading-dot-id-slots (Array InternSlotId))
+  (pool-dotted-prefix-id-slots (Array InternSlotId))
+  (pool-module-id-slots (Array InternSlotId))
+  (pool-base-id-slots (Array InternSlotId))
   (pool-count (Array i64))
   (generated-next-id (Array i64))
-  (map-id-slots (Array InternId))
+  (map-id-slots (Array InternSlotId))
   (map-hash-slots (Array i64))
-  (generated-map-id-slots (Array InternId))
+  (generated-map-id-slots (Array InternSlotId))
   (generated-map-hash-slots (Array i64))
   (map-ready (Array bool))
   (reset-generation (Array i64))
@@ -939,7 +955,7 @@
   (table-id-cell (Array i64))
   (reset-generation-cell (Array i64))
   (pool-slots (Array String))
-  (map-id-slots (Array InternId))
+  (map-id-slots (Array InternSlotId))
   (map-hash-slots (Array i64))
   (map-ready-cell (Array bool))
   (table-id i64)
@@ -987,15 +1003,15 @@
         (make-array bool (intern-capacity))
         (make-array i32 (intern-capacity))
         (make-array i32 (intern-capacity))
-        (make-array InternId (intern-capacity))
-        (make-array InternId (intern-capacity))
-        (make-array InternId (intern-capacity))
-        (make-array InternId (intern-capacity))
+        (make-array InternSlotId (intern-capacity))
+        (make-array InternSlotId (intern-capacity))
+        (make-array InternSlotId (intern-capacity))
+        (make-array InternSlotId (intern-capacity))
         pool-count
         generated-next-id
-        (make-array InternId (intern-capacity))
+        (make-array InternSlotId (intern-capacity))
         (make-array i64 (intern-capacity))
-        (make-array InternId intern-generated-map-capacity)
+        (make-array InternSlotId intern-generated-map-capacity)
         (make-array i64 intern-generated-map-capacity)
         map-ready
         reset-generation
@@ -1110,7 +1126,7 @@
 
 (define (intern-compat-state-generated-map-clear! [state : InternCompatState]) : unit
   (let
-    [slots : (Array InternId) (struct-get state generated-map-id-slots)]
+    [slots : (Array InternSlotId) (struct-get state generated-map-id-slots)]
     [index : i64 0]
     [count : i64 (array-length slots)]
     (while (< index count)
@@ -1320,7 +1336,7 @@
       (begin
         (while (and (not done) (< steps capacity))
           (let
-            [stored-id : InternId
+            [stored-id : InternSlotId
               (array-ref (struct-get state map-id-slots) cursor)]
             (if (intern-id-slot-empty? stored-id)
               (let
@@ -1370,7 +1386,7 @@
       (begin
         (while (and (not done) (< steps capacity))
           (let
-            [stored-id : InternId
+            [stored-id : InternSlotId
               (array-ref (struct-get state map-id-slots) cursor)]
             (if (intern-id-slot-empty? stored-id)
               (set! done true)
@@ -1881,7 +1897,7 @@
   (if (>= index intern-generated-map-capacity)
     false
     (let
-      [stored : InternId (array-ref intern-generated-map-id-slots index)]
+      [stored : InternSlotId (array-ref intern-generated-map-id-slots index)]
       (if (and
         (not (intern-id-slot-empty? stored))
         (= (intern-id-slot-decode stored) id))
@@ -2027,7 +2043,8 @@
   (if (>= steps intern-generated-map-capacity)
     (tl_oob_abort)
     (let
-      [stored-id : InternId (array-ref intern-generated-map-id-slots cursor)]
+      [stored-id : InternSlotId
+        (array-ref intern-generated-map-id-slots cursor)]
       (if (intern-id-slot-empty? stored-id)
         (let
           [id : i64
@@ -2189,7 +2206,8 @@
   (if (>= steps intern-generated-map-capacity)
     (InternLookupMissing)
     (let
-      [stored-id : InternId (array-ref intern-generated-map-id-slots cursor)]
+      [stored-id : InternSlotId
+        (array-ref intern-generated-map-id-slots cursor)]
       (if (intern-id-slot-empty? stored-id)
         (InternLookupMissing)
         (let
@@ -2423,7 +2441,7 @@
           false
           (< steps capacity))
           (let
-            [stored-id : InternId (array-ref intern-map-id-slots cursor)]
+            [stored-id : InternSlotId (array-ref intern-map-id-slots cursor)]
             (if (intern-id-slot-empty? stored-id)
               (let
                 [persistent-name : String (intern-persistent-copy name)]
@@ -2470,7 +2488,7 @@
           false
           (< steps capacity))
           (let
-            [stored-id : InternId (array-ref intern-map-id-slots cursor)]
+            [stored-id : InternSlotId (array-ref intern-map-id-slots cursor)]
             (if (intern-id-slot-empty? stored-id)
               (let
                 [name : String (intern-persistent-substring text start len)]
@@ -2521,6 +2539,12 @@
           (+ intern-profile-source-symbol-bytes-count len))))
     (intern-slice text start len)))
 
+;; Typed lexer boundary. Parser tokens can carry only renderable source names;
+;; structural identities and missing sentinels remain raw in their own later
+;; compiler domains until those boundaries are migrated.
+(define (intern-source-slice-id [text : String] [start : i64] [len : i64]) : InternId
+  (intern-id-from-renderable (intern-source-slice text start len)))
+
 ;: Look up an already-interned name without mutating the table. This lets later
 ;: compiler phases use id-keyed indexes without interning backend-generated
 ;: probe strings as a side effect.
@@ -2534,16 +2558,16 @@
         [mask : i64 (- capacity 1)]
         [cursor : i64 (bit-and hash mask)]
         [steps : i64 0]
-        [ids : (Ptr InternId)
+        [ids : (Ptr InternSlotId)
           (unsafe
-            (ptr-cast (array-data intern-map-id-slots) : (Ptr InternId)))]
+            (ptr-cast (array-data intern-map-id-slots) : (Ptr InternSlotId)))]
         [hashes : (Ptr i64)
           (unsafe
             (ptr-cast (array-data intern-map-hash-slots) : (Ptr i64)))]
         (begin
           (while (< steps capacity)
             (let
-              [stored : InternId
+              [stored : InternSlotId
                 (unsafe
                   (ptr-read (ptr-offset ids cursor)))]
               (if (intern-id-slot-empty? stored)
@@ -2652,7 +2676,7 @@
   [name : String]) : InternLookup
   (if (array-ref (struct-get session map-ready-cell) 0)
     (let
-      [ids : (Array InternId) (struct-get session map-id-slots)]
+      [ids : (Array InternSlotId) (struct-get session map-id-slots)]
       [hashes : (Array i64) (struct-get session map-hash-slots)]
       [pool : (Array String) (struct-get session pool-slots)]
       [capacity : i64 (array-length ids)]
@@ -2662,7 +2686,7 @@
       (begin
         (while (< steps capacity)
           (let
-            [stored : InternId (array-ref ids cursor)]
+            [stored : InternSlotId (array-ref ids cursor)]
             (if (intern-id-slot-empty? stored)
               (return (InternLookupMissing))
               (let
@@ -2729,6 +2753,11 @@
         (set! intern-profile-render-count (+ intern-profile-render-count 1))
         (array-ref intern-pool-slots id)))
     (array-ref intern-pool-slots id)))
+
+;; Typed render boundary. Callers with a structural key or a missing i64 cannot
+;; call this API without an explicit, checked domain conversion.
+(define (intern-id-str [id : InternId]) : String
+  (intern-str (intern-id-value id)))
 
 (define (intern-generation) : i64
   intern-reset-generation)

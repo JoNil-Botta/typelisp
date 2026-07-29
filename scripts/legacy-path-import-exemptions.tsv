@@ -15,5 +15,6 @@ tests/integration/compile_profile_generated_import_inert.tl	Generated provider i
 tests/integration/legacy_dotted_enum_main.tl	Mixed legacy/dotted nominal identity compatibility coverage for #2454.
 tests/integration/mixed_global_annotation_main.tl	Mixed flat-path/dotted global annotation compatibility coverage for #2454.
 tests/integration/struct_match_pattern.tl	Provider identity intentionally differs from its fixture path; retained for #2454.
+tests/safety/compiler_intern_structural_to_name_reject.tl	Direct safety invocation has no canonical module root for the compiler source under test.
 tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl	Shadowing provider identity intentionally differs from its fixture path; retained for #2454.
 tests/safety/thread_spawn_unrelated_dotted_spawn_ok.tl	Dotted provider identity intentionally differs from its fixture path; retained for #2454.

@@ -39,9 +39,9 @@
   (LParen)
   (RParen)
   (Int i64 String)
-  (Sym i64)
+  (Sym ci.InternId)
   (End)
-  (Str i64)
+  (Str ci.InternId)
   (Char char)
   (Float String)
   (LBracket)
@@ -112,7 +112,7 @@
 
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
-;; i64-payload `Token.Sym` and the source-preserving `Token.Int`.
+;; typed-id payload `Token.Sym` and the source-preserving `Token.Int`.
 (define (tag [t : Token]) : i64
   (match t
     [(Token.LParen) 1]
@@ -171,20 +171,8 @@
 ;; lexer representation to callers that can stay id-native.
 (define (sym-id [t : Token]) : i64
   (match t
-    [(Token.LParen) -1]
-    [(Token.RParen) -1]
-    [(Token.Int _ _) -1]
-    [(Token.Sym id) id]
-    [(Token.End) -1]
-    [(Token.Str _) -1]
-    [(Token.Char _) -1]
-    [(Token.Float _) -1]
-    [(Token.LBracket) -1]
-    [(Token.RBracket) -1]
-    [(Token.Quote) -1]
-    [(Token.Backtick) -1]
-    [(Token.Comma) -1]
-    [(Token.CommaAt) -1]))
+    [(Token.Sym id) (ci.intern-id-value id)]
+    [_ -1]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
@@ -193,7 +181,7 @@
     [(Token.LParen) ""]
     [(Token.RParen) ""]
     [(Token.Int _ _) ""]
-    [(Token.Sym id) (ci.intern-str id)]
+    [(Token.Sym id) (ci.intern-id-str id)]
     [(Token.End) ""]
     [(Token.Str _) ""]
     [(Token.Char _) ""]
@@ -216,7 +204,7 @@
     [(Token.Int _ _) ""]
     [(Token.Sym _) ""]
     [(Token.End) ""]
-    [(Token.Str id) (ci.intern-str id)]
+    [(Token.Str id) (ci.intern-id-str id)]
     [(Token.Char _) ""]
     [(Token.Float _) ""]
     [(Token.LBracket) ""]
@@ -229,7 +217,7 @@
 ;; Parser-assigned identity of a string literal (-1 for any other token).
 (define (str-id [t : Token]) : i64
   (match t
-    [(Token.Str id) id]
+    [(Token.Str id) (ci.intern-id-value id)]
     [_ -1]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):

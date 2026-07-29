@@ -6,6 +6,7 @@
 ;; it from the runtime prelude.
 (import "../compiler_backend.tl")
 (import "../compiler_optimize.tl")
+(import compiler_builtin_ids as cbi)
 
 (define (bounds-check-smoke-program) : CompilerIrProgram
   (CompilerIrProgram.Program
@@ -42,16 +43,19 @@
     CompilerIrExternList.Nil))
 
 (define (main) : i64
-  (match (compiler-backend-emit-program-linux
-    (optimize-program-with-level (bounds-check-smoke-program) 2))
-    [(ResultCompilerBackend.Ok asm)
-      (let
-        [symbol-count : i64 (compiler-backend-string-count asm "tl_oob_abort")]
-        [defines-abort : bool
-          (compiler-backend-string-contains? asm "tl_oob_abort:\n")]
-        (if (not (= symbol-count 1))
-          1
-          (if defines-abort
-            2
-            42)))]
-    [(ResultCompilerBackend.Err _) 2]))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (match (compiler-backend-emit-program-linux
+      (optimize-program-with-level (bounds-check-smoke-program) 2))
+      [(ResultCompilerBackend.Ok asm)
+        (let
+          [symbol-count : i64
+            (compiler-backend-string-count asm "tl_oob_abort")]
+          [defines-abort : bool
+            (compiler-backend-string-contains? asm "tl_oob_abort:\n")]
+          (if (not (= symbol-count 1))
+            1
+            (if defines-abort
+              2
+              42)))]
+      [(ResultCompilerBackend.Err _) 2])))

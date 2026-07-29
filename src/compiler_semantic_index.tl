@@ -1211,6 +1211,56 @@
           (ast-expr-list-get (& items) index 0))
         (set! index (+ index 1))))))
 
+(define (compiler-semantic-walk-quasiquote-let-bindings!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingList]
+  [env : TcTypeEnv]
+  [bindings : AstLetBindingList]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast-let-binding-list-len (& bindings)))
+      (begin
+        (match (ast-let-binding-list-get
+          (& bindings)
+          index
+          (ast-let-binding-fallback))
+          [(AstLetBinding.Binding _ _ init)
+            (compiler-semantic-walk-quasiquote-node! state scope env init)])
+        (set! index (+ index 1))))))
+
+(define (compiler-semantic-walk-quasiquote-match-arms!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingList]
+  [env : TcTypeEnv]
+  [arms : AstMatchArmList]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast-match-arm-list-len (& arms)))
+      (begin
+        (match (ast-match-arm-list-get (& arms) index (ast-match-arm-fallback))
+          [(AstMatchArm.Arm _ body)
+            (compiler-semantic-walk-quasiquote-node! state scope env body)])
+        (set! index (+ index 1))))))
+
+(define (compiler-semantic-walk-quasiquote-resource-bindings!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingList]
+  [env : TcTypeEnv]
+  [bindings : AstResourceBindingList]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast-resource-binding-list-len (& bindings)))
+      (begin
+        (match (ast-resource-binding-list-get
+          (& bindings)
+          index
+          (ast-resource-binding-fallback))
+          [(AstResourceBinding.Binding _ init cleanup _)
+            (begin
+              (compiler-semantic-walk-quasiquote-node! state scope env init)
+              (compiler-semantic-walk-quasiquote-node! state scope env cleanup))])
+        (set! index (+ index 1))))))
+
 (define (compiler-semantic-walk-quasiquote-node!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingList]
@@ -1240,20 +1290,134 @@
         (compiler-semantic-walk-quasiquote-node! state scope env condition)
         (compiler-semantic-walk-quasiquote-node! state scope env then-expr)
         (compiler-semantic-walk-quasiquote-node! state scope env else-expr))]
+    [(AstExpr.Let payload)
+      (match (box-get payload)
+        [(AstLet.Let bindings body)
+          (begin
+            (compiler-semantic-walk-quasiquote-let-bindings!
+              state
+              scope
+              env
+              bindings)
+            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
+    [(AstExpr.Lambda payload)
+      (match (box-get payload)
+        [(AstLambda.Lambda _ _ body)
+          (compiler-semantic-walk-quasiquote-node! state scope env body)])]
     [(AstExpr.Tuple items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.TupleRef target _)
+      (compiler-semantic-walk-quasiquote-node! state scope env target)]
     [(AstExpr.Array items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
     [(AstExpr.DynArray items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.MakeArray _ size)
+      (compiler-semantic-walk-quasiquote-node! state scope env size)]
+    [(AstExpr.ArrayRef target index)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env target)
+        (compiler-semantic-walk-quasiquote-node! state scope env index))]
+    [(AstExpr.ArraySet target index value)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env target)
+        (compiler-semantic-walk-quasiquote-node! state scope env index)
+        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+    [(AstExpr.ArrayTake target live index)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env target)
+        (compiler-semantic-walk-quasiquote-node! state scope env live)
+        (compiler-semantic-walk-quasiquote-node! state scope env index))]
+    [(AstExpr.ArrayPush target value)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env target)
+        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+    [(AstExpr.StringRef target index)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env target)
+        (compiler-semantic-walk-quasiquote-node! state scope env index))]
+    [(AstExpr.While condition body)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env condition)
+        (compiler-semantic-walk-quasiquote-node! state scope env body))]
     [(AstExpr.Begin items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
     [(AstExpr.Unsafe items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(AstExpr.Set _ value)
+      (compiler-semantic-walk-quasiquote-node! state scope env value)]
     [(AstExpr.Ann inner _)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
     [(AstExpr.Cast inner _)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Borrow _ _ inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Match payload)
+      (match (box-get payload)
+        [(AstMatch.Match scrutinee arms)
+          (begin
+            (compiler-semantic-walk-quasiquote-node! state scope env scrutinee)
+            (compiler-semantic-walk-quasiquote-match-arms! state scope env arms))])]
+    [(AstExpr.Foreach payload)
+      (match (box-get payload)
+        [(AstForeach.Foreach _ _ start end body)
+          (begin
+            (compiler-semantic-walk-quasiquote-node! state scope env start)
+            (compiler-semantic-walk-quasiquote-node! state scope env end)
+            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
+    [(AstExpr.SpmdReduce payload)
+      (match (box-get payload)
+        [(AstSpmdReduce.Reduce _ _ _ start end init value)
+          (begin
+            (compiler-semantic-walk-quasiquote-node! state scope env start)
+            (compiler-semantic-walk-quasiquote-node! state scope env end)
+            (compiler-semantic-walk-quasiquote-node! state scope env init)
+            (compiler-semantic-walk-quasiquote-node! state scope env value))])]
+    [(AstExpr.SpmdScan payload)
+      (match (box-get payload)
+        [(AstSpmdScan.Scan _ _ _ start end _ _ init value body)
+          (begin
+            (compiler-semantic-walk-quasiquote-node! state scope env start)
+            (compiler-semantic-walk-quasiquote-node! state scope env end)
+            (compiler-semantic-walk-quasiquote-node! state scope env init)
+            (compiler-semantic-walk-quasiquote-node! state scope env value)
+            (compiler-semantic-walk-quasiquote-node! state scope env body))])]
+    [(AstExpr.SpmdBroadcast value lane)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env value)
+        (compiler-semantic-walk-quasiquote-node! state scope env lane))]
+    [(AstExpr.SpmdShuffle value lane)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env value)
+        (compiler-semantic-walk-quasiquote-node! state scope env lane))]
+    [(AstExpr.StructGet target _)
+      (compiler-semantic-walk-quasiquote-node! state scope env target)]
+    [(AstExpr.StructSet target _ value)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env target)
+        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+    [(AstExpr.WithRegion _ body)
+      (compiler-semantic-walk-quasiquote-list! state scope env body)]
+    [(AstExpr.WithEscape scratch body)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env scratch)
+        (compiler-semantic-walk-quasiquote-list! state scope env body))]
+    [(AstExpr.WithScratch body)
+      (compiler-semantic-walk-quasiquote-list! state scope env body)]
+    [(AstExpr.InArena arena body)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env arena)
+        (compiler-semantic-walk-quasiquote-list! state scope env body))]
+    [(AstExpr.WithResource payload)
+      (match (box-get payload)
+        [(AstWithResource.WithResource bindings body)
+          (begin
+            (compiler-semantic-walk-quasiquote-resource-bindings!
+              state
+              scope
+              env
+              bindings)
+            (compiler-semantic-walk-quasiquote-list! state scope env body))])]
     [(AstExpr.Box inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
     [(AstExpr.BoxGet inner)
@@ -1266,11 +1430,62 @@
         (compiler-semantic-walk-quasiquote-node! state scope env value))]
     [(AstExpr.Comptime inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.Try inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
     [(AstExpr.Return inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(AstExpr.Quote _) unit]
-    [(AstExpr.Quasiquote inner)
+    [(AstExpr.PtrNullCheck inner)
       (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.PtrAddrOf inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.PtrRead inner)
+      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+    [(AstExpr.PtrWrite ptr value)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env ptr)
+        (compiler-semantic-walk-quasiquote-node! state scope env value))]
+    [(AstExpr.PtrOffset ptr offset)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env ptr)
+        (compiler-semantic-walk-quasiquote-node! state scope env offset))]
+    [(AstExpr.PtrCast ptr _)
+      (compiler-semantic-walk-quasiquote-node! state scope env ptr)]
+    [(AstExpr.PtrToInt ptr)
+      (compiler-semantic-walk-quasiquote-node! state scope env ptr)]
+    [(AstExpr.IntToPtr value _)
+      (compiler-semantic-walk-quasiquote-node! state scope env value)]
+    [(AstExpr.StringData value)
+      (compiler-semantic-walk-quasiquote-node! state scope env value)]
+    [(AstExpr.StringFromBytes data len)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env data)
+        (compiler-semantic-walk-quasiquote-node! state scope env len))]
+    [(AstExpr.ArrayData value)
+      (compiler-semantic-walk-quasiquote-node! state scope env value)]
+    [(AstExpr.CpuIdEax leaf subleaf)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env leaf)
+        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
+    [(AstExpr.CpuIdEbx leaf subleaf)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env leaf)
+        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
+    [(AstExpr.CpuIdEcx leaf subleaf)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env leaf)
+        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
+    [(AstExpr.CpuIdEdx leaf subleaf)
+      (begin
+        (compiler-semantic-walk-quasiquote-node! state scope env leaf)
+        (compiler-semantic-walk-quasiquote-node! state scope env subleaf))]
+    [(AstExpr.Xgetbv index)
+      (compiler-semantic-walk-quasiquote-node! state scope env index)]
+    [(AstExpr.Syscall args)
+      (compiler-semantic-walk-quasiquote-list! state scope env args)]
+    [(AstExpr.Quote _) unit]
+    ;; CTFE preserves a nested quasiquote wholesale. Its unquotes belong to
+    ;; the future quasiquote evaluation rather than the surrounding macro.
+    [(AstExpr.Quasiquote _) unit]
     [_ unit]))
 
 (define (compiler-semantic-walk-let!
@@ -2587,8 +2802,8 @@
 ;# Additional answer detail.
   (define answer : i64 42)
 (defmacro (wrap [value : Expr]) : Expr
-  `(begin ,value))
-(define wrapped-answer : i64 (wrap 8))
+  `(struct-get ,value left))
+(define wrapped-answer : i64 (wrap (Pair 8)))
 (define (use
   ; answer appears in a comment before the parameter binder.
   [answer : i64]) : i64
@@ -2599,7 +2814,9 @@
 (define (call-use) : i64 (use answer))
 (define (match-use [value : i64]) : i64
   (match value
-    [bound bound]))"]
+    [bound bound]))
+(defmacro (nested-template [hidden : Expr]) : Expr
+  `(quasiquote (begin (unquote hidden))))"]
     (match (compiler-check-source-index-with-roots path source (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ first)
         (let
@@ -2709,6 +2926,20 @@
               "bound"
               CompilerSemanticRecordRole.Use
               1)]
+          [nested-param-definition-index : i64
+            (compiler-semantic-source-index-find-record
+              (& first)
+              path
+              "hidden"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [nested-param-use-index : i64
+            (compiler-semantic-source-index-find-record
+              (& first)
+              path
+              "hidden"
+              CompilerSemanticRecordRole.Use
+              0)]
           [first-len : i64 (compiler-semantic-source-index-len (& first))]
           (if (or
             (< answer-index 0)
@@ -2726,7 +2957,9 @@
             (< function-use-index 0)
             (< generated-index 0)
             (< pattern-definition-index 0)
-            (< pattern-use-index 0))
+            (< pattern-use-index 0)
+            (< nested-param-definition-index 0)
+            (>= nested-param-use-index 0))
             (begin
               (compiler-semantic-source-index-release! (&mut first))
               false)

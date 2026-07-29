@@ -61660,6 +61660,21 @@
             program))))
     (ast-program decls)))
 
+;; R3-P2: the per-splice refresh list is a `|rest|`-sized declaration copy that
+;; is read exactly once, by the top-env rebuild of the splice that built it, so
+;; it belongs in the splice-view generation like every other per-splice backing
+;; array. All four call sites run after their splice's
+;; `macro-splice-view-arena-begin!`, so the list is released two splices later,
+;; long after its only consumer has returned. Built into the NON-generational
+;; `macro-expand-scratch-arena` instead, these copies accumulated for the whole
+;; walk: 25.9 MB still resident at `typecheck.macro_scratch_release` on the
+;; opt1 self-compile, over 94 splices.
+;;
+;; The consumers (`tc-build-top-env-list-explicit-in-module` and
+;; `tc-refresh-top-env-for-splice`) read declarations out of the list and bind
+;; types resolved through POOL ids; nothing they retain points at this slot
+;; array. They also run with the enclosing arena restored, so the env spines
+;; they build still land in the macro arena, not in the view generation.
 (define (macro-scratch-decl-list-filter-path
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -61667,16 +61682,21 @@
   (if macro-expand-scratch-enabled
     (let
       [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (macro-expand-scratch-arena-get)]
+      [storage : i64
+        (if (= macro-splice-view-arena 0)
+          (macro-expand-scratch-arena-get)
+          macro-splice-view-arena)]
       (begin
         (unsafe
-          (arena.tl_arena_set scratch))
+          (arena.tl_arena_set storage))
         (let
           [out : AstDeclList
             (macro-decl-list-filter-path decls paths wanted-path)]
-          [scratch-head : i64 (arena.tl_arena_current)]
+          [storage-head : i64 (arena.tl_arena_current)]
           (begin
-            (set! macro-expand-scratch-arena scratch-head)
+            (if (= macro-splice-view-arena 0)
+              (set! macro-expand-scratch-arena storage-head)
+              (set! macro-splice-view-arena storage-head))
             (unsafe
               (arena.tl_arena_set enclosing))
             out))))
@@ -65106,6 +65126,55 @@
           [(MacroMaybeDecl.No) (set! index (+ index 1))]))
       (MacroMaybeDecl.No))))
 
+(define (macro-surface-call-decl-fill-in-module
+  [target-module-id : i64]
+  [base-id : i64]) : MacroMaybeDecl
+  (let
+    [result : MacroMaybeDecl
+      (match (macro-surface-summaries-call-decl-in-module
+        (compiler-load-surface-summaries)
+        target-module-id
+        base-id)
+        [(MacroMaybeDecl.Some
+            macro-name
+            def-module
+            declaration-id
+            params
+            ret
+            body)
+          (MacroMaybeDecl.Some
+            macro-name
+            def-module
+            declaration-id
+            params
+            ret
+            body)]
+        [(MacroMaybeDecl.No) (MacroMaybeDecl.No)])]
+    (begin
+      (macro-surface-call-decl-cache-put! target-module-id base-id result)
+      result)))
+
+;; R3-P2 hardening of R3-P1's residual hazard class (its section 6.1: "a
+;; per-declaration ambient arena turns every allocate-into-whatever-arena-is-
+;; current cache into a use-after-free").
+;;
+;; This is a VALUE cache: rebuilding `MacroMaybeDecl.Some` heap-copies the enum
+;; payload into whatever arena is current -- the struct-assignment variant of
+;; the grow-while-transient hazard documented in `compiler_ast_types.tl`
+;; ("assigning a struct value heap-copies it in the current arena"). The cache
+;; is cleared at EVERY splice by `macro-alias-derived-cache-reset!` and refilled
+;; from inside the next declaration's expansion, which under R3-P1 runs in that
+;; declaration's generation; the entry then outlives its arena while the cache
+;; keeps handing it out. Nothing on the current workload reads a stale entry
+;; late enough to fault, so this is a latent defect rather than an observed one.
+;;
+;; Same owner and same argument as R3-P1's `macro-flat-import-targets` fix: the
+;; macro-expansion scratch arena, whose lifetime is exactly this cache's --
+;; `macro-expand-scratch-clear-owned-caches!` runs the reset immediately before
+;; that arena is destroyed. The payloads the entry points at (`params`, `ret`,
+;; `body`, the name strings) are owned by the load surface summaries and are
+;; untouched; only the enum cell moves. Redirected only while a generation is
+;; live, so every non-generational caller keeps its existing owner.
 (define (macro-surface-call-decl-in-module
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
@@ -65114,30 +65183,25 @@
     (match (macro-surface-call-decl-cache-get target-module-id base-id)
       [(MacroSurfaceCallDeclCacheLookup.Hit cached) cached]
       [(MacroSurfaceCallDeclCacheLookup.Miss)
-        (let
-          [result : MacroMaybeDecl
-            (match (macro-surface-summaries-call-decl-in-module
-              (compiler-load-surface-summaries)
-              target-module-id
-              base-id)
-              [(MacroMaybeDecl.Some
-                  macro-name
-                  def-module
-                  declaration-id
-                  params
-                  ret
-                  body)
-                (MacroMaybeDecl.Some
-                  macro-name
-                  def-module
-                  declaration-id
-                  params
-                  ret
-                  body)]
-              [(MacroMaybeDecl.No) (MacroMaybeDecl.No)])]
-          (begin
-            (macro-surface-call-decl-cache-put! target-module-id base-id result)
-            result))])))
+        (if (= macro-decl-generation-arena 0)
+          (macro-surface-call-decl-fill-in-module target-module-id base-id)
+          (let
+            [enclosing : i64 (arena.tl_arena_current)]
+            [scratch : i64 (macro-expand-scratch-arena-get)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set scratch))
+              (let
+                [out : MacroMaybeDecl
+                  (macro-surface-call-decl-fill-in-module
+                    target-module-id
+                    base-id)]
+                [scratch-head : i64 (arena.tl_arena_current)]
+                (begin
+                  (set! macro-expand-scratch-arena scratch-head)
+                  (unsafe
+                    (arena.tl_arena_set enclosing))
+                  out)))))])))
 
 (define (macro-expr-uses-expr-type? [expr-bases : i64] [expr : AstExpr]) : bool
   (or
@@ -75810,11 +75874,17 @@
                                           cur-ctx
                                           (macro-splice-view-program
                                             next-decls-for-ctx))]
-                                      [refresh-decls : AstDeclList
-                                        (macro-scratch-decl-list-filter-path
-                                          rest
-                                          rest-paths
-                                          decl-path)]
+                                      ;; R3-P2: the refresh list is built at
+                                      ;; its only use site, on the non-deferred
+                                      ;; branch below. Built here it was a
+                                      ;; `|rest|`-sized copy that the deferred
+                                      ;; branch threw away unread -- 9 of the 94
+                                      ;; splices on the opt1 self-compile.
+                                      ;; `macro-decl-list-filter-path` is a pure
+                                      ;; filter over `rest` / `rest-paths`,
+                                      ;; neither of which the env extend below
+                                      ;; touches, so moving the call past it is
+                                      ;; order-independent.
                                       [defer-refresh? : bool
                                         (macro-decls-start-with-module-import-placeholder?
                                           rest)]
@@ -75893,7 +75963,10 @@
                                                     [refresh-result : ResultTcEnv
                                                       (tc-build-top-env-list-explicit-in-module
                                                         next-ctx
-                                                        refresh-decls
+                                                        (macro-scratch-decl-list-filter-path
+                                                          rest
+                                                          rest-paths
+                                                          decl-path)
                                                         next-top-env
                                                         cur-module
                                                         cur-module-id)]

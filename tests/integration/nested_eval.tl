@@ -1,14 +1,13 @@
 ;; nested_eval.tl - end-to-end proof of NESTED PATTERN MATCHING (#41).
 ;;
-;; A tiny tree-walking evaluator over a boxed recursive `Sexpr` list spine that
-;; dispatches a call form on its operator symbol. The point of this example is
-;; the `Cons` arm: it destructures TWO enum layers at once with a single nested
-;; pattern
+;; A tiny tree-walking evaluator over a recursive `Sexpr` tree with dense call
+;; arguments. The `Call` arm destructures TWO enum layers at once with a single
+;; nested pattern
 ;;
-;;     [(Sexpr.Cons (SexprAtom.Sym name) rest) ...]
+;;     [(Sexpr.Call (SexprAtom.Sym name) args) ...]
 ;;
 ;; binding `name : String` (the operator symbol, projected out of the nested
-;; `SexprAtom.Sym`) and `rest : (Box Sexpr)` (the argument spine) in one `match`. Before
+;; `SexprAtom.Sym`) and `args : (Array SexprAtom)` in one `match`. Before
 ;; nested patterns this required a separate single-level projection helper
 ;; (`sexpr-sym`, a `match` that pulled the symbol text out of the head and
 ;; panicked on the wrong shape); the nested pattern folds that projection into
@@ -29,21 +28,7 @@
   (List (Box Sexpr)))
 
 (defenum Sexpr
-  (Nil)
-  (Cons SexprAtom (Box Sexpr)))
-
-;; sexpr-head ("car") / sexpr-tail ("cdr"): argument-spine projections. These
-;; remain single-level (the spine is a flat cons list); the symbol projection
-;; that USED to be a third helper is now the nested pattern in `eval-sexpr`.
-(define (sexpr-head [s : Sexpr]) : SexprAtom
-  (match s
-    [(Sexpr.Cons h _) h]
-    [_ (io.panic "eval: car of a non-cons")]))
-
-(define (sexpr-tail [s : Sexpr]) : Sexpr
-  (match s
-    [(Sexpr.Cons _ t) (box-get t)]
-    [_ (io.panic "eval: cdr of a non-cons")]))
+  (Call SexprAtom (Array SexprAtom)))
 
 (define (eval-atom [a : SexprAtom]) : i64
   (match a
@@ -51,17 +36,15 @@
     [(SexprAtom.List nested) (eval-sexpr (box-get nested))]
     [_ (io.panic "eval: not an evaluable atom")]))
 
-;; eval-sexpr: the tree-walking interpreter. The `Cons` arm uses the nested
+;; eval-sexpr: the tree-walking interpreter. The `Call` arm uses the nested
 ;; pattern to bind the operator symbol `name` directly from the head's `Sym`.
 (define (eval-sexpr [s : Sexpr]) : i64
   (match s
-    ;; Nested pattern: head must itself be `(SexprAtom.Sym name)`. Binds `name : String`
-    ;; (one level down) and `rest : (Box Sexpr)` together.
-    [(Sexpr.Cons (SexprAtom.Sym name) rest)
+    ;; Nested pattern: the operator must itself be `(SexprAtom.Sym name)`.
+    [(Sexpr.Call (SexprAtom.Sym name) args)
       (let
-        [args : Sexpr (box-get rest)]
-        [arg1 : SexprAtom (sexpr-head args)]
-        [arg2 : SexprAtom (sexpr-head (sexpr-tail args))]
+        [arg1 : SexprAtom (array-ref args 0)]
+        [arg2 : SexprAtom (array-ref args 1)]
         [a : i64 (eval-atom arg1)]
         [b : i64 (eval-atom arg2)]
         (cond
@@ -79,17 +62,11 @@
 (define (main) : i64
   (let
     [inner : Sexpr
-      (Sexpr.Cons
+      (Sexpr.Call
         (SexprAtom.Sym "*")
-        (box
-          (Sexpr.Cons
-            (SexprAtom.Int 2)
-            (box (Sexpr.Cons (SexprAtom.Int 3) (box Sexpr.Nil))))))]
+        (make-array (SexprAtom.Int 2) (SexprAtom.Int 3)))]
     [prog : Sexpr
-      (Sexpr.Cons
+      (Sexpr.Call
         (SexprAtom.Sym "+")
-        (box
-          (Sexpr.Cons
-            (SexprAtom.Int 1)
-            (box (Sexpr.Cons (SexprAtom.List (box inner)) (box Sexpr.Nil))))))]
+        (make-array (SexprAtom.Int 1) (SexprAtom.List (box inner))))]
     (eval-sexpr prog)))

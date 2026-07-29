@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.string)
 
 (defenum Value
@@ -8,40 +9,91 @@
   (Object (Box FieldList))
   (Sequence (Box ValueList)))
 
-(defenum FieldList
-  (FieldNil)
-  (FieldCons String Value (Box FieldList)))
+(defstruct Field
+  (name String)
+  (value Value))
 
-(defenum ValueList
-  (ValueNil)
-  (ValueCons Value (Box ValueList)))
+(defstruct FieldList
+  (items (Array Field)))
+
+(defstruct ValueList
+  (items (Array Value)))
 
 (defenum Lookup
   (Found Value)
   (Missing))
 
+(define (field-list-empty) : FieldList
+  (FieldList (array.make-array Field 0)))
+
+(define (field-list-copy-from
+  [source : (Array Field)]
+  [target : (Array Field)]
+  [index : i64]) : unit
+  (if (= index (array-length source))
+    unit
+    (begin
+      (array-set! target (+ index 1) (array-ref source index))
+      (field-list-copy-from source target (+ index 1)))))
+
+(define (field-list-prepend
+  [name : String]
+  [value : Value]
+  [rest : FieldList]) : FieldList
+  (let
+    [source : (Array Field) (struct-get rest items)]
+    [target : (Array Field)
+      (array.make-array Field (+ (array-length source) 1))]
+    (begin
+      (array-set! target 0 (Field name value))
+      (field-list-copy-from source target 0)
+      (FieldList target))))
+
+(define (field-list-get-from
+  [items : (Array Field)]
+  [name : String]
+  [index : i64]) : Lookup
+  (if (= index (array-length items))
+    (Missing)
+    (let
+      [field : Field (array-ref items index)]
+      (if (string.eq (struct-get field name) name)
+        (Found (struct-get field value))
+        (field-list-get-from items name (+ index 1))))))
+
 (define (field-list-get [fields : FieldList] [name : String]) : Lookup
-  (match fields
-    [FieldNil (Missing)]
-    [(FieldCons key value rest)
-      (if (string.eq key name)
-        (Found value)
-        (field-list-get (box-get rest) name))]))
+  (field-list-get-from (struct-get fields items) name 0))
 
 (define (value-list-count [items : ValueList]) : i64
-  (match items
-    [(ValueNil) 0]
-    [(ValueCons _ rest) (+ 1 (value-list-count (box-get rest)))]))
+  (array-length (struct-get items items)))
 
 (define (value-list-get [items : ValueList] [index : i64]) : Lookup
-  (if (< index 0)
+  (if (or (< index 0) (>= index (value-list-count items)))
     (Missing)
-    (match items
-      [(ValueNil) (Missing)]
-      [(ValueCons head rest)
-        (if (= index 0)
-          (Found head)
-          (value-list-get (box-get rest) (- index 1)))])))
+    (Found (array-ref (struct-get items items) index))))
+
+(define (value-list-empty) : ValueList
+  (ValueList (array.make-array Value 0)))
+
+(define (value-list-copy-from
+  [source : (Array Value)]
+  [target : (Array Value)]
+  [index : i64]) : unit
+  (if (= index (array-length source))
+    unit
+    (begin
+      (array-set! target (+ index 1) (array-ref source index))
+      (value-list-copy-from source target (+ index 1)))))
+
+(define (value-list-prepend [value : Value] [rest : ValueList]) : ValueList
+  (let
+    [source : (Array Value) (struct-get rest items)]
+    [target : (Array Value)
+      (array.make-array Value (+ (array-length source) 1))]
+    (begin
+      (array-set! target 0 value)
+      (value-list-copy-from source target 0)
+      (ValueList target))))
 
 (defmacro (encode-bool [value : bool]) : Value
   `(serialize_toy_format.Bool ,value))
@@ -76,10 +128,10 @@
     [_ (return (,err-ctor "toy format: expected string"))]))
 
 (defmacro (object-empty) : FieldList
-  `serialize_toy_format.FieldNil)
+  `(serialize_toy_format.field-list-empty))
 
 (defmacro (object-field [name : Expr] [value : Expr] [rest : Expr]) : FieldList
-  `(serialize_toy_format.FieldCons ,name ,value (box ,rest)))
+  `(serialize_toy_format.field-list-prepend ,name ,value ,rest))
 
 (defmacro (object-finish [fields : Expr]) : Value
   `(serialize_toy_format.Object (box ,fields)))
@@ -99,10 +151,10 @@
     [_ (return (,err-ctor "toy format: expected object"))]))
 
 (defmacro (sequence-empty) : ValueList
-  `ValueNil)
+  `(serialize_toy_format.value-list-empty))
 
 (defmacro (sequence-element [_index : Expr] [value : Expr] [rest : Expr]) : ValueList
-  `(serialize_toy_format.ValueCons ,value (box ,rest)))
+  `(serialize_toy_format.value-list-prepend ,value ,rest))
 
 (defmacro (sequence-finish [items : Expr]) : Value
   `(serialize_toy_format.Sequence (box ,items)))

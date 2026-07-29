@@ -20083,23 +20083,21 @@
   (if (not a) 1 2))")
 
 (define (compiler-backend-multi-not-branch-source) : String
-  "(defenum Items
-  (Nil)
-  (Cons i64 (Box Items)))
-(define (contains [items : Items] [needle : i64]) : bool
+  "(define (contains [items : (Array i64)] [needle : i64]) : bool
   (if (< needle 0)
     (contains items (+ needle 1))
     (let
-      [cursor : Items items]
+      [index : i64 0]
       [found : bool false]
       (begin
         (while (not found)
-          (match cursor
-            [(Items.Nil) (return false)]
-            [(Items.Cons head rest)
-              (if (= head needle)
+          (if (>= index (array-length items))
+            (return false)
+            (begin
+              (if (= (array-ref items index) needle)
                 (set! found true)
-                (set! cursor (box-get rest)))]))
+                unit)
+              (set! index (+ index 1)))))
         true))))")
 
 (define (compiler-backend-negated-compare-branch-ok?) : bool
@@ -23483,10 +23481,10 @@
     (compiler-lower-inline-boxed-recursive-source))
     [(ResultCompilerBackend.Ok asm)
       (backend-and4
-        (= (compiler-backend-alloc-call-count asm) 1)
-        ;; (box Nil) heap-allocates a full inline ListI64 value: tag (8) plus
-        ;; the largest variant payload Cons(i64, (Box ListI64)) = 16, so 24
-        ;; bytes. With default-inline aggregates the box holds the
+        (= (compiler-backend-alloc-call-count asm) 2)
+        ;; Both boxed leaves heap-allocate a full inline Tree value: tag (8)
+        ;; plus the largest variant payload Branch((Box Tree), (Box Tree)) =
+        ;; 16, so 24 bytes. With default-inline aggregates each box holds the
         ;; inline value, not an 8-byte handle.
         (compiler-backend-string-contains-alloc-size? asm 24)
         (compiler-backend-string-contains? asm "    leaq -")

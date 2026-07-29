@@ -189,6 +189,14 @@ run_gate \
     scripts/check-gate-reachability.sh \
     --self-test
 run_gate \
+    "zero-cons structural classifier self-tests" \
+    scripts/check-zero-cons.sh \
+    --self-test
+run_gate \
+    "zero-cons fixture and embedded source invariant" \
+    scripts/check-zero-cons.sh \
+    --fixtures
+run_gate \
     "SPMD AVX-512 instruction harness self-tests" \
     scripts/measure-spmd-avx512-instructions.sh \
     --self-test

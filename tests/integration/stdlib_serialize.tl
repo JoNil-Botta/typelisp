@@ -212,26 +212,31 @@
     [_ false]))
 
 (define (serialize-toy-empty-sequence) : toy.Value
-  (toy.Sequence (box toy.ValueNil)))
+  (toy.Sequence (box (toy.value-list-empty))))
 
 (define (serialize-toy-enum-object [tag : String] [payload : toy.Value]) : toy.Value
   (toy.Object
     (box
-      (toy.FieldCons
+      (toy.field-list-prepend
         "tag"
         (toy.Text tag)
-        (box (toy.FieldCons "payload" payload (box toy.FieldNil)))))))
+        (toy.field-list-prepend "payload" payload (toy.field-list-empty))))))
 
 (define (serialize-toy-enum-missing-tag) : toy.Value
   (toy.Object
     (box
-      (toy.FieldCons
+      (toy.field-list-prepend
         "payload"
         (serialize-toy-empty-sequence)
-        (box toy.FieldNil)))))
+        (toy.field-list-empty)))))
 
 (define (serialize-toy-enum-missing-payload) : toy.Value
-  (toy.Object (box (toy.FieldCons "tag" (toy.Text "Idle") (box toy.FieldNil)))))
+  (toy.Object
+    (box
+      (toy.field-list-prepend
+        "tag"
+        (toy.Text "Idle")
+        (toy.field-list-empty)))))
 
 (define (serialize-enum-object-tag-and-payload-count-ok?
   [value : toy.Value]
@@ -532,41 +537,42 @@
       [(result_i64_string_ser.Err _) false])))
 
 (define (serialize-missing-field-value) : toy.Value
-  (toy.Object (box (toy.FieldCons "name" (toy.Text "Ada") (box toy.FieldNil)))))
+  (toy.Object
+    (box
+      (toy.field-list-prepend
+        "name"
+        (toy.Text "Ada")
+        (toy.field-list-empty)))))
 
 (define (serialize-wrong-kind-value) : toy.Value
   (toy.Object
     (box
-      (toy.FieldCons
+      (toy.field-list-prepend
         "name"
         (toy.Text "Ada")
-        (box
-          (toy.FieldCons
-            "age"
-            (toy.Text "36")
-            (box
-              (toy.FieldCons
-                "active"
-                (toy.Bool true)
-                (box
-                  (toy.FieldCons
-                    "score"
-                    (toy.Float 9.5)
-                    (box
-                      (toy.FieldCons
-                        "home"
-                        (person_ser.encode
-                          (Person
-                            "Nested"
-                            (cast 1 : i32)
-                            false
-                            1.0
-                            (Address 12345 "London")
-                            (array 4 5 6)
-                            (serialize-previous-addresses)
-                            (serialize-make-samples)
-                            (serialize-combo)))
-                        (box toy.FieldNil)))))))))))))
+        (toy.field-list-prepend
+          "age"
+          (toy.Text "36")
+          (toy.field-list-prepend
+            "active"
+            (toy.Bool true)
+            (toy.field-list-prepend
+              "score"
+              (toy.Float 9.5)
+              (toy.field-list-prepend
+                "home"
+                (person_ser.encode
+                  (Person
+                    "Nested"
+                    (cast 1 : i32)
+                    false
+                    1.0
+                    (Address 12345 "London")
+                    (array 4 5 6)
+                    (serialize-previous-addresses)
+                    (serialize-make-samples)
+                    (serialize-combo)))
+                (toy.field-list-empty)))))))))
 
 (define (serialize-missing-field-ok?) : bool
   (match (person_ser.decode (serialize-missing-field-value))

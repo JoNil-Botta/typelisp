@@ -653,9 +653,9 @@
   (fixed (Array String 2))
   (items (Array String))
   (pair (Tuple String String)))
-(defenum StringList
-  (SNil)
-  (SCons String (Box StringList)))
+(defenum StringTree
+  (SLeaf String)
+  (SBranch (Box StringTree) (Box StringTree)))
 (define (clone-tuple [items : (Array String)]) : (Tuple String (Array String))
   (clone (tuple \"tuple\" items)))
 (define (clone-fixed) : (Array String 2)
@@ -664,9 +664,9 @@
   (clone items))
 (define (clone-holder [items : (Array String)]) : Holder
   (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
-(define (clone-list [list : StringList]) : StringList
-  (clone list))
-(define (main [items : (Array String)] [list : StringList]) : i64 0)")
+(define (clone-tree [tree : StringTree]) : StringTree
+  (clone tree))
+(define (main [items : (Array String)] [tree : StringTree]) : i64 0)")
 
 (define (compiler-typecheck-clone-function-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))
@@ -1044,12 +1044,15 @@
   "(define (main) : i64 (struct-get 1 x))")
 
 (define (compiler-typecheck-recursive-enum-boxed-source) : String
-  "(defenum ListI64
-  (ListNil)
-  (ListCons i64 (Box ListI64)))
-(define (head [xs : ListI64]) : i64
-  (match xs [(ListCons v rest) v] [ListNil 0]))
-(define (main) : i64 (head (ListCons 1 (box ListNil))))")
+  "(defenum Tree
+  (Leaf i64)
+  (Branch (Box Tree) (Box Tree)))
+(define (left-value [tree : Tree]) : i64
+  (match tree
+    [(Leaf value) value]
+    [(Branch left _) (left-value (box-get left))]))
+(define (main) : i64
+  (left-value (Branch (box (Leaf 1)) (box (Leaf 2)))))")
 
 (define (compiler-typecheck-duplicate-variant-source) : String
   "(defenum Left (Same) (Same))
@@ -1762,9 +1765,6 @@
   (V9)
   (V10)
   (V11 u8 i64 u16))
-(defenum ListI64
-  (ListNil)
-  (ListCons i64 (Box ListI64)))
 (defenum Tree
   (Leaf i64)
   (Node (Box Tree) (Box Tree)))")
@@ -2033,14 +2033,6 @@
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-layout-for-id
                     ctx
-                    (compiler-typecheck-fixture-nominal-id program "ListI64"))
-                    [(ResultTcInlineAggregateLayout.Ok layout)
-                      (if (= (tc-inline-aggregate-layout-size layout) 24)
-                        unit
-                        (set! ok false))]
-                    [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
-                  (match (tc-inline-aggregate-layout-for-id
-                    ctx
                     (compiler-typecheck-fixture-nominal-id program "Tree"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
                       (if (= (tc-inline-aggregate-layout-size layout) 24)
@@ -2094,10 +2086,9 @@
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
-(define (compiler-typecheck-inline-boxed-list-source) : String
-  "(defenum ListI64
-  (ListNil)
-  (ListCons i64 (Box ListI64)))")
+(define (compiler-typecheck-inline-dense-sequence-source) : String
+  "(defstruct I64Sequence
+  (items (Array i64)))")
 
 (define (compiler-typecheck-inline-boxed-tree-source) : String
   "(defenum Tree
@@ -2105,27 +2096,29 @@
   (Node (Box Tree) (Box Tree)))")
 
 (define (compiler-typecheck-inline-boxed-sym-i64-env-source) : String
-  "(defenum SymI64Env
-  (SymI64Nil)
-  (SymI64Bind i64 i64 (Box SymI64Env)))")
+  "(defstruct SymI64Binding
+  (key i64)
+  (value i64))
+(defstruct SymI64Env
+  (bindings (Array SymI64Binding)))")
 
 (define (compiler-typecheck-inline-boxed-loader-helper-source) : String
-  "(defenum InlineHelperRootList
-  (InlineHelperRootNil)
-  (InlineHelperRootCons String (Box InlineHelperRootList)))
+  "(defstruct InlineHelperRoots
+  (slots (Array String))
+  (len i64))
 (defstruct CompilerPkgDep
   (alias String)
   (path String))
-(defenum CompilerPkgDepList
-  (CompilerPkgDepNil)
-  (CompilerPkgDepCons CompilerPkgDep (Box CompilerPkgDepList)))")
+(defstruct CompilerPkgDeps
+  (slots (Array CompilerPkgDep))
+  (len i64))")
 
 (define (compiler-typecheck-inline-loader-helper-layout-ok?) : bool
   (let
     [src : String (compiler-typecheck-inline-boxed-loader-helper-source)]
     (and
-      (compiler-typecheck-inline-layout-ok? src "InlineHelperRootList")
-      (compiler-typecheck-inline-layout-ok? src "CompilerPkgDepList"))))
+      (compiler-typecheck-inline-layout-ok? src "InlineHelperRoots")
+      (compiler-typecheck-inline-layout-ok? src "CompilerPkgDeps"))))
 
 (define (compiler-typecheck-inline-ctfe-metadata-source) : String
   "(defenum CompilerCtfeValue
@@ -2147,9 +2140,9 @@
   (len i64))
 (defenum AstType
   (AstType.I64))
-(defenum AstTypeList
-  (AstTypeList.Nil)
-  (AstTypeList.Cons (Box AstType) (Box AstTypeList)))
+(defstruct AstTypeList
+  (slots (Array AstType))
+  (len i64))
 (defstruct CtfeReflectField
   (name String)
   (ty AstType))
@@ -2207,23 +2200,23 @@
   (AstType.Func (Box AstTypeList) i64)
   (AstType.Tuple (Box AstTypeList))
   (AstType.Box (Box AstType)))
-(defenum AstTypeList
-  (AstTypeList.Nil)
-  (AstTypeList.Cons (Box AstType) (Box AstTypeList)))
+(defstruct AstTypeList
+  (slots (Array AstType))
+  (len i64))
 (defenum AstPattern
   (AstPattern.Wildcard)
   (AstPattern.Tuple (Box AstPatternList)))
-(defenum AstPatternList
-  (AstPatternList.Nil)
-  (AstPatternList.Cons (Box AstPattern) (Box AstPatternList)))
+(defstruct AstPatternList
+  (slots (Array AstPattern))
+  (len i64))
 (defenum AstExpr
   (AstExpr.Literal i64)
   (AstExpr.Call (Box AstExpr) FixtureExprList)
   (AstExpr.Tuple FixtureExprList)
   (AstExpr.Match (Box AstExpr) AstPatternList))
-(defenum FixtureExprList
-  (FixtureExprList.Nil)
-  (FixtureExprList.Cons (Box AstExpr) (Box FixtureExprList)))")
+(defstruct FixtureExprList
+  (slots (Array AstExpr))
+  (len i64))")
 
 (define (compiler-typecheck-inline-ast-list-layout-ok?) : bool
   (let
@@ -2248,10 +2241,10 @@
   (FmtCstList (Box FormatCstList))
   (FmtCstBracketList (Box FormatCstList))
   (FmtCstForms (Box FormatCstList)))
-(defenum FormatCstList
-  (FmtCstNil)
-  (FmtCstCons FormatCst (Box FormatCstList))
-  (FmtCstDense (Array FormatCst) i64 i64))
+(defstruct FormatCstList
+  (slots (Array FormatCst))
+  (start i64)
+  (len i64))
 (defenum Doc
   (DEmpty)
   (DText String)
@@ -2280,10 +2273,10 @@
   (ref-mut (&mut phase Node))
   (visit (-> Node Node)))")
 
-(define (compiler-typecheck-inline-unboxed-list-source) : String
-  "(defenum BadList
-  (BadNil)
-  (BadCons i64 BadList))")
+(define (compiler-typecheck-inline-unboxed-tree-source) : String
+  "(defenum BadTree
+  (Leaf i64)
+  (Branch BadTree BadTree))")
 
 (define (compiler-typecheck-inline-mutual-struct-source) : String
   "(defstruct A (b B))
@@ -2307,10 +2300,10 @@
     (begin
       (if (compiler-typecheck-error-ok?
         (string.concat3
-          (compiler-typecheck-inline-unboxed-list-source)
+          (compiler-typecheck-inline-unboxed-tree-source)
           "\n"
-          "(define (main [x : BadList]) : i64 0)")
-        "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
+          "(define (main [x : BadTree]) : i64 0)")
+        "typecheck: inline aggregate layout cycle BadTree -> BadTree; insert (Box BadTree) at the recursive edge")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -2318,15 +2311,16 @@
         "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok? (compiler-typecheck-inline-boxed-list-source))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-inline-dense-sequence-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-inline-boxed-tree-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-ok?
-        (compiler-typecheck-inline-boxed-list-source)
-        "ListI64")
+        (compiler-typecheck-inline-dense-sequence-source)
+        "I64Sequence")
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-ok?
@@ -2360,9 +2354,9 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-error-ok?
-        (compiler-typecheck-inline-unboxed-list-source)
-        "BadList"
-        "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
+        (compiler-typecheck-inline-unboxed-tree-source)
+        "BadTree"
+        "typecheck: inline aggregate layout cycle BadTree -> BadTree; insert (Box BadTree) at the recursive edge")
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-error-ok?
@@ -5495,12 +5489,12 @@
   (match s [(SCons (SSym op) rest) (__tl_string_length op)] [_ 0]))")
 
 (define (compiler-typecheck-match-ok-nested-rest-source) : String
-  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons (Box Sexpr) (Box Sexpr)))
-(define (depth [s : Sexpr]) : i64
-  (match s
-    [(SCons head rest)
-      (match (box-get head)
-        [(SSym op) (+ 1 (depth (box-get rest)))]
+  "(defenum Expr (Int i64) (Sym String) (Branch (Box Expr) (Box Expr)))
+(define (depth [expr : Expr]) : i64
+  (match expr
+    [(Branch left right)
+      (match (box-get left)
+        [(Sym op) (+ 1 (depth (box-get right)))]
         [_ 0])]
     [_ 0]))")
 
@@ -5606,9 +5600,12 @@
 (define (main [r : result_i64_string.Result]) : i64
   (match r [(result_i64_string.Ok v) v]))")
 
-(define (compiler-typecheck-match-ok-recursive-list-source) : String
-  "(defenum List (Cons i64 (Box List)) (Nil))
-(define (main [l : List]) : i64 (match l [(Cons n rest) n] [(Nil) 0]))")
+(define (compiler-typecheck-match-ok-dense-sequence-source) : String
+  "(defenum SequenceView (Empty) (Items (Array i64)))
+(define (main [view : SequenceView]) : i64
+  (match view
+    [(Items items) (if (= (array-length items) 0) 0 (array-ref items 0))]
+    [(Empty) 0]))")
 
 (define (compiler-typecheck-match-ok-recursive-expr-source) : String
   "(defenum Expr (ENum i64) (EAdd (Box Expr) (Box Expr)))
@@ -5879,7 +5876,7 @@
         (and
           ok
           (compiler-typecheck-ok?
-            (compiler-typecheck-match-ok-recursive-list-source))))
+            (compiler-typecheck-match-ok-dense-sequence-source))))
       (set!
         ok
         (and
@@ -6494,8 +6491,7 @@
     "(module stdlib.comptime)\n"
     (compiler-typecheck-stdlib-comptime-expr-decl-source)
     "\n(defenum ExprList
-  (ExprListNil)
-  (ExprListCons Expr (Box ExprList)))"))
+  (Unexpected))"))
 
 (define (compiler-typecheck-stdlib-comptime-surface-tests-ok?) : bool
   (and

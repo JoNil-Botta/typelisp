@@ -1196,9 +1196,9 @@
   (fixed (Array String 2))
   (items (Array String))
   (pair (Tuple String String)))
-(defenum StringList
-  (Nil)
-  (Cons String (Box StringList)))
+(defenum StringTree
+  (Leaf String)
+  (Branch (Box StringTree) (Box StringTree)))
 (define (clone-tuple [items : (Array String)]) : i64
   (let [pair : (Tuple String (Array String)) (clone (tuple \"tuple\" items))]
     (__tl_string_length (tuple-ref pair 0))))
@@ -1210,9 +1210,9 @@
     (array-length copied)))
 (define (clone-holder [items : (Array String)]) : Holder
   (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
-(define (clone-list [list : StringList]) : StringList
-  (clone list))
-(define (main [n : i64] [list : StringList]) : i64
+(define (clone-tree [tree : StringTree]) : StringTree
+  (clone tree))
+(define (main [n : i64] [tree : StringTree]) : i64
   (let
     [items1 : (Array String) (make-array String n)]
     [items2 : (Array String) (make-array String n)]
@@ -1222,7 +1222,7 @@
       (clone-dyn items2)
       (clone-holder items3)
       (clone-fixed)
-      (clone-list list)
+      (clone-tree tree)
       0)))")
 
 (define (compiler-lower-clone-dynarray-bulk-source) : String
@@ -1335,8 +1335,8 @@
               (if (=
                 (lower-test-function-call-count
                   functions
-                  ".::clone-list"
-                  ".::clone$StringList")
+                  ".::clone-tree"
+                  ".::clone$StringTree")
                 1)
                 unit
                 (set! ok false))
@@ -1359,7 +1359,7 @@
               (if (>
                 (lower-test-function-call-count
                   functions
-                  ".::clone$StringList$acc"
+                  ".::clone$StringTree"
                   "tl_substring")
                 0)
                 unit
@@ -1470,15 +1470,15 @@
       [(Wide b n) (+ (cast b : i64) n)])))")
 
 (define (compiler-lower-inline-boxed-recursive-source) : String
-  "(defenum ListI64 (Nil) (Cons i64 (Box ListI64)))
+  "(defenum Tree (Leaf i64) (Branch (Box Tree) (Box Tree)))
 (define (main) : i64
   (let
-    [tail : (Box ListI64) (box Nil)]
-    (let
-      [list : ListI64 (Cons 41 tail)]
-      (match list
-        [Nil 0]
-        [(Cons head _) (+ head 1)]))))")
+    [tree : Tree (Branch (box (Leaf 20)) (box (Leaf 21)))]
+    (match tree
+      [(Leaf value) value]
+      [(Branch left right)
+        (+ (match (box-get left) [(Leaf value) value] [_ 0])
+           (match (box-get right) [(Leaf value) value] [_ 0]))])))")
 
 (define (compiler-lower-inline-imported-enum-payload-source) : String
   "(module stdlib.maybe_string)
@@ -1494,10 +1494,10 @@
       [(maybe_string.MaybeString.Some head) head])))")
 
 (define (compiler-lower-inline-recursive-error-source) : String
-  "(defenum BadList (Nil) (Cons i64 BadList))
+  "(defenum BadTree (Leaf i64) (Branch BadTree BadTree))
 (define (main) : i64
   (let
-    [x : BadList (BadList.Cons 1 BadList.Nil)]
+    [x : BadTree (BadTree.Leaf 1)]
     0))")
 
 (define (compiler-lower-inline-aggregate-copy-source) : String
@@ -1704,7 +1704,7 @@
             (begin
               (if (=
                 (lower-test-function-call-count functions "main" "tl_alloc")
-                1)
+                2)
                 unit
                 (set! ok false))
               (if (>= (lower-test-function-alloc-count functions "main") 6)
@@ -1893,7 +1893,7 @@
     (compiler-lower-inline-enum-layout-cache-order-ok?)
     (compiler-lower-inline-error-ok?
       (compiler-lower-inline-recursive-error-source)
-      "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))
+      "typecheck: inline aggregate layout cycle BadTree -> BadTree; insert (Box BadTree) at the recursive edge")))
 
 (define (compiler-lower-generated-decl-source) : String
   "(defstruct Point (x i64) (y i64))
@@ -5020,17 +5020,14 @@
 (define (compiler-lower-module-function-returning-struct-source) : String
   "(module data)
 (defstruct Candidate (number i64))
-(defenum CandList (Nil) (Cons Candidate (Box CandList)))
-(define (cand-nth [cands : CandList]) : Candidate
-  (match cands
-    [(CandList.Nil) (Candidate 0)]
-    [(CandList.Cons head rest) head]))
+(define (cand-nth [cands : (Array Candidate)]) : Candidate
+  (array-ref cands 0))
 (module main)
 (import data)
 (define (main) : i64
   (let [c : data.Candidate
     (data.cand-nth
-      (data.Cons (data.Candidate 7) (box data.Nil)))]
+      (make-array (data.Candidate 7)))]
     (struct-get c number)))")
 
 (define (compiler-lower-module-function-returning-struct-ok?) : bool

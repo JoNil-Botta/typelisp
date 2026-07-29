@@ -1,15 +1,14 @@
 (defenum Value
   (ValueObject FieldList))
 
-(defenum FieldList
-  (FieldNil)
-  (FieldCons Value (Box FieldList)))
+(defstruct FieldList
+  (items (Array Value)))
 
 (defmacro (object-empty) : FieldList
-  `serialize_missing_sequence_hook_format.FieldNil)
+  `(serialize_missing_sequence_hook_format.FieldList (make-array Value 0)))
 
-(defmacro (object-field [_name : Expr] [value : Expr] [rest : Expr]) : FieldList
-  `(serialize_missing_sequence_hook_format.FieldCons ,value (box ,rest)))
+(defmacro (object-field [_name : Expr] [_value : Expr] [rest : Expr]) : FieldList
+  rest)
 
 (defmacro (object-finish [fields : Expr]) : Value
   `(serialize_missing_sequence_hook_format.ValueObject ,fields))

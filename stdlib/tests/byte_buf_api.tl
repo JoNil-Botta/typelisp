@@ -104,6 +104,32 @@
         [expected : String "hello"]
         (test.assert-string-eq (& out) (& expected) "to-string text")))))
 
+(define (assert-string-copy-boundaries) : unit
+  (begin
+    (let
+      [buf : byte_buf.ByteBuf (byte_buf.from-string "owner")]
+      [copy : String (byte_buf.to-string buf)]
+      [expected : String "owner"]
+      (begin
+        (set! buf (byte_buf.set! buf 0 (make-u8 88)))
+        (test.assert-string-eq
+          (& copy)
+          (& expected)
+          "to-string owns copied storage")))
+    (let
+      [buf : byte_buf.ByteBuf (byte_buf.from-string "borrow")]
+      [copy : String
+        (let
+          [view : (& buf bytes) (byte_buf.as-bytes (& buf))]
+          (byte_buf.bytes-to-string view))]
+      [expected : String "borrow"]
+      (begin
+        (set! buf (byte_buf.set! buf 0 (make-u8 88)))
+        (test.assert-string-eq
+          (& copy)
+          (& expected)
+          "bytes-to-string owns copied storage")))))
+
 (define (assert-borrowed-bytes) : unit
   (let
     [text : String "abcdef"]
@@ -223,6 +249,7 @@
     (assert-borrowed-copy)
     (assert-mixed-append)
     (assert-string-roundtrip)
+    (assert-string-copy-boundaries)
     (assert-borrowed-bytes)
     (assert-byte-buf-views)
     (assert-binary-string)

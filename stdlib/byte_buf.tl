@@ -207,8 +207,20 @@
     [n : i64 (bytes-length view)]
     (if (= n 0)
       ""
-      (unsafe
-        (string-from-bytes (bytes-data view) n)))))
+      (let
+        [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data out))]
+        (begin
+          (string.str-copy-bytes-into
+            (unsafe
+              (bytes-data view))
+            dst
+            0
+            n)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) n)))))))
 
 ;: Borrow the live range of a `ByteBuf` as immutable bytes.
 (define (as-bytes [buf : (& source ByteBuf)]) : (& source bytes)
@@ -413,7 +425,9 @@
     [n : i64 (len buf)]
     (if (= n 0)
       ""
-      (unsafe
-        (string-from-bytes
-          (ptr-cast (array-data (struct-get buf slots)) : (Ptr u8))
-          n)))))
+      (let
+        [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+        (begin
+          (byte-buf-copy-slots-range-into out 0 (struct-get buf slots) 0 n)
+          (unsafe
+            (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) n)))))))

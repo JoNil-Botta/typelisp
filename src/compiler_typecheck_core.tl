@@ -1209,7 +1209,7 @@
 (define (tc-agg-layout-cache-storage-handle) : i64
   (begin
     (if (= tc-agg-layout-cache-storage-arena 0)
-      (set! tc-agg-layout-cache-storage-arena (arena.tl_arena_make))
+      (set! tc-agg-layout-cache-storage-arena (arena.tl_arena_make_small))
       unit)
     tc-agg-layout-cache-storage-arena))
 
@@ -14944,7 +14944,7 @@
       [prev-arena : i64 (arena.tl_arena_current)]
       [old-arena : i64 tc-module-decl-index-arena]
       [_make-arena : unit
-        (set! tc-module-decl-index-arena (arena.tl_arena_make))]
+        (set! tc-module-decl-index-arena (arena.tl_arena_make_small))]
       [_switch : unit
         (unsafe
           (arena.tl_arena_set tc-module-decl-index-arena))]
@@ -77070,7 +77070,7 @@
 (define (tc-fn-scratch-arena-get) : i64
   (if (= tc-fn-scratch-arena 0)
     (let
-      [scratch : i64 (arena.tl_arena_make)]
+      [scratch : i64 (arena.tl_arena_make_small)]
       (begin
         (set! tc-fn-scratch-arena scratch)
         scratch))
@@ -77171,7 +77171,7 @@
 (define (tc-decl-scratch-arena-get) : i64
   (if (= tc-decl-scratch-arena 0)
     (let
-      [scratch : i64 (arena.tl_arena_make)]
+      [scratch : i64 (arena.tl_arena_make_small)]
       (begin
         (set! tc-decl-scratch-arena scratch)
         scratch))

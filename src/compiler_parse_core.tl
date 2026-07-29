@@ -1970,7 +1970,7 @@
           compiler-parse-state-control-owner-addr))]
     [name-id : i64
       (if (= owner-address 0)
-        (reader.read-stable-symbol-id name)
+        (reader.stable-symbol-id name)
         (ci.intern-compat-state-intern
           (compiler-parse-state-owner control)
           name))]
@@ -8282,7 +8282,7 @@
 (define (parse-ast-extern-varargs-tail-id [name-id : i64]) : i64
   (let
     [name : String (compiler-parse-name-text name-id)]
-    (reader.read-string-symbol-id
+    (reader.string-symbol-id
       (string.substring name 3 (- (string.string-length name) 3)))))
 
 (define (parse-ast-extern-varargs-open? [name-id : i64]) : bool
@@ -10120,7 +10120,7 @@
       ;; truncate the spanned pool back to here before reading the next form.
       ;; Bounds the spanned pool to a single form so it never has to grow.
       [mark : i64 (reader.sp-node-pool-len)]
-      (match (reader.read-form-spanned-result toks cur)
+      (match (reader.form-spanned-result toks cur)
         [(reader.ResultSpannedSexpr.Ok form)
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
@@ -10220,7 +10220,7 @@
   [pools : AstNodePoolContext]) : ResultAstProgram
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (match (lexer.lex-spanned-result src)
+    (match (lexer.spanned-result src)
       [(lexer.ResultSpannedTokens.Ok toks)
         (parse-ast-program-with-cfg-and-pools toks cfgs pools)]
       [(lexer.ResultSpannedTokens.Err err)
@@ -10265,7 +10265,7 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
       [mark : i64 (reader.sp-node-pool-len)]
-      (match (lexer.lex-spanned-result src)
+      (match (lexer.spanned-result src)
         [(lexer.ResultSpannedTokens.Ok toks)
           (let
             [cur : (Array i64) (array.make-array i64 1)]
@@ -10276,7 +10276,7 @@
                 (begin
                   (reader.sp-node-pool-truncate! mark)
                   (ResultAstReplItem.Err "parse: expected REPL input"))
-                (match (reader.read-form-spanned-result toks cur)
+                (match (reader.form-spanned-result toks cur)
                   [(reader.ResultSpannedSexpr.Ok form)
                     (let
                       [records-start : i64 (reader.sp-node-pool-len)]
@@ -10348,7 +10348,7 @@
       ;; parse-ast-program-forms): the decl carries no sp ids, so truncate back
       ;; before reading the next form.
       [mark : i64 (reader.sp-node-pool-len)]
-      (match (reader.read-form-spanned-result toks cur)
+      (match (reader.form-spanned-result toks cur)
         [(reader.ResultSpannedSexpr.Ok spanned-form)
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
@@ -10493,7 +10493,7 @@
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (match (lexer.lex-spanned-result src)
+    (match (lexer.spanned-result src)
       [(lexer.ResultSpannedTokens.Ok toks)
         (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
       [(lexer.ResultSpannedTokens.Err err)
@@ -10600,7 +10600,7 @@
               [rest : AstDeclList rest]
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
-                  (= name (reader.read-stable-symbol-id "std.io"))]
+                  (= name (reader.stable-symbol-id "std.io"))]
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
@@ -10624,8 +10624,8 @@
                       (let
                         [body-rest : AstDeclList body-rest]
                         (and
-                          (= name (reader.read-stable-symbol-id "local.helper"))
-                          (= value-name (reader.read-stable-symbol-id "value"))
+                          (= name (reader.stable-symbol-id "local.helper"))
+                          (= value-name (reader.stable-symbol-id "value"))
                           (match (ast-decl-list-step body-rest)
                             [(AstDeclListStep.Nil) true]
                             [_ false])))]
@@ -10930,9 +10930,9 @@
               (ast-dispatch-variant-fallback))
               [(AstDispatchVariant.Variant (AstDispatchIsa.Avx512) avx512-name)
                 (and
-                  (= scalar-name (reader.read-stable-symbol-id "dot-scalar"))
-                  (= avx2-name (reader.read-stable-symbol-id "dot-avx2"))
-                  (= avx512-name (reader.read-stable-symbol-id "dot-avx512")))]
+                  (= scalar-name (reader.stable-symbol-id "dot-scalar"))
+                  (= avx2-name (reader.stable-symbol-id "dot-avx2"))
+                  (= avx512-name (reader.stable-symbol-id "dot-avx512")))]
               [_ false])]
           [_ false])]
       [_ false])
@@ -10953,7 +10953,7 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "dot"))
+                    (= name (reader.stable-symbol-id "dot"))
                     (compiler-parse-defdispatch-variants-ok? variants))]
                 [_ false]))]
           [_ false]))]
@@ -10973,7 +10973,7 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "id"))
+                    (= name (reader.stable-symbol-id "id"))
                     (= (struct-get (& variants) len) 1)
                     (match (ast-dispatch-variant-list-get
                       (& variants)
@@ -10982,9 +10982,7 @@
                       [(AstDispatchVariant.Variant
                           (AstDispatchIsa.Scalar)
                           scalar-name)
-                        (=
-                          scalar-name
-                          (reader.read-stable-symbol-id "id-scalar"))]
+                        (= scalar-name (reader.stable-symbol-id "id-scalar"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -11071,13 +11069,13 @@
         [(ResultAstProgram.Err message)
           (string.eq message "parse: malformed define")]
         [_ false])
-      (match (lexer.lex-spanned-result src)
+      (match (lexer.spanned-result src)
         [(lexer.ResultSpannedTokens.Ok toks)
           (let
             [cur : (Array i64) (make-array i64 1)]
             (begin
               (array-set! cur 0 0)
-              (match (reader.read-form-spanned-result toks cur)
+              (match (reader.form-spanned-result toks cur)
                 [(reader.ResultSpannedSexpr.Ok form)
                   (let
                     [span : token.SourceSpan (reader.spanned-sexpr-span form)]
@@ -11476,7 +11474,7 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "raw-map"))
+                    (= name (reader.stable-symbol-id "raw-map"))
                     (match ty
                       [(AstType.Func args ret)
                         (let
@@ -11534,7 +11532,7 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "local-call"))
+                    (= name (reader.stable-symbol-id "local-call"))
                     (string.eq
                       (ast-extern-metadata-symbol (box-get metadata))
                       "foreign_exact")
@@ -11572,7 +11570,7 @@
   (match decl
     [(AstDecl.Extern decl-meta name _ metadata ty)
       (and
-        (= name (reader.read-stable-symbol-id "snprintf"))
+        (= name (reader.stable-symbol-id "snprintf"))
         (match (ast-extern-metadata-abi (box-get metadata))
           [(AstExternAbi.CVarargsTyped tail-ty)
             (match tail-ty
@@ -11605,7 +11603,7 @@
   (match decl
     [(AstDecl.Extern decl-meta name _ metadata ty)
       (and
-        (= name (reader.read-stable-symbol-id "printf"))
+        (= name (reader.stable-symbol-id "printf"))
         (match (ast-extern-metadata-abi (box-get metadata))
           [(AstExternAbi.CVarargsOpen) true]
           [_ false])
@@ -11641,7 +11639,7 @@
   (match decl
     [(AstDecl.Extern decl-meta name _ metadata ty)
       (and
-        (= name (reader.read-stable-symbol-id "local-add"))
+        (= name (reader.stable-symbol-id "local-add"))
         (string.eq
           (ast-extern-metadata-symbol (box-get metadata))
           "foreign_add_exact")
@@ -11697,14 +11695,14 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "_write"))
+                    (= name (reader.stable-symbol-id "_write"))
                     (= (compiler-parse-param-list-count params) 3)
                     (match ret
                       [(AstType.I32) true]
                       [_ false])
                     (match (ast-fn-metadata-export metadata)
                       [(AstFnExport.Export symbol)
-                        (= symbol (reader.read-stable-symbol-id "_write"))]
+                        (= symbol (reader.stable-symbol-id "_write"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -12131,11 +12129,10 @@
                                           (and
                                             (=
                                               name
-                                              (reader.read-stable-symbol-id
-                                                "danger"))
+                                              (reader.stable-symbol-id "danger"))
                                             (=
                                               extern-name
-                                              (reader.read-stable-symbol-id
+                                              (reader.stable-symbol-id
                                                 "raw-call"))
                                             (match extern-ty
                                               [(AstType.Func _ ret)
@@ -12236,7 +12233,7 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "Resource"))
+                    (= name (reader.stable-symbol-id "Resource"))
                     (match repr
                       [(AstStructRepr.Default) true]
                       [_ false])
@@ -12244,7 +12241,7 @@
                       [(AstStructCleanup.Fn cleanup-name)
                         (=
                           cleanup-name
-                          (reader.read-stable-symbol-id "close-resource"))]
+                          (reader.stable-symbol-id "close-resource"))]
                       [_ false])
                     (= (compiler-parse-field-count fields) 3)
                     (= (compiler-parse-field-cleanup-list-score fields) 110))]
@@ -12271,12 +12268,12 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "Resource"))
+                    (= name (reader.stable-symbol-id "Resource"))
                     (match cleanup
                       [(AstEnumCleanup.Fn cleanup-name)
                         (=
                           cleanup-name
-                          (reader.read-stable-symbol-id "close-resource"))]
+                          (reader.stable-symbol-id "close-resource"))]
                       [_ false])
                     (= (compiler-parse-variant-list-cleanup-score variants) 110))]
                 [_ false]))]
@@ -12306,7 +12303,7 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "Stat"))
+                    (= name (reader.stable-symbol-id "Stat"))
                     (ast-struct-repr-c? repr)
                     (= (compiler-parse-field-count fields) 2))]
                 [_ false]))]
@@ -12331,7 +12328,7 @@
               (match (ast-decl-list-step tail)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "parser-basic"))
+                    (= name (reader.stable-symbol-id "parser-basic"))
                     (= (ast-source-span-start-line span) 1)
                     (match (ast-expr-unspan body)
                       [(AstExpr.Begin exprs)
@@ -13384,7 +13381,7 @@
               (match (ast-decl-list-step rest)
                 [(AstDeclListStep.Nil)
                   (and
-                    (= name (reader.read-stable-symbol-id "all"))
+                    (= name (reader.stable-symbol-id "all"))
                     (= (ast-macro-param-list-len (& params)) 2)
                     (match (ast-macro-param-list-get
                       (& params)
@@ -13395,7 +13392,7 @@
                           (AstType.Bool)
                           false
                           (AstMacroTypeKindList.Nil))
-                        (= first (reader.read-stable-symbol-id "first"))]
+                        (= first (reader.stable-symbol-id "first"))]
                       [_ false])
                     (match (ast-macro-param-list-get
                       (& params)
@@ -13406,7 +13403,7 @@
                           (AstType.Bool)
                           true
                           (AstMacroTypeKindList.Nil))
-                        (= rest (reader.read-stable-symbol-id "rest"))]
+                        (= rest (reader.stable-symbol-id "rest"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -13468,7 +13465,7 @@
   [text : String]
   [fixed-id : i64]) : bool
   (let
-    [source-id : i64 (reader.read-stable-symbol-id text)]
+    [source-id : i64 (reader.stable-symbol-id text)]
     [generated-id : i64 (ci.intern-generated-canonical-name text)]
     [macro-global-id : i64
       (+ (ci.intern-macro-global-structural-base) source-id)]
@@ -13481,16 +13478,16 @@
 
 (define (compiler-parse-fixed-syntax-name-provenance-ok?) : bool
   (let
-    [source-kind : i64 (reader.read-stable-symbol-id "i64")]
+    [source-kind : i64 (reader.stable-symbol-id "i64")]
     [generated-kind : i64 (ci.intern-generated-canonical-name "i64")]
-    [source-all : i64 (reader.read-stable-symbol-id "all")]
+    [source-all : i64 (reader.stable-symbol-id "all")]
     [generated-all : i64 (ci.intern-generated-canonical-name "all")]
-    [source-dots : i64 (reader.read-stable-symbol-id "...")]
+    [source-dots : i64 (reader.stable-symbol-id "...")]
     [generated-dots : i64 (ci.intern-generated-canonical-name "...")]
     (and
       (parse-ast-macro-type-kind-known? source-kind)
       (not (parse-ast-macro-type-kind-known? generated-kind))
-      (parse-ast-macro-type-kind-known? (reader.read-stable-symbol-id "box"))
+      (parse-ast-macro-type-kind-known? (reader.stable-symbol-id "box"))
       (not
         (parse-ast-macro-type-kind-known?
           (ci.intern-generated-canonical-name "box")))
@@ -13729,26 +13726,24 @@
     (and
       (compiler-parse-dispatch-index-env-matches? full)
       (=
-        (compiler-parse-dispatch-tag full (reader.read-stable-symbol-id "if"))
+        (compiler-parse-dispatch-tag full (reader.stable-symbol-id "if"))
         (compiler-parse-tag-expr-if))
       (=
         (compiler-parse-dispatch-tag
           full
-          (reader.read-stable-symbol-id "not-parser-syntax"))
+          (reader.stable-symbol-id "not-parser-syntax"))
         (compiler-parse-tag-unknown))
       (not (compiler-parse-dispatch-indexed? partial))
       (=
-        (compiler-parse-dispatch-tag partial (reader.read-stable-symbol-id "+"))
+        (compiler-parse-dispatch-tag partial (reader.stable-symbol-id "+"))
         (compiler-parse-tag-bin-add))
       (=
-        (compiler-parse-dispatch-tag
-          partial
-          (reader.read-stable-symbol-id "if"))
+        (compiler-parse-dispatch-tag partial (reader.stable-symbol-id "if"))
         (compiler-parse-tag-unknown))
       (compiler-parse-dispatch-indexed? configured)
       (compiler-cfg-enabled?
         configured
-        (reader.read-stable-symbol-id "dispatch-index-test")))))
+        (reader.stable-symbol-id "dispatch-index-test")))))
 
 (define (compiler-parse-shape-tests-front-ok? [program : AstProgram]) : bool
   (and
@@ -13889,7 +13884,7 @@
   (let
     ;; Prime the fixed dispatch-name ids before measuring source parsing.
     [_dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
-    (match (lexer.lex-spanned-result "(define (f [x : User]) : User x)")
+    (match (lexer.spanned-result "(define (f [x : User]) : User x)")
       [(lexer.ResultSpannedTokens.Ok toks)
         (let
           [before : i64 (ci.intern-pool-len)]
@@ -14026,7 +14021,7 @@
         (compiler-parse-init-ok?)
         (compiler-parse-contextual-init-ok?)
         (compiler-parse-init-call-name-ok?)
-        (reader.read-symbol-id-preservation-ok?)
+        (reader.symbol-id-preservation-ok?)
         (compiler-parse-source-symbol-ids-preserved-ok?)
         (compiler-parse-box-ok?)
         (compiler-parse-reference-ok?)

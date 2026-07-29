@@ -12,7 +12,7 @@
 (import read as reader)
 
 (define (tlci-symbol-text [name-id : i64]) : String
-  (reader.read-symbol-text-for-id name-id))
+  (reader.symbol-text-for-id name-id))
 
 (define (tlci-string-length [text : String]) : i64
   (__tl_string_length text))
@@ -1731,7 +1731,7 @@
     [_ -1]))
 
 (define (tlci-signature-param-count [signature : String]) : i64
-  (match (reader.read-result (lexer.lex signature))
+  (match (reader.result (lexer.lex signature))
     [(reader.ResultSexpr.Err _) -1]
     [(reader.ResultSexpr.Ok form)
       (match form
@@ -2580,7 +2580,7 @@
         "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
 
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
-  (match (reader.read-result (lexer.lex source))
+  (match (reader.result (lexer.lex source))
     [(reader.ResultSexpr.Err message)
       (ResultTlciMetadata.Err (string.append "tlci metadata: " message))]
     [(reader.ResultSexpr.Ok form) (tlci-metadata-from-form form)]))

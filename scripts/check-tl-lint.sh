@@ -277,7 +277,8 @@ for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
         set -- --name-case "$@"
     fi
     if ci_timing_run "chunk-$lint_chunk_index" lint \
-        "$COMPILER" lint --check "$@" >> "$STDOUT" 2>> "$STDERR"; then
+        "$COMPILER" lint --check --redundant-function-name "$@" \
+            >> "$STDOUT" 2>> "$STDERR"; then
         :
     else
         chunk_status=$?

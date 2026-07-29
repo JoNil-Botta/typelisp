@@ -11,7 +11,7 @@
 
 (import (generated-provider) as generated)
 
-(defmacro (signature-score [target : Module] [expected : type]) : i64
+(defmacro (score [target : Module] [expected : type]) : i64
   (let
     [module : String (comptime.module-name target)]
     [present : bool (comptime.module-value? module "make")]
@@ -82,9 +82,9 @@
   (let
     [signature-total : i64
       (+
-        (signature-score provider (-> i64 bool))
+        (score provider (-> i64 bool))
         (+
-          (signature-score generated (-> i64 bool))
+          (score generated (-> i64 bool))
           (stdlib-signature-score comptime (-> bool Expr))))]
     [token : provider.Token (provider.Token 42)]
     [protocol-total : i64

@@ -22,7 +22,7 @@
 (import "tlci_core.tl")
 
 (define (compiler-load-lex-token-buffer-arena-handle) : i64
-  (lexer.lex-spanned-token-buffer-arena-handle-value))
+  (lexer.spanned-token-buffer-arena-handle-value))
 
 (define (compiler-load-reader-node-pool-arena-handle) : i64
   (reader.sp-node-pool-base-arena-handle-value))
@@ -13794,7 +13794,7 @@
 ;: Parse a `typelisp.pkg` manifest, an S-expression of the form
 ;:   (package (name "...") (version "...") (kind "bin") (entry "...")
 ;:            (dependencies (alias "path") ...))
-;: into a structured value. Reuses the selfhost reader (`lex` + `read-result`)
+;: into a structured value. Reuses the selfhost reader (`lex` + `result`)
 ;: instead of a
 ;: bespoke manifest tokenizer.
 ;: A parsed dependency: an import alias and its package-root path.
@@ -14065,7 +14065,7 @@
   (compiler-load-safe-relative? path))
 
 (define (compiler-load-symbol-text [name-id : i64]) : String
-  (reader.read-symbol-text-for-id name-id))
+  (reader.symbol-text-for-id name-id))
 
 ;; Manifest values outlive the reader's persistent intern arena because package
 ;; builds reset compiler state between inline-test phases. Materialize stored
@@ -14944,12 +14944,12 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
-      (match (lexer.lex-spanned-result source)
+      (match (lexer.spanned-result source)
         [(lexer.ResultSpannedTokens.Err err)
           (ResultCompilerPkgManifestDiagnostic.Err
             (box (compiler-load-manifest-source-error-diagnostic path err)))]
         [(lexer.ResultSpannedTokens.Ok toks)
-          (match (reader.read-spanned-result toks)
+          (match (reader.spanned-result toks)
             [(reader.ResultSpannedSexpr.Err err)
               (ResultCompilerPkgManifestDiagnostic.Err
                 (box (compiler-load-manifest-source-error-diagnostic path err)))]
@@ -14965,12 +14965,12 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
-      (match (lexer.lex-spanned-result source)
+      (match (lexer.spanned-result source)
         [(lexer.ResultSpannedTokens.Err err)
           (ResultCompilerPkgManifestDiagnostic.Err
             (box (compiler-load-manifest-source-error-diagnostic path err)))]
         [(lexer.ResultSpannedTokens.Ok toks)
-          (match (reader.read-spanned-result toks)
+          (match (reader.spanned-result toks)
             [(reader.ResultSpannedSexpr.Err err)
               (ResultCompilerPkgManifestDiagnostic.Err
                 (box (compiler-load-manifest-source-error-diagnostic path err)))]

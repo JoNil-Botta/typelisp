@@ -28,7 +28,7 @@
   (value String))
 
 (define (package-lock-symbol-text [name-id : i64]) : String
-  (reader.read-symbol-text-for-id name-id))
+  (reader.symbol-text-for-id name-id))
 
 (defenum PackageLockMaybeEntry
   (No)
@@ -205,8 +205,7 @@
         [(reader.Sexpr.Str val-id)
           (match (box-get vrest)
             [(reader.Sexpr.Nil)
-              (ResultPackageLockString.Ok
-                (reader.read-symbol-text-for-id val-id))]
+              (ResultPackageLockString.Ok (reader.symbol-text-for-id val-id))]
             [_
               (ResultPackageLockString.Err
                 (string.concat3
@@ -255,7 +254,7 @@
                     [(reader.Sexpr.Str pin-value-id)
                       (let
                         [pin-value : String
-                          (reader.read-symbol-text-for-id pin-value-id)]
+                          (reader.symbol-text-for-id pin-value-id)]
                         (if (string.eq pin-value "")
                           (ResultPackageLockPin.Err
                             "package-lock: pin value must not be empty")
@@ -563,7 +562,7 @@
         "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 
 (define (package-lock-parse [source : String]) : ResultPackageLockFile
-  (match (reader.read-result (lexer.lex source))
+  (match (reader.result (lexer.lex source))
     [(reader.ResultSexpr.Err message)
       (ResultPackageLockFile.Err (string.append "package-lock: " message))]
     [(reader.ResultSexpr.Ok form) (package-lock-from-form form)]))

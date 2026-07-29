@@ -9,4 +9,4 @@
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (lexer.lex-span-self-test)))
+    (lexer.span-self-test)))

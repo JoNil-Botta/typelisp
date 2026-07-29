@@ -443,6 +443,61 @@
     (abort-write message)
     (os-exit 134)))
 
+;; `typelisp test` enables this process-local state in its generated harness.
+;; Outside that harness, stdlib.test assertion failures retain their historical
+;; abort behavior. Hard faults and explicit panic calls never route through this
+;; state and therefore still terminate the harness.
+(define runtime-test-suite-active : bool
+  false)
+(define runtime-test-case-failed : bool
+  false)
+(define runtime-test-failed-count : i64
+  0)
+
+(define (runtime-test-suite-begin!) : unit
+  (begin
+    (set! runtime-test-suite-active true)
+    (set! runtime-test-case-failed false)
+    (set! runtime-test-failed-count 0)))
+
+(define (runtime-test-case-begin!) : unit
+  (set! runtime-test-case-failed false))
+
+(define (runtime-test-assertion-failure! [message : String]) : unit
+  (if runtime-test-suite-active
+    (begin
+      (set! runtime-test-case-failed true)
+      (abort-write "  ")
+      (abort-write message)
+      (abort-write "\n"))
+    (begin
+      (abort-write message)
+      (abort-write "\n")
+      (os-exit 134))))
+
+(define (runtime-test-case-finish!) : bool
+  (begin
+    (if runtime-test-case-failed
+      (set! runtime-test-failed-count (+ runtime-test-failed-count 1))
+      unit)
+    runtime-test-case-failed))
+
+(define (runtime-test-suite-finish [total : i64]) : i64
+  (let
+    [passed : i64 (- total runtime-test-failed-count)]
+    (begin
+      (set! runtime-test-suite-active false)
+      (abort-write "TypeLisp tests: ")
+      (abort-write-signed-decimal passed)
+      (abort-write " passed; ")
+      (abort-write-signed-decimal runtime-test-failed-count)
+      (abort-write " failed; ")
+      (abort-write-signed-decimal total)
+      (abort-write " total\n")
+      (if (= runtime-test-failed-count 0)
+        0
+        1))))
+
 ;: Render an integer into a fresh active-arena decimal string.
 (define (int-to-string [value : i64])
   (:export-symbol "tl_int_to_string") : String

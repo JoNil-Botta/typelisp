@@ -568,6 +568,12 @@ production codegen. `typelisp test <file.tl>` turns a file's inline tests
 into a generated harness and runs it; with no file, it runs the nearest
 package's inline tests plus `tests/**/*.tl` integration programs (exit 0
 passes). `typelisp test --check` type-checks harnesses without linking.
+The runner announces every selected test, continues after assertion failures,
+prints `ok` or `FAILED` for each test, and finishes with passed, failed, and
+total counts. `--filter <substring>` selects inline-test names (and package
+integration paths), while `--list` prints the selected names without running
+them. Ordinary assertion failures exit `1`; an unexpected harness abort exits
+`2`.
 Tests commonly import `stdlib/test.tl` for assertions. CI auto-discovers
 inline-test-bearing files, so adding tests requires no manifest edits.
 

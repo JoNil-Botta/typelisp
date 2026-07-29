@@ -2719,7 +2719,7 @@ assert_success
 assert_stdout_empty
 assert_contains "$err" "test inc-basic"
 assert_contains "$err" "ok inc-basic"
-assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
+assert_contains "$err" "TypeLisp tests: 1 passed; 0 failed; 1 total"
 [ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
 
 # cli-gate-case inline-test-normal-compile wrapper run_cmd
@@ -2734,18 +2734,72 @@ assert_not_contains "$WORKDIR/inline_test_pass.s" "__tl_inline_test"
 cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
 (import "stdlib/test.tl")
 
+(test passes-before
+  (assert-true true "before"))
+
 (test failing-case
-  (assert-i64-eq 1 2 "inline failure message"))
+  (assert-i64-eq 1 2 "first inline failure")
+  (assert-true false "second inline failure"))
+
+(test passes-after
+  (assert-true true "after"))
 EOF
 
-    # cli-gate-case inline-test-fail wrapper run_cmd
-    run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
-    assert_failure
-    assert_stdout_empty
-    assert_contains "$err" "test failing-case"
-    assert_contains "$err" "inline failure message"
-    assert_contains "$err" "typelisp test: test executable exited"
-    [ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
+# cli-gate-case inline-test-fail wrapper run_cmd
+run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_code 1
+assert_stdout_empty
+assert_contains "$err" "test passes-before"
+assert_contains "$err" "ok passes-before"
+assert_contains "$err" "test failing-case"
+assert_contains "$err" "first inline failure: expected 2, found 1"
+assert_contains "$err" "second inline failure"
+assert_contains "$err" "FAILED failing-case"
+assert_contains "$err" "inline_test_fail.tl:"
+assert_contains "$err" "test passes-after"
+assert_contains "$err" "ok passes-after"
+assert_contains "$err" "TypeLisp tests: 2 passed; 1 failed; 3 total"
+assert_not_contains "$err" "typelisp test: test executable exited"
+[ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
+
+# cli-gate-case inline-test-filter wrapper run_cmd
+run_cmd inline-test-filter "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --filter passes-after --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "test passes-after"
+assert_contains "$err" "ok passes-after"
+assert_contains "$err" "TypeLisp tests: 1 passed; 0 failed; 1 total"
+assert_not_contains "$err" "passes-before"
+assert_not_contains "$err" "failing-case"
+
+# cli-gate-case inline-test-list wrapper run_cmd
+run_cmd inline-test-list "$COMPILER" test --list "$WORKDIR/inline_test_fail.tl" --filter failing --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "failing-case "
+assert_contains "$out" "inline_test_fail.tl:"
+assert_contains "$out" "TypeLisp tests listed: 1 test(s)"
+assert_not_contains "$out" "passes-before"
+assert_not_contains "$out" "passes-after"
+
+cat > "$WORKDIR/inline_test_crash.tl" <<'EOF'
+(import stdlib.io)
+
+(test crashes-hard
+  (io.panic "hard inline harness crash"))
+
+(test must-not-run-after-crash
+  unit)
+EOF
+
+# cli-gate-case inline-test-crash wrapper run_cmd
+run_cmd inline-test-crash "$COMPILER" test "$WORKDIR/inline_test_crash.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_code 2
+assert_stdout_empty
+assert_contains "$err" "test crashes-hard"
+assert_contains "$err" "hard inline harness crash"
+assert_contains "$err" "typelisp test: test executable exited"
+assert_not_contains "$err" "must-not-run-after-crash"
 
 cat > "$WORKDIR/inline_test_no_tests.tl" <<'EOF'
 (define (main) : i64 0)
@@ -2760,7 +2814,7 @@ assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
 run_cmd inline-test-no-tests-run "$COMPILER" test "$WORKDIR/inline_test_no_tests.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stdout_empty
-assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
+assert_contains "$err" "TypeLisp tests: 0 passed; 0 failed; 0 total"
 [ ! -f "$WORKDIR/inline_test_no_tests.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
 
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
@@ -2826,6 +2880,38 @@ assert_contains "$out" "TypeLisp integration test file:"
 assert_contains "$out" "TypeLisp package tests passed: 3 test(s) in 3 file(s)"
 assert_contains "$err" "test pkg-inline"
 assert_contains "$err" "ok pkg-inline"
+
+TEST_INLINE_FAIL_PKG="$WORKDIR/package-test-inline-fail-pkg"
+mkdir -p "$TEST_INLINE_FAIL_PKG/src" "$TEST_INLINE_FAIL_PKG/tests"
+cat > "$TEST_INLINE_FAIL_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "package_test_inline_fail_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+maybe_strip_manifest_kind "$TEST_INLINE_FAIL_PKG/typelisp.pkg"
+cat > "$TEST_INLINE_FAIL_PKG/src/lib.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(test package-fails
+  (assert-true false "package inline failure"))
+
+(test package-passes-after
+  (assert-true true "package inline sentinel"))
+EOF
+cat > "$TEST_INLINE_FAIL_PKG/tests/pass.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+# cli-gate-case package-test-inline-fail-continues wrapper run_cmd
+run_cmd package-test-inline-fail-continues "$COMPILER" test --target "$HOST_TARGET" --manifest-path "$TEST_INLINE_FAIL_PKG/typelisp.pkg" --stdlib-root "$ROOT/stdlib"
+assert_code 1
+assert_contains "$out" "TypeLisp integration test file:"
+assert_contains "$out" "TypeLisp package tests failed: 1 of 2 file(s) failed; 3 test(s)"
+assert_contains "$err" "FAILED package-fails"
+assert_contains "$err" "ok package-passes-after"
+assert_contains "$err" "TypeLisp tests: 1 passed; 1 failed; 2 total"
+assert_not_contains "$err" "typelisp test: test executable exited"
 
 TEST_EMPTY_PKG="$WORKDIR/package-test-empty-pkg"
 mkdir -p "$TEST_EMPTY_PKG/src"

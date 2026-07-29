@@ -228,14 +228,17 @@ Options:
 
 (define (cli-test-help-text) : String
   "Usage:
-    typelisp test [--check] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
-    typelisp test [--check] --batch <inputs.txt> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--prefix-cache-stats]
+    typelisp test [--check] [--filter <substring>] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+    typelisp test [--check] [--filter <substring>] --batch <inputs.txt> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--prefix-cache-stats]
+    typelisp test --list [--filter <substring>] [<file.tl>] [--manifest-path <typelisp.pkg>] [--batch <inputs.txt>] [--stdlib-root <dir>...]
 
 Summary:
     Run or typecheck inline `(test ...)` declarations.
 
 Options:
     --check                        Typecheck inline tests without running them
+    --filter <substring>           Select inline-test names and package integration paths containing text
+    --list                         List selected test names without running them
     --batch <file>                 Read newline-separated inline-test input paths; runs them unless --check
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided

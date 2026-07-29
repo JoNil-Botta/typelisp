@@ -203,8 +203,18 @@ integration test files; stdlib and dependency imports provide runtime
 declarations only. Integration test files run as normal programs: a `main` exit
 status of `0` passes, while any non-zero status fails the package test command
 with exit `1`. `typelisp test --check` type-checks generated inline harnesses
-and integration test files without assembling or linking. Package integration
-discovery skips the reserved
+and integration test files without assembling or linking.
+
+Inline harnesses announce each test before it runs and report `ok` or `FAILED`
+afterward. Assertions from `stdlib.test` record every failure in the current
+test instead of aborting the process, so later assertions and later tests still
+run. A final line reports passed, failed, and total counts; assertion failures
+exit `1`, while a hard panic, trap, or other unexpected harness termination
+exits `2`. Use `--filter <substring>` to select inline-test names and package
+integration paths. Use `--list` (optionally with `--filter`) to print selected
+names without compiling or running their harnesses.
+
+Package integration discovery skips the reserved
 `tests/diagnostics/**`, `tests/format_golden/**`, `tests/golden/**`,
 `tests/inline/**`, `tests/no-libc/**`, `tests/public-tools/**`,
 `tests/safety/**`, and `tests/spmd/**` fixture corpora. When

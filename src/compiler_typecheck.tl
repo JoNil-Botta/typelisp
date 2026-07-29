@@ -9277,9 +9277,9 @@
       unit
       (io.panic "typecheck: intern qualified metadata tests failed"))
     (cbi.compiler-builtin-initialize-for-parse!)
-    (if (tc-type-env-box-smoke?)
+    (if (tc-type-env-segmented-snapshot-smoke?)
       unit
-      (io.panic "typecheck: boxed type env smoke mismatch"))
+      (io.panic "typecheck: segmented type env snapshot smoke mismatch"))
     (if (tc-type-env-local-cache-smoke?)
       unit
       (io.panic "typecheck: local type env cache smoke mismatch"))

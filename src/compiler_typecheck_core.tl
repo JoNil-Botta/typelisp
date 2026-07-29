@@ -6195,18 +6195,30 @@
 
 (defmacro (tc-type-env-binding-name-at [binding-ptr : comptime.Expr]) : comptime.Expr
   `(unsafe
-    (ptr-read (ptr-cast ,binding-ptr : (Ptr i64)))))
+    (ptr-read
+      (ptr-cast
+        (ptr-offset
+          (ptr-cast ,binding-ptr : (Ptr u8))
+          (comptime (offset-of (type TcTypeEnvBinding) name-id)))
+        : (Ptr i64)))))
 
 (defmacro (tc-type-env-binding-type-at [binding-ptr : comptime.Expr]) : comptime.Expr
   `(unsafe
     (ptr-read
       (ptr-cast
-        (ptr-offset (ptr-cast ,binding-ptr : (Ptr i64)) 1)
+        (ptr-offset
+          (ptr-cast ,binding-ptr : (Ptr u8))
+          (comptime (offset-of (type TcTypeEnvBinding) ty)))
         : (Ptr AstType)))))
 
 (defmacro (tc-type-env-binding-parent-at [binding-ptr : comptime.Expr]) : comptime.Expr
   `(unsafe
-    (ptr-read (ptr-offset (ptr-cast ,binding-ptr : (Ptr i64)) 4))))
+    (ptr-read
+      (ptr-cast
+        (ptr-offset
+          (ptr-cast ,binding-ptr : (Ptr u8))
+          (comptime (offset-of (type TcTypeEnvBinding) parent)))
+        : (Ptr i64)))))
 
 (defmacro (tc-type-env-cache-at [cache-ptr : comptime.Expr]) : comptime.Expr
   `(unsafe
@@ -6216,17 +6228,31 @@
   [store-handle : i64]
   [binding : TcTypeEnvBinding]) : i64
   (let
-    [store-words : (MutPtr i64)
+    [store-bytes : (MutPtr u8)
       (unsafe
-        (int->ptr (cast store-handle : u64) : (MutPtr i64)))]
+        (int->ptr (cast store-handle : u64) : (MutPtr u8)))]
+    [capacity-ptr : (MutPtr i64)
+      (unsafe
+        (ptr-cast
+          (ptr-offset
+            store-bytes
+            (comptime (offset-of (type TcTypeEnvStore) binding-capacity)))
+          : (MutPtr i64)))]
+    [len-ptr : (MutPtr i64)
+      (unsafe
+        (ptr-cast
+          (ptr-offset
+            store-bytes
+            (comptime (offset-of (type TcTypeEnvStore) binding-len)))
+          : (MutPtr i64)))]
     [index : i64
       (unsafe
-        (ptr-read (ptr-offset store-words 2)))]
+        (ptr-read len-ptr))]
     (begin
       (if (<
         index
         (unsafe
-          (ptr-read (ptr-offset store-words 1))))
+          (ptr-read capacity-ptr)))
         unit
         (let
           [store : TcTypeEnvStore (tc-type-env-store-read store-handle)]
@@ -6237,11 +6263,16 @@
       (let
         [items : (Array TcTypeEnvBinding)
           (unsafe
-            (ptr-read (ptr-cast store-words : (Ptr (Array TcTypeEnvBinding)))))]
+            (ptr-read
+              (ptr-cast
+                (ptr-offset
+                  store-bytes
+                  (comptime (offset-of (type TcTypeEnvStore) bindings)))
+                : (Ptr (Array TcTypeEnvBinding)))))]
         (begin
           (array-set! items index binding)
           (unsafe
-            (ptr-write! (ptr-offset store-words 2) (+ index 1)))
+            (ptr-write! len-ptr (+ index 1)))
           (unsafe
             (cast
               (ptr->int
@@ -9279,9 +9310,9 @@
 
 ;; Arena that owns the module-local env cache chain. The cache lives in
 ;; the GLOBAL above, but hygiene lookups fire deep inside per-decl typechecking
-;; whose allocations land in scratch arenas; the cache's (box ...) cells and
-;; cached env internals would dangle once the scratch arena is reclaimed. Build
-;; cache entries inside this dedicated persistent arena (same idiom as the node
+;; whose allocations land in scratch arenas; the cache entries and cached env
+;; internals would dangle once the scratch arena is reclaimed. Build cache
+;; entries inside this dedicated persistent arena (same idiom as the node
 ;; pools' base arena). Linux starts small for tiny compiles; if a large cache
 ;; spills, reset promotes it once to a reusable general root. Module identity
 ;; itself is the stable intern ID.
@@ -21782,6 +21813,87 @@
         0)
       (TcSpmdEnv merged left-len))))
 
+(define (tc-type-env-owner-arena-smoke?) : bool
+  (let
+    [base-id : i64 (intern "owner-arena-base")]
+    [filler-id : i64 (intern "owner-arena-filler")]
+    [home : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make_small)]
+    [scratch : i64 (arena.tl_arena_make_small)]
+    [_owner-current : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [base : TcTypeEnv (tc-bind-id (tc-empty-env) base-id (AstType.String))]
+    [first-cache : TcTypeEnv (tc-env-with-cache base)]
+    [grown : TcTypeEnv
+      (TcTypeEnv (struct-get base store) (struct-get base head) 0)]
+    [latest-cache : TcTypeEnv
+      (TcTypeEnv (struct-get first-cache store) (struct-get first-cache head) 0)]
+    [index : i64 0]
+    [cache-index : i64 0]
+    [binding-restored? : bool false]
+    [latest-cache-valid? : bool false]
+    (begin
+      (unsafe
+        (arena.tl_arena_set scratch))
+      ;; Extend a store created in `owner` while an unrelated scratch arena is
+      ;; current. Segment allocation must use the store owner and restore the
+      ;; scratch arena before returning.
+      (while (< index (+ (tc-type-env-binding-segment-capacity) 8))
+        (begin
+          (set! grown (tc-bind-id grown filler-id (AstType.I64)))
+          (set! index (+ index 1))))
+      (set! binding-restored? (= (arena.tl_arena_current) scratch))
+      ;; Exercise cache-segment rollover through the same owner switch. The
+      ;; newer cache payloads intentionally live only until scratch is
+      ;; destroyed; `first-cache` was built in owner and must remain valid.
+      (while (< cache-index (+ (tc-type-env-cache-segment-capacity) 2))
+        (begin
+          (set! latest-cache (tc-env-with-cache grown))
+          (set! cache-index (+ cache-index 1))))
+      (set!
+        latest-cache-valid?
+        (match (tc-lookup-id latest-cache base-id)
+          [(ResultTcType.Ok (AstType.String)) true]
+          [_ false]))
+      (let
+        [scratch-restored? : bool
+          (=
+            (tc-type-env-store-owner-root (arena.tl_arena_current))
+            (tc-type-env-store-owner-root scratch))]
+        (begin
+          (unsafe
+            (begin
+              (arena.tl_arena_set home)
+              (arena.tl_arena_destroy scratch)))
+          ;; Destroying scratch must not invalidate either the retained
+          ;; first-segment snapshot or the head in the later owner segment.
+          (let
+            [base-alive? : bool
+              (match (tc-lookup-id base base-id)
+                [(ResultTcType.Ok (AstType.String)) true]
+                [_ false])]
+            [grown-alive? : bool
+              (match (tc-lookup-id grown base-id)
+                [(ResultTcType.Ok (AstType.String)) true]
+                [_ false])]
+            [first-cache-alive? : bool
+              (match (tc-lookup-id first-cache base-id)
+                [(ResultTcType.Ok (AstType.String)) true]
+                [_ false])]
+            (begin
+              (unsafe
+                (begin
+                  (arena.tl_arena_set home)
+                  (arena.tl_arena_destroy owner)))
+              (and
+                binding-restored?
+                scratch-restored?
+                latest-cache-valid?
+                base-alive?
+                grown-alive?
+                first-cache-alive?))))))))
+
 (define (tc-type-env-segmented-snapshot-smoke?) : bool
   (let
     [branch-id : i64 (intern "branch")]
@@ -21851,6 +21963,7 @@
         [segment-sibling : TcTypeEnv
           (tc-bind-id segment-base segment-id (AstType.Bool))]
         (and
+          (tc-type-env-owner-arena-smoke?)
           (match (tc-lookup-id base branch-id)
             [(ResultTcType.Err _) true]
             [_ false])

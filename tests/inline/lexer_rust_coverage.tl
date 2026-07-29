@@ -8,6 +8,7 @@
 ;; lexer and token declarations deduplicate with lex.tl's own token import.
 (import lex)
 (import token)
+(import compiler_intern)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -126,6 +127,36 @@
             (string.eq (token.sym (array-ref toks 1)) "x")
             (string.eq (token.sym (array-ref toks 3)) "y"))
           "duplicate symbols should reuse the same intern id")]
+      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+
+(test
+  lexer-token-intern-ids-are-typed-and-compact
+  (let
+    [r : lex.ResultTokens (lex.result "(x \"x\")")]
+    (match r
+      [(lex.ResultTokens.Ok toks)
+        (begin
+          (lexer-assert-true
+            (=
+              (comptime (size-of (type InternId)))
+              (comptime (size-of (type u32))))
+            "typed intern ids should retain compact u32 storage")
+          (match (array-ref toks 1)
+            [(token.Token.Sym id)
+              (lexer-assert-true
+                (=
+                  (compiler_intern.intern-id-value id)
+                  (token.sym-id (array-ref toks 1)))
+                "typed symbol ids should preserve the lexer identity")]
+            [_ (lexer-assert-true false "symbol token should carry an id")])
+          (match (array-ref toks 2)
+            [(token.Token.Str id)
+              (lexer-assert-true
+                (=
+                  (compiler_intern.intern-id-value id)
+                  (token.str-id (array-ref toks 2)))
+                "typed string ids should preserve the lexer identity")]
+            [_ (lexer-assert-true false "string token should carry an id")]))]
       [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
 
 ;; ---- 3. src/lexer.rs test_single_char_literals -------------------------

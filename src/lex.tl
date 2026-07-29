@@ -669,8 +669,8 @@
                   [(result_lex_i64.Ok end)
                     (let
                       [text : String (unescape-string-literal src start end)]
-                      [string-id : i64
-                        (ci.intern-source-slice
+                      [string-id : ci.InternId
+                        (ci.intern-source-slice-id
                           text
                           0
                           (string.string-length text))]
@@ -717,7 +717,8 @@
                     (array-set!
                       toks
                       count
-                      (token.Token.Sym (ci.intern-source-slice src i (- end i))))
+                      (token.Token.Sym
+                        (ci.intern-source-slice-id src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end))
                   (begin
@@ -725,7 +726,9 @@
                     (array-set!
                       toks
                       count
-                      (token.Token.Sym cbi.compiler-builtin-id-fix-colon))
+                      (token.Token.Sym
+                        (ci.intern-id-from-renderable
+                          cbi.compiler-builtin-id-fix-colon)))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))))]
             [(is-symbol-char c)
@@ -736,7 +739,8 @@
                   (array-set!
                     toks
                     count
-                    (token.Token.Sym (ci.intern-source-slice src i (- end i))))
+                    (token.Token.Sym
+                      (ci.intern-source-slice-id src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))]
             [else
@@ -924,8 +928,8 @@
                     [(result_lex_i64.Ok end)
                       (let
                         [text : String (unescape-string-literal src start end)]
-                        [string-id : i64
-                          (ci.intern-source-slice
+                        [string-id : ci.InternId
+                          (ci.intern-source-slice-id
                             text
                             0
                             (string.string-length text))]
@@ -998,7 +1002,7 @@
                         count
                         (token.spanned-token-new
                           (token.Token.Sym
-                            (ci.intern-source-slice src i (- end i)))
+                            (ci.intern-source-slice-id src i (- end i)))
                           line
                           col))
                       (set! count (+ count 1))
@@ -1009,7 +1013,9 @@
                         stoks
                         count
                         (token.spanned-token-new
-                          (token.Token.Sym cbi.compiler-builtin-id-fix-colon)
+                          (token.Token.Sym
+                            (ci.intern-id-from-renderable
+                              cbi.compiler-builtin-id-fix-colon))
                           line
                           col))
                       (set! count (+ count 1))
@@ -1024,7 +1030,7 @@
                       count
                       (token.spanned-token-new
                         (token.Token.Sym
-                          (ci.intern-source-slice src i (- end i)))
+                          (ci.intern-source-slice-id src i (- end i)))
                         line
                         col))
                     (set! count (+ count 1))

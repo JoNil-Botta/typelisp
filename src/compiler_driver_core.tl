@@ -156,8 +156,8 @@
 (define (compiler-driver-state-detach-active-pools-if-owned!
   [pools : AstNodePoolContext]) : unit
   (if (=
-    (ast-node-pool-base-arena-handle)
-    (ast-node-pool-context-base-arena pools))
+    (ast-node-pool-owner-arena-handle)
+    (ast-node-pool-context-owner-arena pools))
     (ast-node-pool-context-install! compiler-driver-detached-compat-pools)
     unit))
 
@@ -337,6 +337,11 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "reader-sexpr-pool"
+        (compiler-load-reader-sexpr-pool-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "typecheck-aggregate-layout-cache"
         (tc-agg-layout-cache-storage-arena-handle-value))
       (allocation_profile.compiler-allocation-profile-control!
@@ -397,7 +402,8 @@
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
     (struct-get state expr-pool)
-    (struct-get state type-pool)))
+    (struct-get state type-pool)
+    (array-ref (struct-get state pool-arena) 0)))
 
 (define (compiler-driver-state-owned-pool-arena [state : CompilerDriverState]) : i64
   (array-ref (struct-get state pool-arena) 0))

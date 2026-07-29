@@ -62776,30 +62776,30 @@
         [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))))
 
 (define (macro-identity-key-sexpr [sexpr : reader.SpannedSexpr]) : String
-  (match sexpr
-    [(reader.SpannedSexpr.Int _ text _)
+  (match (reader.spanned-sexpr-view sexpr)
+    [(reader.SpannedSexprView.Int _ text _)
       (str_cat.str-cat "int:" (spec-string-key text))]
-    [(reader.SpannedSexpr.Sym name _)
+    [(reader.SpannedSexprView.Sym name _)
       (str_cat.str-cat
         "sym:"
         (spec-string-key (macro-output-symbol-text-id name "identity-key")))]
-    [(reader.SpannedSexpr.Nil _) "nil"]
-    [(reader.SpannedSexpr.Cons head tail _)
+    [(reader.SpannedSexprView.Nil _) "nil"]
+    [(reader.SpannedSexprView.Cons head tail _)
       (str_cat.str-cat
         "cons:"
-        (spec-string-key (macro-identity-key-sexpr (reader.sp-node-get head)))
+        (spec-string-key (macro-identity-key-sexpr head))
         ":"
-        (spec-string-key (macro-identity-key-sexpr (reader.sp-node-get tail))))]
-    [(reader.SpannedSexpr.Str string-id _)
+        (spec-string-key (macro-identity-key-sexpr tail)))]
+    [(reader.SpannedSexprView.Str string-id _)
       (str_cat.str-cat "str:" (spec-string-key (intern-str string-id)))]
-    [(reader.SpannedSexpr.Char c _)
+    [(reader.SpannedSexprView.Char c _)
       (str_cat.str-cat "char:" (string.int->string (cast c : i64)))]
-    [(reader.SpannedSexpr.Float text _)
+    [(reader.SpannedSexprView.Float text _)
       (str_cat.str-cat "float:" (spec-string-key text))]
-    [(reader.SpannedSexpr.BracketList items _)
+    [(reader.SpannedSexprView.BracketList items _)
       (str_cat.str-cat
         "bracket:"
-        (spec-string-key (macro-identity-key-sexpr (reader.sp-node-get items))))]))
+        (spec-string-key (macro-identity-key-sexpr items)))]))
 
 (define (macro-identity-key-syntax-expr
   [expr : AstExpr]
@@ -64386,7 +64386,7 @@
   (match (macro-expr-list-to-spanned-sexpr exprs span origin)
     [(ResultMacroSexpr.Ok tail)
       (ResultMacroSexpr.Ok
-        (reader.spanned-sexpr-cons
+        (reader.spanned-sexpr-list-prepend
           (macro-spanned-symbol-id name-id span)
           tail
           span))]
@@ -64406,29 +64406,17 @@
   [name-id : i64]
   [a : reader.SpannedSexpr]
   [span : token.SourceSpan]) : reader.SpannedSexpr
-  (reader.spanned-sexpr-cons
-    (macro-spanned-symbol-id name-id span)
-    (reader.spanned-sexpr-cons a (reader.SpannedSexpr.Nil span) span)
-    span))
+  (reader.spanned-sexpr-list2 (macro-spanned-symbol-id name-id span) a span))
 
 (define (macro-form0-id [name-id : i64] [span : token.SourceSpan]) : reader.SpannedSexpr
-  (reader.spanned-sexpr-cons
-    (macro-spanned-symbol-id name-id span)
-    (reader.SpannedSexpr.Nil span)
-    span))
+  (reader.spanned-sexpr-list1 (macro-spanned-symbol-id name-id span) span))
 
 (define (macro-form2-id
   [name-id : i64]
   [a : reader.SpannedSexpr]
   [b : reader.SpannedSexpr]
   [span : token.SourceSpan]) : reader.SpannedSexpr
-  (reader.spanned-sexpr-cons
-    (macro-spanned-symbol-id name-id span)
-    (reader.spanned-sexpr-cons
-      a
-      (reader.spanned-sexpr-cons b (reader.SpannedSexpr.Nil span) span)
-      span)
-    span))
+  (reader.spanned-sexpr-list3 (macro-spanned-symbol-id name-id span) a b span))
 
 (define (macro-form3-id
   [name-id : i64]
@@ -64436,16 +64424,7 @@
   [b : reader.SpannedSexpr]
   [c : reader.SpannedSexpr]
   [span : token.SourceSpan]) : reader.SpannedSexpr
-  (reader.spanned-sexpr-cons
-    (macro-spanned-symbol-id name-id span)
-    (reader.spanned-sexpr-cons
-      a
-      (reader.spanned-sexpr-cons
-        b
-        (reader.spanned-sexpr-cons c (reader.SpannedSexpr.Nil span) span)
-        span)
-      span)
-    span))
+  (reader.spanned-sexpr-list4 (macro-spanned-symbol-id name-id span) a b c span))
 
 (define (macro-binop-symbol-id [op : AstBinOp]) : i64
   (match op
@@ -64483,14 +64462,21 @@
   [items : (& items AstLifetimeList)]
   [span : token.SourceSpan]
   [index : i64]) : reader.SpannedSexpr
-  (if (>= index (ast-lifetime-list-len items))
-    (reader.SpannedSexpr.Nil span)
-    (reader.spanned-sexpr-cons
-      (macro-spanned-symbol-id
-        (ast-lifetime-list-get items index (ast-lifetime-fallback))
-        span)
-      (macro-lifetime-list-to-spanned-sexpr-at items span (+ index 1))
-      span)))
+  (let
+    [builder : reader.SpannedSexprBuilder (reader.spanned-sexpr-builder-new)]
+    [i : i64 index]
+    (begin
+      (while (< i (ast-lifetime-list-len items))
+        (begin
+          (set!
+            builder
+            (reader.spanned-sexpr-builder-push
+              builder
+              (macro-spanned-symbol-id
+                (ast-lifetime-list-get items i (ast-lifetime-fallback))
+                span)))
+          (set! i (+ i 1))))
+      (reader.spanned-sexpr-list-from-builder builder span))))
 
 (define (macro-internal-resolved-struct-type-marker) : String
   "__typelisp internal resolved struct type")
@@ -64503,12 +64489,14 @@
   [name-id : i64]
   [lifetimes : AstLifetimeList]
   [span : token.SourceSpan]) : reader.SpannedSexpr
-  (reader.spanned-sexpr-cons
-    (macro-spanned-symbol-id marker-id span)
-    (reader.spanned-sexpr-cons
-      (macro-spanned-symbol-id name-id span)
-      (macro-lifetime-list-to-spanned-sexpr lifetimes span)
-      span)
+  (reader.spanned-sexpr-list-from-builder
+    (reader.spanned-sexpr-builder-extend
+      (reader.spanned-sexpr-builder-push
+        (reader.spanned-sexpr-builder-push
+          (reader.spanned-sexpr-builder-new)
+          (macro-spanned-symbol-id marker-id span))
+        (macro-spanned-symbol-id name-id span))
+      (macro-lifetime-list-to-spanned-sexpr lifetimes span))
     span))
 
 (define (macro-type-list-to-spanned-sexpr
@@ -64522,22 +64510,36 @@
   [span : token.SourceSpan]
   [origin : AstExpr]
   [index : i64]) : ResultMacroSexpr
+  (macro-type-list-to-spanned-sexpr-into
+    items
+    span
+    origin
+    index
+    (reader.spanned-sexpr-builder-new)))
+
+(define (macro-type-list-to-spanned-sexpr-into
+  [items : (& items AstTypeList)]
+  [span : token.SourceSpan]
+  [origin : AstExpr]
+  [index : i64]
+  [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
   (if (>= index (ast-type-list-len items))
-    (ResultMacroSexpr.Ok (reader.SpannedSexpr.Nil span))
+    (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-type-to-spanned-sexpr
       (ty-node-get (ast-type-list-get items index (ast-type-id-fallback)))
       span
       origin)
       [(ResultMacroSexpr.Ok shead)
-        (match (macro-type-list-to-spanned-sexpr-at
+        (macro-type-list-to-spanned-sexpr-into
           items
           span
           origin
-          (+ index 1))
-          [(ResultMacroSexpr.Ok stail)
-            (ResultMacroSexpr.Ok (reader.spanned-sexpr-cons shead stail span))]
-          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-      [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])))
+          (+ index 1)
+          (reader.spanned-sexpr-builder-push builder shead))]
+      [(ResultMacroSexpr.Err diag)
+        (begin
+          (reader.spanned-sexpr-builder-discard! builder)
+          (ResultMacroSexpr.Err diag))])))
 
 (define (macro-type-unary-sexpr-id
   [name-id : i64]
@@ -64554,7 +64556,7 @@
   [lifetimes : AstLifetimeList]
   [span : token.SourceSpan]) : ResultMacroSexpr
   (ResultMacroSexpr.Ok
-    (reader.spanned-sexpr-cons
+    (reader.spanned-sexpr-list-prepend
       (macro-spanned-symbol-id name-id span)
       (macro-lifetime-list-to-spanned-sexpr lifetimes span)
       span)))
@@ -64705,7 +64707,7 @@
       (match (macro-type-list-to-spanned-sexpr (box-get items) span origin)
         [(ResultMacroSexpr.Ok stail)
           (ResultMacroSexpr.Ok
-            (reader.spanned-sexpr-cons
+            (reader.spanned-sexpr-list-prepend
               (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 175) span)
               stail
               span))]
@@ -64716,17 +64718,16 @@
           (match (macro-type-to-spanned-sexpr (ty-node-get ret) span origin)
             [(ResultMacroSexpr.Ok sret)
               (ResultMacroSexpr.Ok
-                (reader.spanned-sexpr-cons
-                  (macro-spanned-symbol-id
-                    (cbi.compiler-builtin-ctfe-ref 176)
-                    span)
-                  (macro-spanned-sexpr-append
-                    sargs
-                    (reader.spanned-sexpr-cons
-                      sret
-                      (reader.SpannedSexpr.Nil span)
-                      span)
-                    span)
+                (reader.spanned-sexpr-list-from-builder
+                  (reader.spanned-sexpr-builder-push
+                    (reader.spanned-sexpr-builder-extend
+                      (reader.spanned-sexpr-builder-push
+                        (reader.spanned-sexpr-builder-new)
+                        (macro-spanned-symbol-id
+                          (cbi.compiler-builtin-ctfe-ref 176)
+                          span))
+                      sargs)
+                    sret)
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
@@ -64862,13 +64863,7 @@
   [left : reader.SpannedSexpr]
   [right : reader.SpannedSexpr]
   [span : token.SourceSpan]) : reader.SpannedSexpr
-  (match left
-    [(reader.SpannedSexpr.Cons head tail _)
-      (reader.spanned-sexpr-cons
-        (reader.sp-node-get head)
-        (macro-spanned-sexpr-append (reader.sp-node-get tail) right span)
-        span)]
-    [_ right]))
+  (reader.spanned-sexpr-list-append left right span))
 
 (define (macro-literal-to-spanned-sexpr
   [lit : AstLiteral]
@@ -64898,22 +64893,36 @@
   [index : i64]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
+  (macro-pattern-list-to-spanned-sexpr-into
+    patterns
+    index
+    span
+    origin
+    (reader.spanned-sexpr-builder-new)))
+
+(define (macro-pattern-list-to-spanned-sexpr-into
+  [patterns : (& patterns AstPatternList)]
+  [index : i64]
+  [span : token.SourceSpan]
+  [origin : AstExpr]
+  [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
   (if (>= index (struct-get patterns len))
-    (ResultMacroSexpr.Ok (reader.SpannedSexpr.Nil span))
+    (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-pattern-to-spanned-sexpr
       (ast-pattern-list-get patterns index (ast-pattern-fallback))
       span
       origin)
       [(ResultMacroSexpr.Ok shead)
-        (match (macro-pattern-list-to-spanned-sexpr-at
+        (macro-pattern-list-to-spanned-sexpr-into
           patterns
           (+ index 1)
           span
-          origin)
-          [(ResultMacroSexpr.Ok stail)
-            (ResultMacroSexpr.Ok (reader.spanned-sexpr-cons shead stail span))]
-          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-      [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])))
+          origin
+          (reader.spanned-sexpr-builder-push builder shead))]
+      [(ResultMacroSexpr.Err diag)
+        (begin
+          (reader.spanned-sexpr-builder-discard! builder)
+          (ResultMacroSexpr.Err diag))])))
 
 (define (macro-pattern-to-spanned-sexpr
   [pattern : AstPattern]
@@ -64937,7 +64946,7 @@
         origin)
         [(ResultMacroSexpr.Ok args)
           (ResultMacroSexpr.Ok
-            (reader.spanned-sexpr-cons
+            (reader.spanned-sexpr-list-prepend
               (macro-spanned-symbol-id
                 (macro-output-source-identity-id-at name "pattern-variant")
                 span)
@@ -64969,13 +64978,7 @@
             [(ResultMacroSexpr.Ok sbody)
               (ResultMacroSexpr.Ok
                 (reader.spanned-sexpr-bracket-list
-                  (reader.spanned-sexpr-cons
-                    spattern
-                    (reader.spanned-sexpr-cons
-                      sbody
-                      (reader.SpannedSexpr.Nil span)
-                      span)
-                    span)
+                  (reader.spanned-sexpr-list2 spattern sbody span)
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
@@ -64991,22 +64994,36 @@
   [index : i64]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
+  (macro-match-arm-list-to-spanned-sexpr-into
+    arms
+    index
+    span
+    origin
+    (reader.spanned-sexpr-builder-new)))
+
+(define (macro-match-arm-list-to-spanned-sexpr-into
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [span : token.SourceSpan]
+  [origin : AstExpr]
+  [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
   (if (>= index (struct-get arms len))
-    (ResultMacroSexpr.Ok (reader.SpannedSexpr.Nil span))
+    (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-match-arm-bracket
       (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       span
       origin)
       [(ResultMacroSexpr.Ok shead)
-        (match (macro-match-arm-list-to-spanned-sexpr-at
+        (macro-match-arm-list-to-spanned-sexpr-into
           arms
           (+ index 1)
           span
-          origin)
-          [(ResultMacroSexpr.Ok stail)
-            (ResultMacroSexpr.Ok (reader.spanned-sexpr-cons shead stail span))]
-          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-      [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])))
+          origin
+          (reader.spanned-sexpr-builder-push builder shead))]
+      [(ResultMacroSexpr.Err diag)
+        (begin
+          (reader.spanned-sexpr-builder-discard! builder)
+          (ResultMacroSexpr.Err diag))])))
 
 (define (macro-let-binding-bracket
   [binding : AstLetBinding]
@@ -65020,14 +65037,11 @@
             [(AstMaybeType.No)
               (ResultMacroSexpr.Ok
                 (reader.spanned-sexpr-bracket-list
-                  (reader.spanned-sexpr-cons
+                  (reader.spanned-sexpr-list2
                     (macro-spanned-symbol-id
                       (macro-output-source-identity-id-at name "let-binding")
                       span)
-                    (reader.spanned-sexpr-cons
-                      svalue
-                      (reader.SpannedSexpr.Nil span)
-                      span)
+                    svalue
                     span)
                   span))]
             [(AstMaybeType.Some ty)
@@ -65035,24 +65049,17 @@
                 [(ResultMacroSexpr.Ok sty)
                   (ResultMacroSexpr.Ok
                     (reader.spanned-sexpr-bracket-list
-                      (reader.spanned-sexpr-cons
+                      (reader.spanned-sexpr-list4
                         (macro-spanned-symbol-id
                           (macro-output-source-identity-id-at
                             name
                             "typed-let-binding")
                           span)
-                        (reader.spanned-sexpr-cons
-                          (macro-spanned-symbol-id
-                            (cbi.compiler-builtin-ctfe-ref 120)
-                            span)
-                          (reader.spanned-sexpr-cons
-                            sty
-                            (reader.spanned-sexpr-cons
-                              svalue
-                              (reader.SpannedSexpr.Nil span)
-                              span)
-                            span)
+                        (macro-spanned-symbol-id
+                          (cbi.compiler-builtin-ctfe-ref 120)
                           span)
+                        sty
+                        svalue
                         span)
                       span))]
                 [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
@@ -65063,55 +65070,76 @@
   [body : reader.SpannedSexpr]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
-  (macro-let-tail-at (& bindings) body span origin 0))
+  (macro-let-tail-at
+    (& bindings)
+    body
+    span
+    origin
+    0
+    (reader.spanned-sexpr-builder-new)))
 
 (define (macro-let-tail-at
   [bindings : (& bindings AstLetBindingList)]
   [body : reader.SpannedSexpr]
   [span : token.SourceSpan]
   [origin : AstExpr]
-  [index : i64]) : ResultMacroSexpr
+  [index : i64]
+  [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
   (if (>= index (ast-let-binding-list-len bindings))
     (ResultMacroSexpr.Ok
-      (reader.spanned-sexpr-cons body (reader.SpannedSexpr.Nil span) span))
+      (reader.spanned-sexpr-list-from-builder
+        (reader.spanned-sexpr-builder-push builder body)
+        span))
     (match (macro-let-binding-bracket
       (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       span
       origin)
       [(ResultMacroSexpr.Ok sbracket)
-        (match (macro-let-tail-at bindings body span origin (+ index 1))
-          [(ResultMacroSexpr.Ok stail)
-            (ResultMacroSexpr.Ok
-              (reader.spanned-sexpr-cons sbracket stail span))]
-          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-      [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])))
+        (macro-let-tail-at
+          bindings
+          body
+          span
+          origin
+          (+ index 1)
+          (reader.spanned-sexpr-builder-push builder sbracket))]
+      [(ResultMacroSexpr.Err diag)
+        (begin
+          (reader.spanned-sexpr-builder-discard! builder)
+          (ResultMacroSexpr.Err diag))])))
 
 (define (macro-expr-list-to-spanned-sexpr
   [exprs : AstExprList]
   [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
-  (macro-expr-list-to-spanned-sexpr-at (& exprs) 0 span origin))
+  (macro-expr-list-to-spanned-sexpr-at
+    (& exprs)
+    0
+    span
+    origin
+    (reader.spanned-sexpr-builder-new)))
 
 (define (macro-expr-list-to-spanned-sexpr-at
   [exprs : (& exprs AstExprList)]
   [index : i64]
   [span : token.SourceSpan]
-  [origin : AstExpr]) : ResultMacroSexpr
+  [origin : AstExpr]
+  [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
   (if (>= index (struct-get exprs len))
-    (ResultMacroSexpr.Ok (reader.SpannedSexpr.Nil span))
+    (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
       (match (macro-expr-to-spanned-sexpr-with-span head-expr span origin)
         [(ResultMacroSexpr.Ok shead)
-          (match (macro-expr-list-to-spanned-sexpr-at
+          (macro-expr-list-to-spanned-sexpr-at
             exprs
             (+ index 1)
             span
-            origin)
-            [(ResultMacroSexpr.Ok stail)
-              (ResultMacroSexpr.Ok (reader.spanned-sexpr-cons shead stail span))]
-            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))))
+            origin
+            (reader.spanned-sexpr-builder-push builder shead))]
+        [(ResultMacroSexpr.Err diag)
+          (begin
+            (reader.spanned-sexpr-builder-discard! builder)
+            (ResultMacroSexpr.Err diag))]))))
 
 (define (macro-call-head-to-spanned-sexpr
   [expr : AstExpr]
@@ -65180,7 +65208,8 @@
           [(ResultMacroSexpr.Ok head)
             (match (macro-expr-list-to-spanned-sexpr args span origin)
               [(ResultMacroSexpr.Ok tail)
-                (ResultMacroSexpr.Ok (reader.spanned-sexpr-cons head tail span))]
+                (ResultMacroSexpr.Ok
+                  (reader.spanned-sexpr-list-prepend head tail span))]
               [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
           [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))]
     [(AstExpr.BracketClause items)
@@ -65273,7 +65302,7 @@
               (match (macro-let-tail bindings sbody span origin)
                 [(ResultMacroSexpr.Ok stail)
                   (ResultMacroSexpr.Ok
-                    (reader.spanned-sexpr-cons
+                    (reader.spanned-sexpr-list-prepend
                       (macro-spanned-symbol-id
                         (cbi.compiler-builtin-ctfe-ref 181)
                         span)
@@ -65302,11 +65331,16 @@
               (match (macro-match-arm-list-to-spanned-sexpr arms span origin)
                 [(ResultMacroSexpr.Ok sarms)
                   (ResultMacroSexpr.Ok
-                    (reader.spanned-sexpr-cons
-                      (macro-spanned-symbol-id
-                        (cbi.compiler-builtin-ctfe-ref 182)
-                        span)
-                      (reader.spanned-sexpr-cons sscrutinee sarms span)
+                    (reader.spanned-sexpr-list-from-builder
+                      (reader.spanned-sexpr-builder-extend
+                        (reader.spanned-sexpr-builder-push
+                          (reader.spanned-sexpr-builder-push
+                            (reader.spanned-sexpr-builder-new)
+                            (macro-spanned-symbol-id
+                              (cbi.compiler-builtin-ctfe-ref 182)
+                              span))
+                          sscrutinee)
+                        sarms)
                       span))]
                 [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
@@ -65546,9 +65580,8 @@
       (match (ast-maybe-type-from-id maybe-ty-id)
         [(AstMaybeType.No)
           (ResultMacroSexpr.Ok
-            (reader.spanned-sexpr-cons
+            (reader.spanned-sexpr-list1
               (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 118) span)
-              (reader.SpannedSexpr.Nil span)
               span))]
         [(AstMaybeType.Some ty)
           (match (macro-type-to-spanned-sexpr ty span origin)
@@ -65736,20 +65769,24 @@
   [origin : AstExpr]) : ResultMacroParsedDecls
   (let
     [mark : i64 (reader.sp-node-pool-len)]
+    [sexpr-mark : i64 (reader.sexpr-node-pool-len)]
     (match (macro-expr-to-spanned-sexpr expr origin)
       [(ResultMacroSexpr.Ok form)
         (match (macro-parse-decl-sexpr dispatch form origin)
           [(ResultMacroParsedDecls.Ok decls)
             (begin
               (reader.sp-node-pool-truncate! mark)
+              (reader.sexpr-node-pool-truncate! sexpr-mark)
               (ResultMacroParsedDecls.Ok decls))]
           [(ResultMacroParsedDecls.Err diag)
             (begin
               (reader.sp-node-pool-truncate! mark)
+              (reader.sexpr-node-pool-truncate! sexpr-mark)
               (ResultMacroParsedDecls.Err diag))])]
       [(ResultMacroSexpr.Err diag)
         (begin
           (reader.sp-node-pool-truncate! mark)
+          (reader.sexpr-node-pool-truncate! sexpr-mark)
           (ResultMacroParsedDecls.Err diag))])))
 
 (define (macro-parse-decls-from-exprs

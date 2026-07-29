@@ -1644,12 +1644,13 @@
   (cast (tlci-string-ref text idx) : i64))
 
 (define (tlci-field-string-value [ftail : reader.Sexpr] [fname : String]) : ResultTlciString
-  (match ftail
-    [(reader.Sexpr.Cons vhead vrest)
-      (match (box-get vhead)
-        [(reader.Sexpr.Str val-id)
-          (match (box-get vrest)
-            [(reader.Sexpr.Nil) (ResultTlciString.Ok (tlci-symbol-text val-id))]
+  (match (reader.sexpr-view ftail)
+    [(reader.SexprView.Cons vhead vrest)
+      (match (reader.sexpr-view vhead)
+        [(reader.SexprView.Str val-id)
+          (match (reader.sexpr-view vrest)
+            [(reader.SexprView.Nil)
+              (ResultTlciString.Ok (tlci-symbol-text val-id))]
             [_
               (ResultTlciString.Err
                 (str_cat.str-cat
@@ -1667,12 +1668,12 @@
         (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-field-i64-value [ftail : reader.Sexpr] [fname : String]) : ResultTlciI64
-  (match ftail
-    [(reader.Sexpr.Cons vhead vrest)
-      (match (box-get vhead)
-        [(reader.Sexpr.Int val _)
-          (match (box-get vrest)
-            [(reader.Sexpr.Nil) (ResultTlciI64.Ok val)]
+  (match (reader.sexpr-view ftail)
+    [(reader.SexprView.Cons vhead vrest)
+      (match (reader.sexpr-view vhead)
+        [(reader.SexprView.Int val _)
+          (match (reader.sexpr-view vrest)
+            [(reader.SexprView.Nil) (ResultTlciI64.Ok val)]
             [_
               (ResultTlciI64.Err
                 (str_cat.str-cat
@@ -1720,11 +1721,11 @@
         result))))
 
 (define (tlci-sexpr-list-length [items : reader.Sexpr]) : i64
-  (match items
-    [(reader.Sexpr.Nil) 0]
-    [(reader.Sexpr.Cons _ rest)
+  (match (reader.sexpr-view items)
+    [(reader.SexprView.Nil) 0]
+    [(reader.SexprView.Cons _ rest)
       (let
-        [tail-len : i64 (tlci-sexpr-list-length (box-get rest))]
+        [tail-len : i64 (tlci-sexpr-list-length rest)]
         (if (< tail-len 0)
           -1
           (+ tail-len 1)))]
@@ -1734,13 +1735,13 @@
   (match (reader.result (lexer.lex signature))
     [(reader.ResultSexpr.Err _) -1]
     [(reader.ResultSexpr.Ok form)
-      (match form
-        [(reader.Sexpr.Cons head rest)
-          (match (box-get head)
-            [(reader.Sexpr.Sym arrow)
+      (match (reader.sexpr-view form)
+        [(reader.SexprView.Cons head rest)
+          (match (reader.sexpr-view head)
+            [(reader.SexprView.Sym arrow)
               (if (string.eq (tlci-symbol-text arrow) "->")
                 (let
-                  [item-count : i64 (tlci-sexpr-list-length (box-get rest))]
+                  [item-count : i64 (tlci-sexpr-list-length rest)]
                   (if (> item-count 0)
                     (- item-count 1)
                     -1))
@@ -1971,8 +1972,8 @@
   [has-index-param : bool]
   [symbol : String]
   [has-symbol : bool]) : ResultTlciSpmdSpecialization
-  (match fields
-    [(reader.Sexpr.Nil)
+  (match (reader.sexpr-view fields)
+    [(reader.SexprView.Nil)
       (cond
         [(not has-abi)
           (ResultTlciSpmdSpecialization.Err
@@ -2005,24 +2006,24 @@
               result
               index-param
               symbol))])]
-    [(reader.Sexpr.Cons field rest)
-      (match (box-get field)
-        [(reader.Sexpr.Cons fhead ftail)
-          (match (box-get fhead)
-            [(reader.Sexpr.Sym fname)
+    [(reader.SexprView.Cons field rest)
+      (match (reader.sexpr-view field)
+        [(reader.SexprView.Cons fhead ftail)
+          (match (reader.sexpr-view fhead)
+            [(reader.SexprView.Sym fname)
               (cond
                 [(string.eq (tlci-symbol-text fname) "abi")
                   (if has-abi
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `abi`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
                         (tlci-spmd-specialization-fields
-                          (box-get rest)
+                          rest
                           value
                           true
                           backend
@@ -2042,13 +2043,13 @@
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `backend`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
                         (tlci-spmd-specialization-fields
-                          (box-get rest)
+                          rest
                           abi
                           has-abi
                           value
@@ -2067,14 +2068,12 @@
                   (if has-lanes
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `lanes`")
-                    (match (tlci-field-i64-value
-                      (box-get ftail)
-                      (tlci-symbol-text fname))
+                    (match (tlci-field-i64-value ftail (tlci-symbol-text fname))
                       [(ResultTlciI64.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciI64.Ok value)
                         (tlci-spmd-specialization-fields
-                          (box-get rest)
+                          rest
                           abi
                           has-abi
                           backend
@@ -2094,13 +2093,13 @@
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `args`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
                         (tlci-spmd-specialization-fields
-                          (box-get rest)
+                          rest
                           abi
                           has-abi
                           backend
@@ -2120,13 +2119,13 @@
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `result`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
                         (tlci-spmd-specialization-fields
-                          (box-get rest)
+                          rest
                           abi
                           has-abi
                           backend
@@ -2145,14 +2144,12 @@
                   (if has-index-param
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `index-param`")
-                    (match (tlci-field-i64-value
-                      (box-get ftail)
-                      (tlci-symbol-text fname))
+                    (match (tlci-field-i64-value ftail (tlci-symbol-text fname))
                       [(ResultTlciI64.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciI64.Ok value)
                         (tlci-spmd-specialization-fields
-                          (box-get rest)
+                          rest
                           abi
                           has-abi
                           backend
@@ -2172,13 +2169,13 @@
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `symbol`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
                         (tlci-spmd-specialization-fields
-                          (box-get rest)
+                          rest
                           abi
                           has-abi
                           backend
@@ -2234,8 +2231,8 @@
   [signature : String]
   [has-signature : bool]
   [specializations-rev : TlciSpmdSpecializationList]) : ResultTlciSpmdCallable
-  (match fields
-    [(reader.Sexpr.Nil)
+  (match (reader.sexpr-view fields)
+    [(reader.SexprView.Nil)
       (cond
         [(not has-name)
           (ResultTlciSpmdCallable.Err
@@ -2251,24 +2248,24 @@
               (tlci-spmd-specializations-reverse-onto
                 specializations-rev
                 TlciSpmdSpecializationList.Nil)))])]
-    [(reader.Sexpr.Cons field rest)
-      (match (box-get field)
-        [(reader.Sexpr.Cons fhead ftail)
-          (match (box-get fhead)
-            [(reader.Sexpr.Sym fname)
+    [(reader.SexprView.Cons field rest)
+      (match (reader.sexpr-view field)
+        [(reader.SexprView.Cons fhead ftail)
+          (match (reader.sexpr-view fhead)
+            [(reader.SexprView.Sym fname)
               (cond
                 [(string.eq (tlci-symbol-text fname) "name")
                   (if has-name
                     (ResultTlciSpmdCallable.Err
                       "tlci metadata: duplicate helper field `name`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdCallable.Err message)]
                       [(ResultTlciString.Ok value)
                         (tlci-spmd-helper-fields
-                          (box-get rest)
+                          rest
                           value
                           true
                           signature
@@ -2279,25 +2276,25 @@
                     (ResultTlciSpmdCallable.Err
                       "tlci metadata: duplicate helper field `signature`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdCallable.Err message)]
                       [(ResultTlciString.Ok value)
                         (tlci-spmd-helper-fields
-                          (box-get rest)
+                          rest
                           name
                           has-name
                           value
                           true
                           specializations-rev)]))]
                 [(string.eq (tlci-symbol-text fname) "specialization")
-                  (match (tlci-spmd-specialization-from-field (box-get ftail))
+                  (match (tlci-spmd-specialization-from-field ftail)
                     [(ResultTlciSpmdSpecialization.Err message)
                       (ResultTlciSpmdCallable.Err message)]
                     [(ResultTlciSpmdSpecialization.Ok specialization)
                       (tlci-spmd-helper-fields
-                        (box-get rest)
+                        rest
                         name
                         has-name
                         signature
@@ -2321,13 +2318,13 @@
       (ResultTlciSpmdCallable.Err "tlci metadata: helper fields must be lists")]))
 
 (define (tlci-spmd-helper-from-form [form : reader.Sexpr]) : ResultTlciSpmdCallable
-  (match form
-    [(reader.Sexpr.Cons head rest)
-      (match (box-get head)
-        [(reader.Sexpr.Sym name)
+  (match (reader.sexpr-view form)
+    [(reader.SexprView.Cons head rest)
+      (match (reader.sexpr-view head)
+        [(reader.SexprView.Sym name)
           (if (string.eq (tlci-symbol-text name) "helper")
             (tlci-spmd-helper-fields
-              (box-get rest)
+              rest
               ""
               false
               ""
@@ -2348,17 +2345,17 @@
 (define (tlci-spmd-callables-from-fields-rev
   [fields : reader.Sexpr]
   [items-rev : TlciSpmdCallableList]) : ResultTlciSpmdCallableList
-  (match fields
-    [(reader.Sexpr.Nil)
+  (match (reader.sexpr-view fields)
+    [(reader.SexprView.Nil)
       (ResultTlciSpmdCallableList.Ok
         (tlci-spmd-callables-reverse-onto items-rev TlciSpmdCallableList.Nil))]
-    [(reader.Sexpr.Cons item rest)
-      (match (tlci-spmd-helper-from-form (box-get item))
+    [(reader.SexprView.Cons item rest)
+      (match (tlci-spmd-helper-from-form item)
         [(ResultTlciSpmdCallable.Err message)
           (ResultTlciSpmdCallableList.Err message)]
         [(ResultTlciSpmdCallable.Ok callable)
           (tlci-spmd-callables-from-fields-rev
-            (box-get rest)
+            rest
             (TlciSpmdCallableList.Cons callable (box items-rev)))])]
     [_
       (ResultTlciSpmdCallableList.Err
@@ -2373,8 +2370,8 @@
   [has-name : bool]
   [version : String]
   [has-version : bool]) : ResultTlciMetadata
-  (match fields
-    [(reader.Sexpr.Nil)
+  (match (reader.sexpr-view fields)
+    [(reader.SexprView.Nil)
       (cond
         [(not has-name)
           (ResultTlciMetadata.Err
@@ -2395,43 +2392,33 @@
               name
               version
               TlciSpmdCallableList.Nil))])]
-    [(reader.Sexpr.Cons field rest)
-      (match (box-get field)
-        [(reader.Sexpr.Cons fhead ftail)
-          (match (box-get fhead)
-            [(reader.Sexpr.Sym fname)
+    [(reader.SexprView.Cons field rest)
+      (match (reader.sexpr-view field)
+        [(reader.SexprView.Cons fhead ftail)
+          (match (reader.sexpr-view fhead)
+            [(reader.SexprView.Sym fname)
               (if (string.eq (tlci-symbol-text fname) "name")
                 (if has-name
                   (ResultTlciMetadata.Err
                     "tlci metadata: duplicate package field `name`")
                   (match (tlci-field-string-value
-                    (box-get ftail)
+                    ftail
                     (tlci-symbol-text fname))
                     [(ResultTlciString.Err message)
                       (ResultTlciMetadata.Err message)]
                     [(ResultTlciString.Ok value)
-                      (tlci-package-fields
-                        (box-get rest)
-                        value
-                        true
-                        version
-                        has-version)]))
+                      (tlci-package-fields rest value true version has-version)]))
                 (if (string.eq (tlci-symbol-text fname) "version")
                   (if has-version
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate package field `version`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciMetadata.Err message)]
                       [(ResultTlciString.Ok value)
-                        (tlci-package-fields
-                          (box-get rest)
-                          name
-                          has-name
-                          value
-                          true)]))
+                        (tlci-package-fields rest name has-name value true)]))
                   (ResultTlciMetadata.Err
                     (str_cat.str-cat
                       "tlci metadata: unknown package field `"
@@ -2456,8 +2443,8 @@
   [has-package : bool]
   [spmd-callables : TlciSpmdCallableList]
   [has-spmd-callables : bool]) : ResultTlciMetadata
-  (match fields
-    [(reader.Sexpr.Nil)
+  (match (reader.sexpr-view fields)
+    [(reader.SexprView.Nil)
       (cond
         [(not has-version)
           (ResultTlciMetadata.Err
@@ -2481,24 +2468,24 @@
         [else
           (ResultTlciMetadata.Ok
             (TlciMetadata version package-name package-version spmd-callables))])]
-    [(reader.Sexpr.Cons field rest)
-      (match (box-get field)
-        [(reader.Sexpr.Cons fhead ftail)
-          (match (box-get fhead)
-            [(reader.Sexpr.Sym fname)
+    [(reader.SexprView.Cons field rest)
+      (match (reader.sexpr-view field)
+        [(reader.SexprView.Cons fhead ftail)
+          (match (reader.sexpr-view fhead)
+            [(reader.SexprView.Sym fname)
               (cond
                 [(string.eq (tlci-symbol-text fname) "version")
                   (if has-version
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `version`")
                     (match (tlci-field-string-value
-                      (box-get ftail)
+                      ftail
                       (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciMetadata.Err message)]
                       [(ResultTlciString.Ok value)
                         (tlci-metadata-fields
-                          (box-get rest)
+                          rest
                           value
                           true
                           package-name
@@ -2510,12 +2497,12 @@
                   (if has-package
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `package`")
-                    (match (tlci-package-from-field (box-get ftail))
+                    (match (tlci-package-from-field ftail)
                       [(ResultTlciMetadata.Err message)
                         (ResultTlciMetadata.Err message)]
                       [(ResultTlciMetadata.Ok parsed)
                         (tlci-metadata-fields
-                          (box-get rest)
+                          rest
                           version
                           has-version
                           (struct-get parsed package-name)
@@ -2527,12 +2514,12 @@
                   (if has-spmd-callables
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `spmd-callables`")
-                    (match (tlci-spmd-callables-from-field (box-get ftail))
+                    (match (tlci-spmd-callables-from-field ftail)
                       [(ResultTlciSpmdCallableList.Err message)
                         (ResultTlciMetadata.Err message)]
                       [(ResultTlciSpmdCallableList.Ok parsed)
                         (tlci-metadata-fields
-                          (box-get rest)
+                          rest
                           version
                           has-version
                           package-name
@@ -2553,13 +2540,13 @@
     [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")]))
 
 (define (tlci-metadata-from-form [form : reader.Sexpr]) : ResultTlciMetadata
-  (match form
-    [(reader.Sexpr.Cons head rest)
-      (match (box-get head)
-        [(reader.Sexpr.Sym name)
+  (match (reader.sexpr-view form)
+    [(reader.SexprView.Cons head rest)
+      (match (reader.sexpr-view head)
+        [(reader.SexprView.Sym name)
           (if (string.eq (tlci-symbol-text name) "typelisp-tlci-metadata")
             (tlci-metadata-fields
-              (box-get rest)
+              rest
               ""
               false
               ""

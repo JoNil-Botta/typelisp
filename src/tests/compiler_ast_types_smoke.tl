@@ -320,6 +320,35 @@
           (ast.ast-node-pool-context-install! active-before)
           ok)))))
 
+(define (compiler-ast-context-owner-identity-smoke?) : bool
+  (let
+    [active-before : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [owner : i64 (ast.ast-node-pool-context-owner-arena pools)]
+    [copied : ast.AstNodePoolContext (ast.ast-node-pool-context-snapshot pools)]
+    [synthetic-head : arena.Arena (arena.make)]
+    [head : i64 (arena.raw-handle synthetic-head)]
+    (begin
+      ;; Model a payload allocation advancing the mutable chain head after a
+      ;; context copy has been installed. Retirement must still recognize the
+      ;; copied active context as belonging to the original pool owner.
+      (ast.ast-node-pool-context-sync-base-arena! copied head)
+      (ast.ast-node-pool-context-install! copied)
+      (let
+        [ok : bool
+          (and
+            (not (= owner head))
+            (= (ast.ast-node-pool-context-owner-arena copied) owner)
+            (= (ast.ast-node-pool-owner-arena-handle) owner)
+            (= (ast.ast-node-pool-base-arena-handle) head))]
+        (begin
+          (ast.ast-node-pool-context-install! active-before)
+          (unsafe
+            (arena.destroy synthetic-head))
+          ok)))))
+
 (define (compiler-ast-context-shared-binary?
   [pools : ast.AstNodePoolContext]
   [id : i64]
@@ -1294,6 +1323,7 @@
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
     (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
     (unless (compiler-ast-active-context-sync-smoke?) (return 4))
+    (unless (compiler-ast-context-owner-identity-smoke?) (return 17))
     (unless (compiler-ast-program-compaction-smoke?) (return 5))
     (unless (compiler-ast-program-copy-append-smoke?) (return 13))
     (unless (compiler-ast-decl-cons-growth-smoke?) (return 6))

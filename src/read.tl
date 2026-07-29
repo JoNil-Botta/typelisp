@@ -38,28 +38,32 @@
 (import token)
 
 ;; --------------------------------------------------------------------------
-;; The Sexpr AST: cons cells, the way Lisp represents read source.
+;; Dense s-expression node and child storage.
 ;; --------------------------------------------------------------------------
-;; An s-expression is an atom (an integer, float, or symbol), the empty list, or a cons
-;; cell pairing a head s-expression with a tail s-expression. A *proper list*
-;; `(a b c)` is the right-nested spine
-;; `(Sexpr.Cons a (Sexpr.Cons b (Sexpr.Cons c Sexpr.Nil)))`, terminated by
-;; `Sexpr.Nil` - exactly the cons-cell encoding of a list in any Lisp.
-;; `Sexpr.Cons` carries two boxed `Sexpr` children, so the recursive layout is
-;; finite and every constructed node that escapes via a return is heap-promoted.
-;; The reader builds this tree; importers can walk it with `match`-based
-;; recursion. `Sexpr.Str` carries the parser-assigned ID of a string literal's
+;; TypeLisp has only proper parenthesized and bracketed forms. A list therefore
+;; stores one contiguous range of child-node ids instead of a boxed head/tail
+;; spine. The storage variants are intentionally not a public traversal
+;; contract: consumers use `SexprView` / `SpannedSexprView`, whose `Cons` step
+;; carries a value-level tail view and never allocates or stores a recursive
+;; pair. `Sexpr.Str` carries the parser-assigned ID of a string literal's
 ;; unescaped inner text. The reader preserves the lexer's `token.Token.Str` ID, so a
 ;; quoted string reads as a distinct atom rather than being conflated with a
 ;; `Sexpr.Sym` of the same characters. `Sexpr.Char` carries a character-literal
-;; datum (`'x'`), likewise keeping chars distinct from symbols, ints, and strings. `Sexpr.Str` and `Sexpr.Char`
-;; are appended last so the existing variants keep their stable ordering for
-;; every importer.
+;; datum (`'x'`), likewise keeping chars distinct from symbols, ints, and
+;; strings.
 (defenum Sexpr
   (Int i64 String)
   (Sym i64)
+  (List i64 i64)
+  (Str i64)
+  (Char char)
+  (Float String))
+
+(defenum SexprView
+  (Int i64 String)
+  (Sym i64)
   (Nil)
-  (Cons (Box Sexpr) (Box Sexpr))
+  (Cons Sexpr Sexpr)
   (Str i64)
   (Char char)
   (Float String))
@@ -71,20 +75,29 @@
 (defenum SpannedSexpr
   (Int i64 String token.SourceSpan)
   (Sym i64 token.SourceSpan)
-  (Nil token.SourceSpan)
-  (Cons i64 i64 token.SourceSpan)
+  (List i64 i64 token.SourceSpan)
   (Str i64 token.SourceSpan)
   (Char char token.SourceSpan)
   (Float String token.SourceSpan)
-  (BracketList i64 token.SourceSpan))
+  (BracketList i64 i64 token.SourceSpan))
+
+(defenum SpannedSexprView
+  (Int i64 String token.SourceSpan)
+  (Sym i64 token.SourceSpan)
+  (Nil token.SourceSpan)
+  (Cons SpannedSexpr SpannedSexpr token.SourceSpan)
+  (Str i64 token.SourceSpan)
+  (Char char token.SourceSpan)
+  (Float String token.SourceSpan)
+  (BracketList SpannedSexpr token.SourceSpan))
 
 (defenum ResultSpannedSexpr
   (Ok SpannedSexpr)
   (Err token.SourceError))
 
-;; --- flat SpannedSexpr node pool (mirrors the AstExpr flat pool) ---
-;; SpannedSexpr.Cons / SpannedSexpr.BracketList children are i64 ids into this pool instead of
-;; (box ...). Two plain globals (array + count), NOT a struct, to avoid the
+;; --- flat Sexpr / SpannedSexpr child-node pools ---
+;; List children are contiguous ids into their corresponding pool. Two plain
+;; globals (array + count), NOT a struct, avoid the
 ;; opt2 hot-path-inline miscompile seen on the AstExpr pool. The spanned tree
 ;; is transient (consumed into AstExpr, spans copied out by value, then dead),
 ;; so the pool is reset per program parse (see compiler_parse_core.tl). Start
@@ -100,9 +113,26 @@
   0)
 (define sp-node-pool-count : i64
   0)
+(define sp-builder-slots : (Array SpannedSexpr)
+  (make-array SpannedSexpr 0))
+(define sp-builder-count : i64
+  0)
+(define sexpr-node-pool-slots : (Array Sexpr)
+  (make-array Sexpr 0))
+(define sexpr-node-pool-base-arena : i64
+  0)
+(define sexpr-node-pool-count : i64
+  0)
+(define sexpr-builder-slots : (Array Sexpr)
+  (make-array Sexpr 0))
+(define sexpr-builder-count : i64
+  0)
 
 (define (sp-node-pool-base-arena-handle-value) : i64
   sp-node-pool-base-arena)
+
+(define (sexpr-node-pool-base-arena-handle-value) : i64
+  sexpr-node-pool-base-arena)
 
 (define (sp-node-pool-restore-arena-after-base-alloc!
   [previous-arena : i64]
@@ -134,6 +164,9 @@
 
 (define (sp-node-pool-len) : i64
   sp-node-pool-count)
+
+(define (sexpr-node-pool-len) : i64
+  sexpr-node-pool-count)
 
 ;; Grow is a safety net. The spanned pool is reset per program parse and
 ;; truncated per top-level form (compiler_parse_core.tl), so ordinary inputs
@@ -175,6 +208,106 @@
       (set! sp-node-pool-base-arena head-arena)
       (set! sp-node-pool-slots new-slots))))
 
+(define (sexpr-node-pool-grow!) : unit
+  (let
+    [old-slots : (Array Sexpr) sexpr-node-pool-slots]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 sexpr-node-pool-base-arena]
+    [storage-root : i64
+      (if (= base-arena 0)
+        (arena.tl_arena_make)
+        base-arena)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set storage-root))]
+    [new-slots : (Array Sexpr) (make-array Sexpr new-cap)]
+    [head-arena : i64 (arena.tl_arena_current)]
+    [_restore-arena : unit
+      (sp-node-pool-restore-arena-after-base-alloc!
+        previous-arena
+        base-arena
+        head-arena)]
+    [len : i64 sexpr-node-pool-count]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (set! sexpr-node-pool-base-arena head-arena)
+      (set! sexpr-node-pool-slots new-slots))))
+
+(define (sp-builder-grow!) : unit
+  (let
+    [old-slots : (Array SpannedSexpr) sp-builder-slots]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 sp-node-pool-base-arena]
+    [storage-root : i64
+      (if (= base-arena 0)
+        (arena.tl_arena_make)
+        base-arena)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set storage-root))]
+    [new-slots : (Array SpannedSexpr) (make-array SpannedSexpr new-cap)]
+    [head-arena : i64 (arena.tl_arena_current)]
+    [_restore-arena : unit
+      (sp-node-pool-restore-arena-after-base-alloc!
+        previous-arena
+        base-arena
+        head-arena)]
+    [i : i64 0]
+    (begin
+      (while (< i sp-builder-count)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (set! sp-node-pool-base-arena head-arena)
+      (set! sp-builder-slots new-slots))))
+
+(define (sexpr-builder-grow!) : unit
+  (let
+    [old-slots : (Array Sexpr) sexpr-builder-slots]
+    [old-cap : i64 (array-length old-slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1024
+        (* old-cap 2))]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 sexpr-node-pool-base-arena]
+    [storage-root : i64
+      (if (= base-arena 0)
+        (arena.tl_arena_make)
+        base-arena)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set storage-root))]
+    [new-slots : (Array Sexpr) (make-array Sexpr new-cap)]
+    [head-arena : i64 (arena.tl_arena_current)]
+    [_restore-arena : unit
+      (sp-node-pool-restore-arena-after-base-alloc!
+        previous-arena
+        base-arena
+        head-arena)]
+    [i : i64 0]
+    (begin
+      (while (< i sexpr-builder-count)
+        (begin
+          (array-set! new-slots i (array-ref old-slots i))
+          (set! i (+ i 1))))
+      (set! sexpr-node-pool-base-arena head-arena)
+      (set! sexpr-builder-slots new-slots))))
+
 (define (sp-node-push [node : SpannedSexpr]) : i64
   (begin
     (if (>= sp-node-pool-count (array-length sp-node-pool-slots))
@@ -187,14 +320,39 @@
         (set! sp-node-pool-count (+ id 1))
         id))))
 
+(define (sexpr-node-push [node : Sexpr]) : i64
+  (begin
+    (if (>= sexpr-node-pool-count (array-length sexpr-node-pool-slots))
+      (sexpr-node-pool-grow!)
+      unit)
+    (let
+      [id : i64 sexpr-node-pool-count]
+      (begin
+        (array-set! sexpr-node-pool-slots id node)
+        (set! sexpr-node-pool-count (+ id 1))
+        id))))
+
 (define (sp-node-get [id : i64]) : SpannedSexpr
   (array-ref sp-node-pool-slots id))
+
+(define (sexpr-node-get [id : i64]) : Sexpr
+  (array-ref sexpr-node-pool-slots id))
 
 (define (sp-node-pool-truncate! [mark : i64]) : unit
   (set! sp-node-pool-count mark))
 
 (define (sp-node-pool-reset!) : unit
-  (sp-node-pool-truncate! 0))
+  (begin
+    (sp-node-pool-truncate! 0)
+    (set! sp-builder-count 0)))
+
+(define (sexpr-node-pool-truncate! [mark : i64]) : unit
+  (set! sexpr-node-pool-count mark))
+
+(define (sexpr-node-pool-reset!) : unit
+  (begin
+    (sexpr-node-pool-truncate! 0)
+    (set! sexpr-builder-count 0)))
 
 (define (sp-node-pool-arena-ownership-self-test) : i64
   (let
@@ -204,59 +362,285 @@
       (unsafe
         (arena.set! scratch))
       (sp-node-pool-grow!)
+      (sexpr-node-pool-grow!)
+      (sp-builder-grow!)
+      (sexpr-builder-grow!)
       (unsafe
         (begin
           (arena.set! home)
           (arena.destroy scratch)))
       (sp-node-pool-reset!)
+      (sexpr-node-pool-reset!)
       (let
-        [id : i64 (sp-node-push (SpannedSexpr.Nil (token.SourceSpan 1 1 1 1)))]
-        (match (sp-node-get id)
-          [(SpannedSexpr.Nil span)
-            (if (and (= id 0) (= (struct-get span start-line) 1))
-              42
-              1)]
+        [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
+        [sp-list : SpannedSexpr
+          (spanned-sexpr-list1 (SpannedSexpr.Sym 7 span) span)]
+        [sexpr-list : Sexpr
+          (sexpr-list-from-builder
+            (sexpr-builder-push (sexpr-builder-new) (Sexpr.Sym 9)))]
+        (match sp-list
+          [(SpannedSexpr.List sp-start sp-length sp-span)
+            (match sexpr-list
+              [(Sexpr.List sexpr-start sexpr-length)
+                (if (and
+                  (= sp-start 0)
+                  (= sp-length 1)
+                  (= sp-span.start-line 1)
+                  (= sexpr-start 0)
+                  (= sexpr-length 1))
+                  (match (sp-node-get sp-start)
+                    [(SpannedSexpr.Sym sp-value _)
+                      (match (sexpr-node-get sexpr-start)
+                        [(Sexpr.Sym sexpr-value)
+                          (if (and (= sp-value 7) (= sexpr-value 9))
+                            42
+                            1)]
+                        [_ 1])]
+                    [_ 1])
+                  1)]
+              [_ 1])]
           [_ 2])))))
 
-(define (sexpr-cons [head : Sexpr] [tail : Sexpr]) : Sexpr
-  (Sexpr.Cons (box head) (box tail)))
+(defstruct SexprBuilder
+  (start i64))
 
-(define (spanned-sexpr-cons
+(defstruct SpannedSexprBuilder
+  (start i64))
+
+(define (sexpr-builder-new) : SexprBuilder
+  (SexprBuilder sexpr-builder-count))
+
+(define (spanned-sexpr-builder-new) : SpannedSexprBuilder
+  (SpannedSexprBuilder sp-builder-count))
+
+(define (sexpr-builder-push [builder : SexprBuilder] [item : Sexpr]) : SexprBuilder
+  (begin
+    (if (>= sexpr-builder-count (array-length sexpr-builder-slots))
+      (sexpr-builder-grow!)
+      unit)
+    (array-set! sexpr-builder-slots sexpr-builder-count item)
+    (set! sexpr-builder-count (+ sexpr-builder-count 1))
+    builder))
+
+(define (spanned-sexpr-builder-push
+  [builder : SpannedSexprBuilder]
+  [item : SpannedSexpr]) : SpannedSexprBuilder
+  (begin
+    (if (>= sp-builder-count (array-length sp-builder-slots))
+      (sp-builder-grow!)
+      unit)
+    (array-set! sp-builder-slots sp-builder-count item)
+    (set! sp-builder-count (+ sp-builder-count 1))
+    builder))
+
+(define (sexpr-list-from-builder [builder : SexprBuilder]) : Sexpr
+  (let
+    [start : i64 (sexpr-node-pool-len)]
+    [builder-start : i64 builder.start]
+    [len : i64 (- sexpr-builder-count builder-start)]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (sexpr-node-push (array-ref sexpr-builder-slots (+ builder-start i)))
+          (set! i (+ i 1))))
+      (set! sexpr-builder-count builder-start)
+      (Sexpr.List start len))))
+
+(define (spanned-sexpr-list-from-builder
+  [builder : SpannedSexprBuilder]
+  [span : token.SourceSpan]) : SpannedSexpr
+  (let
+    [start : i64 (sp-node-pool-len)]
+    [builder-start : i64 builder.start]
+    [len : i64 (- sp-builder-count builder-start)]
+    [i : i64 0]
+    (begin
+      (while (< i len)
+        (begin
+          (sp-node-push (array-ref sp-builder-slots (+ builder-start i)))
+          (set! i (+ i 1))))
+      (set! sp-builder-count builder-start)
+      (SpannedSexpr.List start len span))))
+
+(define (sexpr-builder-discard! [builder : SexprBuilder]) : unit
+  (set! sexpr-builder-count builder.start))
+
+(define (spanned-sexpr-builder-discard! [builder : SpannedSexprBuilder]) : unit
+  (set! sp-builder-count builder.start))
+
+(define (spanned-sexpr-builder-extend
+  [builder : SpannedSexprBuilder]
+  [items : SpannedSexpr]) : SpannedSexprBuilder
+  (match items
+    [(SpannedSexpr.List start length _)
+      (let
+        [out : SpannedSexprBuilder builder]
+        [i : i64 0]
+        (begin
+          (while (< i length)
+            (begin
+              (set!
+                out
+                (spanned-sexpr-builder-push out (sp-node-get (+ start i))))
+              (set! i (+ i 1))))
+          out))]
+    [_ (io.panic "reader: list builder extend requires a proper list")]))
+
+(define (spanned-sexpr-list1 [a : SpannedSexpr] [span : token.SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-list-from-builder
+    (spanned-sexpr-builder-push (spanned-sexpr-builder-new) a)
+    span))
+
+(define (spanned-sexpr-list2
+  [a : SpannedSexpr]
+  [b : SpannedSexpr]
+  [span : token.SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-list-from-builder
+    (spanned-sexpr-builder-push
+      (spanned-sexpr-builder-push (spanned-sexpr-builder-new) a)
+      b)
+    span))
+
+(define (spanned-sexpr-list3
+  [a : SpannedSexpr]
+  [b : SpannedSexpr]
+  [c : SpannedSexpr]
+  [span : token.SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-list-from-builder
+    (spanned-sexpr-builder-push
+      (spanned-sexpr-builder-push
+        (spanned-sexpr-builder-push (spanned-sexpr-builder-new) a)
+        b)
+      c)
+    span))
+
+(define (spanned-sexpr-list4
+  [a : SpannedSexpr]
+  [b : SpannedSexpr]
+  [c : SpannedSexpr]
+  [d : SpannedSexpr]
+  [span : token.SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-list-from-builder
+    (spanned-sexpr-builder-push
+      (spanned-sexpr-builder-push
+        (spanned-sexpr-builder-push
+          (spanned-sexpr-builder-push (spanned-sexpr-builder-new) a)
+          b)
+        c)
+      d)
+    span))
+
+(define (spanned-sexpr-list-append
+  [left : SpannedSexpr]
+  [right : SpannedSexpr]
+  [span : token.SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-list-from-builder
+    (spanned-sexpr-builder-extend
+      (spanned-sexpr-builder-extend (spanned-sexpr-builder-new) left)
+      right)
+    span))
+
+(define (sexpr-empty) : Sexpr
+  (Sexpr.List (sexpr-node-pool-len) 0))
+
+(define (spanned-sexpr-empty [span : token.SourceSpan]) : SpannedSexpr
+  (SpannedSexpr.List (sp-node-pool-len) 0 span))
+
+(define (spanned-sexpr-list-prepend
   [head : SpannedSexpr]
   [tail : SpannedSexpr]
   [span : token.SourceSpan]) : SpannedSexpr
-  (SpannedSexpr.Cons (sp-node-push head) (sp-node-push tail) span))
+  (match tail
+    [(SpannedSexpr.List start length _)
+      (let
+        [builder : SpannedSexprBuilder
+          (spanned-sexpr-builder-push (spanned-sexpr-builder-new) head)]
+        [i : i64 0]
+        (begin
+          (while (< i length)
+            (begin
+              (set!
+                builder
+                (spanned-sexpr-builder-push builder (sp-node-get (+ start i))))
+              (set! i (+ i 1))))
+          (spanned-sexpr-list-from-builder builder span)))]
+    [_ (io.panic "reader: list prepend requires a proper list")]))
 
 (define (spanned-sexpr-bracket-list
   [items : SpannedSexpr]
   [span : token.SourceSpan]) : SpannedSexpr
-  (SpannedSexpr.BracketList (sp-node-push items) span))
+  (match items
+    [(SpannedSexpr.List start length _)
+      (SpannedSexpr.BracketList start length span)]
+    [_ (io.panic "reader: bracket form requires a proper list")]))
+
+(define (sexpr-view [s : Sexpr]) : SexprView
+  (match s
+    [(Sexpr.Int n text) (SexprView.Int n text)]
+    [(Sexpr.Sym name) (SexprView.Sym name)]
+    [(Sexpr.List start length)
+      (if (<= length 0)
+        SexprView.Nil
+        (SexprView.Cons
+          (sexpr-node-get start)
+          (Sexpr.List (+ start 1) (- length 1))))]
+    [(Sexpr.Str text) (SexprView.Str text)]
+    [(Sexpr.Char c) (SexprView.Char c)]
+    [(Sexpr.Float text) (SexprView.Float text)]))
+
+(define (spanned-sexpr-view [s : SpannedSexpr]) : SpannedSexprView
+  (match s
+    [(SpannedSexpr.Int n text span) (SpannedSexprView.Int n text span)]
+    [(SpannedSexpr.Sym name span) (SpannedSexprView.Sym name span)]
+    [(SpannedSexpr.List start length span)
+      (if (<= length 0)
+        (SpannedSexprView.Nil span)
+        (SpannedSexprView.Cons
+          (sp-node-get start)
+          (SpannedSexpr.List (+ start 1) (- length 1) span)
+          span))]
+    [(SpannedSexpr.Str text span) (SpannedSexprView.Str text span)]
+    [(SpannedSexpr.Char c span) (SpannedSexprView.Char c span)]
+    [(SpannedSexpr.Float text span) (SpannedSexprView.Float text span)]
+    [(SpannedSexpr.BracketList start length span)
+      (SpannedSexprView.BracketList (SpannedSexpr.List start length span) span)]))
 
 (define (spanned-sexpr-span [s : SpannedSexpr]) : token.SourceSpan
   (match s
     [(SpannedSexpr.Int _ _ span) span]
     [(SpannedSexpr.Sym _ span) span]
-    [(SpannedSexpr.Nil span) span]
-    [(SpannedSexpr.Cons _ _ span) span]
+    [(SpannedSexpr.List _ _ span) span]
     [(SpannedSexpr.Str _ span) span]
     [(SpannedSexpr.Char _ span) span]
     [(SpannedSexpr.Float _ span) span]
-    [(SpannedSexpr.BracketList _ span) span]))
+    [(SpannedSexpr.BracketList _ _ span) span]))
+
+(define (spanned-sexpr-range-form [start : i64] [length : i64]) : Sexpr
+  (let
+    [builder : SexprBuilder (sexpr-builder-new)]
+    [i : i64 0]
+    (begin
+      (while (< i length)
+        (begin
+          (set!
+            builder
+            (sexpr-builder-push
+              builder
+              (spanned-sexpr-form (sp-node-get (+ start i)))))
+          (set! i (+ i 1))))
+      (sexpr-list-from-builder builder))))
 
 (define (spanned-sexpr-form [s : SpannedSexpr]) : Sexpr
   (match s
     [(SpannedSexpr.Int n text _) (Sexpr.Int n text)]
     [(SpannedSexpr.Sym sym _) (Sexpr.Sym sym)]
-    [(SpannedSexpr.Nil _) Sexpr.Nil]
-    [(SpannedSexpr.Cons head tail _)
-      (sexpr-cons
-        (spanned-sexpr-form (sp-node-get head))
-        (spanned-sexpr-form (sp-node-get tail)))]
+    [(SpannedSexpr.List start length _) (spanned-sexpr-range-form start length)]
     [(SpannedSexpr.Str text _) (Sexpr.Str text)]
     [(SpannedSexpr.Char c _) (Sexpr.Char c)]
     [(SpannedSexpr.Float text _) (Sexpr.Float text)]
-    [(SpannedSexpr.BracketList items _)
-      (spanned-sexpr-form (sp-node-get items))]))
+    [(SpannedSexpr.BracketList start length _)
+      (spanned-sexpr-range-form start length)]))
 
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the `(Array token.Token)`.
@@ -310,7 +694,10 @@
     [else (stable-symbol-id "quote")]))
 
 (define (prefix-form [name : i64] [form : Sexpr]) : Sexpr
-  (sexpr-cons (Sexpr.Sym name) (sexpr-cons form Sexpr.Nil)))
+  (sexpr-list-from-builder
+    (sexpr-builder-push
+      (sexpr-builder-push (sexpr-builder-new) (Sexpr.Sym name))
+      form)))
 
 (define (prefix-spanned-form
   [name : i64]
@@ -319,12 +706,12 @@
   (let
     [span : token.SourceSpan
       (token.merge-spans prefix-span (spanned-sexpr-span form))]
-    (spanned-sexpr-cons
-      (SpannedSexpr.Sym name prefix-span)
-      (spanned-sexpr-cons
-        form
-        (SpannedSexpr.Nil (spanned-sexpr-span form))
-        span)
+    (spanned-sexpr-list-from-builder
+      (spanned-sexpr-builder-push
+        (spanned-sexpr-builder-push
+          (spanned-sexpr-builder-new)
+          (SpannedSexpr.Sym name prefix-span))
+        form)
       span)))
 
 (define (close-delimiter-text [tag : i64]) : String
@@ -455,7 +842,8 @@
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [open-span : token.SourceSpan]
-  [close-tag : i64]) : ResultSpannedSexpr
+  [close-tag : i64]
+  [builder : SpannedSexprBuilder]) : ResultSpannedSexpr
   (let
     [st : token.SpannedToken (peek-spanned-token toks cur)]
     [span : token.SourceSpan (token.spanned-token-span st)]
@@ -465,7 +853,9 @@
         (begin
           (advance cur)
           (ResultSpannedSexpr.Ok
-            (SpannedSexpr.Nil (token.merge-spans open-span span))))]
+            (spanned-sexpr-list-from-builder
+              builder
+              (token.merge-spans open-span span))))]
       [(= t (token.tag-end))
         (ResultSpannedSexpr.Err
           (token.SourceError (unterminated-list-message close-tag) open-span))]
@@ -475,31 +865,54 @@
       [else
         (match (form-spanned-result toks cur)
           [(ResultSpannedSexpr.Ok head)
-            (match (list-spanned-items-result toks cur open-span close-tag)
-              [(ResultSpannedSexpr.Ok tail)
-                (ResultSpannedSexpr.Ok
-                  (spanned-sexpr-cons
-                    head
-                    tail
-                    (token.merge-spans open-span (spanned-sexpr-span tail))))]
-              [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])]
+            (list-spanned-items-result
+              toks
+              cur
+              open-span
+              close-tag
+              (spanned-sexpr-builder-push builder head))]
           [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)])])))
 
 (define (list-spanned-result
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [open-span : token.SourceSpan]) : ResultSpannedSexpr
-  (list-spanned-items-result toks cur open-span (token.tag-rparen)))
+  (let
+    [pool-mark : i64 (sp-node-pool-len)]
+    [builder : SpannedSexprBuilder (spanned-sexpr-builder-new)]
+    [result : ResultSpannedSexpr
+      (list-spanned-items-result toks cur open-span (token.tag-rparen) builder)]
+    (match result
+      [(ResultSpannedSexpr.Ok form) (ResultSpannedSexpr.Ok form)]
+      [(ResultSpannedSexpr.Err err)
+        (begin
+          (spanned-sexpr-builder-discard! builder)
+          (sp-node-pool-truncate! pool-mark)
+          (ResultSpannedSexpr.Err err))])))
 
 (define (bracket-list-spanned-result
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [open-span : token.SourceSpan]) : ResultSpannedSexpr
-  (match (list-spanned-items-result toks cur open-span (token.tag-rbracket))
-    [(ResultSpannedSexpr.Ok items)
-      (ResultSpannedSexpr.Ok
-        (spanned-sexpr-bracket-list items (spanned-sexpr-span items)))]
-    [(ResultSpannedSexpr.Err err) (ResultSpannedSexpr.Err err)]))
+  (let
+    [pool-mark : i64 (sp-node-pool-len)]
+    [builder : SpannedSexprBuilder (spanned-sexpr-builder-new)]
+    [result : ResultSpannedSexpr
+      (list-spanned-items-result
+        toks
+        cur
+        open-span
+        (token.tag-rbracket)
+        builder)]
+    (match result
+      [(ResultSpannedSexpr.Ok items)
+        (ResultSpannedSexpr.Ok
+          (spanned-sexpr-bracket-list items (spanned-sexpr-span items)))]
+      [(ResultSpannedSexpr.Err err)
+        (begin
+          (spanned-sexpr-builder-discard! builder)
+          (sp-node-pool-truncate! pool-mark)
+          (ResultSpannedSexpr.Err err))])))
 
 (define (form-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
   (let
@@ -558,56 +971,76 @@
       [else (ResultSexpr.Err "reader: unexpected end of input")])))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
-;; until the matching ')', returning the proper list
-;; `(Sexpr.Cons f1 (Sexpr.Cons f2 ... Sexpr.Nil))`. Built by right-recursion so
-;; the spine comes out in source order
-;; with NO reversal: read the head form, then recurse to read the rest of the
-;; list, and cons the two. The base case is the ')' that closes this list -
-;; consume it and return `Sexpr.Nil`. Hitting `token.Token.End` before a ')' is an unterminated
-;; list and returns `ErrSexpr`. Nesting is handled for free: a head form that is
-;; itself a '(' re-enters `form-result` -> `list-result`, which reads
-;; the inner list to ITS ')' and advances the shared cursor past it before this
-;; level reads its next sibling.
+;; until the matching ')' into a growable temporary builder. Completing the
+;; form copies that builder once into a contiguous child range in source order.
+;; The base case consumes the closing delimiter and records the range; hitting
+;; `token.Token.End` first returns `ErrSexpr`. Nesting is handled for free: a
+;; head form that starts with '(' re-enters `form-result` -> `list-result`,
+;; completes its own child range, and then becomes one value in this builder.
 (define (list-result-with-close
   [toks : (Array token.Token)]
   [cur : (Array i64)]
   [close-tag : i64]
-  [unterminated-message : String]) : ResultSexpr
+  [unterminated-message : String]
+  [builder : SexprBuilder]) : ResultSexpr
   (let
     [t : i64 (peek-tag toks cur)]
     (if (= t close-tag)
-      ;; End of this list: consume the ')' and terminate the spine with `Sexpr.Nil`.
+      ;; End of this list: consume the ')' and seal the dense child range.
       (begin
         (advance cur)
-        (ResultSexpr.Ok Sexpr.Nil))
+        (ResultSexpr.Ok (sexpr-list-from-builder builder)))
       (if (= t (token.tag-end))
         (ResultSexpr.Err unterminated-message)
-        ;; A list element: read the head form (which advances the cursor past
-        ;; it, however deeply nested), then recurse for the tail and cons.
+        ;; A list element: read the next form (which advances the cursor past
+        ;; it, however deeply nested), append it, and continue.
         (match (form-result toks cur)
           [(ResultSexpr.Ok head)
-            (match (list-result-with-close
+            (list-result-with-close
               toks
               cur
               close-tag
-              unterminated-message)
-              [(ResultSexpr.Ok tail) (ResultSexpr.Ok (sexpr-cons head tail))]
-              [(ResultSexpr.Err message) (ResultSexpr.Err message)])]
+              unterminated-message
+              (sexpr-builder-push builder head))]
           [(ResultSexpr.Err message) (ResultSexpr.Err message)])))))
 
 (define (list-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
-  (list-result-with-close
-    toks
-    cur
-    (token.tag-rparen)
-    "reader: unterminated list (missing ')')"))
+  (let
+    [pool-mark : i64 (sexpr-node-pool-len)]
+    [builder : SexprBuilder (sexpr-builder-new)]
+    [result : ResultSexpr
+      (list-result-with-close
+        toks
+        cur
+        (token.tag-rparen)
+        "reader: unterminated list (missing ')')"
+        builder)]
+    (match result
+      [(ResultSexpr.Ok form) (ResultSexpr.Ok form)]
+      [(ResultSexpr.Err message)
+        (begin
+          (sexpr-builder-discard! builder)
+          (sexpr-node-pool-truncate! pool-mark)
+          (ResultSexpr.Err message))])))
 
 (define (bracket-list-result [toks : (Array token.Token)] [cur : (Array i64)]) : ResultSexpr
-  (list-result-with-close
-    toks
-    cur
-    (token.tag-rbracket)
-    "reader: unterminated list (missing ']')"))
+  (let
+    [pool-mark : i64 (sexpr-node-pool-len)]
+    [builder : SexprBuilder (sexpr-builder-new)]
+    [result : ResultSexpr
+      (list-result-with-close
+        toks
+        cur
+        (token.tag-rbracket)
+        "reader: unterminated list (missing ']')"
+        builder)]
+    (match result
+      [(ResultSexpr.Ok form) (ResultSexpr.Ok form)]
+      [(ResultSexpr.Err message)
+        (begin
+          (sexpr-builder-discard! builder)
+          (sexpr-node-pool-truncate! pool-mark)
+          (ResultSexpr.Err message))])))
 
 ;; read: the public entry point. Read a single top-level form from the front of
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
@@ -617,6 +1050,7 @@
   (let
     [cur : (Array i64) (make-array i64 1)]
     (begin
+      (sexpr-node-pool-reset!)
       (array-set! cur 0 0)
       (form-result toks cur))))
 
@@ -624,6 +1058,7 @@
   (let
     [cur : (Array i64) (make-array i64 1)]
     (begin
+      (set! sp-builder-count 0)
       (array-set! cur 0 0)
       (form-spanned-result toks cur))))
 
@@ -643,13 +1078,13 @@
               (and
                 (= pool-len-before (ci.intern-pool-len))
                 (= first-id second-id)
-                (match form
-                  [(SpannedSexpr.Cons first-node tail-node _)
-                    (match (sp-node-get first-node)
+                (match (spanned-sexpr-view form)
+                  [(SpannedSexprView.Cons first tail _)
+                    (match first
                       [(SpannedSexpr.Sym first-text _)
-                        (match (sp-node-get tail-node)
-                          [(SpannedSexpr.Cons second-node _ _)
-                            (match (sp-node-get second-node)
+                        (match (spanned-sexpr-view tail)
+                          [(SpannedSexprView.Cons second _ _)
+                            (match second
                               [(SpannedSexpr.Sym second-text _)
                                 (and
                                   (= (symbol-id first-text) first-id)
@@ -665,3 +1100,185 @@
   (match (result toks)
     [(ResultSexpr.Ok form) form]
     [(ResultSexpr.Err message) (io.panic message)]))
+
+(define (reader-test-symbol? [form : Sexpr] [expected : String]) : bool
+  (match (sexpr-view form)
+    [(SexprView.Sym name-id) (string.eq (symbol-text-for-id name-id) expected)]
+    [_ false]))
+
+(define (reader-test-unspanned-dense-ranges?) : bool
+  (match (result (lexer.lex "(alpha (beta gamma) [])"))
+    [(ResultSexpr.Err _) false]
+    [(ResultSexpr.Ok form)
+      (and
+        (= (sexpr-node-pool-len) 5)
+        (match form
+          [(Sexpr.List start length)
+            (and
+              (= start 2)
+              (= length 3)
+              (match (sexpr-view form)
+                [(SexprView.Cons first tail1)
+                  (and
+                    (reader-test-symbol? first "alpha")
+                    (match (sexpr-view tail1)
+                      [(SexprView.Cons nested tail2)
+                        (and
+                          (match (sexpr-view nested)
+                            [(SexprView.Cons beta nested-tail)
+                              (and
+                                (reader-test-symbol? beta "beta")
+                                (match (sexpr-view nested-tail)
+                                  [(SexprView.Cons gamma nested-end)
+                                    (and
+                                      (reader-test-symbol? gamma "gamma")
+                                      (match (sexpr-view nested-end)
+                                        [(SexprView.Nil) true]
+                                        [_ false]))]
+                                  [_ false]))]
+                            [_ false])
+                          (match (sexpr-view tail2)
+                            [(SexprView.Cons empty tail3)
+                              (and
+                                (match (sexpr-view empty)
+                                  [(SexprView.Nil) true]
+                                  [_ false])
+                                (match (sexpr-view tail3)
+                                  [(SexprView.Nil) true]
+                                  [_ false]))]
+                            [_ false]))]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]))
+
+(define (reader-test-spanned-bracket-range?) : bool
+  (begin
+    (sp-node-pool-reset!)
+    (match (lexer.spanned-result "[alpha (beta gamma)]")
+      [(lexer.ResultSpannedTokens.Err _) false]
+      [(lexer.ResultSpannedTokens.Ok toks)
+        (match (spanned-result toks)
+          [(ResultSpannedSexpr.Err _) false]
+          [(ResultSpannedSexpr.Ok form)
+            (and
+              (= (sp-node-pool-len) 4)
+              (match form
+                [(SpannedSexpr.BracketList start length span)
+                  (and
+                    (= start 2)
+                    (= length 2)
+                    (= (token.span-start-line span) 1)
+                    (= (token.span-start-col span) 1)
+                    (match (spanned-sexpr-view form)
+                      [(SpannedSexprView.BracketList items _)
+                        (match (spanned-sexpr-view items)
+                          [(SpannedSexprView.Cons alpha tail _)
+                            (and
+                              (match (spanned-sexpr-view alpha)
+                                [(SpannedSexprView.Sym name-id _)
+                                  (string.eq
+                                    (symbol-text-for-id name-id)
+                                    "alpha")]
+                                [_ false])
+                              (match (spanned-sexpr-view tail)
+                                [(SpannedSexprView.Cons nested end _)
+                                  (and
+                                    (match (spanned-sexpr-view nested)
+                                      [(SpannedSexprView.Cons _ _ _) true]
+                                      [_ false])
+                                    (match (spanned-sexpr-view end)
+                                      [(SpannedSexprView.Nil _) true]
+                                      [_ false]))]
+                                [_ false]))]
+                          [_ false])]
+                      [_ false]))]
+                [_ false]))])])))
+
+(define (reader-test-prefix-range?) : bool
+  (match (result (lexer.lex "'alpha"))
+    [(ResultSexpr.Err _) false]
+    [(ResultSexpr.Ok form)
+      (and
+        (= (sexpr-node-pool-len) 2)
+        (match (sexpr-view form)
+          [(SexprView.Cons quote tail)
+            (and
+              (reader-test-symbol? quote "quote")
+              (match (sexpr-view tail)
+                [(SexprView.Cons value end)
+                  (and
+                    (reader-test-symbol? value "alpha")
+                    (match (sexpr-view end)
+                      [(SexprView.Nil) true]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]))
+
+(define (reader-test-mismatched-delimiter?) : bool
+  (begin
+    (sp-node-pool-reset!)
+    (match (lexer.spanned-result "(alpha]")
+      [(lexer.ResultSpannedTokens.Err _) false]
+      [(lexer.ResultSpannedTokens.Ok toks)
+        (match (spanned-result toks)
+          [(ResultSpannedSexpr.Ok _) false]
+          [(ResultSpannedSexpr.Err err)
+            (and
+              (string.eq
+                (token.source-error-message err)
+                "reader: mismatched delimiter: expected ')' but found ']' at 1:7")
+              (= (token.span-start-line (token.source-error-span err)) 1)
+              (= (token.span-start-col (token.source-error-span err)) 7))])])))
+
+(define (reader-test-error-rolls-back-ranges?) : bool
+  (let
+    [plain-error-ok : bool
+      (match (result (lexer.lex "((alpha)]"))
+        [(ResultSexpr.Ok _) false]
+        [(ResultSexpr.Err _)
+          (and (= (sexpr-node-pool-len) 0) (= sexpr-builder-count 0))])]
+    [_reset-spanned : unit (sp-node-pool-reset!)]
+    [spanned-error-ok : bool
+      (match (lexer.spanned-result "((alpha)]")
+        [(lexer.ResultSpannedTokens.Err _) false]
+        [(lexer.ResultSpannedTokens.Ok toks)
+          (match (spanned-result toks)
+            [(ResultSpannedSexpr.Ok _) false]
+            [(ResultSpannedSexpr.Err _)
+              (and (= (sp-node-pool-len) 0) (= sp-builder-count 0))])])]
+    [repeated-read-ok : bool
+      (match (lexer.spanned-result "(beta)")
+        [(lexer.ResultSpannedTokens.Err _) false]
+        [(lexer.ResultSpannedTokens.Ok toks)
+          (match (spanned-result toks)
+            [(ResultSpannedSexpr.Err _) false]
+            [(ResultSpannedSexpr.Ok form)
+              (and
+                (= (sp-node-pool-len) 1)
+                (match (spanned-sexpr-view form)
+                  [(SpannedSexprView.Cons value tail _)
+                    (and
+                      (match (spanned-sexpr-view value)
+                        [(SpannedSexprView.Sym name-id _)
+                          (string.eq (symbol-text-for-id name-id) "beta")]
+                        [_ false])
+                      (match (spanned-sexpr-view tail)
+                        [(SpannedSexprView.Nil _) true]
+                        [_ false]))]
+                  [_ false]))])])]
+    [ok : bool (and plain-error-ok spanned-error-ok repeated-read-ok)]
+    (begin
+      (sp-node-pool-reset!)
+      (sexpr-node-pool-reset!)
+      ok)))
+
+(test
+  reader-dense-child-ranges
+  (if (and
+    (reader-test-unspanned-dense-ranges?)
+    (reader-test-spanned-bracket-range?)
+    (reader-test-prefix-range?)
+    (reader-test-mismatched-delimiter?)
+    (reader-test-error-rolls-back-ranges?))
+    unit
+    (io.panic "reader: dense child range self-test failed")))

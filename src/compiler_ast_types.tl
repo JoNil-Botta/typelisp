@@ -822,6 +822,11 @@
 ;; use-after-free). This is why the pool previously failed closed.
 (define node-pool-base-arena : i64
   (arena.tl_arena_current))
+
+;; Stable identity of the installed pool arena. Unlike `node-pool-base-arena`,
+;; this does not advance when payload persistence grows the arena chain.
+(define node-pool-owner-arena : i64
+  node-pool-base-arena)
 (define ast-node-pool-storage-arena : i64
   0)
 (define ty-node-pool-storage-arena : i64
@@ -1738,6 +1743,12 @@
           head-arena)]
       (begin
         (set! node-pool-base-arena head-arena)
+        (if (= head-arena base-arena)
+          unit
+          ;; Type payload persistence grew the base arena shared by both pools.
+          ;; Publish that rare head transition through the expression half too;
+          ;; driver retirement reads the mutable head from that half.
+          (ast-node-pool-active-context-capture-expr!))
         (unsafe
           (begin
             (ptr-write! dest (ptr-read source))
@@ -2153,7 +2164,8 @@
 
 (define (ast-node-pools-state-install!
   [expr-pool : AstExprNodePoolState]
-  [type-pool : AstTypeNodePoolState]) : unit
+  [type-pool : AstTypeNodePoolState]
+  [owner-arena : i64]) : unit
   (begin
     (set! ast-node-pool-segment-bases (struct-get expr-pool segment-bases))
     (set! ast-node-pool-count (struct-get expr-pool count))
@@ -2172,16 +2184,19 @@
     (set! ty-node-dedup-count (struct-get type-pool dedup-count))
     ;; Driver-created states allocate both pools in one persistent arena. Keep
     ;; the shared compatibility grow/persist target there after both installs.
-    (set! node-pool-base-arena (struct-get expr-pool base-arena))))
+    (set! node-pool-base-arena (struct-get expr-pool base-arena))
+    (set! node-pool-owner-arena owner-arena)))
 
 (defstruct AstNodePoolContext
   (expr-pool (Array AstExprNodePoolState))
-  (type-pool (Array AstTypeNodePoolState)))
+  (type-pool (Array AstTypeNodePoolState))
+  (owner-arena i64))
 
 (define (ast-node-pool-context-from-cells
   [expr-pool : (Array AstExprNodePoolState)]
-  [type-pool : (Array AstTypeNodePoolState)]) : AstNodePoolContext
-  (AstNodePoolContext expr-pool type-pool))
+  [type-pool : (Array AstTypeNodePoolState)]
+  [owner-arena : i64]) : AstNodePoolContext
+  (AstNodePoolContext expr-pool type-pool owner-arena))
 
 ;; R3-P2b: these two cells are POOL STATE, not caller state. Any context that is
 ;; later installed hands them to `ast-node-pool-context-install!`, which points
@@ -2243,18 +2258,21 @@
 ;; (H4): keeping the pre-allocation handle would restart the next base
 ;; allocation on a filled segment and grow a sibling chain that
 ;; destroy-from-head never reaches.
-(define (ast-node-pool-context-new
+(define (ast-node-pool-context-new-with-pool-owner
   [expr-pool : AstExprNodePoolState]
   [type-pool : AstTypeNodePoolState]
-  [owner-arena : i64]) : AstNodePoolContext
+  [allocation-owner-arena : i64]
+  [pool-owner-arena : i64]) : AstNodePoolContext
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     [redirect? : bool
-      (and (not (= owner-arena 0)) (not (= owner-arena prev-arena)))]
+      (and
+        (not (= allocation-owner-arena 0))
+        (not (= allocation-owner-arena prev-arena)))]
     [_set-arena : unit
       (if redirect?
         (unsafe
-          (arena.tl_arena_set owner-arena))
+          (arena.tl_arena_set allocation-owner-arena))
         unit)]
     [expr-cell : (Array AstExprNodePoolState)
       (array.make-array AstExprNodePoolState 1)]
@@ -2262,20 +2280,30 @@
       (array.make-array AstTypeNodePoolState 1)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_republish : unit
-      (if (= owner-arena node-pool-base-arena)
+      (if (= allocation-owner-arena node-pool-base-arena)
         (set! node-pool-base-arena head-arena)
         unit)]
     [_restore-arena : unit
       (if redirect?
         (node-pool-restore-arena-after-base-alloc!
           prev-arena
-          owner-arena
+          allocation-owner-arena
           head-arena)
         unit)]
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
-      (AstNodePoolContext expr-cell type-cell))))
+      (AstNodePoolContext expr-cell type-cell pool-owner-arena))))
+
+(define (ast-node-pool-context-new
+  [expr-pool : AstExprNodePoolState]
+  [type-pool : AstTypeNodePoolState]
+  [owner-arena : i64]) : AstNodePoolContext
+  (ast-node-pool-context-new-with-pool-owner
+    expr-pool
+    type-pool
+    owner-arena
+    owner-arena))
 
 ;: The context that describes the ACTIVE pool. Its owner is the pool's own base
 ;: arena, unconditionally -- this is the context `ast-node-pool-context-install!`
@@ -2283,10 +2311,11 @@
 ;: a generation's destroy to, so ownership is the only thing that can make it
 ;: safe.
 (define (ast-node-pool-context-capture-active-raw) : AstNodePoolContext
-  (ast-node-pool-context-new
+  (ast-node-pool-context-new-with-pool-owner
     (ast-node-pool-state-capture)
     (ty-node-pool-state-capture)
-    node-pool-base-arena))
+    node-pool-base-arena
+    node-pool-owner-arena))
 
 ;; R3-P2c: THE BACKSTOP, and the answer to "what prevents the next one".
 ;;
@@ -2342,13 +2371,14 @@
 
 (define (ast-node-pool-context-capture-active) : AstNodePoolContext
   (if ast-node-pool-compat-context-explicit?
-    (ast-node-pool-context-new
+    (ast-node-pool-context-new-with-pool-owner
       (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
       (array-ref (struct-get ast-node-pool-compat-context type-pool) 0)
       ;; Describes the compat pool, so the compat pool's base arena owns it.
       (struct-get
         (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
-        base-arena))
+        base-arena)
+      (struct-get ast-node-pool-compat-context owner-arena))
     (ast-node-pool-context-capture-active-raw)))
 
 (define ast-node-pool-active-context-installed? : bool
@@ -2394,13 +2424,15 @@
     (set! ast-node-pool-compat-context-explicit? true)
     (ast-node-pools-state-install!
       (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
-      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0))))
+      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0)
+      (struct-get ast-node-pool-compat-context owner-arena))))
 
 (define (ast-node-pool-compat-context-clear!) : unit
   (begin
     (ast-node-pools-state-install!
       (array-ref (struct-get ast-node-pool-compat-saved-context expr-pool) 0)
-      (array-ref (struct-get ast-node-pool-compat-saved-context type-pool) 0))
+      (array-ref (struct-get ast-node-pool-compat-saved-context type-pool) 0)
+      (struct-get ast-node-pool-compat-saved-context owner-arena))
     (set! ast-node-pool-compat-context-explicit? false)))
 
 (define (ast-node-pool-compat-context-active?) : bool
@@ -2413,15 +2445,17 @@
   (if ast-node-pool-compat-context-explicit?
     (ast-node-pools-state-install!
       (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
-      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0))
+      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0)
+      (struct-get ast-node-pool-compat-context owner-arena))
     unit))
 
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
-  (ast-node-pool-context-new
+  (ast-node-pool-context-new-with-pool-owner
     (array-ref (struct-get pools expr-pool) 0)
     (array-ref (struct-get pools type-pool) 0)
     ;; A snapshot describes the same pool, so it has the same owner.
-    (ast-node-pool-context-base-arena pools)))
+    (ast-node-pool-context-base-arena pools)
+    (struct-get pools owner-arena)))
 
 (define (ast-node-pool-context-capture-active! [pools : AstNodePoolContext]) : unit
   (if ast-node-pool-compat-context-explicit?
@@ -2454,6 +2488,9 @@
 (define (ast-node-pool-base-arena-handle) : i64
   node-pool-base-arena)
 
+(define (ast-node-pool-owner-arena-handle) : i64
+  node-pool-owner-arena)
+
 (define (ast-node-pool-expr-storage-arena-handle) : i64
   ast-node-pool-storage-arena)
 
@@ -2468,7 +2505,8 @@
         (struct-get (array-ref (struct-get pools expr-pool) 0) base-arena))
       (ast-node-pools-state-install!
         (array-ref (struct-get pools expr-pool) 0)
-        (array-ref (struct-get pools type-pool) 0))
+        (array-ref (struct-get pools type-pool) 0)
+        (struct-get pools owner-arena))
       ;; Update the persistent global struct's fields instead of assigning the
       ;; struct value: the assignment heap-copies the struct in the CURRENT
       ;; arena, leaving the global pointing into freed memory when the install
@@ -2479,6 +2517,9 @@
       (set!
         (struct-get ast-node-pool-active-context type-pool)
         (struct-get pools type-pool))
+      (set!
+        (struct-get ast-node-pool-active-context owner-arena)
+        (struct-get pools owner-arena))
       ;; R3-P2c: remember WHICH transient generation, if any, was live when
       ;; these cells were published. See `ast-node-pool-active-context-reseat!`.
       (set!
@@ -2526,6 +2567,9 @@
 
 (define (ast-node-pool-context-base-arena [pools : AstNodePoolContext]) : i64
   (struct-get (array-ref (struct-get pools expr-pool) 0) base-arena))
+
+(define (ast-node-pool-context-owner-arena [pools : AstNodePoolContext]) : i64
+  (struct-get pools owner-arena))
 
 ;; Segments have no interior pointers into their backing arenas, so adding one
 ;; never copies or relocates prior nodes. Expression and type segments use
@@ -2594,9 +2638,10 @@
     ;; they land in the caller's active scratch arena, committing the pool and
     ;; releasing that scratch arena leaves every explicit pool access dangling.
     [pools : AstNodePoolContext
-      (ast-node-pool-context-new
+      (ast-node-pool-context-new-with-pool-owner
         (ast-expr-node-pool-state-with-base-arena expr-pool shared-arena)
         (ast-type-node-pool-state-with-base-arena type-pool shared-arena)
+        shared-arena
         shared-arena)]
     [head-arena : i64 (arena.tl_arena_current)]
     (begin

@@ -51,6 +51,7 @@ instead, which the sweep does not require to be reachable.
 | Run the complete local CI suite | `ci-verify.sh` |
 | Check TypeLisp formatting and lint | `check-tl-format.sh`, `check-tl-lint.sh` |
 | Check compiler-source coverage | `verify-selfhost-compile-manifest.sh`, `verify-inline-tests.sh` |
+| Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog) |
 | Check public CLI behavior | `verify-public-tools.sh`, `check-stage1-wrapper.sh` |
 | Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh`, `verify-native-link-windows.sh` |
 | Check codegen shape and parity | `verify-asm-shape-gates.sh`, `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |

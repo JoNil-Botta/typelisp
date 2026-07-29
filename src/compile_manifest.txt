@@ -91,11 +91,11 @@ end
 
 case|integration_nested_eval|tests/integration/nested_eval.tl|assembly|present|direct
 contains|_tl_eval_sexpr:
-contains|_tl_sexpr_head:
-contains|_tl_sexpr_tail:
+contains|_tl_eval_atom:
 contains|match_nested
 contains|string_eq
 contains|call _tl_eval_sexpr
+contains|call _tl_eval_atom
 contains|call _tl_panic
 end
 

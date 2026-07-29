@@ -1,9 +1,8 @@
 (defenum Value
   (ValueText String))
 
-(defenum FieldList
-  (FieldNil)
-  (FieldCons Value (Box FieldList)))
+(defstruct FieldList
+  (items (Array Value)))
 
 (defmacro (encode-string [value : String]) : Value
   `(serialize_bad_object_finish_hook_format.ValueText ,value))
@@ -12,10 +11,10 @@
   `"")
 
 (defmacro (object-empty) : FieldList
-  `serialize_bad_object_finish_hook_format.FieldNil)
+  `(serialize_bad_object_finish_hook_format.FieldList (make-array Value 0)))
 
-(defmacro (object-field [_name : Expr] [value : Expr] [rest : Expr]) : FieldList
-  `(serialize_bad_object_finish_hook_format.FieldCons ,value (box ,rest)))
+(defmacro (object-field [_name : Expr] [_value : Expr] [rest : Expr]) : FieldList
+  rest)
 
 (defmacro (object-finish [_fields : Expr]) : i64
   `0)

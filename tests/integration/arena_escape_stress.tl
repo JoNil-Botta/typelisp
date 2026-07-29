@@ -10,13 +10,10 @@
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
 (import stdlib.arena)
+(import stdlib.array)
 (import stdlib.string)
 
 (extern (tl_alloc [arg0 : u64]) : u64)
-
-(defenum StressList
-  (StressNil)
-  (StressCons String (Box StressList)))
 
 (define (overflow-bytes) : u64
   (cast 67108864 : u64))
@@ -31,19 +28,37 @@
     (string.append "arena-stress:" (string.int->string seed))
     (string.append ":" (string.int->string idx))))
 
-(define (make-list [count : i64] [seed : i64]) : StressList
-  (if (= count 0)
-    (StressNil)
-    (StressCons (payload seed count) (box (make-list (- count 1) seed)))))
+(define (fill-items
+  [items : (Array String)]
+  [index : i64]
+  [count : i64]
+  [seed : i64]) : unit
+  (if (= index count)
+    unit
+    (begin
+      (array-set! items index (payload seed (- count index)))
+      (fill-items items (+ index 1) count seed))))
 
-(define (list-ok? [items : StressList] [count : i64] [seed : i64]) : bool
-  (match items
-    [(StressNil) (= count 0)]
-    [(StressCons head rest)
-      (and
-        (> count 0)
-        (string.eq head (payload seed count))
-        (list-ok? (box-get rest) (- count 1) seed))]))
+(define (make-items [count : i64] [seed : i64]) : (Array String)
+  (let
+    [items : (Array String) (array.make-array String count)]
+    (begin
+      (fill-items items 0 count seed)
+      items)))
+
+(define (items-ok-from?
+  [items : (Array String)]
+  [index : i64]
+  [count : i64]
+  [seed : i64]) : bool
+  (if (= index count)
+    true
+    (and
+      (string.eq (array-ref items index) (payload seed (- count index)))
+      (items-ok-from? items (+ index 1) count seed))))
+
+(define (items-ok? [items : (Array String)] [count : i64] [seed : i64]) : bool
+  (and (= (array-length items) count) (items-ok-from? items 0 count seed)))
 
 (define (escape-string [seed : i64]) : String
   (let
@@ -68,7 +83,7 @@
                     (arena.destroy scratch-head))
                   escaped)))))))))
 
-(define (escape-list [count : i64] [seed : i64]) : StressList
+(define (escape-items [count : i64] [seed : i64]) : (Array String)
   (let
     [enclosing : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
@@ -76,7 +91,7 @@
       (unsafe
         (arena.set! scratch))
       (let
-        [raw : StressList (make-list count seed)]
+        [raw : (Array String) (make-items count seed)]
         (begin
           (force-overflow)
           (let
@@ -85,13 +100,14 @@
               (unsafe
                 (arena.set! enclosing))
               (let
-                [escaped : StressList (clone raw)]
+                [escaped : (Array String) (clone raw)]
                 (begin
                   (unsafe
                     (arena.destroy scratch-head))
                   escaped)))))))))
 
-(define (escape-list-rewind [scratch : arena.Arena] [count : i64] [seed : i64]) : StressList
+(define (escape-items-rewind [scratch : arena.Arena] [count : i64] [seed : i64]) : (Array
+    String)
   (let
     [enclosing : arena.Arena (arena.current)]
     (begin
@@ -99,7 +115,7 @@
         (arena.set! scratch))
       (let
         [mark : arena.ArenaMark (arena.mark)]
-        [raw : StressList (make-list count seed)]
+        [raw : (Array String) (make-items count seed)]
         (begin
           (force-overflow)
           (let
@@ -108,7 +124,7 @@
               (unsafe
                 (arena.set! enclosing))
               (let
-                [escaped : StressList (clone raw)]
+                [escaped : (Array String) (clone raw)]
                 [new-enclosing : arena.Arena (arena.current)]
                 (begin
                   (unsafe
@@ -122,37 +138,39 @@
     acc
     (let
       [escaped : String (escape-string n)]
-      [noise : StressList (escape-list 8 (+ n 1000))]
+      [noise : (Array String) (escape-items 8 (+ n 1000))]
       (if (and
         (string.eq escaped (payload n 999))
-        (list-ok? noise 8 (+ n 1000)))
+        (items-ok? noise 8 (+ n 1000)))
         (string-cycles (- n 1) (+ acc (string-length escaped)))
         0))))
 
-(define (list-cycles [n : i64] [acc : i64]) : i64
+(define (item-cycles [n : i64] [acc : i64]) : i64
   (if (= n 0)
     acc
     (let
-      [items : StressList (escape-list 96 n)]
+      [items : (Array String) (escape-items 96 n)]
       [after : String (escape-string (+ n 2000))]
-      (if (and (list-ok? items 96 n) (string.eq after (payload (+ n 2000) 999)))
-        (list-cycles (- n 1) (+ acc 1))
+      (if (and
+        (items-ok? items 96 n)
+        (string.eq after (payload (+ n 2000) 999)))
+        (item-cycles (- n 1) (+ acc 1))
         0))))
 
-(define (rewind-list-cycles-inner [scratch : arena.Arena] [n : i64] [acc : i64]) : i64
+(define (rewind-item-cycles-inner [scratch : arena.Arena] [n : i64] [acc : i64]) : i64
   (if (= n 0)
     acc
     (let
-      [items : StressList (escape-list-rewind scratch 96 n)]
-      [after : StressList (escape-list-rewind scratch 8 (+ n 3000))]
-      (if (and (list-ok? after 8 (+ n 3000)) (list-ok? items 96 n))
-        (rewind-list-cycles-inner scratch (- n 1) (+ acc 1))
+      [items : (Array String) (escape-items-rewind scratch 96 n)]
+      [after : (Array String) (escape-items-rewind scratch 8 (+ n 3000))]
+      (if (and (items-ok? after 8 (+ n 3000)) (items-ok? items 96 n))
+        (rewind-item-cycles-inner scratch (- n 1) (+ acc 1))
         0))))
 
-(define (rewind-list-cycles [n : i64]) : i64
+(define (rewind-item-cycles [n : i64]) : i64
   (let
     [scratch : arena.Arena (arena.make)]
-    [score : i64 (rewind-list-cycles-inner scratch n 0)]
+    [score : i64 (rewind-item-cycles-inner scratch n 0)]
     (begin
       (unsafe
         (arena.destroy scratch))
@@ -161,10 +179,10 @@
 (define (main) : i64
   (let
     [string-score : i64 (string-cycles 3 0)]
-    [list-score : i64 (list-cycles 3 0)]
-    [rewind-score : i64 (rewind-list-cycles 3)]
+    [item-score : i64 (item-cycles 3 0)]
+    [rewind-score : i64 (rewind-item-cycles 3)]
     (begin
       (unless (> string-score 0) (return 1))
-      (unless (= list-score 3) (return 2))
+      (unless (= item-score 3) (return 2))
       (unless (= rewind-score 3) (return 3))
       42)))

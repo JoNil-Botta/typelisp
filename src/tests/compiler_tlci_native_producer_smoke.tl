@@ -15,6 +15,7 @@
 (import "../compiler_ctfe.tl")
 (import compiler_intern as ci)
 (import stdlib.array)
+(import stdlib.arena)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as producer_test_svec)
@@ -2141,6 +2142,12 @@
           (compiler-comptime-host-session-close!)
           ok)))))
 
+;: Owner arena for the smoke's image loads. Every one of them releases the
+;: image before returning, so the arena current at the load already
+;: outlives it.
+(define (producer-test-image-owner-arena) : i64
+  (arena.tl_arena_current))
+
 (define (producer-test-emitted-bytes-ok?
   [bytes : (Array u8)]
   [template-identity : String]
@@ -2148,6 +2155,7 @@
   [fold-identity : String]
   [fallback-identity : String]) : bool
   (match (tlci-loader-load-from-bytes-with-host
+    (producer-test-image-owner-arena)
     bytes
     (compiler-comptime-host-table))
     [(ResultTlciLoadedImage.Err _) false]
@@ -2224,6 +2232,7 @@
                   [(ResultProducerBytes.Err _) false]
                   [(ResultProducerBytes.Ok bytes)
                     (match (tlci-loader-load-from-bytes-with-host
+                      (producer-test-image-owner-arena)
                       bytes
                       (compiler-comptime-host-table))
                       [(ResultTlciLoadedImage.Err _) false]
@@ -2334,6 +2343,7 @@
                       false)]
                   [(ResultProducerBytes.Ok bytes)
                     (match (tlci-loader-load-from-bytes-with-host
+                      (producer-test-image-owner-arena)
                       bytes
                       (compiler-comptime-host-table))
                       [(ResultTlciLoadedImage.Err message)

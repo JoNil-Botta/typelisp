@@ -6,6 +6,7 @@
 ;; finalize code pages as RX through tlci_pages, and run the image registration
 ;; entry point through the backend runtime's raw C-ABI bridge, validate its
 ;; macro table, and invoke registered entries through the six-argument ABI.
+(import stdlib.arena)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
@@ -89,6 +90,14 @@
   8)
 (define tlci-loader-entry-code-offset : i64
   16)
+
+;: The retained-storage slots of an image that has not been through
+;: registration yet. A process-global empty array, not a per-load allocation:
+;: an unregistered image must not hold a reference into the arena that
+;: happened to be current when it was mapped, even one nothing dereferences.
+;: Registration replaces the slots it actually uses with owner-arena storage.
+(define tlci-loader-no-retained-storage : (Array i64)
+  (make-array i64 0))
 
 (define (tlci-loader-section-contains-slot?
   [slot-offset : i64]
@@ -366,20 +375,54 @@
       (ptr->int (array-data items)))
     : i64))
 
-(define (tlci-loader-host-table-storage [table : TlciHostCallbackTable]) : (Array
+;; OWNERSHIP RULE FOR RETAINED IMAGE STORAGE.
+;;
+;; The two i64 arrays a loaded image keeps -- the host callback table and the
+;; registration block -- must be allocated in an arena that outlives the IMAGE,
+;; never in "whatever arena is current" when the image happens to be loaded.
+;; `host-table-addr` and `registration-addr` are RAW addresses into these
+;; arrays: the addresses are handed to the image's own code at registration,
+;; and `tlci-loader-dispatch-macro` re-reads the host table through
+;; `host-table-addr` on EVERY later dispatch. A caller that maps an image while
+;; a transient arena is current -- a macro-walk declaration generation, say --
+;; and then keeps the image past that arena's destroy dispatches through freed
+;; pages. That is exactly what R3-P2d found: the embedded stdlib image is
+;; mapped lazily from inside a firing declaration's generation and dispatched
+;; from every later declaration.
+;;
+;; The owner is therefore a required parameter with no default, so a load site
+;; cannot inherit an owner by omission; the arity is the enforcement.
+(define (tlci-loader-alloc-i64-array-in-arena [owner-arena : i64] [count : i64]) : (Array
     i64)
-  (make-array
-    (struct-get table magic)
-    (struct-get table abi-version)
-    (struct-get table byte-size)
-    (struct-get table host-context)
-    (struct-get table reserved0)
-    (struct-get table reserved1)
-    (struct-get table reserved2)
-    (struct-get table abort-callback)))
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    [_enter : unit
+      (unsafe
+        (arena.tl_arena_set owner-arena))]
+    [items : (Array i64) (make-array i64 count)]
+    [_restore : unit
+      (unsafe
+        (arena.tl_arena_set previous))]
+    items))
 
-(define (tlci-loader-registration-storage) : (Array i64)
-  (make-array i64 8))
+(define (tlci-loader-host-table-storage
+  [owner-arena : i64]
+  [table : TlciHostCallbackTable]) : (Array i64)
+  (let
+    [items : (Array i64) (tlci-loader-alloc-i64-array-in-arena owner-arena 8)]
+    (begin
+      (array-set! items 0 (struct-get table magic))
+      (array-set! items 1 (struct-get table abi-version))
+      (array-set! items 2 (struct-get table byte-size))
+      (array-set! items 3 (struct-get table host-context))
+      (array-set! items 4 (struct-get table reserved0))
+      (array-set! items 5 (struct-get table reserved1))
+      (array-set! items 6 (struct-get table reserved2))
+      (array-set! items 7 (struct-get table abort-callback))
+      items)))
+
+(define (tlci-loader-registration-storage [owner-arena : i64]) : (Array i64)
+  (tlci-loader-alloc-i64-array-in-arena owner-arena 8))
 
 (define (tlci-loader-read-registration [addr : i64]) : TlciImageRegistration
   (TlciImageRegistration
@@ -563,8 +606,8 @@
     (struct-get image-region writable)
     (struct-get image-region executable)
     (+ image-base (+ code-offset entry-code-offset))
-    (make-array i64 0)
-    (make-array i64 0)
+    tlci-loader-no-retained-storage
+    tlci-loader-no-retained-storage
     0
     0
     0
@@ -620,6 +663,7 @@
 ;; name/function slot was rebased by the fixup pass. Validation reuses the
 ;; same macro-entry checks the registration path applies.
 (define (tlci-loader-install-native-table
+  [owner-arena : i64]
   [bytes : (Array u8)]
   [loaded : TlciLoadedImage]
   [host-table : TlciHostCallbackTable]
@@ -631,7 +675,8 @@
         (struct-get loaded image-region-addr)
         (+ code-file-offset table-offset))]
     [macro-count : i64 (tlci-loader-read-mapped-i64 count-addr)]
-    [host-storage : (Array i64) (tlci-loader-host-table-storage host-table)]
+    [host-storage : (Array i64)
+      (tlci-loader-host-table-storage owner-arena host-table)]
     [host-table-addr : i64 (tlci-loader-i64-array-addr host-storage)]
     [installed : TlciLoadedImage
       (TlciLoadedImage
@@ -663,6 +708,7 @@
       [(ResultTlciLoaderUnit.Ok) (ResultTlciLoadedImage.Ok installed)])))
 
 (define (tlci-loader-load-from-bytes-with-registration
+  [owner-arena : i64]
   [bytes : (Array u8)]
   [host-table : TlciHostCallbackTable]) : ResultTlciLoadedImage
   (match (tlci-parse-image bytes)
@@ -676,21 +722,25 @@
           [(ResultTlciLoadedImage.Ok loaded)
             (if (>= native-table 0)
               (tlci-loader-install-native-table
+                owner-arena
                 bytes
                 loaded
                 host-table
                 native-table)
-              (tlci-loader-finish-registration loaded host-table))]))]))
+              (tlci-loader-finish-registration owner-arena loaded host-table))]))]))
 
 (define (tlci-loader-finish-registration
+  [owner-arena : i64]
   [loaded : TlciLoadedImage]
   [host-table : TlciHostCallbackTable]) : ResultTlciLoadedImage
   (match (ResultTlciLoadedImage.Ok loaded)
     [(ResultTlciLoadedImage.Err message) (ResultTlciLoadedImage.Err message)]
     [(ResultTlciLoadedImage.Ok loaded)
       (let
-        [host-storage : (Array i64) (tlci-loader-host-table-storage host-table)]
-        [registration-storage : (Array i64) (tlci-loader-registration-storage)]
+        [host-storage : (Array i64)
+          (tlci-loader-host-table-storage owner-arena host-table)]
+        [registration-storage : (Array i64)
+          (tlci-loader-registration-storage owner-arena)]
         [host-table-addr : i64 (tlci-loader-i64-array-addr host-storage)]
         [registration-addr : i64
           (tlci-loader-i64-array-addr registration-storage)]
@@ -856,13 +906,22 @@
         [host-table : TlciHostCallbackTable (tlci-loader-empty-host-table)]
         (tlci-loader-load-parsed bytes image (& host-table)))]))
 
+;: `owner-arena` owns the storage the returned image RETAINS, and must outlive
+;: every dispatch on it -- see the ownership rule above
+;: `tlci-loader-host-table-storage`. It is deliberately explicit: an image that
+;: is released before the caller's current arena can pass
+;: `(arena.tl_arena_current)`, and one that is kept past it must not.
 (define (tlci-loader-load-from-bytes-with-host
+  [owner-arena : i64]
   [bytes : (Array u8)]
   [host-table : TlciHostCallbackTable]) : ResultTlciLoadedImage
   (match (tlci-validate-host-callback-table host-table)
     [(ResultTlciHostAbi.Err message) (ResultTlciLoadedImage.Err message)]
     [(ResultTlciHostAbi.Ok)
-      (tlci-loader-load-from-bytes-with-registration bytes host-table)]))
+      (tlci-loader-load-from-bytes-with-registration
+        owner-arena
+        bytes
+        host-table)]))
 
 (define (tlci-loader-address-range-contained?
   [addr : i64]
@@ -1452,6 +1511,13 @@
           (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
           (ResultTlciBytes.Ok bytes)))]))
 
+;: Owner arena for the loader's own self-test loads. Every one of them either
+;: rejects the image or releases it before returning, so the arena that is
+;: current at the load already outlives the image. Named once here so the seven
+;: call sites below still have to state an owner without repeating the reason.
+(define (tlci-loader-test-owner-arena) : i64
+  (arena.tl_arena_current))
+
 (define (tlci-loader-test-named-imports-status) : i64
   (match (tlci-loader-test-emit-with-import "fuel-check")
     [(ResultTlciBytes.Err _) 1]
@@ -1459,6 +1525,7 @@
       (let
         [bound : bool
           (match (tlci-loader-load-from-bytes-with-host
+            (tlci-loader-test-owner-arena)
             bytes
             (tlci-loader-test-host-table "fuel-check" 4096))
             [(ResultTlciLoadedImage.Err _) false]
@@ -1475,6 +1542,7 @@
         [missing : bool
           (tlci-loader-test-rejects?
             (tlci-loader-load-from-bytes-with-host
+              (tlci-loader-test-owner-arena)
               bytes
               (tlci-loader-test-host-table "other" 8192))
             "tlci loader: image `demo@0.1.0` has unresolved host import `fuel-check`")]
@@ -1493,6 +1561,7 @@
         [bad-slot : bool
           (tlci-loader-test-rejects?
             (tlci-loader-load-from-bytes-with-host
+              (tlci-loader-test-owner-arena)
               bad-slot-bytes
               (tlci-loader-test-host-table "fuel-check" 4096))
             "tlci loader: import slot outside loadable sections: 8")]
@@ -1503,6 +1572,7 @@
     [(ResultTlciBytes.Err _) 10]
     [(ResultTlciBytes.Ok bytes)
       (match (tlci-loader-load-from-bytes-with-host
+        (tlci-loader-test-owner-arena)
         bytes
         (tlci-test-host-callback-table))
         [(ResultTlciLoadedImage.Err _) 11]
@@ -1572,11 +1642,13 @@
           (and
             (tlci-loader-test-rejects?
               (tlci-loader-load-from-bytes-with-host
+                (tlci-loader-test-owner-arena)
                 status-bytes
                 (tlci-test-host-callback-table))
               "tlci loader: tlci_image_entry returned status 4")
             (tlci-loader-test-rejects?
               (tlci-loader-load-from-bytes-with-host
+                (tlci-loader-test-owner-arena)
                 bad-registration-bytes
                 (tlci-test-host-callback-table))
               (str_cat.str-cat
@@ -1605,6 +1677,7 @@
               "tlci loader: fixup offset outside loadable sections: 8")
             (tlci-loader-test-rejects?
               (tlci-loader-load-from-bytes-with-host
+                (tlci-loader-test-owner-arena)
                 bytes
                 (TlciHostCallbackTable
                   tlci-host-callback-table-magic
@@ -1620,11 +1693,72 @@
                   0))
               "tlci host ABI: unsupported callback ABI version 3"))))]))
 
+;; R3-P2d regression. The retained host callback table and registration block
+;; must belong to `owner-arena`, NOT to the arena that happened to be current
+;; when the image was mapped -- so an image loaded from inside a transient
+;; arena keeps working after that arena is destroyed. This test is the compiler
+;; failure in miniature: map the image with a transient arena current, destroy
+;; the transient arena, then perform exactly the read
+;; `tlci-loader-dispatch-macro` performs on every dispatch.
+;;
+;; Without the owner parameter this reads unmapped pages and the smoke dies on
+;; SIGSEGV rather than returning a status.
+(define (tlci-loader-test-retained-storage-outlives-load-arena-status) : i64
+  (match (tlci-loader-test-emit-with-real-fixup)
+    [(ResultTlciBytes.Err _) 70]
+    [(ResultTlciBytes.Ok bytes)
+      (let
+        [owner : i64 (arena.tl_arena_current)]
+        [transient : i64 (arena.tl_arena_make)]
+        [_enter : unit
+          (unsafe
+            (arena.tl_arena_set transient))]
+        [loaded-result : ResultTlciLoadedImage
+          (tlci-loader-load-from-bytes-with-host
+            owner
+            bytes
+            (tlci-test-host-callback-table))]
+        [_leave : unit
+          (unsafe
+            (arena.tl_arena_set owner))]
+        [_drop : unit
+          (unsafe
+            (arena.tl_arena_destroy transient))]
+        (match loaded-result
+          [(ResultTlciLoadedImage.Err _) 71]
+          [(ResultTlciLoadedImage.Ok loaded)
+            (let
+              ;; The dispatch-path read, after the load arena is gone.
+              [host-magic : i64
+                (tlci-loader-read-mapped-i64
+                  (struct-get loaded host-table-addr))]
+              [host-context : i64
+                (tlci-loader-read-mapped-i64
+                  (+
+                    (struct-get loaded host-table-addr)
+                    tlci-host-callback-table-host-context-offset))]
+              [registration-magic : i64
+                (tlci-loader-read-mapped-i64
+                  (struct-get loaded registration-addr))]
+              [released : bool
+                (match (tlci-loader-release loaded)
+                  [(ResultTlciLoaderUnit.Ok) true]
+                  [(ResultTlciLoaderUnit.Err _) false])]
+              (cond
+                [(not (= host-magic tlci-host-callback-table-magic)) 72]
+                [(not (= host-context 1234)) 73]
+                [(not (= registration-magic tlci-image-registration-magic)) 74]
+                [(not released) 75]
+                [else 0]))]))]))
+
 (define (tlci-loader-self-test-status) : i64
   (let
     [load-status : i64 (tlci-loader-test-loads-and-fixes-up-status)]
+    [retained-status : i64
+      (tlci-loader-test-retained-storage-outlives-load-arena-status)]
     (cond
       [(not (= load-status 0)) load-status]
+      [(not (= retained-status 0)) retained-status]
       [(not (tlci-loader-test-rejections-ok?)) 2]
       [(not (tlci-loader-test-registration-rejections-ok?)) 3]
       [(not (tlci-loader-test-macro-entry-validation-ok?)) 4]

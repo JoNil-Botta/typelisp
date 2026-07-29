@@ -56,6 +56,7 @@ c_abi_win64_nested_aggregate|tests/integration/c_abi_win64_nested_aggregate.tl|4
 c_abi_int8_struct|tests/integration/c_abi_int8_struct.tl|42|-|-|benchmarks/c_abi_int8_struct/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 arena_pool_context_escape|tests/integration/arena_pool_context_escape.tl|42|-|-|stdlib/arena.tl stdlib/array.tl stdlib/string.tl
+arena_lazy_singleton_raw_addr_escape|tests/integration/arena_lazy_singleton_raw_addr_escape.tl|42|-|-|stdlib/arena.tl stdlib/array.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl
 # Backend/regalloc campaign fixtures recovered from llvm-inlining.
 # syscall_arg_alias and dead_frame_store stay Linux-only via windows_integration_non_applicable_cases.

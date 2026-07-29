@@ -72,9 +72,7 @@
               (begin
                 (unsafe
                   (arena.destroy scratch))
-                (+
-                  (bundle-score bundle-copy)
-                  (sequence-score sequence-copy))))))))))
+                (+ (bundle-score bundle-copy) (sequence-score sequence-copy))))))))))
 
 (define (main) : i64
   (let

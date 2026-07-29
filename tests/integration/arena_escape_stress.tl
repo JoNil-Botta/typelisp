@@ -58,9 +58,7 @@
       (items-ok-from? items (+ index 1) count seed))))
 
 (define (items-ok? [items : (Array String)] [count : i64] [seed : i64]) : bool
-  (and
-    (= (array-length items) count)
-    (items-ok-from? items 0 count seed)))
+  (and (= (array-length items) count) (items-ok-from? items 0 count seed)))
 
 (define (escape-string [seed : i64]) : String
   (let
@@ -108,10 +106,8 @@
                     (arena.destroy scratch-head))
                   escaped)))))))))
 
-(define (escape-items-rewind
-  [scratch : arena.Arena]
-  [count : i64]
-  [seed : i64]) : (Array String)
+(define (escape-items-rewind [scratch : arena.Arena] [count : i64] [seed : i64]) : (Array
+    String)
   (let
     [enclosing : arena.Arena (arena.current)]
     (begin
@@ -155,14 +151,13 @@
     (let
       [items : (Array String) (escape-items 96 n)]
       [after : String (escape-string (+ n 2000))]
-      (if (and (items-ok? items 96 n) (string.eq after (payload (+ n 2000) 999)))
+      (if (and
+        (items-ok? items 96 n)
+        (string.eq after (payload (+ n 2000) 999)))
         (item-cycles (- n 1) (+ acc 1))
         0))))
 
-(define (rewind-item-cycles-inner
-  [scratch : arena.Arena]
-  [n : i64]
-  [acc : i64]) : i64
+(define (rewind-item-cycles-inner [scratch : arena.Arena] [n : i64] [acc : i64]) : i64
   (if (= n 0)
     acc
     (let

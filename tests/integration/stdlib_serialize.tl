@@ -233,10 +233,7 @@
 (define (serialize-toy-enum-missing-payload) : toy.Value
   (toy.Object
     (box
-      (toy.field-list-prepend
-        "tag"
-        (toy.Text "Idle")
-        (toy.field-list-empty)))))
+      (toy.field-list-prepend "tag" (toy.Text "Idle") (toy.field-list-empty)))))
 
 (define (serialize-enum-object-tag-and-payload-count-ok?
   [value : toy.Value]
@@ -539,10 +536,7 @@
 (define (serialize-missing-field-value) : toy.Value
   (toy.Object
     (box
-      (toy.field-list-prepend
-        "name"
-        (toy.Text "Ada")
-        (toy.field-list-empty)))))
+      (toy.field-list-prepend "name" (toy.Text "Ada") (toy.field-list-empty)))))
 
 (define (serialize-wrong-kind-value) : toy.Value
   (toy.Object

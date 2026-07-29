@@ -36,10 +36,7 @@
       (array-set! target (+ index 1) (array-ref source index))
       (field-list-copy-from source target (+ index 1)))))
 
-(define (field-list-prepend
-  [name : String]
-  [value : Value]
-  [rest : FieldList]) : FieldList
+(define (field-list-prepend [name : String] [value : Value] [rest : FieldList]) : FieldList
   (let
     [source : (Array Field) (struct-get rest items)]
     [target : (Array Field)

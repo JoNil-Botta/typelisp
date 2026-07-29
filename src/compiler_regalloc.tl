@@ -3972,7 +3972,7 @@
       (let
         [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
         [live-blocks : (Array CompilerLiveBlock)
-          (compiler-live-build-block-array seq)]
+          (compiler-live-build-block-array seq vars)]
         [count : i64 (array-length live-blocks)]
         [words : i64 (compiler-reg-bits-words vars)]
         [cells : i64 (* count words)]
@@ -24322,7 +24322,7 @@
           [web-end : (Array i64) (array.make-array i64 vars)]
           [web-root : (Array bool) (array.make-array bool vars)]
           [liveness : CompilerFunctionLiveness
-            (compiler-live-analyze-blocks-edge-precise blocks)]
+            (compiler-live-analyze-blocks-edge-precise blocks vars)]
           (begin
             (compiler-reg-fill-i64-array ep-starts (- 0 1))
             (compiler-reg-fill-i64-array ep-ends (- 0 1))

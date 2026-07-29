@@ -5,12 +5,12 @@
 ;; and parenthesized/bracketed lists keep their delimiter kind.
 (import stdlib.io)
 (import stdlib.string)
-(import "format_tokens.tl")
+(import format_tokens as tokens)
 
 (defenum FormatCst
-  (Atom FormatToken)
+  (Atom tokens.FormatToken)
   (Comment String)
-  (Prefix FormatToken (Box FormatCst))
+  (Prefix tokens.FormatToken (Box FormatCst))
   (List (Box FormatCstList))
   (BracketList (Box FormatCstList))
   (Forms (Box FormatCstList)))
@@ -39,19 +39,19 @@
 
 (defenum ResultFormatCst
   (Ok FormatCst)
-  (Err FormatSourceError))
+  (Err tokens.FormatSourceError))
 
 (defenum ResultFormatParsedCst
   (Ok FormatParsedCst)
-  (Err FormatSourceError))
+  (Err tokens.FormatSourceError))
 
 (defenum ResultFormatParsedCstList
   (Ok FormatParsedCstList)
-  (Err FormatSourceError))
+  (Err tokens.FormatSourceError))
 
 (defenum ResultFormatParseSeqEnd
   (Ok i64)
-  (Err FormatSourceError))
+  (Err tokens.FormatSourceError))
 
 (define (format-cst-vec-new) : FormatCstVec
   (FormatCstVec (make-array FormatCst 4) 0))
@@ -182,37 +182,37 @@
       (+ (fmt-cst-bracket-count node) (fmt-cst-list-bracket-count rest))]))
 
 (define (fmt-unexpected-closing [tag : i64]) : bool
-  (or (= tag (fmt-tag-rparen)) (= tag (fmt-tag-rbracket))))
+  (or (= tag (tokens.fmt-tag-rparen)) (= tag (tokens.fmt-tag-rbracket))))
 
 (define (fmt-prefix-tag? [tag : i64]) : bool
   (or
-    (= tag (fmt-tag-quote))
-    (= tag (fmt-tag-backtick))
-    (= tag (fmt-tag-comma))
-    (= tag (fmt-tag-comma-at))))
+    (= tag (tokens.fmt-tag-quote))
+    (= tag (tokens.fmt-tag-backtick))
+    (= tag (tokens.fmt-tag-comma))
+    (= tag (tokens.fmt-tag-comma-at))))
 
 (define (fmt-parse-seq-into-result
-  [stream : FormatTokenStream]
+  [stream : tokens.FormatTokenStream]
   [idx : i64]
   [stop-tag : i64]
   [items : (&mut items FormatCstVec)]) : ResultFormatParseSeqEnd
   (let
-    [tag : i64 (format-token-tag (format-token-at stream idx))]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
-      [(= tag (fmt-tag-end))
+      [(= tag (tokens.fmt-tag-end))
         (if (= stop-tag 0)
           (ResultFormatParseSeqEnd.Ok idx)
           (ResultFormatParseSeqEnd.Err
-            (FormatSourceError
+            (tokens.FormatSourceError
               "format cst: unclosed delimiter"
-              (format-token-span stream idx))))]
+              (tokens.format-token-span stream idx))))]
       [(and (!= stop-tag 0) (= tag stop-tag))
         (ResultFormatParseSeqEnd.Ok (+ idx 1))]
       [(fmt-unexpected-closing tag)
         (ResultFormatParseSeqEnd.Err
-          (FormatSourceError
+          (tokens.FormatSourceError
             "format cst: unexpected closing delimiter"
-            (format-token-span stream idx)))]
+            (tokens.format-token-span stream idx)))]
       [else
         (match (fmt-parse-one-result stream idx)
           [(ResultFormatParsedCst.Ok parsed)
@@ -224,28 +224,28 @@
           [(ResultFormatParsedCst.Err err) (ResultFormatParseSeqEnd.Err err)])])))
 
 (define (fmt-parse-seq-result
-  [stream : FormatTokenStream]
+  [stream : tokens.FormatTokenStream]
   [idx : i64]
   [stop-tag : i64]) : ResultFormatParsedCstList
   (let
-    [tag : i64 (format-token-tag (format-token-at stream idx))]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
-      [(= tag (fmt-tag-end))
+      [(= tag (tokens.fmt-tag-end))
         (if (= stop-tag 0)
           (ResultFormatParsedCstList.Ok
             (FormatParsedCstList.ParsedList (fmt-cst-list-nil) idx))
           (ResultFormatParsedCstList.Err
-            (FormatSourceError
+            (tokens.FormatSourceError
               "format cst: unclosed delimiter"
-              (format-token-span stream idx))))]
+              (tokens.format-token-span stream idx))))]
       [(and (!= stop-tag 0) (= tag stop-tag))
         (ResultFormatParsedCstList.Ok
           (FormatParsedCstList.ParsedList (fmt-cst-list-nil) (+ idx 1)))]
       [(fmt-unexpected-closing tag)
         (ResultFormatParsedCstList.Err
-          (FormatSourceError
+          (tokens.FormatSourceError
             "format cst: unexpected closing delimiter"
-            (format-token-span stream idx)))]
+            (tokens.format-token-span stream idx)))]
       [else
         (let
           [items : FormatCstVec (format-cst-vec-new)]
@@ -270,21 +270,21 @@
             [(ResultFormatParsedCst.Err err)
               (ResultFormatParsedCstList.Err err)]))])))
 
-(define (fmt-parse-one-result [stream : FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
+(define (fmt-parse-one-result [stream : tokens.FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
   (let
-    [tok : FormatToken (format-token-at stream idx)]
-    [tag : i64 (format-token-tag (format-token-at stream idx))]
+    [tok : tokens.FormatToken (tokens.format-token-at stream idx)]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
-      [(= tag (fmt-tag-lparen))
-        (match (fmt-parse-seq-result stream (+ idx 1) (fmt-tag-rparen))
+      [(= tag (tokens.fmt-tag-lparen))
+        (match (fmt-parse-seq-result stream (+ idx 1) (tokens.fmt-tag-rparen))
           [(ResultFormatParsedCstList.Ok parsed)
             (match parsed
               [(FormatParsedCstList.ParsedList items next)
                 (ResultFormatParsedCst.Ok
                   (FormatParsedCst.Parsed (FormatCst.List (box items)) next))])]
           [(ResultFormatParsedCstList.Err err) (ResultFormatParsedCst.Err err)])]
-      [(= tag (fmt-tag-lbracket))
-        (match (fmt-parse-seq-result stream (+ idx 1) (fmt-tag-rbracket))
+      [(= tag (tokens.fmt-tag-lbracket))
+        (match (fmt-parse-seq-result stream (+ idx 1) (tokens.fmt-tag-rbracket))
           [(ResultFormatParsedCstList.Ok parsed)
             (match parsed
               [(FormatParsedCstList.ParsedList items next)
@@ -293,10 +293,10 @@
                     (FormatCst.BracketList (box items))
                     next))])]
           [(ResultFormatParsedCstList.Err err) (ResultFormatParsedCst.Err err)])]
-      [(= tag (fmt-tag-comment))
+      [(= tag (tokens.fmt-tag-comment))
         (ResultFormatParsedCst.Ok
           (FormatParsedCst.Parsed
-            (FormatCst.Comment (format-token-text tok))
+            (FormatCst.Comment (tokens.format-token-text tok))
             (+ idx 1)))]
       [(fmt-prefix-tag? tag)
         (match (fmt-parse-one-result stream (+ idx 1))
@@ -310,19 +310,19 @@
           [(ResultFormatParsedCst.Err err) (ResultFormatParsedCst.Err err)])]
       [(fmt-unexpected-closing tag)
         (ResultFormatParsedCst.Err
-          (FormatSourceError
+          (tokens.FormatSourceError
             "format cst: unexpected closing delimiter"
-            (format-token-span stream idx)))]
-      [(= tag (fmt-tag-end))
+            (tokens.format-token-span stream idx)))]
+      [(= tag (tokens.fmt-tag-end))
         (ResultFormatParsedCst.Err
-          (FormatSourceError
+          (tokens.FormatSourceError
             "format cst: unexpected end"
-            (format-token-span stream idx)))]
+            (tokens.format-token-span stream idx)))]
       [else
         (ResultFormatParsedCst.Ok
           (FormatParsedCst.Parsed (FormatCst.Atom tok) (+ idx 1)))])))
 
-(define (parse-format-tokens-result [stream : FormatTokenStream]) : ResultFormatCst
+(define (parse-format-tokens-result [stream : tokens.FormatTokenStream]) : ResultFormatCst
   (match (fmt-parse-seq-result stream 0 0)
     [(ResultFormatParsedCstList.Ok parsed)
       (match parsed
@@ -331,14 +331,16 @@
     [(ResultFormatParsedCstList.Err err) (ResultFormatCst.Err err)]))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
-  (match (format-lex-result src)
-    [(ResultFormatTokenStream.Ok stream) (parse-format-tokens-result stream)]
-    [(ResultFormatTokenStream.Err err) (ResultFormatCst.Err err)]))
+  (match (tokens.format-lex-result src)
+    [(tokens.ResultFormatTokenStream.Ok stream)
+      (parse-format-tokens-result stream)]
+    [(tokens.ResultFormatTokenStream.Err err) (ResultFormatCst.Err err)]))
 
 (define (parse-format-source [src : String]) : FormatCst
   (match (parse-format-source-result src)
     [(ResultFormatCst.Ok tree) tree]
-    [(ResultFormatCst.Err err) (io.panic (format-source-error-message err))]))
+    [(ResultFormatCst.Err err)
+      (io.panic (tokens.format-source-error-message err))]))
 
 (define (format-cst-fixture) : String
   "(import \"std.tl\")
@@ -364,21 +366,33 @@
 
 (define (format-cst-prefixed-int-ok?) : bool
   (let
-    [stream : FormatTokenStream (format-lex "(0x2a -0b101010)")]
+    [stream : tokens.FormatTokenStream (tokens.format-lex "(0x2a -0b101010)")]
     (and
-      (= (format-token-tag-count stream (fmt-tag-int)) 2)
-      (= (format-token-tag (format-token-at stream 1)) (fmt-tag-int))
-      (string.eq (format-token-text (format-token-at stream 1)) "0x2a")
-      (= (format-token-tag (format-token-at stream 2)) (fmt-tag-int))
-      (string.eq (format-token-text (format-token-at stream 2)) "-0b101010")
-      (= (format-token-tag (format-token-at stream 4)) (fmt-tag-end)))))
+      (= (tokens.format-token-tag-count stream (tokens.fmt-tag-int)) 2)
+      (=
+        (tokens.format-token-tag (tokens.format-token-at stream 1))
+        (tokens.fmt-tag-int))
+      (string.eq
+        (tokens.format-token-text (tokens.format-token-at stream 1))
+        "0x2a")
+      (=
+        (tokens.format-token-tag (tokens.format-token-at stream 2))
+        (tokens.fmt-tag-int))
+      (string.eq
+        (tokens.format-token-text (tokens.format-token-at stream 2))
+        "-0b101010")
+      (=
+        (tokens.format-token-tag (tokens.format-token-at stream 4))
+        (tokens.fmt-tag-end)))))
 
 (define (format-cst-apostrophe-char-ok?) : bool
   (let
-    [stream : FormatTokenStream (format-lex "'a' '\"' '('")]
+    [stream : tokens.FormatTokenStream (tokens.format-lex "'a' '\"' '('")]
     (and
-      (= (format-token-tag-count stream (fmt-tag-char)) 3)
-      (= (format-token-tag (format-token-at stream 3)) (fmt-tag-end)))))
+      (= (tokens.format-token-tag-count stream (tokens.fmt-tag-char)) 3)
+      (=
+        (tokens.format-token-tag (tokens.format-token-at stream 3))
+        (tokens.fmt-tag-end)))))
 
 (define (format-cst-error-location-ok?) : bool
   (match (parse-format-source-result "(define x\n  ]")
@@ -386,9 +400,14 @@
     [(ResultFormatCst.Err err)
       (and
         (string.eq
-          (format-source-error-message err)
+          (tokens.format-source-error-message err)
           "format cst: unexpected closing delimiter")
-        (format-source-span-eq? (format-source-error-span err) 2 3 2 3))]))
+        (tokens.format-source-span-eq?
+          (tokens.format-source-error-span err)
+          2
+          3
+          2
+          3))]))
 
 (define (format-cst-legacy-char-rejected-ok?) : bool
   (and
@@ -396,13 +415,13 @@
       [(ResultFormatCst.Ok _) false]
       [(ResultFormatCst.Err err)
         (string.eq
-          (format-source-error-message err)
+          (tokens.format-source-error-message err)
           "format lexer: unexpected character")])
     (match (parse-format-source-result "#\\space'")
       [(ResultFormatCst.Ok _) false]
       [(ResultFormatCst.Err err)
         (string.eq
-          (format-source-error-message err)
+          (tokens.format-source-error-message err)
           "format lexer: unexpected character")])))
 
 (define (format-cst-dense-storage-ok?) : bool
@@ -420,14 +439,16 @@
 
 (define (format-cst-self-test) : i64
   (let
-    [stream : FormatTokenStream (format-lex (format-cst-fixture))]
+    [stream : tokens.FormatTokenStream (tokens.format-lex (format-cst-fixture))]
     [tree : FormatCst (parse-format-source (format-cst-fixture))]
     (begin
-      (unless (> (format-token-count stream) 40) (return 1))
+      (unless (> (tokens.format-token-count stream) 40) (return 1))
       (unless (> (fmt-cst-count tree) 40) (return 2))
       (unless (= (fmt-cst-comment-count tree) 1) (return 3))
       (unless (> (fmt-cst-bracket-count tree) 4) (return 4))
-      (unless (= (format-token-tag-count stream (fmt-tag-char)) 1) (return 5))
+      (unless
+        (= (tokens.format-token-tag-count stream (tokens.fmt-tag-char)) 1)
+        (return 5))
       (unless (format-cst-boxed-nested-ok?) (return 6))
       (unless (format-cst-prefixed-int-ok?) (return 7))
       (unless (format-cst-apostrophe-char-ok?) (return 8))

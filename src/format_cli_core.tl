@@ -9,6 +9,7 @@
 (import (vector.vector String) as fmt_svec)
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
+(import format_tokens as tokens)
 (import "format_rules.tl")
 (import "package_source_core.tl")
 
@@ -46,20 +47,22 @@
         (io.print-error (string.append message "\n"))
         1)]))
 
-(define (fmt-source-error-message [path : String] [err : FormatSourceError]) : String
+(define (fmt-source-error-message
+  [path : String]
+  [err : tokens.FormatSourceError]) : String
   (let
-    [span : FormatSourceSpan (format-source-error-span err)]
+    [span : tokens.FormatSourceSpan (tokens.format-source-error-span err)]
     (string.append
       path
       (string.append
         ":"
         (string.append
-          (string.int->string (format-source-span-start-line span))
+          (string.int->string (tokens.format-source-span-start-line span))
           (string.append
             ":"
             (string.append
-              (string.int->string (format-source-span-start-col span))
-              (string.append ": " (format-source-error-message err)))))))))
+              (string.int->string (tokens.format-source-span-start-col span))
+              (string.append ": " (tokens.format-source-error-message err)))))))))
 
 (test
   fmt-write-failure-diagnostic-includes-path-and-reason
@@ -88,7 +91,7 @@
     [(ResultFormatString.Ok _) false]
     [(ResultFormatString.Err err)
       (string.eq
-        (format-source-error-message err)
+        (tokens.format-source-error-message err)
         "format lexer: malformed integer literal")]))
 
 (test

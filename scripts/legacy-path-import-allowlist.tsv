@@ -45,9 +45,6 @@ src/doc_cli_core.tl	4
 src/doc_expand.tl	2
 src/doc_test.tl	3
 src/format_cli_core.tl	2
-src/format_cst.tl	1
-src/format_rules_doc_compat.tl	1
-src/format_rules.tl	3
 src/inspect_cli_core.tl	1
 src/lint_core.tl	1
 src/lint_driver_core.tl	4
@@ -97,7 +94,6 @@ src/tests/compiler_typecheck_smoke.tl	1
 src/tests/comptime_host_smoke.tl	5
 src/tests/doc_expand_smoke.tl	1
 src/tests/doc_test_smoke.tl	1
-src/tests/format_rules_integration.tl	2
 src/tests/lint_driver_smoke.tl	1
 src/tests/lint_smoke.tl	1
 src/tests/lsp_frame_smoke.tl	1

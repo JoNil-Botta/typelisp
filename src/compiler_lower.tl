@@ -5745,7 +5745,7 @@
   [module : String]
   [module-id : i64]) : ResultLowerModuleLocalEnv
   (if (string.eq module "")
-    (ResultLowerModuleLocalEnv.Ok top-env (TcTypeEnv.Nil) (LowerNameEnv.Nil))
+    (ResultLowerModuleLocalEnv.Ok top-env (tc-empty-env) (LowerNameEnv.Nil))
     (match (tc-context-program ctx)
       [(AstProgram.Program decls-box)
         (let
@@ -5765,7 +5765,7 @@
             top-env
             decls
             top-env
-            (TcTypeEnv.Nil)
+            (tc-empty-env)
             names
             local-alias-names
             name-cache
@@ -57509,7 +57509,7 @@
         (lower-name-cache-overlay
           (LowerNameEnv.Nil)
           cbi.compiler-builtin-id-fix-empty)
-        (lower-type-cache-overlay (TcTypeEnv.Nil))
+        (lower-type-cache-overlay (tc-empty-env))
         dispatch-variants
         mode
         ""

@@ -85,7 +85,7 @@ layout/spec metadata, and wrappers around other data.
 
 | Family | File:line | Constructors | Access/order/indexing | Hotness | Disposition | Blocker/follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| `TcTypeEnv` | `src/compiler_typecheck_core.tl:34` | `TcTypeEnv.Nil` / `TcTypeEnv.Bind` / `TcTypeEnv.Cache` | Persistent scope chain plus cache nodes and marker scans. | Very hot. | `redesign-scope-stack` | #3428; not a vector rewrite. |
+| `TcTypeEnv` | `src/compiler_typecheck_core.tl:87` | `TcTypeEnv` snapshots over `TcTypeEnvBinding` / `TcTypeEnvCache` arena entries | Shared stable-address segmented arena with encoded heads; append-only branches preserve lookup, cache, and marker-scan snapshots. | Very hot. | `migrated-segmented-persistent-arena` | #3584. |
 | `ResultTcTypeList` | `src/compiler_typecheck_core.tl:66` | `ResultTcTypeList.Ok` / `ResultTcTypeList.Err` | Wrapper for `AstTypeList`. | Error plumbing. | `not-a-cons-migration-target` | Follows AST/type-list owner. |
 | `ResultTcExprList` | `src/compiler_typecheck_core.tl:70` | `ResultTcExprList.Ok` / `ResultTcExprList.Err` | Wrapper for `AstExprList`. | Error plumbing. | `not-a-cons-migration-target` | Follows `AstExprList` in #3427. |
 | `TcStringList` | `src/compiler_typecheck_core.tl:128` | `TcStringList.Nil` / `TcStringList.Cons` | Small stack/set/path lists for bound names, cycle chains, and owner/lifetime sets. | Frequent but usually tiny. | `keep-persistent-cons` | Specific hot call sites can be split later if measured. |
@@ -140,10 +140,10 @@ inline aggregate recursion. They are not production storage families.
 
 - Do not convert parser result wrappers independently; they change only when
   their payload family changes.
-- Do not vectorize env chains mechanically. `TcTypeEnv` and `MacroHygieneEnv`
-  need a scoped-stack design with explicit save/restore marks and marker-scan
-  semantics (#3428); `TcSpmdEnv` has already moved to an array-backed scoped
-  stack with snapshot marks (#3583).
+- Do not vectorize env chains mechanically. `TcTypeEnv` uses a stable-address
+  persistent arena whose encoded-head snapshots retain marker-scan semantics
+  (#3584), and `TcSpmdEnv` uses an array-backed scoped stack with snapshot marks
+  (#3583). `MacroHygieneEnv` still needs an equivalent snapshot-aware design.
 - Treat `AstDeclList` and `AstDeclPathList` as a paired migration; every caller
   that assumes lockstep traversal must update in one slice.
 - Measure before landing any conversion that claims speed or memory wins. The

@@ -2,6 +2,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.array)
+(import stdlib.comptime)
 (import stdlib.hashmap)
 (import "compiler_symbols.tl")
 (import "compiler_load.tl")
@@ -28,9 +29,9 @@
 (cfg test (import stdlib.test))
 (import sym_i64_env)
 
-;; TcTypeEnv.Cache fields: ids map, values, unsafe flags, raw C fnptr flags,
-;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
-;; parallel `values`:
+;; TcTypeEnv cache fields: ids map, values, unsafe flags, raw C fnptr flags,
+;; default-shadow flags, scan-through, partial, rest head, below head. The flag
+;; arrays parallel `values`:
 ;; the raw C fnptr flag records whether the head-most binding is a raw C
 ;; function pointer value, and bit 0 of the packed default-shadow sidecar is set
 ;; when the head-most binding sits above the first default-boundary marker
@@ -53,9 +54,48 @@
 ;; lookup fall-through but still stop marker scans. Partial local caches cover
 ;; only the compaction prefix; their `rest` keeps the full spine for marker
 ;; scans, while `below` skips the covered prefix for lookup miss fall-through.
-(defenum TcTypeEnv
+;;
+;; Immutable snapshots are a shared segmented arena plus an encoded stable
+;; entry address. Bind heads are positive addresses, cache heads are negated
+;; addresses, and -1 is empty. Branches append arena entries whose parent is
+;; the retained head, so sibling snapshots remain stable without one boxed
+;; self-tail allocation per binding/cache node.
+(defstruct TcTypeEnvBinding
+  (name-id i64)
+  (ty AstType)
+  (parent i64))
+
+(defstruct TcTypeEnvCache
+  (ids tc_i64_i64_map.Map)
+  (values (Array AstType))
+  (unsafe-flags (Array i64))
+  (c-abi-fnptr-flags (Array i64))
+  (shadow-flags (Array i64))
+  (scan-through bool)
+  (partial bool)
+  (rest i64)
+  (below i64))
+
+(defstruct TcTypeEnvStore
+  (bindings (Array TcTypeEnvBinding))
+  (binding-capacity i64)
+  (binding-len i64)
+  (caches (Array TcTypeEnvCache))
+  (cache-capacity i64)
+  (cache-len i64)
+  (owner-arena i64))
+
+(defstruct TcTypeEnv
+  (store i64)
+  (head i64)
+  ;; Keep snapshot arguments in the aggregate-by-reference ABI class. Passing
+  ;; the two live words in separate registers made high-frequency wrappers
+  ;; spill and rebuild both words on every call.
+  (abi-pad i64))
+
+(defenum TcTypeEnvView
   (Nil)
-  (Bind i64 AstType (Box TcTypeEnv))
+  (Bind i64 AstType TcTypeEnv)
   (Cache
     tc_i64_i64_map.Map
     (Array AstType)
@@ -64,8 +104,8 @@
     (Array i64)
     bool
     bool
-    (Box TcTypeEnv)
-    (Box TcTypeEnv)))
+    TcTypeEnv
+    TcTypeEnv))
 
 (defenum TcTypeEnvSpineStep
   (Done)
@@ -6017,36 +6057,303 @@
         expr
         (tc-type-mismatch-message actual expected message)))))
 
+(define (tc-type-env-binding-segment-capacity) : i64
+  64)
+
+(define (tc-type-env-cache-segment-capacity) : i64
+  8)
+
+(define (tc-type-env-store-owner-root [handle : i64]) : i64
+  (if (= handle 0)
+    0
+    (let
+      [root : i64
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr handle : (Ptr i64)) 5)))]
+      (if (= root 0)
+        handle
+        root))))
+
+(define (tc-type-env-store-owner-current-head [handle : i64]) : i64
+  (let
+    [root : i64 (tc-type-env-store-owner-root handle)]
+    (if (= root 0)
+      0
+      (let
+        [head : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        (if (= head 0)
+          root
+          head)))))
+
+(define (tc-type-env-store-restore-after-owner-alloc!
+  [previous-arena : i64]
+  [owner : i64]) : unit
+  (if (=
+    (tc-type-env-store-owner-root previous-arena)
+    (tc-type-env-store-owner-root owner))
+    unit
+    (unsafe
+      (arena.tl_arena_set (tc-type-env-store-owner-current-head previous-arena)))))
+
+(define (tc-type-env-store-new) : TcTypeEnvStore
+  (TcTypeEnvStore
+    (array.make-array TcTypeEnvBinding 1)
+    0
+    0
+    (array.make-array TcTypeEnvCache 1)
+    0
+    0
+    (tc-type-env-store-owner-root (arena.tl_arena_current))))
+
+(define (tc-type-env-store-handle-new) : i64
+  (let
+    [cell : (Array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
+    (begin
+      (array-set! cell 0 (tc-type-env-store-new))
+      (unsafe
+        (cast (ptr->int (ptr-cast (array-data cell) : (Ptr u8))) : i64)))))
+
+(define (tc-type-env-store-read [handle : i64]) : TcTypeEnvStore
+  (unsafe
+    (ptr-read (int->ptr (cast handle : u64) : (Ptr TcTypeEnvStore)))))
+
+(define (tc-type-env-store-write! [handle : i64] [store : TcTypeEnvStore]) : unit
+  (unsafe
+    (ptr-write! (int->ptr (cast handle : u64) : (MutPtr TcTypeEnvStore)) store)))
+
+(define (tc-type-env-new) : TcTypeEnv
+  (TcTypeEnv (tc-type-env-store-handle-new) -1 0))
+
+(define (tc-type-env-store-grow-bindings!
+  [store : (&mut store TcTypeEnvStore)]
+  [required : i64]) : unit
+  (let
+    [next-capacity : i64
+      (if (< required (tc-type-env-binding-segment-capacity))
+        (tc-type-env-binding-segment-capacity)
+        required)]
+    [owner : i64 (struct-get store owner-arena)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+      (let
+        [bigger : (Array TcTypeEnvBinding)
+          (array.make-array TcTypeEnvBinding next-capacity)]
+        (begin
+          (set! (struct-get store bindings) bigger)
+          (set! (struct-get store binding-capacity) next-capacity)
+          (set! (struct-get store binding-len) 0)))
+      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
+
+(define (tc-type-env-store-grow-caches!
+  [store : (&mut store TcTypeEnvStore)]
+  [required : i64]) : unit
+  (let
+    [next-capacity : i64
+      (if (< required (tc-type-env-cache-segment-capacity))
+        (tc-type-env-cache-segment-capacity)
+        required)]
+    [owner : i64 (struct-get store owner-arena)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
+      (let
+        [bigger : (Array TcTypeEnvCache)
+          (array.make-array TcTypeEnvCache next-capacity)]
+        (begin
+          (set! (struct-get store caches) bigger)
+          (set! (struct-get store cache-capacity) next-capacity)
+          (set! (struct-get store cache-len) 0)))
+      (tc-type-env-store-restore-after-owner-alloc! previous-arena owner))))
+
+(define (tc-type-env-store-write-cache!
+  [store : (&mut store TcTypeEnvStore)]
+  [index : i64]
+  [cache : TcTypeEnvCache]) : unit
+  (array-set! (struct-get store caches) index cache))
+
+;; Hot persistent-env walkers expand these address/field reads at their direct
+;; match sites. Returning an enum-shaped view per node was measurably expensive
+;; here: it copied the store and the largest cache payload even when a walker
+;; only needed the binding key and parent. Arena segments are never moved, so a
+;; snapshot head remains a valid element address after later segments are added.
+(defmacro (tc-type-env-binding-ptr
+  [_store-handle : comptime.Expr]
+  [index : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (int->ptr (cast ,index : u64) : (Ptr TcTypeEnvBinding))))
+
+(defmacro (tc-type-env-cache-ptr
+  [_store-handle : comptime.Expr]
+  [index : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (int->ptr (cast ,index : u64) : (Ptr TcTypeEnvCache))))
+
+(defmacro (tc-type-env-binding-name-at [binding-ptr : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read (ptr-cast ,binding-ptr : (Ptr i64)))))
+
+(defmacro (tc-type-env-binding-type-at [binding-ptr : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read
+      (ptr-cast
+        (ptr-offset (ptr-cast ,binding-ptr : (Ptr i64)) 1)
+        : (Ptr AstType)))))
+
+(defmacro (tc-type-env-binding-parent-at [binding-ptr : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read (ptr-offset (ptr-cast ,binding-ptr : (Ptr i64)) 4))))
+
+(defmacro (tc-type-env-cache-at [cache-ptr : comptime.Expr]) : comptime.Expr
+  `(unsafe
+    (ptr-read ,cache-ptr)))
+
+(define (tc-type-env-store-push-binding!
+  [store-handle : i64]
+  [binding : TcTypeEnvBinding]) : i64
+  (let
+    [store-words : (MutPtr i64)
+      (unsafe
+        (int->ptr (cast store-handle : u64) : (MutPtr i64)))]
+    [index : i64
+      (unsafe
+        (ptr-read (ptr-offset store-words 2)))]
+    (begin
+      (if (<
+        index
+        (unsafe
+          (ptr-read (ptr-offset store-words 1))))
+        unit
+        (let
+          [store : TcTypeEnvStore (tc-type-env-store-read store-handle)]
+          (begin
+            (tc-type-env-store-grow-bindings! (&mut store) (+ index 1))
+            (tc-type-env-store-write! store-handle store)
+            (set! index 0))))
+      (let
+        [items : (Array TcTypeEnvBinding)
+          (unsafe
+            (ptr-read (ptr-cast store-words : (Ptr (Array TcTypeEnvBinding)))))]
+        (begin
+          (array-set! items index binding)
+          (unsafe
+            (ptr-write! (ptr-offset store-words 2) (+ index 1)))
+          (unsafe
+            (cast
+              (ptr->int
+                (ptr-cast (ptr-offset (array-data items) index) : (Ptr u8)))
+              : i64)))))))
+
+(define (tc-type-env-store-push-cache!
+  [store : (&mut store TcTypeEnvStore)]
+  [cache : TcTypeEnvCache]) : i64
+  (let
+    [index : i64 (struct-get store cache-len)]
+    (begin
+      (if (< index (struct-get store cache-capacity))
+        unit
+        (begin
+          (tc-type-env-store-grow-caches! store (+ index 1))
+          (set! index 0)))
+      (tc-type-env-store-write-cache! store index cache)
+      (set! (struct-get store cache-len) (+ index 1))
+      (unsafe
+        (cast
+          (ptr->int
+            (ptr-cast
+              (ptr-offset (array-data (struct-get store caches)) index)
+              : (Ptr u8)))
+          : i64)))))
+
+(define (tc-type-env-cache-head [index : i64]) : i64
+  (- 0 index))
+
+(define (tc-type-env-cache-index [head : i64]) : i64
+  (- 0 head))
+
+(define (tc-type-env-bind-node [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [index : i64
+      (tc-type-env-store-push-binding!
+        store-handle
+        (TcTypeEnvBinding name-id ty (struct-get env head)))]
+    (TcTypeEnv store-handle index 0)))
+
+(define (tc-type-env-cache-node [env : TcTypeEnv] [cache : TcTypeEnvCache]) : TcTypeEnv
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [store : TcTypeEnvStore (tc-type-env-store-read store-handle)]
+    [index : i64 (tc-type-env-store-push-cache! (&mut store) cache)]
+    (begin
+      (tc-type-env-store-write! store-handle store)
+      (TcTypeEnv store-handle (tc-type-env-cache-head index) 0))))
+
+(define (tc-type-env-view [env : TcTypeEnv]) : TcTypeEnvView
+  (let
+    [head : i64 (struct-get env head)]
+    (cond
+      [(= head -1) TcTypeEnvView.Nil]
+      [(>= head 0)
+        (let
+          [store-handle : i64 (struct-get env store)]
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          (TcTypeEnvView.Bind
+            (tc-type-env-binding-name-at binding-ptr)
+            (tc-type-env-binding-type-at binding-ptr)
+            (TcTypeEnv
+              store-handle
+              (tc-type-env-binding-parent-at binding-ptr)
+              0)))]
+      [else
+        (let
+          [store-handle : i64 (struct-get env store)]
+          [cache-ptr : (Ptr TcTypeEnvCache)
+            (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
+          [cache : TcTypeEnvCache (tc-type-env-cache-at cache-ptr)]
+          (TcTypeEnvView.Cache
+            (struct-get cache ids)
+            (struct-get cache values)
+            (struct-get cache unsafe-flags)
+            (struct-get cache c-abi-fnptr-flags)
+            (struct-get cache shadow-flags)
+            (struct-get cache scan-through)
+            (struct-get cache partial)
+            (TcTypeEnv store-handle (struct-get cache rest) 0)
+            (TcTypeEnv store-handle (struct-get cache below) 0)))])))
+
 (define (tc-empty-env) : TcTypeEnv
-  TcTypeEnv.Nil)
+  (tc-type-env-new))
 
 (define (tc-type-env-spine-step [env : TcTypeEnv]) : TcTypeEnvSpineStep
-  (match env
-    [(TcTypeEnv.Nil) (TcTypeEnvSpineStep.Done)]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (TcTypeEnvSpineStep.Cache (box-get rest))]
-    [(TcTypeEnv.Bind key ty rest)
-      (TcTypeEnvSpineStep.Bind key ty (box-get rest))]))
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) (TcTypeEnvSpineStep.Done)]
+    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _) (TcTypeEnvSpineStep.Cache rest)]
+    [(TcTypeEnvView.Bind key ty rest) (TcTypeEnvSpineStep.Bind key ty rest)]))
 
 (define (tc-type-env-marker-start [env : TcTypeEnv]) : TcTypeEnv
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (box-get rest)]
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _) rest]
     [_ env]))
 
 (define (tc-type-env-marker-step [env : TcTypeEnv]) : TcTypeEnvMarkerStep
-  (match env
-    [(TcTypeEnv.Nil) (TcTypeEnvMarkerStep.Done)]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) (TcTypeEnvMarkerStep.Done)]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (TcTypeEnvMarkerStep.Cache (box-get rest))
+        (TcTypeEnvMarkerStep.Cache rest)
         (TcTypeEnvMarkerStep.Done))]
-    [(TcTypeEnv.Bind key ty rest)
-      (TcTypeEnvMarkerStep.Bind key ty (box-get rest))]))
+    [(TcTypeEnvView.Bind key ty rest) (TcTypeEnvMarkerStep.Bind key ty rest)]))
 
 (define (tc-type-env-lookup-step [env : TcTypeEnv] [name-id : i64]) : TcTypeEnvLookupStep
-  (match env
-    [(TcTypeEnv.Nil) (TcTypeEnvLookupStep.Missing)]
-    [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) (TcTypeEnvLookupStep.Missing)]
+    [(TcTypeEnvView.Cache ids values _ _ _ _ partial _ below)
       (match (tc_i64_i64_map.get (& ids) name-id)
         [(tc_i64_i64_map.LookupFound index)
           ;; AstType reads must stay `array-ref` because inline-by-value
@@ -6054,17 +6361,17 @@
           (TcTypeEnvLookupStep.Found (array-ref values index))]
         [(tc_i64_i64_map.LookupMissing)
           (if partial
-            (TcTypeEnvLookupStep.Miss (box-get below))
+            (TcTypeEnvLookupStep.Miss below)
             (TcTypeEnvLookupStep.Missing))])]
-    [(TcTypeEnv.Bind key ty rest)
+    [(TcTypeEnvView.Bind key ty rest)
       (if (= key name-id)
         (TcTypeEnvLookupStep.Found ty)
-        (TcTypeEnvLookupStep.Miss (box-get rest)))]))
+        (TcTypeEnvLookupStep.Miss rest))]))
 
 (define (tc-type-env-unsafe-lookup-step [env : TcTypeEnv] [name-id : i64]) : TcTypeEnvUnsafeLookupStep
-  (match env
-    [(TcTypeEnv.Nil) (TcTypeEnvUnsafeLookupStep.Missing)]
-    [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) (TcTypeEnvUnsafeLookupStep.Missing)]
+    [(TcTypeEnvView.Cache ids values unsafe-flags _ _ _ partial _ below)
       (match (tc_i64_i64_map.get (& ids) name-id)
         [(tc_i64_i64_map.LookupFound index)
           ;; AstType read must stay `array-ref`; the unsafe flag is a
@@ -6080,14 +6387,14 @@
               1))]
         [(tc_i64_i64_map.LookupMissing)
           (if partial
-            (TcTypeEnvUnsafeLookupStep.Miss (box-get below))
+            (TcTypeEnvUnsafeLookupStep.Miss below)
             (TcTypeEnvUnsafeLookupStep.Missing))])]
-    [(TcTypeEnv.Bind key ty rest)
+    [(TcTypeEnvView.Bind key ty rest)
       (if (= key name-id)
         (TcTypeEnvUnsafeLookupStep.Found
           ty
-          (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
-        (TcTypeEnvUnsafeLookupStep.Miss (box-get rest)))]))
+          (tc-binding-unsafe-marker-head-id? rest name-id))
+        (TcTypeEnvUnsafeLookupStep.Miss rest))]))
 
 (define (tc-local-cache-threshold) : i64
   32)
@@ -6301,7 +6608,7 @@
       (tc-topenv-membership-mark-bound! name-id)
       unit)
     (let
-      [next-env : TcTypeEnv (TcTypeEnv.Bind name-id ty (box env))]
+      [next-env : TcTypeEnv (tc-type-env-bind-node env name-id ty)]
       (begin
         (if tc-type-env-scoped-runtime-active
           (tc-type-env-scoped-runtime-note-bind-id! next-env name-id ty env)
@@ -6311,28 +6618,40 @@
 (define (tc-env-uncached-prefix-reaches-cache?
   [env : TcTypeEnv]
   [remaining : i64]) : bool
-  (if (<= remaining 0)
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ _ _) true]
-      [_ false])
-    (match env
-      [(TcTypeEnv.Bind _ _ rest)
-        (tc-env-uncached-prefix-reaches-cache? (box-get rest) (- remaining 1))]
-      [_ false])))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    [left : i64 remaining]
+    (begin
+      (while (and (> left 0) (>= head 0))
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          (begin
+            (set! head (tc-type-env-binding-parent-at binding-ptr))
+            (set! left (- left 1)))))
+      (and (<= left 0) (< head -1)))))
 
 (define (tc-env-after-prefix [env : TcTypeEnv] [remaining : i64]) : TcTypeEnv
-  (if (<= remaining 0)
-    env
-    (match env
-      [(TcTypeEnv.Bind _ _ rest)
-        (tc-env-after-prefix (box-get rest) (- remaining 1))]
-      [_ env])))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    [left : i64 remaining]
+    (begin
+      (while (and (> left 0) (>= head 0))
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          (begin
+            (set! head (tc-type-env-binding-parent-at binding-ptr))
+            (set! left (- left 1)))))
+      (TcTypeEnv store-handle head 0))))
 
 (define (tc-env-partial-layer-depth [env : TcTypeEnv]) : i64
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through partial _ below)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through partial _ below)
       (if (and scan-through partial)
-        (+ 1 (tc-env-partial-layer-depth (box-get below)))
+        (+ 1 (tc-env-partial-layer-depth below))
         0)]
     [_ 0]))
 
@@ -6342,50 +6661,60 @@
 ;; widening TcTypeEnv: later collapses can sum old layers and stop at the
 ;; immutable explicit top-env boundary.
 (define (tc-env-partial-local-covered-count [env : TcTypeEnv]) : i64
-  (match env
-    [(TcTypeEnv.Cache _ values _ _ _ scan-through partial _ below)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache _ values _ _ _ scan-through partial _ below)
       (if (and scan-through partial)
         (+
           (/ (array.length values) 2)
-          (tc-env-partial-local-covered-count (box-get below)))
+          (tc-env-partial-local-covered-count below))
         0)]
     [_ 0]))
 
 (define (tc-env-partial-local-base [env : TcTypeEnv]) : TcTypeEnv
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through partial _ below)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through partial _ below)
       (if (and scan-through partial)
-        (tc-env-partial-local-base (box-get below))
+        (tc-env-partial-local-base below)
         env)]
     [_ env]))
 
 (cfg
   test
   (define (tc-env-cache-explicit-head? [env : TcTypeEnv]) : bool
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
+    (match (tc-type-env-view env)
+      [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
       [_ false])))
 
 (define (tc-env-uncached-prefix-to-explicit-cache-count [env : TcTypeEnv]) : i64
   (let
-    [cur : TcTypeEnv env]
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
     [count : i64 0]
     [found : bool false]
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(TcTypeEnv.Bind _ _ rest)
-            (begin
-              (set! count (+ count 1))
-              (set! cur (box-get rest)))]
-          [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ _ _)
-            (begin
-              (if scan-through
-                unit
-                (set! found true))
-              (set! done true))]
-          [(TcTypeEnv.Nil) (set! done true)]))
+        (cond
+          [(>= head 0)
+            (let
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              (begin
+                (set! count (+ count 1))
+                (set! head (tc-type-env-binding-parent-at binding-ptr))))]
+          [(< head -1)
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              (begin
+                (if (struct-get cache scan-through)
+                  unit
+                  (set! found true))
+                (set! done true)))]
+          [else (set! done true)]))
       (if found
         count
         -1))))
@@ -7246,10 +7575,10 @@
         (+ index 1)
         (begin
           (cfg compile-profile (compiler-tc-env-profile-note-bind))
-          (TcTypeEnv.Bind
+          (tc-type-env-bind-node
+            env
             (struct-get slot name-id)
-            (struct-get slot ty)
-            (box env)))))))
+            (struct-get slot ty)))))))
 
 (define (tc-type-env-scoped-sidecar-materialize
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnv
@@ -8001,39 +8330,77 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [remaining : i64]) : bool
-  (if (<= remaining 0)
-    false
-    (match env
-      [(TcTypeEnv.Nil) false]
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id remaining)]
-      [(TcTypeEnv.Bind key _ rest)
-        (if (tc-c-abi-fnptr-marker-key-id? key name-id)
-          true
-          (if (= key name-id)
-            false
-            (tc-c-abi-fnptr-marker-near-id?
-              (box-get rest)
-              name-id
-              (- remaining 1))))])))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    [left : i64 remaining]
+    [done : bool false]
+    [found : bool false]
+    (begin
+      (while (and (> left 0) (not done))
+        (cond
+          [(= head -1) (set! done true)]
+          [(< head -1)
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              (set! head (struct-get cache rest)))]
+          [else
+            (let
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              [key : i64 (tc-type-env-binding-name-at binding-ptr)]
+              (cond
+                [(tc-c-abi-fnptr-marker-key-id? key name-id)
+                  (begin
+                    (set! found true)
+                    (set! done true))]
+                [(= key name-id) (set! done true)]
+                [else
+                  (begin
+                    (set! head (tc-type-env-binding-parent-at binding-ptr))
+                    (set! left (- left 1)))]))]))
+      found)))
 
 (define (tc-binding-c-abi-fnptr-persistent-id?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache ids _ _ c-abi-fnptr-flags _ _ partial _ below)
-      (let
-        [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-        (if (>= index 0)
-          (= (array-ref c-abi-fnptr-flags index) 1)
-          (if partial
-            (tc-binding-c-abi-fnptr-persistent-id? (box-get below) name-id)
-            false)))]
-    [(TcTypeEnv.Bind key _ rest)
-      (if (= key name-id)
-        (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id 3)
-        (tc-binding-c-abi-fnptr-persistent-id? (box-get rest) name-id))]))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    (cond
+      [(= head -1) false]
+      [(< head -1)
+        (let
+          [cache : TcTypeEnvCache
+            (tc-type-env-cache-at
+              (tc-type-env-cache-ptr
+                store-handle
+                (tc-type-env-cache-index head)))]
+          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+          [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+          (if (>= index 0)
+            (= (array-ref (struct-get cache c-abi-fnptr-flags) index) 1)
+            (if (struct-get cache partial)
+              (tc-binding-c-abi-fnptr-persistent-id?
+                (TcTypeEnv store-handle (struct-get cache below) 0)
+                name-id)
+              false)))]
+      [else
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          [rest : TcTypeEnv
+            (TcTypeEnv
+              store-handle
+              (tc-type-env-binding-parent-at binding-ptr)
+              0)]
+          (if (= (tc-type-env-binding-name-at binding-ptr) name-id)
+            (tc-c-abi-fnptr-marker-near-id? rest name-id 3)
+            (tc-binding-c-abi-fnptr-persistent-id? rest name-id)))])))
 
 (define (tc-binding-c-abi-fnptr-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (if tc-type-env-scoped-runtime-active
@@ -8069,57 +8436,94 @@
     (tc-binding-c-abi-fnptr-persistent-id? env name-id)))
 
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Bind key _ _) (tc-unsafe-decl-marker-key-id? key name-id)]
-    [_ false]))
+  (let
+    [head : i64 (struct-get env head)]
+    (if (>= head 0)
+      (let
+        [binding-ptr : (Ptr TcTypeEnvBinding)
+          (tc-type-env-binding-ptr (struct-get env store) head)]
+        (tc-unsafe-decl-marker-key-id?
+          (tc-type-env-binding-name-at binding-ptr)
+          name-id))
+      false)))
 
 (define (tc-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache ids _ unsafe-flags _ _ _ partial _ below)
-      (let
-        [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-        (if (>= index 0)
-          (= (array-ref unsafe-flags index) 1)
-          (if partial
-            (tc-binding-unsafe-id? (box-get below) name-id)
-            false)))]
-    [(TcTypeEnv.Bind key _ rest)
-      (if (= key name-id)
-        (tc-binding-unsafe-marker-head-id? (box-get rest) name-id)
-        (tc-binding-unsafe-id? (box-get rest) name-id))]))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    (cond
+      [(= head -1) false]
+      [(< head -1)
+        (let
+          [cache : TcTypeEnvCache
+            (tc-type-env-cache-at
+              (tc-type-env-cache-ptr
+                store-handle
+                (tc-type-env-cache-index head)))]
+          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+          [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+          (if (>= index 0)
+            (= (array-ref (struct-get cache unsafe-flags) index) 1)
+            (if (struct-get cache partial)
+              (tc-binding-unsafe-id?
+                (TcTypeEnv store-handle (struct-get cache below) 0)
+                name-id)
+              false)))]
+      [else
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          [rest : TcTypeEnv
+            (TcTypeEnv
+              store-handle
+              (tc-type-env-binding-parent-at binding-ptr)
+              0)]
+          (if (= (tc-type-env-binding-name-at binding-ptr) name-id)
+            (tc-binding-unsafe-marker-head-id? rest name-id)
+            (tc-binding-unsafe-id? rest name-id)))])))
 
 (define (tc-env-cache-count [env : TcTypeEnv]) : i64
   (let
-    [cur : TcTypeEnv env]
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
     [count : i64 0]
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(TcTypeEnv.Nil) (set! done true)]
-          [(TcTypeEnv.Bind _ _ rest)
-            (begin
-              (set! count (+ count 1))
-              (set! cur (box-get rest)))]
-          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]))
+        (cond
+          [(= head -1) (set! done true)]
+          [(>= head 0)
+            (let
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              (begin
+                (set! count (+ count 1))
+                (set! head (tc-type-env-binding-parent-at binding-ptr))))]
+          [else
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              (set! head (struct-get cache rest)))]))
       count)))
 
 (define (tc-env-cache-count-prefix [env : TcTypeEnv] [remaining : i64]) : i64
   (let
-    [cur : TcTypeEnv env]
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
     [left : i64 remaining]
     [count : i64 0]
-    [done : bool false]
     (begin
-      (while (and (not done) (> left 0))
-        (match cur
-          [(TcTypeEnv.Bind _ _ rest)
-            (begin
-              (set! count (+ count 1))
-              (set! left (- left 1))
-              (set! cur (box-get rest)))]
-          [_ (set! done true)]))
+      (while (and (> left 0) (>= head 0))
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          (begin
+            (set! count (+ count 1))
+            (set! left (- left 1))
+            (set! head (tc-type-env-binding-parent-at binding-ptr)))))
       count)))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
@@ -8150,35 +8554,47 @@
       (if default-shadow
         tc-env-cache-flag-default-shadow
         0)]
-    (match rest-env
-      [(TcTypeEnv.Bind marker-id marker-ty _)
-        (let
-          [marker-flag : i64
-            (cond
-              [(= marker-id cleanup-marker-id) tc-env-cache-flag-cleanup-owner]
-              [(= marker-id ordinary-arena-marker-id)
-                tc-env-cache-flag-ordinary-arena-owner]
-              [(= marker-id atomic-arena-marker-id)
-                tc-env-cache-flag-atomic-arena-owner]
-              [else 0])]
-          (if (= marker-flag 0)
-            base
-            (match marker-ty
-              [(AstType.Var owner)
-                (if (= owner name-id)
-                  (+ base marker-flag)
-                  base)]
-              [_ base])))]
-      [_ base])))
+    [head : i64 (struct-get rest-env head)]
+    (if (>= head 0)
+      (let
+        [binding-ptr : (Ptr TcTypeEnvBinding)
+          (tc-type-env-binding-ptr (struct-get rest-env store) head)]
+        [marker-id : i64 (tc-type-env-binding-name-at binding-ptr)]
+        [marker-ty : AstType (tc-type-env-binding-type-at binding-ptr)]
+        [marker-flag : i64
+          (cond
+            [(= marker-id cleanup-marker-id) tc-env-cache-flag-cleanup-owner]
+            [(= marker-id ordinary-arena-marker-id)
+              tc-env-cache-flag-ordinary-arena-owner]
+            [(= marker-id atomic-arena-marker-id)
+              tc-env-cache-flag-atomic-arena-owner]
+            [else 0])]
+        (if (= marker-flag 0)
+          base
+          (match marker-ty
+            [(AstType.Var owner)
+              (if (= owner name-id)
+                (+ base marker-flag)
+                base)]
+            [_ base])))
+      base)))
 
 (define (tc-env-cache-owner-marker-head-id?
   [env : TcTypeEnv]
   [name-id : i64]
   [marker-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Bind key (AstType.Var owner) _)
-      (and (= key marker-id) (= owner name-id))]
-    [_ false]))
+  (let
+    [head : i64 (struct-get env head)]
+    (if (>= head 0)
+      (let
+        [binding-ptr : (Ptr TcTypeEnvBinding)
+          (tc-type-env-binding-ptr (struct-get env store) head)]
+        (if (= (tc-type-env-binding-name-at binding-ptr) marker-id)
+          (match (tc-type-env-binding-type-at binding-ptr)
+            [(AstType.Var owner) (= owner name-id)]
+            [_ false])
+          false))
+      false)))
 
 ;; Cache construction is the dominant i64 map workload of a self-compile
 ;; (~16% of stage2 CPU before this change): the previous shape walked the
@@ -8235,7 +8651,8 @@
   [shadow-flags : (Array i64)]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
-    [cur : TcTypeEnv env]
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
     [position : i64 0]
@@ -8246,11 +8663,19 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(TcTypeEnv.Nil) (set! done true)]
-          [(TcTypeEnv.Bind name-id ty rest)
+        (cond
+          [(= head -1) (set! done true)]
+          [(>= head 0)
             (let
-              [rest-env : TcTypeEnv (box-get rest)]
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              [name-id : i64 (tc-type-env-binding-name-at binding-ptr)]
+              [ty : AstType (tc-type-env-binding-type-at binding-ptr)]
+              [rest-env : TcTypeEnv
+                (TcTypeEnv
+                  store-handle
+                  (tc-type-env-binding-parent-at binding-ptr)
+                  0)]
               ;; The boundary bind itself and everything below it are not
               ;; default shadows.
               [still-above : bool
@@ -8279,10 +8704,17 @@
                   position)
                   (set! next (+ next 1))
                   unit)
-                (set! cur rest-env)
+                (set! head (struct-get rest-env head))
                 (set! position (+ position 1))
                 (set! cur-above-boundary still-above)))]
-          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]))
+          [else
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              (set! head (struct-get cache rest)))]))
       cur-ids)))
 
 (define (tc-env-cache-fill-prefix
@@ -8295,7 +8727,8 @@
   [shadow-flags : (Array i64)]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
-    [cur : TcTypeEnv env]
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
     [left : i64 remaining]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
@@ -8307,10 +8740,18 @@
     [done : bool false]
     (begin
       (while (and (not done) (> left 0))
-        (match cur
-          [(TcTypeEnv.Bind name-id ty rest)
+        (cond
+          [(>= head 0)
             (let
-              [rest-env : TcTypeEnv (box-get rest)]
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              [name-id : i64 (tc-type-env-binding-name-at binding-ptr)]
+              [ty : AstType (tc-type-env-binding-type-at binding-ptr)]
+              [rest-env : TcTypeEnv
+                (TcTypeEnv
+                  store-handle
+                  (tc-type-env-binding-parent-at binding-ptr)
+                  0)]
               [still-above : bool
                 (if cur-above-boundary
                   (not (= name-id (tc-default-boundary-id)))
@@ -8338,17 +8779,25 @@
                   (set! next (+ next 1))
                   unit)
                 (set! left (- left 1))
-                (set! cur rest-env)
+                (set! head (struct-get rest-env head))
                 (set! position (+ position 1))
                 (set! cur-above-boundary still-above)))]
-          [(TcTypeEnv.Cache _ _ _ _ _ scan-through partial rest _)
-            (if (and scan-through partial)
-              ;; The cache's `rest` starts at the first bind it covers. Walk
-              ;; that layer, then the next partial layer, but stop before an
-              ;; explicit/global cache; `left` is the exact covered-bind sum.
-              (set! cur (box-get rest))
-              (set! done true))]
-          [_ (set! done true)]))
+          [(< head -1)
+            (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              (if (and
+                (struct-get cache scan-through)
+                (struct-get cache partial))
+                ;; The cache's `rest` starts at the first bind it covers. Walk
+                ;; that layer, then the next partial layer, but stop before an
+                ;; explicit/global cache; `left` is the exact covered-bind sum.
+                (set! head (struct-get cache rest))
+                (set! done true)))]
+          [else (set! done true)]))
       cur-ids)))
 
 (define (tc-env-with-cache-mode [env : TcTypeEnv] [scan-through : bool]) : TcTypeEnv
@@ -8372,16 +8821,18 @@
           true)]
       (begin
         (array-set! shadow-flags (- capacity 1) count)
-        (TcTypeEnv.Cache
-          ids
-          values
-          unsafe-flags
-          c-abi-fnptr-flags
-          shadow-flags
-          scan-through
-          false
-          (box env)
-          (box env))))))
+        (tc-type-env-cache-node
+          env
+          (TcTypeEnvCache
+            ids
+            values
+            unsafe-flags
+            c-abi-fnptr-flags
+            shadow-flags
+            scan-through
+            false
+            (struct-get env head)
+            (struct-get env head)))))))
 
 (define (tc-env-with-partial-local-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-cache-prefix-layer
@@ -8415,16 +8866,18 @@
           true)]
       (begin
         (array-set! shadow-flags (- capacity 1) count)
-        (TcTypeEnv.Cache
-          ids
-          values
-          unsafe-flags
-          c-abi-fnptr-flags
-          shadow-flags
-          scan-through
-          true
-          (box env)
-          (box below))))))
+        (tc-type-env-cache-node
+          env
+          (TcTypeEnvCache
+            ids
+            values
+            unsafe-flags
+            c-abi-fnptr-flags
+            shadow-flags
+            scan-through
+            true
+            (struct-get env head)
+            (struct-get below head)))))))
 
 (define (tc-env-with-cache-layer-over-explicit [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -8814,7 +9267,7 @@
   false)
 
 (define (tc-empty-type-env) : TcTypeEnv
-  TcTypeEnv.Nil)
+  (tc-empty-env))
 
 (define (tc-empty-module-local-env-cache) : TcModuleLocalEnvCache
   (TcModuleLocalEnvCache (array.make-array TcModuleLocalEnvEntry 0) 0))
@@ -9056,30 +9509,58 @@
     TcTypeEnvScopedMarkerKind.UnsafeContext))
 
 (define (tc-env-marker-type-scan [env : TcTypeEnv] [name-id : i64]) : AstMaybeType
-  (match env
-    [(TcTypeEnv.Nil) (AstMaybeType.No)]
-    [(TcTypeEnv.Cache ids values _ _ _ scan-through partial _ below)
-      (if scan-through
-        (match (tc_i64_i64_map.get (& ids) name-id)
-          [(tc_i64_i64_map.LookupFound index)
-            (AstMaybeType.Some (array-ref values index))]
-          [(tc_i64_i64_map.LookupMissing)
-            (if partial
-              (tc-env-marker-type-scan (box-get below) name-id)
-              (AstMaybeType.No))])
-        (AstMaybeType.No))]
-    [(TcTypeEnv.Bind key ty rest)
-      (if (= key name-id)
-        (AstMaybeType.Some ty)
-        (tc-env-marker-type-scan (box-get rest) name-id))]))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    (cond
+      [(= head -1) (AstMaybeType.No)]
+      [(< head -1)
+        (let
+          [cache : TcTypeEnvCache
+            (tc-type-env-cache-at
+              (tc-type-env-cache-ptr
+                store-handle
+                (tc-type-env-cache-index head)))]
+          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+          (if (struct-get cache scan-through)
+            (match (tc_i64_i64_map.get (& ids) name-id)
+              [(tc_i64_i64_map.LookupFound index)
+                (AstMaybeType.Some (array-ref (struct-get cache values) index))]
+              [(tc_i64_i64_map.LookupMissing)
+                (if (struct-get cache partial)
+                  (tc-env-marker-type-scan
+                    (TcTypeEnv store-handle (struct-get cache below) 0)
+                    name-id)
+                  (AstMaybeType.No))])
+            (AstMaybeType.No)))]
+      [else
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          (if (= (tc-type-env-binding-name-at binding-ptr) name-id)
+            (AstMaybeType.Some (tc-type-env-binding-type-at binding-ptr))
+            (tc-env-marker-type-scan
+              (TcTypeEnv
+                store-handle
+                (tc-type-env-binding-parent-at binding-ptr)
+                0)
+              name-id)))])))
 
 (define (tc-env-marker-type [env : TcTypeEnv] [name-id : i64]) : AstMaybeType
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-env-marker-type-scan env name-id)
-        (tc-env-marker-type-scan (box-get rest) name-id))]
-    [_ (tc-env-marker-type-scan env name-id)]))
+  (let
+    [head : i64 (struct-get env head)]
+    (if (< head -1)
+      (let
+        [store-handle : i64 (struct-get env store)]
+        [cache : TcTypeEnvCache
+          (tc-type-env-cache-at
+            (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head)))]
+        (if (struct-get cache scan-through)
+          (tc-env-marker-type-scan env name-id)
+          (tc-env-marker-type-scan
+            (TcTypeEnv store-handle (struct-get cache rest) 0)
+            name-id)))
+      (tc-env-marker-type-scan env name-id))))
 
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (if tc-type-env-scoped-runtime-active
@@ -11542,12 +12023,12 @@
 (define tc-macro-helper-env-cache-ready : bool
   false)
 (define tc-macro-helper-env-cache-value : TcTypeEnv
-  (TcTypeEnv.Nil))
+  (tc-empty-env))
 
 (define (tc-macro-helper-env-cache-reset!) : unit
   (begin
     (set! tc-macro-helper-env-cache-ready false)
-    (set! tc-macro-helper-env-cache-value (TcTypeEnv.Nil))))
+    (set! tc-macro-helper-env-cache-value (tc-empty-env))))
 
 (define (tc-macro-helper-env-cached [env : TcTypeEnv]) : TcTypeEnv
   (if tc-macro-helper-env-cache-ready
@@ -11584,33 +12065,43 @@
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
     (let
       [lookup-id : i64 (tc-env-name-key-id name-id)]
-      [cur : TcTypeEnv env]
+      [store-handle : i64 (struct-get env store)]
+      [head : i64 (struct-get env head)]
       [done : bool false]
       [found : bool false]
       [found-ty : AstType (AstType.Unit)]
       (begin
         (while (not done)
-          (match cur
-            [(TcTypeEnv.Nil) (set! done true)]
-            [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
+          (cond
+            [(= head -1) (set! done true)]
+            [(< head -1)
               (let
+                [cache : TcTypeEnvCache
+                  (tc-type-env-cache-at
+                    (tc-type-env-cache-ptr
+                      store-handle
+                      (tc-type-env-cache-index head)))]
+                [ids : tc_i64_i64_map.Map (struct-get cache ids)]
                 [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
                 (if (>= index 0)
                   (begin
                     ;; AstType is multi-word; keep this checked value read.
-                    (set! found-ty (array-ref values index))
+                    (set! found-ty (array-ref (struct-get cache values) index))
                     (set! found true)
                     (set! done true))
-                  (if partial
-                    (set! cur (box-get below))
+                  (if (struct-get cache partial)
+                    (set! head (struct-get cache below))
                     (set! done true))))]
-            [(TcTypeEnv.Bind key ty rest)
-              (if (= key lookup-id)
-                (begin
-                  (set! found-ty ty)
-                  (set! found true)
-                  (set! done true))
-                (set! cur (box-get rest)))]))
+            [else
+              (let
+                [binding-ptr : (Ptr TcTypeEnvBinding)
+                  (tc-type-env-binding-ptr store-handle head)]
+                (if (= (tc-type-env-binding-name-at binding-ptr) lookup-id)
+                  (begin
+                    (set! found-ty (tc-type-env-binding-type-at binding-ptr))
+                    (set! found true)
+                    (set! done true))
+                  (set! head (tc-type-env-binding-parent-at binding-ptr))))]))
         (if found
           (begin
             (tc-poison-observation-note! found-ty)
@@ -11663,29 +12154,39 @@
 (define (tc-name-bound-persistent-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
     [lookup-id : i64 (tc-env-name-key-id name-id)]
-    [cur : TcTypeEnv env]
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
     [done : bool false]
     [found : bool false]
     (begin
       (while (not done)
-        (match cur
-          [(TcTypeEnv.Nil) (set! done true)]
-          [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
+        (cond
+          [(= head -1) (set! done true)]
+          [(< head -1)
             (let
+              [cache : TcTypeEnvCache
+                (tc-type-env-cache-at
+                  (tc-type-env-cache-ptr
+                    store-handle
+                    (tc-type-env-cache-index head)))]
+              [ids : tc_i64_i64_map.Map (struct-get cache ids)]
               [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
               (if (>= index 0)
                 (begin
                   (set! found true)
                   (set! done true))
-                (if partial
-                  (set! cur (box-get below))
+                (if (struct-get cache partial)
+                  (set! head (struct-get cache below))
                   (set! done true))))]
-          [(TcTypeEnv.Bind key _ rest)
-            (if (= key lookup-id)
-              (begin
-                (set! found true)
-                (set! done true))
-              (set! cur (box-get rest)))]))
+          [else
+            (let
+              [binding-ptr : (Ptr TcTypeEnvBinding)
+                (tc-type-env-binding-ptr store-handle head)]
+              (if (= (tc-type-env-binding-name-at binding-ptr) lookup-id)
+                (begin
+                  (set! found true)
+                  (set! done true))
+                (set! head (tc-type-env-binding-parent-at binding-ptr))))]))
       found)))
 
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
@@ -11718,46 +12219,63 @@
     (cfg compile-profile (compiler-tc-env-profile-note-lookup))
     (let
       [lookup-id : i64 (tc-env-name-key-id name-id)]
-      [cur : TcTypeEnv env]
+      [store-handle : i64 (struct-get env store)]
+      [head : i64 (struct-get env head)]
       [done : bool false]
       [found : bool false]
       [found-ty : AstType (AstType.Unit)]
       [found-unsafe : bool false]
       (begin
         (while (not done)
-          (match cur
-            [(TcTypeEnv.Nil) (set! done true)]
-            [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
+          (cond
+            [(= head -1) (set! done true)]
+            [(< head -1)
               (let
+                [cache : TcTypeEnvCache
+                  (tc-type-env-cache-at
+                    (tc-type-env-cache-ptr
+                      store-handle
+                      (tc-type-env-cache-index head)))]
+                [ids : tc_i64_i64_map.Map (struct-get cache ids)]
                 [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
                 (if (>= index 0)
                   (begin
                     ;; AstType read stays checked; the flag is scalar i64.
-                    (set! found-ty (array-ref values index))
+                    (set! found-ty (array-ref (struct-get cache values) index))
                     (set!
                       found-unsafe
                       (=
                         (unsafe
                           (ptr-read
                             (ptr-offset
-                              (ptr-cast (array-data unsafe-flags) : (Ptr i64))
+                              (ptr-cast
+                                (array-data (struct-get cache unsafe-flags))
+                                : (Ptr i64))
                               index)))
                         1))
                     (set! found true)
                     (set! done true))
-                  (if partial
-                    (set! cur (box-get below))
+                  (if (struct-get cache partial)
+                    (set! head (struct-get cache below))
                     (set! done true))))]
-            [(TcTypeEnv.Bind key ty rest)
-              (if (= key lookup-id)
-                (begin
-                  (set! found-ty ty)
-                  (set!
-                    found-unsafe
-                    (tc-binding-unsafe-marker-head-id? (box-get rest) lookup-id))
-                  (set! found true)
-                  (set! done true))
-                (set! cur (box-get rest)))]))
+            [else
+              (let
+                [binding-ptr : (Ptr TcTypeEnvBinding)
+                  (tc-type-env-binding-ptr store-handle head)]
+                [rest : TcTypeEnv
+                  (TcTypeEnv
+                    store-handle
+                    (tc-type-env-binding-parent-at binding-ptr)
+                    0)]
+                (if (= (tc-type-env-binding-name-at binding-ptr) lookup-id)
+                  (begin
+                    (set! found-ty (tc-type-env-binding-type-at binding-ptr))
+                    (set!
+                      found-unsafe
+                      (tc-binding-unsafe-marker-head-id? rest lookup-id))
+                    (set! found true)
+                    (set! done true))
+                  (set! head (struct-get rest head))))]))
         (if found
           (begin
             (tc-poison-observation-note! found-ty)
@@ -11819,22 +12337,18 @@
 (define (tc-name-bound-before-hygiene-global-boundary-id?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) false]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (tc-name-bound-before-hygiene-global-boundary-id?
-          (box-get rest)
-          name-id)
+        (tc-name-bound-before-hygiene-global-boundary-id? rest name-id)
         false)]
-    [(TcTypeEnv.Bind key _ rest)
+    [(TcTypeEnvView.Bind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
         false
         (if (= key name-id)
           true
-          (tc-name-bound-before-hygiene-global-boundary-id?
-            (box-get rest)
-            name-id)))]))
+          (tc-name-bound-before-hygiene-global-boundary-id? rest name-id)))]))
 
 (define (tc-unqualified-import-ambiguity-message-for-key
   [_ctx : TcContext]
@@ -12113,18 +12627,18 @@
   (tc-hygiene-global-binding-unsafe-scan env env name-id))
 
 (define (tc-active-region-scan [env : TcTypeEnv]) : TcMaybeNameId
-  (match env
-    [(TcTypeEnv.Nil) (TcMaybeNameId.No)]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) (TcMaybeNameId.No)]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (tc-active-region-scan (box-get rest))
+        (tc-active-region-scan rest)
         (TcMaybeNameId.No))]
-    [(TcTypeEnv.Bind key ty rest)
+    [(TcTypeEnvView.Bind key ty rest)
       (if (= key (tc-region-marker-id))
         (match ty
           [(AstType.Var region) (TcMaybeNameId.Some region)]
-          [_ (tc-active-region-scan (box-get rest))])
-        (tc-active-region-scan (box-get rest)))]))
+          [_ (tc-active-region-scan rest)])
+        (tc-active-region-scan rest))]))
 
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeNameId
   (if tc-type-env-scoped-runtime-active
@@ -12308,8 +12822,8 @@
 (define (tc-arena-phase-token-region-head
   [env : TcTypeEnv]
   [region-marker-id : i64]) : TcMaybeNameId
-  (match env
-    [(TcTypeEnv.Bind key ty _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Bind key ty _)
       (if (= key region-marker-id)
         (match ty
           [(AstType.Var region) (TcMaybeNameId.Some region)]
@@ -12321,15 +12835,15 @@
   [env : TcTypeEnv]
   [owner-marker-id : i64]
   [region-marker-id : i64]) : TcMaybeNameId
-  (match env
-    [(TcTypeEnv.Bind key ty rest)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Bind key ty rest)
       (if (= key owner-marker-id)
         (match ty
           [(AstType.Var owner) (TcMaybeNameId.Some owner)]
           [_ (TcMaybeNameId.No)])
         (if (= key region-marker-id)
           (tc-arena-phase-token-owner-head
-            (box-get rest)
+            rest
             owner-marker-id
             region-marker-id)
           (TcMaybeNameId.No)))]
@@ -12339,32 +12853,26 @@
   [env : TcTypeEnv]
   [token-id : i64]
   [region-marker-id : i64]) : TcMaybeNameId
-  (match env
-    [(TcTypeEnv.Nil) (TcMaybeNameId.No)]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) (TcMaybeNameId.No)]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (tc-arena-phase-token-region-active-scan
-          (box-get rest)
-          token-id
-          region-marker-id)
+        (tc-arena-phase-token-region-active-scan rest token-id region-marker-id)
         (TcMaybeNameId.No))]
-    [(TcTypeEnv.Bind key _ rest)
+    [(TcTypeEnvView.Bind key _ rest)
       (if (= key token-id)
-        (tc-arena-phase-token-region-head (box-get rest) region-marker-id)
-        (tc-arena-phase-token-region-active-scan
-          (box-get rest)
-          token-id
-          region-marker-id))]))
+        (tc-arena-phase-token-region-head rest region-marker-id)
+        (tc-arena-phase-token-region-active-scan rest token-id region-marker-id))]))
 
 (define (tc-arena-phase-token-region-active [env : TcTypeEnv] [token-id : i64]) : TcMaybeNameId
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
     (let
       [region-marker-id : i64 (tc-arena-phase-token-region-marker-id token-id)]
-      (match env
-        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+      (match (tc-type-env-view env)
+        [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
           (tc-arena-phase-token-region-active-scan
-            (box-get rest)
+            rest
             token-id
             region-marker-id)]
         [_
@@ -12378,24 +12886,21 @@
   [token-id : i64]
   [owner-marker-id : i64]
   [region-marker-id : i64]) : TcMaybeNameId
-  (match env
-    [(TcTypeEnv.Nil) (TcMaybeNameId.No)]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) (TcMaybeNameId.No)]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-arena-phase-token-owner-active-scan
-          (box-get rest)
+          rest
           token-id
           owner-marker-id
           region-marker-id)
         (TcMaybeNameId.No))]
-    [(TcTypeEnv.Bind key _ rest)
+    [(TcTypeEnvView.Bind key _ rest)
       (if (= key token-id)
-        (tc-arena-phase-token-owner-head
-          (box-get rest)
-          owner-marker-id
-          region-marker-id)
+        (tc-arena-phase-token-owner-head rest owner-marker-id region-marker-id)
         (tc-arena-phase-token-owner-active-scan
-          (box-get rest)
+          rest
           token-id
           owner-marker-id
           region-marker-id))]))
@@ -12406,10 +12911,10 @@
     (let
       [owner-marker-id : i64 (tc-arena-phase-token-owner-marker-id token-id)]
       [region-marker-id : i64 (tc-arena-phase-token-region-marker-id token-id)]
-      (match env
-        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+      (match (tc-type-env-view env)
+        [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
           (tc-arena-phase-token-owner-active-scan
-            (box-get rest)
+            rest
             token-id
             owner-marker-id
             region-marker-id)]
@@ -12483,28 +12988,20 @@
   [name-id : i64]
   [marker-id : i64]
   [sidecar-flag : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache ids _ _ _ sidecar-flags _ partial _ below)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) false]
+    [(TcTypeEnvView.Cache ids _ _ _ sidecar-flags _ partial _ below)
       (match (tc_i64_i64_map.get (& ids) name-id)
         [(tc_i64_i64_map.LookupFound index)
           (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
         [(tc_i64_i64_map.LookupMissing)
           (if partial
-            (tc-owner-active-indexed-id?
-              (box-get below)
-              name-id
-              marker-id
-              sidecar-flag)
+            (tc-owner-active-indexed-id? below name-id marker-id sidecar-flag)
             false)])]
-    [(TcTypeEnv.Bind key _ rest)
+    [(TcTypeEnvView.Bind key _ rest)
       (if (= key name-id)
-        (tc-env-cache-owner-marker-head-id? (box-get rest) name-id marker-id)
-        (tc-owner-active-indexed-id?
-          (box-get rest)
-          name-id
-          marker-id
-          sidecar-flag))]))
+        (tc-env-cache-owner-marker-head-id? rest name-id marker-id)
+        (tc-owner-active-indexed-id? rest name-id marker-id sidecar-flag))]))
 
 (define (tc-cleanup-owner-active-persistent-id?
   [env : TcTypeEnv]
@@ -12556,34 +13053,63 @@
   (tc-arena-owner-active-id? env name-id (tc-atomic-arena-owner-marker-id)))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
-  (match env
-    [(TcTypeEnv.Nil) TcStringList.Nil]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-active-cleanup-owners-scan root (box-get rest))
-        TcStringList.Nil)]
-    [(TcTypeEnv.Bind key ty rest)
-      (let
-        [owners : TcStringList
-          (tc-active-cleanup-owners-scan root (box-get rest))]
-        (if (= key (tc-cleanup-owner-marker-id))
-          (match ty
-            [(AstType.Var owner)
-              (let
-                [owner-str : String (intern-str owner)]
-                (if (tc-cleanup-owner-active-id? root owner)
-                  (tc-string-list-add owners owner-str)
-                  owners))]
-            [_ owners])
-          owners))]))
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    (cond
+      [(= head -1) TcStringList.Nil]
+      [(< head -1)
+        (let
+          [cache : TcTypeEnvCache
+            (tc-type-env-cache-at
+              (tc-type-env-cache-ptr
+                store-handle
+                (tc-type-env-cache-index head)))]
+          (if (struct-get cache scan-through)
+            (tc-active-cleanup-owners-scan
+              root
+              (TcTypeEnv store-handle (struct-get cache rest) 0))
+            TcStringList.Nil))]
+      [else
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          [key : i64 (tc-type-env-binding-name-at binding-ptr)]
+          [ty : AstType (tc-type-env-binding-type-at binding-ptr)]
+          [rest : TcTypeEnv
+            (TcTypeEnv
+              store-handle
+              (tc-type-env-binding-parent-at binding-ptr)
+              0)]
+          [owners : TcStringList (tc-active-cleanup-owners-scan root rest)]
+          (if (= key (tc-cleanup-owner-marker-id))
+            (match ty
+              [(AstType.Var owner)
+                (let
+                  [owner-str : String (intern-str owner)]
+                  (if (tc-cleanup-owner-active-id? root owner)
+                    (tc-string-list-add owners owner-str)
+                    owners))]
+              [_ owners])
+            owners))])))
 
 (define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-active-cleanup-owners-scan env (box-get rest))]
-      [_ (tc-active-cleanup-owners-scan env env)])))
+    (let
+      [head : i64 (struct-get env head)]
+      (if (< head -1)
+        (let
+          [store-handle : i64 (struct-get env store)]
+          [cache : TcTypeEnvCache
+            (tc-type-env-cache-at
+              (tc-type-env-cache-ptr
+                store-handle
+                (tc-type-env-cache-index head)))]
+          (tc-active-cleanup-owners-scan
+            env
+            (TcTypeEnv store-handle (struct-get cache rest) 0)))
+        (tc-active-cleanup-owners-scan env env)))))
 
 (define (tc-lifetime-list-count [items : AstLifetimeList]) : i64
   (ast-lifetime-list-len (& items)))
@@ -12730,13 +13256,13 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [base : i64]) : i64
-  (match env
-    [(TcTypeEnv.Nil) -1]
-    [(TcTypeEnv.Bind key _ rest)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) -1]
+    [(TcTypeEnvView.Bind key _ rest)
       (if (= key name-id)
         base
-        (tc-ordinary-binding-rank-id-from (box-get rest) name-id (+ base 1)))]
-    [(TcTypeEnv.Cache ids _ _ _ sidecar-flags scan-through partial _ below)
+        (tc-ordinary-binding-rank-id-from rest name-id (+ base 1)))]
+    [(TcTypeEnvView.Cache ids _ _ _ sidecar-flags scan-through partial _ below)
       (if scan-through
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(tc_i64_i64_map.LookupFound index)
@@ -12748,23 +13274,23 @@
           [(tc_i64_i64_map.LookupMissing)
             (if partial
               (tc-ordinary-binding-rank-id-from
-                (box-get below)
+                below
                 name-id
                 (+ base (tc-env-cache-covered-count sidecar-flags)))
               -1)])
         -1)]))
 
 (define (tc-lifetime-visible-scan-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) false]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (tc-lifetime-visible-scan-id? (box-get rest) lifetime-id)
+        (tc-lifetime-visible-scan-id? rest lifetime-id)
         false)]
-    [(TcTypeEnv.Bind key ty rest)
+    [(TcTypeEnvView.Bind key ty rest)
       (if (tc-env-binding-matches-lifetime-id? key ty lifetime-id)
         true
-        (tc-lifetime-visible-scan-id? (box-get rest) lifetime-id))]))
+        (tc-lifetime-visible-scan-id? rest lifetime-id))]))
 
 (define (tc-lifetime-visible-persistent-id?
   [env : TcTypeEnv]
@@ -12773,9 +13299,9 @@
     false
     (or
       (>= (tc-ordinary-binding-rank-id-from env lifetime-id 0) 0)
-      (match env
-        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-          (tc-lifetime-visible-scan-id? (box-get rest) lifetime-id)]
+      (match (tc-type-env-view env)
+        [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
+          (tc-lifetime-visible-scan-id? rest lifetime-id)]
         [_ (tc-lifetime-visible-scan-id? env lifetime-id)]))))
 
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
@@ -12802,21 +13328,21 @@
   [lifetime-id : i64]
   [target-id : i64]
   [seen-target : bool]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) false]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-lifetime-outlives-binding-scan-inner-id
-          (box-get rest)
+          rest
           lifetime-id
           target-id
           seen-target)
         false)]
-    [(TcTypeEnv.Bind key ty rest)
+    [(TcTypeEnvView.Bind key ty rest)
       (if (tc-env-binding-matches-lifetime-id? key ty lifetime-id)
         seen-target
         (tc-lifetime-outlives-binding-scan-inner-id
-          (box-get rest)
+          rest
           lifetime-id
           target-id
           (or seen-target (= key target-id))))]))
@@ -12826,10 +13352,10 @@
   [lifetime-id : i64]
   [target-id : i64]
   [seen-target : bool]) : bool
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
       (tc-lifetime-outlives-binding-scan-inner-id
-        (box-get rest)
+        rest
         lifetime-id
         target-id
         seen-target)]
@@ -12887,21 +13413,21 @@
   [seen-target : bool]) : bool
   (if (and (>= value-lifetime-id 0) (= value-lifetime-id target-lifetime-id))
     true
-    (match env
-      [(TcTypeEnv.Nil) false]
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+    (match (tc-type-env-view env)
+      [(TcTypeEnvView.Nil) false]
+      [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-lifetime-outlives-lifetime-scan-inner-id
-            (box-get rest)
+            rest
             value-lifetime-id
             target-lifetime-id
             seen-target)
           false)]
-      [(TcTypeEnv.Bind key ty rest)
+      [(TcTypeEnvView.Bind key ty rest)
         (if (tc-env-binding-matches-lifetime-id? key ty value-lifetime-id)
           seen-target
           (tc-lifetime-outlives-lifetime-scan-inner-id
-            (box-get rest)
+            rest
             value-lifetime-id
             target-lifetime-id
             (or
@@ -12913,10 +13439,10 @@
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]
   [seen-target : bool]) : bool
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
       (tc-lifetime-outlives-lifetime-scan-inner-id
-        (box-get rest)
+        rest
         value-lifetime-id
         target-lifetime-id
         seen-target)]
@@ -13949,16 +14475,13 @@
   [target-region : i64]) : bool
   (if (= value-region target-region)
     true
-    (match env
-      [(TcTypeEnv.Nil) false]
-      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+    (match (tc-type-env-view env)
+      [(TcTypeEnvView.Nil) false]
+      [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
-          (tc-region-outlives-or-matches-scan
-            (box-get rest)
-            value-region
-            target-region)
+          (tc-region-outlives-or-matches-scan rest value-region target-region)
           false)]
-      [(TcTypeEnv.Bind key ty rest)
+      [(TcTypeEnvView.Bind key ty rest)
         (if (= key (tc-region-marker-id))
           (match ty
             [(AstType.Var region)
@@ -13967,18 +14490,15 @@
                 (if (= region target-region)
                   true
                   (tc-region-outlives-or-matches-scan
-                    (box-get rest)
+                    rest
                     value-region
                     target-region)))]
             [_
               (tc-region-outlives-or-matches-scan
-                (box-get rest)
+                rest
                 value-region
                 target-region)])
-          (tc-region-outlives-or-matches-scan
-            (box-get rest)
-            value-region
-            target-region))])))
+          (tc-region-outlives-or-matches-scan rest value-region target-region))])))
 
 (define (tc-region-outlives-or-matches
   [env : TcTypeEnv]
@@ -13986,12 +14506,9 @@
   [target-region : i64]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-region-outlives-or-matches-scan
-          (box-get rest)
-          value-region
-          target-region)]
+    (match (tc-type-env-view env)
+      [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _)
+        (tc-region-outlives-or-matches-scan rest value-region target-region)]
       [_ (tc-region-outlives-or-matches-scan env value-region target-region)])))
 
 (define (tc-region-can-flow-into-any
@@ -14313,34 +14830,52 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [prefix-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Bind key _ rest)
-      (if (= key name-id)
-        false
-        (if (= key prefix-id)
-          true
-          (tc-source-leading-segment-wins-over-exact-id?
-            (box-get rest)
-            name-id
-            prefix-id)))]
-    [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
-      (let
-        [prefix-index : i64 (tc_i64_i64_map.get-value-or (& ids) prefix-id -1)]
-        (if (>= prefix-index 0)
-          (let
-            [name-index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-            (if (>= name-index 0)
-              (< prefix-index name-index)
-              true))
-          (if partial
-            (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
-              false
+  (let
+    [store-handle : i64 (struct-get env store)]
+    [head : i64 (struct-get env head)]
+    (cond
+      [(= head -1) false]
+      [(< head -1)
+        (let
+          [cache : TcTypeEnvCache
+            (tc-type-env-cache-at
+              (tc-type-env-cache-ptr
+                store-handle
+                (tc-type-env-cache-index head)))]
+          [ids : tc_i64_i64_map.Map (struct-get cache ids)]
+          [prefix-index : i64
+            (tc_i64_i64_map.get-value-or (& ids) prefix-id -1)]
+          (if (>= prefix-index 0)
+            (let
+              [name-index : i64
+                (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+              (if (>= name-index 0)
+                (< prefix-index name-index)
+                true))
+            (if (struct-get cache partial)
+              (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
+                false
+                (tc-source-leading-segment-wins-over-exact-id?
+                  (TcTypeEnv store-handle (struct-get cache below) 0)
+                  name-id
+                  prefix-id))
+              false)))]
+      [else
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          [key : i64 (tc-type-env-binding-name-at binding-ptr)]
+          (if (= key name-id)
+            false
+            (if (= key prefix-id)
+              true
               (tc-source-leading-segment-wins-over-exact-id?
-                (box-get below)
+                (TcTypeEnv
+                  store-handle
+                  (tc-type-env-binding-parent-at binding-ptr)
+                  0)
                 name-id
-                prefix-id))
-            false)))]))
+                prefix-id))))])))
 
 (define (tc-source-leading-segment-wins-over-exact-id-from-dot?
   [env : TcTypeEnv]
@@ -21247,8 +21782,34 @@
         0)
       (TcSpmdEnv merged left-len))))
 
-(define (tc-type-env-box-smoke?) : bool
+(define (tc-type-env-segmented-snapshot-smoke?) : bool
   (let
+    [branch-id : i64 (intern "branch")]
+    [base : TcTypeEnv
+      (tc-bind-id (tc-empty-env) (intern "base") (AstType.String))]
+    [left : TcTypeEnv (tc-bind-id base branch-id (AstType.I64))]
+    [right : TcTypeEnv (tc-bind-id base branch-id (AstType.Bool))]
+    [left-cached : TcTypeEnv (tc-env-with-cache left)]
+    [right-cached : TcTypeEnv (tc-env-with-cache right)]
+    [segment-id : i64 (intern "segment-base")]
+    [segment-base : TcTypeEnv
+      (tc-bind-id (tc-empty-env) segment-id (AstType.String))]
+    [segment-grown : TcTypeEnv
+      (TcTypeEnv
+        (struct-get segment-base store)
+        (struct-get segment-base head)
+        0)]
+    [segment-index : i64 0]
+    [cache-segment-id : i64 (intern "cache-segment-base")]
+    [cache-segment-base : TcTypeEnv
+      (tc-bind-id (tc-empty-env) cache-segment-id (AstType.String))]
+    [cache-segment-first : TcTypeEnv (tc-env-with-cache cache-segment-base)]
+    [cache-segment-latest : TcTypeEnv
+      (TcTypeEnv
+        (struct-get cache-segment-first store)
+        (struct-get cache-segment-first head)
+        0)]
+    [cache-segment-index : i64 0]
     [env : TcTypeEnv
       (tc-bind-return-type
         (tc-bind-id
@@ -21260,27 +21821,92 @@
           (AstType.Bool))
         (AstType.I64))]
     [cached : TcTypeEnv (tc-env-with-cache env)]
-    (and
-      (= (tc-env-cache-count cached) 4)
-      (match (tc-lookup-id cached (intern "x"))
-        [(ResultTcType.Ok (AstType.Bool)) true]
-        [_ false])
-      (match (tc-current-return-type env)
-        [(ResultTcType.Ok (AstType.I64)) true]
-        [_ false])
-      (match (tc-active-region env)
-        [(TcMaybeNameId.Some region) (= region (intern "arena"))]
-        [_ false])
-      (tc-lifetime-visible-id? env (intern "arena")))))
+    (begin
+      ;; Force more than one binding segment, then branch from the retained
+      ;; first-segment snapshot after the store has advanced.
+      (while (< segment-index (+ (tc-type-env-binding-segment-capacity) 8))
+        (begin
+          (set!
+            segment-grown
+            (tc-bind-id
+              segment-grown
+              (intern
+                (string.append "segment-" (string.int->string segment-index)))
+              (AstType.I64)))
+          (set! segment-index (+ segment-index 1))))
+      (while (< cache-segment-index (+ (tc-type-env-cache-segment-capacity) 2))
+        (begin
+          (set!
+            cache-segment-latest
+            (tc-env-with-cache
+              (tc-bind-id
+                cache-segment-base
+                (intern
+                  (string.append
+                    "cache-segment-"
+                    (string.int->string cache-segment-index)))
+                (AstType.I64))))
+          (set! cache-segment-index (+ cache-segment-index 1))))
+      (let
+        [segment-sibling : TcTypeEnv
+          (tc-bind-id segment-base segment-id (AstType.Bool))]
+        (and
+          (match (tc-lookup-id base branch-id)
+            [(ResultTcType.Err _) true]
+            [_ false])
+          (match (tc-lookup-id left branch-id)
+            [(ResultTcType.Ok (AstType.I64)) true]
+            [_ false])
+          (match (tc-lookup-id right branch-id)
+            [(ResultTcType.Ok (AstType.Bool)) true]
+            [_ false])
+          (match (tc-lookup-id left-cached branch-id)
+            [(ResultTcType.Ok (AstType.I64)) true]
+            [_ false])
+          (match (tc-lookup-id right-cached branch-id)
+            [(ResultTcType.Ok (AstType.Bool)) true]
+            [_ false])
+          (match (tc-lookup-id segment-base segment-id)
+            [(ResultTcType.Ok (AstType.String)) true]
+            [_ false])
+          (match (tc-lookup-id segment-grown segment-id)
+            [(ResultTcType.Ok (AstType.String)) true]
+            [_ false])
+          (match (tc-lookup-id segment-sibling segment-id)
+            [(ResultTcType.Ok (AstType.Bool)) true]
+            [_ false])
+          (match (tc-lookup-id cache-segment-first cache-segment-id)
+            [(ResultTcType.Ok (AstType.String)) true]
+            [_ false])
+          (match (tc-lookup-id cache-segment-latest cache-segment-id)
+            [(ResultTcType.Ok (AstType.String)) true]
+            [_ false])
+          (= (tc-env-cache-count cached) 4)
+          (match (tc-lookup-id cached (intern "x"))
+            [(ResultTcType.Ok (AstType.Bool)) true]
+            [_ false])
+          (match (tc-current-return-type env)
+            [(ResultTcType.Ok (AstType.I64)) true]
+            [_ false])
+          (match (tc-active-region env)
+            [(TcMaybeNameId.Some region) (= region (intern "arena"))]
+            [_ false])
+          (tc-lifetime-visible-id? env (intern "arena")))))))
+
+(test
+  tc-type-env-segmented-snapshots
+  (if (tc-type-env-segmented-snapshot-smoke?)
+    unit
+    (io.panic "typecheck: segmented environment snapshot smoke failed")))
 
 (define (tc-type-env-cache-head? [env : TcTypeEnv]) : bool
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ _ _) true]
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache _ _ _ _ _ _ _ _ _) true]
     [_ false]))
 
 (define (tc-type-env-cache-partial-head? [env : TcTypeEnv]) : bool
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ partial _ _) partial]
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache _ _ _ _ _ _ partial _ _) partial]
     [_ false]))
 
 (define (tc-type-env-bind-many [env : TcTypeEnv] [count : i64]) : TcTypeEnv
@@ -21459,8 +22085,8 @@
       (=
         (tc-env-partial-local-covered-count deep)
         (* (tc-local-cache-threshold) (+ (tc-local-cache-partial-layer-cap) 1)))
-      (match (tc-env-partial-local-base deep)
-        [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
+      (match (tc-type-env-view (tc-env-partial-local-base deep))
+        [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
         [_ false])
       (match (tc-lookup-id deep global-id)
         [(ResultTcType.Ok (AstType.String)) true]
@@ -25892,9 +26518,9 @@
 (define (tc-default-builtin-unshadowed-scan-id?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache ids _ _ _ shadow-flags _ partial _ below)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) false]
+    [(TcTypeEnvView.Cache ids _ _ _ shadow-flags _ partial _ below)
       (match (tc_i64_i64_map.get (& ids) name-id)
         [(tc_i64_i64_map.LookupFound index)
           (=
@@ -25904,28 +26530,28 @@
             0)]
         [(tc_i64_i64_map.LookupMissing)
           (if partial
-            (tc-default-builtin-unshadowed-scan-id? (box-get below) name-id)
+            (tc-default-builtin-unshadowed-scan-id? below name-id)
             true)])]
-    [(TcTypeEnv.Bind key _ rest)
+    [(TcTypeEnvView.Bind key _ rest)
       (if (= key name-id)
         false
         (if (= key (tc-default-boundary-id))
           true
-          (tc-default-builtin-unshadowed-scan-id? (box-get rest) name-id)))]))
+          (tc-default-builtin-unshadowed-scan-id? rest name-id)))]))
 
 (define (tc-name-local-bound-before-module-scan-id?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Nil) false]
+    [(TcTypeEnvView.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id)
+        (tc-name-local-bound-before-module-scan-id? rest name-id)
         false)]
-    [(TcTypeEnv.Bind key _ rest)
+    [(TcTypeEnvView.Bind key _ rest)
       (if (= key name-id)
         true
-        (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id))]))
+        (tc-name-local-bound-before-module-scan-id? rest name-id))]))
 
 (define (tc-top-level-value-owned-by-module-id?
   [ctx : TcContext]
@@ -75027,10 +75653,10 @@
     [cur : TcTypeEnv env]
     [done : bool false]
     (while (and (not done) (> remaining 0))
-      (match cur
-        [(TcTypeEnv.Nil) (set! done true)]
-        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]
-        [(TcTypeEnv.Bind name-id _ rest)
+      (match (tc-type-env-view cur)
+        [(TcTypeEnvView.Nil) (set! done true)]
+        [(TcTypeEnvView.Cache _ _ _ _ _ _ _ rest _) (set! cur rest)]
+        [(TcTypeEnvView.Bind name-id _ rest)
           (begin
             (let
               [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
@@ -75060,15 +75686,15 @@
                           " / "
                           (string.int->string (array.length values)))))))
                 unit))
-            (set! cur (box-get rest)))]))))
+            (set! cur rest))]))))
 
 (define (tc-top-env-reresolve-caches! [ctx : TcContext] [env : TcTypeEnv]) : unit
-  (match env
-    [(TcTypeEnv.Cache ids values _ _ _ _ partial rest below)
+  (match (tc-type-env-view env)
+    [(TcTypeEnvView.Cache ids values _ _ _ _ partial rest below)
       (begin
-        (tc-top-env-reresolve-cache-layer! ctx ids values (box-get rest))
+        (tc-top-env-reresolve-cache-layer! ctx ids values rest)
         (if partial
-          (tc-top-env-reresolve-caches! ctx (box-get below))
+          (tc-top-env-reresolve-caches! ctx below)
           unit))]
     [_ unit]))
 

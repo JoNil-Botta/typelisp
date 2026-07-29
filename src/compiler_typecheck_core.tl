@@ -300,7 +300,12 @@
 ;; process-global selector.
 (defstruct TcBodyState
   (data (Array TcBodyStateData))
-  (job-state TcJobState))
+  (job-state TcJobState)
+  ;; The source-name owner is immutable for one typecheck body. Cache it here
+  ;; so hot source-key lookups do not repeatedly traverse TcContext and the
+  ;; intern session handle just to validate the job-owned tables.
+  (intern-table-id i64)
+  (intern-generation i64))
 
 (defenum TcContext
   (TcContext
@@ -354,7 +359,7 @@
     module-id
     pools
     source-names
-    (tc-body-state-new-with-job-state job-state)))
+    (tc-body-state-new-with-job-state-and-source-names job-state source-names)))
 
 (define (tc-context-new-with-source-names
   [program : AstProgram]
@@ -485,9 +490,13 @@
 ;; bit there avoids a second recursive AST walk in lower. Facts are keyed by the
 ;; stable body node id. Bodies synthesized after source typecheck are absent and
 ;; lower falls back to its conservative scanner for those only.
-(define (tc-body-state-new-with-job-state [job-state : TcJobState]) : TcBodyState
+(define (tc-body-state-new-with-job-state-and-source-names
+  [job-state : TcJobState]
+  [source-names : ci.InternSourceNameSessionHandle]) : TcBodyState
   (let
     [cell : (Array TcBodyStateData) (array.make-array TcBodyStateData 1)]
+    [source-session : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session source-names)]
     (begin
       (array-set!
         cell
@@ -508,7 +517,16 @@
           -1
           (array.make-array i64 1)
           (array.make-array i64 1)))
-      (TcBodyState cell job-state))))
+      (TcBodyState
+        cell
+        job-state
+        (struct-get source-session table-id)
+        (struct-get source-session reset-generation)))))
+
+(define (tc-body-state-new-with-job-state [job-state : TcJobState]) : TcBodyState
+  (tc-body-state-new-with-job-state-and-source-names
+    job-state
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (tc-body-state-new) : TcBodyState
   (tc-body-state-new-with-job-state (tc-serial-job-state)))
@@ -2043,16 +2061,6 @@
 
 (define (tc-context-job-state [ctx : TcContext]) : TcJobState
   (struct-get (tc-context-body-state ctx) job-state))
-
-(define (tc-context-intern-table-id [ctx : TcContext]) : i64
-  (struct-get
-    (ci.intern-source-name-session-handle-session (tc-context-source-names ctx))
-    table-id))
-
-(define (tc-context-intern-generation [ctx : TcContext]) : i64
-  (struct-get
-    (ci.intern-source-name-session-handle-session (tc-context-source-names ctx))
-    reset-generation))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (if (ast-node-pool-compat-context-active?)
@@ -15676,82 +15684,91 @@
     value
     handle))
 
-(define (tc-context-source-key-cache [ctx : TcContext]) : TcSourceKeyCacheState
-  (tc-job-state-source-key-cache (tc-context-job-state ctx)))
-
 (define (tc-context-source-dotted-alias-key-cache-get
   [ctx : TcContext]
   [module-id : i64]
   [name-id : i64]) : i64
-  (tc-source-dotted-alias-key-cache-get-for-state
-    (tc-context-source-key-cache ctx)
-    (tc-context-intern-table-id ctx)
-    (tc-context-intern-generation ctx)
-    module-id
-    name-id))
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-dotted-alias-key-cache-get-for-state
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      module-id
+      name-id)))
 
 (define (tc-context-source-dotted-full-path-key-cache-get
   [ctx : TcContext]
   [module-id : i64]
   [name-id : i64]) : i64
-  (tc-source-dotted-full-path-key-cache-get-for-state
-    (tc-context-source-key-cache ctx)
-    (tc-context-intern-table-id ctx)
-    (tc-context-intern-generation ctx)
-    module-id
-    name-id))
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-dotted-full-path-key-cache-get-for-state
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      module-id
+      name-id)))
 
 (define (tc-context-source-qualified-variant-key-cache-get
   [ctx : TcContext]
   [registry-id : i64]
   [module-id : i64]
   [name-id : i64]) : i64
-  (tc-source-qualified-variant-key-cache-get-for-state
-    (tc-context-source-key-cache ctx)
-    (tc-context-intern-table-id ctx)
-    (tc-context-intern-generation ctx)
-    registry-id
-    module-id
-    name-id))
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-qualified-variant-key-cache-get-for-state
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      registry-id
+      module-id
+      name-id)))
 
 (define (tc-context-source-qualified-variant-handle-cache-get
   [ctx : TcContext]
   [registry-id : i64]
   [module-id : i64]
   [name-id : i64]) : i64
-  (tc-source-qualified-variant-handle-cache-get-for-state
-    (tc-context-source-key-cache ctx)
-    (tc-context-intern-table-id ctx)
-    (tc-context-intern-generation ctx)
-    registry-id
-    module-id
-    name-id))
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-qualified-variant-handle-cache-get-for-state
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      registry-id
+      module-id
+      name-id)))
 
 (define (tc-context-source-dotted-alias-key-cache-put!
   [ctx : TcContext]
   [module-id : i64]
   [name-id : i64]
   [value : i64]) : unit
-  (tc-source-dotted-alias-key-cache-put-for-state!
-    (tc-context-source-key-cache ctx)
-    (tc-context-intern-table-id ctx)
-    (tc-context-intern-generation ctx)
-    module-id
-    name-id
-    value))
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-dotted-alias-key-cache-put-for-state!
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      module-id
+      name-id
+      value)))
 
 (define (tc-context-source-dotted-full-path-key-cache-put!
   [ctx : TcContext]
   [module-id : i64]
   [name-id : i64]
   [value : i64]) : unit
-  (tc-source-dotted-full-path-key-cache-put-for-state!
-    (tc-context-source-key-cache ctx)
-    (tc-context-intern-table-id ctx)
-    (tc-context-intern-generation ctx)
-    module-id
-    name-id
-    value))
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-dotted-full-path-key-cache-put-for-state!
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      module-id
+      name-id
+      value)))
 
 (define (tc-context-source-qualified-variant-key-cache-put!
   [ctx : TcContext]
@@ -15760,15 +15777,17 @@
   [name-id : i64]
   [value : i64]
   [handle : i64]) : unit
-  (tc-source-qualified-variant-key-cache-put-for-state!
-    (tc-context-source-key-cache ctx)
-    (tc-context-intern-table-id ctx)
-    (tc-context-intern-generation ctx)
-    registry-id
-    module-id
-    name-id
-    value
-    handle))
+  (let
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    (tc-source-qualified-variant-key-cache-put-for-state!
+      (tc-job-state-source-key-cache (struct-get body-state job-state))
+      (struct-get body-state intern-table-id)
+      (struct-get body-state intern-generation)
+      registry-id
+      module-id
+      name-id
+      value
+      handle)))
 
 (define (tc-lazy-import-stub-list-empty) : TcLazyImportStubList
   (TcLazyImportStubList (array.make-array TcLazyImportStub 0) 0))
@@ -78997,7 +79016,8 @@
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
   (let
-    [body-state : TcBodyState (tc-body-state-new-with-job-state job-state)]
+    [body-state : TcBodyState
+      (tc-body-state-new-with-job-state-and-source-names job-state source-names)]
     [_start-body-state : unit
       (tc-body-early-exit-facts-start! body-state pools)]
     [checked : ResultCompilerTypecheckChecked

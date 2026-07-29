@@ -3042,6 +3042,18 @@
 
 (cfg
   compile-profile
+  (define compiler-tc-pool-context-reseats : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-note-pool-context-reseat!) : unit
+    (set!
+      compiler-tc-pool-context-reseats
+      (+ compiler-tc-pool-context-reseats 1))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-walk-decl-generation-skip!) : unit
     (set!
       compiler-tc-walk-decl-generation-skips
@@ -5487,6 +5499,9 @@
       (compiler-tc-macro-counter-profile-line
         "walk_decl_generation_expr_copies"
         compiler-tc-walk-decl-generation-expr-copies)
+      (compiler-tc-macro-counter-profile-line
+        "pool_context_reseats"
+        compiler-tc-pool-context-reseats)
       (compiler-tc-macro-counter-profile-line
         "walk_hygiene_us"
         (/ compiler-tc-walk-hygiene-ns 1000))
@@ -60009,12 +60024,10 @@
       (set! macro-live-symbols-retired-arena 0)
       (if (= current 0)
         unit
-        (unsafe
-          (arena.tl_arena_destroy current)))
+        (macro-generation-destroy! current))
       (if (or (= retired 0) (= retired current))
         unit
-        (unsafe
-          (arena.tl_arena_destroy retired))))))
+        (macro-generation-destroy! retired)))))
 
 ;; Force the next pass to rebuild the live symbols/registries. Called from the
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice
@@ -60424,12 +60437,10 @@
       (set! macro-splice-view-retired-arena 0)
       (if (= current 0)
         unit
-        (unsafe
-          (arena.tl_arena_destroy current)))
+        (macro-generation-destroy! current))
       (if (or (= retired 0) (= retired current))
         unit
-        (unsafe
-          (arena.tl_arena_destroy retired))))))
+        (macro-generation-destroy! retired)))))
 
 ;; R3-P1: a firing declaration's expansion allocates superseded intermediate
 ;; forms -- hygiene copies and re-walk products -- into the ambient macro
@@ -60480,8 +60491,7 @@
       (set! macro-decl-generation-retired-arena previous)
       (if (= retired 0)
         unit
-        (unsafe
-          (arena.tl_arena_destroy retired))))))
+        (macro-generation-destroy! retired)))))
 
 ;: The arena this declaration's expansion runs in: the live generation while
 ;: its batch has room, otherwise a fresh one (which retires the batch before
@@ -60530,6 +60540,23 @@
 (define macro-splice-generation-retired-arena : i64
   0)
 
+;: R3-P2c backstop. Every generation destroy in the walk goes through here
+;: first: if the process-global pool context still aliases cells this
+;: generation owns, reseat it into base-arena-owned cells before the pages go
+;: away. See `ast-node-pool-active-context-reseat!` for why the guard lives at
+;: the destroy rather than at the producers.
+(define (macro-generation-destroy! [generation : i64]) : unit
+  (if (= generation 0)
+    unit
+    (begin
+      (if (ast-node-pool-active-context-owned-by? generation)
+        (begin
+          (cfg compile-profile (compiler-tc-note-pool-context-reseat!))
+          (ast-node-pool-active-context-reseat!))
+        unit)
+      (unsafe
+        (arena.tl_arena_destroy generation)))))
+
 (define (macro-splice-generation-enter!) : i64
   (let
     [previous : i64 macro-splice-generation-arena]
@@ -60540,8 +60567,7 @@
       (set! macro-splice-generation-retired-arena previous)
       (if (= retired 0)
         unit
-        (unsafe
-          (arena.tl_arena_destroy retired)))
+        (macro-generation-destroy! retired))
       next)))
 
 ;: True while either ring holds a live generation, i.e. while an "allocate into
@@ -60559,12 +60585,10 @@
       (set! macro-splice-generation-retired-arena 0)
       (if (= current 0)
         unit
-        (unsafe
-          (arena.tl_arena_destroy current)))
+        (macro-generation-destroy! current))
       (if (or (= retired 0) (= retired current))
         unit
-        (unsafe
-          (arena.tl_arena_destroy retired))))))
+        (macro-generation-destroy! retired)))))
 
 ;; R3-P2b generation escapes.
 ;;
@@ -60644,12 +60668,10 @@
       (macro-splice-generations-release!)
       (if (= current 0)
         unit
-        (unsafe
-          (arena.tl_arena_destroy current)))
+        (macro-generation-destroy! current))
       (if (or (= retired 0) (= retired current))
         unit
-        (unsafe
-          (arena.tl_arena_destroy retired))))))
+        (macro-generation-destroy! retired)))))
 
 ;; The checked-lowering pipeline compacts its parsed program before macro
 ;; expansion.  Keep an explicit proof of whether expansion changed the program
@@ -74449,12 +74471,9 @@
         (unsafe
           (arena.tl_arena_set generation))]
       [_escape-open : unit (set! macro-decl-generation-active true)]
-      ;; R3-P2b: any AstNodePoolContext this expansion builds can be INSTALLED,
-      ;; which points the process-global active context at that context's cells.
-      ;; Pin those cells to the pool base arena for the duration, or the global
-      ;; ends up aliasing storage this generation owns and the next
-      ;; `capture-active!` after the destroy writes into freed pages.
-      [_pin-cells : unit (ast-node-pool-context-cells-pin-base! true)]
+      ;; R3-P2c: publish which generation is live, so anything that installs a
+      ;; pool context from inside this expansion is repaired at the destroy.
+      [_witness-on : unit (ast-node-pool-context-transient-witness! generation)]
       [raw : ResultMacroDeclExpansion
         (macro-expand-decl-with-path
           ctx
@@ -74465,7 +74484,7 @@
           decl
           decl-path)]
       [_escape-close : unit (set! macro-decl-generation-active false)]
-      [_unpin-cells : unit (ast-node-pool-context-cells-pin-base! false)]
+      [_witness-off : unit (ast-node-pool-context-transient-witness! 0)]
       ;; Clamped: the walk never truncates the pool below the length it entered
       ;; with, but a base above the live length would make the id map read out
       ;; of range, and a shorter pool has nothing above the base to copy anyway.

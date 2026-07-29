@@ -2202,63 +2202,136 @@
 ;; `tests/integration/compile_profile_cross_file_single_compilation`; the class
 ;; is pinned by `tests/integration/arena_pool_context_escape.tl`.
 ;;
-;; `ast-node-pool-context-cells-pin-base` gates the redirect to exactly the
-;; window where a generation can be current. Unconditionally pinning the cells
-;; to the base arena is NOT correct: this constructor also runs at global init
-;; and on the CTFE capture path, and republishing `node-pool-base-arena` on
-;; every call moves the handle out from under callers that captured it for
-;; `node-pool-restore-arena-after-base-alloc!` -- the H4 sibling-chain trap.
-;; Measured: doing it unconditionally SIGSEGVs on every input.
+;; THE RULE, stated once so every constructor below can be checked against it:
 ;;
-;; The base-arena head is republished after the allocation (H4): keeping the
-;; pre-allocation handle would restart the next base allocation on a filled
-;; segment and grow a sibling chain that destroy-from-head never reaches.
-(define ast-node-pool-context-cells-pin-base : bool
-  false)
-
-(define (ast-node-pool-context-cells-pin-base! [on : bool]) : unit
-  (set! ast-node-pool-context-cells-pin-base on))
-
+;;   the cells of an `AstNodePoolContext` must be allocated in the arena that
+;;   owns the POOL they describe -- never in "whatever arena is current".
+;;
+;; Every constructor names that owner explicitly:
+;;
+;;   * `ast-node-pool-context-new-with-capacities-in-arena` describes a FRESH
+;;     pool, so the owner is that pool's own `shared-arena`. It has always said
+;;     so ("the context cells are part of the pool's retained ownership graph").
+;;   * `ast-node-pool-context-capture-active-raw` describes the ACTIVE pool, so
+;;     the owner is `node-pool-base-arena` -- the arena that same file already
+;;     requires the pool's backing arrays to live in.
+;;   * `ast-node-pool-context-new` takes the owner as an argument and has no
+;;     default, so a new call site cannot silently inherit the current arena.
+;;
+;; R3-P2c: the earlier form of this fix gated a redirect INSIDE
+;; `ast-node-pool-context-new` on a global flag set while a macro-walk
+;; generation was live. That was wrong in both directions and is the defect this
+;; revision closes:
+;;
+;;   * it OVERRODE a caller that had already chosen a deliberate owner.
+;;     `-new-with-capacities-in-arena` sets the arena to the new pool's
+;;     `shared-arena` and then calls this constructor; with the flag on, the
+;;     cells were redirected to the GLOBAL base arena instead, so a pool built
+;;     during an expansion described itself with cells owned by a different
+;;     arena's lifetime. On the `--cfg embedded-stdlib-tlci --cfg
+;;     tlci-native-route` build the stdlib surface is re-hydrated through
+;;     exactly that constructor from inside macro expansion, which is why it
+;;     surfaced on the comptime host-metadata smoke and on no workload this
+;;     packet had measured.
+;;   * it was BYPASSABLE. Any future constructor that built cells without
+;;     consulting the flag was silently outside the rule.
+;;
+;; Taking the owner as a parameter fixes both: there is no ambient default to
+;; get wrong, and adding a constructor forces the author to name an owner.
+;;
+;; When the owner is `node-pool-base-arena` the head is republished afterwards
+;; (H4): keeping the pre-allocation handle would restart the next base
+;; allocation on a filled segment and grow a sibling chain that
+;; destroy-from-head never reaches.
 (define (ast-node-pool-context-new
   [expr-pool : AstExprNodePoolState]
-  [type-pool : AstTypeNodePoolState]) : AstNodePoolContext
-  (if (or (not ast-node-pool-context-cells-pin-base) (= node-pool-base-arena 0))
-    (let
-      [expr-cell : (Array AstExprNodePoolState)
-        (array.make-array AstExprNodePoolState 1)]
-      [type-cell : (Array AstTypeNodePoolState)
-        (array.make-array AstTypeNodePoolState 1)]
-      (begin
-        (array-set! expr-cell 0 expr-pool)
-        (array-set! type-cell 0 type-pool)
-        (AstNodePoolContext expr-cell type-cell)))
-    (let
-      [prev-arena : i64 (arena.tl_arena_current)]
-      [base-arena : i64 node-pool-base-arena]
-      [_set-arena : unit
+  [type-pool : AstTypeNodePoolState]
+  [owner-arena : i64]) : AstNodePoolContext
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [redirect? : bool
+      (and (not (= owner-arena 0)) (not (= owner-arena prev-arena)))]
+    [_set-arena : unit
+      (if redirect?
         (unsafe
-          (arena.tl_arena_set base-arena))]
-      [expr-cell : (Array AstExprNodePoolState)
-        (array.make-array AstExprNodePoolState 1)]
-      [type-cell : (Array AstTypeNodePoolState)
-        (array.make-array AstTypeNodePoolState 1)]
-      [head-arena : i64 (arena.tl_arena_current)]
-      [_restore-arena : unit
-        (begin
-          (set! node-pool-base-arena head-arena)
-          (node-pool-restore-arena-after-base-alloc!
-            prev-arena
-            base-arena
-            head-arena))]
-      (begin
-        (array-set! expr-cell 0 expr-pool)
-        (array-set! type-cell 0 type-pool)
-        (AstNodePoolContext expr-cell type-cell)))))
+          (arena.tl_arena_set owner-arena))
+        unit)]
+    [expr-cell : (Array AstExprNodePoolState)
+      (array.make-array AstExprNodePoolState 1)]
+    [type-cell : (Array AstTypeNodePoolState)
+      (array.make-array AstTypeNodePoolState 1)]
+    [head-arena : i64 (arena.tl_arena_current)]
+    [_republish : unit
+      (if (= owner-arena node-pool-base-arena)
+        (set! node-pool-base-arena head-arena)
+        unit)]
+    [_restore-arena : unit
+      (if redirect?
+        (node-pool-restore-arena-after-base-alloc!
+          prev-arena
+          owner-arena
+          head-arena)
+        unit)]
+    (begin
+      (array-set! expr-cell 0 expr-pool)
+      (array-set! type-cell 0 type-pool)
+      (AstNodePoolContext expr-cell type-cell))))
 
+;: The context that describes the ACTIVE pool. Its owner is the pool's own base
+;: arena, unconditionally -- this is the context `ast-node-pool-context-install!`
+;: publishes into the process-global, and a global has no reset cadence to align
+;: a generation's destroy to, so ownership is the only thing that can make it
+;: safe.
 (define (ast-node-pool-context-capture-active-raw) : AstNodePoolContext
   (ast-node-pool-context-new
     (ast-node-pool-state-capture)
-    (ty-node-pool-state-capture)))
+    (ty-node-pool-state-capture)
+    node-pool-base-arena))
+
+;; R3-P2c: THE BACKSTOP, and the answer to "what prevents the next one".
+;;
+;; Naming an owner at every constructor (above) is a rule a NEW call site can
+;; still get wrong, and the class has now fired five times, each time from a
+;; producer nobody had enumerated. So the guard is moved off the producers and
+;; onto the one place every escape of this class must pass: the moment a
+;; transient generation is destroyed.
+;;
+;; `ast-node-pool-context-transient-witness` is the generation handle that is
+;; live right now, published by the macro walk around each expansion.
+;; `install!` records it, so the process-global always knows whether the cells it
+;; currently aliases belong to a transient arena and to WHICH one. Before a
+;; generation is destroyed the walk asks
+;; `ast-node-pool-active-context-owned-by?`, and if the answer is yes it
+;; RESEATS: re-captures the identical pool state into base-arena-owned cells and
+;; re-installs. The pool state is copied by value, so nothing is lost; only the
+;; cells the global aliases change, and they change to storage that outlives
+;; every generation.
+;;
+;; This is why no future producer has to be enumerated. It does not matter which
+;; path built the context or whether its author knew the rule: if it published
+;; into the global from inside a generation, the destroy repairs it first.
+(define ast-node-pool-context-transient-witness : i64
+  0)
+(define ast-node-pool-active-context-owner : i64
+  0)
+
+(define (ast-node-pool-context-transient-witness! [generation : i64]) : unit
+  (set! ast-node-pool-context-transient-witness generation))
+
+(define (ast-node-pool-active-context-owned-by? [generation : i64]) : bool
+  (and (not (= generation 0)) (= ast-node-pool-active-context-owner generation)))
+
+(define (ast-node-pool-active-context-reseat!) : unit
+  (if (not ast-node-pool-active-context-installed?)
+    (set! ast-node-pool-active-context-owner 0)
+    (let
+      [saved-witness : i64 ast-node-pool-context-transient-witness]
+      [_clear : unit (set! ast-node-pool-context-transient-witness 0)]
+      [fresh : AstNodePoolContext (ast-node-pool-context-capture-active-raw)]
+      [_install : unit (ast-node-pool-context-install! fresh)]
+      (begin
+        (set! ast-node-pool-context-transient-witness saved-witness)
+        (set! ast-node-pool-active-context-owner 0)))))
 
 (define ast-node-pool-compat-context-explicit? : bool
   false)
@@ -2271,7 +2344,11 @@
   (if ast-node-pool-compat-context-explicit?
     (ast-node-pool-context-new
       (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
-      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0))
+      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0)
+      ;; Describes the compat pool, so the compat pool's base arena owns it.
+      (struct-get
+        (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
+        base-arena))
     (ast-node-pool-context-capture-active-raw)))
 
 (define ast-node-pool-active-context-installed? : bool
@@ -2342,7 +2419,9 @@
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
   (ast-node-pool-context-new
     (array-ref (struct-get pools expr-pool) 0)
-    (array-ref (struct-get pools type-pool) 0)))
+    (array-ref (struct-get pools type-pool) 0)
+    ;; A snapshot describes the same pool, so it has the same owner.
+    (ast-node-pool-context-base-arena pools)))
 
 (define (ast-node-pool-context-capture-active! [pools : AstNodePoolContext]) : unit
   (if ast-node-pool-compat-context-explicit?
@@ -2400,6 +2479,11 @@
       (set!
         (struct-get ast-node-pool-active-context type-pool)
         (struct-get pools type-pool))
+      ;; R3-P2c: remember WHICH transient generation, if any, was live when
+      ;; these cells were published. See `ast-node-pool-active-context-reseat!`.
+      (set!
+        ast-node-pool-active-context-owner
+        ast-node-pool-context-transient-witness)
       (set! ast-node-pool-active-context-installed? true))))
 
 (define (ast-node-pool-context-expr-len [pools : AstNodePoolContext]) : i64
@@ -2512,7 +2596,8 @@
     [pools : AstNodePoolContext
       (ast-node-pool-context-new
         (ast-expr-node-pool-state-with-base-arena expr-pool shared-arena)
-        (ast-type-node-pool-state-with-base-arena type-pool shared-arena))]
+        (ast-type-node-pool-state-with-base-arena type-pool shared-arena)
+        shared-arena)]
     [head-arena : i64 (arena.tl_arena_current)]
     (begin
       (ast-node-pool-context-sync-base-arena! pools head-arena)

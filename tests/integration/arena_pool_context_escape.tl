@@ -18,7 +18,9 @@
 ; destroyed (not rewound) scratch arena, a publish from inside it, and a
 ; write-through read after the destroy. The GUARDED path allocates the cells in
 ; the long-lived arena before publishing, which is what
-; `ast-node-pool-context-cells-pin-base!` does in the compiler.
+; `ast-node-pool-context-new` does in the compiler by taking the owning arena
+; as a required parameter, and what `macro-generation-destroy!` repairs at the
+; destroy for any producer that got it wrong anyway.
 ;
 ; Exit 42 on success, like the other arena-ownership fixtures.
 (import stdlib.arena)

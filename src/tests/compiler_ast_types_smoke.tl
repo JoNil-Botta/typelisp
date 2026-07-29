@@ -437,11 +437,15 @@
     [source-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new
         (ast.ast-expr-node-pool-state-create 8)
-        (ast.ast-type-node-pool-state-create 8))]
+        (ast.ast-type-node-pool-state-create 8)
+        ;; Smoke-local scratch pool: never installed, caller-arena owned.
+        (arena.tl_arena_current))]
     [dest-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new
         (ast.ast-expr-node-pool-state-create 8)
-        (ast.ast-type-node-pool-state-create 8))]
+        (ast.ast-type-node-pool-state-create 8)
+        ;; Smoke-local scratch pool: never installed, caller-arena owned.
+        (arena.tl_arena_current))]
     [active-before : ast.AstNodePoolContext
       (ast.ast-node-pool-context-capture-active)]
     [source-decoy-expr : i64
@@ -798,11 +802,15 @@
     [source-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new
         (ast.ast-expr-node-pool-state-create 8)
-        (ast.ast-type-node-pool-state-create 8))]
+        (ast.ast-type-node-pool-state-create 8)
+        ;; Smoke-local scratch pool: never installed, caller-arena owned.
+        (arena.tl_arena_current))]
     [dest-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new
         (ast.ast-expr-node-pool-state-create 8)
-        (ast.ast-type-node-pool-state-create 8))]
+        (ast.ast-type-node-pool-state-create 8)
+        ;; Smoke-local scratch pool: never installed, caller-arena owned.
+        (arena.tl_arena_current))]
     [source-i64-ty : i64
       (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
     [_source-decoy : i64

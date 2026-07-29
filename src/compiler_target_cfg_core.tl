@@ -6,7 +6,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as target_cfg_svec)
 (import compiler_builtin_ids as cbi)
-(import "compiler_cfg_core.tl")
+(import compiler_cfg_core as cfg_core)
 (import compiler_intern as ci)
 (import sym_i64_env)
 
@@ -42,15 +42,19 @@
           (string.append value "; expected linux-x86_64 or windows-x86_64")))]))
 
 (define (compiler-target-enable-linux-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable
-    (compiler-cfg-enable
-      (compiler-cfg-enable (compiler-cfg-enable cfgs "linux") "unix")
+  (cfg_core.compiler-cfg-enable
+    (cfg_core.compiler-cfg-enable
+      (cfg_core.compiler-cfg-enable
+        (cfg_core.compiler-cfg-enable cfgs "linux")
+        "unix")
       "target-linux")
     "os-linux"))
 
 (define (compiler-target-enable-windows-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable
-    (compiler-cfg-enable (compiler-cfg-enable cfgs "windows") "target-windows")
+  (cfg_core.compiler-cfg-enable
+    (cfg_core.compiler-cfg-enable
+      (cfg_core.compiler-cfg-enable cfgs "windows")
+      "target-windows")
     "os-windows"))
 
 (define (compiler-target-cfgs
@@ -73,22 +77,31 @@
       target
       names
       (+ index 1)
-      (compiler-cfg-enable cfgs (target_cfg_svec.get (& names) index "")))))
+      (cfg_core.compiler-cfg-enable
+        cfgs
+        (target_cfg_svec.get (& names) index "")))))
 
 (define (compiler-target-cfgs-with-names
   [target : CompilerTargetCfg]
   [names : target_cfg_svec.Vec]) : sym_i64_env.SymI64Env
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (compiler-target-cfgs-with-names-from target names 0 (compiler-cfg-empty))))
+    (compiler-target-cfgs-with-names-from
+      target
+      names
+      0
+      (cfg_core.compiler-cfg-empty))))
 
 (define (compiler-target-enable-linux-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
   [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-with-intern-state
-    (compiler-cfg-enable-with-intern-state
-      (compiler-cfg-enable-with-intern-state
-        (compiler-cfg-enable-with-intern-state cfgs "linux" intern-state)
+  (cfg_core.compiler-cfg-enable-with-intern-state
+    (cfg_core.compiler-cfg-enable-with-intern-state
+      (cfg_core.compiler-cfg-enable-with-intern-state
+        (cfg_core.compiler-cfg-enable-with-intern-state
+          cfgs
+          "linux"
+          intern-state)
         "unix"
         intern-state)
       "target-linux"
@@ -99,9 +112,12 @@
 (define (compiler-target-enable-windows-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
   [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-with-intern-state
-    (compiler-cfg-enable-with-intern-state
-      (compiler-cfg-enable-with-intern-state cfgs "windows" intern-state)
+  (cfg_core.compiler-cfg-enable-with-intern-state
+    (cfg_core.compiler-cfg-enable-with-intern-state
+      (cfg_core.compiler-cfg-enable-with-intern-state
+        cfgs
+        "windows"
+        intern-state)
       "target-windows"
       intern-state)
     "os-windows"

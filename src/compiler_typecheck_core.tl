@@ -6181,6 +6181,8 @@
 ;; here: it copied the store and the largest cache payload even when a walker
 ;; only needed the binding key and parent. Arena segments are never moved, so a
 ;; snapshot head remains a valid element address after later segments are added.
+;; `tc-type-env-raw-layout-smoke?` pins the word offsets used by these hot
+;; accessors without adding byte-offset conversion work to each expansion.
 (defmacro (tc-type-env-binding-ptr
   [_store-handle : comptime.Expr]
   [index : comptime.Expr]) : comptime.Expr
@@ -6195,30 +6197,18 @@
 
 (defmacro (tc-type-env-binding-name-at [binding-ptr : comptime.Expr]) : comptime.Expr
   `(unsafe
-    (ptr-read
-      (ptr-cast
-        (ptr-offset
-          (ptr-cast ,binding-ptr : (Ptr u8))
-          (comptime (offset-of (type TcTypeEnvBinding) name-id)))
-        : (Ptr i64)))))
+    (ptr-read (ptr-cast ,binding-ptr : (Ptr i64)))))
 
 (defmacro (tc-type-env-binding-type-at [binding-ptr : comptime.Expr]) : comptime.Expr
   `(unsafe
     (ptr-read
       (ptr-cast
-        (ptr-offset
-          (ptr-cast ,binding-ptr : (Ptr u8))
-          (comptime (offset-of (type TcTypeEnvBinding) ty)))
+        (ptr-offset (ptr-cast ,binding-ptr : (Ptr i64)) 1)
         : (Ptr AstType)))))
 
 (defmacro (tc-type-env-binding-parent-at [binding-ptr : comptime.Expr]) : comptime.Expr
   `(unsafe
-    (ptr-read
-      (ptr-cast
-        (ptr-offset
-          (ptr-cast ,binding-ptr : (Ptr u8))
-          (comptime (offset-of (type TcTypeEnvBinding) parent)))
-        : (Ptr i64)))))
+    (ptr-read (ptr-offset (ptr-cast ,binding-ptr : (Ptr i64)) 4))))
 
 (defmacro (tc-type-env-cache-at [cache-ptr : comptime.Expr]) : comptime.Expr
   `(unsafe
@@ -6228,31 +6218,17 @@
   [store-handle : i64]
   [binding : TcTypeEnvBinding]) : i64
   (let
-    [store-bytes : (MutPtr u8)
+    [store-words : (MutPtr i64)
       (unsafe
-        (int->ptr (cast store-handle : u64) : (MutPtr u8)))]
-    [capacity-ptr : (MutPtr i64)
-      (unsafe
-        (ptr-cast
-          (ptr-offset
-            store-bytes
-            (comptime (offset-of (type TcTypeEnvStore) binding-capacity)))
-          : (MutPtr i64)))]
-    [len-ptr : (MutPtr i64)
-      (unsafe
-        (ptr-cast
-          (ptr-offset
-            store-bytes
-            (comptime (offset-of (type TcTypeEnvStore) binding-len)))
-          : (MutPtr i64)))]
+        (int->ptr (cast store-handle : u64) : (MutPtr i64)))]
     [index : i64
       (unsafe
-        (ptr-read len-ptr))]
+        (ptr-read (ptr-offset store-words 2)))]
     (begin
       (if (<
         index
         (unsafe
-          (ptr-read capacity-ptr)))
+          (ptr-read (ptr-offset store-words 1))))
         unit
         (let
           [store : TcTypeEnvStore (tc-type-env-store-read store-handle)]
@@ -6263,16 +6239,11 @@
       (let
         [items : (Array TcTypeEnvBinding)
           (unsafe
-            (ptr-read
-              (ptr-cast
-                (ptr-offset
-                  store-bytes
-                  (comptime (offset-of (type TcTypeEnvStore) bindings)))
-                : (Ptr (Array TcTypeEnvBinding)))))]
+            (ptr-read (ptr-cast store-words : (Ptr (Array TcTypeEnvBinding)))))]
         (begin
           (array-set! items index binding)
           (unsafe
-            (ptr-write! len-ptr (+ index 1)))
+            (ptr-write! (ptr-offset store-words 2) (+ index 1)))
           (unsafe
             (cast
               (ptr->int
@@ -21813,6 +21784,15 @@
         0)
       (TcSpmdEnv merged left-len))))
 
+(define (tc-type-env-raw-layout-smoke?) : bool
+  (and
+    (= (comptime (offset-of (type TcTypeEnvBinding) name-id)) 0)
+    (= (comptime (offset-of (type TcTypeEnvBinding) ty)) 8)
+    (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
+    (= (comptime (offset-of (type TcTypeEnvStore) bindings)) 0)
+    (= (comptime (offset-of (type TcTypeEnvStore) binding-capacity)) 8)
+    (= (comptime (offset-of (type TcTypeEnvStore) binding-len)) 16)))
+
 (define (tc-type-env-owner-arena-smoke?) : bool
   (let
     [base-id : i64 (intern "owner-arena-base")]
@@ -21963,6 +21943,7 @@
         [segment-sibling : TcTypeEnv
           (tc-bind-id segment-base segment-id (AstType.Bool))]
         (and
+          (tc-type-env-raw-layout-smoke?)
           (tc-type-env-owner-arena-smoke?)
           (match (tc-lookup-id base branch-id)
             [(ResultTcType.Err _) true]

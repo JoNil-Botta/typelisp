@@ -402,7 +402,10 @@
       (begin
         (surface-ast-write-i64! out 25)
         (surface-ast-write-bool! out mutable)
-        (surface-ast-write-i64! out lifetime-id)
+        (surface-ast-write-borrow-lifetime!
+          out
+          context
+          (ast-borrow-lifetime-from-id lifetime-id))
         (surface-ast-write-i64! out inner))]
     [(AstExpr.Match payload)
       (match (box-get payload)
@@ -750,7 +753,7 @@
       [(= tag 25)
         (AstExpr.Borrow
           (surface-ast-read-bool! reader)
-          (surface-ast-read-i64! reader)
+          (ast-borrow-lifetime-to-id (surface-ast-read-borrow-lifetime! reader))
           (surface-ast-read-i64! reader))]
       [(= tag 26)
         (AstExpr.Match

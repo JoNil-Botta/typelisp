@@ -30,13 +30,16 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
-  ;; 2: `AstExpr.PtrNull` carries an AstTypeId instead of an inline AstType, so
-  ;; wire tag 57 now writes one i64 index into the serialized type pool rather
-  ;; than an inline type record. The payload is git-hash keyed and fail-closed
-  ;; (`compiler_driver_core.tl` requires TlciProducerIdentityAdmission.ExactMatch
-  ;; and degrades to re-parse), so this is a deployment invariant rather than a
-  ;; format-compatibility one -- but the version still moves whenever the
-  ;; encoding shape does.
+  ;; 2: eight AstExpr variants carry AstTypeIds instead of inline AstTypes, so
+  ;; their wire tags now reference the serialized type pool. `Init` similarly
+  ;; carries an AstMaybeTypeId sentinel. `Borrow` also narrowed in memory, but
+  ;; its wire representation remains the portable AstBorrowLifetime encoding:
+  ;; named lifetimes must not serialize producer-generation intern ids.
+  ;;
+  ;; The payload is git-hash keyed and fail-closed (`compiler_driver_core.tl`
+  ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
+  ;; so this is a deployment invariant rather than a format-compatibility one --
+  ;; but the version still moves whenever the encoding shape does.
   2)
 
 (define (surface-ast-write-macro-type-kind-list!
@@ -1437,10 +1440,19 @@
         (ast-node-pool-context-expr-push
           source-pools
           (AstExpr.Literal (AstLiteral.Int 22 "22")))]
-      [body : i64
+      [sum : i64
         (ast-node-pool-context-expr-push
           source-pools
           (AstExpr.Binary AstBinOp.Add left right))]
+      [borrow-lifetime-id : i64 (ci.intern "borrow-region")]
+      [body : i64
+        (ast-node-pool-context-expr-push
+          source-pools
+          (AstExpr.Borrow
+            false
+            (ast-borrow-lifetime-to-id
+              (AstBorrowLifetime.Named borrow-lifetime-id))
+            sum))]
       [decl-slots : (Array AstDecl) (make-array AstDecl 1)]
       [path-slots : (Array String) (make-array String 1)]
       [owner-slots : (Array i64) (make-array i64 1)]
@@ -1524,7 +1536,7 @@
                                   (=
                                     (ast-node-pool-context-expr-len
                                       (struct-get hydration pools))
-                                    3)
+                                    4)
                                   (=
                                     (ast-decl-list-len
                                       (& (struct-get hydration decls)))
@@ -1548,10 +1560,27 @@
                                         (match (ast-node-pool-context-expr-get
                                           (struct-get hydration pools)
                                           hydrated-body)
-                                          [(AstExpr.Binary op _ _)
-                                            (match op
-                                              [(AstBinOp.Add) true]
-                                              [_ false])]
+                                          [(AstExpr.Borrow
+                                              mutable
+                                              lifetime-id
+                                              hydrated-sum)
+                                            (and
+                                              (not mutable)
+                                              (match (ast-borrow-lifetime-from-id
+                                                lifetime-id)
+                                                [(AstBorrowLifetime.Named name)
+                                                  (surface_identity.surface-identity-string-eq?
+                                                    (ci.intern-str name)
+                                                    "borrow-region")]
+                                                [_ false])
+                                              (match (ast-node-pool-context-expr-get
+                                                (struct-get hydration pools)
+                                                hydrated-sum)
+                                                [(AstExpr.Binary op _ _)
+                                                  (match op
+                                                    [(AstBinOp.Add) true]
+                                                    [_ false])]
+                                                [_ false]))]
                                           [_ false]))]
                                     [_ false]))]))])))])]))))))
 

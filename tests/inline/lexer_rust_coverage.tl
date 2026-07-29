@@ -159,6 +159,19 @@
             [_ (lexer-assert-true false "string token should carry an id")]))]
       [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
 
+(test
+  lexer-lone-colon-without-compiler-builtin-initialization
+  (let
+    [r : lex.ResultTokens (lex.result ":")]
+    (match r
+      [(lex.ResultTokens.Ok toks)
+        (lexer-assert-true
+          (and
+            (= (token.tag (array-ref toks 0)) (token.tag-sym))
+            (string.eq (token.sym (array-ref toks 0)) ":"))
+          "standalone lexer should intern a lone colon from its source")]
+      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+
 ;; ---- 3. src/lexer.rs test_single_char_literals -------------------------
 (test
   lexer-single-char-literal-a

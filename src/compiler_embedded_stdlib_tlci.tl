@@ -26,7 +26,8 @@
   (Err String))
 
 (defenum CompilerEmbeddedStdlibTlciLookup
-  (Cataloged)
+  (Resolved TlciResolvedMacroEntry)
+  (Shell TlciResolvedMacroEntry)
   (Missing)
   (Unavailable String))
 
@@ -175,28 +176,43 @@
     (let
       [loaded : TlciLoadedImage
         (array-ref compiler-embedded-stdlib-tlci-session-image 0)]
-      (match (tlci-loader-find-macro-entry (& loaded) name)
-        [(ResultTlciMacroEntry.Ok _) CompilerEmbeddedStdlibTlciLookup.Cataloged]
-        [(ResultTlciMacroEntry.Err _) CompilerEmbeddedStdlibTlciLookup.Missing]))
+      (match (tlci-loader-resolve-macro-entry (& loaded) name)
+        [(TlciMacroEntryLookup.Resolved resolved)
+          (CompilerEmbeddedStdlibTlciLookup.Resolved resolved)]
+        [(TlciMacroEntryLookup.Shell resolved)
+          (CompilerEmbeddedStdlibTlciLookup.Shell resolved)]
+        [(TlciMacroEntryLookup.Missing)
+          CompilerEmbeddedStdlibTlciLookup.Missing]
+        [(TlciMacroEntryLookup.Err message)
+          (CompilerEmbeddedStdlibTlciLookup.Unavailable message)]))
     (CompilerEmbeddedStdlibTlciLookup.Unavailable
       (array-ref compiler-embedded-stdlib-tlci-session-error 0))))
 
 ;; Dispatch a cataloged entry on the mapped pass session. The caller owns the
 ;; comptime host session (operands, fuel, cookie) around this call.
 (define (compiler-embedded-stdlib-tlci-session-dispatch
-  [name : String]
+  [resolved : TlciResolvedMacroEntry]
   [session-cookie : i64]) : ResultTlciMacroDispatch
   (if (= (array-ref compiler-embedded-stdlib-tlci-session-state 0) 1)
     (let
       [loaded : TlciLoadedImage
         (array-ref compiler-embedded-stdlib-tlci-session-image 0)]
-      (tlci-loader-dispatch-macro
+      (tlci-loader-dispatch-resolved-macro
         (& loaded)
-        name
+        resolved
         session-cookie
         (array.make-array i64 0)
         0))
     (ResultTlciMacroDispatch.Err "embedded stdlib tlci session is not loaded")))
+
+(define (compiler-embedded-stdlib-tlci-session-mark-shell!
+  [resolved : TlciResolvedMacroEntry]) : ResultTlciLoaderUnit
+  (if (= (array-ref compiler-embedded-stdlib-tlci-session-state 0) 1)
+    (let
+      [loaded : TlciLoadedImage
+        (array-ref compiler-embedded-stdlib-tlci-session-image 0)]
+      (tlci-loader-mark-macro-entry-shell! (& loaded) resolved))
+    (ResultTlciLoaderUnit.Err "embedded stdlib tlci session is not loaded")))
 
 (define (compiler-embedded-stdlib-tlci-session-close!) : unit
   (let

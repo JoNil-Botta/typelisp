@@ -2914,6 +2914,16 @@
             pools)]
         [(CompilerDriverPreludeSurface.Ok decls paths modules seen)
           (begin
+            ;; Hydration bypasses the ordinary stdlib source loader, so record
+            ;; the embedded provenance that loader would have attached. Macro
+            ;; routing must not depend on an unrelated later import happening
+            ;; to resolve core_macros.tl from the embedded payload.
+            (compiler-load-note-embedded-module!
+              compiler-load-core-macro-prelude-path)
+            (compiler-load-note-embedded-module!
+              compiler-load-runtime-prelude-path)
+            (compiler-load-session-state-note-embedded-stdlib-source!
+              load-state)
             (cfg
               compile-profile
               (set!

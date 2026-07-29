@@ -1224,6 +1224,8 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_ent
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_resolution_calls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_invoke_us|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_invoke_calls|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_shell_learns|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_shell_cache_hits|"
 # The repo's own stdlib is content-identical to the embedded payload, so
 # the catalog dispatches here too; shell entries keep the counted
 # interpreted fallback (and their per-identity profile rows above). On
@@ -1263,6 +1265,12 @@ else
     assert_profile_counter_eq_in \
         "$CHECK_STDERR" \
         "typecheck.macro.stdlib_tlci_catalog_misses" \
+        0 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_eq_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_source_interpreted" \
         0 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"

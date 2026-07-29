@@ -16,7 +16,6 @@
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_surface_facts as surface_facts)
 (import (hashmap.hashmap i64 i64) as tc_i64_i64_map)
-(import (hashmap.hashmap String i64) as tc_string_i64_map)
 (import "compiler_parse_core.tl")
 (import read as reader)
 (import stdlib.string)
@@ -4590,6 +4589,14 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-stdlib-tlci-shell-learns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-tlci-shell-cache-hits : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-stdlib-tlci-native-expr-results : i64
     0))
 (cfg
@@ -4780,6 +4787,8 @@
       (set! compiler-tc-macro-stdlib-tlci-load-failures 0)
       (set! compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 0)
       (set! compiler-tc-macro-stdlib-tlci-native-dispatches 0)
+      (set! compiler-tc-macro-stdlib-tlci-shell-learns 0)
+      (set! compiler-tc-macro-stdlib-tlci-shell-cache-hits 0)
       (set! compiler-tc-macro-stdlib-tlci-native-expr-results 0)
       (set! compiler-tc-macro-stdlib-tlci-native-module-results 0)
       (set! compiler-tc-macro-stdlib-tlci-native-decls-results 0)
@@ -5449,6 +5458,12 @@
       (compiler-tc-macro-counter-profile-line
         "stdlib_tlci_native_dispatches"
         compiler-tc-macro-stdlib-tlci-native-dispatches)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_shell_learns"
+        compiler-tc-macro-stdlib-tlci-shell-learns)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_shell_cache_hits"
+        compiler-tc-macro-stdlib-tlci-shell-cache-hits)
       (compiler-tc-macro-counter-profile-line
         "stdlib_tlci_native_expr_results"
         compiler-tc-macro-stdlib-tlci-native-expr-results)
@@ -71855,85 +71870,26 @@
                   [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))))])]))
 
 ;; Route embedded-stdlib macro calls through the TLCI catalog before the
-;; semantic CTFE fallback. The current image contains native registration
-;; shells, not lowered transformer bodies, so a catalog hit is deliberately
-;; counted separately from the interpreted execution that follows. Explicit
-;; stdlib roots never enter this branch because loader provenance is per
-;; compilation session.
+;; semantic CTFE fallback. The mapped catalog owns its package-agnostic index
+;; and terminal shell state for the mapping lifetime. Explicit stdlib roots
+;; never enter this branch because loader provenance is per compilation
+;; session.
 (define macro-expand-stdlib-tlci-route-active : bool
   false)
-(cfg
-  embedded-stdlib-tlci
-  (define macro-expand-stdlib-tlci-catalog-cache : tc_string_i64_map.Map
-    (tc_string_i64_map.new)))
-
-;; The catalog cache outlives expansion scratch, node-pool context installs, and
-;; intern floor resets. Its buckets regrow on insert, so keep every allocation
-;; in compiler-load-provenance-arena, the dedicated arena that is never reset.
-(cfg
-  embedded-stdlib-tlci
-  (define (macro-expand-stdlib-tlci-catalog-cache-reset!) : unit
-    (let
-      [previous-arena : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set (compiler-load-provenance-arena)))
-        (set! macro-expand-stdlib-tlci-catalog-cache (tc_string_i64_map.new))
-        (unsafe
-          (arena.tl_arena_set previous-arena))))))
-
-(cfg
-  embedded-stdlib-tlci
-  (define (macro-expand-stdlib-tlci-catalog-cache-insert!
-    [name : String]
-    [outcome : i64]) : unit
-    (let
-      ;; Intern the key: identity strings are built in expansion scratch
-      ;; arenas, and the map stores the key by value.
-      [stable-name : String (ci.intern-str (ci.intern name))]
-      [previous-arena : i64 (arena.tl_arena_current)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set (compiler-load-provenance-arena)))
-        (tc_string_i64_map.insert-ref!
-          (&mut macro-expand-stdlib-tlci-catalog-cache)
-          stable-name
-          outcome)
-        (unsafe
-          (arena.tl_arena_set previous-arena))))))
 
 (cfg
   embedded-stdlib-tlci
   (define (macro-expand-stdlib-tlci-catalog-lookup-cached [name : String]) : CompilerEmbeddedStdlibTlciLookup
-    (match (tc_string_i64_map.get
-      (& macro-expand-stdlib-tlci-catalog-cache)
-      name)
-      [(tc_string_i64_map.LookupFound outcome)
-        (cond
-          [(= outcome 1) CompilerEmbeddedStdlibTlciLookup.Cataloged]
-          [(= outcome 0) CompilerEmbeddedStdlibTlciLookup.Missing]
-          [else
-            (CompilerEmbeddedStdlibTlciLookup.Unavailable
-              "cached embedded stdlib tlci load failure")])]
-      [(tc_string_i64_map.LookupMissing)
+    (begin
+      (cfg compile-profile (compiler-tc-stdlib-tlci-entry-resolution-start!))
+      (let
+        [lookup : CompilerEmbeddedStdlibTlciLookup
+          (compiler-embedded-stdlib-tlci-catalog-lookup name)]
         (begin
           (cfg
             compile-profile
-            (compiler-tc-stdlib-tlci-entry-resolution-start!))
-          (let
-            [lookup : CompilerEmbeddedStdlibTlciLookup
-              (compiler-embedded-stdlib-tlci-catalog-lookup name)]
-            (begin
-              (cfg
-                compile-profile
-                (compiler-tc-stdlib-tlci-entry-resolution-finish!))
-              (macro-expand-stdlib-tlci-catalog-cache-insert!
-                name
-                (match lookup
-                  [(CompilerEmbeddedStdlibTlciLookup.Cataloged) 1]
-                  [(CompilerEmbeddedStdlibTlciLookup.Missing) 0]
-                  [(CompilerEmbeddedStdlibTlciLookup.Unavailable _) -1]))
-              lookup)))])))
+            (compiler-tc-stdlib-tlci-entry-resolution-finish!))
+          lookup)))))
 
 (define (macro-note-stdlib-tlci-route
   [definition-module : String]
@@ -71952,7 +71908,13 @@
             (if (ctfe-string-prefix? macro-name "stdlib.")
               macro-name
               (str_cat.str-cat definition-module "/" macro-name)))
-            [(CompilerEmbeddedStdlibTlciLookup.Cataloged)
+            [(CompilerEmbeddedStdlibTlciLookup.Resolved _)
+              (cfg
+                compile-profile
+                (set!
+                  compiler-tc-macro-stdlib-tlci-catalog-hits
+                  (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1)))]
+            [(CompilerEmbeddedStdlibTlciLookup.Shell _)
               (cfg
                 compile-profile
                 (set!
@@ -72001,12 +71963,158 @@
 (define macro-stdlib-tlci-native-cookie : i64
   0x1cf1)
 
-;; Execute a cataloged native entry with the exact operand values the
+;; Execute a resolved native entry with the exact operand values the
 ;; interpreted binding produced: the bound CTFE environment is consulted per
-;; parameter name, so marshalling cannot diverge from interpretation. Any
-;; unavailable session keeps the counted interpreted fallback; a nonzero
-;; dispatch status surfaces as the same diagnostic contract the interpreter
-;; uses.
+;; parameter name, so marshalling cannot diverge from interpretation. A
+;; successful call that commits no result permanently marks this catalog entry
+;; as a shell for the mapping generation. Any nonzero status remains retryable
+;; and surfaces as the same diagnostic contract the interpreter uses.
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-try-stdlib-tlci-native-resolved
+    [ctx : TcContext]
+    [identity : String]
+    [resolved : TlciResolvedMacroEntry]
+    [params : AstMacroParamList]
+    [ret : AstType]
+    [env : CtfeEnv]
+    [call-expr : AstExpr]) : MacroNativeStdlibTlciResult
+    (if (not (compiler-embedded-stdlib-tlci-session-open!))
+      MacroNativeStdlibTlciResult.No
+      (let
+        [count : i64 (struct-get params len)]
+        [operands : (Array CompilerCtfeValue)
+          (array.make-array CompilerCtfeValue 8)]
+        [index : i64 0]
+        [ok : bool (<= count 8)]
+        (begin
+          (while (and ok (< index count))
+            (match (array-ref (struct-get params slots) index)
+              [(AstMacroParam.Param pname _ _ _)
+                (match (ctfe-env-lookup-id env pname)
+                  [(CtfeMaybeValue.Some value)
+                    (begin
+                      (array-set! operands index value)
+                      (set! index (+ index 1)))]
+                  [(CtfeMaybeValue.None) (set! ok false)])]))
+          (if (not ok)
+            MacroNativeStdlibTlciResult.No
+            (begin
+              (compiler-comptime-host-session-open!
+                (tc-context-pools ctx)
+                operands
+                count
+                (ctfe-fuel-limit)
+                macro-stdlib-tlci-native-cookie
+                (ctfe-env-reflections env))
+              (cfg
+                compile-profile
+                (compiler-tc-stdlib-tlci-entry-invoke-start!))
+              (let
+                [dispatch-result : ResultTlciMacroDispatch
+                  (compiler-embedded-stdlib-tlci-session-dispatch
+                    resolved
+                    macro-stdlib-tlci-native-cookie)]
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-tc-stdlib-tlci-entry-invoke-finish!))
+                  (match dispatch-result
+                    [(ResultTlciMacroDispatch.Err message)
+                      (begin
+                        (compiler-comptime-host-session-close!)
+                        (MacroNativeStdlibTlciResult.Err
+                          (ctfe-diagnostic-at-expr call-expr message)))]
+                    [(ResultTlciMacroDispatch.Ok dispatch)
+                      (let
+                        [status : i64 (struct-get dispatch status)]
+                        (cond
+                          [(and
+                              (= status 0)
+                              (compiler-comptime-host-result-ready?))
+                            (let
+                              [value : CompilerCtfeValue
+                                (compiler-comptime-host-result-value)]
+                              (begin
+                                (compiler-comptime-host-session-close!)
+                                (cfg
+                                  compile-profile
+                                  (begin
+                                    (set!
+                                      compiler-tc-macro-stdlib-tlci-catalog-hits
+                                      (+
+                                        compiler-tc-macro-stdlib-tlci-catalog-hits
+                                        1))
+                                    (set!
+                                      compiler-tc-macro-stdlib-tlci-native-dispatches
+                                      (+
+                                        compiler-tc-macro-stdlib-tlci-native-dispatches
+                                        1))
+                                    (if (tc-macro-result-module? ret)
+                                      (set!
+                                        compiler-tc-macro-stdlib-tlci-native-module-results
+                                        (+
+                                          compiler-tc-macro-stdlib-tlci-native-module-results
+                                          1))
+                                      (if (tc-macro-result-decls? ret)
+                                        (set!
+                                          compiler-tc-macro-stdlib-tlci-native-decls-results
+                                          (+
+                                            compiler-tc-macro-stdlib-tlci-native-decls-results
+                                            1))
+                                        (set!
+                                          compiler-tc-macro-stdlib-tlci-native-expr-results
+                                          (+
+                                            compiler-tc-macro-stdlib-tlci-native-expr-results
+                                            1))))))
+                                (MacroNativeStdlibTlciResult.Value value)))]
+                          [(= status 0)
+                            (match (compiler-embedded-stdlib-tlci-session-mark-shell!
+                              resolved)
+                              [(ResultTlciLoaderUnit.Ok)
+                                (begin
+                                  (compiler-comptime-host-session-close!)
+                                  (cfg
+                                    compile-profile
+                                    (set!
+                                      compiler-tc-macro-stdlib-tlci-shell-learns
+                                      (+
+                                        compiler-tc-macro-stdlib-tlci-shell-learns
+                                        1)))
+                                  MacroNativeStdlibTlciResult.No)]
+                              [(ResultTlciLoaderUnit.Err message)
+                                (begin
+                                  (compiler-comptime-host-session-close!)
+                                  (MacroNativeStdlibTlciResult.Err
+                                    (ctfe-diagnostic-at-expr call-expr message)))])]
+                          ;; A transformer that called `comptime-error` left
+                          ;; its own message in the session diagnostic slot;
+                          ;; that message is the author's, and reporting the
+                          ;; raw status instead would make a macro's own
+                          ;; rejection unreadable and route-dependent. The
+                          ;; generic status text stays for statuses with no
+                          ;; recorded message (bad request, panic). Refs #5701.
+                          [else
+                            (let
+                              [recorded : String
+                                (compiler-comptime-host-diagnostic-text)]
+                              [message : String
+                                (if (and
+                                  (=
+                                    status
+                                    tlci-host-callback-status-diagnostic)
+                                  (> (string.string-length recorded) 0))
+                                  recorded
+                                  (tlci-loader-macro-status-diagnostic
+                                    identity
+                                    status))]
+                              (begin
+                                (compiler-comptime-host-session-close!)
+                                (MacroNativeStdlibTlciResult.Err
+                                  (ctfe-diagnostic-at-expr call-expr message))))]))]))))))))))
+
+;; The provenance gate comes before identity construction and catalog access,
+;; so source stdlib macros and unrelated packages pay neither cost.
 (cfg
   embedded-stdlib-tlci
   (define (macro-try-stdlib-tlci-native
@@ -72017,141 +72125,37 @@
     [ret : AstType]
     [env : CtfeEnv]
     [call-expr : AstExpr]) : MacroNativeStdlibTlciResult
-    (let
-      [identity : String
-        (if (ctfe-string-prefix? macro-name "stdlib.")
-          macro-name
-          (str_cat.str-cat definition-module "/" macro-name))]
-      (if (or
-        (not macro-expand-stdlib-tlci-route-active)
-        (not (compiler-load-embedded-stdlib-module-id? definition-module))
-        (not
-          (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
-            [(CompilerEmbeddedStdlibTlciLookup.Cataloged) true]
-            [_ false])))
-        MacroNativeStdlibTlciResult.No
-        (if (not (compiler-embedded-stdlib-tlci-session-open!))
-          MacroNativeStdlibTlciResult.No
-          (let
-            [count : i64 (struct-get params len)]
-            [operands : (Array CompilerCtfeValue)
-              (array.make-array CompilerCtfeValue 8)]
-            [index : i64 0]
-            [ok : bool (<= count 8)]
+    (if (or
+      (not macro-expand-stdlib-tlci-route-active)
+      (not (compiler-load-embedded-stdlib-module-id? definition-module)))
+      MacroNativeStdlibTlciResult.No
+      (let
+        [identity : String
+          (if (ctfe-string-prefix? macro-name "stdlib.")
+            macro-name
+            (str_cat.str-cat definition-module "/" macro-name))]
+        (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
+          [(CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
+            (macro-try-stdlib-tlci-native-resolved
+              ctx
+              identity
+              resolved
+              params
+              ret
+              env
+              call-expr)]
+          [(CompilerEmbeddedStdlibTlciLookup.Shell _)
             (begin
-              (while (and ok (< index count))
-                (match (array-ref (struct-get params slots) index)
-                  [(AstMacroParam.Param pname _ _ _)
-                    (match (ctfe-env-lookup-id env pname)
-                      [(CtfeMaybeValue.Some value)
-                        (begin
-                          (array-set! operands index value)
-                          (set! index (+ index 1)))]
-                      [(CtfeMaybeValue.None) (set! ok false)])]))
-              (if (not ok)
-                MacroNativeStdlibTlciResult.No
-                (begin
-                  (compiler-comptime-host-session-open!
-                    (tc-context-pools ctx)
-                    operands
-                    count
-                    (ctfe-fuel-limit)
-                    macro-stdlib-tlci-native-cookie
-                    (ctfe-env-reflections env))
-                  (cfg
-                    compile-profile
-                    (compiler-tc-stdlib-tlci-entry-invoke-start!))
-                  (let
-                    [dispatch-result : ResultTlciMacroDispatch
-                      (compiler-embedded-stdlib-tlci-session-dispatch
-                        identity
-                        macro-stdlib-tlci-native-cookie)]
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-tc-stdlib-tlci-entry-invoke-finish!))
-                      (match dispatch-result
-                        [(ResultTlciMacroDispatch.Err message)
-                          (begin
-                            (compiler-comptime-host-session-close!)
-                            (MacroNativeStdlibTlciResult.Err
-                              (ctfe-diagnostic-at-expr call-expr message)))]
-                        [(ResultTlciMacroDispatch.Ok dispatch)
-                          (let
-                            [status : i64 (struct-get dispatch status)]
-                            (cond
-                              [(and
-                                  (= status 0)
-                                  (compiler-comptime-host-result-ready?))
-                                (let
-                                  [value : CompilerCtfeValue
-                                    (compiler-comptime-host-result-value)]
-                                  (begin
-                                    (compiler-comptime-host-session-close!)
-                                    (cfg
-                                      compile-profile
-                                      (begin
-                                        (set!
-                                          compiler-tc-macro-stdlib-tlci-catalog-hits
-                                          (+
-                                            compiler-tc-macro-stdlib-tlci-catalog-hits
-                                            1))
-                                        (set!
-                                          compiler-tc-macro-stdlib-tlci-native-dispatches
-                                          (+
-                                            compiler-tc-macro-stdlib-tlci-native-dispatches
-                                            1))
-                                        (if (tc-macro-result-module? ret)
-                                          (set!
-                                            compiler-tc-macro-stdlib-tlci-native-module-results
-                                            (+
-                                              compiler-tc-macro-stdlib-tlci-native-module-results
-                                              1))
-                                          (if (tc-macro-result-decls? ret)
-                                            (set!
-                                              compiler-tc-macro-stdlib-tlci-native-decls-results
-                                              (+
-                                                compiler-tc-macro-stdlib-tlci-native-decls-results
-                                                1))
-                                            (set!
-                                              compiler-tc-macro-stdlib-tlci-native-expr-results
-                                              (+
-                                                compiler-tc-macro-stdlib-tlci-native-expr-results
-                                                1))))))
-                                    (MacroNativeStdlibTlciResult.Value value)))]
-                              ;; status 0 with no committed result: a registration
-                              ;; shell -- keep the counted interpreted fallback.
-                              [(= status 0)
-                                (begin
-                                  (compiler-comptime-host-session-close!)
-                                  MacroNativeStdlibTlciResult.No)]
-                              ;; A transformer that called `comptime-error` left
-                              ;; its own message in the session diagnostic slot;
-                              ;; that message is the author's, and reporting the
-                              ;; raw status instead would make a macro's own
-                              ;; rejection unreadable and route-dependent. The
-                              ;; generic status text stays for statuses with no
-                              ;; recorded message (bad request, panic). Refs #5701.
-                              [else
-                                (let
-                                  [recorded : String
-                                    (compiler-comptime-host-diagnostic-text)]
-                                  [message : String
-                                    (if (and
-                                      (=
-                                        status
-                                        tlci-host-callback-status-diagnostic)
-                                      (> (string.string-length recorded) 0))
-                                      recorded
-                                      (tlci-loader-macro-status-diagnostic
-                                        identity
-                                        status))]
-                                  (begin
-                                    (compiler-comptime-host-session-close!)
-                                    (MacroNativeStdlibTlciResult.Err
-                                      (ctfe-diagnostic-at-expr
-                                        call-expr
-                                        message))))]))]))))))))))))
+              (cfg
+                compile-profile
+                (set!
+                  compiler-tc-macro-stdlib-tlci-shell-cache-hits
+                  (+ compiler-tc-macro-stdlib-tlci-shell-cache-hits 1)))
+              MacroNativeStdlibTlciResult.No)]
+          [(CompilerEmbeddedStdlibTlciLookup.Missing)
+            MacroNativeStdlibTlciResult.No]
+          [(CompilerEmbeddedStdlibTlciLookup.Unavailable _)
+            MacroNativeStdlibTlciResult.No])))))
 
 (cfg
   (not embedded-stdlib-tlci)
@@ -78465,11 +78469,6 @@
               load-state)
             (compiler-load-embedded-provenance-noted?)))
         false))
-    (cfg
-      embedded-stdlib-tlci
-      (if macro-expand-stdlib-tlci-route-active
-        (macro-expand-stdlib-tlci-catalog-cache-reset!)
-        unit))
     (cfg embedded-stdlib-tlci (compiler-embedded-stdlib-tlci-session-close!))
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
     (tc-stdlib-comptime-macro-surface-ok-reset!)

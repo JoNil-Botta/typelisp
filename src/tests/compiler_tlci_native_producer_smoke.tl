@@ -270,6 +270,66 @@
             (= committed 0)
             (= committed 1)))))))
 
+(define (producer-test-shell-cache?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]
+  [operand : CompilerCtfeValue]) : bool
+  (match (tlci-loader-resolve-macro-entry loaded identity)
+    [(TlciMacroEntryLookup.Resolved resolved)
+      (let
+        [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [operands : (Array CompilerCtfeValue)
+          (array.make-array CompilerCtfeValue 1)]
+        (begin
+          (array-set! operands 0 operand)
+          (compiler-comptime-host-session-open!
+            pools
+            operands
+            1
+            64
+            producer-test-cookie
+            (ctfe-reflect-info-list-empty))
+          (let
+            [first-was-shell : bool
+              (match (tlci-loader-dispatch-resolved-macro
+                loaded
+                resolved
+                producer-test-cookie
+                (array.make-array i64 0)
+                0)
+                [(ResultTlciMacroDispatch.Err _) false]
+                [(ResultTlciMacroDispatch.Ok dispatch)
+                  (and
+                    (=
+                      (struct-get dispatch status)
+                      tlci-host-callback-status-ok)
+                    (not (compiler-comptime-host-result-ready?)))])]
+            (begin
+              (compiler-comptime-host-session-close!)
+              (and
+                first-was-shell
+                (match (tlci-loader-mark-macro-entry-shell! loaded resolved)
+                  [(ResultTlciLoaderUnit.Err _) false]
+                  [(ResultTlciLoaderUnit.Ok)
+                    (and
+                      (match (tlci-loader-resolve-macro-entry loaded identity)
+                        [(TlciMacroEntryLookup.Shell _) true]
+                        [_ false])
+                      ;; Known-shell dispatch stops at indexed state and needs
+                      ;; no second compiler host session.
+                      (match (tlci-loader-dispatch-macro
+                        loaded
+                        identity
+                        producer-test-cookie
+                        (array.make-array i64 0)
+                        0)
+                        [(ResultTlciMacroDispatch.Err message)
+                          (string.eq
+                            message
+                            "tlci loader: macro entry is a known shell")]
+                        [(ResultTlciMacroDispatch.Ok _) false]))]))))))]
+    [_ false]))
+
 (define (producer-test-expr-operand [name : String]) : CompilerCtfeValue
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -2556,20 +2616,10 @@
                               (producer-test-dispatch-tuple-marked?
                                 (& loaded)
                                 "package.macros/tuplemarked")
-                              (let
-                                [fallback-operands : (Array CompilerCtfeValue)
-                                  (array.make-array CompilerCtfeValue 1)]
-                                (begin
-                                  (array-set!
-                                    fallback-operands
-                                    0
-                                    (producer-test-expr-operand "value"))
-                                  (producer-test-dispatch-with?
-                                    (& loaded)
-                                    "package.macros/unsupported"
-                                    fallback-operands
-                                    1
-                                    true))))]
+                              (producer-test-shell-cache?
+                                (& loaded)
+                                "package.macros/unsupported"
+                                (producer-test-expr-operand "value")))]
                           (match (tlci-loader-release loaded)
                             [(ResultTlciLoaderUnit.Ok) ok]
                             [(ResultTlciLoaderUnit.Err _) false]))])])))])])))

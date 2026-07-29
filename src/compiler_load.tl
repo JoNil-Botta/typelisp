@@ -5792,11 +5792,11 @@
         alias
         summary
         locals)]
-    [(AstExpr.MakeArray elem length)
+    [(AstExpr.MakeArray elem-id length)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-type-demand
           state
-          elem
+          (ty-node-get elem-id)
           alias
           summary
           locals)
@@ -5911,7 +5911,7 @@
           alias
           summary
           locals))]
-    [(AstExpr.Ann inner ty)
+    [(AstExpr.Ann inner ty-id)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
@@ -5921,11 +5921,11 @@
           locals)
         (compiler-load-session-state-lazy-type-demand
           state
-          ty
+          (ty-node-get ty-id)
           alias
           summary
           locals))]
-    [(AstExpr.Cast inner ty)
+    [(AstExpr.Cast inner ty-id)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand
           state
@@ -5935,7 +5935,7 @@
           locals)
         (compiler-load-session-state-lazy-type-demand
           state
-          ty
+          (ty-node-get ty-id)
           alias
           summary
           locals))]
@@ -6221,17 +6221,17 @@
           alias
           summary
           locals))]
-    [(AstExpr.TypeLiteral ty)
+    [(AstExpr.TypeLiteral ty-id)
       (compiler-load-session-state-lazy-type-demand
         state
-        ty
+        (ty-node-get ty-id)
         alias
         summary
         locals)]
-    [(AstExpr.Init maybe-ty)
+    [(AstExpr.Init maybe-ty-id)
       (compiler-load-session-state-lazy-maybe-type-demand
         state
-        maybe-ty
+        (ast-maybe-type-from-id maybe-ty-id)
         alias
         summary
         locals)]
@@ -6301,10 +6301,10 @@
         locals)]
     [(AstExpr.Break) (compiler-load-lazy-alias-demand-none)]
     [(AstExpr.Continue) (compiler-load-lazy-alias-demand-none)]
-    [(AstExpr.PtrNull ty)
+    [(AstExpr.PtrNull ty-id)
       (compiler-load-session-state-lazy-type-demand
         state
-        ty
+        (ty-node-get ty-id)
         alias
         summary
         locals)]
@@ -8607,31 +8607,38 @@
       0
       records-start
       records-end)
+    ;; Index cursors rather than two `ast-decl-list-step` walks in lockstep.
+    ;; Each step copied a 104 B row and wrote a 144 B result -- twice per
+    ;; declaration here -- to answer a tag question; only the `ModuleBody` arm
+    ;; reads a payload, and it reads it straight out of the backing slot. The
+    ;; walk still stops at the shorter of the two lists, which is what running
+    ;; either cursor to `Nil` did.
     (let
-      [source-cursor : AstDeclList source]
-      [dest-cursor : AstDeclList dest]
-      [done : bool false]
-      (while (not done)
-        (match (ast-decl-list-step source-cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons source-decl source-rest)
-            (match (ast-decl-list-step dest-cursor)
-              [(AstDeclListStep.Nil) (set! done true)]
-              [(AstDeclListStep.Cons dest-decl dest-rest)
-                (begin
-                  (match source-decl
-                    [(AstDecl.ModuleBody _ source-body-box)
-                      (match dest-decl
-                        [(AstDecl.ModuleBody _ dest-body-box)
-                          (compiler-load-propagate-compacted-decl-origins!
-                            (box-get source-body-box)
-                            (box-get dest-body-box)
-                            records-start
-                            records-end)]
-                        [_ unit])]
-                    [_ unit])
-                  (set! source-cursor source-rest)
-                  (set! dest-cursor dest-rest))])])))))
+      [source-count : i64 (ast-decl-list-len (& source))]
+      [dest-count : i64 (ast-decl-list-len (& dest))]
+      [count : i64
+        (if (< source-count dest-count)
+          source-count
+          dest-count)]
+      [source-slots : (Array AstDecl) (struct-get source slots)]
+      [source-offset : i64 (struct-get source offset)]
+      [dest-slots : (Array AstDecl) (struct-get dest slots)]
+      [dest-offset : i64 (struct-get dest offset)]
+      [index : i64 0]
+      (while (< index count)
+        (begin
+          (match (array-ref source-slots (+ source-offset index))
+            [(AstDecl.ModuleBody _ source-body-box)
+              (match (array-ref dest-slots (+ dest-offset index))
+                [(AstDecl.ModuleBody _ dest-body-box)
+                  (compiler-load-propagate-compacted-decl-origins!
+                    (box-get source-body-box)
+                    (box-get dest-body-box)
+                    records-start
+                    records-end)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1)))))))
 
 (define (compiler-load-propagate-compacted-program-origins!
   [source : AstProgram]

@@ -312,8 +312,8 @@
         (doc-ast-expr-source type-segment-bases callee)
         (doc-ast-expr-list-source type-segment-bases args)
         ")")]
-    [(AstExpr.TypeLiteral ty)
-      (doc-cat3 "(type " (doc-ast-type-source type-segment-bases ty) ")")]
+    [(AstExpr.TypeLiteral ty-id)
+      (doc-cat3 "(type " (doc-ast-type-id-source type-segment-bases ty-id) ")")]
     [(AstExpr.Ann inner _) (doc-ast-expr-source type-segment-bases inner)]
     [(AstExpr.Spanned inner _) (doc-ast-expr-source type-segment-bases inner)]
     [_ "..."]))

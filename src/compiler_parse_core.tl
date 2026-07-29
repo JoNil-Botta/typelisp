@@ -5752,7 +5752,8 @@
                 (ResultAstExpr.Ok
                   (ast-node-pool-context-expr-push
                     pools
-                    (AstExpr.TypeLiteral parsed-ty))))]
+                    (AstExpr.TypeLiteral
+                      (ast-node-pool-context-type-push pools parsed-ty)))))]
             [(ResultAstType.Err message) (ResultAstExpr.Err message)])]
         [_ (ResultAstExpr.Err "parse: type expects exactly one type")])]
     [_ (ResultAstExpr.Err "parse: type expects exactly one type")]))
@@ -6311,7 +6312,8 @@
                     (ResultAstExpr.Ok
                       (ast-node-pool-context-expr-push
                         pools
-                        (AstExpr.PtrNull parsed-ty)))]
+                        (AstExpr.PtrNull
+                          (ast-node-pool-context-type-push pools parsed-ty))))]
                   [(ResultAstType.Err message) (ResultAstExpr.Err message)])
                 (ResultAstExpr.Err "parse: expected ':' in ptr-null"))]
             [_
@@ -11723,8 +11725,8 @@
             (and
               (ast-decl-list-empty? (& done))
               (match (ast-expr-unspan (ast-node-get body-box))
-                [(AstExpr.Init ty)
-                  (match ty
+                [(AstExpr.Init ty-id)
+                  (match (ast-maybe-type-from-id ty-id)
                     [(AstMaybeType.Some inner)
                       (match inner
                         [(AstType.I64) true]
@@ -11749,8 +11751,8 @@
                 (and
                   (ast-decl-list-empty? (& done))
                   (match (ast-expr-unspan (ast-node-get body-box))
-                    [(AstExpr.Init ty)
-                      (match ty
+                    [(AstExpr.Init ty-id)
+                      (match (ast-maybe-type-from-id ty-id)
                         [(AstMaybeType.No) true]
                         [_ false])]
                     [_ false])))]
@@ -11852,7 +11854,7 @@
                           (match (ast-expr-unspan first)
                             [(AstExpr.Borrow
                                 _
-                                AstBorrowLifetime.Inferred
+                                first-lifetime-id
                                 first-place-box)
                               (let
                                 [first-place : AstExpr
@@ -11865,7 +11867,7 @@
                                       (match (ast-expr-unspan second)
                                         [(AstExpr.Borrow
                                             _
-                                            (AstBorrowLifetime.Named lifetime)
+                                            lifetime
                                             second-place-box)
                                           (let
                                             [second-place : AstExpr
@@ -11874,6 +11876,7 @@
                                               second-place)
                                               [(AstExpr.Var second-name)
                                                 (and
+                                                  (= first-lifetime-id -1)
                                                   (=
                                                     lifetime
                                                     cbi.compiler-builtin-id-fix-x)

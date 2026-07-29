@@ -2349,8 +2349,8 @@
       (lint-expr-list-uses-import? exprs alias module-name)]
     [(AstExpr.DynArray exprs)
       (lint-expr-list-uses-import? exprs alias module-name)]
-    [(AstExpr.MakeArray elem len)
-      (if (lint-type-uses-import? elem alias module-name)
+    [(AstExpr.MakeArray elem-id len)
+      (if (lint-type-uses-import? (ty-node-get elem-id) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get len) alias module-name))]
     [(AstExpr.ArrayRef array index)
@@ -2395,14 +2395,14 @@
       (if (lint-name-id-uses-import? target alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get value) alias module-name))]
-    [(AstExpr.Ann inner ty)
+    [(AstExpr.Ann inner ty-id)
       (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
         true
-        (lint-type-uses-import? ty alias module-name))]
-    [(AstExpr.Cast inner ty)
+        (lint-type-uses-import? (ty-node-get ty-id) alias module-name))]
+    [(AstExpr.Cast inner ty-id)
       (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
         true
-        (lint-type-uses-import? ty alias module-name))]
+        (lint-type-uses-import? (ty-node-get ty-id) alias module-name))]
     [(AstExpr.Borrow _ _ place)
       (lint-expr-uses-import? (ast-node-get place) alias module-name)]
     [(AstExpr.Match match-box)
@@ -2493,9 +2493,13 @@
       (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get value) alias module-name))]
-    [(AstExpr.TypeLiteral ty) (lint-type-uses-import? ty alias module-name)]
-    [(AstExpr.Init maybe-ty)
-      (lint-maybe-type-uses-import? maybe-ty alias module-name)]
+    [(AstExpr.TypeLiteral ty-id)
+      (lint-type-uses-import? (ty-node-get ty-id) alias module-name)]
+    [(AstExpr.Init maybe-ty-id)
+      (lint-maybe-type-uses-import?
+        (ast-maybe-type-from-id maybe-ty-id)
+        alias
+        module-name)]
     [(AstExpr.Comptime inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
     [(AstExpr.Quote inner)
@@ -2514,7 +2518,8 @@
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
     [(AstExpr.Break) false]
     [(AstExpr.Continue) false]
-    [(AstExpr.PtrNull ty) (lint-type-uses-import? ty alias module-name)]
+    [(AstExpr.PtrNull ty-id)
+      (lint-type-uses-import? (ty-node-get ty-id) alias module-name)]
     [(AstExpr.PtrNullCheck inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
     [(AstExpr.PtrAddrOf place)
@@ -2537,22 +2542,22 @@
         (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get offset) alias module-name)))]
-    [(AstExpr.PtrCast ptr ty)
+    [(AstExpr.PtrCast ptr ty-id)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
           true
-          (lint-type-uses-import? ty alias module-name)))]
+          (lint-type-uses-import? (ty-node-get ty-id) alias module-name)))]
     [(AstExpr.PtrToInt ptr)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get ptr) alias module-name))]
-    [(AstExpr.IntToPtr value ty)
+    [(AstExpr.IntToPtr value ty-id)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
           true
-          (lint-type-uses-import? ty alias module-name)))]
+          (lint-type-uses-import? (ty-node-get ty-id) alias module-name)))]
     [(AstExpr.StringData inner)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
@@ -4328,21 +4333,21 @@
   (match expr
     [(AstExpr.Spanned inner _)
       (lint-copy-on-update-init-type-name state (ast-node-get inner))]
-    [(AstExpr.Ann inner ty)
+    [(AstExpr.Ann inner ty-id)
       (let
         [annotated : String
           (lint-copy-on-update-struct-name-from-type
             (struct-get state shapes)
-            ty)]
+            (ty-node-get ty-id))]
         (if (string.eq annotated "")
           (lint-copy-on-update-init-type-name state (ast-node-get inner))
           annotated))]
-    [(AstExpr.Cast inner ty)
+    [(AstExpr.Cast inner ty-id)
       (let
         [casted : String
           (lint-copy-on-update-struct-name-from-type
             (struct-get state shapes)
-            ty)]
+            (ty-node-get ty-id))]
         (if (string.eq casted "")
           (lint-copy-on-update-init-type-name state (ast-node-get inner))
           casted))]
@@ -9969,10 +9974,10 @@
       (lint-unused-variable-expr (ast-node-get tuple) state span)]
     [(AstExpr.Array exprs) (lint-unused-variable-expr-list exprs state)]
     [(AstExpr.DynArray exprs) (lint-unused-variable-expr-list exprs state)]
-    [(AstExpr.MakeArray ty len)
+    [(AstExpr.MakeArray ty-id len)
       (lint-unused-variable-expr
         (ast-node-get len)
-        (lint-unused-variable-type ty state)
+        (lint-unused-variable-type (ty-node-get ty-id) state)
         span)]
     [(AstExpr.ArrayRef array index)
       (lint-unused-variable-expr
@@ -10020,20 +10025,22 @@
           (lint-unused-variable-expr-list exprs state)))]
     [(AstExpr.Set _ value)
       (lint-unused-variable-expr (ast-node-get value) state span)]
-    [(AstExpr.Ann inner ty)
+    [(AstExpr.Ann inner ty-id)
       (lint-unused-variable-type
-        ty
+        (ty-node-get ty-id)
         (lint-unused-variable-expr (ast-node-get inner) state span))]
-    [(AstExpr.Cast inner ty)
+    [(AstExpr.Cast inner ty-id)
       (begin
         (lint-unused-unsafe-block-mark-unknown!)
         (lint-unused-variable-type
-          ty
+          (ty-node-get ty-id)
           (lint-unused-variable-expr (ast-node-get inner) state span)))]
-    [(AstExpr.Borrow _ lifetime place)
+    [(AstExpr.Borrow _ lifetime-id place)
       (lint-unused-variable-expr
         (ast-node-get place)
-        (lint-unused-variable-borrow-lifetime lifetime state)
+        (lint-unused-variable-borrow-lifetime
+          (ast-borrow-lifetime-from-id lifetime-id)
+          state)
         span)]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
@@ -10208,8 +10215,12 @@
         (ast-node-get value)
         (lint-unused-variable-expr (ast-node-get inner) state span)
         span)]
-    [(AstExpr.TypeLiteral ty) (lint-unused-variable-type ty state)]
-    [(AstExpr.Init maybe-ty) (lint-unused-variable-maybe-type maybe-ty state)]
+    [(AstExpr.TypeLiteral ty-id)
+      (lint-unused-variable-type (ty-node-get ty-id) state)]
+    [(AstExpr.Init maybe-ty-id)
+      (lint-unused-variable-maybe-type
+        (ast-maybe-type-from-id maybe-ty-id)
+        state)]
     [(AstExpr.Comptime inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExpr.Quote _) state]
@@ -10226,7 +10237,8 @@
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExpr.Break) state]
     [(AstExpr.Continue) state]
-    [(AstExpr.PtrNull ty) (lint-unused-variable-type ty state)]
+    [(AstExpr.PtrNull ty-id)
+      (lint-unused-variable-type (ty-node-get ty-id) state)]
     [(AstExpr.PtrNullCheck inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExpr.PtrAddrOf place)
@@ -10243,15 +10255,15 @@
         (ast-node-get offset)
         (lint-unused-variable-expr (ast-node-get ptr) state span)
         span)]
-    [(AstExpr.PtrCast ptr ty)
+    [(AstExpr.PtrCast ptr ty-id)
       (lint-unused-variable-type
-        ty
+        (ty-node-get ty-id)
         (lint-unused-variable-expr (ast-node-get ptr) state span))]
     [(AstExpr.PtrToInt ptr)
       (lint-unused-variable-expr (ast-node-get ptr) state span)]
-    [(AstExpr.IntToPtr value ty)
+    [(AstExpr.IntToPtr value ty-id)
       (lint-unused-variable-type
-        ty
+        (ty-node-get ty-id)
         (lint-unused-variable-expr (ast-node-get value) state span))]
     [(AstExpr.StringData inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]

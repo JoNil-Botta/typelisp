@@ -447,22 +447,30 @@
 ;; Outside that harness, stdlib.test assertion failures retain their historical
 ;; abort behavior. Hard faults and explicit panic calls never route through this
 ;; state and therefore still terminate the harness.
+;: Whether the current process is running a generated `typelisp test` suite.
 (define runtime-test-suite-active : bool
   false)
+
+;: Whether an assertion has failed in the current generated test case.
 (define runtime-test-case-failed : bool
   false)
+
+;: Number of failed cases recorded by the current generated test suite.
 (define runtime-test-failed-count : i64
   0)
 
+;: Reset process-local reporting state before a generated test suite runs.
 (define (runtime-test-suite-begin!) : unit
   (begin
     (set! runtime-test-suite-active true)
     (set! runtime-test-case-failed false)
     (set! runtime-test-failed-count 0)))
 
+;: Reset the failure marker before a generated test case runs.
 (define (runtime-test-case-begin!) : unit
   (set! runtime-test-case-failed false))
 
+;: Record an assertion diagnostic, or abort outside a generated test suite.
 (define (runtime-test-assertion-failure! [message : String]) : unit
   (if runtime-test-suite-active
     (begin
@@ -474,6 +482,7 @@
       (abort-write message)
       (os-exit 134))))
 
+;: Finish the current case and return whether any assertion failed.
 (define (runtime-test-case-finish!) : bool
   (begin
     (if runtime-test-case-failed
@@ -481,6 +490,7 @@
       unit)
     runtime-test-case-failed))
 
+;: Print the suite summary and return zero on success or one on test failures.
 (define (runtime-test-suite-finish [total : i64]) : i64
   (let
     [passed : i64 (- total runtime-test-failed-count)]

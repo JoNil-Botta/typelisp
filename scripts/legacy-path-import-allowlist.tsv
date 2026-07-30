@@ -90,7 +90,7 @@ src/tests/compiler_tlci_native_producer_smoke.tl	3
 src/tests/compiler_typecheck_reflection_smoke.tl	1
 src/tests/compiler_typecheck_reverse_mixed_smoke.tl	1
 src/tests/compiler_typecheck_smoke.tl	1
-src/tests/comptime_host_smoke.tl	5
+src/tests/comptime_host_smoke.tl	4
 src/tests/doc_expand_smoke.tl	1
 src/tests/doc_test_smoke.tl	1
 src/tests/lint_driver_smoke.tl	1

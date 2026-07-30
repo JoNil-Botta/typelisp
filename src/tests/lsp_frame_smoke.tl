@@ -435,19 +435,14 @@
     [path : String "/tmp/cache.tl"]
     [docs0 : lsp_document_vec.Vec (lsp_document_vec.new)]
     [docs1 : lsp_document_vec.Vec
-      (lsp-documents-set docs0 uri path "" (lsp-diagnostic-uri-list-single uri))]
+      (lsp-documents-set docs0 uri path "" (lsp-diagnostic-uris-single uri))]
     [doc1 : LspDocument
       (lsp_document_vec.get (& docs1) 0 (lsp-document-fallback))]
     [empty-decls : lsp_decl_vec.Vec (lsp-document-decls doc1 docs1)]
     [cached-empty-doc : LspDocument
       (lsp_document_vec.get (& docs1) 0 (lsp-document-fallback))]
     [docs2 : lsp_document_vec.Vec
-      (lsp-documents-set
-        docs1
-        uri
-        path
-        ""
-        (lsp-diagnostic-uri-list-single "diag"))]
+      (lsp-documents-set docs1 uri path "" (lsp-diagnostic-uris-single "diag"))]
     [same-text-doc : LspDocument
       (lsp_document_vec.get (& docs2) 0 (lsp-document-fallback))]
     [docs3 : lsp_document_vec.Vec
@@ -456,7 +451,7 @@
         uri
         path
         "(define cached : i64 1)"
-        (lsp-diagnostic-uri-list-single "diag"))]
+        (lsp-diagnostic-uris-single "diag"))]
     [changed-doc : LspDocument
       (lsp_document_vec.get (& docs3) 0 (lsp-document-fallback))]
     [changed-decls : lsp_decl_vec.Vec (lsp-document-decls changed-doc docs3)]
@@ -496,7 +491,7 @@
           uri
           path
           stale-text
-          (lsp-diagnostic-uri-list-single uri)))
+          (lsp-diagnostic-uris-single uri)))
       (let
         [lookup-ok : bool
           (match (lsp-get-document params docs)
@@ -541,7 +536,7 @@
         uri
         path
         initial
-        (lsp-diagnostic-uri-list-single uri))]
+        (lsp-diagnostic-uris-single uri))]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
@@ -550,7 +545,7 @@
         docs
         uri
         path
-        (lsp-diagnostic-uri-list-single uri)
+        (lsp-diagnostic-uris-single uri)
         updated)
         [(LspSaveResult.Ok next-docs)
           (let
@@ -956,7 +951,7 @@
           path-a
           "λfoo\nx"
           7
-          LspDiagnosticUriList.Nil))
+          (lsp-diagnostic-uris-empty)))
       (set!
         docs
         (lsp-documents-set-versioned
@@ -965,7 +960,7 @@
           path-b
           "q"
           9
-          LspDiagnosticUriList.Nil))
+          (lsp-diagnostic-uris-empty)))
       (let
         [rendered : String
           (json.stringify (lsp-code-action-workspace-edit docs path-a edits))]
@@ -981,7 +976,7 @@
             uri-a
             path-a
             "λfoo\nx"
-            LspDiagnosticUriList.Nil)]
+            (lsp-diagnostic-uris-empty))]
         (and
           (lsp-code-action-all-edits-open? docs path-a edits)
           (not (lsp-code-action-all-edits-open? docs path-a missing-edits))

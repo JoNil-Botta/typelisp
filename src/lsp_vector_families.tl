@@ -21,9 +21,12 @@
   (LspCheckCacheOk)
   (LspCheckCacheErr String))
 
-(defenum LspDiagnosticUriList
-  (Nil)
-  (Cons String (Box LspDiagnosticUriList)))
+;; Ordered URI set used by diagnostic publication. `len` is a persistent
+;; snapshot boundary: later appends may share spare slots, while growth copies
+;; into a larger buffer and leaves older snapshots intact.
+(defstruct LspDiagnosticUris
+  (slots (Array String))
+  (len i64))
 
 (defstruct LspDocument
   (uri String)
@@ -33,7 +36,7 @@
   ;; source did not arrive from a versioned open/change notification and must
   ;; not be the target of a versioned WorkspaceEdit.
   (version i64)
-  (diagnostic-uris LspDiagnosticUriList)
+  (diagnostic-uris LspDiagnosticUris)
   (decls lsp_decl_vec.Vec)
   (decls-valid bool)
   (check-cache LspCheckCache))

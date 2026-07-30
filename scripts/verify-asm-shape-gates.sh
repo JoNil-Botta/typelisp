@@ -589,6 +589,27 @@ check_stdlib_math_sqrt() {
     done
 }
 
+check_inline_alloc_unique_labels_link() {
+    _name=inline_alloc_unique_labels
+    _binary="$WORKDIR/$_name"
+    _stdout="$WORKDIR/$_name.build.stdout"
+    _stderr="$WORKDIR/$_name.build.stderr"
+    echo "[asm-shape] standalone opt2 link $_name" >&2
+    if ! "$COMPILER" build "$ROOT/src/compiler_backend_tests.tl" \
+        --target linux-x86_64 \
+        --opt-level 2 \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/src" \
+        -o "$_binary" > "$_stdout" 2> "$_stderr"; then
+        echo "build stdout:" >&2
+        sed 's/^/  /' "$_stdout" >&2 || true
+        echo "build stderr:" >&2
+        sed 's/^/  /' "$_stderr" >&2 || true
+        fail "$_name standalone build failed"
+    fi
+    [ -x "$_binary" ] || fail "$_name standalone build produced no executable"
+}
+
 check_divmagic_hoist
 check_hoist_priority
 check_lftr_counter_retire
@@ -617,5 +638,6 @@ check_param_pin_interval
 check_frame_slot_repacking
 check_gep_value_direct
 check_stdlib_math_sqrt
+check_inline_alloc_unique_labels_link
 
 echo "Assembly shape gates passed."

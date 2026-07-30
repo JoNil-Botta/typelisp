@@ -186,7 +186,7 @@
     [_ 0]))
 
 (define (opt-count-arith-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -230,7 +230,7 @@
         (opt-count-xgetbv-instrs (box-get rest)))]))
 
 (define (opt-count-cpuid-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -250,7 +250,7 @@
     0))
 
 (define (opt-count-xgetbv-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -378,7 +378,7 @@
         (opt-count-mov-i64-value (box-get rest) needle))]))
 
 (define (opt-count-mov-i64-value-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [needle : i64]
@@ -464,7 +464,7 @@
         [_ (opt-mov-dst-i64-value (box-get rest) dst fallback)])]))
 
 (define (opt-mov-dst-i64-value-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -2029,7 +2029,7 @@
         (opt-count-load-dst-instrs (box-get rest) dst))]))
 
 (define (opt-count-load-dst-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -2177,7 +2177,7 @@
         (opt-count-cast-instrs (box-get rest)))]))
 
 (define (opt-count-cast-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -3311,7 +3311,7 @@
   (let
     [block : CompilerIrBlock
       (compiler-ir-block (compiler-ir-label "entry") instrs)]
-    [used : (Array i64)
+    [used : (__tl_dyn-array i64)
       (opt-collect-blocks-uses-array
         64
         (compiler-ir-block-cons block CompilerIrBlockList.Nil))]
@@ -3703,7 +3703,7 @@
         (ast-node-pool-reader-type-segment-bases)
         params
         blocks)]
-    [used : (Array i64) (opt-collect-blocks-uses-array frame safe)]
+    [used : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame safe)]
     (opt-dce-block-list-array used safe)))
 
 (define (compiler-optimize-divrem-safety-self-test) : i64
@@ -4657,7 +4657,7 @@
     [_ 0]))
 
 (define (opt-count-word-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -4694,7 +4694,7 @@
     [_ 0]))
 
 (define (opt-count-pack-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -5565,7 +5565,7 @@
     [remat-cap : CompilerIrBlockList (opt-function-blocks remat-cap-function)]
     [induction-input : CompilerIrBlockList
       (opt-successor-sink-induction-remat-blocks)]
-    [induction-cell : (Array i64) (opt-used-array-new 1)]
+    [induction-cell : (__tl_dyn-array i64) (opt-used-array-new 1)]
     [_induction-cell-init : unit (array-set! induction-cell 0 16)]
     [induction-direct : CompilerIrBlockList
       (opt-successor-sink-blocks
@@ -5792,7 +5792,7 @@
         [_ (opt-copy-binop-lhs-var (box-get rest) dst)])]))
 
 (define (opt-copy-binop-lhs-var-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]) : i64
@@ -8290,7 +8290,7 @@
 
 (define (opt-scc-component-size [result : OptSccResult] [scc-id : i64]) : i64
   (let
-    [scc-of : (Array i64) (struct-get result scc-of)]
+    [scc-of : (__tl_dyn-array i64) (struct-get result scc-of)]
     [count : i64 (array-length scc-of)]
     [slot : i64 0]
     [size : i64 0]
@@ -8305,7 +8305,7 @@
 
 (define (opt-scc-order-position [result : OptSccResult] [scc-id : i64]) : i64
   (let
-    [order : (Array i64) (struct-get result order)]
+    [order : (__tl_dyn-array i64) (struct-get result order)]
     [count : i64 (array-length order)]
     [index : i64 0]
     [position : i64 (- 0 1)]
@@ -8389,7 +8389,7 @@
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     [result : OptSccResult (opt-scc-compute graph)]
-    [order : (Array i64) (struct-get result order)]
+    [order : (__tl_dyn-array i64) (struct-get result order)]
     [main-scc : i64
       (opt-scc-result-component
         result
@@ -9495,7 +9495,7 @@
         (opt-count-direct-call-name (box-get rest) name))]))
 
 (define (opt-count-direct-call-name-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [name : String]
@@ -10576,7 +10576,8 @@
 
 (define (opt-inline-switch-caller-call-named [callee-name : i64]) : CompilerIrInstr
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 3)]
     (begin
       ;; Swap the first two arguments so the Switch scrutinee and BoundsCheck
       ;; index must both be remapped rather than retaining their callee ids.
@@ -11731,7 +11732,7 @@
       (opt-block-list-label-at? (compiler-ir-block-seq-to-list seq) index label)]))
 
 (define (opt-count-branches-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11767,7 +11768,7 @@
       (opt-count-branches-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-jump-to-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [target : i64]
@@ -11811,7 +11812,7 @@
       (opt-count-jump-to-blocks (compiler-ir-block-seq-to-list seq) target)]))
 
 (define (opt-count-tail-call-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11928,7 +11929,7 @@
       [else 42])))
 
 (define (opt-count-phi-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -11977,7 +11978,7 @@
         (opt-count-mov-dst-instrs (box-get rest) dst))]))
 
 (define (opt-count-mov-dst-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -12045,7 +12046,7 @@
       (opt-count-arith-label-blocks (compiler-ir-block-seq-to-list seq) label)]))
 
 (define (opt-count-mul-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -12118,7 +12119,7 @@
       (opt-count-cast-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-count-gep-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -12178,7 +12179,7 @@
         (opt-count-load-instrs (box-get rest)))]))
 
 (define (opt-count-load-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [acc : i64]) : i64
@@ -12279,7 +12280,7 @@
         [_ (opt-mov-src-var (box-get rest) dst fallback)])]))
 
 (define (opt-mov-src-var-instr-seq-from
-  [slots : (Array CompilerIrInstr)]
+  [slots : (__tl_dyn-array CompilerIrInstr)]
   [index : i64]
   [count : i64]
   [dst : i64]
@@ -12873,7 +12874,7 @@
         (CompilerIrValue.Var 1)
         (CompilerIrValue.Var 2)
         (AstType.I64))]
-    [buckets : (Array OptGlobalExprFacts)
+    [buckets : (__tl_dyn-array OptGlobalExprFacts)
       (array.make-array OptGlobalExprFacts 1)]
     [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
     [doms : OptDomInfo
@@ -12929,7 +12930,7 @@
         (CompilerIrValue.Var 1)
         (CompilerIrValue.Var 2)
         (AstType.I64))]
-    [buckets : (Array OptGvnBucket) (array.make-array OptGvnBucket 1)]
+    [buckets : (__tl_dyn-array OptGvnBucket) (array.make-array OptGvnBucket 1)]
     [table : OptGvnMap (OptGvnMap buckets)]
     (begin
       (array-set! buckets 0 (OptGvnBucket.Nil))
@@ -13051,7 +13052,7 @@
           (AstType.I64)
           (opt-global-pack-word-blocks)))]
     [blocks : CompilerIrBlockList (opt-function-blocks forwarded)]
-    [uses : (Array i64) (opt-collect-blocks-uses-array 16 blocks)]
+    [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array 16 blocks)]
     (opt-dce-block-list-array uses blocks)))
 
 (define (compiler-optimize-global-value-number-self-test) : i64
@@ -21415,7 +21416,8 @@
 
 (define (opt-merged-loop-test-callee-args) : CompilerIrCallArgs
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 3)]
     (begin
       (array-set! args 0 (CompilerIrValue.Var 0))
       (array-set! args 1 (CompilerIrValue.Var 1))
@@ -21424,7 +21426,8 @@
 
 (define (opt-merged-loop-test-tail-args [rounds : i64]) : CompilerIrCallArgs
   (let
-    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+    [args : (__tl_dyn-array CompilerIrValue)
+      (array.make-array CompilerIrValue 4)]
     (begin
       ;; The first three arguments are unchanged. Tail-recursion conversion
       ;; must not materialize identity writes for them.

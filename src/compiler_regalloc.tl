@@ -82,22 +82,13 @@
   (No)
   (Some CompilerRegInterval))
 
-(defstruct CompilerRegVarType
-  (var i64)
-  (ty AstType))
-
-;; The per-function var-type view is a pair of var-id-indexed arrays. The `Array`
-;; arm below lets it BE a var-type list, so the whole-function view costs one
-;; struct rather than one cons cell per live variable, and every lookup through
-;; it is an index rather than a walk of the ascending-id list.
+;; The per-function var-type view is a pair of var-id-indexed arrays. IR
+;; variable IDs are a dense monotonic domain bounded by the function's `vars`
+;; watermark. `present` distinguishes real definitions from holes in that
+;; domain; `items` carries the exact type for each present ID.
 (defstruct CompilerRegVarTypes
   (present (Array i64))
   (items (Array AstType)))
-
-(defenum CompilerRegVarTypeList
-  (Nil)
-  (Cons CompilerRegVarType (Box CompilerRegVarTypeList))
-  (Array CompilerRegVarTypes))
 
 (defenum CompilerRegMaybeType
   (No)
@@ -355,7 +346,7 @@
     CompilerRegAssignmentList
     CompilerLiveI64Set
     CompilerRegIntervalSeq
-    CompilerRegVarTypeList
+    CompilerRegVarTypes
     CompilerRegCallSplit
     CompilerRegSplitPlan))
 
@@ -371,7 +362,7 @@
     i64
     i64
     CompilerRegAssignmentList
-    CompilerRegVarTypeList))
+    CompilerRegVarTypes))
 
 ;; Per-instruction rewrite state for rematerialization. The rewritten
 ;; instructions themselves are not carried here: they are pushed straight into
@@ -379,7 +370,7 @@
 ;; walk, so the payload is only the scalars and lists that thread forward
 ;; (emit point, next var id, and the extra assignment/type lists remat grows).
 (defenum CompilerRegCallSaveInstrRewrite
-  (Rewrite i64 i64 CompilerRegAssignmentList CompilerRegVarTypeList))
+  (Rewrite i64 i64 CompilerRegAssignmentList CompilerRegVarTypes))
 
 ;; Conservative cold-call clobber splitting happens before scalar allocation.
 ;; `temp-start` is the first synthetic stack-home used to carry a protected GP
@@ -551,11 +542,6 @@
   [head : CompilerRegAssignment]
   [rest : CompilerRegAssignmentList]) : CompilerRegAssignmentList
   (CompilerRegAssignmentList.Cons head (box rest)))
-
-(define (compiler-reg-var-type-cons
-  [head : CompilerRegVarType]
-  [rest : CompilerRegVarTypeList]) : CompilerRegVarTypeList
-  (CompilerRegVarTypeList.Cons head (box rest)))
 
 ;; Capacity for a seq that must hold `len + 1` elements; the caller copies the
 ;; live prefix into a fresh array of this size when the current one is full.
@@ -1181,50 +1167,8 @@
     true
     (compiler-reg-handle-type? ty)))
 
-(define (compiler-reg-var-type-insert
-  [types : CompilerRegVarTypeList]
-  [var : i64]
-  [ty : AstType]) : CompilerRegVarTypeList
-  (match types
-    [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-var-type-insert
-        (compiler-reg-var-type-seq-to-list seq)
-        var
-        ty)]
-    [(CompilerRegVarTypeList.Nil)
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType var ty)
-        CompilerRegVarTypeList.Nil)]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (let
-        [id : i64 (struct-get item var)]
-        (if (= id var)
-          (compiler-reg-var-type-cons
-            (CompilerRegVarType var ty)
-            (box-get rest))
-          (if (> id var)
-            (compiler-reg-var-type-cons (CompilerRegVarType var ty) types)
-            (compiler-reg-var-type-cons
-              item
-              (compiler-reg-var-type-insert (box-get rest) var ty)))))]))
-
-(define (compiler-reg-var-type-lookup
-  [types : CompilerRegVarTypeList]
-  [var : i64]) : CompilerRegMaybeType
-  (match types
-    [(CompilerRegVarTypeList.Array seq) (compiler-reg-var-types-lookup seq var)]
-    [(CompilerRegVarTypeList.Nil) CompilerRegMaybeType.No]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (let
-        [id : i64 (struct-get item var)]
-        (if (= id var)
-          (CompilerRegMaybeType.Some (struct-get item ty))
-          (if (> id var)
-            CompilerRegMaybeType.No
-            (compiler-reg-var-type-lookup (box-get rest) var))))]))
-
-(define (compiler-reg-var-types-list [types : CompilerRegVarTypes]) : CompilerRegVarTypeList
-  (CompilerRegVarTypeList.Array types))
+(define (compiler-reg-var-types-empty) : CompilerRegVarTypes
+  (CompilerRegVarTypes (array.make-array i64 0) (array.make-array AstType 0)))
 
 (define (compiler-reg-var-types-lookup
   [types : CompilerRegVarTypes]
@@ -1237,6 +1181,48 @@
       (if (= (array-ref present var) 0)
         CompilerRegMaybeType.No
         (CompilerRegMaybeType.Some (array-ref items var))))))
+
+;; Dense builder update. Callers use this only for uniquely owned fixture or
+;; rewrite accumulators; published plans are combined by
+;; compiler-reg-var-types-merge, which copies its inputs. Synthetic IDs are
+;; minted monotonically from the function watermark, so geometric growth makes
+;; a run of new IDs amortized linear while `present` keeps spare slots absent.
+(define (compiler-reg-var-types-insert
+  [types : CompilerRegVarTypes]
+  [var : i64]
+  [ty : AstType]) : CompilerRegVarTypes
+  (if (< var 0)
+    types
+    (let
+      [old-present : (Array i64) (struct-get types present)]
+      [old-items : (Array AstType) (struct-get types items)]
+      [old-len : i64 (array-length old-present)]
+      (if (< var old-len)
+        (begin
+          (array-set! old-present var 1)
+          (array-set! old-items var ty)
+          types)
+        (let
+          [grown : i64
+            (if (< old-len 4)
+              4
+              (* old-len 2))]
+          [new-len : i64
+            (if (> (+ var 1) grown)
+              (+ var 1)
+              grown)]
+          [present : (Array i64) (array.make-array i64 new-len)]
+          [items : (Array AstType) (array.make-array AstType new-len)]
+          [index : i64 0]
+          (begin
+            (while (< index old-len)
+              (begin
+                (array-set! present index (array-ref old-present index))
+                (array-set! items index (array-ref old-items index))
+                (set! index (+ index 1))))
+            (array-set! present var 1)
+            (array-set! items var ty)
+            (CompilerRegVarTypes present items)))))))
 
 (define (compiler-reg-addr-of-result-type) : AstType
   (ast-ty-mut-ptr (AstType.U8)))
@@ -1364,32 +1350,6 @@
               [(CompilerIrBlock.Block _ instrs)
                 (compiler-reg-instr-seq-types-array! instrs present types)])
             (set! i (+ i 1)))))]))
-
-(define (compiler-reg-var-type-arrays-to-list
-  [present : (Array i64)]
-  [types : (Array AstType)]
-  [index : i64]
-  [acc : CompilerRegVarTypeList]) : CompilerRegVarTypeList
-  (if (< index 0)
-    acc
-    (compiler-reg-var-type-arrays-to-list
-      present
-      types
-      (- index 1)
-      (if (= (array-ref present index) 0)
-        acc
-        (compiler-reg-var-type-cons
-          (CompilerRegVarType index (array-ref types index))
-          acc)))))
-
-;; Materialize the ascending-id cons form of an array view, for the arms that
-;; still walk entries rather than index them.
-(define (compiler-reg-var-type-seq-to-list [types : CompilerRegVarTypes]) : CompilerRegVarTypeList
-  (compiler-reg-var-type-arrays-to-list
-    (struct-get types present)
-    (struct-get types items)
-    (- (array-length (struct-get types present)) 1)
-    CompilerRegVarTypeList.Nil))
 
 (define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypes
   (match func
@@ -4024,25 +3984,26 @@
 ;; When handles-ok? is true (scalar path) 8-byte aggregate handles are register
 ;; eligible; when false (SIMD/AVX path, unchanged) only CPU scalars/pointers are.
 (define (compiler-reg-ineligible-non-scalars
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [set : CompilerLiveI64Set]
   [handles-ok? : bool]) : CompilerLiveI64Set
-  (match types
-    [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-ineligible-non-scalars
-        (compiler-reg-var-type-seq-to-list seq)
-        set
-        handles-ok?)]
-    [(CompilerRegVarTypeList.Nil) set]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (compiler-reg-ineligible-non-scalars
-        (box-get rest)
-        (if (if handles-ok?
-          (compiler-reg-register-eligible-type? (struct-get item ty))
-          (compiler-reg-scalar-type? (struct-get item ty)))
-          set
-          (compiler-live-set-insert set (struct-get item var)))
-        handles-ok?)]))
+  (let
+    [present : (Array i64) (struct-get types present)]
+    [items : (Array AstType) (struct-get types items)]
+    [index : i64 0]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index (array-length present))
+        (begin
+          (if (or
+            (= (array-ref present index) 0)
+            (if handles-ok?
+              (compiler-reg-register-eligible-type? (array-ref items index))
+              (compiler-reg-scalar-type? (array-ref items index))))
+            unit
+            (set! out (compiler-live-set-insert out index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-reg-ineligible-params
   [params : CompilerIrParamList]
@@ -4774,10 +4735,10 @@
 (define (compiler-reg-call-arg-gp-class?
   [type-segment-bases : i64]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]) : bool
+  [types : CompilerRegVarTypes]) : bool
   (match value
     [(CompilerIrValue.Var id)
-      (match (compiler-reg-var-type-lookup types id)
+      (match (compiler-reg-var-types-lookup types id)
         [(CompilerRegMaybeType.Some ty)
           (and
             (not (compiler-reg-float-type? ty))
@@ -4790,7 +4751,7 @@
 (define (compiler-reg-call-args-array-gp-class?
   [type-segment-bases : i64]
   [values : (Array CompilerIrValue)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [index : i64]
   [count : i64]) : bool
   (if (>= index count)
@@ -4810,7 +4771,7 @@
 (define (compiler-reg-call-args-gp-class?
   [type-segment-bases : i64]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]) : bool
+  [types : CompilerRegVarTypes]) : bool
   (match args
     [(CompilerIrCallArgs.Nil) false]
     [(CompilerIrCallArgs.One v)
@@ -4836,7 +4797,7 @@
 (define (compiler-reg-call-gp-parallel-from?
   [type-segment-bases : i64]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [start : i64]
   [limit : i64]) : bool
   (let
@@ -4848,10 +4809,10 @@
 
 (define (compiler-reg-call-arg-float?
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]) : bool
+  [types : CompilerRegVarTypes]) : bool
   (match value
     [(CompilerIrValue.Var id)
-      (match (compiler-reg-var-type-lookup types id)
+      (match (compiler-reg-var-types-lookup types id)
         [(CompilerRegMaybeType.Some ty) (compiler-reg-float-type? ty)]
         [(CompilerRegMaybeType.No) false])]
     [(CompilerIrValue.F64 _) true]
@@ -4860,10 +4821,10 @@
 (define (compiler-reg-call-arg-group?
   [type-segment-bases : i64]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]) : bool
+  [types : CompilerRegVarTypes]) : bool
   (match value
     [(CompilerIrValue.Var id)
-      (match (compiler-reg-var-type-lookup types id)
+      (match (compiler-reg-var-types-lookup types id)
         [(CompilerRegMaybeType.Some ty)
           (compiler-reg-type-register-group? type-segment-bases ty)]
         [(CompilerRegMaybeType.No) true])]
@@ -4872,7 +4833,7 @@
 (define (compiler-reg-call-args-array-has-group?
   [type-segment-bases : i64]
   [values : (Array CompilerIrValue)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [i : i64]) : bool
   (if (>= i (array-length values))
     false
@@ -4890,7 +4851,7 @@
 (define (compiler-reg-call-args-have-group?
   [type-segment-bases : i64]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]) : bool
+  [types : CompilerRegVarTypes]) : bool
   (match args
     [(CompilerIrCallArgs.Nil) false]
     [(CompilerIrCallArgs.One a)
@@ -4915,7 +4876,7 @@
 (define (compiler-reg-call-arg-vars-selective-value
   [out : CompilerLiveI64Set]
   [value : CompilerIrValue]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [abi : CompilerRegTargetAbi]
   [int-idx : i64]
   [float-idx : i64]
@@ -4940,7 +4901,7 @@
 (define (compiler-reg-call-arg-vars-selective-array
   [out : CompilerLiveI64Set]
   [values : (Array CompilerIrValue)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [abi : CompilerRegTargetAbi]
   [i : i64]
   [int-idx : i64]
@@ -4975,7 +4936,7 @@
 (define (compiler-reg-call-arg-vars-selective
   [out : CompilerLiveI64Set]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [abi : CompilerRegTargetAbi]
   [start : i64]) : CompilerLiveI64Set
   (match args
@@ -5021,7 +4982,7 @@
   [type-segment-bases : i64]
   [out : CompilerLiveI64Set]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [start : i64]
   [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
   (if (compiler-reg-call-gp-parallel-from?
@@ -5039,7 +5000,7 @@
   [type-segment-bases : i64]
   [instrs : CompilerIrInstrSeq]
   [set : CompilerLiveI64Set]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -5159,7 +5120,7 @@
   [type-segment-bases : i64]
   [blocks : CompilerIrBlockList]
   [set : CompilerLiveI64Set]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
   (match blocks
     [(CompilerIrBlockList.Nil) set]
@@ -5208,7 +5169,7 @@
 (define (compiler-reg-ineligible-vars-non-params
   [type-segment-bases : i64]
   [func : CompilerIrFunction]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
@@ -5245,8 +5206,7 @@
 ;; non-rescued scalar spill would.
 (define (compiler-reg-ineligible-vars-simd
   [func : CompilerIrFunction]
-  [_type-info : CompilerRegVarTypes]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalSeq]) : CompilerLiveI64Set
   (match func
     [(CompilerIrFunction.Function _ params _ _ blocks)
@@ -10077,7 +10037,7 @@
     vars
     vars
     CompilerRegAssignmentList.Nil
-    CompilerRegVarTypeList.Nil))
+    (compiler-reg-var-types-empty)))
 
 (define (compiler-reg-loop-split-direction-present?
   [copies : CompilerRegEdgeCopySeq]
@@ -11876,9 +11836,10 @@
             vars
             (+ vars 1)
             extra-assignments
-            (compiler-reg-var-type-cons
-              (CompilerRegVarType vars ty)
-              CompilerRegVarTypeList.Nil))]
+            (compiler-reg-var-types-insert
+              (compiler-reg-var-types-empty)
+              vars
+              ty))]
         [(CompilerRegEdgeCopyRewrite.Refused _)
           (compiler-reg-loop-split-noop blocks vars)]))))
 
@@ -13214,11 +13175,13 @@
             vars
             (+ vars 2)
             extra-assignments
-            (compiler-reg-var-type-cons
-              (CompilerRegVarType outer-var ty)
-              (compiler-reg-var-type-cons
-                (CompilerRegVarType inner-var ty)
-                CompilerRegVarTypeList.Nil)))]
+            (compiler-reg-var-types-insert
+              (compiler-reg-var-types-insert
+                (compiler-reg-var-types-empty)
+                inner-var
+                ty)
+              outer-var
+              ty))]
         [(CompilerRegEdgeCopyRewrite.Refused _)
           (compiler-reg-loop-split-noop blocks vars)]))))
 
@@ -13248,10 +13211,8 @@
             (compiler-reg-live-interval-selection func liveness)]
           [assignments : CompilerRegAssignmentList
             (compiler-reg-plan-assignments plan)]
-          [types : CompilerRegVarTypeList
-            (compiler-reg-var-types-list type-info)]
           [group-vars : CompilerLiveI64Set
-            (compiler-reg-function-group-vars type-segment-bases func types)]
+            (compiler-reg-function-group-vars type-segment-bases func type-info)]
           [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
           [block-array : (Array CompilerIrBlock) (struct-get seq slots)]
           [param-vars : CompilerLiveI64Set
@@ -13407,11 +13368,10 @@
         (struct-get liveness-handle baseline)]
       [selection : CompilerRegIntervalSelection
         (compiler-reg-live-interval-selection func liveness)]
-      [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
       [assignments : CompilerRegAssignmentList
         (compiler-reg-plan-assignments plan)]
       [group-vars : CompilerLiveI64Set
-        (compiler-reg-function-group-vars type-segment-bases func types)]
+        (compiler-reg-function-group-vars type-segment-bases func type-info)]
       (match selection
         [(CompilerRegIntervalSelection.Selection _ intervals)
           (let
@@ -13610,7 +13570,7 @@
                                             ;; id, so no round ever overrides
                                             ;; another's entry and the merge
                                             ;; direction cannot change the map.
-                                            (compiler-reg-var-type-list-merge
+                                            (compiler-reg-var-types-merge
                                               split-types
                                               rest-types))
                                           refused-header)])]))])]))])]))]))))
@@ -14055,7 +14015,7 @@
   [current-vars : i64]
   [plan : CompilerRegPlan]
   [extra-assignments : CompilerRegAssignmentList]
-  [extra-types : CompilerRegVarTypeList]
+  [extra-types : CompilerRegVarTypes]
   [rounds-left : i64]) : CompilerRegCallSaveRewrite
   (if (<= rounds-left 0)
     (CompilerRegCallSaveRewrite.Rewrite
@@ -14142,10 +14102,8 @@
                         (compiler-reg-assignment-list-merge
                           next-assignments
                           extra-assignments)]
-                      [merged-types : CompilerRegVarTypeList
-                        (compiler-reg-var-type-list-merge
-                          next-types
-                          extra-types)]
+                      [merged-types : CompilerRegVarTypes
+                        (compiler-reg-var-types-merge next-types extra-types)]
                       [next-func : CompilerIrFunction
                         (CompilerIrFunction.Function
                           name
@@ -14198,7 +14156,7 @@
     vars
     plan
     CompilerRegAssignmentList.Nil
-    CompilerRegVarTypeList.Nil
+    (compiler-reg-var-types-empty)
     (compiler-reg-loop-split-max-rounds-for-abi abi)))
 
 ;; ---------------------------------------------------------------------------
@@ -16945,26 +16903,14 @@
 ;; vars the structural Pack/Word scan misses).
 (define (compiler-reg-group-vars-from-types
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match types
-    [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-group-vars-from-types-seq type-segment-bases seq set)]
-    [(CompilerRegVarTypeList.Nil) set]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (compiler-reg-group-vars-from-types
-        type-segment-bases
-        (box-get rest)
-        (if (compiler-reg-type-register-group?
-          type-segment-bases
-          (struct-get item ty))
-          (compiler-live-set-insert set (struct-get item var))
-          set))]))
+  (compiler-reg-group-vars-from-types-seq type-segment-bases types set))
 
 (define (compiler-reg-function-group-vars
   [type-segment-bases : i64]
   [func : CompilerIrFunction]
-  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  [types : CompilerRegVarTypes]) : CompilerLiveI64Set
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-group-vars-fixpoint
@@ -19236,7 +19182,7 @@
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegIdList]
   [values : (Array CompilerIrValue)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [i : i64]
   [float-idx : i64]
   [position : i64]
@@ -19274,7 +19220,7 @@
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegIdList]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [position : i64]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
@@ -19330,7 +19276,7 @@
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegIdList]
   [instr : CompilerIrInstr]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match instr
@@ -19372,7 +19318,7 @@
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegIdList]
   [instrs : CompilerIrInstrSeq]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (let
@@ -19394,7 +19340,7 @@
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegIdList]
   [blocks : CompilerIrBlockList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (match blocks
@@ -19437,7 +19383,7 @@
 (define (compiler-reg-function-float-arg-prefs
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [coalesce : CompilerRegCoalesceMap]
   [n : i64]) : (Array i64)
   (let
@@ -19498,7 +19444,7 @@
 (define (compiler-reg-float-arg-demote-array!
   [abi : CompilerRegTargetAbi]
   [values : (Array CompilerIrValue)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [i : i64]
   [float-idx : i64]
   [position : i64]
@@ -19533,7 +19479,7 @@
 (define (compiler-reg-float-arg-demote-args!
   [abi : CompilerRegTargetAbi]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [position : i64]
   [parents : (Array i64)]
   [assignments : CompilerRegAssignmentTable]) : unit
@@ -19584,7 +19530,7 @@
 (define (compiler-reg-float-arg-demote-instr!
   [abi : CompilerRegTargetAbi]
   [instr : CompilerIrInstr]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [parents : (Array i64)]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match instr
@@ -19623,7 +19569,7 @@
 (define (compiler-reg-float-arg-demote-seq!
   [abi : CompilerRegTargetAbi]
   [instrs : CompilerIrInstrSeq]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [parents : (Array i64)]
   [assignments : CompilerRegAssignmentTable]) : unit
   (let
@@ -19643,7 +19589,7 @@
 (define (compiler-reg-float-arg-demote-blocks!
   [abi : CompilerRegTargetAbi]
   [blocks : CompilerIrBlockList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [parents : (Array i64)]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match blocks
@@ -19683,7 +19629,7 @@
 (define (compiler-reg-float-call-args-demote!
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [coalesce : CompilerRegCoalesceMap]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match func
@@ -20914,7 +20860,6 @@
   [func : CompilerIrFunction]
   [liveness-handle : CompilerRegLivenessHandle]
   [type-info : CompilerRegVarTypes]
-  [types : CompilerRegVarTypeList]
   [intervals : CompilerRegIntervalSeq]
   [interval-index : CompilerRegIntervalIndex]
   [assignment-table : CompilerRegAssignmentTable]
@@ -20993,7 +20938,7 @@
         raw-moves
         storage-identity-vars)]
     [group-vars : CompilerLiveI64Set
-      (compiler-reg-function-group-vars type-segment-bases func types)]
+      (compiler-reg-function-group-vars type-segment-bases func type-info)]
     ;; Same-value overlap-coalescing exclusion points. This is the KIND-0
     ;; (call-like: call/syscall/cpuid/xgetbv) point set, NOT the coarse merged
     ;; caller-clobber set. A value that spans only a div/mod or shift is safely
@@ -21202,7 +21147,7 @@
       (compiler-reg-function-float-arg-prefs
         abi
         func
-        types
+        type-info
         coalesce
         (array-length (struct-get interval-index starts)))]
     ;; The effective scalar allocation pass sees only coalesced
@@ -21468,7 +21413,7 @@
         (compiler-reg-float-call-args-demote!
           abi
           func
-          types
+          type-info
           coalesce
           scalar-assignments)
         unit)]
@@ -21610,7 +21555,7 @@
       (compiler-reg-assignment-table-to-list pair-assignments)
       ineligible
       intervals
-      types
+      type-info
       call-save-split
       split-plan)))
 
@@ -21626,11 +21571,10 @@
       (compiler-reg-liveness-handle-make func false)]
     [liveness : CompilerFunctionLiveness (struct-get liveness-handle baseline)]
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
-    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals func liveness)]
     [ineligible : CompilerLiveI64Set
-      (compiler-reg-ineligible-vars-simd func type-info types intervals)]
+      (compiler-reg-ineligible-vars-simd func type-info intervals)]
     [vars : i64
       (match func
         [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
@@ -21639,7 +21583,6 @@
       func
       liveness-handle
       type-info
-      types
       intervals
       (compiler-reg-interval-index-build intervals vars)
       (compiler-reg-assignment-table-make vars)
@@ -21671,11 +21614,10 @@
       (compiler-reg-liveness-handle-make func false)]
     [liveness : CompilerFunctionLiveness (struct-get liveness-handle baseline)]
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
-    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals func liveness)]
     [ineligible : CompilerLiveI64Set
-      (compiler-reg-ineligible-vars-simd func type-info types intervals)]
+      (compiler-reg-ineligible-vars-simd func type-info intervals)]
     [vars : i64
       (match func
         [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
@@ -21684,7 +21626,6 @@
       func
       liveness-handle
       type-info
-      types
       intervals
       (compiler-reg-interval-index-build intervals vars)
       (compiler-reg-assignment-table-make vars)
@@ -21820,11 +21761,6 @@
       (+ start 1)
       end)))
 
-;; An empty var-type view, for callers that must bind one on a path where the
-;; scalar plan is not taken and no types are needed.
-(define (compiler-reg-var-types-empty) : CompilerRegVarTypes
-  (CompilerRegVarTypes (array.make-array i64 0) (array.make-array AstType 0)))
-
 (define (compiler-reg-plan-function-scalar-cold-for-abi
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
@@ -21848,7 +21784,6 @@
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func true)]
-    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [vars : i64
       (match func
         [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
@@ -21891,7 +21826,7 @@
                 (compiler-reg-ineligible-vars-non-params
                   type-segment-bases
                   func
-                  types
+                  type-info
                   abi)]
               (if cold-split?
                 (compiler-reg-live-set-insert-range base forced-spill-from vars)
@@ -21917,7 +21852,6 @@
                   func
                   liveness-handle
                   type-info
-                  types
                   intervals
                   interval-index
                   preassignments
@@ -21999,7 +21933,7 @@
       CompilerRegAssignmentList.Nil
       (compiler-live-set-empty)
       (compiler-reg-interval-seq-empty)
-      (compiler-reg-var-types-list type-info)
+      type-info
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
 
@@ -22026,25 +21960,27 @@
 ;; groups, unknown) is skipped by the scalar interval walk and then receives a
 ;; private dense slot if it still needs stack storage.
 (define (compiler-reg-color-flags
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [flags : (Array bool)]) : unit
-  (match types
-    [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-color-flags (compiler-reg-var-type-seq-to-list seq) flags)]
-    [(CompilerRegVarTypeList.Nil) unit]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (let
-        [var : i64 (struct-get item var)]
-        (begin
-          (if (< var (array-length flags))
-            (array-set!
-              flags
-              var
-              (or
-                (compiler-reg-scalar-type? (struct-get item ty))
-                (compiler-reg-handle-type? (struct-get item ty))))
-            unit)
-          (compiler-reg-color-flags (box-get rest) flags)))]))
+  (let
+    [present : (Array i64) (struct-get types present)]
+    [items : (Array AstType) (struct-get types items)]
+    [index : i64 0]
+    [limit : i64
+      (if (< (array-length present) (array-length flags))
+        (array-length present)
+        (array-length flags))]
+    (while (< index limit)
+      (begin
+        (if (= (array-ref present index) 0)
+          unit
+          (array-set!
+            flags
+            index
+            (or
+              (compiler-reg-scalar-type? (array-ref items index))
+              (compiler-reg-handle-type? (array-ref items index)))))
+        (set! index (+ index 1))))))
 
 ;; Mark every variable with a final liveness interval. Combined with direct IR
 ;; uses/defs below, this distinguishes real values (including dead emitted defs)
@@ -22068,20 +22004,22 @@
 ;; Every colorable var has a types-list entry (compiler-reg-color-flags only
 ;; sets its flag from one), so the walk never reads an unwritten element.
 (define (compiler-reg-color-var-tys
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [tys : (Array AstType)]) : unit
-  (match types
-    [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-color-var-tys (compiler-reg-var-type-seq-to-list seq) tys)]
-    [(CompilerRegVarTypeList.Nil) unit]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (let
-        [var : i64 (struct-get item var)]
-        (begin
-          (if (< var (array-length tys))
-            (array-set! tys var (struct-get item ty))
-            unit)
-          (compiler-reg-color-var-tys (box-get rest) tys)))]))
+  (let
+    [present : (Array i64) (struct-get types present)]
+    [items : (Array AstType) (struct-get types items)]
+    [index : i64 0]
+    [limit : i64
+      (if (< (array-length present) (array-length tys))
+        (array-length present)
+        (array-length tys))]
+    (while (< index limit)
+      (begin
+        (if (= (array-ref present index) 0)
+          unit
+          (array-set! tys index (array-ref items index)))
+        (set! index (+ index 1))))))
 
 (define (compiler-reg-vector-elem-size [ty : AstType]) : i64
   (match ty
@@ -23497,47 +23435,40 @@
           range-count
           from)))))
 
-;; Rebuild the var-type table on remapped keys. Type and assignment lookups
-;; early-exit on the ascending-id list invariant, so remapping keys in place
-;; would silently break every lookup past the first out-of-order entry
-;; (observed: register homes lost to formula-slot fallbacks and i64 compares
-;; emitted as cmpb once the width lookup missed). Scatter the entries into
-;; new-id-indexed arrays and rebuild the list in id order instead. Storage-range
-;; coloring may alias multiple old inline-storage vars onto the same new id, but
-;; those ids are never used as scalar value keys; later entries may overwrite the
-;; unused storage type without affecting emission.
+;; Rebuild the var-type table on remapped keys. Storage-range coloring may alias
+;; multiple old inline-storage vars onto the same new id, but those ids are
+;; never used as scalar value keys; later entries may overwrite the unused
+;; storage type without affecting emission.
 (define (compiler-reg-color-scatter-types
   [remap : (Array i64)]
   [present : (Array i64)]
   [items : (Array AstType)]
-  [types : CompilerRegVarTypeList]) : unit
-  (match types
-    [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-color-scatter-types
-        remap
-        present
-        items
-        (compiler-reg-var-type-seq-to-list seq))]
-    [(CompilerRegVarTypeList.Nil) unit]
-    [(CompilerRegVarTypeList.Cons item rest)
+  [types : CompilerRegVarTypes]) : unit
+  (let
+    [source-present : (Array i64) (struct-get types present)]
+    [source-items : (Array AstType) (struct-get types items)]
+    [index : i64 0]
+    (while (< index (array-length source-present))
       (begin
-        (compiler-reg-var-type-array-set!
-          present
-          items
-          (compiler-reg-remap-id remap (struct-get item var))
-          (struct-get item ty))
-        (compiler-reg-color-scatter-types remap present items (box-get rest)))]))
+        (if (= (array-ref source-present index) 0)
+          unit
+          (compiler-reg-var-type-array-set!
+            present
+            items
+            (compiler-reg-remap-id remap index)
+            (array-ref source-items index)))
+        (set! index (+ index 1))))))
 
 (define (compiler-reg-color-rebuild-types
   [remap : (Array i64)]
   [vars : i64]
-  [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
+  [types : CompilerRegVarTypes]) : CompilerRegVarTypes
   (let
     [present : (Array i64) (array.make-array i64 vars)]
     [items : (Array AstType) (array.make-array AstType vars)]
     (begin
       (compiler-reg-color-scatter-types remap present items types)
-      (CompilerRegVarTypeList.Array (CompilerRegVarTypes present items)))))
+      (CompilerRegVarTypes present items))))
 
 ;; Spilled scalars are dropped: the id remap re-homes them, so emission's
 ;; formula-slot fallback covers the new id and a stale Spill offset keyed by
@@ -25341,7 +25272,7 @@
   (match plan
     [(CompilerRegPlan.Plan _ _ intervals _ _ _) intervals]))
 
-(define (compiler-reg-plan-types [plan : CompilerRegPlan]) : CompilerRegVarTypeList
+(define (compiler-reg-plan-types [plan : CompilerRegPlan]) : CompilerRegVarTypes
   (match plan
     [(CompilerRegPlan.Plan _ _ _ types _ _) types]))
 
@@ -25369,22 +25300,40 @@
           (struct-get item var)
           (struct-get item location)))]))
 
-(define (compiler-reg-var-type-list-merge
-  [extra : CompilerRegVarTypeList]
-  [base : CompilerRegVarTypeList]) : CompilerRegVarTypeList
-  (match extra
-    [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-var-type-list-merge
-        (compiler-reg-var-type-seq-to-list seq)
-        base)]
-    [(CompilerRegVarTypeList.Nil) base]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (compiler-reg-var-type-list-merge
-        (box-get rest)
-        (compiler-reg-var-type-insert
-          base
-          (struct-get item var)
-          (struct-get item ty)))]))
+(define (compiler-reg-var-types-merge
+  [extra : CompilerRegVarTypes]
+  [base : CompilerRegVarTypes]) : CompilerRegVarTypes
+  (let
+    [extra-present : (Array i64) (struct-get extra present)]
+    [extra-items : (Array AstType) (struct-get extra items)]
+    [base-present : (Array i64) (struct-get base present)]
+    [base-items : (Array AstType) (struct-get base items)]
+    (if (= (array-length extra-present) 0)
+      base
+      (let
+        [size : i64
+          (if (> (array-length extra-present) (array-length base-present))
+            (array-length extra-present)
+            (array-length base-present))]
+        [present : (Array i64) (array.make-array i64 size)]
+        [items : (Array AstType) (array.make-array AstType size)]
+        [index : i64 0]
+        (begin
+          (while (< index (array-length base-present))
+            (begin
+              (array-set! present index (array-ref base-present index))
+              (array-set! items index (array-ref base-items index))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index (array-length extra-present))
+            (begin
+              (if (= (array-ref extra-present index) 0)
+                unit
+                (begin
+                  (array-set! present index 1)
+                  (array-set! items index (array-ref extra-items index))))
+              (set! index (+ index 1))))
+          (CompilerRegVarTypes present items))))))
 
 (define (compiler-reg-plan-with-call-save-rewrite
   [plan : CompilerRegPlan]
@@ -25408,7 +25357,7 @@
             (compiler-reg-assignment-list-merge extra-assignments assignments)
             ineligible
             intervals
-            (compiler-reg-var-type-list-merge extra-types types)
+            (compiler-reg-var-types-merge extra-types types)
             shadows
             split-plan)])]))
 
@@ -25490,32 +25439,19 @@
             best)))]))
 
 (define (compiler-reg-plan-var-count-types
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [best : i64]) : i64
-  (match types
-    ;; The cons walk keeps the highest id it sees; on the array view that is the
-    ;; last present slot, so scan down from the top instead of over every entry.
-    [(CompilerRegVarTypeList.Array seq)
-      (let
-        [present : (Array i64) (struct-get seq present)]
-        [index : i64 (- (array-length present) 1)]
-        (begin
-          (while (if (< index 0)
-            false
-            (= (array-ref present index) 0))
-            (set! index (- index 1)))
-          (if (>= index best)
-            (+ index 1)
-            best)))]
-    [(CompilerRegVarTypeList.Nil) best]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (let
-        [var : i64 (struct-get item var)]
-        (compiler-reg-plan-var-count-types
-          (box-get rest)
-          (if (>= var best)
-            (+ var 1)
-            best)))]))
+  (let
+    [present : (Array i64) (struct-get types present)]
+    [index : i64 (- (array-length present) 1)]
+    (begin
+      (while (if (< index 0)
+        false
+        (= (array-ref present index) 0))
+        (set! index (- index 1)))
+      (if (>= index best)
+        (+ index 1)
+        best))))
 
 (define (compiler-reg-plan-var-count [plan : CompilerRegPlan] [min-vars : i64]) : i64
   (match plan
@@ -25767,18 +25703,18 @@
       (compiler-reg-scratch-float-value-memory? assignments rhs))))
 
 (define (compiler-reg-scratch-float-value?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [value : CompilerIrValue]) : bool
   (match value
     [(CompilerIrValue.Var var)
-      (match (compiler-reg-var-type-lookup types var)
+      (match (compiler-reg-var-types-lookup types var)
         [(CompilerRegMaybeType.Some ty) (compiler-reg-float-type? ty)]
         [(CompilerRegMaybeType.No) false])]
     [(CompilerIrValue.F64 _) true]
     [_ false]))
 
 (define (compiler-reg-scratch-float-binop?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
@@ -26009,7 +25945,7 @@
   [_type-segment-bases : i64]
   [_abi : CompilerRegTargetAbi]
   [_assignments : CompilerRegAssignmentList]
-  [_types : CompilerRegVarTypeList]
+  [_types : CompilerRegVarTypes]
   [_instr : CompilerIrInstr]
   [_phi-targets : CompilerRegLabelList]
   [_phi-xmm-targets : CompilerRegLabelList]
@@ -26315,7 +26251,7 @@
   [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [assignments : CompilerRegAssignmentList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [instrs : CompilerIrInstrSeq]
   [phi-targets : CompilerRegLabelList]
   [phi-xmm-targets : CompilerRegLabelList]
@@ -26348,7 +26284,7 @@
   [type-segment-bases : i64]
   [abi : CompilerRegTargetAbi]
   [assignments : CompilerRegAssignmentList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [blocks : CompilerIrBlockList]
   [phi-targets : CompilerRegLabelList]
   [phi-xmm-targets : CompilerRegLabelList]
@@ -26468,36 +26404,6 @@
     (begin
       (array-set! items i (compiler-reg-interval-seq-empty))
       (compiler-reg-fill-interval-seq-array! items (+ i 1)))))
-
-(define (compiler-reg-types-from-list-fill!
-  [types : CompilerRegVarTypeList]
-  [present : (Array i64)]
-  [items : (Array AstType)]) : unit
-  (match types
-    [(CompilerRegVarTypeList.Array seq)
-      (compiler-reg-types-from-list-fill!
-        (compiler-reg-var-type-seq-to-list seq)
-        present
-        items)]
-    [(CompilerRegVarTypeList.Nil) unit]
-    [(CompilerRegVarTypeList.Cons item rest)
-      (begin
-        (compiler-reg-var-type-array-set!
-          present
-          items
-          (struct-get item var)
-          (struct-get item ty))
-        (compiler-reg-types-from-list-fill! (box-get rest) present items))]))
-
-(define (compiler-reg-var-types-from-list
-  [types : CompilerRegVarTypeList]
-  [vars : i64]) : CompilerRegVarTypes
-  (let
-    [present : (Array i64) (array.make-array i64 vars)]
-    [items : (Array AstType) (array.make-array AstType vars)]
-    (begin
-      (compiler-reg-types-from-list-fill! types present items)
-      (CompilerRegVarTypes present items))))
 
 ;; Generic constrained scratch-plan construction.  These builders attach the
 ;; deterministic instruction/ordinal identity, interval, and physical-home policy.
@@ -27076,7 +26982,7 @@
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
-  [var-types : CompilerRegVarTypeList]
+  [var-types : CompilerRegVarTypes]
   [instr : CompilerIrInstr]
   [point : i64]
   [ordinal : i64]
@@ -27735,7 +27641,7 @@
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
-  [var-types : CompilerRegVarTypeList]
+  [var-types : CompilerRegVarTypes]
   [instr : CompilerIrInstr]
   [point : i64]
   [ordinal : i64]
@@ -28203,7 +28109,7 @@
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
-  [var-types : CompilerRegVarTypeList]
+  [var-types : CompilerRegVarTypes]
   [instr : CompilerIrInstr]
   [point : i64]
   [group-lo : i64]
@@ -28279,7 +28185,7 @@
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
-  [var-types : CompilerRegVarTypeList]
+  [var-types : CompilerRegVarTypes]
   [instrs : CompilerIrInstrSeq]
   [phi-targets : CompilerRegLabelList]
   [phi-xmm-targets : CompilerRegLabelList]
@@ -28360,7 +28266,7 @@
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
-  [var-types : CompilerRegVarTypeList]
+  [var-types : CompilerRegVarTypes]
   [blocks : CompilerIrBlockList]
   [phi-targets : CompilerRegLabelList]
   [phi-xmm-targets : CompilerRegLabelList]
@@ -28550,7 +28456,7 @@
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
   [assignment-table : CompilerRegAssignmentTable]
-  [var-types : CompilerRegVarTypeList]
+  [var-types : CompilerRegVarTypes]
   [instr : CompilerIrInstr]
   [point : i64]
   [ordinal : i64]
@@ -28604,7 +28510,7 @@
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
   [assignment-table : CompilerRegAssignmentTable]
-  [var-types : CompilerRegVarTypeList]
+  [var-types : CompilerRegVarTypes]
   [instrs : CompilerIrInstrSeq]
   [block-weight : i64]
   [instruction-start : i64]
@@ -28673,7 +28579,7 @@
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
   [assignment-table : CompilerRegAssignmentTable]
-  [var-types : CompilerRegVarTypeList]
+  [var-types : CompilerRegVarTypes]
   [blocks : CompilerIrBlockList]
   [depths : (Array i64)]
   [block-index : i64]
@@ -28846,7 +28752,7 @@
                 policy
                 assignment-list
                 assignments
-                (compiler-reg-var-types-list base-types)
+                base-types
                 blocks
                 depths
                 0
@@ -29382,9 +29288,7 @@
                     (compiler-reg-plan-assignments plan)
                     blocks))]
               [base-type-info : CompilerRegVarTypes
-                (compiler-reg-var-types-from-list
-                  (compiler-reg-plan-types plan)
-                  _vars)]
+                (compiler-reg-plan-types plan)]
               [liveness-handle : CompilerRegLivenessHandle
                 (compiler-reg-liveness-handle-make _func false)]
               [base-interval-selection : CompilerRegIntervalSelection
@@ -29705,7 +29609,7 @@
         vars
         vars
         CompilerRegAssignmentList.Nil
-        CompilerRegVarTypeList.Nil)
+        (compiler-reg-var-types-empty))
       (let
         [shadow-regs : (Array i64) (compiler-reg-plan-caller-save-regs plan)]
         [r-var : (Array i64) (array.make-array i64 count)]
@@ -29737,7 +29641,7 @@
         [next-var : i64 vars]
         [extra-assignments : CompilerRegAssignmentList
           CompilerRegAssignmentList.Nil]
-        [extra-types : CompilerRegVarTypeList CompilerRegVarTypeList.Nil]
+        [extra-types : CompilerRegVarTypes (compiler-reg-var-types-empty)]
         [cursor : i64 0]
         [point : i64 0]
         [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
@@ -29842,7 +29746,7 @@
                                               extra-assignments))
                                           (set!
                                             extra-types
-                                            (compiler-reg-var-type-insert
+                                            (compiler-reg-var-types-insert
                                               extra-types
                                               w
                                               ty))
@@ -30291,7 +30195,7 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
-  [extra-types : CompilerRegVarTypeList]
+  [extra-types : CompilerRegVarTypes]
   [remap : (Array i64)]
   [builder : (&mut builder CompilerIrInstrBuilder)]) : CompilerRegCallSaveInstrRewrite
   (if (compiler-reg-remat-use-site-ok? instr)
@@ -30307,7 +30211,7 @@
       [chosen : CompilerRegIdList CompilerRegIdList.Nil]
       [out-next-var : i64 next-var]
       [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
-      [out-extra-types : CompilerRegVarTypeList extra-types]
+      [out-extra-types : CompilerRegVarTypes extra-types]
       [word-index : i64 0]
       [word-count : i64 (compiler-live-set-word-count uses)]
       (begin
@@ -30361,7 +30265,7 @@
                                     out-extra-assignments))
                                 (set!
                                   out-extra-types
-                                  (compiler-reg-var-type-insert
+                                  (compiler-reg-var-types-insert
                                     out-extra-types
                                     temp
                                     ty))
@@ -30415,7 +30319,7 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
-  [extra-types : CompilerRegVarTypeList]
+  [extra-types : CompilerRegVarTypes]
   [remap : (Array i64)]
   [builder : (&mut builder CompilerIrInstrBuilder)]) : CompilerRegCallSaveInstrRewrite
   (let
@@ -30424,7 +30328,7 @@
     [out-point : i64 point]
     [out-next-var : i64 next-var]
     [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
-    [out-extra-types : CompilerRegVarTypeList extra-types]
+    [out-extra-types : CompilerRegVarTypes extra-types]
     (begin
       (while (< index count)
         (begin
@@ -30470,7 +30374,7 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
-  [extra-types : CompilerRegVarTypeList]
+  [extra-types : CompilerRegVarTypes]
   [remap : (Array i64)]
   [acc : CompilerIrBlockList]) : CompilerRegCallSaveRewrite
   (match blocks
@@ -30555,7 +30459,7 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
-  [extra-types : CompilerRegVarTypeList]
+  [extra-types : CompilerRegVarTypes]
   [remap : (Array i64)]
   [acc : CompilerIrBlockList]) : CompilerRegCallSaveRewrite
   (let
@@ -30564,7 +30468,7 @@
     [out-point : i64 point]
     [out-next-var : i64 next-var]
     [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
-    [out-extra-types : CompilerRegVarTypeList extra-types]
+    [out-extra-types : CompilerRegVarTypes extra-types]
     [out-acc : CompilerIrBlockList acc]
     (begin
       (while (< i count)
@@ -30641,12 +30545,11 @@
       vars
       vars
       CompilerRegAssignmentList.Nil
-      CompilerRegVarTypeList.Nil)
+      (compiler-reg-var-types-empty))
     (let
       [table : CompilerRegRematTable (compiler-reg-remat-table-build func)]
-      [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
       [group-vars : CompilerLiveI64Set
-        (compiler-reg-function-group-vars type-segment-bases func types)]
+        (compiler-reg-function-group-vars type-segment-bases func type-info)]
       [liveness-handle : CompilerRegLivenessHandle
         (compiler-reg-liveness-handle-make func false)]
       [liveness : CompilerFunctionLiveness
@@ -30681,7 +30584,7 @@
               parents
               merged-roots
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil
+              (compiler-reg-var-types-empty)
               remap
               CompilerIrBlockList.Nil)
               [(CompilerRegCallSaveRewrite.Rewrite
@@ -30769,9 +30672,10 @@
     (compiler-reg-interval-seq-prepend
       (CompilerRegInterval 0 0 1)
       (compiler-reg-interval-seq-empty))
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.I64))
-      CompilerRegVarTypeList.Nil)
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-empty)
+      0
+      (AstType.I64))
     (compiler-reg-call-split-empty)
     (compiler-reg-split-plan-empty)))
 
@@ -30868,11 +30772,13 @@
       (compiler-reg-interval-seq-prepend
         (CompilerRegInterval 1 0 1)
         (compiler-reg-interval-seq-empty)))
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 0 (AstType.U64))
-      (compiler-reg-var-type-cons
-        (CompilerRegVarType 1 (AstType.U64))
-        CompilerRegVarTypeList.Nil))
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-insert
+        (compiler-reg-var-types-empty)
+        1
+        (AstType.U64))
+      0
+      (AstType.U64))
     (compiler-reg-call-split-empty)
     (compiler-reg-split-plan-empty)))
 
@@ -34676,12 +34582,14 @@
       (CompilerRegInterval 5 5 7)
       (compiler-reg-interval-seq-empty))))
 
-(define (compiler-reg-color-pointer-types) : CompilerRegVarTypeList
-  (compiler-reg-var-type-cons
-    (CompilerRegVarType 2 (AstType.U64))
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType 5 (AstType.U64))
-      CompilerRegVarTypeList.Nil)))
+(define (compiler-reg-color-pointer-types) : CompilerRegVarTypes
+  (compiler-reg-var-types-insert
+    (compiler-reg-var-types-insert
+      (compiler-reg-var-types-empty)
+      5
+      (AstType.U64))
+    2
+    (AstType.U64)))
 
 (define (compiler-reg-color-spill-sharing-assignments [vars : i64]) : CompilerRegAssignmentList
   (if (< vars 1)
@@ -34691,12 +34599,13 @@
       (- vars 1)
       (CompilerRegLocation.Spill (* (- vars 1) 8)))))
 
-(define (compiler-reg-color-spill-sharing-types [vars : i64]) : CompilerRegVarTypeList
+(define (compiler-reg-color-spill-sharing-types [vars : i64]) : CompilerRegVarTypes
   (if (< vars 1)
-    CompilerRegVarTypeList.Nil
-    (compiler-reg-var-type-cons
-      (CompilerRegVarType (- vars 1) (AstType.I64))
-      (compiler-reg-color-spill-sharing-types (- vars 1)))))
+    (compiler-reg-var-types-empty)
+    (compiler-reg-var-types-insert
+      (compiler-reg-color-spill-sharing-types (- vars 1))
+      (- vars 1)
+      (AstType.I64))))
 
 (define (compiler-reg-color-spill-sharing-intervals) : CompilerRegIntervalSeq
   (compiler-reg-interval-seq-prepend
@@ -34891,7 +34800,7 @@
               (compiler-reg-interval-seq-prepend
                 (CompilerRegInterval 2 2 4)
                 (compiler-reg-interval-seq-empty))))
-          CompilerRegVarTypeList.Nil
+          (compiler-reg-var-types-empty)
           (compiler-reg-call-split-empty)
           (compiler-reg-split-plan-empty))
         (compiler-live-set-empty)
@@ -35002,9 +34911,10 @@
           (compiler-reg-interval-seq-prepend
             (CompilerRegInterval group-var 0 2)
             (compiler-reg-interval-seq-empty))
-          (compiler-reg-var-type-cons
-            (CompilerRegVarType group-var (AstType.Struct (intern "RegGroup")))
-            CompilerRegVarTypeList.Nil)
+          (compiler-reg-var-types-insert
+            (compiler-reg-var-types-empty)
+            group-var
+            (AstType.Struct (intern "RegGroup")))
           (compiler-reg-call-split-empty)
           (compiler-reg-split-plan-empty))
         (compiler-live-set1 group-var)

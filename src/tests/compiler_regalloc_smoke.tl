@@ -143,7 +143,7 @@
       (compiler-reg-function-group-vars
         (ast-node-pool-reader-type-segment-bases)
         func
-        (compiler-reg-var-types-list types))]
+        types)]
     (and
       ;; Source handles remain scalar even though structurally-created pair
       ;; vars with the same provenance type occupy two homes.

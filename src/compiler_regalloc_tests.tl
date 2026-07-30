@@ -2999,7 +2999,7 @@
         CompilerRegAssignmentList.Nil)
       (compiler-live-set-empty)
       (compiler-reg-interval-seq-empty)
-      (compiler-reg-var-types-list (compiler-reg-function-var-types func))
+      (compiler-reg-function-var-types func)
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
 
@@ -3018,7 +3018,7 @@
           CompilerRegAssignmentList.Nil))
       (compiler-live-set-empty)
       (compiler-reg-interval-seq-empty)
-      (compiler-reg-var-types-list (compiler-reg-function-var-types func))
+      (compiler-reg-function-var-types func)
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
 
@@ -3059,7 +3059,7 @@
                       extra-types))]
                 [rewritten-assignments : CompilerRegAssignmentList
                   (compiler-reg-plan-assignments rewritten-plan)]
-                [rewritten-types : CompilerRegVarTypeList
+                [rewritten-types : CompilerRegVarTypes
                   (compiler-reg-plan-types rewritten-plan)]
                 (and
                   (= out-vars (+ vars 2))
@@ -3079,13 +3079,13 @@
                     items
                     "use0b"
                     (+ vars 1))
-                  (match (compiler-reg-var-type-lookup rewritten-types vars)
+                  (match (compiler-reg-var-types-lookup rewritten-types vars)
                     [(CompilerRegMaybeType.Some ty)
                       (match ty
                         [(AstType.I64) true]
                         [_ false])]
                     [(CompilerRegMaybeType.No) false])
-                  (match (compiler-reg-var-type-lookup
+                  (match (compiler-reg-var-types-lookup
                     rewritten-types
                     (+ vars 1))
                     [(CompilerRegMaybeType.Some ty)
@@ -3820,7 +3820,7 @@
               CompilerRegAssignmentList.Nil)
             (compiler-live-set-empty)
             intervals
-            (compiler-reg-var-types-list type-info)
+            type-info
             (compiler-reg-call-split-empty)
             (compiler-reg-split-plan-empty))]))))
 
@@ -3845,7 +3845,7 @@
                 CompilerRegAssignmentList.Nil))
             (compiler-live-set-empty)
             intervals
-            (compiler-reg-var-types-list type-info)
+            type-info
             (compiler-reg-call-split-empty)
             (compiler-reg-split-plan-empty))]))))
 
@@ -3870,7 +3870,7 @@
                 CompilerRegAssignmentList.Nil))
             (compiler-live-set-empty)
             intervals
-            (compiler-reg-var-types-list type-info)
+            type-info
             (compiler-reg-call-split-empty)
             (compiler-reg-split-plan-empty))]))))
 
@@ -5520,6 +5520,50 @@
     (test.assert-true
       (compiler-reg-dense-interval-seq-ok?)
       "dense interval growth preserves order and merge overlap boundaries")))
+
+(cfg
+  test
+  (define (compiler-reg-dense-var-types-ok?) : bool
+    (let
+      [base : CompilerRegVarTypes
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-insert
+            (compiler-reg-var-types-empty)
+            2
+            (AstType.I64))
+          5
+          (AstType.U64))]
+      [extra : CompilerRegVarTypes
+        (compiler-reg-var-types-insert
+          (compiler-reg-var-types-empty)
+          5
+          (AstType.Bool))]
+      [merged : CompilerRegVarTypes (compiler-reg-var-types-merge extra base)]
+      (and
+        (= (array-ref (struct-get base present) 2) 1)
+        (= (array-ref (struct-get base present) 3) 0)
+        (match (compiler-reg-var-types-lookup base 2)
+          [(CompilerRegMaybeType.Some (AstType.I64)) true]
+          [_ false])
+        (match (compiler-reg-var-types-lookup base 3)
+          [(CompilerRegMaybeType.No) true]
+          [_ false])
+        ;; Merge overrides a present extra entry without mutating the published
+        ;; base view retained by retry paths.
+        (match (compiler-reg-var-types-lookup base 5)
+          [(CompilerRegMaybeType.Some (AstType.U64)) true]
+          [_ false])
+        (match (compiler-reg-var-types-lookup merged 5)
+          [(CompilerRegMaybeType.Some (AstType.Bool)) true]
+          [_ false])))))
+
+(cfg
+  test
+  (test
+    regalloc-dense-var-types
+    (test.assert-true
+      (compiler-reg-dense-var-types-ok?)
+      "dense var types preserve holes, exact types, growth, and merge isolation")))
 
 (cfg
   test

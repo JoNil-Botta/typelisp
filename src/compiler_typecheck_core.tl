@@ -37341,6 +37341,1009 @@
     [(AstExpr.Syscall args)
       (tc-expr-list-uses-free-name? expr-bases args name bound)]))
 
+;; The id rule for a dot-free target text: the source-name id of an env key,
+;; or -1 when the key's display can never equal the target. Pool ids render
+;; as their text (intern-str is injective), structural-local and hygiene
+;; global/local ids render as their source name, and composite keys render
+;; dotted (with '/'), so they map to -1. For any dot-free target text T this
+;; makes (= (tc-env-key-source-id-or-neg v) (intern T)) EXACTLY
+;; (string.eq (tc-env-key-name-text v) T).
+(define (tc-env-key-source-id-or-neg [name-id : i64]) : i64
+  (cond
+    [(and (>= name-id 0) (< name-id (intern-capacity))) name-id]
+    [(ci.intern-structural-local-id? name-id)
+      (ci.intern-structural-local-source-name-id name-id)]
+    [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
+      (macro-hygiene-structural-source-name-id name-id)]
+    [else -1]))
+
+;; Same shadowing rules as `tc-expr-uses-free-name?`, but the target is one or
+;; two source-name ids matched in a single walk and the bound set is keyed by
+;; source-name id (the exact id form of the string-keyed set for the dot-free
+;; target texts the compat prescan uses).
+(define (tc-expr-list-uses-free-source-id?
+  [expr-bases : i64]
+  [exprs : AstExprList]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (tc-expr-list-uses-free-source-id-at?
+    expr-bases
+    (& exprs)
+    0
+    target-1
+    target-2
+    bound))
+
+(define (tc-expr-list-uses-free-source-id-at?
+  [expr-bases : i64]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (if (>= index (struct-get exprs len))
+    false
+    (or
+      (tc-expr-uses-free-source-id?
+        expr-bases
+        (ast-expr-segment-bases-get
+          expr-bases
+          (ast-expr-list-get exprs index 0))
+        target-1
+        target-2
+        bound)
+      (tc-expr-list-uses-free-source-id-at?
+        expr-bases
+        exprs
+        (+ index 1)
+        target-1
+        target-2
+        bound))))
+
+(define (tc-let-binding-list-uses-free-source-id?
+  [expr-bases : i64]
+  [bindings : AstLetBindingList]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (tc-let-binding-list-uses-free-source-id-at?
+    expr-bases
+    (& bindings)
+    target-1
+    target-2
+    bound
+    0))
+
+(define (tc-let-binding-list-uses-free-source-id-at?
+  [expr-bases : i64]
+  [bindings : (& bindings AstLetBindingList)]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding bind-name _ init-box)
+        (let
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          (or
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              init
+              target-1
+              target-2
+              bound)
+            (tc-let-binding-list-uses-free-source-id-at?
+              expr-bases
+              bindings
+              target-1
+              target-2
+              (tc-name-id-list-add
+                bound
+                (tc-env-key-source-id-or-neg bind-name))
+              (+ index 1))))])))
+
+(define (tc-resource-binding-list-uses-free-source-id?
+  [expr-bases : i64]
+  [bindings : AstResourceBindingList]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (tc-resource-binding-list-uses-free-source-id-at?
+    expr-bases
+    (& bindings)
+    target-1
+    target-2
+    bound
+    0))
+
+(define (tc-resource-binding-list-uses-free-source-id-at?
+  [expr-bases : i64]
+  [bindings : (& bindings AstResourceBindingList)]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len bindings))
+    false
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
+        (let
+          [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+          [cleanup : AstExpr
+            (ast-expr-segment-bases-get expr-bases cleanup-box)]
+          (or
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              init
+              target-1
+              target-2
+              bound)
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              cleanup
+              target-1
+              target-2
+              bound)
+            (tc-resource-binding-list-uses-free-source-id-at?
+              expr-bases
+              bindings
+              target-1
+              target-2
+              (tc-name-id-list-add
+                bound
+                (tc-env-key-source-id-or-neg bind-name))
+              (+ index 1))))])))
+
+(define (tc-match-arms-use-free-source-id?
+  [expr-bases : i64]
+  [arms : AstMatchArmList]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (tc-match-arms-use-free-source-id-at?
+    expr-bases
+    (& arms)
+    target-1
+    target-2
+    bound
+    0))
+
+(define (tc-match-arms-use-free-source-id-at?
+  [expr-bases : i64]
+  [arms : (& arms AstMatchArmList)]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (struct-get arms len))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+          (or
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              body
+              target-1
+              target-2
+              (tc-pattern-add-bound-source-ids pattern bound))
+            (tc-match-arms-use-free-source-id-at?
+              expr-bases
+              arms
+              target-1
+              target-2
+              bound
+              (+ index 1))))])))
+
+(define (tc-pattern-add-bound-source-ids
+  [pattern : AstPattern]
+  [bound : TcNameIdList]) : TcNameIdList
+  (match pattern
+    [(AstPattern.Var name _)
+      (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))]
+    [(AstPattern.Tuple patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-source-ids patterns bound))]
+    [(AstPattern.Wildcard) bound]
+    [(AstPattern.Binding name)
+      (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))]
+    [(AstPattern.Variant _ patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-source-ids patterns bound))]
+    [(AstPattern.Literal _) bound]))
+
+(define (tc-pattern-list-add-bound-source-ids
+  [patterns : AstPatternList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (tc-pattern-list-add-bound-source-ids-at (& patterns) bound 0))
+
+(define (tc-pattern-list-add-bound-source-ids-at
+  [patterns : (& patterns AstPatternList)]
+  [bound : TcNameIdList]
+  [index : i64]) : TcNameIdList
+  (if (>= index (struct-get patterns len))
+    bound
+    (tc-pattern-list-add-bound-source-ids-at
+      patterns
+      (tc-pattern-add-bound-source-ids
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        bound)
+      (+ index 1))))
+
+(define (tc-let-binding-list-add-bound-source-ids
+  [bindings : AstLetBindingList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (tc-let-binding-list-add-bound-source-ids-at (& bindings) bound 0))
+
+(define (tc-let-binding-list-add-bound-source-ids-at
+  [bindings : (& bindings AstLetBindingList)]
+  [bound : TcNameIdList]
+  [index : i64]) : TcNameIdList
+  (if (>= index (ast-let-binding-list-len bindings))
+    bound
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (tc-let-binding-list-add-bound-source-ids-at
+          bindings
+          (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))
+          (+ index 1))])))
+
+(define (tc-resource-binding-list-add-bound-source-ids
+  [bindings : AstResourceBindingList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (tc-resource-binding-list-add-bound-source-ids-at (& bindings) bound 0))
+
+(define (tc-resource-binding-list-add-bound-source-ids-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [bound : TcNameIdList]
+  [index : i64]) : TcNameIdList
+  (if (>= index (ast-resource-binding-list-len bindings))
+    bound
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name _ _ _)
+        (tc-resource-binding-list-add-bound-source-ids-at
+          bindings
+          (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name))
+          (+ index 1))])))
+
+(define (tc-param-list-add-bound-source-ids
+  [params : AstParamList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (tc-param-list-add-bound-source-ids-at (& params) 0 bound))
+
+(define (tc-param-list-add-bound-source-ids-at
+  [params : (& params AstParamList)]
+  [index : i64]
+  [bound : TcNameIdList]) : TcNameIdList
+  (if (>= index (ast-param-list-len params))
+    bound
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _ _)
+        (tc-param-list-add-bound-source-ids-at
+          params
+          (+ index 1)
+          (tc-name-id-list-add bound (tc-env-key-source-id-or-neg name)))])))
+
+(define (tc-expr-uses-free-source-id?
+  [expr-bases : i64]
+  [expr : AstExpr]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : TcNameIdList]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Literal _) false]
+    [(AstExpr.Var var-name)
+      (let
+        [sid : i64 (tc-env-key-source-id-or-neg var-name)]
+        (if (or (= sid target-1) (= sid target-2))
+          (not (tc-name-id-list-contains bound sid))
+          false))]
+    [(AstExpr.Binary _ left-box right-box)
+      (let
+        [left : AstExpr (ast-expr-segment-bases-get expr-bases left-box)]
+        [right : AstExpr (ast-expr-segment-bases-get expr-bases right-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases left target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            right
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Unary _ inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Call func-box args)
+      (let
+        [func : AstExpr (ast-expr-segment-bases-get expr-bases func-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases func target-1 target-2 bound)
+          (tc-expr-list-uses-free-source-id?
+            expr-bases
+            args
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.BracketClause items)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        items
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.TypeLiteral _) false]
+    [(AstExpr.Init _) false]
+    [(AstExpr.If cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [then-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : AstExpr
+          (ast-expr-segment-bases-get expr-bases else-branch-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases cond target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            then-branch
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            else-branch
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body-box)
+          (let
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (or
+              (tc-let-binding-list-uses-free-source-id?
+                expr-bases
+                bindings
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                body
+                target-1
+                target-2
+                (tc-let-binding-list-add-bound-source-ids bindings bound))))])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params _ body-box)
+          (let
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (tc-expr-uses-free-source-id?
+              expr-bases
+              body
+              target-1
+              target-2
+              (tc-param-list-add-bound-source-ids params bound)))])]
+    [(AstExpr.Tuple exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.TupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (ast-expr-segment-bases-get expr-bases tuple-box)]
+        (tc-expr-uses-free-source-id? expr-bases tuple target-1 target-2 bound))]
+    [(AstExpr.Array exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.DynArray exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.MakeArray _ len-box)
+      (let
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-uses-free-source-id? expr-bases len target-1 target-2 bound))]
+    [(AstExpr.ArrayRef array-box index-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            array
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            index
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.ArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            array
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            index
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [live : AstExpr (ast-expr-segment-bases-get expr-bases live-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            array
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id? expr-bases live target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            index
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.ArrayPush array-box value-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            array
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.StringRef str-box index-box)
+      (let
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases str target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            index
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.While cond-box body-box)
+      (let
+        [cond : AstExpr (ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases cond target-1 target-2 bound)
+          (tc-expr-uses-free-source-id? expr-bases body target-1 target-2 bound)))]
+    [(AstExpr.Begin exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.Unsafe exprs)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        exprs
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.Set var-name value-box)
+      (let
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [sid : i64 (tc-env-key-source-id-or-neg var-name)]
+        (or
+          (if (or (= sid target-1) (= sid target-2))
+            (not (tc-name-id-list-contains bound sid))
+            false)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Ann inner-box _)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Cast inner-box _)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Borrow _ _ place-box)
+      (let
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-expr-uses-free-source-id? expr-bases place target-1 target-2 bound))]
+    [(AstExpr.Box inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.BoxGet inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.BoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.BoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            inner
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr
+              (ast-expr-segment-bases-get expr-bases scrutinee-box)]
+            (or
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                scrutinee
+                target-1
+                target-2
+                bound)
+              (tc-match-arms-use-free-source-id?
+                expr-bases
+                arms
+                target-1
+                target-2
+                bound)))])]
+    [(AstExpr.Foreach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach.Foreach index _ start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            (or
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                start
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                end
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                body
+                target-1
+                target-2
+                (tc-name-id-list-add bound (tc-env-key-source-id-or-neg index)))))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ index _ start-box end-box init-box value-box)
+          (let
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            (or
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                start
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                end
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                init
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                value
+                target-1
+                target-2
+                (tc-name-id-list-add bound (tc-env-key-source-id-or-neg index)))))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan
+            _
+            index
+            _
+            start-box
+            end-box
+            prefix
+            _
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : AstExpr (ast-expr-segment-bases-get expr-bases start-box)]
+            [end : AstExpr (ast-expr-segment-bases-get expr-bases end-box)]
+            [init : AstExpr (ast-expr-segment-bases-get expr-bases init-box)]
+            [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+            [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
+            [value-bound : TcNameIdList
+              (tc-name-id-list-add bound (tc-env-key-source-id-or-neg index))]
+            [body-bound : TcNameIdList
+              (tc-name-id-list-add
+                value-bound
+                (tc-env-key-source-id-or-neg prefix))]
+            (or
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                start
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                end
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                init
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                value
+                target-1
+                target-2
+                value-bound)
+              (tc-expr-uses-free-source-id?
+                expr-bases
+                body
+                target-1
+                target-2
+                body-bound)))])]
+    [(AstExpr.SpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id? expr-bases lane target-1 target-2 bound)))]
+    [(AstExpr.SpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : AstExpr (ast-expr-segment-bases-get expr-bases lane-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id? expr-bases lane target-1 target-2 bound)))]
+    [(AstExpr.StructGet receiver-box _)
+      (let
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        (tc-expr-uses-free-source-id?
+          expr-bases
+          receiver
+          target-1
+          target-2
+          bound))]
+    [(AstExpr.StructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr
+          (ast-expr-segment-bases-get expr-bases receiver-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            receiver
+            target-1
+            target-2
+            bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.WithRegion _ body)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        body
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.WithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (ast-expr-segment-bases-get expr-bases scratch-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            scratch
+            target-1
+            target-2
+            bound)
+          (tc-expr-list-uses-free-source-id?
+            expr-bases
+            body
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.WithScratch body)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        body
+        target-1
+        target-2
+        bound)]
+    [(AstExpr.InArena arena-box body)
+      (let
+        [arena : AstExpr (ast-expr-segment-bases-get expr-bases arena-box)]
+        (or
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            arena
+            target-1
+            target-2
+            bound)
+          (tc-expr-list-uses-free-source-id?
+            expr-bases
+            body
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.WithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource.WithResource bindings body)
+          (or
+            (tc-resource-binding-list-uses-free-source-id?
+              expr-bases
+              bindings
+              target-1
+              target-2
+              bound)
+            (tc-expr-list-uses-free-source-id?
+              expr-bases
+              body
+              target-1
+              target-2
+              (tc-resource-binding-list-add-bound-source-ids bindings bound)))])]
+    [(AstExpr.TypeLiteral _) false]
+    [(AstExpr.Init _) false]
+    [(AstExpr.Comptime inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Quote inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Quasiquote inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Unquote inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.UnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Try inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Return inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.Break) false]
+    [(AstExpr.Continue) false]
+    [(AstExpr.PtrNull _) false]
+    [(AstExpr.PtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-uses-free-source-id? expr-bases inner target-1 target-2 bound))]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-expr-uses-free-source-id? expr-bases place target-1 target-2 bound))]
+    [(AstExpr.PtrRead ptr-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound))]
+    [(AstExpr.PtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            value
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.PtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : AstExpr (ast-expr-segment-bases-get expr-bases offset-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            offset
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.PtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound))]
+    [(AstExpr.PtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound))]
+    [(AstExpr.IntToPtr value-box _)
+      (let
+        [value : AstExpr (ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-expr-uses-free-source-id? expr-bases value target-1 target-2 bound))]
+    [(AstExpr.StringData str-box)
+      (let
+        [str : AstExpr (ast-expr-segment-bases-get expr-bases str-box)]
+        (tc-expr-uses-free-source-id? expr-bases str target-1 target-2 bound))]
+    [(AstExpr.StringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : AstExpr (ast-expr-segment-bases-get expr-bases len-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases ptr target-1 target-2 bound)
+          (tc-expr-uses-free-source-id? expr-bases len target-1 target-2 bound)))]
+    [(AstExpr.ArrayData array-box)
+      (let
+        [array : AstExpr (ast-expr-segment-bases-get expr-bases array-box)]
+        (tc-expr-uses-free-source-id? expr-bases array target-1 target-2 bound))]
+    [(AstExpr.BinaryData _) false]
+    [(AstExpr.SpmdProgramIndex) false]
+    [(AstExpr.SpmdProgramCount) false]
+    [(AstExpr.ProgramArgc) false]
+    [(AstExpr.ProgramArgv) false]
+    [(AstExpr.ProgramEnvp) false]
+    [(AstExpr.CpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases leaf target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            subleaf
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.CpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases leaf target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            subleaf
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.CpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases leaf target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            subleaf
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.CpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : AstExpr (ast-expr-segment-bases-get expr-bases subleaf-box)]
+        (or
+          (tc-expr-uses-free-source-id? expr-bases leaf target-1 target-2 bound)
+          (tc-expr-uses-free-source-id?
+            expr-bases
+            subleaf
+            target-1
+            target-2
+            bound)))]
+    [(AstExpr.Xgetbv index-box)
+      (let
+        [index : AstExpr (ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-expr-uses-free-source-id? expr-bases index target-1 target-2 bound))]
+    [(AstExpr.Syscall args)
+      (tc-expr-list-uses-free-source-id?
+        expr-bases
+        args
+        target-1
+        target-2
+        bound)]))
+
 ;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
 ;; when the expression assigns to the free name. Lambda capture checks use this
 ;; to reject mutation of captured bindings while allowing local parameter/let
@@ -77811,21 +78814,34 @@
                                 (set! done true))]))])]))])))
       result)))
 
-(define (macro-expr-needs-compat-expansion? [expr-bases : i64] [expr : AstExpr]) : bool
-  (or
-    (tc-expr-uses-free-name? expr-bases expr "when" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr-bases expr "unless" TcStringList.Nil)))
+(define (macro-expr-needs-compat-expansion?
+  [expr-bases : i64]
+  [expr : AstExpr]
+  [when-id : i64]
+  [unless-id : i64]) : bool
+  ;; One walk matching both ids; per-Var comparison is the exact id form of
+  ;; the two string-keyed walks it replaces (see tc-env-key-source-id-or-neg).
+  (tc-expr-uses-free-source-id?
+    expr-bases
+    expr
+    when-id
+    unless-id
+    TcNameIdList.Nil))
 
-(define (macro-decl-needs-expansion? [expr-bases : i64] [decl : AstDecl]) : bool
+(define (macro-decl-needs-expansion?
+  [expr-bases : i64]
+  [decl : AstDecl]
+  [when-id : i64]
+  [unless-id : i64]) : bool
   (match decl
     [(AstDecl.Def decl-meta _ _ expr-box)
       (let
         [expr : AstExpr (ast-expr-segment-bases-get expr-bases expr-box)]
-        (macro-expr-needs-compat-expansion? expr-bases expr))]
+        (macro-expr-needs-compat-expansion? expr-bases expr when-id unless-id))]
     [(AstDecl.DefFn decl-meta _ _ _ body-box _)
       (let
         [body : AstExpr (ast-expr-segment-bases-get expr-bases body-box)]
-        (macro-expr-needs-compat-expansion? expr-bases body))]
+        (macro-expr-needs-compat-expansion? expr-bases body when-id unless-id))]
     [(AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(AstDecl.Test _ _ _) false]
     [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
@@ -77836,7 +78852,7 @@
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (macro-decl-needs-expansion? expr-bases inner))]
+        (macro-decl-needs-expansion? expr-bases inner when-id unless-id))]
     [_ false]))
 
 (define (macro-decl-has-defmacro? [decl : AstDecl]) : bool
@@ -77848,18 +78864,35 @@
         (macro-decl-has-defmacro? inner))]
     [_ false]))
 
-;; Whether a program needs the macro expansion pass.
+;; Whether a program needs the macro expansion pass. The when/unless intern
+;; ids are found once per scan and threaded through the per-declaration
+;; prescan.
 (define (macro-program-needs-expansion?
   [expr-bases : i64]
   [decls : AstDeclList]) : bool
+  (macro-program-needs-expansion-with-ids?
+    expr-bases
+    decls
+    (intern "when")
+    (intern "unless")))
+
+(define (macro-program-needs-expansion-with-ids?
+  [expr-bases : i64]
+  [decls : AstDeclList]
+  [when-id : i64]
+  [unless-id : i64]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList rest]
         (or
-          (macro-decl-needs-expansion? expr-bases decl)
-          (macro-program-needs-expansion? expr-bases rest)))]))
+          (macro-decl-needs-expansion? expr-bases decl when-id unless-id)
+          (macro-program-needs-expansion-with-ids?
+            expr-bases
+            rest
+            when-id
+            unless-id)))]))
 
 (define (macro-program-has-defmacro? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)

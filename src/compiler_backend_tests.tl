@@ -7018,6 +7018,64 @@
     [_reset-after : unit (compiler-backend-sweep-reset!)]
     (string.eq got want)))
 
+;; Pass-1 fast paths: an inert record following a candidate must still poison
+;; a Win64 epilogue tail, so nothing in the region is swept.
+(define (compiler-backend-deadstore-sweep-win64-inert-tail-poison-ok?) : bool
+  (let
+    [input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $1, 40(%rsp)
+    leaq 24(%rsp), %rsp
+    movq %rax, %rbx
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+    [got : String (compiler-backend-peephole-asm input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (string.eq got input)))
+
+;; Pass-1 fast paths: a candidate as the region's last record is swept by the
+;; candidate hoist, and a candidate inside a Win64 epilogue tail still poisons
+;; the region through that same hoist.
+(define (compiler-backend-deadstore-sweep-candidate-last-ok?) : bool
+  (let
+    [last-input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $1, 40(%rsp)
+"]
+    [last-want : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+"]
+    [tail-input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq $1, 40(%rsp)
+    leaq 24(%rsp), %rsp
+    movq $2, 40(%rsp)
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+    [last-got : String (compiler-backend-peephole-asm last-input)]
+    [_reset-mid : unit (compiler-backend-sweep-reset!)]
+    [_record-tail : unit
+      (compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+    [tail-got : String (compiler-backend-peephole-asm tail-input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (and (string.eq last-got last-want) (string.eq tail-got tail-input))))
+
 (define (compiler-backend-deadstore-sweep-win64-ok?) : bool
   (and
     (compiler-backend-deadstore-sweep-win64-rbp-frame-ok?)
@@ -7032,7 +7090,9 @@
     (compiler-backend-deadstore-sweep-coverage-cap-ok?)
     (compiler-backend-deadstore-sweep-leaq-watermark-ok?)
     (compiler-backend-deadstore-sweep-read-before-store-ok?)
-    (compiler-backend-deadstore-sweep-coverage-em-window-ok?)))
+    (compiler-backend-deadstore-sweep-coverage-em-window-ok?)
+    (compiler-backend-deadstore-sweep-win64-inert-tail-poison-ok?)
+    (compiler-backend-deadstore-sweep-candidate-last-ok?)))
 
 (define (compiler-backend-r10-dead-scan-long-gap-ok?) : bool
   (let

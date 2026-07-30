@@ -1226,7 +1226,7 @@
   (current-label i64)
   (assignments CompilerRegAssignmentList)
   (vars i64)
-  (types CompilerRegVarTypeList)
+  (types CompilerRegVarTypes)
   (global-types CompilerBackendGlobalTypeTable)
   (ret-ty AstType)
   (plan CompilerBackendRuntimePlan)
@@ -16214,11 +16214,11 @@
         values))))
 
 (define (compiler-backend-value-type
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : CompilerRegMaybeType
   (match value
-    [(CompilerIrValue.Var id) (compiler-reg-var-type-lookup types id)]
+    [(CompilerIrValue.Var id) (compiler-reg-var-types-lookup types id)]
     [(CompilerIrValue.Global name)
       (compiler-backend-global-type-lookup global-types name)]
     [(CompilerIrValue.GlobalAddr _) (CompilerRegMaybeType.Some (AstType.U64))]
@@ -16247,7 +16247,7 @@
     [_ result-ty]))
 
 (define (compiler-backend-binop-operand-ty
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
@@ -16275,13 +16275,13 @@
       result-ty)))
 
 (define (compiler-backend-value-float?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : bool
   (match value
     [(CompilerIrValue.F64 _) true]
     [(CompilerIrValue.Var id)
-      (match (compiler-reg-var-type-lookup types id)
+      (match (compiler-reg-var-types-lookup types id)
         [(CompilerRegMaybeType.Some ty) (compiler-backend-float-type? ty)]
         [(CompilerRegMaybeType.No) false])]
     [(CompilerIrValue.Global name)
@@ -16295,7 +16295,7 @@
 ;; instead of the integer path. The operand precision is recovered separately
 ;; via compiler-backend-binop-operand-ty.
 (define (compiler-backend-binop-f64?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
@@ -21573,7 +21573,7 @@
 
 (define (compiler-backend-emit-binop-with-plan
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -22283,7 +22283,7 @@
 
 (define (compiler-backend-emit-binop
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -22325,7 +22325,7 @@
     [_ false]))
 
 (define (compiler-backend-rax-forwardable-binop?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [op : CompilerIrBinOp]
@@ -22486,7 +22486,7 @@
 
 (define (compiler-backend-emit-binop-to-rax
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -22549,7 +22549,7 @@
 
 (define (compiler-backend-emit-binop-with-rax-value
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
@@ -22859,7 +22859,7 @@
   [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -23666,7 +23666,7 @@
   [type-segment-bases : i64]
   [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -29428,7 +29428,7 @@
       (compiler-backend-runtime-param-types-id name)]))
 
 (define (compiler-backend-call-actual-type
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [value : CompilerIrValue]) : AstType
   (match (compiler-backend-value-type types global-types value)
@@ -29437,7 +29437,7 @@
 
 (define (compiler-backend-call-actual-param-type-for-index
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
@@ -29460,7 +29460,7 @@
 (define (compiler-backend-call-actual-param-types-fill
   [type-segment-bases : i64]
   [out : (&mut out AstTypeList)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
@@ -29492,7 +29492,7 @@
 
 (define (compiler-backend-call-actual-param-types-from
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [fixed-types : AstTypeList]
@@ -29516,7 +29516,7 @@
 (define (compiler-backend-call-c-abi-param-types-fill
   [type-segment-bases : i64]
   [out : (&mut out AstTypeList)]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
@@ -29629,7 +29629,7 @@
 
 (define (compiler-backend-call-c-abi-param-types-from
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
@@ -29652,7 +29652,7 @@
       out)))
 
 (define (compiler-backend-call-actual-param-type-at
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [index : i64]) : AstType
@@ -29665,7 +29665,7 @@
 
 (define (compiler-backend-call-actual-param-types
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]) : AstTypeList
   (compiler-backend-call-actual-param-types-from
@@ -29679,7 +29679,7 @@
 
 (define (compiler-backend-call-c-abi-param-types
   [type-segment-bases : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [args : CompilerIrCallArgs]
   [declared-types : AstTypeList]
@@ -29722,7 +29722,7 @@
   [type-segment-bases : i64]
   [name : i64]
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [extern-call-info : i64]
   [index : CompilerBackendProgramIndex]) : AstTypeList
@@ -34850,7 +34850,7 @@
   [ty : AstType]
   [assignments : CompilerRegAssignmentList]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
@@ -35732,7 +35732,7 @@
   [name : i64]
   [args : CompilerIrCallArgs]
   [ty : AstType]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -36017,7 +36017,7 @@
   [inline-name : String]
   [args : CompilerIrCallArgs]
   [ty : AstType]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -36106,7 +36106,7 @@
   [assignments : CompilerRegAssignmentList]
   [arg-assignments : CompilerRegAssignmentList]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
   [externs : CompilerIrExternList]
@@ -39917,7 +39917,7 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [load-dst : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]) : bool
   (if (< index (struct-get instrs len))
@@ -40194,7 +40194,7 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-rax-forwardable-consumer?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
@@ -40225,7 +40225,7 @@
     [_ false]))
 
 (define (compiler-backend-rest-starts-rax-forwardable-consumer?
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
@@ -40743,7 +40743,7 @@
 (define (compiler-backend-gep-load-pair-alu-probe
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]
   [base : CompilerIrValue]
@@ -41292,7 +41292,7 @@
 (define (compiler-backend-gep-load-alu-probe
   [type-segment-bases : i64]
   [assignments : CompilerRegAssignmentList]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [use-counts : (Array i64)]
   [base : CompilerIrValue]
@@ -42165,7 +42165,7 @@
   [args : CompilerIrCallArgs]
   [assignments : CompilerRegAssignmentList]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
@@ -42293,7 +42293,7 @@
               instr-diag)))])))
 
 (define (compiler-backend-indirect-call-param-types
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [func : CompilerIrValue]
   [_functions : CompilerIrFunctionList]
   [_externs : CompilerIrExternList]
@@ -42356,7 +42356,7 @@
   [arg-assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -42508,7 +42508,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -42543,7 +42543,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [vars : i64]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -42702,7 +42702,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -42837,7 +42837,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [plan : CompilerBackendRuntimePlan]
   [_externs : CompilerIrExternList]
@@ -42942,7 +42942,7 @@
   [assignments : CompilerRegAssignmentList]
   [planned-target : String]
   [planned-stage : String]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -46145,7 +46145,7 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -46268,7 +46268,7 @@
   [index : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -46350,7 +46350,7 @@
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -46456,7 +46456,7 @@
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [types : CompilerRegVarTypeList]
+  [types : CompilerRegVarTypes]
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -52431,7 +52431,7 @@
               walk-vars
               walk-vars
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
+              (compiler-reg-var-types-empty)))]
         [alloc-blocks : CompilerIrBlockList
           (match leaf-csr-rewrite
             [(CompilerRegCallSaveRewrite.Rewrite out-blocks _ _ _ _) out-blocks])]
@@ -52499,7 +52499,7 @@
               alloc-vars
               alloc-vars
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
+              (compiler-reg-var-types-empty)))]
         [call-save-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -52533,7 +52533,7 @@
               call-save-vars
               call-save-vars
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
+              (compiler-reg-var-types-empty)))]
         [rewrite-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -52571,7 +52571,7 @@
               rewritten-vars
               rewritten-vars
               CompilerRegAssignmentList.Nil
-              CompilerRegVarTypeList.Nil))]
+              (compiler-reg-var-types-empty)))]
         [remat0-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -52594,7 +52594,7 @@
             remat0-vars
             remat0-vars
             CompilerRegAssignmentList.Nil
-            CompilerRegVarTypeList.Nil)]
+            (compiler-reg-var-types-empty))]
         ;; Downstream-facing FINAL pipeline names (= identity of the remat output).
         [remat-reg-plan : CompilerRegPlan
           (if call-save-enabled
@@ -52641,7 +52641,7 @@
             [(CompilerRegScratchPlanResult.Result out-plan _) out-plan])]
         [scratch-vars : i64
           (compiler-reg-plan-var-count scratch-reg-plan remat-vars)]
-        [plan-types : CompilerRegVarTypeList
+        [plan-types : CompilerRegVarTypes
           (compiler-reg-plan-types scratch-reg-plan)]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
@@ -52757,7 +52757,7 @@
                 scavenge-func
                 (compiler-live-analyze-function scavenge-func)))
             (compiler-reg-interval-seq-empty))]
-        [types : CompilerRegVarTypeList
+        [types : CompilerRegVarTypes
           (match coloring
             [(CompilerRegColoring.None) plan-types]
             [(CompilerRegColoring.Remap remap _)
@@ -59287,7 +59287,7 @@
               (compiler-reg-function-group-vars
                 type-segment-bases
                 (CompilerIrFunction.Function name params ret-ty vars blocks)
-                (compiler-reg-var-types-list types))]
+                types)]
             [_group-enable : unit
               (begin
                 (compiler-backend-current-slot-vars-set! vars)
@@ -59363,7 +59363,7 @@
             (compiler-reg-function-group-vars
               type-segment-bases
               (CompilerIrFunction.Function name params ret-ty vars blocks)
-              (compiler-reg-var-types-list types))]
+              types)]
           [_group-enable : unit
             (begin
               (compiler-backend-current-slot-vars-set! vars)

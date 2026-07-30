@@ -17,6 +17,161 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
+;; #6061: force every converted dense family past its initial capacity and
+;; pin the logical newest-first/LIFO semantics that the former Cons chains had.
+(define (opt-dense-test-licm-roots
+  [roots : OptLicmStoreRootList]
+  [next : i64]
+  [last : i64]) : OptLicmStoreRootList
+  (if (> next last)
+    roots
+    (opt-dense-test-licm-roots
+      (opt-licm-store-roots-add roots (OptLicmRoot.Fresh next))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-unroll-memories
+  [type-segment-bases : i64]
+  [memories : OptUnrollSimdMemoryList]
+  [next : i64]
+  [last : i64]) : OptUnrollSimdMemoryList
+  (if (> next last)
+    memories
+    (opt-dense-test-unroll-memories
+      type-segment-bases
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var next)
+        (AstType.I64))
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-late-drops
+  [drops : OptLateBoundsPairDrop]
+  [next : i64]
+  [last : i64]) : OptLateBoundsPairDrop
+  (if (> next last)
+    drops
+    (opt-dense-test-late-drops
+      (opt-late-bounds-pair-drops-add drops next)
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-reach-push
+  [worklist : OptReachWorklist]
+  [next : i64]
+  [last : i64]) : OptReachWorklist
+  (if (> next last)
+    worklist
+    (opt-dense-test-reach-push
+      (opt-reach-worklist-push worklist next)
+      (+ next 1)
+      last)))
+
+(define (opt-dense-test-reach-pop-order?
+  [worklist : OptReachWorklist]
+  [expected : i64]) : bool
+  (match (opt-reach-worklist-pop worklist)
+    [(OptReachWorklistPop.Empty) (< expected 0)]
+    [(OptReachWorklistPop.Item found rest)
+      (and
+        (= found expected)
+        (opt-dense-test-reach-pop-order? rest (- expected 1)))]))
+
+(define (opt-dense-test-reach-reuse?) : bool
+  (match (opt-reach-worklist-pop
+    (opt-dense-test-reach-push (opt-reach-worklist-new) 0 20))
+    [(OptReachWorklistPop.Empty) false]
+    [(OptReachWorklistPop.Item found rest)
+      (if (= found 20)
+        (match (opt-reach-worklist-pop (opt-reach-worklist-push rest 99))
+          [(OptReachWorklistPop.Empty) false]
+          [(OptReachWorklistPop.Item reused tail)
+            (and (= reused 99) (opt-dense-test-reach-pop-order? tail 19))])
+        false)]))
+
+(define (opt-dense-test-scratch-roots
+  [roots : OptScratchRootList]
+  [next : i64]
+  [last : i64]) : OptScratchRootList
+  (if (> next last)
+    roots
+    (opt-dense-test-scratch-roots
+      (opt-scratch-root-list-add roots next)
+      (+ next 1)
+      last)))
+
+(define (compiler-optimize-dense-storage-self-test) : i64
+  (let
+    [type-segment-bases : i64 (ast-node-pool-reader-type-segment-bases)]
+    [licm : OptLicmStoreRootList
+      (opt-dense-test-licm-roots (opt-licm-store-roots-new) 1 8)]
+    [memories : OptUnrollSimdMemoryList
+      (opt-dense-test-unroll-memories
+        type-segment-bases
+        (opt-unroll-simd-memory-new)
+        1
+        8)]
+    [memory-count : i64 (opt-unroll-simd-memory-count memories)]
+    [newest-index : i64
+      (opt-unroll-simd-memory-index
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 8)
+        (AstType.I64)
+        0)]
+    [oldest-index : i64
+      (opt-unroll-simd-memory-index
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 1)
+        (AstType.I64)
+        0)]
+    [deduped : OptUnrollSimdMemoryList
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        memories
+        (CompilerIrValue.Var 4)
+        (AstType.I64))]
+    [deduped-count : i64 (opt-unroll-simd-memory-count deduped)]
+    [typed : OptUnrollSimdMemoryList
+      (opt-unroll-simd-memory-add
+        type-segment-bases
+        deduped
+        (CompilerIrValue.Var 1)
+        (AstType.U64))]
+    [drops : OptLateBoundsPairDrop
+      (opt-dense-test-late-drops (opt-late-bounds-pair-drops-new) 1 8)]
+    [roots : OptScratchRootList
+      (opt-dense-test-scratch-roots (opt-scratch-root-list-new) 1 32)]
+    (cond
+      [(not (opt-licm-store-roots-safe? licm (OptLicmRoot.Fresh 99))) 1]
+      [(opt-licm-store-roots-safe? licm (OptLicmRoot.Fresh 4)) 2]
+      [(not (= memory-count 8)) 3]
+      [(not (= newest-index 0)) 4]
+      [(not (= oldest-index 7)) 5]
+      [(not (= deduped-count 8)) 6]
+      [(not (= (opt-unroll-simd-memory-count typed) 9)) 7]
+      [(not
+          (=
+            (opt-unroll-simd-memory-index
+              type-segment-bases
+              typed
+              (CompilerIrValue.Var 1)
+              (AstType.U64)
+              0)
+            0))
+        8]
+      [(not (opt-late-bounds-pair-drop? drops 1)) 9]
+      [(not (opt-late-bounds-pair-drop? drops 8)) 10]
+      [(opt-late-bounds-pair-drop? drops 9) 11]
+      [(not (opt-dense-test-reach-reuse?)) 12]
+      [(not (opt-scratch-root-list-contains? roots 1)) 13]
+      [(not (opt-scratch-root-list-contains? roots 32)) 14]
+      [(opt-scratch-root-list-contains? roots 33) 15]
+      [else 42])))
+
 ;; --- self-test ---------------------------------------------------------------
 (define (opt-count-arith-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -24403,7 +24558,7 @@
       [store-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
-            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+            (opt-scratch-root-list-add (opt-scratch-root-list-new) 1)]
           (OptScratchScopeReport.Report
             1
             32
@@ -24427,7 +24582,7 @@
       [return-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
-            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+            (opt-scratch-root-list-add (opt-scratch-root-list-new) 1)]
           (OptScratchScopeReport.Report
             1
             32

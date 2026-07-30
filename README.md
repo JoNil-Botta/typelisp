@@ -437,9 +437,9 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
 - AVX2 and AVX-512 vectorize a contiguous `foreach` map/zip subset over
   `i8`–`i64`, `u8`–`u64`, `f32`, and `f64` lanes (AVX-512 additionally
   covers bool lanes), plus eligible `spmd-reduce` array folds (`sum` over
-  `i32`/`i64`/`f32`/`f64`, `min`/`max` over `i32`, and AVX-512 `min`/`max` over
-  `i64`). Contiguous maps can borrow vector backing or slice storage, so
-  public APIs can take vector/slice views.
+  `i32`/`i64`/`f32`/`f64`, `min`/`max` over `i32`/`i64`, and `all`/`any` over
+  bool). Contiguous maps can borrow vector backing or slice storage, so public
+  APIs can take vector/slice views.
 - Scalar lowering supports `spmd-reduce` `sum`/`min`/`max`/`all`/`any` and
   inclusive `spmd-scan` over the SPEC-supported types. AVX2 and AVX-512
   additionally vectorize canonical contiguous range-wide scans for i32/i64

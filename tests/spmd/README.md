@@ -161,8 +161,11 @@ compile and run in `avx2` and `avx512`.
   bool arrays across empty, sub-lane, exact-lane, and tail lengths. All modes
   exit 42.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
-  i64/i32/f64, f32 `sum`, plus `all`/`any` bool reductions across empty,
-  sub-lane, exact-lane, tail, signed-zero, and finite-overflow cases. Exit 42.
+  i64/i32/f64, f32 `sum`, plus direct bool-array `all`/`any` reductions across
+  empty, sub-lane, AVX2/AVX-512 lane boundaries, tails, seeded folds,
+  signed-zero, and finite-overflow cases. Exit 42. SIMD assembly gates pin the
+  AVX2 i64 compare/blend expansion and native AVX2/AVX-512 bool mask
+  reductions.
 - `map_fused_reduce_i64.tl` - i64 `sum` over mapped add, sub/bit-or/bit-xor,
   and checked shift values, including empty, sub-gang, exact-gang, and tail
   ranges plus a neutral lane-index term. All modes exit 42; SIMD assembly gates

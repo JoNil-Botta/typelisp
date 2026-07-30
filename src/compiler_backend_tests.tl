@@ -12243,6 +12243,31 @@
         [(ResultCompilerBackend.Err _) false])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-backend-bool-reduce-asm-contains?
+  [src : String]
+  [lower-mode : CompilerLowerMode]
+  [backend-mode : CompilerBackendMode]
+  [reduce-op : String]
+  [result-op : String]
+  [register : String]) : bool
+  (match (lower-compiler-source-with-mode src lower-mode)
+    [(ResultCompilerLower.Ok program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (CompilerBackendTarget.Linux)
+        backend-mode
+        spans
+        true)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "spmd_reduce_avx2_body")
+            (compiler-backend-string-contains? asm reduce-op)
+            (compiler-backend-string-contains? asm result-op)
+            (compiler-backend-string-contains? asm register)
+            (compiler-backend-string-contains? asm "spmd_reduce_tail"))]
+        [(ResultCompilerBackend.Err _) false])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-backend-shuffle-asm-contains?
   [src : String]
   [lower-mode : CompilerLowerMode]
@@ -12329,7 +12354,33 @@
       "    vaddps "
       "    vextractf128 $1, "
       "    vaddss "
-      "    movss %xmm2, ")))
+      "    movss %xmm2, ")
+    (compiler-backend-avx2-reduce-asm-contains?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      "    vpcmpgtq "
+      "    vextracti128 $1, "
+      "    vpblendvb "
+      "    vmovq %xmm2, ")
+    (compiler-backend-avx2-reduce-asm-contains?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      "    vpcmpgtq "
+      "    vextracti128 $1, "
+      "    vpblendvb "
+      "    vmovq %xmm2, ")
+    (compiler-backend-bool-reduce-asm-contains?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
+      (CompilerLowerMode.Avx2)
+      (CompilerBackendMode.Avx2)
+      "    vpmovmskb "
+      "    sete %al\n"
+      "%ymm")
+    (compiler-backend-bool-reduce-asm-contains?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
+      (CompilerLowerMode.Avx2)
+      (CompilerBackendMode.Avx2)
+      "    vpmovmskb "
+      "    setne %al\n"
+      "%ymm")))
 
 (define (compiler-backend-avx512-reduce-asm-contains?
   [src : String]
@@ -12417,6 +12468,23 @@
       "    vaddss "
       "    movss %xmm2, ")
     (compiler-backend-avx512-vector-reduce-i64-minmax-ok?)))
+
+(define (compiler-backend-avx512-bool-vector-reduce-ok?) : bool
+  (and
+    (compiler-backend-bool-reduce-asm-contains?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
+      (CompilerLowerMode.Avx512)
+      (CompilerBackendMode.Avx512)
+      "    kortestq "
+      "    setc %al\n"
+      "%k")
+    (compiler-backend-bool-reduce-asm-contains?
+      "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
+      (CompilerLowerMode.Avx512)
+      (CompilerBackendMode.Avx512)
+      "    kortestq "
+      "    setne %al\n"
+      "%k")))
 
 (define (compiler-backend-vector-reduce-direct-assignments
   [dst-location : CompilerRegLocation]) : CompilerRegAssignmentList
@@ -13789,6 +13857,7 @@
     (compiler-backend-avx512-masked-if-ok?)
     (compiler-backend-avx2-vector-reduce-ok?)
     (compiler-backend-avx512-vector-reduce-ok?)
+    (compiler-backend-avx512-bool-vector-reduce-ok?)
     (compiler-backend-vector-shuffle-ok?)
     (compiler-backend-vector-reduce-direct-store-ok?)
     (compiler-backend-xmm-family-conversion-ok?)

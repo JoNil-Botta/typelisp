@@ -39,8 +39,8 @@
 
 (defstruct FormatTokenStream
   (source String)
-  (tokens (Array FormatToken))
-  (starts (Array i64))
+  (tokens (__tl_dyn-array FormatToken))
+  (starts (__tl_dyn-array i64))
   (count i64))
 
 (defstruct FormatPosition
@@ -282,7 +282,7 @@
 ;; millions of call prologues just to classify bytes. Precompute a 256-entry
 ;; class table once per process and test membership with an inline array lookup.
 ;; Bit 0 = whitespace, bit 1 = digit, bit 2 = symbol char, bit 3 = hex digit.
-(define fmt-char-class-table : (Array i64)
+(define fmt-char-class-table : (__tl_dyn-array i64)
   (make-array i64 256))
 (define fmt-char-class-ready : bool
   false)
@@ -563,8 +563,8 @@
     (ResultFmtMaybeCharEnd.No)))
 
 (define (fmt-store-token
-  [tokens : (Array FormatToken)]
-  [starts : (Array i64)]
+  [tokens : (__tl_dyn-array FormatToken)]
+  [starts : (__tl_dyn-array i64)]
   [count : i64]
   [start : i64]
   [tok : FormatToken]) : unit
@@ -578,11 +578,11 @@
 ;; multi-character tokens or whitespace, so the byte-sized arrays were ~3x
 ;; larger than needed and paid that cost in zero-init on every file).
 (define (fmt-grow-token-array
-  [old : (Array FormatToken)]
+  [old : (__tl_dyn-array FormatToken)]
   [count : i64]
-  [newcap : i64]) : (Array FormatToken)
+  [newcap : i64]) : (__tl_dyn-array FormatToken)
   (let
-    [bigger : (Array FormatToken) (make-array FormatToken newcap)]
+    [bigger : (__tl_dyn-array FormatToken) (make-array FormatToken newcap)]
     [j : i64 0]
     (begin
       (while (< j count)
@@ -591,10 +591,12 @@
           (set! j (+ j 1))))
       bigger)))
 
-(define (fmt-grow-i64-array [old : (Array i64)] [count : i64] [newcap : i64]) : (Array
-    i64)
+(define (fmt-grow-i64-array
+  [old : (__tl_dyn-array i64)]
+  [count : i64]
+  [newcap : i64]) : (__tl_dyn-array i64)
   (let
-    [bigger : (Array i64) (make-array i64 newcap)]
+    [bigger : (__tl_dyn-array i64) (make-array i64 newcap)]
     [j : i64 0]
     (begin
       (while (< j count)
@@ -615,8 +617,8 @@
       (unsafe
         (string-data (& src)))]
     [cap : i64 (fmt-token-capacity-estimate n)]
-    [tokens : (Array FormatToken) (make-array FormatToken cap)]
-    [starts : (Array i64) (make-array i64 cap)]
+    [tokens : (__tl_dyn-array FormatToken) (make-array FormatToken cap)]
+    [starts : (__tl_dyn-array i64) (make-array i64 cap)]
     [i : i64 0]
     [count : i64 0]
     (begin

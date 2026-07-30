@@ -69,7 +69,7 @@
   false)
 
 (defstruct CompileCliCfgNames
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 (define (compile-cli-cfg-names-with-capacity [capacity : i64]) : CompileCliCfgNames
@@ -84,8 +84,8 @@
   (compile-cli-cfg-names-with-capacity 4))
 
 (define (compile-cli-cfg-names-copy-range!
-  [dst : (&mut dst (Array String))]
-  [src : (& src (Array String))]
+  [dst : (&mut dst (__tl_dyn-array String))]
+  [src : (& src (__tl_dyn-array String))]
   [index : i64]
   [count : i64]) : unit
   (let
@@ -103,7 +103,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array String) (make-array String new-cap)]
+    [bigger : (__tl_dyn-array String) (make-array String new-cap)]
     (begin
       (compile-cli-cfg-names-copy-range!
         (&mut bigger)

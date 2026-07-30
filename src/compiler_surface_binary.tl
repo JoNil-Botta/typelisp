@@ -53,10 +53,10 @@
           (set! index (+ index 1))))
       unit)))
 
-(define (surface-binary-byte [bytes : (Array u8)] [offset : i64]) : i64
+(define (surface-binary-byte [bytes : (__tl_dyn-array u8)] [offset : i64]) : i64
   (cast (array-ref bytes offset) : i64))
 
-(define (surface-binary-read-u64 [bytes : (Array u8)] [offset : i64]) : i64
+(define (surface-binary-read-u64 [bytes : (__tl_dyn-array u8)] [offset : i64]) : i64
   (+
     (surface-binary-byte bytes offset)
     (+
@@ -74,11 +74,11 @@
                 (shl (surface-binary-byte bytes (+ offset 7)) 56)))))))))
 
 (define (surface-binary-bytes->string
-  [bytes : (Array u8)]
+  [bytes : (__tl_dyn-array u8)]
   [offset : i64]
   [length : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 length)]
+    [out : (__tl_dyn-array u8) (make-array u8 length)]
     [index : i64 0]
     (begin
       (while (< index length)
@@ -88,9 +88,10 @@
       (unsafe
         (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) length)))))
 
-(define (surface-binary-copy [bytes : (Array u8)]) : (Array u8)
+(define (surface-binary-copy [bytes : (__tl_dyn-array u8)]) : (__tl_dyn-array
+    u8)
   (let
-    [out : (Array u8) (make-array u8 (array-length bytes))]
+    [out : (__tl_dyn-array u8) (make-array u8 (array-length bytes))]
     [index : i64 0]
     (begin
       (while (< index (array-length bytes))

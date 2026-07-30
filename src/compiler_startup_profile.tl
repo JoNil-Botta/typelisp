@@ -12,7 +12,7 @@
 
 (define compiler-startup-profile-marker-count : i64
   13)
-(define compiler-startup-profile-ticks : (Array i64)
+(define compiler-startup-profile-ticks : (__tl_dyn-array i64)
   (array.make-array i64 compiler-startup-profile-marker-count))
 
 (define (compiler-startup-profile-mark! [index : i64]) : unit

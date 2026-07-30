@@ -303,11 +303,11 @@
   (Consume i64))
 
 (defstruct AstTypeList
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 (defstruct AstLifetimeList
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 (defenum AstMaybeType
@@ -322,18 +322,18 @@
   (Param i64 AstType bool bool))
 
 (defstruct AstParamList
-  (slots (Array AstParam))
+  (slots (__tl_dyn-array AstParam))
   (len i64))
 
 (defstruct AstMacroTypeKindList
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 (defenum AstMacroParam
   (Param i64 AstType bool AstMacroTypeKindList))
 
 (defstruct AstMacroParamList
-  (slots (Array AstMacroParam))
+  (slots (__tl_dyn-array AstMacroParam))
   (len i64))
 
 (defenum AstFieldCleanup
@@ -345,7 +345,7 @@
   (Def i64 AstType AstFieldCleanup))
 
 (defstruct AstFieldDefList
-  (slots (Array AstFieldDef))
+  (slots (__tl_dyn-array AstFieldDef))
   (len i64))
 
 (defenum AstStructRepr
@@ -367,7 +367,7 @@
   (Arg String))
 
 (defstruct AstExternLinkInputList
-  (slots (Array AstExternLinkInput))
+  (slots (__tl_dyn-array AstExternLinkInput))
   (len i64))
 
 (defenum AstFnExport
@@ -379,7 +379,7 @@
   (Varying))
 
 (defstruct AstSpmdParamClassList
-  (slots (Array AstSpmdParamClass))
+  (slots (__tl_dyn-array AstSpmdParamClass))
   (len i64))
 
 (defenum AstSpmdResultClass
@@ -396,7 +396,7 @@
   (index-param i64))
 
 (defstruct AstSpmdSpecializationList
-  (slots (Array AstSpmdSpecialization))
+  (slots (__tl_dyn-array AstSpmdSpecialization))
   (len i64))
 
 (defenum AstSpmdCallable
@@ -417,7 +417,7 @@
   (symbol i64))
 
 (defstruct AstImportedSpmdSpecializationList
-  (slots (Array AstImportedSpmdSpecialization))
+  (slots (__tl_dyn-array AstImportedSpmdSpecialization))
   (len i64))
 
 (defstruct AstImportedSpmdCallable
@@ -425,7 +425,7 @@
   (specializations AstImportedSpmdSpecializationList))
 
 (defstruct AstImportedSpmdCallableList
-  (slots (Array AstImportedSpmdCallable))
+  (slots (__tl_dyn-array AstImportedSpmdCallable))
   (len i64))
 
 (defenum AstImportedSpmdMetadata
@@ -481,14 +481,14 @@
   (Owned))
 
 (defstruct AstVariantPayloadCleanupList
-  (slots (Array AstVariantPayloadCleanup))
+  (slots (__tl_dyn-array AstVariantPayloadCleanup))
   (len i64))
 
 (defenum AstVariantDef
   (Def i64 AstTypeList AstVariantPayloadCleanupList))
 
 (defstruct AstVariantDefList
-  (slots (Array AstVariantDef))
+  (slots (__tl_dyn-array AstVariantDef))
   (len i64))
 
 (defenum AstPattern
@@ -500,28 +500,28 @@
   (Literal AstLiteral))
 
 (defstruct AstPatternList
-  (slots (Array AstPattern))
+  (slots (__tl_dyn-array AstPattern))
   (len i64))
 
 (defenum AstLetBinding
   (Binding i64 AstMaybeType i64))
 
 (defstruct AstLetBindingList
-  (slots (Array AstLetBinding))
+  (slots (__tl_dyn-array AstLetBinding))
   (len i64))
 
 (defenum AstResourceBinding
   (Binding i64 i64 i64 bool))
 
 (defstruct AstResourceBindingList
-  (slots (Array AstResourceBinding))
+  (slots (__tl_dyn-array AstResourceBinding))
   (len i64))
 
 (defenum AstMatchArm
   (Arm AstPattern i64))
 
 (defstruct AstMatchArmList
-  (slots (Array AstMatchArm))
+  (slots (__tl_dyn-array AstMatchArm))
   (len i64))
 
 ;; Boxed payload for `AstExpr.Lambda`. Lambdas are rare in the AST, but their
@@ -579,6 +579,7 @@
   (Lambda (Box AstLambda))
   (Tuple AstExprList)
   (TupleRef i64 i64)
+  ;; Expression variant named `Array`; this is not unsized array type syntax.
   (Array AstExprList)
   (DynArray AstExprList)
   (MakeArray i64 i64)
@@ -782,11 +783,11 @@
     (AstBorrowLifetime.Inferred)
     (AstBorrowLifetime.Named id)))
 
-(define (ast-node-pool-segment-base-table-new) : (Array i64)
+(define (ast-node-pool-segment-base-table-new) : (__tl_dyn-array i64)
   (array.make-array i64 ast-node-pool-max-segments))
 
 (define (ast-expr-node-pool-biased-segment-base
-  [segment : (Array AstExpr)]
+  [segment : (__tl_dyn-array AstExpr)]
   [segment-index : i64]) : i64
   (-
     (cast
@@ -795,11 +796,11 @@
       : i64)
     (* segment-index ast-expr-node-pool-segment-bytes)))
 
-(define ast-node-pool-first-segment : (Array AstExpr)
+(define ast-node-pool-first-segment : (__tl_dyn-array AstExpr)
   (array.make-array AstExpr ast-expr-node-pool-segment-size))
 (define ast-node-pool-segment-bases : i64
   (let
-    [bases : (Array i64) (ast-node-pool-segment-base-table-new)]
+    [bases : (__tl_dyn-array i64) (ast-node-pool-segment-base-table-new)]
     (begin
       (array-set!
         bases
@@ -884,7 +885,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-segment : (Array AstExpr)
+    [new-segment : (__tl_dyn-array AstExpr)
       (array.make-array AstExpr ast-expr-node-pool-segment-size)]
     [new-storage-arena : i64 (arena.tl_arena_current)]
     (begin
@@ -1036,7 +1037,8 @@
     [_set-base-arena : unit
       (unsafe
         (arena.tl_arena_set base-arena))]
-    [segment-bases : (Array i64) (ast-node-pool-segment-base-table-new)]
+    [segment-bases : (__tl_dyn-array i64)
+      (ast-node-pool-segment-base-table-new)]
     [base-head : i64 (arena.tl_arena_current)]
     [storage-root : i64 (ast-node-pool-arena-make)]
     [_set-arena : unit
@@ -1046,7 +1048,7 @@
     (begin
       (while (< segment-index segment-count)
         (let
-          [segment : (Array AstExpr)
+          [segment : (__tl_dyn-array AstExpr)
             (array.make-array AstExpr ast-expr-node-pool-segment-size)]
           (begin
             (array-set!
@@ -1108,7 +1110,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set old-storage-arena))]
-    [new-segment : (Array AstExpr)
+    [new-segment : (__tl_dyn-array AstExpr)
       (array.make-array AstExpr ast-expr-node-pool-segment-size)]
     [new-storage-arena : i64 (arena.tl_arena_current)]
     [len : i64 (struct-get pool count)]
@@ -1221,7 +1223,7 @@
 ;; hash-consed pushes (below), a 1K-node first segment covers direct smoke
 ;; callers while additional segments grow on demand.
 (define (ast-type-node-pool-biased-segment-base
-  [segment : (Array AstType)]
+  [segment : (__tl_dyn-array AstType)]
   [segment-index : i64]) : i64
   (-
     (cast
@@ -1230,11 +1232,11 @@
       : i64)
     (* segment-index ast-type-node-pool-segment-bytes)))
 
-(define ty-node-pool-first-segment : (Array AstType)
+(define ty-node-pool-first-segment : (__tl_dyn-array AstType)
   (array.make-array AstType ast-type-node-pool-segment-size))
 (define ty-node-pool-segment-bases : i64
   (let
-    [bases : (Array i64) (ast-node-pool-segment-base-table-new)]
+    [bases : (__tl_dyn-array i64) (ast-node-pool-segment-base-table-new)]
     (begin
       (array-set!
         bases
@@ -1280,7 +1282,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
-    [new-segment : (Array AstType)
+    [new-segment : (__tl_dyn-array AstType)
       (array.make-array AstType ast-type-node-pool-segment-size)]
     [new-storage-arena : i64 (arena.tl_arena_current)]
     (begin
@@ -1370,7 +1372,7 @@
   (count i64)
   (base-arena i64)
   (exhausted bool)
-  (dedup-slots (Array i64))
+  (dedup-slots (__tl_dyn-array i64))
   (dedup-count i64)
   (storage-arena i64)
   (segment-count i64))
@@ -1419,8 +1421,9 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set base-arena))]
-    [segment-bases : (Array i64) (ast-node-pool-segment-base-table-new)]
-    [dedup-slots : (Array i64) (array.make-array i64 dedup-cap)]
+    [segment-bases : (__tl_dyn-array i64)
+      (ast-node-pool-segment-base-table-new)]
+    [dedup-slots : (__tl_dyn-array i64) (array.make-array i64 dedup-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [storage-root : i64 (ast-node-pool-arena-make)]
     [_set-storage-arena : unit
@@ -1430,7 +1433,7 @@
     (begin
       (while (< segment-index segment-count)
         (let
-          [segment : (Array AstType)
+          [segment : (__tl_dyn-array AstType)
             (array.make-array AstType ast-type-node-pool-segment-size)]
           (begin
             (array-set!
@@ -1475,7 +1478,7 @@
 
 (define (ast-type-node-pool-state-dedup-clear [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
   (let
-    [slots : (Array i64) (struct-get pool dedup-slots)]
+    [slots : (__tl_dyn-array i64) (struct-get pool dedup-slots)]
     [cap : i64 (array-length slots)]
     [i : i64 0]
     (begin
@@ -1524,7 +1527,7 @@
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set old-storage-arena))]
-    [new-segment : (Array AstType)
+    [new-segment : (__tl_dyn-array AstType)
       (array.make-array AstType ast-type-node-pool-segment-size)]
     [new-storage-arena : i64 (arena.tl_arena_current)]
     [len : i64 (struct-get pool count)]
@@ -1601,7 +1604,7 @@
 (define (ast-type-node-pool-state-push-dedup
   [pool : AstTypeNodePoolState]
   [node : AstType]
-  [dedup-slots : (Array i64)]
+  [dedup-slots : (__tl_dyn-array i64)]
   [dedup-count : i64]
   [idx : i64]
   [mask : i64]) : AstTypeNodePoolPushResult
@@ -1639,7 +1642,7 @@
   [pool : AstTypeNodePoolState]
   [node : AstType]) : AstTypeNodePoolPushResult
   (let
-    [dedup-slots : (Array i64) (struct-get pool dedup-slots)]
+    [dedup-slots : (__tl_dyn-array i64) (struct-get pool dedup-slots)]
     [dedup-cap : i64 (array-length dedup-slots)]
     [dedup-count : i64 (struct-get pool dedup-count)]
     (if (>= (* dedup-count 2) dedup-cap)
@@ -1776,7 +1779,7 @@
 ;; fixpoint. String payloads (lifetime names) compare by content.
 (define ty-node-dedup-capacity : i64
   131072)
-(define ty-node-dedup-slots : (Array i64)
+(define ty-node-dedup-slots : (__tl_dyn-array i64)
   (array.make-array i64 131072))
 (define ty-node-dedup-count : i64
   0)
@@ -2188,13 +2191,13 @@
     (set! node-pool-owner-arena owner-arena)))
 
 (defstruct AstNodePoolContext
-  (expr-pool (Array AstExprNodePoolState))
-  (type-pool (Array AstTypeNodePoolState))
+  (expr-pool (__tl_dyn-array AstExprNodePoolState))
+  (type-pool (__tl_dyn-array AstTypeNodePoolState))
   (owner-arena i64))
 
 (define (ast-node-pool-context-from-cells
-  [expr-pool : (Array AstExprNodePoolState)]
-  [type-pool : (Array AstTypeNodePoolState)]
+  [expr-pool : (__tl_dyn-array AstExprNodePoolState)]
+  [type-pool : (__tl_dyn-array AstTypeNodePoolState)]
   [owner-arena : i64]) : AstNodePoolContext
   (AstNodePoolContext expr-pool type-pool owner-arena))
 
@@ -2274,9 +2277,9 @@
         (unsafe
           (arena.tl_arena_set allocation-owner-arena))
         unit)]
-    [expr-cell : (Array AstExprNodePoolState)
+    [expr-cell : (__tl_dyn-array AstExprNodePoolState)
       (array.make-array AstExprNodePoolState 1)]
-    [type-cell : (Array AstTypeNodePoolState)
+    [type-cell : (__tl_dyn-array AstTypeNodePoolState)
       (array.make-array AstTypeNodePoolState 1)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_republish : unit
@@ -2837,9 +2840,10 @@
               ;; source's insertion-ordered id.
               (set! i (+ i 1)))]))
       (let
-        [source-dedup : (Array i64) (struct-get source-state dedup-slots)]
+        [source-dedup : (__tl_dyn-array i64)
+          (struct-get source-state dedup-slots)]
         [dedup-cap : i64 (array-length source-dedup)]
-        [dedup-copy : (Array i64) (array.make-array i64 dedup-cap)]
+        [dedup-copy : (__tl_dyn-array i64) (array.make-array i64 dedup-cap)]
         [dedup-i : i64 0]
         (begin
           (while (< dedup-i dedup-cap)
@@ -2906,7 +2910,7 @@
     (ty-node-pool-exhausted?)))
 
 (defstruct AstExprList
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 (defstruct AstExprClause
@@ -2914,7 +2918,7 @@
   (second i64))
 
 (defstruct AstExprClauseList
-  (slots (Array AstExprClause))
+  (slots (__tl_dyn-array AstExprClause))
   (len i64))
 
 (defstruct AstExprBindingClause
@@ -2929,7 +2933,7 @@
   (span AstSourceSpan))
 
 (defstruct AstExprBindingClauseList
-  (slots (Array AstExprBindingClause))
+  (slots (__tl_dyn-array AstExprBindingClause))
   (len i64))
 
 (defenum AstMaybeModuleName
@@ -2963,7 +2967,7 @@
   (Variant AstDispatchIsa i64))
 
 (defstruct AstDispatchVariantList
-  (slots (Array AstDispatchVariant))
+  (slots (__tl_dyn-array AstDispatchVariant))
   (len i64))
 
 (defenum AstGeneratedDeclMeta
@@ -3020,7 +3024,7 @@
   (Unsafe (Box AstDecl)))
 
 (defstruct AstDeclList
-  (slots (Array AstDecl))
+  (slots (__tl_dyn-array AstDecl))
   (offset i64)
   (len i64)
   (prependable bool))
@@ -3030,8 +3034,8 @@
   (Cons AstDecl AstDeclList))
 
 (defstruct AstDeclPathList
-  (slots (Array String))
-  (owner-ids (Array i64))
+  (slots (__tl_dyn-array String))
+  (owner-ids (__tl_dyn-array i64))
   (offset i64)
   (len i64)
   (prependable bool))
@@ -3041,7 +3045,7 @@
   (Cons String AstDeclPathList))
 
 (defstruct AstDeclModuleList
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (offset i64)
   (len i64)
   (prependable bool))
@@ -3078,8 +3082,8 @@
     fallback))
 
 (define (ast-type-list-copy-range
-  [dst : (&mut dst (Array i64))]
-  [src : (& src (Array i64))]
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -3096,7 +3100,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
       (ast-type-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
@@ -3312,8 +3316,8 @@
     fallback))
 
 (define (ast-lifetime-list-copy-range
-  [dst : (&mut dst (Array i64))]
-  [src : (& src (Array i64))]
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -3330,7 +3334,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
       (ast-lifetime-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
@@ -3403,8 +3407,8 @@
     fallback))
 
 (define (ast-param-list-copy-range
-  [dst : (&mut dst (Array AstParam))]
-  [src : (& src (Array AstParam))]
+  [dst : (&mut dst (__tl_dyn-array AstParam))]
+  [src : (& src (__tl_dyn-array AstParam))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -3421,7 +3425,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstParam) (array.make-array AstParam new-cap)]
+    [bigger : (__tl_dyn-array AstParam) (array.make-array AstParam new-cap)]
     (begin
       (ast-param-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
@@ -3580,8 +3584,8 @@
     fallback))
 
 (define (ast-macro-param-list-copy-range
-  [dst : (&mut dst (Array AstMacroParam))]
-  [src : (& src (Array AstMacroParam))]
+  [dst : (&mut dst (__tl_dyn-array AstMacroParam))]
+  [src : (& src (__tl_dyn-array AstMacroParam))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -3598,7 +3602,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstMacroParam) (array.make-array AstMacroParam new-cap)]
+    [bigger : (__tl_dyn-array AstMacroParam)
+      (array.make-array AstMacroParam new-cap)]
     (begin
       (ast-macro-param-list-copy-range
         (&mut bigger)
@@ -3658,8 +3663,8 @@
     fallback))
 
 (define (ast-field-def-list-copy-range
-  [dst : (&mut dst (Array AstFieldDef))]
-  [src : (& src (Array AstFieldDef))]
+  [dst : (&mut dst (__tl_dyn-array AstFieldDef))]
+  [src : (& src (__tl_dyn-array AstFieldDef))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -3676,7 +3681,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstFieldDef) (array.make-array AstFieldDef new-cap)]
+    [bigger : (__tl_dyn-array AstFieldDef)
+      (array.make-array AstFieldDef new-cap)]
     (begin
       (ast-field-def-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
@@ -3741,8 +3747,8 @@
     fallback))
 
 (define (ast-extern-link-input-list-copy-range
-  [dst : (&mut dst (Array AstExternLinkInput))]
-  [src : (& src (Array AstExternLinkInput))]
+  [dst : (&mut dst (__tl_dyn-array AstExternLinkInput))]
+  [src : (& src (__tl_dyn-array AstExternLinkInput))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -3759,7 +3765,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstExternLinkInput)
+    [bigger : (__tl_dyn-array AstExternLinkInput)
       (array.make-array AstExternLinkInput new-cap)]
     (begin
       (ast-extern-link-input-list-copy-range
@@ -3810,8 +3816,8 @@
     fallback))
 
 (define (ast-spmd-param-class-list-copy-range
-  [dst : (&mut dst (Array AstSpmdParamClass))]
-  [src : (& src (Array AstSpmdParamClass))]
+  [dst : (&mut dst (__tl_dyn-array AstSpmdParamClass))]
+  [src : (& src (__tl_dyn-array AstSpmdParamClass))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -3825,7 +3831,7 @@
   (let
     [len : i64 (struct-get items len)]
     [old-cap : i64 (array-length (struct-get items slots))]
-    [next : (Array AstSpmdParamClass)
+    [next : (__tl_dyn-array AstSpmdParamClass)
       (array.make-array
         AstSpmdParamClass
         (if (< old-cap 1)
@@ -3877,8 +3883,8 @@
     fallback))
 
 (define (ast-spmd-specialization-list-copy-range
-  [dst : (&mut dst (Array AstSpmdSpecialization))]
-  [src : (& src (Array AstSpmdSpecialization))]
+  [dst : (&mut dst (__tl_dyn-array AstSpmdSpecialization))]
+  [src : (& src (__tl_dyn-array AstSpmdSpecialization))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -3892,7 +3898,7 @@
   (let
     [len : i64 (struct-get items len)]
     [old-cap : i64 (array-length (struct-get items slots))]
-    [next : (Array AstSpmdSpecialization)
+    [next : (__tl_dyn-array AstSpmdSpecialization)
       (array.make-array
         AstSpmdSpecialization
         (if (< old-cap 1)
@@ -3994,8 +4000,8 @@
     fallback))
 
 (define (ast-imported-spmd-specialization-list-copy-range
-  [dst : (&mut dst (Array AstImportedSpmdSpecialization))]
-  [src : (& src (Array AstImportedSpmdSpecialization))]
+  [dst : (&mut dst (__tl_dyn-array AstImportedSpmdSpecialization))]
+  [src : (& src (__tl_dyn-array AstImportedSpmdSpecialization))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4013,7 +4019,7 @@
   (let
     [len : i64 (struct-get items len)]
     [old-cap : i64 (array-length (struct-get items slots))]
-    [next : (Array AstImportedSpmdSpecialization)
+    [next : (__tl_dyn-array AstImportedSpmdSpecialization)
       (array.make-array
         AstImportedSpmdSpecialization
         (if (< old-cap 1)
@@ -4068,8 +4074,8 @@
     fallback))
 
 (define (ast-imported-spmd-callable-list-copy-range
-  [dst : (&mut dst (Array AstImportedSpmdCallable))]
-  [src : (& src (Array AstImportedSpmdCallable))]
+  [dst : (&mut dst (__tl_dyn-array AstImportedSpmdCallable))]
+  [src : (& src (__tl_dyn-array AstImportedSpmdCallable))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4083,7 +4089,7 @@
   (let
     [len : i64 (struct-get items len)]
     [old-cap : i64 (array-length (struct-get items slots))]
-    [next : (Array AstImportedSpmdCallable)
+    [next : (__tl_dyn-array AstImportedSpmdCallable)
       (array.make-array
         AstImportedSpmdCallable
         (if (< old-cap 1)
@@ -4231,8 +4237,8 @@
     fallback))
 
 (define (ast-variant-payload-cleanup-list-copy-range
-  [dst : (&mut dst (Array AstVariantPayloadCleanup))]
-  [src : (& src (Array AstVariantPayloadCleanup))]
+  [dst : (&mut dst (__tl_dyn-array AstVariantPayloadCleanup))]
+  [src : (& src (__tl_dyn-array AstVariantPayloadCleanup))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4250,7 +4256,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstVariantPayloadCleanup)
+    [bigger : (__tl_dyn-array AstVariantPayloadCleanup)
       (array.make-array AstVariantPayloadCleanup new-cap)]
     (begin
       (ast-variant-payload-cleanup-list-copy-range
@@ -4326,8 +4332,8 @@
     fallback))
 
 (define (ast-variant-def-list-copy-range
-  [dst : (&mut dst (Array AstVariantDef))]
-  [src : (& src (Array AstVariantDef))]
+  [dst : (&mut dst (__tl_dyn-array AstVariantDef))]
+  [src : (& src (__tl_dyn-array AstVariantDef))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4344,7 +4350,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstVariantDef) (array.make-array AstVariantDef new-cap)]
+    [bigger : (__tl_dyn-array AstVariantDef)
+      (array.make-array AstVariantDef new-cap)]
     (begin
       (ast-variant-def-list-copy-range
         (&mut bigger)
@@ -4428,8 +4435,8 @@
     fallback))
 
 (define (ast-pattern-list-copy-range
-  [dst : (&mut dst (Array AstPattern))]
-  [src : (& src (Array AstPattern))]
+  [dst : (&mut dst (__tl_dyn-array AstPattern))]
+  [src : (& src (__tl_dyn-array AstPattern))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4446,7 +4453,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstPattern) (array.make-array AstPattern new-cap)]
+    [bigger : (__tl_dyn-array AstPattern) (array.make-array AstPattern new-cap)]
     (begin
       (ast-pattern-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
@@ -4537,8 +4544,8 @@
     fallback))
 
 (define (ast-let-binding-list-copy-range
-  [dst : (&mut dst (Array AstLetBinding))]
-  [src : (& src (Array AstLetBinding))]
+  [dst : (&mut dst (__tl_dyn-array AstLetBinding))]
+  [src : (& src (__tl_dyn-array AstLetBinding))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4555,7 +4562,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstLetBinding) (array.make-array AstLetBinding new-cap)]
+    [bigger : (__tl_dyn-array AstLetBinding)
+      (array.make-array AstLetBinding new-cap)]
     (begin
       (ast-let-binding-list-copy-range
         (&mut bigger)
@@ -4634,8 +4642,8 @@
     fallback))
 
 (define (ast-resource-binding-list-copy-range
-  [dst : (&mut dst (Array AstResourceBinding))]
-  [src : (& src (Array AstResourceBinding))]
+  [dst : (&mut dst (__tl_dyn-array AstResourceBinding))]
+  [src : (& src (__tl_dyn-array AstResourceBinding))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4652,7 +4660,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstResourceBinding)
+    [bigger : (__tl_dyn-array AstResourceBinding)
       (array.make-array AstResourceBinding new-cap)]
     (begin
       (ast-resource-binding-list-copy-range
@@ -4734,8 +4742,8 @@
     fallback))
 
 (define (ast-match-arm-list-copy-range
-  [dst : (&mut dst (Array AstMatchArm))]
-  [src : (& src (Array AstMatchArm))]
+  [dst : (&mut dst (__tl_dyn-array AstMatchArm))]
+  [src : (& src (__tl_dyn-array AstMatchArm))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4752,7 +4760,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstMatchArm) (array.make-array AstMatchArm new-cap)]
+    [bigger : (__tl_dyn-array AstMatchArm)
+      (array.make-array AstMatchArm new-cap)]
     (begin
       (ast-match-arm-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
@@ -4825,8 +4834,8 @@
     fallback))
 
 (define (ast-expr-list-copy-range
-  [dst : (&mut dst (Array i64))]
-  [src : (& src (Array i64))]
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4843,7 +4852,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
       (ast-expr-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
@@ -4925,8 +4934,8 @@
     fallback))
 
 (define (ast-expr-clause-list-copy-range
-  [dst : (&mut dst (Array AstExprClause))]
-  [src : (& src (Array AstExprClause))]
+  [dst : (&mut dst (__tl_dyn-array AstExprClause))]
+  [src : (& src (__tl_dyn-array AstExprClause))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -4943,7 +4952,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstExprClause) (array.make-array AstExprClause new-cap)]
+    [bigger : (__tl_dyn-array AstExprClause)
+      (array.make-array AstExprClause new-cap)]
     (begin
       (ast-expr-clause-list-copy-range
         (&mut bigger)
@@ -5018,8 +5028,8 @@
     fallback))
 
 (define (ast-expr-binding-clause-list-copy-range
-  [dst : (&mut dst (Array AstExprBindingClause))]
-  [src : (& src (Array AstExprBindingClause))]
+  [dst : (&mut dst (__tl_dyn-array AstExprBindingClause))]
+  [src : (& src (__tl_dyn-array AstExprBindingClause))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -5037,7 +5047,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstExprBindingClause)
+    [bigger : (__tl_dyn-array AstExprBindingClause)
       (array.make-array AstExprBindingClause new-cap)]
     (begin
       (ast-expr-binding-clause-list-copy-range
@@ -5826,8 +5836,8 @@
     fallback))
 
 (define (ast-dispatch-variant-list-copy-range
-  [dst : (&mut dst (Array AstDispatchVariant))]
-  [src : (& src (Array AstDispatchVariant))]
+  [dst : (&mut dst (__tl_dyn-array AstDispatchVariant))]
+  [src : (& src (__tl_dyn-array AstDispatchVariant))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -5844,7 +5854,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstDispatchVariant)
+    [bigger : (__tl_dyn-array AstDispatchVariant)
       (array.make-array AstDispatchVariant new-cap)]
     (begin
       (ast-dispatch-variant-list-copy-range
@@ -5931,8 +5941,8 @@
     [_ fallback]))
 
 (define (ast-decl-list-copy-range
-  [dst : (&mut dst (Array AstDecl))]
-  [src : (& src (Array AstDecl))]
+  [dst : (&mut dst (__tl_dyn-array AstDecl))]
+  [src : (& src (__tl_dyn-array AstDecl))]
   [src-offset : i64]
   [index : i64]
   [count : i64]) : unit
@@ -5943,8 +5953,8 @@
       (ast-decl-list-copy-range dst src src-offset (+ index 1) count))))
 
 (define (ast-decl-list-copy-to
-  [dst : (&mut dst (Array AstDecl))]
-  [src : (& src (Array AstDecl))]
+  [dst : (&mut dst (__tl_dyn-array AstDecl))]
+  [src : (& src (__tl_dyn-array AstDecl))]
   [src-offset : i64]
   [dst-offset : i64]
   [index : i64]
@@ -5964,7 +5974,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstDecl) (array.make-array AstDecl new-cap)]
+    [bigger : (__tl_dyn-array AstDecl) (array.make-array AstDecl new-cap)]
     (begin
       (ast-decl-list-copy-range
         (&mut bigger)
@@ -6006,7 +6016,7 @@
 ;; result.
 (define (ast-decl-list-push-from
   [v : (&mut v AstDeclList)]
-  [src : (& src (Array AstDecl))]
+  [src : (& src (__tl_dyn-array AstDecl))]
   [src-index : i64]) : unit
   (begin
     (if (<
@@ -6071,7 +6081,7 @@
           4
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
-      [slots : (Array AstDecl) (array.make-array AstDecl new-cap)]
+      [slots : (__tl_dyn-array AstDecl) (array.make-array AstDecl new-cap)]
       (begin
         (array-set! slots new-offset head)
         (ast-decl-list-copy-to
@@ -6383,8 +6393,8 @@
     fallback))
 
 (define (ast-decl-path-list-copy-range
-  [dst : (&mut dst (Array String))]
-  [src : (& src (Array String))]
+  [dst : (&mut dst (__tl_dyn-array String))]
+  [src : (& src (__tl_dyn-array String))]
   [src-offset : i64]
   [index : i64]
   [count : i64]) : unit
@@ -6395,8 +6405,8 @@
       (ast-decl-path-list-copy-range dst src src-offset (+ index 1) count))))
 
 (define (ast-decl-path-list-copy-to
-  [dst : (&mut dst (Array String))]
-  [src : (& src (Array String))]
+  [dst : (&mut dst (__tl_dyn-array String))]
+  [src : (& src (__tl_dyn-array String))]
   [src-offset : i64]
   [dst-offset : i64]
   [index : i64]
@@ -6422,8 +6432,8 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array String) (array.make-array String new-cap)]
-    [bigger-owner-ids : (Array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array String) (array.make-array String new-cap)]
+    [bigger-owner-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
       (ast-decl-path-list-copy-range
         (&mut bigger)
@@ -6525,8 +6535,8 @@
           4
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
-      [slots : (Array String) (array.make-array String new-cap)]
-      [owner-ids : (Array i64) (array.make-array i64 new-cap)]
+      [slots : (__tl_dyn-array String) (array.make-array String new-cap)]
+      [owner-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
       (begin
         (array-set! slots new-offset head)
         (array-set! owner-ids new-offset owner-id)
@@ -6593,8 +6603,8 @@
     fallback))
 
 (define (ast-decl-module-list-copy-to
-  [dst : (&mut dst (Array i64))]
-  [src : (& src (Array i64))]
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
   [src-offset : i64]
   [dst-offset : i64]
   [index : i64]
@@ -6619,7 +6629,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
     (begin
       (ast-decl-module-list-copy-to
         (&mut bigger)
@@ -6683,7 +6693,7 @@
           4
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
-      [slots : (Array i64) (array.make-array i64 new-cap)]
+      [slots : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
       (begin
         (array-set! slots new-offset head)
         (ast-decl-module-list-copy-to
@@ -6709,7 +6719,7 @@
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]) : AstDeclPathList
   (let
-    [owner-ids : (Array i64)
+    [owner-ids : (__tl_dyn-array i64)
       (array.make-array i64 (array-length (struct-get paths slots)))]
     [index : i64 0]
     [count : i64 (ast-decl-path-list-len (& paths))]
@@ -6785,14 +6795,14 @@
 (defstruct AstProgramCompactionRemap
   (source-pools AstNodePoolContext)
   (dest-pools AstNodePoolContext)
-  (expr-map (Array i32))
-  (type-map (Array i32))
+  (expr-map (__tl_dyn-array i32))
+  (type-map (__tl_dyn-array i32))
   (source-expr-bases i64)
   (shared-expr-base i64)
   (shared-type-base i64)
   (persist-in-place bool))
 
-(define (ast-compaction-id-map-create [count : i64]) : (Array i32)
+(define (ast-compaction-id-map-create [count : i64]) : (__tl_dyn-array i32)
   (let
     [cap : i64
       (if (< count 1)
@@ -6928,7 +6938,7 @@
     (if (< id base)
       id
       (let
-        [type-map : (Array i32) (struct-get remap type-map)]
+        [type-map : (__tl_dyn-array i32) (struct-get remap type-map)]
         [slot : i64 (- id base)]
         [cached : i32 (array-ref type-map slot)]
         (if (> cached 0)
@@ -7791,7 +7801,7 @@
     (if (< id base)
       id
       (let
-        [expr-map : (Array i32) (struct-get remap expr-map)]
+        [expr-map : (__tl_dyn-array i32) (struct-get remap expr-map)]
         [slot : i64 (- id base)]
         [cached : i32 (array-ref expr-map slot)]
         [persist? : bool (struct-get remap persist-in-place)]
@@ -7952,7 +7962,7 @@
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [index : i64 0]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
     (begin
@@ -7989,10 +7999,10 @@
       [_set-map-arena : unit
         (unsafe
           (arena.tl_arena_set map-arena))]
-      [expr-map : (Array i32)
+      [expr-map : (__tl_dyn-array i32)
         (ast-compaction-id-map-create
           (ast-node-pool-context-expr-len source-pools))]
-      [type-map : (Array i32)
+      [type-map : (__tl_dyn-array i32)
         (ast-compaction-id-map-create
           (ast-node-pool-context-type-len source-pools))]
       [remap : AstProgramCompactionRemap
@@ -8044,10 +8054,10 @@
     [_set-map-arena : unit
       (unsafe
         (arena.tl_arena_set map-arena))]
-    [expr-map : (Array i32)
+    [expr-map : (__tl_dyn-array i32)
       (ast-compaction-id-map-create
         (- (ast-node-pool-context-expr-len source-pools) shared-expr-base))]
-    [type-map : (Array i32)
+    [type-map : (__tl_dyn-array i32)
       (ast-compaction-id-map-create
         (- (ast-node-pool-context-type-len source-pools) shared-type-base))]
     [_restore-map-arena : unit
@@ -8085,8 +8095,8 @@
   [program : AstProgram]
   [shared-expr-base : i64]
   [shared-type-base : i64]
-  [expr-map : (Array i32)]
-  [type-map : (Array i32)]
+  [expr-map : (__tl_dyn-array i32)]
+  [type-map : (__tl_dyn-array i32)]
   [persist-in-place : bool]) : AstProgramCompaction
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
@@ -9326,9 +9336,9 @@
 ;; `size-of` on an enum reports the handle width, so the two stride constants
 ;; are stated by hand and consumed by unchecked pointer arithmetic in every
 ;; pool load and store. If a constant ever disagrees with the layout the
-;; compiler actually gives `(Array AstExpr)` / `(Array AstType)`, every pool
-;; access computes a wrong address and the failure is silent memory
-;; corruption, not a type error.
+;; compiler actually gives `(__tl_dyn-array AstExpr)` /
+;; `(__tl_dyn-array AstType)`, every pool access computes a wrong address and
+;; the failure is silent memory corruption, not a type error.
 ;;
 ;; The check plays the two representations against each other: `array-set!`
 ;; addresses a slot with the compiler's own stride, while the reader below
@@ -9337,7 +9347,7 @@
 ;; stride cannot alias into a passing answer.
 (define (ast-expr-node-stride-pinned?) : bool
   (let
-    [slots : (Array AstExpr) (array.make-array AstExpr 2)]
+    [slots : (__tl_dyn-array AstExpr) (array.make-array AstExpr 2)]
     [_w0 : unit (array-set! slots 0 (AstExpr.Var 0))]
     [_w1 : unit (array-set! slots 1 (AstExpr.Comptime 987654321))]
     [base : i64
@@ -9359,7 +9369,7 @@
 
 (define (ast-type-node-stride-pinned?) : bool
   (let
-    [slots : (Array AstType) (array.make-array AstType 2)]
+    [slots : (__tl_dyn-array AstType) (array.make-array AstType 2)]
     [_w0 : unit (array-set! slots 0 (AstType.I64))]
     [_w1 : unit (array-set! slots 1 (AstType.Array 123456789 42))]
     [base : i64

@@ -64,16 +64,16 @@
   0)
 
 (defstruct CompilerDriverState
-  (expr-pool (Array AstExprNodePoolState))
-  (type-pool (Array AstTypeNodePoolState))
-  (intern-state (Array ci.InternCompatState))
+  (expr-pool (__tl_dyn-array AstExprNodePoolState))
+  (type-pool (__tl_dyn-array AstTypeNodePoolState))
+  (intern-state (__tl_dyn-array ci.InternCompatState))
   (parser-state CompilerParseState)
-  (builtin-ids (Array cbi.CompilerBuiltinIdsState))
-  (lower-arenas (Array CompilerLowerArenaState))
+  (builtin-ids (__tl_dyn-array cbi.CompilerBuiltinIdsState))
+  (lower-arenas (__tl_dyn-array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
   (typecheck-state TcJobState)
   (typecheck-prefix-cache TcPrefixSnapshotCacheState)
-  (pool-arena (Array i64))
+  (pool-arena (__tl_dyn-array i64))
   (surface-arena i64)
   (profile-state profile_state.CompilerProfileState))
 
@@ -82,17 +82,17 @@
   [type-pool : AstTypeNodePoolState]
   [pool-arena : i64]) : CompilerDriverState
   (let
-    [expr-cell : (Array AstExprNodePoolState)
+    [expr-cell : (__tl_dyn-array AstExprNodePoolState)
       (array.make-array AstExprNodePoolState 1)]
-    [type-cell : (Array AstTypeNodePoolState)
+    [type-cell : (__tl_dyn-array AstTypeNodePoolState)
       (array.make-array AstTypeNodePoolState 1)]
-    [intern-cell : (Array ci.InternCompatState)
+    [intern-cell : (__tl_dyn-array ci.InternCompatState)
       (array.make-array ci.InternCompatState 1)]
-    [builtin-cell : (Array cbi.CompilerBuiltinIdsState)
+    [builtin-cell : (__tl_dyn-array cbi.CompilerBuiltinIdsState)
       (array.make-array cbi.CompilerBuiltinIdsState 1)]
-    [lower-cell : (Array CompilerLowerArenaState)
+    [lower-cell : (__tl_dyn-array CompilerLowerArenaState)
       (array.make-array CompilerLowerArenaState 1)]
-    [pool-arena-cell : (Array i64) (array.make-array i64 1)]
+    [pool-arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
     [surface-arena : i64 (arena.tl_arena_make)]
     ;; The typecheck caches share the driver's lifetime with hydrated surface
     ;; data. Allocate them in that already-reserved arena instead of extending
@@ -252,9 +252,9 @@
 ;; because the compatibility pool-global handle deliberately points at the 1x1
 ;; detached compat pools (entry arena) once the source arena is detached, so
 ;; `compiler-driver-node-pool-base-arena` cannot name the checked-program arena.
-(define compiler-driver-active-state-pool-arena : (Array i64)
+(define compiler-driver-active-state-pool-arena : (__tl_dyn-array i64)
   (array.make-array i64 1))
-(define compiler-driver-active-state-surface-arena : (Array i64)
+(define compiler-driver-active-state-surface-arena : (__tl_dyn-array i64)
   (array.make-array i64 1))
 
 ;; Legacy/test adapter for the remaining load/typecheck/lower call graph.
@@ -2575,7 +2575,7 @@
   (define (compiler-driver-hydrate-prelude-rodata
     [outer-build : String]
     [expected-source-hash : String]
-    [rodata : (Array u8)]
+    [rodata : (__tl_dyn-array u8)]
     [configuration : String]
     [pools : AstNodePoolContext]) : CompilerDriverPreludeSurface
     (match (tlci-producer-identity-admit

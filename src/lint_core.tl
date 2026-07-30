@@ -299,7 +299,7 @@
 
 ;: Immutable contiguous registry of registered rules.
 (defstruct LintRuleList
-  (slots (Array LintRule))
+  (slots (__tl_dyn-array LintRule))
   (len i64))
 
 (defenum LintMaybeRule
@@ -542,14 +542,15 @@
 ;: Growable findings buffer. The backing array stores findings in discovery
 ;: order; the CLI renders from the end to preserve the historical output order.
 (defstruct LintFindings
-  (slots (Array LintFinding))
+  (slots (__tl_dyn-array LintFinding))
   (len i64))
 
 (defenum LintMaybeFinding
   (No)
   (Some LintFinding))
 
-(define (lint-findings-slots [items : LintFindings]) : (Array LintFinding)
+(define (lint-findings-slots [items : LintFindings]) : (__tl_dyn-array
+    LintFinding)
   (struct-get items slots))
 
 ;: Number of live findings in `items`.
@@ -571,8 +572,8 @@
   (lint-findings-with-capacity 4))
 
 (define (lint-findings-copy-range
-  [dst : (Array LintFinding)]
-  [src : (Array LintFinding)]
+  [dst : (__tl_dyn-array LintFinding)]
+  [src : (__tl_dyn-array LintFinding)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -584,7 +585,7 @@
 (define (lint-findings-grow [items : LintFindings]) : LintFindings
   (let
     [n : i64 (lint-findings-count items)]
-    [bigger : (Array LintFinding)
+    [bigger : (__tl_dyn-array LintFinding)
       (make-array LintFinding (* (lint-findings-capacity items) 2))]
     (begin
       (lint-findings-copy-range bigger (lint-findings-slots items) 0 n)
@@ -594,7 +595,7 @@
 (define (lint-findings-add [finding : LintFinding] [items : LintFindings]) : LintFindings
   (if (< (lint-findings-count items) (lint-findings-capacity items))
     (let
-      [slots : (Array LintFinding) (lint-findings-slots items)]
+      [slots : (__tl_dyn-array LintFinding) (lint-findings-slots items)]
       [n : i64 (lint-findings-count items)]
       (begin
         (array-set! slots n finding)
@@ -1914,8 +1915,8 @@
         [loop-depth : i64 0]
         [concat-depth : i64 0]
         [stack-cap : i64 (+ (string.string-length source) 2)]
-        [loop-stack : (Array bool) (make-array bool stack-cap)]
-        [concat-stack : (Array bool) (make-array bool stack-cap)]
+        [loop-stack : (__tl_dyn-array bool) (make-array bool stack-cap)]
+        [concat-stack : (__tl_dyn-array bool) (make-array bool stack-cap)]
         [findings : LintFindings acc]
         (begin
           (while (not done)
@@ -2879,7 +2880,7 @@
 ;; lint run, so a capacity-doubling append keeps every push O(1) amortized and
 ;; every lookup a contiguous scan.
 (defstruct LintUnusedUnsafeExactNames
-  (slots (Array LintUnusedUnsafeExactName))
+  (slots (__tl_dyn-array LintUnusedUnsafeExactName))
   (len i64))
 
 (defenum LintUnusedUnsafeExactLookup
@@ -2888,7 +2889,7 @@
   (RequiresUnsafe))
 
 (defstruct LintUnusedUnsafeUnknownRoots
-  (slots (Array String))
+  (slots (__tl_dyn-array String))
   (len i64))
 
 (define (lint-unused-unsafe-exact-names-empty) : LintUnusedUnsafeExactNames
@@ -2918,7 +2919,7 @@
 ;; Strict push/mark-top/pop stack of the enclosing unsafe blocks: one global
 ;; owner, so the backing array is reused across sibling blocks.
 (defstruct LintUnusedUnsafeBlockStack
-  (slots (Array LintUnusedUnsafeBlock))
+  (slots (__tl_dyn-array LintUnusedUnsafeBlock))
   (len i64))
 
 (define (lint-unused-unsafe-block-stack-empty) : LintUnusedUnsafeBlockStack
@@ -2957,13 +2958,13 @@
   [requires-unsafe : bool]) : unit
   (let
     [n : i64 (struct-get lint-unused-unsafe-exact-names len)]
-    [slots : (Array LintUnusedUnsafeExactName)
+    [slots : (__tl_dyn-array LintUnusedUnsafeExactName)
       (struct-get lint-unused-unsafe-exact-names slots)]
     (begin
       (if (< n (array-length slots))
         unit
         (let
-          [bigger : (Array LintUnusedUnsafeExactName)
+          [bigger : (__tl_dyn-array LintUnusedUnsafeExactName)
             (make-array
               LintUnusedUnsafeExactName
               (lint-grown-capacity (array-length slots)))]
@@ -2982,12 +2983,13 @@
 (define (lint-unused-unsafe-classifier-add-unknown-root! [name : String]) : unit
   (let
     [n : i64 (struct-get lint-unused-unsafe-unknown-roots len)]
-    [slots : (Array String) (struct-get lint-unused-unsafe-unknown-roots slots)]
+    [slots : (__tl_dyn-array String)
+      (struct-get lint-unused-unsafe-unknown-roots slots)]
     (begin
       (if (< n (array-length slots))
         unit
         (let
-          [bigger : (Array String)
+          [bigger : (__tl_dyn-array String)
             (make-array String (lint-grown-capacity (array-length slots)))]
           [index : i64 0]
           (begin
@@ -3016,13 +3018,13 @@
   (if lint-unused-unsafe-classifier-enabled
     (let
       [n : i64 (struct-get lint-unused-unsafe-block-stack len)]
-      [slots : (Array LintUnusedUnsafeBlock)
+      [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
         (struct-get lint-unused-unsafe-block-stack slots)]
       (begin
         (if (< n (array-length slots))
           unit
           (let
-            [bigger : (Array LintUnusedUnsafeBlock)
+            [bigger : (__tl_dyn-array LintUnusedUnsafeBlock)
               (make-array
                 LintUnusedUnsafeBlock
                 (lint-grown-capacity (array-length slots)))]
@@ -3049,7 +3051,7 @@
       (if (< top 0)
         unit
         (let
-          [slots : (Array LintUnusedUnsafeBlock)
+          [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
             (struct-get lint-unused-unsafe-block-stack slots)]
           (array-set!
             slots
@@ -3067,7 +3069,7 @@
       (if (< top 0)
         unit
         (let
-          [slots : (Array LintUnusedUnsafeBlock)
+          [slots : (__tl_dyn-array LintUnusedUnsafeBlock)
             (struct-get lint-unused-unsafe-block-stack slots)]
           (if (struct-get (array-ref slots top) required)
             unit
@@ -3426,7 +3428,7 @@
 ;; removals are order-independent and every update copies into a right-sized
 ;; array: the walker keeps older `pending` values alive across branches.
 (defstruct LintPendingAssignmentList
-  (slots (Array LintPendingAssignment))
+  (slots (__tl_dyn-array LintPendingAssignment))
   (len i64))
 
 (defenum LintMaybePendingAssignment
@@ -3973,7 +3975,7 @@
 ;; single owner, so the append reuses spare capacity. Lookups scan from the
 ;; newest entry to keep the shadowing order of the old prepend-built list.
 (defstruct LintCopyOnUpdateStructList
-  (slots (Array LintCopyOnUpdateStructShape))
+  (slots (__tl_dyn-array LintCopyOnUpdateStructShape))
   (len i64))
 
 (defenum LintCopyOnUpdateMaybeStruct
@@ -3988,7 +3990,7 @@
 ;; their shorter value live across the body walk, so updates copy into a
 ;; right-sized array instead of sharing a builder.
 (defstruct LintCopyOnUpdateLocalList
-  (slots (Array LintCopyOnUpdateLocal))
+  (slots (__tl_dyn-array LintCopyOnUpdateLocal))
   (len i64))
 
 (defstruct LintCopyOnUpdateArgCheck
@@ -4076,7 +4078,7 @@
       locals
       (let
         [n : i64 (- (struct-get locals len) 1)]
-        [slots : (Array LintCopyOnUpdateLocal)
+        [slots : (__tl_dyn-array LintCopyOnUpdateLocal)
           (make-array LintCopyOnUpdateLocal n)]
         [index : i64 0]
         (begin
@@ -4104,7 +4106,7 @@
       without
       (let
         [n : i64 (struct-get without len)]
-        [slots : (Array LintCopyOnUpdateLocal)
+        [slots : (__tl_dyn-array LintCopyOnUpdateLocal)
           (make-array LintCopyOnUpdateLocal (+ n 1))]
         [index : i64 0]
         (begin
@@ -4704,12 +4706,13 @@
   (let
     [names : LintNameList (lint-copy-on-update-field-names fields)]
     [n : i64 (struct-get shapes len)]
-    [slots : (Array LintCopyOnUpdateStructShape) (struct-get shapes slots)]
+    [slots : (__tl_dyn-array LintCopyOnUpdateStructShape)
+      (struct-get shapes slots)]
     (begin
       (if (< n (array-length slots))
         unit
         (let
-          [bigger : (Array LintCopyOnUpdateStructShape)
+          [bigger : (__tl_dyn-array LintCopyOnUpdateStructShape)
             (make-array
               LintCopyOnUpdateStructShape
               (lint-grown-capacity (array-length slots)))]
@@ -5832,7 +5835,7 @@
 ;; the cons list head-first now counts down. Entries are unique by name and
 ;; updates copy into a right-sized array so branches never share a slot.
 (defstruct LintSingleElementArrayCandidateList
-  (slots (Array LintSingleElementArrayCandidate))
+  (slots (__tl_dyn-array LintSingleElementArrayCandidate))
   (len i64))
 
 (defstruct LintSingleElementArrayState
@@ -5880,7 +5883,7 @@
       items
       (let
         [n : i64 (- (struct-get items len) 1)]
-        [slots : (Array LintSingleElementArrayCandidate)
+        [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
           (make-array LintSingleElementArrayCandidate n)]
         [index : i64 0]
         (begin
@@ -5905,7 +5908,7 @@
     [without : LintSingleElementArrayCandidateList
       (lint-single-element-array-candidate-remove items name)]
     [n : i64 (struct-get without len)]
-    [slots : (Array LintSingleElementArrayCandidate)
+    [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
       (make-array LintSingleElementArrayCandidate (+ n 1))]
     [index : i64 0]
     (begin
@@ -5925,7 +5928,7 @@
   [item : LintSingleElementArrayCandidate]) : LintSingleElementArrayCandidateList
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array LintSingleElementArrayCandidate)
+    [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
       (make-array LintSingleElementArrayCandidate n)]
     [index : i64 0]
     (begin
@@ -6956,7 +6959,7 @@
       items
       (let
         [n : i64 (- (struct-get items len) 1)]
-        [slots : (Array LintPendingAssignment)
+        [slots : (__tl_dyn-array LintPendingAssignment)
           (make-array LintPendingAssignment n)]
         [index : i64 0]
         (begin
@@ -6981,7 +6984,7 @@
     [without : LintPendingAssignmentList
       (lint-pending-assignment-remove items name)]
     [n : i64 (struct-get without len)]
-    [slots : (Array LintPendingAssignment)
+    [slots : (__tl_dyn-array LintPendingAssignment)
       (make-array LintPendingAssignment (+ n 1))]
     [index : i64 0]
     (begin
@@ -7563,7 +7566,7 @@
 ;; table for the active lint program, then use direct line lookup and binary
 ;; search for all span conversions. The array is rebuilt before every lint
 ;; walk, while the parsed file's scratch arena is active.
-(define lint-source-line-starts : (Array i64)
+(define lint-source-line-starts : (__tl_dyn-array i64)
   (make-array i64 0))
 
 (define (lint-source-line-index-build! [source : String]) : unit
@@ -7579,7 +7582,7 @@
             unit)
           (set! index (+ index 1))))
       (let
-        [starts : (Array i64) (make-array i64 line-count)]
+        [starts : (__tl_dyn-array i64) (make-array i64 line-count)]
         [source-index : i64 0]
         [line-index : i64 1]
         (begin
@@ -7626,11 +7629,11 @@
 ;; threaded state and each frame owns its bindings array, so appends reuse
 ;; spare capacity instead of rebuilding.
 (defstruct LintUnusedVariableBindingList
-  (slots (Array LintUnusedVariableBinding))
+  (slots (__tl_dyn-array LintUnusedVariableBinding))
   (len i64))
 
 (defstruct LintUnusedVariableFrameList
-  (slots (Array LintUnusedVariableBindingList))
+  (slots (__tl_dyn-array LintUnusedVariableBindingList))
   (len i64))
 
 (defstruct LintUnusedVariableMarkBindingsResult
@@ -8735,12 +8738,13 @@
   [binding : LintUnusedVariableBinding]) : LintUnusedVariableBindingList
   (let
     [n : i64 (struct-get bindings len)]
-    [slots : (Array LintUnusedVariableBinding) (struct-get bindings slots)]
+    [slots : (__tl_dyn-array LintUnusedVariableBinding)
+      (struct-get bindings slots)]
     (begin
       (if (< n (array-length slots))
         unit
         (let
-          [bigger : (Array LintUnusedVariableBinding)
+          [bigger : (__tl_dyn-array LintUnusedVariableBinding)
             (make-array
               LintUnusedVariableBinding
               (lint-grown-capacity (array-length slots)))]
@@ -8759,12 +8763,13 @@
   [bindings : LintUnusedVariableBindingList]) : LintUnusedVariableFrameList
   (let
     [n : i64 (struct-get frames len)]
-    [slots : (Array LintUnusedVariableBindingList) (struct-get frames slots)]
+    [slots : (__tl_dyn-array LintUnusedVariableBindingList)
+      (struct-get frames slots)]
     (begin
       (if (< n (array-length slots))
         unit
         (let
-          [bigger : (Array LintUnusedVariableBindingList)
+          [bigger : (__tl_dyn-array LintUnusedVariableBindingList)
             (make-array
               LintUnusedVariableBindingList
               (lint-grown-capacity (array-length slots)))]
@@ -9056,7 +9061,7 @@
   [cursor : i64]
   [fallback : AstSourceSpan]
   [reportable : bool]
-  [slots : (Array LintUnusedVariableBinding)]
+  [slots : (__tl_dyn-array LintUnusedVariableBinding)]
   [index : i64]) : LintUnusedVariableBindingBuild
   (if (>= index (array-length slots))
     (LintUnusedVariableBindingBuild
@@ -9112,7 +9117,7 @@
   [cursor : i64]
   [fallback : AstSourceSpan]
   [reportable : bool]
-  [slots : (Array LintUnusedVariableBinding)]
+  [slots : (__tl_dyn-array LintUnusedVariableBinding)]
   [index : i64]) : LintUnusedVariableBindingBuild
   (if (>= index (array-length slots))
     (LintUnusedVariableBindingBuild

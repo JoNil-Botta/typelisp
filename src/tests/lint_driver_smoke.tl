@@ -478,7 +478,7 @@
   "(defstruct Point
   (x i64)
   (y i64))
-(define (main [items : (Array Point)]) : i64
+(define (main [items : (__tl_dyn-array Point)]) : i64
   (struct-get (array-ref items 0) x))")
 
 (define (lint-driver-smoke-nested-prefer-dotted-field-source) : String

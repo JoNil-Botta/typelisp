@@ -21,13 +21,13 @@
 (cfg test (import stdlib.test))
 
 (defstruct CompilerTlciNativeLayout
-  (bytes (Array u8))
+  (bytes (__tl_dyn-array u8))
   (size i64)
   (bss-size i64)
-  (import-names (Array String))
-  (import-offsets (Array i64))
+  (import-names (__tl_dyn-array String))
+  (import-offsets (__tl_dyn-array i64))
   (import-count i64)
-  (fixup-offsets (Array i64))
+  (fixup-offsets (__tl_dyn-array i64))
   (fixup-count i64))
 
 (defenum ResultCompilerTlciNativeLayout
@@ -66,7 +66,9 @@
   (got i64)
   (bss i64))
 
-(define (compiler-tlci-native-fail! [error : (Array String)] [message : String]) : i64
+(define (compiler-tlci-native-fail!
+  [error : (__tl_dyn-array String)]
+  [message : String]) : i64
   (begin
     (if (= (string.string-length (array-ref error 0)) 0)
       (array-set! error 0 message)
@@ -176,10 +178,10 @@
 ;; the borrow-in-loop then consume-after-loop ownership pattern exercised by a
 ;; whole-compiler function body.
 (define (compiler-tlci-native-got-slot!
-  [import-names : (Array String)]
-  [import-offsets : (Array i64)]
-  [import-count : (Array i64)]
-  [error : (Array String)]
+  [import-names : (__tl_dyn-array String)]
+  [import-offsets : (__tl_dyn-array i64)]
+  [import-count : (__tl_dyn-array i64)]
+  [error : (__tl_dyn-array String)]
   [bases : CompilerTlciNativeBases]
   [name : String]) : i64
   (let
@@ -250,10 +252,10 @@
     name))
 
 (define (compiler-tlci-native-symbol-offset!
-  [import-names : (Array String)]
-  [import-offsets : (Array i64)]
-  [import-count : (Array i64)]
-  [error : (Array String)]
+  [import-names : (__tl_dyn-array String)]
+  [import-offsets : (__tl_dyn-array i64)]
+  [import-count : (__tl_dyn-array i64)]
+  [error : (__tl_dyn-array String)]
   [bases : CompilerTlciNativeBases]
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [name : String]) : i64
@@ -277,7 +279,7 @@
 
 ;; Write a little-endian i32 at `offset`.
 (define (compiler-tlci-native-patch-i32!
-  [bytes : (Array u8)]
+  [bytes : (__tl_dyn-array u8)]
   [offset : i64]
   [value : i64]) : unit
   (begin
@@ -289,13 +291,13 @@
 ;; Patch one rel32 site at region offset `site` to reach symbol `target`:
 ;; value = target-offset - (site + 4). Returns false on resolution failure.
 (define (compiler-tlci-native-patch-rel32!
-  [import-names : (Array String)]
-  [import-offsets : (Array i64)]
-  [import-count : (Array i64)]
-  [error : (Array String)]
+  [import-names : (__tl_dyn-array String)]
+  [import-offsets : (__tl_dyn-array i64)]
+  [import-count : (__tl_dyn-array i64)]
+  [error : (__tl_dyn-array String)]
   [bases : CompilerTlciNativeBases]
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
-  [bytes : (Array u8)]
+  [bytes : (__tl_dyn-array u8)]
   [site : i64]
   [target : String]) : bool
   (let
@@ -321,14 +323,14 @@
 ;; emitter's site-offset walk exactly. Extern direct calls are rejected: host
 ;; access goes through extern-value GOT loads only.
 (define (compiler-tlci-native-patch-text!
-  [import-names : (Array String)]
-  [import-offsets : (Array i64)]
-  [import-count : (Array i64)]
-  [error : (Array String)]
+  [import-names : (__tl_dyn-array String)]
+  [import-offsets : (__tl_dyn-array i64)]
+  [import-count : (__tl_dyn-array i64)]
+  [error : (__tl_dyn-array String)]
   [bases : CompilerTlciNativeBases]
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [image : cobj.CompilerObjectImage]
-  [bytes : (Array u8)]) : bool
+  [bytes : (__tl_dyn-array u8)]) : bool
   (let
     [instrs : cobj.CompilerObjectX64InstrList
       (compiler-tlci-native-section-instrs
@@ -593,18 +595,18 @@
 ;; as a base-relative fixup. `region-base` is the region offset where these
 ;; records begin.
 (define (compiler-tlci-native-patch-data!
-  [import-names : (Array String)]
-  [import-offsets : (Array i64)]
-  [import-count : (Array i64)]
-  [error : (Array String)]
+  [import-names : (__tl_dyn-array String)]
+  [import-offsets : (__tl_dyn-array i64)]
+  [import-count : (__tl_dyn-array i64)]
+  [error : (__tl_dyn-array String)]
   [bases : CompilerTlciNativeBases]
   [symbols : (& symbols CompilerTlciNativeSymbolIndex)]
   [image : cobj.CompilerObjectImage]
-  [bytes : (Array u8)]
+  [bytes : (__tl_dyn-array u8)]
   [kind : cobj.CompilerObjectSectionKind]
   [region-base : i64]
-  [fixup-offsets : (Array i64)]
-  [fixup-count : (Array i64)]) : bool
+  [fixup-offsets : (__tl_dyn-array i64)]
+  [fixup-count : (__tl_dyn-array i64)]) : bool
   (let
     [records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data image kind)]
@@ -698,15 +700,15 @@
       (CompilerTlciNativeBases 0 rodata-base data-base got-base bss-base)]
     [symbols-index : CompilerTlciNativeSymbolIndex
       (compiler-tlci-native-build-symbol-index image bases)]
-    [import-names : (Array String)
+    [import-names : (__tl_dyn-array String)
       (array.make-array String compiler-tlci-native-import-cap)]
-    [import-offsets : (Array i64)
+    [import-offsets : (__tl_dyn-array i64)
       (array.make-array i64 compiler-tlci-native-import-cap)]
-    [import-count : (Array i64) (make-array 0)]
-    [error : (Array String) (make-array "")]
-    [fixup-offsets : (Array i64)
+    [import-count : (__tl_dyn-array i64) (make-array 0)]
+    [error : (__tl_dyn-array String) (make-array "")]
+    [fixup-offsets : (__tl_dyn-array i64)
       (array.make-array i64 compiler-tlci-native-fixup-cap)]
-    [fixup-count : (Array i64) (make-array 0)]
+    [fixup-count : (__tl_dyn-array i64) (make-array 0)]
     [builder : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity bss-base)]
     (begin
@@ -723,7 +725,7 @@
         data-base)
       (compiler-object-elf-render-padding-to! (&mut builder) bss-base)
       (let
-        [bytes : (Array u8)
+        [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-to-array (& builder))]
         [text-ok : bool
           (compiler-tlci-native-patch-text!
@@ -815,12 +817,12 @@
       total)))
 
 (define (compiler-tlci-native-function-export-offsets
-  [image : cobj.CompilerObjectImage]) : (Array i64)
+  [image : cobj.CompilerObjectImage]) : (__tl_dyn-array i64)
   (let
     [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
     [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [total : i64 (compiler-tlci-native-function-export-count image)]
-    [out : (Array i64) (array.make-array i64 total)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 total)]
     [index : i64 0]
     [slot : i64 0]
     (begin
@@ -848,7 +850,7 @@
 
 ;; Function bodies are emitted in definition order, so ascending text offsets
 ;; are definition order regardless of symbol-table ordering.
-(define (compiler-tlci-native-sort-offsets! [out : (Array i64)]) : unit
+(define (compiler-tlci-native-sort-offsets! [out : (__tl_dyn-array i64)]) : unit
   (let
     [count : i64 (array-length out)]
     [index : i64 1]
@@ -868,19 +870,19 @@
 ;; metadata as canonical text and plain arrays, and every tlci_core nominal
 ;; stays inside this module's single import instance.
 (defenum ResultCompilerTlciNativeBytes
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 (define (compiler-tlci-native-package
   [metadata-text : String]
   [build-hash : String]
-  [rodata : (Array u8)]
-  [code : (Array u8)]
-  [imports : (Array u8)]
-  [fixup-offsets : (Array i64)]
+  [rodata : (__tl_dyn-array u8)]
+  [code : (__tl_dyn-array u8)]
+  [imports : (__tl_dyn-array u8)]
+  [fixup-offsets : (__tl_dyn-array i64)]
   [fixup-count : i64]
-  [identities : (Array String)]
-  [entry-offsets : (Array i64)]
+  [identities : (__tl_dyn-array String)]
+  [entry-offsets : (__tl_dyn-array i64)]
   [macro-count : i64]) : ResultCompilerTlciNativeBytes
   (match (tlci-metadata-parse metadata-text)
     [(ResultTlciMetadata.Err message)
@@ -916,10 +918,10 @@
 ;; Emit the layout's base fixups as a tlci fixups section: one u64 slot offset
 ;; per absolute pointer slot, which the loader rebases by the map base.
 (define (compiler-tlci-native-emit-fixups
-  [layout : (& layout CompilerTlciNativeLayout)]) : (Array u8)
+  [layout : (& layout CompilerTlciNativeLayout)]) : (__tl_dyn-array u8)
   (let
     [count : i64 (struct-get layout fixup-count)]
-    [out : (Array u8)
+    [out : (__tl_dyn-array u8)
       (array.make-array u8 (* count tlci-section-fixup-record-size))]
     [index : i64 0]
     (begin
@@ -985,14 +987,14 @@
 ;; Emit count + fixed records + packed names. Records contain a GOT slot and
 ;; section-relative name slice; the loader resolves the name before W^X.
 (defenum ResultCompilerTlciNativeImports
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 (define (compiler-tlci-native-emit-imports
   [layout : (& layout CompilerTlciNativeLayout)]) : ResultCompilerTlciNativeImports
   (let
     [count : i64 (struct-get layout import-count)]
-    [names : (Array String) (array.make-array String count)]
+    [names : (__tl_dyn-array String) (array.make-array String count)]
     [index : i64 0]
     [names-len : i64 0]
     [error : String ""]
@@ -1020,7 +1022,8 @@
               (+
                 tlci-section-import-header-size
                 (* count tlci-section-import-record-size))]
-            [out : (Array u8) (array.make-array u8 (+ records-end names-len))]
+            [out : (__tl_dyn-array u8)
+              (array.make-array u8 (+ records-end names-len))]
             [name-offset : i64 records-end]
             (begin
               (tlci-set-u64! out 0 count)
@@ -1048,7 +1051,9 @@
 
 (cfg
   test
-  (define (compiler-tlci-native-test-u32 [bytes : (Array u8)] [offset : i64]) : i64
+  (define (compiler-tlci-native-test-u32
+    [bytes : (__tl_dyn-array u8)]
+    [offset : i64]) : i64
     (bit-or
       (cast (array-ref bytes offset) : i64)
       (bit-or
@@ -1246,7 +1251,8 @@
         [(ResultCompilerTlciNativeLayout.Err _) false]
         [(ResultCompilerTlciNativeLayout.Ok layout)
           (let
-            [fixups : (Array u8) (compiler-tlci-native-emit-fixups (& layout))]
+            [fixups : (__tl_dyn-array u8)
+              (compiler-tlci-native-emit-fixups (& layout))]
             (and
               (= (array-length fixups) tlci-section-fixup-record-size)
               (= (tlci-read-u64 fixups 0) 32)
@@ -1291,7 +1297,7 @@
       (compiler-tlci-native-test-image "host-a" false false))
       [(ResultCompilerTlciNativeLayout.Ok layout)
         (let
-          [bytes : (Array u8) (struct-get layout bytes)]
+          [bytes : (__tl_dyn-array u8) (struct-get layout bytes)]
           (and
             (= (struct-get layout size) 2096)
             (= (array-length bytes) 2096)

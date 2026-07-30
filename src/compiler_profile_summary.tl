@@ -31,59 +31,59 @@
   8448)
 
 (define (compiler-profile-summary-keys
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-keys state))
 
 (define (compiler-profile-summary-names
-  [state : profile_state.CompilerProfileState]) : (Array String)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array String)
   (profile_state.compiler-profile-state-summary-names state))
 
 (define (compiler-profile-summary-elapsed
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-elapsed state))
 
 (define (compiler-profile-summary-calls
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-calls state))
 
 (define (compiler-profile-summary-counts
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-counts state))
 
 (define (compiler-profile-summary-total-elapsed
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-total-elapsed state))
 
 (define (compiler-profile-summary-total-calls
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-total-calls state))
 
 (define (compiler-profile-summary-exact-slots
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-exact-slots state))
 
 (define (compiler-profile-summary-exact-counts
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-exact-counts state))
 
 (define (compiler-profile-summary-exact-names
-  [state : profile_state.CompilerProfileState]) : (Array String)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array String)
   (profile_state.compiler-profile-state-summary-exact-names state))
 
 (define (compiler-profile-summary-exact-keys
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-exact-keys state))
 
 (define (compiler-profile-summary-exact-elapsed
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-exact-elapsed state))
 
 (define (compiler-profile-summary-exact-calls
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-exact-calls state))
 
 (define (compiler-profile-summary-exact-top
-  [state : profile_state.CompilerProfileState]) : (Array i64)
+  [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
   (profile_state.compiler-profile-state-summary-exact-top state))
 
 (define (compiler-profile-summary-exact-scope? [scope : i64]) : bool
@@ -137,9 +137,10 @@
   [fresh : bool]) : unit
   (let
     [offset : i64 (compiler-profile-summary-exact-offset scope index)]
-    [elapsed-values : (Array i64)
+    [elapsed-values : (__tl_dyn-array i64)
       (compiler-profile-summary-exact-elapsed state)]
-    [call-values : (Array i64) (compiler-profile-summary-exact-calls state)]
+    [call-values : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-calls state)]
     (if fresh
       (begin
         (array-set! elapsed-values offset elapsed)
@@ -163,10 +164,12 @@
       (compiler-profile-summary-exact-table-scope-capacity scope)]
     [table-offset : i64 (compiler-profile-summary-exact-table-offset scope)]
     [dense-offset : i64 (compiler-profile-summary-exact-offset scope 0)]
-    [slots : (Array i64) (compiler-profile-summary-exact-slots state)]
-    [counts : (Array i64) (compiler-profile-summary-exact-counts state)]
-    [names : (Array String) (compiler-profile-summary-exact-names state)]
-    [keys : (Array i64) (compiler-profile-summary-exact-keys state)]
+    [slots : (__tl_dyn-array i64) (compiler-profile-summary-exact-slots state)]
+    [counts : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-counts state)]
+    [names : (__tl_dyn-array String)
+      (compiler-profile-summary-exact-names state)]
+    [keys : (__tl_dyn-array i64) (compiler-profile-summary-exact-keys state)]
     [slot : i64 (+ table-offset (% key table-capacity))]
     [probes : i64 0]
     [index : i64 -1]
@@ -207,11 +210,15 @@
 (define (compiler-profile-summary-reset!
   [state : profile_state.CompilerProfileState]) : unit
   (let
-    [counts : (Array i64) (compiler-profile-summary-counts state)]
-    [total-elapsed : (Array i64) (compiler-profile-summary-total-elapsed state)]
-    [total-calls : (Array i64) (compiler-profile-summary-total-calls state)]
-    [exact-slots : (Array i64) (compiler-profile-summary-exact-slots state)]
-    [exact-counts : (Array i64) (compiler-profile-summary-exact-counts state)]
+    [counts : (__tl_dyn-array i64) (compiler-profile-summary-counts state)]
+    [total-elapsed : (__tl_dyn-array i64)
+      (compiler-profile-summary-total-elapsed state)]
+    [total-calls : (__tl_dyn-array i64)
+      (compiler-profile-summary-total-calls state)]
+    [exact-slots : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-slots state)]
+    [exact-counts : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-counts state)]
     [scope : i64 0]
     [slot : i64 0]
     (begin
@@ -247,7 +254,7 @@
   [count : i64]
   [key : i64]) : i64
   (let
-    [keys : (Array i64) (compiler-profile-summary-keys state)]
+    [keys : (__tl_dyn-array i64) (compiler-profile-summary-keys state)]
     [rank : i64 0]
     [found : i64 -1]
     (begin
@@ -265,10 +272,11 @@
   [left : i64]
   [right : i64]) : unit
   (let
-    [keys : (Array i64) (compiler-profile-summary-keys state)]
-    [names : (Array String) (compiler-profile-summary-names state)]
-    [elapsed-values : (Array i64) (compiler-profile-summary-elapsed state)]
-    [call-values : (Array i64) (compiler-profile-summary-calls state)]
+    [keys : (__tl_dyn-array i64) (compiler-profile-summary-keys state)]
+    [names : (__tl_dyn-array String) (compiler-profile-summary-names state)]
+    [elapsed-values : (__tl_dyn-array i64)
+      (compiler-profile-summary-elapsed state)]
+    [call-values : (__tl_dyn-array i64) (compiler-profile-summary-calls state)]
     [li : i64 (compiler-profile-summary-offset scope left)]
     [ri : i64 (compiler-profile-summary-offset scope right)]
     [key : i64 (array-ref keys li)]
@@ -292,8 +300,9 @@
   (if (<= rank 0)
     unit
     (let
-      [keys : (Array i64) (compiler-profile-summary-keys state)]
-      [elapsed-values : (Array i64) (compiler-profile-summary-elapsed state)]
+      [keys : (__tl_dyn-array i64) (compiler-profile-summary-keys state)]
+      [elapsed-values : (__tl_dyn-array i64)
+        (compiler-profile-summary-elapsed state)]
       [i : i64 (compiler-profile-summary-offset scope rank)]
       [p : i64 (compiler-profile-summary-offset scope (- rank 1))]
       (if (compiler-profile-summary-better?
@@ -314,11 +323,12 @@
   [elapsed : i64]
   [calls : i64]) : unit
   (let
-    [counts : (Array i64) (compiler-profile-summary-counts state)]
-    [keys : (Array i64) (compiler-profile-summary-keys state)]
-    [names : (Array String) (compiler-profile-summary-names state)]
-    [elapsed-values : (Array i64) (compiler-profile-summary-elapsed state)]
-    [call-values : (Array i64) (compiler-profile-summary-calls state)]
+    [counts : (__tl_dyn-array i64) (compiler-profile-summary-counts state)]
+    [keys : (__tl_dyn-array i64) (compiler-profile-summary-keys state)]
+    [names : (__tl_dyn-array String) (compiler-profile-summary-names state)]
+    [elapsed-values : (__tl_dyn-array i64)
+      (compiler-profile-summary-elapsed state)]
+    [call-values : (__tl_dyn-array i64) (compiler-profile-summary-calls state)]
     [count : i64 (array-ref counts scope)]
     [found : i64 (compiler-profile-summary-find state scope count key)]
     (if (>= found 0)
@@ -362,8 +372,10 @@
   [name : String]
   [elapsed : i64]) : unit
   (let
-    [total-elapsed : (Array i64) (compiler-profile-summary-total-elapsed state)]
-    [total-calls : (Array i64) (compiler-profile-summary-total-calls state)]
+    [total-elapsed : (__tl_dyn-array i64)
+      (compiler-profile-summary-total-elapsed state)]
+    [total-calls : (__tl_dyn-array i64)
+      (compiler-profile-summary-total-calls state)]
     (begin
       (array-set!
         total-elapsed
@@ -430,12 +442,13 @@
   [state : profile_state.CompilerProfileState]
   [scope : i64]) : unit
   (let
-    [counts : (Array i64) (compiler-profile-summary-counts state)]
-    [exact-counts : (Array i64) (compiler-profile-summary-exact-counts state)]
-    [keys : (Array i64) (compiler-profile-summary-exact-keys state)]
-    [elapsed-values : (Array i64)
+    [counts : (__tl_dyn-array i64) (compiler-profile-summary-counts state)]
+    [exact-counts : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-counts state)]
+    [keys : (__tl_dyn-array i64) (compiler-profile-summary-exact-keys state)]
+    [elapsed-values : (__tl_dyn-array i64)
       (compiler-profile-summary-exact-elapsed state)]
-    [top : (Array i64) (compiler-profile-summary-exact-top state)]
+    [top : (__tl_dyn-array i64) (compiler-profile-summary-exact-top state)]
     [count : i64
       (array-ref
         exact-counts
@@ -521,19 +534,24 @@
       (compiler-profile-summary-rank-exact! state scope)
       unit)
     (let
-      [counts : (Array i64) (compiler-profile-summary-counts state)]
-      [names : (Array String) (compiler-profile-summary-names state)]
-      [elapsed-values : (Array i64) (compiler-profile-summary-elapsed state)]
-      [call-values : (Array i64) (compiler-profile-summary-calls state)]
-      [exact-names : (Array String)
+      [counts : (__tl_dyn-array i64) (compiler-profile-summary-counts state)]
+      [names : (__tl_dyn-array String) (compiler-profile-summary-names state)]
+      [elapsed-values : (__tl_dyn-array i64)
+        (compiler-profile-summary-elapsed state)]
+      [call-values : (__tl_dyn-array i64)
+        (compiler-profile-summary-calls state)]
+      [exact-names : (__tl_dyn-array String)
         (compiler-profile-summary-exact-names state)]
-      [exact-elapsed : (Array i64)
+      [exact-elapsed : (__tl_dyn-array i64)
         (compiler-profile-summary-exact-elapsed state)]
-      [exact-calls : (Array i64) (compiler-profile-summary-exact-calls state)]
-      [exact-top : (Array i64) (compiler-profile-summary-exact-top state)]
-      [total-elapsed : (Array i64)
+      [exact-calls : (__tl_dyn-array i64)
+        (compiler-profile-summary-exact-calls state)]
+      [exact-top : (__tl_dyn-array i64)
+        (compiler-profile-summary-exact-top state)]
+      [total-elapsed : (__tl_dyn-array i64)
         (compiler-profile-summary-total-elapsed state)]
-      [total-calls : (Array i64) (compiler-profile-summary-total-calls state)]
+      [total-calls : (__tl_dyn-array i64)
+        (compiler-profile-summary-total-calls state)]
       [count : i64 (array-ref counts scope)]
       [rank : i64 0]
       [shown-elapsed : i64 0]
@@ -596,7 +614,8 @@
         (compiler-profile-summary-exact-counts state)
         (compiler-profile-summary-exact-scope-index scope))]
     [offset : i64 (compiler-profile-summary-exact-offset scope 0)]
-    [names : (Array String) (compiler-profile-summary-exact-names state)]
+    [names : (__tl_dyn-array String)
+      (compiler-profile-summary-exact-names state)]
     [index : i64 0]
     [found : i64 -1]
     (begin
@@ -637,7 +656,7 @@
           (compiler-profile-summary-exact-offset
             scope
             (array-ref (compiler-profile-summary-exact-top state) top-offset))]
-        [exact-names : (Array String)
+        [exact-names : (__tl_dyn-array String)
           (compiler-profile-summary-exact-names state)]
         [rank : i64 0]
         [shown-elapsed : i64 0]
@@ -757,9 +776,9 @@
         right
         compiler-profile-summary-optimizer-pass)
       (let
-        [left-names : (Array String)
+        [left-names : (__tl_dyn-array String)
           (compiler-profile-summary-exact-names left)]
-        [right-names : (Array String)
+        [right-names : (__tl_dyn-array String)
           (compiler-profile-summary-exact-names right)]
         [left-pass : i64
           (compiler-profile-summary-exact-find

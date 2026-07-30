@@ -809,7 +809,7 @@
   (ast-ty-box (ctfe-type-info-source-type)))
 
 (defstruct CtfeValueSeq
-  (slots (Array CompilerCtfeValue))
+  (slots (__tl_dyn-array CompilerCtfeValue))
   (len i64))
 
 (defenum CtfeMaybeSyntaxPools
@@ -845,15 +845,15 @@
   (Field String i64))
 
 (defstruct CtfeLayoutFieldList
-  (slots (Array CtfeLayoutField))
-  (key-ids (Array i64))
+  (slots (__tl_dyn-array CtfeLayoutField))
+  (key-ids (__tl_dyn-array i64))
   (len i64))
 
 (defenum CtfeLayoutInfo
   (Info String bool i64 i64 CtfeLayoutFieldList))
 
 (defstruct CtfeLayoutInfoList
-  (slots (Array CtfeLayoutInfo))
+  (slots (__tl_dyn-array CtfeLayoutInfo))
   (index ctfe_key_map.Map)
   (len i64))
 
@@ -871,14 +871,14 @@
   (Field i64 AstType))
 
 (defstruct CtfeReflectFieldList
-  (slots (Array CtfeReflectField))
+  (slots (__tl_dyn-array CtfeReflectField))
   (len i64))
 
 (defenum CtfeReflectVariant
   (Variant i64 AstTypeList))
 
 (defstruct CtfeReflectVariantList
-  (slots (Array CtfeReflectVariant))
+  (slots (__tl_dyn-array CtfeReflectVariant))
   (len i64))
 
 (defenum CtfeReflectCleanup
@@ -890,7 +890,7 @@
   (Enum String String String i64 CtfeReflectCleanup CtfeReflectVariantList))
 
 (defstruct CtfeReflectInfoList
-  (slots (Array CtfeReflectInfo))
+  (slots (__tl_dyn-array CtfeReflectInfo))
   (index ctfe_key_map.Map)
   (len i64))
 
@@ -915,7 +915,7 @@
   (mutable-local bool))
 
 (defstruct CtfeEnvArena
-  (segments (Array (Array CtfeEnvBinding)))
+  (segments (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))
   (segment-count i64)
   (len i64)
   (owner-arena i64))
@@ -971,7 +971,7 @@
 
 (define (ctfe-env-arena-new) : CtfeEnvArena
   (CtfeEnvArena
-    (array.make-array (Array CtfeEnvBinding) 1)
+    (__tl_make-array (__tl_dyn-array CtfeEnvBinding) 1)
     0
     0
     (ctfe-env-arena-owner-root (arena.tl_arena_current))))
@@ -1052,8 +1052,8 @@
     (ci.intern-source-name-session-capture-active-handle)))
 
 (define (ctfe-env-arena-segments-copy-range!
-  [dst : (&mut dst (Array (Array CtfeEnvBinding)))]
-  [src : (& src (Array (Array CtfeEnvBinding)))]
+  [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))]
+  [src : (& src (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -1074,9 +1074,9 @@
       (if (< count capacity)
         unit
         (let
-          [bigger : (Array (Array CtfeEnvBinding))
-            (array.make-array
-              (Array CtfeEnvBinding)
+          [bigger : (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding))
+            (__tl_make-array
+              (__tl_dyn-array CtfeEnvBinding)
               (if (< capacity 1)
                 1
                 (* capacity 2)))]
@@ -1109,7 +1109,7 @@
   (let
     [segment-index : i64 (/ index (ctfe-env-arena-segment-capacity))]
     [offset : i64 (- index (* segment-index (ctfe-env-arena-segment-capacity)))]
-    [segment : (Array CtfeEnvBinding)
+    [segment : (__tl_dyn-array CtfeEnvBinding)
       (array.ref (struct-get store segments) segment-index)]
     (array-set! segment offset binding)))
 
@@ -1117,7 +1117,7 @@
   (let
     [segment-index : i64 (/ index (ctfe-env-arena-segment-capacity))]
     [offset : i64 (- index (* segment-index (ctfe-env-arena-segment-capacity)))]
-    [segment : (Array CtfeEnvBinding)
+    [segment : (__tl_dyn-array CtfeEnvBinding)
       (array.ref (struct-get store segments) segment-index)]
     (unsafe
       (ptr-read (ptr-offset (array-data segment) offset)))))
@@ -1199,8 +1199,8 @@
   [key-id : i64]) : CtfeLayoutFieldList
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array CtfeLayoutField) (struct-get items slots)]
-    [key-ids : (Array i64) (struct-get items key-ids)]
+    [slots : (__tl_dyn-array CtfeLayoutField) (struct-get items slots)]
+    [key-ids : (__tl_dyn-array i64) (struct-get items key-ids)]
     (begin
       (array-set! slots n value)
       (array-set! key-ids n key-id)
@@ -1224,7 +1224,7 @@
   [name-id : i64]) : CtfeLayoutInfoList
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array CtfeLayoutInfo) (struct-get items slots)]
+    [slots : (__tl_dyn-array CtfeLayoutInfo) (struct-get items slots)]
     [index : ctfe_key_map.Map (struct-get items index)]
     (begin
       (array-set! slots n value)
@@ -1244,7 +1244,7 @@
   [value : CtfeReflectField]) : CtfeReflectFieldList
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array CtfeReflectField) (struct-get items slots)]
+    [slots : (__tl_dyn-array CtfeReflectField) (struct-get items slots)]
     (begin
       (array-set! slots n value)
       (CtfeReflectFieldList slots (+ n 1)))))
@@ -1262,7 +1262,7 @@
   [value : CtfeReflectVariant]) : CtfeReflectVariantList
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array CtfeReflectVariant) (struct-get items slots)]
+    [slots : (__tl_dyn-array CtfeReflectVariant) (struct-get items slots)]
     (begin
       (array-set! slots n value)
       (CtfeReflectVariantList slots (+ n 1)))))
@@ -1285,7 +1285,7 @@
   [key-id : i64]) : CtfeReflectInfoList
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array CtfeReflectInfo) (struct-get items slots)]
+    [slots : (__tl_dyn-array CtfeReflectInfo) (struct-get items slots)]
     [index : ctfe_key_map.Map (struct-get items index)]
     (begin
       (array-set! slots n value)
@@ -1939,7 +1939,7 @@
     ;; for every declaration that passed the test, and the borrowed test was a
     ;; second out-of-line call. A match on the slot projection loads the tag and
     ;; only the fields an arm binds.
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
@@ -5410,7 +5410,7 @@
     65536))
 
 (define (ctfe-embedded-stdlib-array-fill!
-  [items : (&mut items (Array i64))]
+  [items : (&mut items (__tl_dyn-array i64))]
   [value : i64]) : unit
   (let
     [index : i64 0]
@@ -5422,8 +5422,8 @@
 (define (ctfe-embedded-stdlib-lzss-insert!
   [data : (Ptr u8)]
   [source-len : i64]
-  [head : (&mut head (Array i64))]
-  [previous : (&mut previous (Array i64))]
+  [head : (&mut head (__tl_dyn-array i64))]
+  [previous : (&mut previous (__tl_dyn-array i64))]
   [index : i64]) : unit
   (if (> (+ index 2) (- source-len 1))
     unit
@@ -5436,8 +5436,8 @@
 (define (ctfe-embedded-stdlib-lzss-insert-range!
   [data : (Ptr u8)]
   [source-len : i64]
-  [head : (&mut head (Array i64))]
-  [previous : (&mut previous (Array i64))]
+  [head : (&mut head (__tl_dyn-array i64))]
+  [previous : (&mut previous (__tl_dyn-array i64))]
   [start : i64]
   [count : i64]) : unit
   (let
@@ -5484,8 +5484,8 @@
 (define (ctfe-embedded-stdlib-lzss-find-match
   [data : (Ptr u8)]
   [source-len : i64]
-  [head : (& head (Array i64))]
-  [previous : (& previous (Array i64))]
+  [head : (& head (__tl_dyn-array i64))]
+  [previous : (& previous (__tl_dyn-array i64))]
   [index : i64]) : CtfeEmbeddedStdlibLzssMatch
   (if (> (+ index 2) (- source-len 1))
     (CtfeEmbeddedStdlibLzssMatch 0 0)
@@ -5533,11 +5533,11 @@
     [data : (Ptr u8)
       (unsafe
         (string-data (& source)))]
-    [head : (Array i64) (array.make-array i64 65536)]
+    [head : (__tl_dyn-array i64) (array.make-array i64 65536)]
     ;; `previous` needs no -1 fill: chain reads only visit indices already
     ;; written by insert! (head points at an inserted index, and previous[i]
     ;; is stored when i is inserted), so its initial contents are never read.
-    [previous : (Array i64) (array.make-array i64 source-len)]
+    [previous : (__tl_dyn-array i64) (array.make-array i64 source-len)]
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity
         (+ source-len (+ (/ source-len 8) 1)))]
@@ -9274,7 +9274,7 @@
 (define (ctfe-value-seq-push [items : CtfeValueSeq] [value : CompilerCtfeValue]) : CtfeValueSeq
   (let
     [n : i64 (struct-get items len)]
-    [slots : (Array CompilerCtfeValue) (struct-get items slots)]
+    [slots : (__tl_dyn-array CompilerCtfeValue) (struct-get items slots)]
     (begin
       (array-set! slots n value)
       (CtfeValueSeq slots (+ n 1)))))

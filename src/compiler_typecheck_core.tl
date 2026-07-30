@@ -66,20 +66,20 @@
 
 (defstruct TcTypeEnvCache
   (ids tc_i64_i64_map.Map)
-  (values (Array AstType))
-  (unsafe-flags (Array i64))
-  (c-abi-fnptr-flags (Array i64))
-  (shadow-flags (Array i64))
+  (values (__tl_dyn-array AstType))
+  (unsafe-flags (__tl_dyn-array i64))
+  (c-abi-fnptr-flags (__tl_dyn-array i64))
+  (shadow-flags (__tl_dyn-array i64))
   (scan-through bool)
   (partial bool)
   (rest i64)
   (below i64))
 
 (defstruct TcTypeEnvStore
-  (bindings (Array TcTypeEnvBinding))
+  (bindings (__tl_dyn-array TcTypeEnvBinding))
   (binding-capacity i64)
   (binding-len i64)
-  (caches (Array TcTypeEnvCache))
+  (caches (__tl_dyn-array TcTypeEnvCache))
   (cache-capacity i64)
   (cache-len i64)
   (owner-arena i64))
@@ -97,10 +97,10 @@
   (Bind i64 AstType TcTypeEnv)
   (Cache
     tc_i64_i64_map.Map
-    (Array AstType)
-    (Array i64)
-    (Array i64)
-    (Array i64)
+    (__tl_dyn-array AstType)
+    (__tl_dyn-array i64)
+    (__tl_dyn-array i64)
+    (__tl_dyn-array i64)
     bool
     bool
     TcTypeEnv
@@ -153,13 +153,13 @@
   (cache-generation i64))
 
 (defstruct TcTypeEnvScopedStack
-  (slots (Array TcTypeEnvScopedSlot))
+  (slots (__tl_dyn-array TcTypeEnvScopedSlot))
   (slot-count i64)
   ;; Latest slot per out-of-range name. Dense intern ids use the shared
   ;; epoch-keyed arrays below; this map preserves the unbounded fallback.
   (lookup-cache tc_i64_i64_map.Map)
   (lookup-epoch i64)
-  (marks (Array TcTypeEnvScopedMark))
+  (marks (__tl_dyn-array TcTypeEnvScopedMark))
   (mark-count i64)
   (scope-depth i64)
   (cache-generation i64))
@@ -217,20 +217,20 @@
 ;; the typecheck layer so driver jobs can own it without teaching the loader
 ;; about typecheck internals.
 (defstruct TcSourceKeyCacheState
-  (dotted-alias-module-keys (Array i64))
-  (dotted-alias-name-keys (Array i64))
-  (dotted-alias-values (Array i64))
-  (dotted-full-path-module-keys (Array i64))
-  (dotted-full-path-name-keys (Array i64))
-  (dotted-full-path-values (Array i64))
-  (qualified-variant-module-keys (Array i64))
-  (qualified-variant-name-keys (Array i64))
-  (qualified-variant-values (Array i64))
-  (qualified-variant-handles (Array i64))
+  (dotted-alias-module-keys (__tl_dyn-array i64))
+  (dotted-alias-name-keys (__tl_dyn-array i64))
+  (dotted-alias-values (__tl_dyn-array i64))
+  (dotted-full-path-module-keys (__tl_dyn-array i64))
+  (dotted-full-path-name-keys (__tl_dyn-array i64))
+  (dotted-full-path-values (__tl_dyn-array i64))
+  (qualified-variant-module-keys (__tl_dyn-array i64))
+  (qualified-variant-name-keys (__tl_dyn-array i64))
+  (qualified-variant-values (__tl_dyn-array i64))
+  (qualified-variant-handles (__tl_dyn-array i64))
   ;; alias table-id, generation, ready;
   ;; full-path table-id, generation, ready;
   ;; qualified table-id, generation, registry-id, ready.
-  (control (Array i64)))
+  (control (__tl_dyn-array i64)))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -253,7 +253,7 @@
 
 (define (tc-job-state-new) : TcJobState
   (let
-    [cell : (Array TcSourceKeyCacheState)
+    [cell : (__tl_dyn-array TcSourceKeyCacheState)
       (array.make-array TcSourceKeyCacheState 1)]
     (begin
       (array-set! cell 0 (tc-source-key-cache-state-new))
@@ -283,7 +283,7 @@
 ;; Standalone source APIs and direct tests are serial compatibility surfaces.
 ;; Allocate their state only when one of those adapters is called; production
 ;; compiler jobs always pass their CompilerDriverState-owned TcJobState.
-(define tc-serial-job-state-cell : (Array TcJobState)
+(define tc-serial-job-state-cell : (__tl_dyn-array TcJobState)
   (array.make-array TcJobState 1))
 (define tc-serial-job-state-ready : bool
   false)
@@ -319,9 +319,9 @@
 (defstruct TcBodyStateData
   (type-facts-recording bool)
   (type-facts-consuming bool)
-  (type-fact-index (Array i64))
-  (type-fact-expr-ids (Array i64))
-  (type-fact-types (Array AstType))
+  (type-fact-index (__tl_dyn-array i64))
+  (type-fact-expr-ids (__tl_dyn-array i64))
+  (type-fact-types (__tl_dyn-array AstType))
   (type-fact-count i64)
   (type-fact-storage-arena i64)
   (type-fact-enclosing-arena i64)
@@ -330,15 +330,15 @@
   (early-exit-current bool)
   (early-exit-suppress-depth i64)
   (early-exit-source-expr-limit i64)
-  (early-exit-facts (Array i64))
-  (early-exit-known (Array i64)))
+  (early-exit-facts (__tl_dyn-array i64))
+  (early-exit-known (__tl_dyn-array i64)))
 
 ;; TcContext values are copied while resolving modules and rebuilding macro
 ;; views. Keep the mutable body analysis behind a shared one-slot cell so every
 ;; derived context for one job observes the same state without consulting a
 ;; process-global selector.
 (defstruct TcBodyState
-  (data (Array TcBodyStateData))
+  (data (__tl_dyn-array TcBodyStateData))
   (job-state TcJobState)
   ;; The source-name owner is immutable for one typecheck body. Cache it here
   ;; so hot source-key lookups do not repeatedly traverse TcContext and the
@@ -533,7 +533,8 @@
   [job-state : TcJobState]
   [source-names : ci.InternSourceNameSessionHandle]) : TcBodyState
   (let
-    [cell : (Array TcBodyStateData) (array.make-array TcBodyStateData 1)]
+    [cell : (__tl_dyn-array TcBodyStateData)
+      (array.make-array TcBodyStateData 1)]
     [source-session : ci.InternSourceNameSession
       (ci.intern-source-name-session-handle-session source-names)]
     (begin
@@ -798,10 +799,10 @@
               (arena.tl_arena_set enclosing))))))))
 
 (define (tc-body-type-fact-grow-copy!
-  [dst-types : (Array AstType)]
-  [dst-expr-ids : (Array i64)]
-  [src-types : (Array AstType)]
-  [src-expr-ids : (Array i64)]
+  [dst-types : (__tl_dyn-array AstType)]
+  [dst-expr-ids : (__tl_dyn-array i64)]
+  [src-types : (__tl_dyn-array AstType)]
+  [src-expr-ids : (__tl_dyn-array i64)]
   [count : i64]
   [index : i64]) : unit
   (let
@@ -815,8 +816,8 @@
 (define (tc-body-type-fact-grow! [state : TcBodyState]) : unit
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    [old-types : (Array AstType) (struct-get data type-fact-types)]
-    [old-expr-ids : (Array i64) (struct-get data type-fact-expr-ids)]
+    [old-types : (__tl_dyn-array AstType) (struct-get data type-fact-types)]
+    [old-expr-ids : (__tl_dyn-array i64) (struct-get data type-fact-expr-ids)]
     [old-cap : i64 (array.length old-types)]
     [new-cap : i64
       (if (< old-cap 1)
@@ -827,8 +828,9 @@
       (unsafe
         (arena.tl_arena_set (struct-get data type-fact-storage-arena)))
       (let
-        [next-types : (Array AstType) (array.make-array AstType new-cap)]
-        [next-expr-ids : (Array i64) (array.make-array i64 new-cap)]
+        [next-types : (__tl_dyn-array AstType)
+          (array.make-array AstType new-cap)]
+        [next-expr-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         (begin
           (tc-body-type-fact-grow-copy!
             next-types
@@ -1149,7 +1151,7 @@
   (summary-backed bool))
 
 (defstruct TcLazyImportStubList
-  (slots (Array TcLazyImportStub))
+  (slots (__tl_dyn-array TcLazyImportStub))
   (len i64))
 
 (defenum TcThreadTransferClass
@@ -1169,7 +1171,7 @@
 (cfg
   compile-profile
   (defstruct CompilerTcMacroProfileEntries
-    (slots (Array CompilerTcMacroProfileEntry))
+    (slots (__tl_dyn-array CompilerTcMacroProfileEntry))
     (len i64)
     (index tc_i64_i64_map.Map)))
 
@@ -1215,7 +1217,7 @@
 ;; the pre-insert cache to obtain a second owned env). Inserts only happen on a
 ;; miss, so the copy is bounded by the distinct module count, not program size.
 (defstruct TcModuleLocalEnvCache
-  (slots (Array TcModuleLocalEnvEntry))
+  (slots (__tl_dyn-array TcModuleLocalEnvEntry))
   (len i64))
 
 (defenum ResultTcModuleLocalEnv
@@ -1228,7 +1230,7 @@
 
 (defstruct TcImportAliasSummaryIndex
   (modules tc_i64_i64_map.Map)
-  (decls (Array AstDeclList))
+  (decls (__tl_dyn-array AstDeclList))
   (count i64))
 
 (defenum TcImportAliasSummaryLookup
@@ -1263,7 +1265,7 @@
   (role TcSpmdRole))
 
 (defstruct TcSpmdEnv
-  (bindings (Array TcSpmdBinding))
+  (bindings (__tl_dyn-array TcSpmdBinding))
   (len i64))
 
 (defstruct TcSpmdEnvMark
@@ -1339,7 +1341,7 @@
   (Field String AstType i64))
 
 (defstruct TcReprCFieldLayoutList
-  (slots (Array TcReprCFieldLayout)))
+  (slots (__tl_dyn-array TcReprCFieldLayout)))
 
 (defenum TcReprCLayout
   (Layout i64 i64 TcReprCFieldLayoutList))
@@ -1352,19 +1354,19 @@
   (Field i64 AstType i64))
 
 (defstruct TcInlineFieldLayoutList
-  (slots (Array TcInlineFieldLayout)))
+  (slots (__tl_dyn-array TcInlineFieldLayout)))
 
 (defenum TcInlinePayloadLayout
   (Payload i64 AstType i64))
 
 (defstruct TcInlinePayloadLayoutList
-  (slots (Array TcInlinePayloadLayout)))
+  (slots (__tl_dyn-array TcInlinePayloadLayout)))
 
 (defenum TcInlineVariantLayout
   (Variant i64 i64 i64 TcInlinePayloadLayoutList))
 
 (defstruct TcInlineVariantLayoutList
-  (slots (Array TcInlineVariantLayout)))
+  (slots (__tl_dyn-array TcInlineVariantLayout)))
 
 (defenum TcInlineFieldsLayout
   (Fields i64 i64 TcInlineFieldLayoutList))
@@ -1576,30 +1578,30 @@
   (intern-floor i64))
 
 (defstruct TcPrefixSnapshotCacheState
-  (slots (Array TcPrefixSnapshotSlot))
-  (arena (Array i64))
-  (enabled (Array bool))
-  (ready (Array bool))
-  (hit-count (Array i64))
-  (miss-count (Array i64))
-  (store-count (Array i64))
-  (provenance (Array TcPrefixSnapshotCacheProvenance))
-  (provenance-ready (Array bool)))
+  (slots (__tl_dyn-array TcPrefixSnapshotSlot))
+  (arena (__tl_dyn-array i64))
+  (enabled (__tl_dyn-array bool))
+  (ready (__tl_dyn-array bool))
+  (hit-count (__tl_dyn-array i64))
+  (miss-count (__tl_dyn-array i64))
+  (store-count (__tl_dyn-array i64))
+  (provenance (__tl_dyn-array TcPrefixSnapshotCacheProvenance))
+  (provenance-ready (__tl_dyn-array bool)))
 
 (define (tc-prefix-snapshot-cache-provenance-empty) : TcPrefixSnapshotCacheProvenance
   (TcPrefixSnapshotCacheProvenance 0 0 0 0 0 0))
 
 (define (tc-prefix-snapshot-cache-state-new) : TcPrefixSnapshotCacheState
   (let
-    [arena-cell : (Array i64) (array.make-array i64 1)]
-    [enabled-cell : (Array bool) (array.make-array bool 1)]
-    [ready-cell : (Array bool) (array.make-array bool 1)]
-    [hit-cell : (Array i64) (array.make-array i64 1)]
-    [miss-cell : (Array i64) (array.make-array i64 1)]
-    [store-cell : (Array i64) (array.make-array i64 1)]
-    [provenance-cell : (Array TcPrefixSnapshotCacheProvenance)
+    [arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [enabled-cell : (__tl_dyn-array bool) (array.make-array bool 1)]
+    [ready-cell : (__tl_dyn-array bool) (array.make-array bool 1)]
+    [hit-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [miss-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [store-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [provenance-cell : (__tl_dyn-array TcPrefixSnapshotCacheProvenance)
       (array.make-array TcPrefixSnapshotCacheProvenance 1)]
-    [provenance-ready-cell : (Array bool) (array.make-array bool 1)]
+    [provenance-ready-cell : (__tl_dyn-array bool) (array.make-array bool 1)]
     (begin
       (array-set! arena-cell 0 0)
       (array-set! enabled-cell 0 false)
@@ -2550,7 +2552,7 @@
 ;; report zeros, which the profile harness does not assert on.
 (cfg
   compile-profile
-  (define compiler-tc-walk-clock-scratch : (Array i64)
+  (define compiler-tc-walk-clock-scratch : (__tl_dyn-array i64)
     (array.make-array i64 2)))
 
 (cfg
@@ -3287,31 +3289,31 @@
 ;; (plain globals, allocated at process init like the reinfer site arrays).
 (cfg
   compile-profile
-  (define compiler-tc-walk-sp-probe-ns : (Array i64)
+  (define compiler-tc-walk-sp-probe-ns : (__tl_dyn-array i64)
     (array.make-array i64 4)))
 (cfg
   compile-profile
-  (define compiler-tc-walk-sp-probe-alloc : (Array i64)
+  (define compiler-tc-walk-sp-probe-alloc : (__tl_dyn-array i64)
     (array.make-array i64 4)))
 (cfg
   compile-profile
-  (define compiler-tc-walk-sp-probe-live : (Array i64)
+  (define compiler-tc-walk-sp-probe-live : (__tl_dyn-array i64)
     (array.make-array i64 4)))
 (cfg
   compile-profile
-  (define compiler-tc-walk-sp-probe-calls : (Array i64)
+  (define compiler-tc-walk-sp-probe-calls : (__tl_dyn-array i64)
     (array.make-array i64 4)))
 (cfg
   compile-profile
-  (define compiler-tc-walk-sp-probe-start-ns : (Array i64)
+  (define compiler-tc-walk-sp-probe-start-ns : (__tl_dyn-array i64)
     (array.make-array i64 4)))
 (cfg
   compile-profile
-  (define compiler-tc-walk-sp-probe-start-alloc : (Array i64)
+  (define compiler-tc-walk-sp-probe-start-alloc : (__tl_dyn-array i64)
     (array.make-array i64 4)))
 (cfg
   compile-profile
-  (define compiler-tc-walk-sp-probe-start-live : (Array i64)
+  (define compiler-tc-walk-sp-probe-start-live : (__tl_dyn-array i64)
     (array.make-array i64 4)))
 
 (cfg
@@ -3810,8 +3812,8 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-copy-prefix!
-    [src : (& src (Array CompilerTcMacroProfileEntry))]
-    [dst : (&mut dst (Array CompilerTcMacroProfileEntry))]
+    [src : (& src (__tl_dyn-array CompilerTcMacroProfileEntry))]
+    [dst : (&mut dst (__tl_dyn-array CompilerTcMacroProfileEntry))]
     [len : i64]) : unit
     (let
       [cursor : i64 0]
@@ -3834,7 +3836,7 @@
             (if (< old-capacity 1)
               16
               (* old-capacity 2))]
-          [next : (Array CompilerTcMacroProfileEntry)
+          [next : (__tl_dyn-array CompilerTcMacroProfileEntry)
             (array.make-array CompilerTcMacroProfileEntry next-capacity)]
           (begin
             (compiler-tc-macro-profile-copy-prefix!
@@ -4042,27 +4044,27 @@
     18))
 (cfg
   compile-profile
-  (define compiler-tc-reinfer-profile-calls : (Array i64)
+  (define compiler-tc-reinfer-profile-calls : (__tl_dyn-array i64)
     (array.make-array i64 18)))
 (cfg
   compile-profile
-  (define compiler-tc-reinfer-profile-ms : (Array i64)
+  (define compiler-tc-reinfer-profile-ms : (__tl_dyn-array i64)
     (array.make-array i64 18)))
 (cfg
   compile-profile
-  (define compiler-tc-reinfer-profile-alloc : (Array i64)
+  (define compiler-tc-reinfer-profile-alloc : (__tl_dyn-array i64)
     (array.make-array i64 18)))
 (cfg
   compile-profile
-  (define compiler-tc-reinfer-profile-live : (Array i64)
+  (define compiler-tc-reinfer-profile-live : (__tl_dyn-array i64)
     (array.make-array i64 18)))
 (cfg
   compile-profile
-  (define compiler-tc-body-fact-profile-hits : (Array i64)
+  (define compiler-tc-body-fact-profile-hits : (__tl_dyn-array i64)
     (array.make-array i64 18)))
 (cfg
   compile-profile
-  (define compiler-tc-body-fact-profile-misses : (Array i64)
+  (define compiler-tc-body-fact-profile-misses : (__tl_dyn-array i64)
     (array.make-array i64 18)))
 
 (cfg
@@ -4702,7 +4704,7 @@
     0))
 (cfg
   compile-profile
-  (define tc-lp-counts : (Array i64)
+  (define tc-lp-counts : (__tl_dyn-array i64)
     (array.make-array i64 15)))
 
 (cfg
@@ -6396,7 +6398,7 @@
 
 (define (tc-type-env-store-handle-new) : i64
   (let
-    [cell : (Array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
+    [cell : (__tl_dyn-array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
     (begin
       (array-set! cell 0 (tc-type-env-store-new))
       (unsafe
@@ -6427,7 +6429,7 @@
       (unsafe
         (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
       (let
-        [bigger : (Array TcTypeEnvBinding)
+        [bigger : (__tl_dyn-array TcTypeEnvBinding)
           (array.make-array TcTypeEnvBinding next-capacity)]
         (begin
           (set! (struct-get store bindings) bigger)
@@ -6449,7 +6451,7 @@
       (unsafe
         (arena.tl_arena_set (tc-type-env-store-owner-current-head owner)))
       (let
-        [bigger : (Array TcTypeEnvCache)
+        [bigger : (__tl_dyn-array TcTypeEnvCache)
           (array.make-array TcTypeEnvCache next-capacity)]
         (begin
           (set! (struct-get store caches) bigger)
@@ -6524,9 +6526,10 @@
             (tc-type-env-store-write! store-handle store)
             (set! index 0))))
       (let
-        [items : (Array TcTypeEnvBinding)
+        [items : (__tl_dyn-array TcTypeEnvBinding)
           (unsafe
-            (ptr-read (ptr-cast store-words : (Ptr (Array TcTypeEnvBinding)))))]
+            (ptr-read
+              (ptr-cast store-words : (Ptr (__tl_dyn-array TcTypeEnvBinding)))))]
         (begin
           (array-set! items index binding)
           (unsafe
@@ -6741,9 +6744,9 @@
 ;; spine from the head down to the first binding. Ids that are bloom-marked but
 ;; not bound-stamped (e.g. spine binds made outside the alias binder) still
 ;; take the exact scan, so results are identical either way.
-(define tc-topenv-membership-slots : (Array i64)
+(define tc-topenv-membership-slots : (__tl_dyn-array i64)
   (array.make-array i64 (intern-capacity)))
-(define tc-topenv-membership-bound-slots : (Array i64)
+(define tc-topenv-membership-bound-slots : (__tl_dyn-array i64)
   (array.make-array i64 (intern-capacity)))
 
 ;; Qualified and generated structural ids live above the direct-slot range.
@@ -6753,9 +6756,9 @@
 ;; the allocation and generic-map dispatch cost paid by every top-level bind.
 (define tc-topenv-membership-overflow-capacity : i64
   65536)
-(define tc-topenv-membership-overflow-keys : (Array i64)
+(define tc-topenv-membership-overflow-keys : (__tl_dyn-array i64)
   (array.make-array i64 65536))
-(define tc-topenv-membership-overflow-flags : (Array i64)
+(define tc-topenv-membership-overflow-flags : (__tl_dyn-array i64)
   (array.make-array i64 65536))
 (define tc-topenv-membership-overflow-complete : bool
   true)
@@ -7158,9 +7161,9 @@
 ;; an older carrier lazily repairs only the names it queries.
 (define tc-type-env-scoped-dense-lookup-capacity : i64
   262144)
-(define tc-type-env-scoped-dense-lookup-indices : (Array i64)
+(define tc-type-env-scoped-dense-lookup-indices : (__tl_dyn-array i64)
   (array.make-array i64 tc-type-env-scoped-dense-lookup-capacity))
-(define tc-type-env-scoped-dense-lookup-epochs : (Array i64)
+(define tc-type-env-scoped-dense-lookup-epochs : (__tl_dyn-array i64)
   (array.make-array i64 tc-type-env-scoped-dense-lookup-capacity))
 (define tc-type-env-scoped-next-lookup-epoch : i64
   1)
@@ -8897,10 +8900,10 @@
 ;; occurrence, which matches the old any-occurrence-above map exactly.
 (define (tc-env-cache-add!
   [ids : (&mut ids tc_i64_i64_map.Map)]
-  [values : (Array AstType)]
-  [unsafe-flags : (Array i64)]
-  [c-abi-fnptr-flags : (Array i64)]
-  [shadow-flags : (Array i64)]
+  [values : (__tl_dyn-array AstType)]
+  [unsafe-flags : (__tl_dyn-array i64)]
+  [c-abi-fnptr-flags : (__tl_dyn-array i64)]
+  [shadow-flags : (__tl_dyn-array i64)]
   [name-id : i64]
   [next : i64]
   [ty : AstType]
@@ -8934,10 +8937,10 @@
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
   [ids : tc_i64_i64_map.Map]
-  [values : (Array AstType)]
-  [unsafe-flags : (Array i64)]
-  [c-abi-fnptr-flags : (Array i64)]
-  [shadow-flags : (Array i64)]
+  [values : (__tl_dyn-array AstType)]
+  [unsafe-flags : (__tl_dyn-array i64)]
+  [c-abi-fnptr-flags : (__tl_dyn-array i64)]
+  [shadow-flags : (__tl_dyn-array i64)]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
     [store-handle : i64 (struct-get env store)]
@@ -9010,10 +9013,10 @@
   [env : TcTypeEnv]
   [remaining : i64]
   [ids : tc_i64_i64_map.Map]
-  [values : (Array AstType)]
-  [unsafe-flags : (Array i64)]
-  [c-abi-fnptr-flags : (Array i64)]
-  [shadow-flags : (Array i64)]
+  [values : (__tl_dyn-array AstType)]
+  [unsafe-flags : (__tl_dyn-array i64)]
+  [c-abi-fnptr-flags : (__tl_dyn-array i64)]
+  [shadow-flags : (__tl_dyn-array i64)]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
     [store-handle : i64 (struct-get env store)]
@@ -9095,10 +9098,10 @@
     (let
       [count : i64 (tc-env-cache-count env)]
       [capacity : i64 (tc-env-cache-capacity count)]
-      [values : (Array AstType) (array.make-array AstType capacity)]
-      [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
-      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 capacity)]
-      [shadow-flags : (Array i64) (array.make-array i64 capacity)]
+      [values : (__tl_dyn-array AstType) (array.make-array AstType capacity)]
+      [unsafe-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill
           env
@@ -9139,10 +9142,10 @@
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
     (let
       [capacity : i64 (tc-env-cache-capacity count)]
-      [values : (Array AstType) (array.make-array AstType capacity)]
-      [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
-      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 capacity)]
-      [shadow-flags : (Array i64) (array.make-array i64 capacity)]
+      [values : (__tl_dyn-array AstType) (array.make-array AstType capacity)]
+      [unsafe-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill-prefix
           env
@@ -9868,11 +9871,11 @@
   "")
 (define tc-unused-unsafe-target-path : String
   "")
-(define tc-unused-unsafe-block-spans : (Array AstSourceSpan)
+(define tc-unused-unsafe-block-spans : (__tl_dyn-array AstSourceSpan)
   (array.make-array AstSourceSpan 128))
-(define tc-unused-unsafe-block-paths : (Array String)
+(define tc-unused-unsafe-block-paths : (__tl_dyn-array String)
   (array.make-array String 128))
-(define tc-unused-unsafe-block-used : (Array bool)
+(define tc-unused-unsafe-block-used : (__tl_dyn-array bool)
   (array.make-array bool 128))
 (define tc-unused-unsafe-block-len : i64
   0)
@@ -9957,9 +9960,9 @@
       (tc-unused-unsafe-find-existing path span (+ index 1)))))
 
 (define (tc-unused-unsafe-grow-copy
-  [new-spans : (Array AstSourceSpan)]
-  [new-paths : (Array String)]
-  [new-used : (Array bool)]
+  [new-spans : (__tl_dyn-array AstSourceSpan)]
+  [new-paths : (__tl_dyn-array String)]
+  [new-used : (__tl_dyn-array bool)]
   [index : i64]) : unit
   (if (>= index tc-unused-unsafe-block-len)
     unit
@@ -9979,9 +9982,10 @@
   (let
     [old-cap : i64 (array.length tc-unused-unsafe-block-spans)]
     [new-cap : i64 (* old-cap 2)]
-    [new-spans : (Array AstSourceSpan) (array.make-array AstSourceSpan new-cap)]
-    [new-paths : (Array String) (array.make-array String new-cap)]
-    [new-used : (Array bool) (array.make-array bool new-cap)]
+    [new-spans : (__tl_dyn-array AstSourceSpan)
+      (array.make-array AstSourceSpan new-cap)]
+    [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
+    [new-used : (__tl_dyn-array bool) (array.make-array bool new-cap)]
     (begin
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used 0)
       (set! tc-unused-unsafe-block-spans new-spans)
@@ -10577,21 +10581,21 @@
 ;; rebuilt once per stdlib surface check, so they are dense arrays and the
 ;; `-cons` spellings prepend by copy rather than chaining cells.
 (defstruct TcStdlibTypeSpecList
-  (slots (Array TcStdlibTypeSpec))
+  (slots (__tl_dyn-array TcStdlibTypeSpec))
   (len i64))
 
 (defenum TcStdlibFieldSpec
   (Spec i64 TcStdlibTypeSpec))
 
 (defstruct TcStdlibFieldSpecList
-  (slots (Array TcStdlibFieldSpec))
+  (slots (__tl_dyn-array TcStdlibFieldSpec))
   (len i64))
 
 (defenum TcStdlibVariantSpec
   (Spec i64 TcStdlibTypeSpecList))
 
 (defstruct TcStdlibVariantSpecList
-  (slots (Array TcStdlibVariantSpec))
+  (slots (__tl_dyn-array TcStdlibVariantSpec))
   (len i64))
 
 (define (tc-stdlib-type-spec-list0) : TcStdlibTypeSpecList
@@ -10599,7 +10603,8 @@
 
 (define (tc-stdlib-type-spec-list1 [a : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
-    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 1)]
+    [slots : (__tl_dyn-array TcStdlibTypeSpec)
+      (array.make-array TcStdlibTypeSpec 1)]
     (begin
       (array-set! slots 0 a)
       (TcStdlibTypeSpecList slots 1))))
@@ -10608,7 +10613,8 @@
   [a : TcStdlibTypeSpec]
   [b : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
-    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 2)]
+    [slots : (__tl_dyn-array TcStdlibTypeSpec)
+      (array.make-array TcStdlibTypeSpec 2)]
     (begin
       (array-set! slots 0 a)
       (array-set! slots 1 b)
@@ -10619,7 +10625,8 @@
   [b : TcStdlibTypeSpec]
   [c : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
-    [slots : (Array TcStdlibTypeSpec) (array.make-array TcStdlibTypeSpec 3)]
+    [slots : (__tl_dyn-array TcStdlibTypeSpec)
+      (array.make-array TcStdlibTypeSpec 3)]
     (begin
       (array-set! slots 0 a)
       (array-set! slots 1 b)
@@ -10635,8 +10642,8 @@
   [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
   (let
     [n : i64 (struct-get rest len)]
-    [src : (Array TcStdlibFieldSpec) (struct-get rest slots)]
-    [slots : (Array TcStdlibFieldSpec)
+    [src : (__tl_dyn-array TcStdlibFieldSpec) (struct-get rest slots)]
+    [slots : (__tl_dyn-array TcStdlibFieldSpec)
       (array.make-array TcStdlibFieldSpec (+ n 1))]
     [i : i64 0]
     (begin
@@ -10657,8 +10664,8 @@
   [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
   (let
     [n : i64 (struct-get rest len)]
-    [src : (Array TcStdlibVariantSpec) (struct-get rest slots)]
-    [slots : (Array TcStdlibVariantSpec)
+    [src : (__tl_dyn-array TcStdlibVariantSpec) (struct-get rest slots)]
+    [slots : (__tl_dyn-array TcStdlibVariantSpec)
       (array.make-array TcStdlibVariantSpec (+ n 1))]
     [i : i64 0]
     (begin
@@ -10744,7 +10751,7 @@
   [module : String]) : ResultTcUnit
   (let
     [count : i64 (ast-decl-list-len (& decls))]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     [index : i64 0]
     [current-module : String module]
@@ -13533,7 +13540,7 @@
         [_ false])]
     [else false]))
 
-(define (tc-env-cache-covered-count [sidecar-flags : (Array i64)]) : i64
+(define (tc-env-cache-covered-count [sidecar-flags : (__tl_dyn-array i64)]) : i64
   (array-ref sidecar-flags (- (array-length sidecar-flags) 1)))
 
 ;; Return the head-first lexical rank of an ordinary binding, or -1.  Local
@@ -15018,7 +15025,7 @@
 ;; Fixed persistent capacity: the slots are allocated once at global init
 ;; (growing under a caller's transient arena would leave the global
 ;; dangling), and ids beyond it fall back to the uncached walk.
-(define tc-type-needs-resolution-slots : (Array i64)
+(define tc-type-needs-resolution-slots : (__tl_dyn-array i64)
   (array.make-array i64 131072))
 (define tc-type-needs-resolution-epoch : i64
   1)
@@ -15507,11 +15514,11 @@
 
 (define tc-imported-module-identity-cache-capacity : i64
   8192)
-(define tc-imported-module-identity-cache-module-keys : (Array i64)
+(define tc-imported-module-identity-cache-module-keys : (__tl_dyn-array i64)
   (array.make-array i64 8192))
-(define tc-imported-module-identity-cache-target-keys : (Array i64)
+(define tc-imported-module-identity-cache-target-keys : (__tl_dyn-array i64)
   (array.make-array i64 8192))
-(define tc-imported-module-identity-cache-values : (Array i64)
+(define tc-imported-module-identity-cache-values : (__tl_dyn-array i64)
   (array.make-array i64 8192))
 (define tc-imported-module-identity-cache-count : i64
   0)
@@ -15662,7 +15669,7 @@
     ;; borrow and then re-read the row with `ast-decl-list-ref`, which returns
     ;; `AstDecl` through an SRET pointer and so copied all 104 B; the projection
     ;; match loads the tag and only the fields an arm binds.
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (and (not found) (< index count))
@@ -15911,7 +15918,7 @@
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (let
-            [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
+            [decls : (__tl_dyn-array AstDecl) (compiler-symbols-decls symbols)]
             [index : i64 (compiler-symbol-handle-index handle)]
             (if (or (< index 0) (>= index (array.length decls)))
               false
@@ -15970,17 +15977,17 @@
   0)
 (define tc-module-decl-index-modules : tc_i64_i64_map.Map
   (tc_i64_i64_map.with-capacity 16))
-(define tc-module-decl-index-starts : (Array i64)
+(define tc-module-decl-index-starts : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define tc-module-decl-index-ends : (Array i64)
+(define tc-module-decl-index-ends : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define tc-module-decl-index-positions : (Array i64)
+(define tc-module-decl-index-positions : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define tc-module-import-index-starts : (Array i64)
+(define tc-module-import-index-starts : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define tc-module-import-index-ends : (Array i64)
+(define tc-module-import-index-ends : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define tc-module-import-index-positions : (Array i64)
+(define tc-module-import-index-positions : (__tl_dyn-array i64)
   (array.make-array i64 0))
 
 ;; Reset marks the index maybe-stale instead of destroying it. The macro
@@ -15991,7 +15998,7 @@
 ;; the next real rebuild, so no stale data survives a content change.
 (define tc-module-decl-index-maybe-stale : bool
   false)
-(define tc-module-decl-index-seq : (Array i64)
+(define tc-module-decl-index-seq : (__tl_dyn-array i64)
   (array.make-array i64 0))
 
 (define (tc-module-decl-index-reset!) : unit
@@ -16056,7 +16063,7 @@
     (let
       [count : i64 (struct-get decls len)]
       [decl-offset : i64 (struct-get decls offset)]
-      [decl-slots : (Array AstDecl) (struct-get decls slots)]
+      [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
       [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       [prev-arena : i64 (arena.tl_arena_current)]
       [old-arena : i64 tc-module-decl-index-arena]
@@ -16067,14 +16074,15 @@
           (arena.tl_arena_set tc-module-decl-index-arena))]
       [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
       [module-count : i64 0]
-      [counts : (Array i64) (array.make-array i64 (+ count 1))]
-      [import-counts : (Array i64) (array.make-array i64 (+ count 1))]
-      [starts : (Array i64) (array.make-array i64 (+ count 1))]
-      [ends : (Array i64) (array.make-array i64 (+ count 1))]
-      [positions : (Array i64) (array.make-array i64 (+ count 1))]
-      [import-starts : (Array i64) (array.make-array i64 (+ count 1))]
-      [import-ends : (Array i64) (array.make-array i64 (+ count 1))]
-      [import-positions : (Array i64) (array.make-array i64 (+ count 1))]
+      [counts : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+      [import-counts : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+      [starts : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+      [ends : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+      [positions : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+      [import-starts : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+      [import-ends : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+      [import-positions : (__tl_dyn-array i64)
+        (array.make-array i64 (+ count 1))]
       [cur-module-id : i64 empty-module-id]
       [i : i64 0]
       [running : i64 0]
@@ -16154,7 +16162,7 @@
         ;; Record the per-decl shape sequence so a maybe-stale index can be
         ;; revalidated without rebuilding.
         (let
-          [seq : (Array i64) (array.make-array i64 count)]
+          [seq : (__tl_dyn-array i64) (array.make-array i64 count)]
           (begin
             (set! i 0)
             (while (< i count)
@@ -16756,15 +16764,15 @@
   (tc-lazy-import-stub-list-empty))
 (define tc-lazy-import-stub-capacity : i64
   65536)
-(define tc-lazy-import-stub-module-ids : (Array i64)
+(define tc-lazy-import-stub-module-ids : (__tl_dyn-array i64)
   (array.make-array i64 65536))
-(define tc-lazy-import-stub-alias-ids : (Array i64)
+(define tc-lazy-import-stub-alias-ids : (__tl_dyn-array i64)
   (array.make-array i64 65536))
-(define tc-lazy-import-stub-target-ids : (Array i64)
+(define tc-lazy-import-stub-target-ids : (__tl_dyn-array i64)
   (array.make-array i64 65536))
-(define tc-lazy-import-stub-summary-backed : (Array bool)
+(define tc-lazy-import-stub-summary-backed : (__tl_dyn-array bool)
   (array.make-array bool 65536))
-(define tc-lazy-import-stub-index-slots : (Array i64)
+(define tc-lazy-import-stub-index-slots : (__tl_dyn-array i64)
   (array.make-array i64 65536))
 (define tc-lazy-import-stub-record-count : i64
   0)
@@ -18299,7 +18307,7 @@
   [symbols : CompilerSymbols]
   [name-id : i64]) : bool
   (let
-    [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
+    [decls : (__tl_dyn-array AstDecl) (compiler-symbols-decls symbols)]
     [decl-count : i64 (compiler-symbols-decl-count symbols)]
     [i : i64 0]
     [matches : i64 0]
@@ -21924,7 +21932,7 @@
 
 (define (tc-spmd-env-fill-from-type-env
   [env : TcTypeEnv]
-  [bindings : (Array TcSpmdBinding)]
+  [bindings : (__tl_dyn-array TcSpmdBinding)]
   [index : i64]) : unit
   (match (tc-type-env-spine-step env)
     [(TcTypeEnvSpineStep.Done) unit]
@@ -21946,12 +21954,14 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (let
     [count : i64 (tc-spmd-env-binding-count env)]
-    [bindings : (Array TcSpmdBinding) (array.make-array TcSpmdBinding count)]
+    [bindings : (__tl_dyn-array TcSpmdBinding)
+      (array.make-array TcSpmdBinding count)]
     (begin
       (tc-spmd-env-fill-from-type-env env bindings (- count 1))
       (TcSpmdEnv bindings count))))
 
-(define (tc-spmd-env-bindings [env : TcSpmdEnv]) : (Array TcSpmdBinding)
+(define (tc-spmd-env-bindings [env : TcSpmdEnv]) : (__tl_dyn-array
+    TcSpmdBinding)
   (struct-get env bindings))
 
 (define (tc-spmd-env-len [env : TcSpmdEnv]) : i64
@@ -21973,8 +21983,8 @@
     (TcSpmdEnv (tc-spmd-env-bindings env) restored-len)))
 
 (define (tc-spmd-env-copy-bindings
-  [dst : (Array TcSpmdBinding)]
-  [src : (Array TcSpmdBinding)]
+  [dst : (__tl_dyn-array TcSpmdBinding)]
+  [src : (__tl_dyn-array TcSpmdBinding)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -22000,9 +22010,9 @@
   [role : TcSpmdRole]) : TcSpmdEnv
   (let
     [old-len : i64 (tc-spmd-env-len env)]
-    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [old-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings env)]
     [new-len : i64 (+ old-len 1)]
-    [new-bindings : (Array TcSpmdBinding)
+    [new-bindings : (__tl_dyn-array TcSpmdBinding)
       (array.make-array TcSpmdBinding new-len)]
     (begin
       (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
@@ -22013,7 +22023,7 @@
       (TcSpmdEnv new-bindings new-len))))
 
 (define (tc-spmd-env-lookup-from
-  [bindings : (Array TcSpmdBinding)]
+  [bindings : (__tl_dyn-array TcSpmdBinding)]
   [index : i64]
   [name-id : i64]) : TcSpmdLookup
   (if (< index 0)
@@ -22035,7 +22045,7 @@
     name-id))
 
 (define (tc-spmd-env-has-local-from?
-  [bindings : (Array TcSpmdBinding)]
+  [bindings : (__tl_dyn-array TcSpmdBinding)]
   [index : i64]
   [name-id : i64]) : bool
   (if (< index 0)
@@ -22056,7 +22066,7 @@
     name-id))
 
 (define (tc-spmd-env-has-outer-from?
-  [bindings : (Array TcSpmdBinding)]
+  [bindings : (__tl_dyn-array TcSpmdBinding)]
   [index : i64]
   [name-id : i64]) : bool
   (if (< index 0)
@@ -22077,7 +22087,7 @@
     name-id))
 
 (define (tc-spmd-env-local-index
-  [bindings : (Array TcSpmdBinding)]
+  [bindings : (__tl_dyn-array TcSpmdBinding)]
   [index : i64]
   [name-id : i64]) : i64
   (if (< index 0)
@@ -22097,13 +22107,13 @@
   [class : TcSpmdClass]) : TcSpmdEnv
   (let
     [old-len : i64 (tc-spmd-env-len env)]
-    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [old-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings env)]
     [local-index : i64
       (tc-spmd-env-local-index old-bindings (- old-len 1) name-id)]
     (if (< local-index 0)
       env
       (let
-        [new-bindings : (Array TcSpmdBinding)
+        [new-bindings : (__tl_dyn-array TcSpmdBinding)
           (array.make-array TcSpmdBinding old-len)]
         [old-binding : TcSpmdBinding (array-ref old-bindings local-index)]
         (begin
@@ -22125,8 +22135,8 @@
     (tc-spmd-env-restore env (TcSpmdEnvMark (- (tc-spmd-env-len env) count)))))
 
 (define (tc-spmd-env-mark-outer-into
-  [dst : (Array TcSpmdBinding)]
-  [src : (Array TcSpmdBinding)]
+  [dst : (__tl_dyn-array TcSpmdBinding)]
+  [src : (__tl_dyn-array TcSpmdBinding)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -22148,8 +22158,8 @@
 (define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
   (let
     [old-len : i64 (tc-spmd-env-len env)]
-    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
-    [new-bindings : (Array TcSpmdBinding)
+    [old-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [new-bindings : (__tl_dyn-array TcSpmdBinding)
       (array.make-array TcSpmdBinding old-len)]
     (begin
       (tc-spmd-env-mark-outer-into new-bindings old-bindings 0 old-len)
@@ -22157,7 +22167,7 @@
 
 (define (tc-spmd-env-merge-binding-class
   [left : TcSpmdBinding]
-  [right-bindings : (Array TcSpmdBinding)]
+  [right-bindings : (__tl_dyn-array TcSpmdBinding)]
   [right-len : i64]
   [index : i64]) : TcSpmdClass
   (if (>= index right-len)
@@ -22167,9 +22177,9 @@
       (tc-spmd-merge-class (struct-get left class) (struct-get right class)))))
 
 (define (tc-spmd-env-merge-classes-into
-  [dst : (Array TcSpmdBinding)]
-  [left-bindings : (Array TcSpmdBinding)]
-  [right-bindings : (Array TcSpmdBinding)]
+  [dst : (__tl_dyn-array TcSpmdBinding)]
+  [left-bindings : (__tl_dyn-array TcSpmdBinding)]
+  [right-bindings : (__tl_dyn-array TcSpmdBinding)]
   [left-len : i64]
   [right-len : i64]
   [index : i64]) : unit
@@ -22203,9 +22213,11 @@
   (let
     [left-len : i64 (tc-spmd-env-len left)]
     [right-len : i64 (tc-spmd-env-len right)]
-    [left-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings left)]
-    [right-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings right)]
-    [merged : (Array TcSpmdBinding) (array.make-array TcSpmdBinding left-len)]
+    [left-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings left)]
+    [right-bindings : (__tl_dyn-array TcSpmdBinding)
+      (tc-spmd-env-bindings right)]
+    [merged : (__tl_dyn-array TcSpmdBinding)
+      (array.make-array TcSpmdBinding left-len)]
     (begin
       ;; Branch merge is index-aligned: both branches start from the same
       ;; snapshot and local lets restore to that mark before the merge.
@@ -24787,7 +24799,7 @@
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [index : i64 0]
     [current-env : TcTypeEnv env]
     [current-module : String module]
@@ -24905,7 +24917,8 @@
 (define (tc-import-alias-summary-index-build-current [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
   (let
     [capacity : i64 (+ (ast-decl-list-count all-decls) 1)]
-    [decls : (Array AstDeclList) (array.make-array AstDeclList capacity)]
+    [decls : (__tl_dyn-array AstDeclList)
+      (array.make-array AstDeclList capacity)]
     [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity capacity)]
     [slot-count : i64 0]
     [count : i64 (ast-decl-list-len (& all-decls))]
@@ -25220,7 +25233,7 @@
     [message : String ""]
     [ok : bool true]
     [count : i64 (ast-decl-list-len (& decls))]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     [index : i64 0]
     (begin
@@ -25342,7 +25355,7 @@
       (tc-import-alias-summary-index-build all-decls)]
     [seen-aliases : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
     [count : i64 (ast-decl-list-len (& decls))]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     [index : i64 0]
     (begin
@@ -25735,8 +25748,8 @@
   [env : TcTypeEnv]) : TcModuleLocalEnvCache
   (let
     [n : i64 (struct-get cache len)]
-    [src : (Array TcModuleLocalEnvEntry) (struct-get cache slots)]
-    [slots : (Array TcModuleLocalEnvEntry)
+    [src : (__tl_dyn-array TcModuleLocalEnvEntry) (struct-get cache slots)]
+    [slots : (__tl_dyn-array TcModuleLocalEnvEntry)
       (array.make-array TcModuleLocalEnvEntry (+ n 1))]
     [i : i64 0]
     (begin
@@ -27409,8 +27422,8 @@
 (define (tc-unbound-edit-distance
   [wanted : String]
   [candidate : String]
-  [first-row : (Array i64)]
-  [second-row : (Array i64)]) : i64
+  [first-row : (__tl_dyn-array i64)]
+  [second-row : (__tl_dyn-array i64)]) : i64
   (let
     [wanted-len : i64 (string.string-length wanted)]
     [candidate-len : i64 (string.string-length candidate)]
@@ -27510,8 +27523,8 @@
         wanted)]
     [wanted-len : i64 (string.string-length wanted-text)]
     [max-distance : i64 (tc-unbound-suggestion-max-distance wanted-len)]
-    [first-row : (Array i64) (array.make-array i64 (+ wanted-len 1))]
-    [second-row : (Array i64) (array.make-array i64 (+ wanted-len 1))]
+    [first-row : (__tl_dyn-array i64) (array.make-array i64 (+ wanted-len 1))]
+    [second-row : (__tl_dyn-array i64) (array.make-array i64 (+ wanted-len 1))]
     [candidate-id : i64 0]
     [candidate-limit : i64 (intern-pool-len)]
     [best-distance : i64 (+ max-distance 1)]
@@ -29495,7 +29508,7 @@
 ;; backend's user-symbol cache (compat states may reuse a generation while
 ;; assigning the same numeric id to different names, so pool identity is
 ;; checked as well).
-(define tc-thread-name-kind-slots : (Array i64)
+(define tc-thread-name-kind-slots : (__tl_dyn-array i64)
   (array.make-array i64 (intern-capacity)))
 (define tc-thread-name-kind-epoch : i64
   1)
@@ -31659,7 +31672,7 @@
         ;; `-decl-key`, once here) -- three 104 B copies per declaration to read
         ;; a name id and a module id. The backing slot is matched in place, and
         ;; the wrapper peel now runs only on an `AstDecl.Unsafe` row.
-        [decl-slots : (Array AstDecl) (struct-get decls slots)]
+        [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
         [decl-offset : i64 (struct-get decls offset)]
         (begin
           (while (< index count)
@@ -31830,9 +31843,10 @@
     (let
       [facts : surface_facts.SurfaceTypecheckFacts
         (surface_facts.surface-typecheck-facts-current)]
-      [decl-keys : (Array i64) (struct-get facts clone-decl-keys)]
-      [root-keys : (Array i64) (struct-get facts clone-root-keys)]
-      [call-indices : (Array i64) (struct-get facts clone-call-indices)]
+      [decl-keys : (__tl_dyn-array i64) (struct-get facts clone-decl-keys)]
+      [root-keys : (__tl_dyn-array i64) (struct-get facts clone-root-keys)]
+      [call-indices : (__tl_dyn-array i64)
+        (struct-get facts clone-call-indices)]
       [count : i64 (array-length decl-keys)]
       [index : i64 0]
       [previous-arena : i64 (arena.tl_arena_current)]
@@ -32916,11 +32930,11 @@
   false)
 (define tc-inlay-hint-count : i64
   0)
-(define tc-inlay-hint-lines : (Array i64)
+(define tc-inlay-hint-lines : (__tl_dyn-array i64)
   (array.make-array i64 65536))
-(define tc-inlay-hint-cols : (Array i64)
+(define tc-inlay-hint-cols : (__tl_dyn-array i64)
   (array.make-array i64 65536))
-(define tc-inlay-hint-types : (Array String)
+(define tc-inlay-hint-types : (__tl_dyn-array String)
   (array.make-array String 65536))
 
 (define (tc-inlay-hints-enable!) : unit
@@ -38611,7 +38625,7 @@
       [_reset : unit (tc-program-enum-index-reset!)]
       [count : i64 (struct-get decls len)]
       [decl-offset : i64 (struct-get decls offset)]
-      [decl-slots : (Array AstDecl) (struct-get decls slots)]
+      [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
       [prev-arena : i64 (arena.tl_arena_current)]
       [index-arena : i64 (arena.tl_arena_make)]
       [_switch : unit
@@ -39835,7 +39849,7 @@
 
 (define tc-agg-layout-cache-capacity : i64
   65536)
-(define tc-agg-layout-cache : (Array TcAggLayoutCacheSlot)
+(define tc-agg-layout-cache : (__tl_dyn-array TcAggLayoutCacheSlot)
   (array.make-array TcAggLayoutCacheSlot 65536))
 (define tc-agg-layout-cache-generation : i64
   -1)
@@ -40171,7 +40185,7 @@
 ;; the next query to clear them at lower boundaries.
 (define tc-agg-scalar-cache-capacity : i64
   400000)
-(define tc-agg-size-cache : (Array i64)
+(define tc-agg-size-cache : (__tl_dyn-array i64)
   (array.make-array i64 400000))
 
 ;; These scalar caches used to be keyed by symbol-handle INDEX, which is
@@ -40239,7 +40253,7 @@
 ;; Same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
 ;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
 ;; layout here defeats the size/regword caches.
-(define tc-agg-align-cache : (Array i64)
+(define tc-agg-align-cache : (__tl_dyn-array i64)
   (array.make-array i64 400000))
 (define tc-agg-align-cache-generation : i64
   -1)
@@ -40295,7 +40309,7 @@
 ;; fixed array as the size cache; this is the hot query for every aggregate
 ;; construct / struct-get / copy (lower-name-register-words). Encoded as
 ;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
-(define tc-agg-regwords-cache : (Array i64)
+(define tc-agg-regwords-cache : (__tl_dyn-array i64)
   (array.make-array i64 400000))
 
 ;; Same per-program keying as tc-agg-size-cache, so it is gated on
@@ -40755,7 +40769,7 @@
     ;; declaration that passed the test, plus a second out-of-line call for the
     ;; test itself). Every arm here binds only an i64 name, so the projection
     ;; match loads the tag and one word.
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     (begin
       (while (< index count)
@@ -43403,7 +43417,7 @@
       (= tc-canonical-enum-decl-index-registry-id registry-id))
       unit
       (let
-        [decls : (Array AstDecl)
+        [decls : (__tl_dyn-array AstDecl)
           (compiler-symbols-decls (tc-context-symbols ctx))]
         [count : i64 (compiler-symbols-decl-count (tc-context-symbols ctx))]
         [prev-arena : i64 (arena.tl_arena_current)]
@@ -48512,7 +48526,7 @@
     ResultTcUnit.Ok
     (let
       [index : i64 (compiler-symbol-handle-index handle)]
-      [decls : (Array AstDecl)
+      [decls : (__tl_dyn-array AstDecl)
         (compiler-symbols-decls (tc-context-symbols ctx))]
       (if (or (< index 0) (>= index (array.length decls)))
         ResultTcUnit.Ok
@@ -48649,11 +48663,11 @@
 ;; proof and its declarations land in the concrete-required lane).
 (define tc-macro-abstract-proof-capacity : i64
   4096)
-(define tc-macro-abstract-proof-macro-keys : (Array i64)
+(define tc-macro-abstract-proof-macro-keys : (__tl_dyn-array i64)
   (array.make-array i64 4096))
-(define tc-macro-abstract-proof-param-keys : (Array i64)
+(define tc-macro-abstract-proof-param-keys : (__tl_dyn-array i64)
   (array.make-array i64 4096))
-(define tc-macro-abstract-proof-kind-masks : (Array i64)
+(define tc-macro-abstract-proof-kind-masks : (__tl_dyn-array i64)
   (array.make-array i64 4096))
 (define tc-macro-abstract-proof-count : i64
   0)
@@ -50175,8 +50189,8 @@
 
 (defstruct TcMovedExactPathIndex
   (heads tc_i64_i64_map.Map)
-  (facts (Array TcMovedPathFact))
-  (next (Array i64))
+  (facts (__tl_dyn-array TcMovedPathFact))
+  (next (__tl_dyn-array i64))
   (len i64))
 
 (defstruct TcMovedSet
@@ -50202,7 +50216,7 @@
 ;; One slot per resource binding, filled in binding order as the checked
 ;; recursion unwinds, so the exit scan walks the same order the cons chain did.
 (defstruct TcMoveCleanupOwners
-  (slots (Array TcMoveCleanupOwner))
+  (slots (__tl_dyn-array TcMoveCleanupOwner))
   (len i64))
 
 (define (tc-move-cleanup-owners-new [count : i64]) : TcMoveCleanupOwners
@@ -50215,7 +50229,7 @@
   [owner-origin-id : i64]
   [move-aware : bool]) : TcMoveCleanupOwners
   (let
-    [slots : (Array TcMoveCleanupOwner) (struct-get owners slots)]
+    [slots : (__tl_dyn-array TcMoveCleanupOwner) (struct-get owners slots)]
     [len : i64 (struct-get owners len)]
     (begin
       (array-set!
@@ -50662,8 +50676,8 @@
   [entry : i64]) : i64
   (let
     [cursor : i64 entry]
-    [facts : (Array TcMovedPathFact) (struct-get index facts)]
-    [next : (Array i64) (struct-get index next)]
+    [facts : (__tl_dyn-array TcMovedPathFact) (struct-get index facts)]
+    [next : (__tl_dyn-array i64) (struct-get index next)]
     (begin
       (while (>= cursor 0)
         (let
@@ -50686,10 +50700,10 @@
     (tc-moved-exact-path-index-find-from index path kind head)))
 
 (define (tc-moved-exact-path-index-copy-prefix!
-  [src-facts : (Array TcMovedPathFact)]
-  [src-next : (Array i64)]
-  [dst-facts : (Array TcMovedPathFact)]
-  [dst-next : (Array i64)]
+  [src-facts : (__tl_dyn-array TcMovedPathFact)]
+  [src-next : (__tl_dyn-array i64)]
+  [dst-facts : (__tl_dyn-array TcMovedPathFact)]
+  [dst-next : (__tl_dyn-array i64)]
   [len : i64]) : unit
   (let
     [cursor : i64 0]
@@ -50702,15 +50716,15 @@
 (define (tc-moved-exact-path-index-ensure-capacity
   [index : TcMovedExactPathIndex]) : TcMovedExactPathIndex
   (let
-    [facts : (Array TcMovedPathFact) (struct-get index facts)]
+    [facts : (__tl_dyn-array TcMovedPathFact) (struct-get index facts)]
     [len : i64 (struct-get index len)]
     (if (< len (array-length facts))
       index
       (let
         [next-capacity : i64 (* (array-length facts) 2)]
-        [next-facts : (Array TcMovedPathFact)
+        [next-facts : (__tl_dyn-array TcMovedPathFact)
           (make-array TcMovedPathFact next-capacity)]
-        [next-links : (Array i64) (make-array i64 next-capacity)]
+        [next-links : (__tl_dyn-array i64) (make-array i64 next-capacity)]
         (begin
           (tc-moved-exact-path-index-copy-prefix!
             facts
@@ -60883,13 +60897,13 @@
 ;; Hygiene environments are immutable snapshots into this dense append-only
 ;; store. A branch extends a retained head without copying or mutating its
 ;; parent, so sibling expression/type/pattern walks remain isolated.
-(define macro-hygiene-env-kinds : (Array i64)
+(define macro-hygiene-env-kinds : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define macro-hygiene-env-keys : (Array i64)
+(define macro-hygiene-env-keys : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define macro-hygiene-env-values : (Array i64)
+(define macro-hygiene-env-values : (__tl_dyn-array i64)
   (array.make-array i64 0))
-(define macro-hygiene-env-parents : (Array i64)
+(define macro-hygiene-env-parents : (__tl_dyn-array i64)
   (array.make-array i64 0))
 (define macro-hygiene-env-slot-count : i64
   0)
@@ -61200,7 +61214,7 @@
   [module-id : i64]) : bool
   (let
     [count : i64 (ast-decl-list-len (& decls))]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [decl-offset : i64 (struct-get decls offset)]
     [index : i64 0]
     [found : bool false]
@@ -61683,9 +61697,9 @@
 ;; instead of destroyed. That leaks one generation and is the safe direction.
 (define macro-decl-generation-escape-capacity : i64
   32)
-(define macro-decl-generation-escape-kinds : (Array i64)
+(define macro-decl-generation-escape-kinds : (__tl_dyn-array i64)
   (array.make-array i64 32))
-(define macro-decl-generation-escape-keys : (Array i64)
+(define macro-decl-generation-escape-keys : (__tl_dyn-array i64)
   (array.make-array i64 32))
 (define macro-decl-generation-escape-count : i64
   0)
@@ -62085,7 +62099,8 @@
     items
     (let
       [count : i64 (ast-decl-list-len (& items))]
-      [slots : (Array AstDecl) (array.make-array AstDecl (+ reserve count))]
+      [slots : (__tl_dyn-array AstDecl)
+        (array.make-array AstDecl (+ reserve count))]
       [reserved : AstDeclList (AstDeclList slots reserve count true)]
       (begin
         (ast-decl-list-copy-to
@@ -62307,8 +62322,10 @@
     items
     (let
       [count : i64 (ast-decl-path-list-len (& items))]
-      [slots : (Array String) (array.make-array String (+ reserve count))]
-      [owner-ids : (Array i64) (array.make-array i64 (+ reserve count))]
+      [slots : (__tl_dyn-array String)
+        (array.make-array String (+ reserve count))]
+      [owner-ids : (__tl_dyn-array i64)
+        (array.make-array i64 (+ reserve count))]
       (begin
         (ast-decl-path-list-copy-to
           (&mut slots)
@@ -62650,7 +62667,7 @@
     [middle-count : i64 (ast-decl-list-len (& middle))]
     [suffix-count : i64 (ast-decl-list-len (& suffix))]
     [total : i64 (+ prefix-count (+ middle-count suffix-count))]
-    [slots : (Array AstDecl)
+    [slots : (__tl_dyn-array AstDecl)
       (array.make-array
         AstDecl
         (if (< total 1)
@@ -62660,11 +62677,11 @@
     ;; through an SRET pointer, so the old shape copied all 104 B into a stack
     ;; temporary and then copied it again into `slots` -- two row copies and a
     ;; call per declaration. Reading the backing slot directly leaves one.
-    [prefix-slots : (Array AstDecl) (struct-get prefix-rev slots)]
+    [prefix-slots : (__tl_dyn-array AstDecl) (struct-get prefix-rev slots)]
     [prefix-offset : i64 (struct-get prefix-rev offset)]
-    [middle-slots : (Array AstDecl) (struct-get middle slots)]
+    [middle-slots : (__tl_dyn-array AstDecl) (struct-get middle slots)]
     [middle-offset : i64 (struct-get middle offset)]
-    [suffix-slots : (Array AstDecl) (struct-get suffix slots)]
+    [suffix-slots : (__tl_dyn-array AstDecl) (struct-get suffix slots)]
     [suffix-offset : i64 (struct-get suffix offset)]
     [index : i64 0]
     (begin
@@ -62708,8 +62725,8 @@
       (if (< total 1)
         1
         total)]
-    [slots : (Array String) (array.make-array String cap)]
-    [owner-ids : (Array i64) (array.make-array i64 cap)]
+    [slots : (__tl_dyn-array String) (array.make-array String cap)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 cap)]
     [index : i64 0]
     (begin
       (while (< index prefix-count)
@@ -62772,8 +62789,8 @@
       (if (< count 1)
         1
         count)]
-    [slots : (Array String) (array.make-array String capacity)]
-    [owner-ids : (Array i64) (array.make-array i64 capacity)]
+    [slots : (__tl_dyn-array String) (array.make-array String capacity)]
+    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -63760,7 +63777,7 @@
 ;; compare.
 (define macro-generated-module-memo-capacity : i64
   4096)
-(define macro-generated-module-memo-keys : (Array i64)
+(define macro-generated-module-memo-keys : (__tl_dyn-array i64)
   (array.make-array i64 4096))
 
 (defenum MacroGeneratedCatalogClosure
@@ -63779,7 +63796,7 @@
     AstDeclList
     MacroGeneratedCatalogClosure))
 
-(define macro-generated-module-memo-catalog-entries : (Array
+(define macro-generated-module-memo-catalog-entries : (__tl_dyn-array
     MacroGeneratedModuleCatalogEntry)
   (array.make-array MacroGeneratedModuleCatalogEntry 4096))
 (define macro-generated-module-memo-count : i64
@@ -64012,9 +64029,9 @@
 ;; program, self-clears on intern-generation change.
 (define macro-generated-decls-memo-capacity : i64
   1024)
-(define macro-generated-decls-memo-keys : (Array i64)
+(define macro-generated-decls-memo-keys : (__tl_dyn-array i64)
   (array.make-array i64 1024))
-(define macro-generated-decls-memo-decls : (Array AstDeclList)
+(define macro-generated-decls-memo-decls : (__tl_dyn-array AstDeclList)
   (array.make-array AstDeclList 1024))
 (define macro-generated-decls-memo-count : i64
   0)
@@ -64140,8 +64157,8 @@
   [decls : AstDeclList]
   [shared-expr-base : i64]
   [shared-type-base : i64]
-  [expr-map : (Array i32)]
-  [type-map : (Array i32)]) : AstDeclList
+  [expr-map : (__tl_dyn-array i32)]
+  [type-map : (__tl_dyn-array i32)]) : AstDeclList
   (let
     [_resume : unit
       (unsafe
@@ -64167,8 +64184,8 @@
   [pools : AstNodePoolContext]
   [shared-expr-base : i64]
   [shared-type-base : i64]
-  [expr-map : (Array i32)]
-  [type-map : (Array i32)]) : unit
+  [expr-map : (__tl_dyn-array i32)]
+  [type-map : (__tl_dyn-array i32)]) : unit
   (let
     [cursor : i64 (macro-generated-module-memo-bucket (- key 1))]
     [steps : i64 0]
@@ -64248,8 +64265,8 @@
   [pools : AstNodePoolContext]
   [shared-expr-base : i64]
   [shared-type-base : i64]
-  [expr-map : (Array i32)]
-  [type-map : (Array i32)]) : unit
+  [expr-map : (__tl_dyn-array i32)]
+  [type-map : (__tl_dyn-array i32)]) : unit
   (let
     [cursor : i64 (macro-generated-decls-memo-bucket (- key 1))]
     [steps : i64 0]
@@ -64291,8 +64308,8 @@
   [pools : AstNodePoolContext]
   [shared-expr-base : i64]
   [shared-type-base : i64]
-  [expr-map : (Array i32)]
-  [type-map : (Array i32)]
+  [expr-map : (__tl_dyn-array i32)]
+  [type-map : (__tl_dyn-array i32)]
   [splice? : bool]) : unit
   (let
     [index : i64 0]
@@ -64540,7 +64557,7 @@
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [index : i64 0]
     [module : String current-module]
     [out-rev : AstDeclList (ast-decl-list-new)]
@@ -66167,7 +66184,7 @@
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [index : i64 0]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [out : TcNameIdList acc]
@@ -66384,11 +66401,11 @@
 
 (define macro-surface-call-decl-cache-capacity : i64
   8192)
-(define macro-surface-call-decl-cache-module-keys : (Array i64)
+(define macro-surface-call-decl-cache-module-keys : (__tl_dyn-array i64)
   (array.make-array i64 8192))
-(define macro-surface-call-decl-cache-base-keys : (Array i64)
+(define macro-surface-call-decl-cache-base-keys : (__tl_dyn-array i64)
   (array.make-array i64 8192))
-(define macro-surface-call-decl-cache-values : (Array MacroMaybeDecl)
+(define macro-surface-call-decl-cache-values : (__tl_dyn-array MacroMaybeDecl)
   (array.make-array MacroMaybeDecl 8192))
 (define macro-surface-call-decl-cache-count : i64
   0)
@@ -66823,7 +66840,7 @@
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [index : i64 0]
     [cur-module-id : i64 module-id]
     [out : TcNameIdList acc]
@@ -67125,14 +67142,14 @@
             previous))))))
 
 (define (macro-hygiene-env-grow-copy!
-  [dst-kinds : (Array i64)]
-  [dst-keys : (Array i64)]
-  [dst-values : (Array i64)]
-  [dst-parents : (Array i64)]
-  [src-kinds : (Array i64)]
-  [src-keys : (Array i64)]
-  [src-values : (Array i64)]
-  [src-parents : (Array i64)]
+  [dst-kinds : (__tl_dyn-array i64)]
+  [dst-keys : (__tl_dyn-array i64)]
+  [dst-values : (__tl_dyn-array i64)]
+  [dst-parents : (__tl_dyn-array i64)]
+  [src-kinds : (__tl_dyn-array i64)]
+  [src-keys : (__tl_dyn-array i64)]
+  [src-values : (__tl_dyn-array i64)]
+  [src-parents : (__tl_dyn-array i64)]
   [index : i64]) : unit
   (let
     [i : i64 index]
@@ -67148,10 +67165,10 @@
   (if (< macro-hygiene-env-slot-count (array.length macro-hygiene-env-keys))
     unit
     (let
-      [old-kinds : (Array i64) macro-hygiene-env-kinds]
-      [old-keys : (Array i64) macro-hygiene-env-keys]
-      [old-values : (Array i64) macro-hygiene-env-values]
-      [old-parents : (Array i64) macro-hygiene-env-parents]
+      [old-kinds : (__tl_dyn-array i64) macro-hygiene-env-kinds]
+      [old-keys : (__tl_dyn-array i64) macro-hygiene-env-keys]
+      [old-values : (__tl_dyn-array i64) macro-hygiene-env-values]
+      [old-parents : (__tl_dyn-array i64) macro-hygiene-env-parents]
       [old-capacity : i64 (array.length old-keys)]
       [next-capacity : i64
         (if (< old-capacity 1)
@@ -67166,10 +67183,14 @@
         (unsafe
           (arena.tl_arena_set storage))
         (let
-          [next-kinds : (Array i64) (array.make-array i64 next-capacity)]
-          [next-keys : (Array i64) (array.make-array i64 next-capacity)]
-          [next-values : (Array i64) (array.make-array i64 next-capacity)]
-          [next-parents : (Array i64) (array.make-array i64 next-capacity)]
+          [next-kinds : (__tl_dyn-array i64)
+            (array.make-array i64 next-capacity)]
+          [next-keys : (__tl_dyn-array i64)
+            (array.make-array i64 next-capacity)]
+          [next-values : (__tl_dyn-array i64)
+            (array.make-array i64 next-capacity)]
+          [next-parents : (__tl_dyn-array i64)
+            (array.make-array i64 next-capacity)]
           (begin
             (macro-hygiene-env-grow-copy!
               next-kinds
@@ -67738,7 +67759,7 @@
   0)
 (define macro-hygiene-produced-limit : i64
   0)
-(define macro-hygiene-produced-refcounts : (Array i64)
+(define macro-hygiene-produced-refcounts : (__tl_dyn-array i64)
   (array.make-array i64 1))
 
 (define (macro-hygiene-produced-eval-start! [env : CtfeEnv]) : unit
@@ -69408,7 +69429,7 @@
 ;; per-program boundary so generated macro bodies do not repeatedly rescan the
 ;; whole declaration list.
 (defstruct MacroFlatImportTargetList
-  (slots (Array i64))
+  (slots (__tl_dyn-array i64))
   (len i64))
 
 (defenum MacroFlatImportTargetCacheLookup
@@ -69431,11 +69452,11 @@
 ;; half load -- only memoization, never correctness, degrades.
 (define macro-alias-cache-capacity : i64
   16384)
-(define macro-alias-cache-module-keys : (Array i64)
+(define macro-alias-cache-module-keys : (__tl_dyn-array i64)
   (array.make-array i64 16384))
-(define macro-alias-cache-qualifier-keys : (Array i64)
+(define macro-alias-cache-qualifier-keys : (__tl_dyn-array i64)
   (array.make-array i64 16384))
-(define macro-alias-cache-values : (Array i64)
+(define macro-alias-cache-values : (__tl_dyn-array i64)
   (array.make-array i64 16384))
 (define macro-alias-cache-count : i64
   0)
@@ -69462,11 +69483,11 @@
   -1)
 (define macro-unqualified-import-cache-capacity : i64
   65536)
-(define macro-unqualified-import-cache-module-keys : (Array i64)
+(define macro-unqualified-import-cache-module-keys : (__tl_dyn-array i64)
   (array.make-array i64 65536))
-(define macro-unqualified-import-cache-name-keys : (Array i64)
+(define macro-unqualified-import-cache-name-keys : (__tl_dyn-array i64)
   (array.make-array i64 65536))
-(define macro-unqualified-import-cache-values : (Array i64)
+(define macro-unqualified-import-cache-values : (__tl_dyn-array i64)
   (array.make-array i64 65536))
 (define macro-unqualified-import-cache-count : i64
   0)
@@ -69476,9 +69497,9 @@
   false)
 (define macro-flat-import-target-cache-capacity : i64
   1024)
-(define macro-flat-import-target-cache-module-keys : (Array i64)
+(define macro-flat-import-target-cache-module-keys : (__tl_dyn-array i64)
   (array.make-array i64 1024))
-(define macro-flat-import-target-cache-values : (Array
+(define macro-flat-import-target-cache-values : (__tl_dyn-array
     MacroFlatImportTargetList)
   (array.make-array MacroFlatImportTargetList 1024))
 (define macro-flat-import-target-cache-count : i64
@@ -69749,7 +69770,7 @@
   [targets : MacroFlatImportTargetList]
   [target-id : i64]) : MacroFlatImportTargetList
   (let
-    [slots : (Array i64) (struct-get targets slots)]
+    [slots : (__tl_dyn-array i64) (struct-get targets slots)]
     [len : i64 (struct-get targets len)]
     [index : i64 0]
     [found : bool false]
@@ -69855,7 +69876,7 @@
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [truncated : bool false]
     [i : i64 0]
@@ -70084,7 +70105,7 @@
   [start-module-id : i64]) : i64
   (let
     [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [cur-module-id : i64 start-module-id]
     [i : i64 start]
     (begin
@@ -70638,7 +70659,7 @@
   [targets : MacroFlatImportTargetList]
   [lookup-name-id : i64]) : i64
   (let
-    [slots : (Array i64) (struct-get targets slots)]
+    [slots : (__tl_dyn-array i64) (struct-get targets slots)]
     [len : i64 (struct-get targets len)]
     [index : i64 0]
     [target : i64 -1]
@@ -72279,7 +72300,7 @@
       MacroNativeStdlibTlciResult.No
       (let
         [count : i64 (struct-get params len)]
-        [operands : (Array CompilerCtfeValue)
+        [operands : (__tl_dyn-array CompilerCtfeValue)
           (array.make-array CompilerCtfeValue 8)]
         [index : i64 0]
         [ok : bool (<= count 8)]
@@ -74328,7 +74349,7 @@
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
-    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    [decl-slots : (__tl_dyn-array AstDecl) (struct-get decls slots)]
     [index : i64 0]
     [out-rev : AstDeclList (ast-decl-list-new)]
     (begin
@@ -75465,8 +75486,8 @@
   [raw : ResultMacroDeclExpansion]
   [shared-expr-base : i64]
   [shared-type-base : i64]
-  [expr-map : (Array i32)]
-  [type-map : (Array i32)]) : ResultMacroDeclExpansion
+  [expr-map : (__tl_dyn-array i32)]
+  [type-map : (__tl_dyn-array i32)]) : ResultMacroDeclExpansion
   (match raw
     [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
       (match (ast-program-copy-append-above-with-maps
@@ -75634,9 +75655,9 @@
       ;; Built while the generation is still current: the maps are dead the
       ;; moment the copy-out returns, and putting them here saves the private
       ;; map arena's reserve/release pair on every firing declaration.
-      [expr-map : (Array i32)
+      [expr-map : (__tl_dyn-array i32)
         (ast-compaction-id-map-create (- (ast-node-pool-len) shared-expr-base))]
-      [type-map : (Array i32) (ast-compaction-id-map-create 0)]
+      [type-map : (__tl_dyn-array i32) (ast-compaction-id-map-create 0)]
       ;; The generation is reused by the rest of its batch, so its newest head
       ;; has to be published before the arena is switched away -- keeping the
       ;; `make` root would restart the next declaration on a filled segment and
@@ -77057,10 +77078,10 @@
 (define (tc-top-env-reresolve-cache-layer!
   [ctx : TcContext]
   [ids : tc_i64_i64_map.Map]
-  [values : (Array AstType)]
+  [values : (__tl_dyn-array AstType)]
   [env : TcTypeEnv]) : unit
   (let
-    [seen : (Array i64) (array.make-array i64 (array.length values))]
+    [seen : (__tl_dyn-array i64) (array.make-array i64 (array.length values))]
     [remaining : i64 (tc_i64_i64_map.len (& ids))]
     [cur : TcTypeEnv env]
     [done : bool false]

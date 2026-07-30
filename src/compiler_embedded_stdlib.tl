@@ -20,7 +20,7 @@
   "__typelisp_embedded_stdlib_lzss_v1__")
 
 (define (compiler-embedded-stdlib-payload-prefix?
-  [payload : (& payload (Array u8))]
+  [payload : (& payload (__tl_dyn-array u8))]
   [prefix : String]) : bool
   (let
     [index : i64 0]
@@ -38,7 +38,7 @@
       matches)))
 
 (define (compiler-embedded-stdlib-compressed-header
-  [payload : (& payload (Array u8))]
+  [payload : (& payload (__tl_dyn-array u8))]
   [start : i64]) : CompilerEmbeddedStdlibCompressedHeader
   (let
     [index : i64 start]
@@ -65,11 +65,11 @@
         (CompilerEmbeddedStdlibCompressedHeaderInvalid)))))
 
 (define (compiler-embedded-stdlib-lzss-decode
-  [compressed : (& compressed (Array u8))]
+  [compressed : (& compressed (__tl_dyn-array u8))]
   [compressed-start : i64]
   [raw-len : i64]) : String
   (let
-    [out : (Array u8) (array.make-array u8 raw-len)]
+    [out : (__tl_dyn-array u8) (array.make-array u8 raw-len)]
     [compressed-index : i64 0]
     [out-index : i64 0]
     [compressed-len : i64 (- (array-length compressed) compressed-start)]

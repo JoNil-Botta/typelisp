@@ -42,9 +42,9 @@
 ;; shadow earlier ones. Refs #5603.
 (define embedded-native-locals-cap : i64
   32)
-(define embedded-native-local-names : (Array String)
+(define embedded-native-local-names : (__tl_dyn-array String)
   (array.make-array String embedded-native-locals-cap))
-(define embedded-native-local-len : (Array i64)
+(define embedded-native-local-len : (__tl_dyn-array i64)
   (make-array 0))
 
 ;; Compile-time i64 locals for the body currently compiling: a binder arm of a
@@ -55,16 +55,16 @@
 ;; bodies bind six at once. Refs #5617, #5701.
 (define embedded-native-data-locals-cap : i64
   24)
-(define embedded-native-data-local-names : (Array String)
+(define embedded-native-data-local-names : (__tl_dyn-array String)
   (array.make-array String embedded-native-data-locals-cap))
-(define embedded-native-data-local-texts : (Array String)
+(define embedded-native-data-local-texts : (__tl_dyn-array String)
   (array.make-array String embedded-native-data-locals-cap))
-(define embedded-native-data-local-len : (Array i64)
+(define embedded-native-data-local-len : (__tl_dyn-array i64)
   (make-array 0))
 
 ;; Serial number for generated i64 temporaries; unique names keep an arm body's
 ;; own temporaries from shadowing a scrutinee its default arm still reads.
-(define embedded-native-temp-seq : (Array i64)
+(define embedded-native-temp-seq : (__tl_dyn-array i64)
   (make-array 0))
 
 (define (embedded-native-locals-reset!) : unit
@@ -132,15 +132,15 @@
         slot))))
 
 (defstruct TlciNativeMacroCaptures
-  (slots (Array TlciNativeMacroCapture))
+  (slots (__tl_dyn-array TlciNativeMacroCapture))
   (len i64))
 
 (define (tlci-native-macro-captures-new) : TlciNativeMacroCaptures
   (TlciNativeMacroCaptures (array.make-array TlciNativeMacroCapture 0) 0))
 
 (define (tlci-native-macro-captures-copy-range!
-  [dst : (&mut dst (Array TlciNativeMacroCapture))]
-  [src : (& src (Array TlciNativeMacroCapture))]
+  [dst : (&mut dst (__tl_dyn-array TlciNativeMacroCapture))]
+  [src : (& src (__tl_dyn-array TlciNativeMacroCapture))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -157,7 +157,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array TlciNativeMacroCapture)
+    [bigger : (__tl_dyn-array TlciNativeMacroCapture)
       (array.make-array TlciNativeMacroCapture new-cap)]
     (begin
       (tlci-native-macro-captures-copy-range!
@@ -222,7 +222,7 @@
         -1)]
     [_ -1]))
 
-(define embedded-stdlib-tlci-native-report-count : (Array i64)
+(define embedded-stdlib-tlci-native-report-count : (__tl_dyn-array i64)
   (make-array 0))
 
 ;; A native entry can still hand single arms back to the interpreter: an arm
@@ -245,13 +245,13 @@
 ;; (#5605, #5600). The reason is recorded where the decision is actually made
 ;; and reported per identity, and it never reaches generated text, so images
 ;; stay byte-identical. Refs #5596.
-(define embedded-native-fallback-reason : (Array String)
+(define embedded-native-fallback-reason : (__tl_dyn-array String)
   (make-array ""))
 
 ;; Per-identity shell reasons for this image, one `identity<TAB>reason` line
 ;; each. The build tool prints them on request; nothing here reaches generated
 ;; text, so the image stays byte-identical either way.
-(define embedded-stdlib-tlci-native-report-reasons : (Array String)
+(define embedded-stdlib-tlci-native-report-reasons : (__tl_dyn-array String)
   (make-array ""))
 
 (define (embedded-native-fallback-reason-reset!) : unit
@@ -337,11 +337,12 @@
     [(AstExpr.MakeArray _ _) "make-array"]
     [_ "unclassified"]))
 
-(define embedded-stdlib-tlci-native-report-partial-count : (Array i64)
+(define embedded-stdlib-tlci-native-report-partial-count : (__tl_dyn-array i64)
   (make-array 0))
 
 ;: Interpreted arm sites across every native entry in the image.
-(define embedded-stdlib-tlci-native-report-interpreted-arms : (Array i64)
+(define embedded-stdlib-tlci-native-report-interpreted-arms : (__tl_dyn-array
+    i64)
   (make-array 0))
 
 ;: How many non-overlapping occurrences of `needle` appear in `text`.
@@ -381,15 +382,15 @@
 ;; Instance-proof producer result: callers across import spellings match on
 ;; this producer-owned enum and receive raw bytes.
 (defenum ResultProducerBytes
-  (Ok (Array u8))
+  (Ok (__tl_dyn-array u8))
   (Err String))
 
 (define embedded-native-ops-cap : i64
   4096)
 
 (define (embedded-native-ops-push!
-  [ops : (Array String)]
-  [ops-count : (Array i64)]
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]
   [line : String]) : unit
   (let
     [slot : i64 (array-ref ops-count 0)]
@@ -454,8 +455,8 @@
 (define (embedded-native-unquote-ops
   [params : (& params AstMacroParamList)]
   [pname : i64]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [param : i64 (embedded-stdlib-tlci-param-index params pname)]
     (if (>= param 0)
@@ -490,8 +491,8 @@
 (define (embedded-native-body-ops
   [params : (& params AstMacroParamList)]
   [body-node : i64]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(AstExpr.Quasiquote quoted)
       (embedded-native-template-ops params quoted ops ops-count)]
@@ -715,8 +716,8 @@
 ;; Push one host-op call whose status let name matches the current op slot,
 ;; keeping generated status bindings unique across the whole entry.
 (define (embedded-native-template-push!
-  [ops : (Array String)]
-  [ops-count : (Array i64)]
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]
   [op : String]
   [arg-a : String]
   [arg-b : String]
@@ -774,8 +775,8 @@
   [first-node : i64]
   [second-node : i64]
   [op : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [first-opened : i64
       (embedded-native-template-ops params first-node ops ops-count)]
@@ -794,8 +795,8 @@
   [params : (& params AstMacroParamList)]
   [inner-node : i64]
   [op : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [inner-opened : i64
       (embedded-native-template-ops params inner-node ops ops-count)]
@@ -814,8 +815,8 @@
 (define (embedded-native-template-ops
   [params : (& params AstMacroParamList)]
   [node : i64]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
     [(AstExpr.Unquote inner)
       (match (embedded-stdlib-tlci-unwrap-expr inner)
@@ -1499,8 +1500,8 @@
 (define (embedded-native-template-args-ops
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [count : i64 (ast-expr-list-len args)]
     [index : i64 0]
@@ -1584,8 +1585,8 @@
 (define (embedded-native-template-match-arms-ops
   [params : (& params AstMacroParamList)]
   [arms : (& arms AstMatchArmList)]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [count : i64 (struct-get arms len)]
     [index : i64 0]
@@ -1709,8 +1710,8 @@
 ;; -1 outside the supported subset.
 (define (embedded-native-pattern-ops
   [pattern : AstPattern]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (match pattern
     [(AstPattern.Wildcard)
       (begin
@@ -1774,8 +1775,8 @@
 (define (embedded-native-pattern-list-ops
   [args : (& args AstPatternList)]
   [index : i64]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]
   [opened : i64]) : i64
   (if (>= index (struct-get args len))
     opened
@@ -1834,8 +1835,8 @@
   [elem-id : i64]
   [op : String]
   [immediate : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [elem-opened : i64
       (embedded-native-template-type-ops
@@ -1856,8 +1857,8 @@
   [inner-id : i64]
   [region-id : i64]
   [mutable : i64]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [region : String (intern-str region-id)]
     [inner-opened : i64
@@ -1881,8 +1882,8 @@
 (define (embedded-native-template-type-ops
   [params : (& params AstMacroParamList)]
   [ty : AstType]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (match ty
     ;; Composite annotations: the element/inner type is a *type-pool node id*,
     ;; read back through the global `ty-node-get` (the type-side twin of
@@ -2018,8 +2019,8 @@
   [params : (& params AstMacroParamList)]
   [bindings : (& bindings AstLetBindingList)]
   [index : i64]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (if (>= index (struct-get bindings len))
     0
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
@@ -2095,7 +2096,7 @@
 ;; A complete, balanced arm expression: the op lets, the status-sum return
 ;; (q99 is the enclosing fuel status), and one closing paren per op let.
 (define (embedded-native-arm-block-with-final
-  [ops : (Array String)]
+  [ops : (__tl_dyn-array String)]
   [ops-count : i64]
   [opened : i64]
   [final : String]) : String
@@ -2116,7 +2117,7 @@
       out)))
 
 (define (embedded-native-arm-block
-  [ops : (Array String)]
+  [ops : (__tl_dyn-array String)]
   [ops-count : i64]
   [opened : i64]) : String
   (embedded-native-arm-block-with-final
@@ -2140,8 +2141,8 @@
 (define (embedded-native-computed-expr-ops
   [params : (& params AstMacroParamList)]
   [node : i64]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr node)
     ;; A quasiquote in computed position produces the same expression value as
     ;; a body-level template; reuse the template walker for its inner syntax.
@@ -3290,7 +3291,9 @@
       1)))
 
 ;; Concatenate the still-open host-op let/if chain emitted into `ops`.
-(define (embedded-native-ops-open-text [ops : (Array String)] [count : i64]) : String
+(define (embedded-native-ops-open-text
+  [ops : (__tl_dyn-array String)]
+  [count : i64]) : String
   (let
     [out : String ""]
     [index : i64 0]
@@ -3310,8 +3313,9 @@
   [op : String]
   [arg : String]) : EmbeddedNativeDataValue
   (let
-    [ops : (Array String) (array.make-array String embedded-native-ops-cap)]
-    [ops-count : (Array i64) (make-array 0)]
+    [ops : (__tl_dyn-array String)
+      (array.make-array String embedded-native-ops-cap)]
+    [ops-count : (__tl_dyn-array i64) (make-array 0)]
     [type-opened : i64
       (embedded-native-computed-expr-ops params type-node ops ops-count)]
     (if (or
@@ -3338,8 +3342,9 @@
   [right-node : i64]
   [op : String]) : EmbeddedNativeDataValue
   (let
-    [ops : (Array String) (array.make-array String embedded-native-ops-cap)]
-    [ops-count : (Array i64) (make-array 0)]
+    [ops : (__tl_dyn-array String)
+      (array.make-array String embedded-native-ops-cap)]
+    [ops-count : (__tl_dyn-array i64) (make-array 0)]
     [left-opened : i64
       (embedded-native-computed-expr-ops params left-node ops ops-count)]
     (if (< left-opened 0)
@@ -4039,8 +4044,8 @@
   [left-node : i64]
   [right-node : i64]
   [op : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [left-opened : i64
       (embedded-native-computed-expr-ops params left-node ops ops-count)]
@@ -4061,8 +4066,8 @@
   [second-node : i64]
   [third-node : i64]
   [op : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [first-opened : i64
       (embedded-native-computed-expr-ops params first-node ops ops-count)]
@@ -4089,8 +4094,8 @@
 (define (embedded-native-computed-resource-scope-ops
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [move-aware : String
       (embedded-native-data-index-text (ast-expr-list-get args 4 0))]
@@ -4146,8 +4151,8 @@
   [value-node : i64]
   [data-node : i64]
   [op : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [data-text : String (embedded-native-data-index-text data-node)]
     (if (string.eq data-text "")
@@ -4170,8 +4175,8 @@
   [arg-node : i64]
   [op : String]
   [arg-a : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [opened : i64
       (embedded-native-computed-expr-ops params arg-node ops ops-count)]
@@ -4190,8 +4195,8 @@
   [type-node : i64]
   [index-node : i64]
   [op : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [index-text : String (embedded-native-data-index-text index-node)]
     (if (string.eq index-text "")
@@ -4214,8 +4219,8 @@
   [first-index-node : i64]
   [second-index-node : i64]
   [op : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [first-index-text : String
       (embedded-native-data-index-text first-index-node)]
@@ -4246,8 +4251,8 @@
   [expr-node : i64]
   [index-node : i64]
   [op : String]
-  [ops : (Array String)]
-  [ops-count : (Array i64)]) : i64
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
   (let
     [index-text : String (embedded-native-data-index-text index-node)]
     (if (string.eq index-text "")
@@ -4337,9 +4342,9 @@
                     (string.eq head "comptime-error"))
                   (= argc 1))
                 (let
-                  [ops : (Array String)
+                  [ops : (__tl_dyn-array String)
                     (array.make-array String embedded-native-ops-cap)]
-                  [ops-count : (Array i64) (make-array 0)]
+                  [ops-count : (__tl_dyn-array i64) (make-array 0)]
                   [opened : i64
                     (embedded-native-computed-expr-ops
                       params
@@ -4366,8 +4371,9 @@
   [node : i64]
   [final : String]) : String
   (let
-    [ops : (Array String) (array.make-array String embedded-native-ops-cap)]
-    [ops-count : (Array i64) (make-array 0)]
+    [ops : (__tl_dyn-array String)
+      (array.make-array String embedded-native-ops-cap)]
+    [ops-count : (__tl_dyn-array i64) (make-array 0)]
     [opened : i64
       (if (match (embedded-stdlib-tlci-unwrap-expr node)
         [(AstExpr.Quasiquote _) true]
@@ -4591,7 +4597,7 @@
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
-            [opens : (Array i64) (make-array 0)]
+            [opens : (__tl_dyn-array i64) (make-array 0)]
             [open-code : String
               (embedded-native-let-bindings-open params (& bindings) 0 opens)]
             (if (string.eq open-code "\x01")
@@ -4668,10 +4674,11 @@
   [op : String]
   [arg-a : String]
   [arg-b : String]
-  [arg-c : String]) : (Array String)
+  [arg-c : String]) : (__tl_dyn-array String)
   (let
-    [ops : (Array String) (array.make-array String embedded-native-ops-cap)]
-    [ops-count : (Array i64) (make-array 0)]
+    [ops : (__tl_dyn-array String)
+      (array.make-array String embedded-native-ops-cap)]
+    [ops-count : (__tl_dyn-array i64) (make-array 0)]
     (begin
       (embedded-native-template-push! ops ops-count op arg-a arg-b arg-c)
       ops)))
@@ -4724,11 +4731,11 @@
                                 (string.eq cond-name "array-dynamic?"))
                               (= (ast-expr-list-len (& cond-args)) 1))
                             (let
-                              [ops : (Array String)
+                              [ops : (__tl_dyn-array String)
                                 (array.make-array
                                   String
                                   embedded-native-ops-cap)]
-                              [ops-count : (Array i64) (make-array 0)]
+                              [ops-count : (__tl_dyn-array i64) (make-array 0)]
                               [opened : i64
                                 (embedded-native-computed-expr-ops
                                   params
@@ -5087,7 +5094,7 @@
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
             [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
-            [opens : (Array i64) (make-array 0)]
+            [opens : (__tl_dyn-array i64) (make-array 0)]
             [open-code : String
               (embedded-native-let-bindings-open params (& bindings) 0 opens)]
             (if (string.eq open-code "\x01")
@@ -5120,7 +5127,7 @@
   [params : (& params AstMacroParamList)]
   [bindings : (& bindings AstLetBindingList)]
   [index : i64]
-  [opens : (Array i64)]) : String
+  [opens : (__tl_dyn-array i64)]) : String
   (if (>= index (struct-get bindings len))
     ""
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
@@ -5166,7 +5173,7 @@
   [params : (& params AstMacroParamList)]
   [name : i64]
   [init : i64]
-  [opens : (Array i64)]) : String
+  [opens : (__tl_dyn-array i64)]) : String
   (let
     [data : EmbeddedNativeDataValue (embedded-native-data-value params init)]
     (if (not (string.eq (struct-get data text) ""))
@@ -5197,7 +5204,7 @@
   [params : (& params AstMacroParamList)]
   [name : i64]
   [init : i64]
-  [opens : (Array i64)]) : String
+  [opens : (__tl_dyn-array i64)]) : String
   (let
     [slot : i64 (embedded-native-local-push! (intern-str name))]
     (if (< slot 0)
@@ -5883,8 +5890,9 @@
   [params : (& params AstMacroParamList)]
   [body-node : i64]) : String
   (let
-    [ops : (Array String) (array.make-array String embedded-native-ops-cap)]
-    [ops-count : (Array i64) (make-array 0)]
+    [ops : (__tl_dyn-array String)
+      (array.make-array String embedded-native-ops-cap)]
+    [ops-count : (__tl_dyn-array i64) (make-array 0)]
     [opened : i64 (embedded-native-body-ops params body-node ops ops-count)]
     (if (or (< opened 0) (>= (array-ref ops-count 0) embedded-native-ops-cap))
       ""
@@ -6102,7 +6110,7 @@
     "(extern comptime-host-commit-result (:symbol \"_tl_comptime_host_commit-result\") : (-> i64 i64 i64 i64 i64 i64))\n"))
 
 (define (embedded-native-source
-  [names : (Array String)]
+  [names : (__tl_dyn-array String)]
   [captures : (& captures TlciNativeMacroCaptures)]) : String
   (let
     [out : String
@@ -6200,9 +6208,9 @@
 
 (define (embedded-native-entry-offsets
   [image : cobj.CompilerObjectImage]
-  [count : i64]) : (Array i64)
+  [count : i64]) : (__tl_dyn-array i64)
   (let
-    [out : (Array i64) (array.make-array i64 count)]
+    [out : (__tl_dyn-array i64) (array.make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -6228,8 +6236,8 @@
   [metadata-text : String]
   [build-hash : String]
   [windows-target : bool]
-  [rodata : (Array u8)]
-  [names : (Array String)]
+  [rodata : (__tl_dyn-array u8)]
+  [names : (__tl_dyn-array String)]
   [captures : (& captures TlciNativeMacroCaptures)]) : ResultProducerBytes
   (let
     [source : String (embedded-native-source names captures)]
@@ -6262,7 +6270,7 @@
                 (ResultProducerBytes.Err message)]
               [(ResultCompilerTlciNativeLayout.Ok layout)
                 (let
-                  [entry-offsets : (Array i64)
+                  [entry-offsets : (__tl_dyn-array i64)
                     (embedded-native-entry-offsets image (array-length names))]
                   (if (not
                     (= (array-length entry-offsets) (array-length names)))

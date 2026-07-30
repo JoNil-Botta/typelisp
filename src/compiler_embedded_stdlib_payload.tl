@@ -103,7 +103,7 @@
 
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
-  (CompilerEmbeddedStdlibPayloadSome (Array u8)))
+  (CompilerEmbeddedStdlibPayloadSome (__tl_dyn-array u8)))
 
 (define (compiler-embedded-stdlib-payload-lookup [suffix : String]) : CompilerEmbeddedStdlibPayload
   (cond

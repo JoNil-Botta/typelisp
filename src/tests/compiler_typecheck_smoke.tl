@@ -27,20 +27,20 @@
     (let [x : i64 1] (set! slot (& x)))))")
 
 (define (compiler-typecheck-reference-container-escape-source) : String
-  "(define (main [x : i64] [items : (Array (& x i64))]) : unit
+  "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (array-set! items 0 (& x))))")
 
 (define (compiler-typecheck-reference-array-push-ok-source) : String
-  "(define (main [x : i64] [items : (Array (& x i64))]) : unit
+  "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (array-push! items (& x)))")
 
 (define (compiler-typecheck-reference-array-push-escape-source) : String
-  "(define (main [x : i64] [items : (Array (& x i64))]) : unit
+  "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (array-push! items (& x))))")
 
 (define (compiler-typecheck-reference-arena-store-escape-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
-    "(define (main [items : (Array (& r str))]) : unit
+    "(define (main [items : (__tl_dyn-array (& r str))]) : unit
   (with-arena r
     (let [s : String (string.int->string 1)]
       (array-set! items 0 (& s)))))"))
@@ -165,7 +165,7 @@
 
 (define (compiler-typecheck-reference-lambda-mutable-reject-source) : String
   "(define (read [r : (&mut items i64)]) : i64 42)
-(define (main [items : (Array i64)]) : i64
+(define (main [items : (__tl_dyn-array i64)]) : i64
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
     ((lambda () : i64 (read r)))))")
 
@@ -199,16 +199,16 @@
 
 (define (compiler-typecheck-reference-dyn-array-init-ok-source) : String
   "(define (main [n : i64]) : unit
-  (let [items : (Array (& n i64)) (init : (Array (& n i64)))] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))] unit))")
 
 (define (compiler-typecheck-reference-dyn-array-make-reject-source) : String
   "(define (main [n : i64]) : unit
-  (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (make-array (& n i64) 0)] unit))")
 
 (define (compiler-typecheck-reference-dyn-array-push-read-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [items : (Array (& n i64)) (init : (Array (& n i64)))]
+    [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
     (begin
       (array-push! items (& n))
       (let [r : (& n i64) (array-ref items 0)] unit))))")
@@ -216,12 +216,12 @@
 (define (compiler-typecheck-reference-dyn-array-push-escape-source) : String
   "(define (main [n : i64]) : unit
   (let
-    [items : (Array (& n i64)) (init : (Array (& n i64)))]
+    [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
     (let [n : i64 1] (array-push! items (& n)))))")
 
 (define (compiler-typecheck-reference-dyn-array-hidden-source) : String
   "(define (main) : unit
-  (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (make-array (& n i64) 0)] unit))")
 
 (define (compiler-typecheck-bytes-borrowed-source) : String
   "(defstruct ByteViews
@@ -244,7 +244,7 @@
 (define (main) : unit unit)")
 
 (define (compiler-typecheck-bytes-bare-array-source) : String
-  "(define (main [items : (Array bytes)]) : unit unit)")
+  "(define (main [items : (__tl_dyn-array bytes)]) : unit unit)")
 
 (define (compiler-typecheck-bytes-policy-message) : String
   "typecheck: bytes is a borrowed byte-slice referent; use (& lifetime bytes) or (&mut lifetime bytes)")
@@ -252,7 +252,7 @@
 (define (compiler-typecheck-zero-make-array-recursive-source) : String
   "(defenum Loop (LoopBox (Box Loop)))
 (define (main) : unit
-  (let [items : (Array Loop) (make-array Loop 0)] unit))")
+  (let [items : (__tl_dyn-array Loop) (make-array Loop 0)] unit))")
 
 (define (compiler-typecheck-auto-borrow-ok-source) : String
   "(defstruct RefBox (:lifetimes owner) (value (& owner i64)))
@@ -458,7 +458,7 @@
 
 (define (compiler-typecheck-borrow-mut-after-immut-source) : String
   "(define (read-i64-ref [r : (& items i64)]) : unit unit)
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (let
     [borrowed : (& items i64) (& (array-ref items 0))]
     (begin
@@ -469,7 +469,7 @@
 
 (define (compiler-typecheck-borrow-immut-after-mut-source) : String
   "(define (write-i64-ref [r : (&mut items i64)]) : unit unit)
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (let
     [exclusive : (&mut items i64) (&mut (array-ref items 0))]
     (begin
@@ -524,74 +524,74 @@
 
 (define (compiler-typecheck-mut-borrow-disjoint-fields-source) : String
   "(defstruct Bags
-  (left (Array i64))
-  (right (Array i64)))
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
 (define (main) : unit
   (let
-    [left-items : (Array i64) (make-array i64 1)]
-    [right-items : (Array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [left : (&mut bags (Array i64)) (&mut (struct-get bags left))]
-      [right : (&mut bags (Array i64)) (&mut (struct-get bags right))]
+      [left : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
+      [right : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags right))]
       unit)))")
 
 (define (compiler-typecheck-mut-borrow-same-field-source) : String
   "(defstruct Bags
-  (left (Array i64))
-  (right (Array i64)))
-(define (write-array-ref [items : (&mut bags (Array i64))]) : unit unit)
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
+(define (write-array-ref [items : (&mut bags (__tl_dyn-array i64))]) : unit unit)
 (define (main) : unit
   (let
-    [left-items : (Array i64) (make-array i64 1)]
-    [right-items : (Array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [first : (&mut bags (Array i64)) (&mut (struct-get bags left))]
-      [second : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      [first : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
+      [second : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
       (write-array-ref first))))")
 
 (define (compiler-typecheck-mut-borrow-ancestor-descendant-source) : String
   "(defstruct Bags
-  (left (Array i64))
-  (right (Array i64)))
+  (left (__tl_dyn-array i64))
+  (right (__tl_dyn-array i64)))
 (define (main) : unit
   (let
-    [left-items : (Array i64) (make-array i64 1)]
-    [right-items : (Array i64) (make-array i64 1)]
+    [left-items : (__tl_dyn-array i64) (make-array i64 1)]
+    [right-items : (__tl_dyn-array i64) (make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
-      [whole-left : (&mut bags (Array i64)) (&mut (struct-get bags left))]
+      [whole-left : (&mut bags (__tl_dyn-array i64)) (&mut (struct-get bags left))]
       [first-item : (&mut bags i64) (&mut (array-ref (struct-get bags left) 0))]
       (array-set! whole-left 0 1))))")
 
 (define (compiler-typecheck-mut-reborrow-bound-subscope-source) : String
   "(define (touch [slot : (&mut items i64)]) : unit unit)
-(define (use [items : (&mut items (Array i64))]) : unit
+(define (use [items : (&mut items (__tl_dyn-array i64))]) : unit
   (begin
     (let
       [slot : (&mut items i64) (&mut (array-ref items 0))]
       (touch slot))
     (array-set! items 0 7)))
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (use (&mut items)))")
 
 (define (compiler-typecheck-mut-reborrow-same-scope-use-source) : String
   "(define (touch [slot : (&mut items i64)]) : unit unit)
-(define (bad [items : (&mut items (Array i64))]) : unit
+(define (bad [items : (&mut items (__tl_dyn-array i64))]) : unit
   (let
     [slot : (&mut items i64) (&mut (array-ref items 0))]
     (begin
       (array-set! items 0 7)
       (touch slot))))
-(define (main [items : (Array i64)]) : unit
+(define (main [items : (__tl_dyn-array i64)]) : unit
   (bad (&mut items)))")
 
 (define (compiler-typecheck-mut-borrow-read-array-length-source) : String
   "(define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
-    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-length items)]
     (begin
       (array-set! borrowed 0 41)
@@ -600,8 +600,8 @@
 (define (compiler-typecheck-mut-borrow-read-array-ref-source) : String
   "(define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
-    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-ref items 0)]
     (begin
       (array-set! borrowed 0 41)
@@ -609,27 +609,27 @@
 
 (define (compiler-typecheck-mut-borrow-read-struct-get-source) : String
   "(defstruct Bag
-  (left (Array i64))
+  (left (__tl_dyn-array i64))
   (right i64))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     [bag : Bag (Bag items 42)]
-    [borrowed : (&mut bag (Array i64)) (&mut (struct-get bag left))]
-    [copy : (Array i64) (struct-get bag left)]
+    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut (struct-get bag left))]
+    [copy : (__tl_dyn-array i64) (struct-get bag left)]
     (begin
       (array-set! borrowed 0 41)
       (array-length copy))))")
 
 (define (compiler-typecheck-mut-borrow-read-disjoint-source) : String
   "(defstruct Bag
-  (left (Array i64))
+  (left (__tl_dyn-array i64))
   (right i64))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     [bag : Bag (Bag items 42)]
-    [borrowed : (&mut bag (Array i64)) (&mut (struct-get bag left))]
+    [borrowed : (&mut bag (__tl_dyn-array i64)) (&mut (struct-get bag left))]
     [right : i64 (struct-get bag right)]
     (begin
       (array-set! borrowed 0 41)
@@ -638,8 +638,8 @@
 (define (compiler-typecheck-mut-borrow-read-through-ref-source) : String
   "(define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
-    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     [n : i64 (array-length borrowed)]
     (begin
       (array-set! borrowed 0 41)
@@ -648,64 +648,64 @@
 (define (compiler-typecheck-mut-borrow-owner-read-after-last-use-source) : String
   "(define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
-    [borrowed : (&mut items (Array i64)) (&mut items)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
+    [borrowed : (&mut items (__tl_dyn-array i64)) (&mut items)]
     (begin
       (array-set! borrowed 0 41)
       (array-length items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-shared-read-source) : String
-  "(define (read-len [items : (& items (Array i64))]) : i64
+  "(define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
-(define (push-with-len [items : (&mut items (Array i64))] [value : i64]) : unit
+(define (push-with-len [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (array-push! items value))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (push-with-len (&mut items) (read-len (& items)))
       (array-length items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-direct-read-source) : String
-  "(define (push-with-len [items : (&mut items (Array i64))] [value : i64]) : unit
+  "(define (push-with-len [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (array-push! items value))
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (push-with-len (&mut items) (array-length items))
       (array-length items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-second-mut-source) : String
   "(define (take-two
-  [left : (&mut left (Array i64))]
-  [right : (&mut right (Array i64))]) : unit
+  [left : (&mut left (__tl_dyn-array i64))]
+  [right : (&mut right (__tl_dyn-array i64))]) : unit
   unit)
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (take-two (&mut items) (&mut items))))")
 
 (define (compiler-typecheck-two-phase-mut-call-escaping-shared-source) : String
-  "(define (borrow-items [items : (& items (Array i64))]) : (& items (Array i64))
+  "(define (borrow-items [items : (& items (__tl_dyn-array i64))]) : (& items (__tl_dyn-array i64))
   items)
 (define (take-mut-and-view
-  [items : (&mut items (Array i64))]
-  [view : (& items (Array i64))]) : unit
+  [items : (&mut items (__tl_dyn-array i64))]
+  [view : (& items (__tl_dyn-array i64))]) : unit
   unit)
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (take-mut-and-view (&mut items) (borrow-items (& items)))))")
 
 (define (compiler-typecheck-two-phase-mut-call-mutate-owner-source) : String
   "(define (take-mut-and-value
-  [items : (&mut items (Array i64))]
+  [items : (&mut items (__tl_dyn-array i64))]
   [value : i64]) : unit
   unit)
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (__tl_dyn-array i64) (make-array i64 1)]
     (take-mut-and-value (&mut items) (begin (array-push! items 1) 0))))")
 
 (define (compiler-typecheck-borrow-if-conservative-source) : String
@@ -841,7 +841,7 @@
 
 (define (compiler-typecheck-borrow-foreach-body-after-last-use-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
-(define (main [n : i64] [out : (Array i64)] [limit : i64]) : unit
+(define (main [n : i64] [out : (__tl_dyn-array i64)] [limit : i64]) : unit
   (foreach ([i : i64 0 limit])
     (let [borrowed : (& n i64) (& n)]
       (begin
@@ -1766,7 +1766,7 @@
 (defmacro (int-stack) : Decls
   `(begin
     (defstruct Stack
-      (slots (Array i64))
+      (slots (__tl_dyn-array i64))
       (len i64)
       (cap i64))
     (define (stack-new) : Stack
@@ -1774,7 +1774,7 @@
     (define (stack-grow [s : Stack]) : Stack
       (let
         [new-cap : i64 (* (struct-get s cap) 2)]
-        [bigger : (Array i64) (array.make-array i64 new-cap)]
+        [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
         [i : i64 0]
         (begin
           (while (< i (struct-get s len))
@@ -1850,6 +1850,10 @@
     [pv : pvec.Vec (pvec.new)]
     (+ (sliceish.len-of v) (psliceish.len-of pv))))")
 
+;; CTFE's type-expression bridge currently recognizes the legacy `Array` head
+;; but not `__tl_dyn-array` when a type parameter is unquoted. Keep these two
+;; spellings as explicit bootstrap compatibility coverage; ordinary private
+;; alias parsing and identity are covered elsewhere in this smoke.
 (define (compiler-typecheck-smoke-type-macro-param-source) : String
   "(import stdlib.array)
 (defstruct Pair (value i64))
@@ -3144,7 +3148,7 @@
 (define (take-array-ref [r : (& items i64)]) : i64 1)
 (define (main) : i64
   (let
-    [items : (Array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
     [fixed : (Array i64 2) (array 3 4)]
     (begin
       (array-set! items 0 (array-ref fixed 1))
@@ -3735,7 +3739,7 @@
 (import stdlib.array)
 (define (main) : i64
   (let
-    [items : (Array i64) (stdlib.array.make-array i64 0)]
+    [items : (__tl_dyn-array i64) (stdlib.array.make-array i64 0)]
     (begin
       (stdlib.array.push! items 41)
       (+ (stdlib.array.ref items 0) (stdlib.array.length items)))))")
@@ -3745,7 +3749,7 @@
 (import stdlib.array)
 (define (main) : i64
   (let
-    [items : (Array i64) (array.make-array i64 0)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 0)]
     (begin
       (array.push! items 41)
       (+ (array.ref items 0) (array.length items)))))")

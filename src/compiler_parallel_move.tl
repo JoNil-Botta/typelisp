@@ -7,7 +7,7 @@
   (ParallelMoveEdge i64 i64 i64 i64 i64))
 
 (defstruct CompilerParallelMoveEdgeSeq
-  (slots (Array CompilerParallelMoveEdge))
+  (slots (__tl_dyn-array CompilerParallelMoveEdge))
   (len i64))
 
 (defenum CompilerParallelMoveDecision
@@ -22,8 +22,8 @@
   (CompilerParallelMoveEdgeSeq (make-array CompilerParallelMoveEdge capacity) 0))
 
 (define (compiler-parallel-move-edge-seq-copy-range!
-  [dst : (&mut dst (Array CompilerParallelMoveEdge))]
-  [src : (& src (Array CompilerParallelMoveEdge))]
+  [dst : (&mut dst (__tl_dyn-array CompilerParallelMoveEdge))]
+  [src : (& src (__tl_dyn-array CompilerParallelMoveEdge))]
   [count : i64]) : unit
   (let
     [index : i64 0]
@@ -40,7 +40,7 @@
       unit
       (let
         [old-capacity : i64 (array-length (struct-get seq slots))]
-        [bigger : (Array CompilerParallelMoveEdge)
+        [bigger : (__tl_dyn-array CompilerParallelMoveEdge)
           (make-array
             CompilerParallelMoveEdge
             (if (< old-capacity 1)
@@ -79,7 +79,7 @@
   [resource : i64]
   [exclude-id : i64]) : bool
   (let
-    [slots : (Array CompilerParallelMoveEdge) (struct-get edges slots)]
+    [slots : (__tl_dyn-array CompilerParallelMoveEdge) (struct-get edges slots)]
     [count : i64 (struct-get edges len)]
     [index : i64 0]
     (begin
@@ -116,7 +116,7 @@
   [edges : CompilerParallelMoveEdgeSeq]
   [blockers : CompilerParallelMoveEdgeSeq]) : bool
   (let
-    [slots : (Array CompilerParallelMoveEdge) (struct-get edges slots)]
+    [slots : (__tl_dyn-array CompilerParallelMoveEdge) (struct-get edges slots)]
     [count : i64 (struct-get edges len)]
     [index : i64 0]
     (begin
@@ -134,7 +134,8 @@
   [remaining : CompilerParallelMoveEdgeSeq]
   [blockers : CompilerParallelMoveEdgeSeq]) : CompilerParallelMoveDecision
   (let
-    [slots : (Array CompilerParallelMoveEdge) (struct-get remaining slots)]
+    [slots : (__tl_dyn-array CompilerParallelMoveEdge)
+      (struct-get remaining slots)]
     [count : i64 (struct-get remaining len)]
     [index : i64 0]
     (begin

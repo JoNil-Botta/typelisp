@@ -746,7 +746,7 @@
 
 ;; Append-only and read front to back: contiguous slots with a doubling push.
 (defstruct SelfhostLintUnsafeSurfaceNames
-  (slots (Array SelfhostLintUnsafeSurfaceName))
+  (slots (__tl_dyn-array SelfhostLintUnsafeSurfaceName))
   (len i64))
 
 (define (selfhost-lint-unsafe-surface-names-empty) : SelfhostLintUnsafeSurfaceNames
@@ -758,14 +758,15 @@
   [fact : SelfhostLintUnsafeSurfaceName]
   [names : SelfhostLintUnsafeSurfaceNames]) : SelfhostLintUnsafeSurfaceNames
   (let
-    [cells : (Array SelfhostLintUnsafeSurfaceName) (struct-get names slots)]
+    [cells : (__tl_dyn-array SelfhostLintUnsafeSurfaceName)
+      (struct-get names slots)]
     [n : i64 (struct-get names len)]
     [index : i64 0]
     (begin
       (if (< n (array-length cells))
         unit
         (let
-          [bigger : (Array SelfhostLintUnsafeSurfaceName)
+          [bigger : (__tl_dyn-array SelfhostLintUnsafeSurfaceName)
             (make-array SelfhostLintUnsafeSurfaceName (* n 2))]
           (begin
             (while (< index n)
@@ -782,7 +783,7 @@
   (names SelfhostLintUnsafeSurfaceNames))
 
 (defstruct SelfhostLintUnsafeSurfaceCache
-  (slots (Array SelfhostLintUnsafeSurfaceCacheEntry))
+  (slots (__tl_dyn-array SelfhostLintUnsafeSurfaceCacheEntry))
   (len i64))
 
 (defenum SelfhostLintUnsafeSurfaceLookup
@@ -937,7 +938,7 @@
         (array-length (struct-get selfhost-lint-unsafe-surface-cache slots)))
         unit
         (let
-          [bigger : (Array SelfhostLintUnsafeSurfaceCacheEntry)
+          [bigger : (__tl_dyn-array SelfhostLintUnsafeSurfaceCacheEntry)
             (make-array SelfhostLintUnsafeSurfaceCacheEntry (* n 2))]
           (begin
             (while (< index n)
@@ -1440,7 +1441,7 @@
   (reportable bool))
 
 (defstruct SelfhostLintDeadDecls
-  (slots (Array SelfhostLintDeadDecl))
+  (slots (__tl_dyn-array SelfhostLintDeadDecl))
   (len i64))
 
 (defstruct SelfhostLintDeadSourceSet
@@ -1494,7 +1495,7 @@
       "scavenge-self-check")
     "compile-profile-summary"))
 
-(define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (Array
+(define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (__tl_dyn-array
     SelfhostLintDeadDecl)
   (struct-get items slots))
 
@@ -1516,8 +1517,8 @@
   (selfhost-lint-dead-decls-with-capacity 8))
 
 (define (selfhost-lint-dead-decls-copy-range
-  [dst : (Array SelfhostLintDeadDecl)]
-  [src : (Array SelfhostLintDeadDecl)]
+  [dst : (__tl_dyn-array SelfhostLintDeadDecl)]
+  [src : (__tl_dyn-array SelfhostLintDeadDecl)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -1529,7 +1530,7 @@
 (define (selfhost-lint-dead-decls-grow [items : SelfhostLintDeadDecls]) : SelfhostLintDeadDecls
   (let
     [n : i64 (selfhost-lint-dead-decls-count items)]
-    [bigger : (Array SelfhostLintDeadDecl)
+    [bigger : (__tl_dyn-array SelfhostLintDeadDecl)
       (make-array
         SelfhostLintDeadDecl
         (* (selfhost-lint-dead-decls-capacity items) 2))]
@@ -1548,7 +1549,7 @@
     (selfhost-lint-dead-decls-count items)
     (selfhost-lint-dead-decls-capacity items))
     (let
-      [slots : (Array SelfhostLintDeadDecl)
+      [slots : (__tl_dyn-array SelfhostLintDeadDecl)
         (selfhost-lint-dead-decls-slots items)]
       [n : i64 (selfhost-lint-dead-decls-count items)]
       (begin
@@ -4821,7 +4822,7 @@ end
 (define (selfhost-lint-single-element-array-dynamic-source) : String
   "(define (main) : i64
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (make-array i64 1)]
     (begin
       (array-set! cur 0 3)
       (array-ref cur 0))))")
@@ -4829,7 +4830,7 @@ end
 (define (selfhost-lint-single-element-array-dotted-source) : String
   "(define (main) : i64
   (let
-    [cur : (Array i64) (array.make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
     (begin
       (array-set! cur 0 3)
       (array.ref cur 0))))")
@@ -4843,15 +4844,15 @@ end
 (define (selfhost-lint-single-element-array-dynamic-index-source) : String
   "(define (main [index : i64]) : i64
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (make-array i64 1)]
     (array-ref cur index)))")
 
 (define (selfhost-lint-single-element-array-escape-source) : String
-  "(define (use-array [items : (Array i64)]) : i64
+  "(define (use-array [items : (__tl_dyn-array i64)]) : i64
   (array-length items))
 (define (main) : i64
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (make-array i64 1)]
     (use-array cur)))")
 
 (define (selfhost-lint-single-element-array-aggregate-source) : String
@@ -4868,9 +4869,9 @@ end
     (array-ref cur 0)))")
 
 (define (selfhost-lint-dynamic-array-literal-dotted-source) : String
-  "(define (make-items [a : i64] [b : i64] [c : i64]) : (Array i64)
+  "(define (make-items [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (array.make-array i64 3)]
+    [items : (__tl_dyn-array i64) (array.make-array i64 3)]
     (begin
       (array-set! items 0 a)
       (array-set! items 1 b)
@@ -4878,45 +4879,45 @@ end
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-bare-source) : String
-  "(define (make-items) : (Array i64)
+  "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items 0 4)
       (array-set! items 1 7)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-return-source) : String
-  "(define (make-items) : (Array i64)
+  "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items 0 4)
       (array-set! items 1 7)
       (return items))))")
 
 (define (selfhost-lint-dynamic-array-literal-assignment-source) : String
-  "(define (set-items [result : (Array i64)]) : unit
+  "(define (set-items [result : (__tl_dyn-array i64)]) : unit
   (let
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items 0 4)
       (array-set! items 1 7)
       (set! result items))))")
 
 (define (selfhost-lint-dynamic-array-literal-ambiguous-two-var-source) : String
-  "(define (make-items [first : i64] [second : i64]) : (Array i64)
+  "(define (make-items [first : i64] [second : i64]) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items 0 first)
       (array-set! items 1 second)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-read-before-complete-source) : String
-  "(define (make-items) : (Array i64)
+  "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items 0 4)
       (array-ref items 0)
@@ -4924,18 +4925,18 @@ end
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-computed-index-source) : String
-  "(define (make-items [index : i64]) : (Array i64)
+  "(define (make-items [index : i64]) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items index 4)
       (array-set! items 1 7)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-duplicate-index-source) : String
-  "(define (make-items) : (Array i64)
+  "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 3)]
+    [items : (__tl_dyn-array i64) (make-array i64 3)]
     (begin
       (array-set! items 0 4)
       (array-set! items 0 7)
@@ -4943,9 +4944,9 @@ end
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-gapped-index-source) : String
-  "(define (make-items) : (Array i64)
+  "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 3)]
+    [items : (__tl_dyn-array i64) (make-array i64 3)]
     (begin
       (array-set! items 0 4)
       (array-set! items 2 7)
@@ -4953,18 +4954,18 @@ end
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-partial-source) : String
-  "(define (make-items) : (Array i64)
+  "(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items 0 4)
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-escape-source) : String
-  "(define (consume [items : (Array i64)]) : unit unit)
-(define (make-items) : (Array i64)
+  "(define (consume [items : (__tl_dyn-array i64)]) : unit unit)
+(define (make-items) : (__tl_dyn-array i64)
   (let
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items 0 4)
       (consume items)
@@ -4972,10 +4973,10 @@ end
       items)))")
 
 (define (selfhost-lint-dynamic-array-literal-suppressed-source) : String
-  "(define (make-items) : (Array i64)
+  "(define (make-items) : (__tl_dyn-array i64)
   (let
     ;; lint-allow: prefer-dynamic-array-literal
-    [items : (Array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
     (begin
       (array-set! items 0 4)
       (array-set! items 1 7)

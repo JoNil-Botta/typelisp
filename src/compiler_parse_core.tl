@@ -241,7 +241,7 @@
   (source-slot i64))
 
 (defstruct CompilerParseDeclOriginAliasVec
-  (items (Array CompilerParseDeclOriginAlias))
+  (items (__tl_dyn-array CompilerParseDeclOriginAlias))
   (len i64))
 
 (define (compiler-parse-decl-origin-alias-vec-with-capacity [capacity : i64]) : CompilerParseDeclOriginAliasVec
@@ -257,10 +257,10 @@
 (define (compiler-parse-decl-origin-alias-vec-grow!
   [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]) : unit
   (let
-    [old-items : (Array CompilerParseDeclOriginAlias)
+    [old-items : (__tl_dyn-array CompilerParseDeclOriginAlias)
       (struct-get aliases items)]
     [len : i64 (struct-get aliases len)]
-    [next-items : (Array CompilerParseDeclOriginAlias)
+    [next-items : (__tl_dyn-array CompilerParseDeclOriginAlias)
       (make-array CompilerParseDeclOriginAlias (* (array-length old-items) 2))]
     [index : i64 0]
     (begin
@@ -795,12 +795,13 @@
 ;; as a compatibility adapter, while production drivers attach their state to
 ;; cfgs with compiler-parse-state-cfgs.
 (defstruct CompilerParseState
-  (control (Array i64))
-  (dispatch-index-keys (Array i64))
-  (dispatch-index-tags (Array i64))
-  (dispatch-cache (Array sym_i64_env.SymI64Env))
-  (dispatch-cache-handle (Array (Array sym_i64_env.SymI64Env)))
-  (intern-owner (Array ci.InternCompatState)))
+  (control (__tl_dyn-array i64))
+  (dispatch-index-keys (__tl_dyn-array i64))
+  (dispatch-index-tags (__tl_dyn-array i64))
+  (dispatch-cache (__tl_dyn-array sym_i64_env.SymI64Env))
+  (dispatch-cache-handle
+    (__tl_dyn-array (__tl_dyn-array sym_i64_env.SymI64Env)))
+  (intern-owner (__tl_dyn-array ci.InternCompatState)))
 
 (define compiler-parse-state-control-keys-addr : i64
   0)
@@ -829,14 +830,14 @@
 (define compiler-parse-invocation-control-slot : i64
   5)
 
-(define (compiler-parse-array-data-addr-i64 [items : (Array i64)]) : i64
+(define (compiler-parse-array-data-addr-i64 [items : (__tl_dyn-array i64)]) : i64
   (cast
     (unsafe
       (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
     : i64))
 
 (define (compiler-parse-intern-owner-data-addr
-  [items : (Array ci.InternCompatState)]) : i64
+  [items : (__tl_dyn-array ci.InternCompatState)]) : i64
   (if (= (array-length items) 0)
     0
     (cast
@@ -845,22 +846,22 @@
       : i64)))
 
 (define (compiler-parse-dispatch-cache-handle-data-addr
-  [items : (Array (Array sym_i64_env.SymI64Env))]) : i64
+  [items : (__tl_dyn-array (__tl_dyn-array sym_i64_env.SymI64Env))]) : i64
   (cast
     (unsafe
       (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
     : i64))
 
 (define (compiler-parse-state-new-from-owner
-  [owner : (Array ci.InternCompatState)]) : CompilerParseState
+  [owner : (__tl_dyn-array ci.InternCompatState)]) : CompilerParseState
   (let
-    [control : (Array i64) (array.make-array i64 10)]
-    [keys : (Array i64) (array.make-array i64 512)]
-    [tags : (Array i64) (array.make-array i64 512)]
-    [cache : (Array sym_i64_env.SymI64Env)
+    [control : (__tl_dyn-array i64) (array.make-array i64 10)]
+    [keys : (__tl_dyn-array i64) (array.make-array i64 512)]
+    [tags : (__tl_dyn-array i64) (array.make-array i64 512)]
+    [cache : (__tl_dyn-array sym_i64_env.SymI64Env)
       (array.make-array sym_i64_env.SymI64Env 1)]
-    [cache-handle : (Array (Array sym_i64_env.SymI64Env))
-      (array.make-array (Array sym_i64_env.SymI64Env) 1)]
+    [cache-handle : (__tl_dyn-array (__tl_dyn-array sym_i64_env.SymI64Env))
+      (__tl_make-array (__tl_dyn-array sym_i64_env.SymI64Env) 1)]
     (begin
       (array-set! cache 0 (sym_i64_env.sym-i64-empty))
       (array-set! cache-handle 0 cache)
@@ -895,7 +896,7 @@
 (define (compiler-parse-state-new-with-intern-state
   [intern-state : ci.InternCompatState]) : CompilerParseState
   (let
-    [owner : (Array ci.InternCompatState)
+    [owner : (__tl_dyn-array ci.InternCompatState)
       (array.make-array ci.InternCompatState 1)]
     (begin
       (array-set! owner 0 intern-state)
@@ -2619,28 +2620,28 @@
 
 (define (compiler-parse-dispatch-cache-ref [control : i64]) : sym_i64_env.SymI64Env
   (let
-    [cache : (Array sym_i64_env.SymI64Env)
+    [cache : (__tl_dyn-array sym_i64_env.SymI64Env)
       (unsafe
         (ptr-read
           (int->ptr
             (compiler-parse-raw-i64-ref
               control
               compiler-parse-state-control-cache-addr)
-            : (Ptr (Array sym_i64_env.SymI64Env)))))]
+            : (Ptr (__tl_dyn-array sym_i64_env.SymI64Env)))))]
     (array-ref cache 0)))
 
 (define (compiler-parse-dispatch-cache-set!
   [control : i64]
   [dispatch : sym_i64_env.SymI64Env]) : unit
   (let
-    [cache : (Array sym_i64_env.SymI64Env)
+    [cache : (__tl_dyn-array sym_i64_env.SymI64Env)
       (unsafe
         (ptr-read
           (int->ptr
             (compiler-parse-raw-i64-ref
               control
               compiler-parse-state-control-cache-addr)
-            : (Ptr (Array sym_i64_env.SymI64Env)))))]
+            : (Ptr (__tl_dyn-array sym_i64_env.SymI64Env)))))]
     (array-set! cache 0 dispatch)))
 
 (define (compiler-parse-state-owner-floor-refresh! [control : i64]) : unit
@@ -9541,8 +9542,8 @@
       result)))
 
 (defstruct ParseAstDeclVec
-  (slots (Array AstDecl))
-  (spans (Array AstSourceSpan))
+  (slots (__tl_dyn-array AstDecl))
+  (spans (__tl_dyn-array AstSourceSpan))
   (len i64))
 
 (define (parse-ast-decl-vec-fallback) : AstDecl
@@ -9582,8 +9583,8 @@
     fallback))
 
 (define (parse-ast-decl-vec-copy-range
-  [dst : (&mut dst (Array AstDecl))]
-  [src : (& src (Array AstDecl))]
+  [dst : (&mut dst (__tl_dyn-array AstDecl))]
+  [src : (& src (__tl_dyn-array AstDecl))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -9593,8 +9594,8 @@
       (parse-ast-decl-vec-copy-range dst src (+ index 1) count))))
 
 (define (parse-ast-decl-vec-span-copy-range
-  [dst : (&mut dst (Array AstSourceSpan))]
-  [src : (& src (Array AstSourceSpan))]
+  [dst : (&mut dst (__tl_dyn-array AstSourceSpan))]
+  [src : (& src (__tl_dyn-array AstSourceSpan))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -9611,8 +9612,9 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstDecl) (make-array AstDecl new-cap)]
-    [bigger-spans : (Array AstSourceSpan) (make-array AstSourceSpan new-cap)]
+    [bigger : (__tl_dyn-array AstDecl) (make-array AstDecl new-cap)]
+    [bigger-spans : (__tl_dyn-array AstSourceSpan)
+      (make-array AstSourceSpan new-cap)]
     (begin
       (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (parse-ast-decl-vec-span-copy-range
@@ -9744,8 +9746,8 @@
 (define (parse-ast-program-forms-into-vec
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
   (if (= (reader.peek-spanned-tag toks cur) (token.tag-end))
     (ResultParseAstDeclVec.Ok)
@@ -9789,8 +9791,8 @@
 (define (parse-ast-program-forms
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]) : ResultAstDeclList
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]) : ResultAstDeclList
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
     [result : ResultParseAstDeclVec
@@ -9807,14 +9809,14 @@
   (compiler-parse-dispatch-env-from-cfg cfgs))
 
 (define (parse-ast-program-with-cfg-and-pools
-  [toks : (Array token.SpannedToken)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgram
   (let
-    [cur : (Array i64) (array.make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
     [base-dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
-    [invocation : (Array i64) (array.make-array i64 6)]
+    [invocation : (__tl_dyn-array i64) (array.make-array i64 6)]
     [dispatch : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind-id
         base-dispatch
@@ -9834,7 +9836,7 @@
         [(ResultAstDeclList.Err message) (ResultAstProgram.Err message)]))))
 
 (define (parse-ast-program-with-cfg
-  [toks : (Array token.SpannedToken)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgram
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -9844,7 +9846,7 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(define (parse-ast-program [toks : (Array token.SpannedToken)]) : ResultAstProgram
+(define (parse-ast-program [toks : (__tl_dyn-array token.SpannedToken)]) : ResultAstProgram
   (parse-ast-program-with-cfg toks (compiler-cfg-empty)))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
@@ -9905,7 +9907,7 @@
       (match (lexer.spanned-result src)
         [(lexer.ResultSpannedTokens.Ok toks)
           (let
-            [cur : (Array i64) (array.make-array i64 1)]
+            [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
             [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
             (begin
               (array-set! cur 0 0)
@@ -9975,8 +9977,8 @@
   [path : String]
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVecDiagnostic
   (if (= (reader.peek-spanned-tag toks cur) (token.tag-end))
     (ResultParseAstDeclVecDiagnostic.Ok)
@@ -10056,8 +10058,8 @@
   [path : String]
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array token.SpannedToken)]
-  [cur : (Array i64)]) : ResultAstDeclListDiagnostic
+  [toks : (__tl_dyn-array token.SpannedToken)]
+  [cur : (__tl_dyn-array i64)]) : ResultAstDeclListDiagnostic
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
     [result : ResultParseAstDeclVecDiagnostic
@@ -10076,19 +10078,19 @@
 
 (define (parse-ast-program-diagnostic
   [path : String]
-  [toks : (Array token.SpannedToken)]) : ResultAstProgramDiagnostic
+  [toks : (__tl_dyn-array token.SpannedToken)]) : ResultAstProgramDiagnostic
   (parse-ast-program-diagnostic-with-cfg path toks (compiler-cfg-empty)))
 
 (define (parse-ast-program-diagnostic-with-cfg-and-pools
   [path : String]
-  [toks : (Array token.SpannedToken)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
-    [cur : (Array i64) (array.make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
     [base-dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
-    [invocation : (Array i64) (array.make-array i64 6)]
+    [invocation : (__tl_dyn-array i64) (array.make-array i64 6)]
     [dispatch : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind-id
         base-dispatch
@@ -10111,7 +10113,7 @@
 
 (define (parse-ast-program-diagnostic-with-cfg
   [path : String]
-  [toks : (Array token.SpannedToken)]
+  [toks : (__tl_dyn-array token.SpannedToken)]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -10710,7 +10712,7 @@
       (match (lexer.spanned-result src)
         [(lexer.ResultSpannedTokens.Ok toks)
           (let
-            [cur : (Array i64) (make-array i64 1)]
+            [cur : (__tl_dyn-array i64) (make-array i64 1)]
             (begin
               (array-set! cur 0 0)
               (match (reader.form-spanned-result toks cur)
@@ -11411,7 +11413,7 @@
       "(define (main) : i64 (with-arena r (let [b : (in r (Box i64)) (box 7)] (box-get b))))")))
 
 (define (compiler-parse-reference-source) : String
-  "(define (use [s : (& n String)] [view : (& n str)] [items : (&mut value (Array i64))]) : unit unit)")
+  "(define (use [s : (& n String)] [view : (& n str)] [items : (&mut value (__tl_dyn-array i64))]) : unit unit)")
 
 (define (compiler-parse-reference-ok?) : bool
   (match (parse-ast-source (compiler-parse-reference-source))
@@ -12506,13 +12508,13 @@
     (compiler-parse-ok?
       "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
     (compiler-parse-ok?
-      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+      "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-parse-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-parse-ok?
-      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
     (compiler-parse-ok?
-      "(define (main [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (+ (program-index) (program-count)))) 0))")
+      "(define (main [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (+ (program-index) (program-count)))) 0))")
     ;; An empty range, a non-i64 index type, and expression
     ;; start/end bounds all parse (range semantics are checked later).
     (compiler-parse-ok?
@@ -12627,6 +12629,8 @@
       "(define (main [a : i64] [b : i64] [c : i64]) : i64 (shl a b c))"
       "parse: malformed binary expression")))
 
+;; Keep the paired public/private dynamic-buffer spellings as explicit alias
+;; compatibility coverage until the final #3581 public-Array removal.
 (define (compiler-parse-type-literal-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
@@ -12995,7 +12999,7 @@
     (compiler-parse-first-fn-has-comptime-param?
       "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))")
     (compiler-parse-first-fn-has-comptime-param?
-      "(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))")
+      "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64) (make-array T n))")
     (compiler-parse-error-ok?
       "(define (main) : i64 ((lambda ([comptime n : i64]) n) 1))"
       "comptime parameters are only supported on top-level function definitions")))
@@ -13381,8 +13385,8 @@
 (define (compiler-parse-diagnostic-invocations-interleaving-ok?) : bool
   (let
     [base : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
-    [frame-a : (Array i64) (array.make-array i64 5)]
-    [frame-b : (Array i64) (array.make-array i64 5)]
+    [frame-a : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [frame-b : (__tl_dyn-array i64) (array.make-array i64 5)]
     [dispatch-a : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind-id
         base

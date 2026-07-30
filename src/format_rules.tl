@@ -442,7 +442,7 @@
       buf)))
 
 (define (format-rules-layout-inline-tail-dense
-  [slots : (Array cst.FormatCst)]
+  [slots : (__tl_dyn-array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -495,7 +495,7 @@
     buf))
 
 (define (format-rules-layout-hard-tail-dense
-  [slots : (Array cst.FormatCst)]
+  [slots : (__tl_dyn-array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -606,7 +606,7 @@
 
 (define (format-rules-layout-list-tail-dense
   [previous-comment : bool]
-  [slots : (Array cst.FormatCst)]
+  [slots : (__tl_dyn-array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -694,7 +694,7 @@
         out))))
 
 (define (format-rules-layout-list-items-dense
-  [slots : (Array cst.FormatCst)]
+  [slots : (__tl_dyn-array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -1376,7 +1376,7 @@
     [_ (format-rules-layout-cst node emit width indent col flat limit buf)]))
 
 (define (format-rules-layout-let-tail-dense
-  [slots : (Array cst.FormatCst)]
+  [slots : (__tl_dyn-array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -2261,7 +2261,7 @@
           buf)))))
 
 (define (format-rules-layout-forms-dense
-  [slots : (Array cst.FormatCst)]
+  [slots : (__tl_dyn-array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [emit : bool]
@@ -2372,7 +2372,7 @@
   (format-rules-layout-cst node true width indent col false 0 buf))
 
 (define (format-rules-render-forms-into-dense
-  [slots : (Array cst.FormatCst)]
+  [slots : (__tl_dyn-array cst.FormatCst)]
   [start : i64]
   [count : i64]
   [width : i64]
@@ -2568,8 +2568,8 @@
     [head : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "x"))]
     [colon : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Colon))]
     [typ : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "i64"))]
-    [dense-slots : (Array cst.FormatCst) (make-array cst.FormatCst 3)]
-    [offset-slots : (Array cst.FormatCst) (make-array cst.FormatCst 5)]
+    [dense-slots : (__tl_dyn-array cst.FormatCst) (make-array cst.FormatCst 3)]
+    [offset-slots : (__tl_dyn-array cst.FormatCst) (make-array cst.FormatCst 5)]
     (begin
       (array-set! dense-slots 0 head)
       (array-set! dense-slots 1 colon)

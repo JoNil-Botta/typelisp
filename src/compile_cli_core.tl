@@ -1798,7 +1798,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [previous-compat-arena : i64]) : i64
   (if (>= index (cli_svec.len entries))
     0
     (let
@@ -1817,6 +1818,11 @@
       ;; rewind region. Keep the exact scratch handle so cleanup does not
       ;; depend on which arena compiler driver internals leave active.
       [home : arena.Arena (arena.current)]
+      ;; Compatibility globals rebuilt by post-emission resets must survive the
+      ;; next entry's standalone preflight, but not the whole manifest. Rotate
+      ;; a small owner after every entry instead of retaining those reset
+      ;; aggregates in the process entry arena.
+      [compat : arena.Arena (arena.make)]
       [scratch : arena.Arena (arena.make)]
       [status : i64
         (begin
@@ -1853,7 +1859,13 @@
           "batch-pre-release"
           "entry-scratch-saved"
           scratch-end)
-        (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "batch-pre-release"
+          "compiler-entry"
+          (allocation_profile.compiler-allocation-profile-entry-arena-handle))
+        (unsafe
+          (arena.set! compat))
         ;; Clear compile state while the entry scratch arena is still mapped:
         ;; loader/typecheck caches may hold scratch-backed nodes until reset.
         (cfg
@@ -1875,7 +1887,18 @@
         ;; entry scratch owner has been destroyed.
         (compiler-driver-state-install-pools! state)
         (compiler-driver-state-install-interns! state)
+        ;; The reset above has republished every compatibility aggregate into
+        ;; `compat`; only now is the preceding entry's owner unreachable.
+        (if (= previous-compat-arena 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy previous-compat-arena)))
         (compiler-driver-allocation-profile-snapshot! "batch-steady")
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "batch-steady"
+          "batch-compat-reset"
+          (arena.raw-handle compat))
         (cfg
           compile-profile
           (compiler-driver-batch-profile-mark!
@@ -1893,7 +1916,8 @@
             stdlib-roots
             cfgs
             backend-mode
-            opt-level)
+            opt-level
+            (arena.raw-handle compat))
           (begin
             (io.print-error
               (str_cat.str-cat
@@ -1920,7 +1944,8 @@
     stdlib-roots
     cfgs
     backend-mode
-    opt-level))
+    opt-level
+    0))
 
 (define (compile-cli-run-windows-batch-entries-from
   [state : CompilerDriverState]
@@ -1930,6 +1955,7 @@
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]
+  [previous-compat-arena : i64]
   [results : (&mut results cli_svec.Vec)]) : i64
   (if (>= index (cli_svec.len entries))
     0
@@ -1949,6 +1975,7 @@
       [force-assembly : bool
         (string.eq (cli_svec.get entries (+ index 3) "auto") "force-assembly")]
       [home : arena.Arena (arena.current)]
+      [compat : arena.Arena (arena.make)]
       [scratch : arena.Arena (arena.make)]
       [entry-result : ResultCompileCliWindowsBatchEntry
         (begin
@@ -1995,7 +2022,13 @@
           "batch-pre-release"
           "entry-scratch-saved"
           scratch-end)
-        (compiler-driver-restore-arena-owner-current! (arena.raw-handle home))
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "batch-pre-release"
+          "compiler-entry"
+          (allocation_profile.compiler-allocation-profile-entry-arena-handle))
+        (unsafe
+          (arena.set! compat))
         (cfg
           compile-profile
           (compiler-driver-state-release-file-state-profiled! state ordinal)
@@ -2011,7 +2044,16 @@
             (arena.tl_arena_destroy scratch-end)))
         (compiler-driver-state-install-pools! state)
         (compiler-driver-state-install-interns! state)
+        (if (= previous-compat-arena 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy previous-compat-arena)))
         (compiler-driver-allocation-profile-snapshot! "batch-steady")
+        (allocation_profile.compiler-allocation-profile-control!
+          2
+          "batch-steady"
+          "batch-compat-reset"
+          (arena.raw-handle compat))
         (cfg
           compile-profile
           (compiler-driver-batch-profile-mark!
@@ -2028,6 +2070,7 @@
             cfgs
             backend-mode
             opt-level
+            (arena.raw-handle compat)
             results)
           (begin
             (io.print-error
@@ -2098,6 +2141,7 @@
         cfgs
         backend-mode
         opt-level
+        0
         (&mut results))]
     (if (= status 0)
       (compile-cli-write-windows-batch-result-plan result-plan-path (& results))

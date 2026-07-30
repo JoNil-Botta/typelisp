@@ -45,6 +45,9 @@ BATCH_NORMAL_STDOUT="$WORKDIR/batch-normal.stdout"
 BATCH_NORMAL_STDERR="$WORKDIR/batch-normal.stderr"
 BATCH_PROFILE_STDOUT="$WORKDIR/batch-profile.stdout"
 BATCH_PROFILE_STDERR="$WORKDIR/batch-profile.stderr"
+BOUNDED_BATCH_LIST="$WORKDIR/batch-bounded.txt"
+BOUNDED_BATCH_STDOUT="$WORKDIR/batch-bounded.stdout"
+BOUNDED_BATCH_STDERR="$WORKDIR/batch-bounded.stderr"
 
 batch_path() {
     if [ "$NL_HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
@@ -164,6 +167,8 @@ validate_profile() {
             }
         }
         if (key == "batch-steady/active") batch_steady_rows++
+        if (key == "batch-pre-release/compiler-entry") batch_entry_rows++
+        if (key == "batch-steady/batch-compat-reset") batch_compat_rows++
         rows++
     }
     END {
@@ -189,6 +194,11 @@ validate_profile() {
             }
             if (batch_steady_rows != expected_entries) {
                 print "unexpected allocation-profile batch steady count" > "/dev/stderr"
+                exit 1
+            }
+            if (batch_entry_rows != expected_entries ||
+                batch_compat_rows != expected_entries) {
+                print "unexpected allocation-profile batch boundary owner count" > "/dev/stderr"
                 exit 1
             }
         }
@@ -242,4 +252,77 @@ cmp "$BATCH_NORMAL_FUNCTIONS" "$BATCH_PROFILE_FUNCTIONS" >/dev/null || {
 }
 validate_profile "$BATCH_PROFILE_STDERR" 2
 
-echo "[allocation-profile] output invariant and owner schema passed"
+echo "[allocation-profile] verify 16-entry steady-state owner bound"
+: > "$BOUNDED_BATCH_LIST"
+bounded_ordinal=0
+while [ "$bounded_ordinal" -lt 16 ]; do
+    printf '%s|%s\n' \
+        "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" \
+        "$(batch_path "$WORKDIR/batch-bounded-$bounded_ordinal.s")" \
+        >> "$BOUNDED_BATCH_LIST"
+    bounded_ordinal=$((bounded_ordinal + 1))
+done
+"$COMPILER" compile --batch "$BOUNDED_BATCH_LIST" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --opt-level 1 \
+    --profile-allocations \
+    >"$BOUNDED_BATCH_STDOUT" 2>"$BOUNDED_BATCH_STDERR"
+validate_profile "$BOUNDED_BATCH_STDERR" 16
+if ! awk -F'|' '
+    function finish_snapshot() {
+        if (entry < 0) return
+        snapshots++
+        if (entry == 0) {
+            baseline = steady
+        } else {
+            drift = steady - baseline
+            if (drift < 0) drift = -drift
+            if (drift > 65536) {
+                print "batch steady owner baseline drifted by " drift \
+                    " bytes at entry " entry > "/dev/stderr"
+                bad = 1
+            }
+        }
+    }
+    BEGIN { entry = -1 }
+    $1 == "compile-allocation-profile" && $2 == "batch-steady" {
+        if ($3 == "active") {
+            finish_snapshot()
+            entry++
+            steady = 0
+            delete seen
+        }
+        root = $4
+        if (root != 0 && !(root in seen)) {
+            steady += $5
+            seen[root] = 1
+        }
+        if ($3 == "batch-compat-reset") {
+            compat_rows++
+            if (compat_rows == 1) {
+                compat_baseline = $5
+            } else {
+                compat_drift = $5 - compat_baseline
+                if (compat_drift < 0) compat_drift = -compat_drift
+                if (compat_drift > 4096) {
+                    print "batch compatibility owner drifted by " compat_drift \
+                        " bytes at entry " entry > "/dev/stderr"
+                    bad = 1
+                }
+            }
+        }
+    }
+    END {
+        finish_snapshot()
+        exit snapshots == 16 && compat_rows == 16 &&
+            baseline > 0 && compat_baseline > 0 && !bad ? 0 : 1
+    }
+' "$BOUNDED_BATCH_STDERR"; then
+    echo "16-entry allocation-owner baseline was not bounded" >&2
+    exit 1
+fi
+
+echo "[allocation-profile] output invariant, rotating reset owner, and steady-state bound passed"

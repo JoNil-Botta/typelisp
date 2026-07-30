@@ -33,19 +33,16 @@ EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
 # same manifest coverage into smaller default chunks unless explicitly
 # overridden. As the compiler grows, two heavy entries in one Windows batch can
 # trip the freestanding allocator after the first compile has emitted assembly,
-# so keep the default at one manifest entry per process on Windows. Hosted
-# Linux also has a lower repeatable boundary than local WSL: #6092 records two
-# runs that emitted eight entries and then exited 139 when entry nine began,
-# while the identical 16-entry chunk stayed below 883 MiB and passed locally.
-# Keep Linux batches large enough to exercise cross-entry reuse, but split at
-# eight until #6092 proves the retained state bounded. Every manifest case and
-# the batch-mode coverage remain unchanged.
+# so keep the default at one manifest entry per process on Windows. Linux keeps
+# the 16-entry stress size: allocation-owner snapshots and absolute batch live
+# baselines make cross-entry retention diagnosable and enforce that repeated
+# entries return to a bounded steady state.
 if [ -n "${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-}" ]; then
     BATCH_CHUNK_SIZE=$TYPELISP_COMPILE_MANIFEST_BATCH_SIZE
 elif [ "$HOST_OS" = windows ]; then
     BATCH_CHUNK_SIZE=1
 else
-    BATCH_CHUNK_SIZE=8
+    BATCH_CHUNK_SIZE=16
 fi
 
 case "$EXPECTATION_MODE" in

@@ -100,7 +100,7 @@ while (-not $process.HasExited -or -not $stderrClosed) {
             $stderrWriter.WriteLine($line)
             if ($line -match '^compile-batch-profile\|[0-9]+\|') {
                 $fields = $line.Split('|')
-                if ($fields.Count -ne 7) {
+                if ($fields.Count -ne 9) {
                     Fail "invalid batch profile row: $line"
                 }
                 $markerSamples.Add([pscustomobject]@{
@@ -110,6 +110,8 @@ while (-not $process.HasExited -or -not $stderrClosed) {
                     alloc_delta = $fields[4]
                     live_delta = $fields[5]
                     peak_live_delta = $fields[6]
+                    live_bytes = $fields[7]
+                    entry0_baseline_delta = $fields[8]
                     working_set_bytes = $working
                     working_set_peak_bytes = $workingPeak
                     private_bytes = $private
@@ -134,10 +136,10 @@ if ($markerSamples.Count -eq 0) {
     Fail "compiler emitted no batch profile markers; build it with --cfg compile-profile"
 }
 
-"entry_ordinal`tmarker`telapsed_ms`talloc_delta_bytes`tlive_delta_bytes`tpeak_live_delta_bytes`tworking_set_bytes`tworking_set_peak_bytes`tprivate_bytes`tprivate_peak_bytes`n" |
+"entry_ordinal`tmarker`telapsed_ms`talloc_delta_bytes`tlive_delta_bytes`tpeak_live_delta_bytes`tlive_bytes`tentry0_baseline_delta_bytes`tworking_set_bytes`tworking_set_peak_bytes`tprivate_bytes`tprivate_peak_bytes`n" |
     Set-Content -LiteralPath $telemetryPath -NoNewline -Encoding utf8
 foreach ($sample in $markerSamples) {
-    "$($sample.ordinal)`t$($sample.marker)`t$($sample.elapsed_ms)`t$($sample.alloc_delta)`t$($sample.live_delta)`t$($sample.peak_live_delta)`t$($sample.working_set_bytes)`t$($sample.working_set_peak_bytes)`t$($sample.private_bytes)`t$($sample.private_peak_bytes)`n" |
+    "$($sample.ordinal)`t$($sample.marker)`t$($sample.elapsed_ms)`t$($sample.alloc_delta)`t$($sample.live_delta)`t$($sample.peak_live_delta)`t$($sample.live_bytes)`t$($sample.entry0_baseline_delta)`t$($sample.working_set_bytes)`t$($sample.working_set_peak_bytes)`t$($sample.private_bytes)`t$($sample.private_peak_bytes)`n" |
         Add-Content -LiteralPath $telemetryPath -NoNewline -Encoding utf8
 }
 

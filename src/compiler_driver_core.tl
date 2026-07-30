@@ -981,6 +981,10 @@
   compile-profile
   (define compiler-driver-batch-profile-best-peak-metric : i64
     17))
+(cfg
+  compile-profile
+  (define compiler-driver-batch-profile-first-live-metric : i64
+    18))
 
 (cfg
   compile-profile
@@ -1044,7 +1048,9 @@
     [elapsed-ms : i64]
     [alloc-delta : i64]
     [live-delta : i64]
-    [peak-delta : i64]) : String
+    [peak-delta : i64]
+    [live-bytes : i64]
+    [baseline-delta : i64]) : String
     (string.append
       "\ncompile-batch-profile|"
       (string.append
@@ -1061,7 +1067,11 @@
                   (compiler-driver-profile-field live-delta)
                   (string.append
                     (compiler-driver-profile-field peak-delta)
-                    "\n"))))))))))
+                    (string.append
+                      (compiler-driver-profile-field live-bytes)
+                      (string.append
+                        (compiler-driver-profile-field baseline-delta)
+                        "\n"))))))))))))
 
 (cfg
   compile-profile
@@ -1087,18 +1097,37 @@
   (define (compiler-driver-batch-profile-start-entry!
     [state : profile_state.CompilerProfileState]
     [ordinal : i64]) : unit
-    (begin
-      (if (= ordinal 0)
+    (let
+      [live-bytes : i64 (profile.alloc-live)]
+      (begin
+        (if (= ordinal 0)
+          (begin
+            (io.print-error
+              "compile-batch-profile|entry_ordinal|marker|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes|live_bytes|entry0_baseline_delta_bytes\n")
+            (compiler-driver-profile-set!
+              state
+              compiler-driver-batch-profile-first-live-metric
+              live-bytes))
+          unit)
+        (compiler-driver-profile-set!
+          state
+          compiler-driver-batch-profile-best-peak-metric
+          0)
+        (compiler-driver-batch-profile-reset-baseline! state)
         (io.print-error
-          "compile-batch-profile|entry_ordinal|marker|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
-        unit)
-      (compiler-driver-profile-set!
-        state
-        compiler-driver-batch-profile-best-peak-metric
-        0)
-      (compiler-driver-batch-profile-reset-baseline! state)
-      (io.print-error
-        (compiler-driver-batch-profile-line ordinal "entry-start" 0 0 0 0)))))
+          (compiler-driver-batch-profile-line
+            ordinal
+            "entry-start"
+            0
+            0
+            0
+            0
+            live-bytes
+            (-
+              live-bytes
+              (compiler-driver-profile-value
+                state
+                compiler-driver-batch-profile-first-live-metric))))))))
 
 (cfg
   compile-profile
@@ -1141,7 +1170,13 @@
               (compiler-driver-profile-value
                 state
                 compiler-driver-batch-profile-start-live-metric))
-            peak-delta))
+            peak-delta
+            end-live
+            (-
+              end-live
+              (compiler-driver-profile-value
+                state
+                compiler-driver-batch-profile-first-live-metric))))
         (compiler-driver-profile-set!
           state
           compiler-driver-batch-profile-best-peak-metric

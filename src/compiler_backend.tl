@@ -55882,9 +55882,10 @@
 ;; `clone` of large IR values during arena escapes is the worst case ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â so
 ;; a self-hosted compiler segfaults compiling a large program on the default
 ;; stack. argc/argv/envp are already captured into globals before this runs, so
-;; switching %rsp is safe (main reads them from globals, not the stack). A failed
-;; mmap (negative result) keeps the original stack; the unmapped page below the
-;; region turns any overflow into a clean SIGSEGV rather than silent corruption.
+;; switching %rsp is safe (main reads them from globals, not the stack). Do not
+;; silently continue on the original small stack when mmap fails: report the
+;; failed reservation and exit 134 so a runner constraint cannot masquerade as
+;; an unrelated compiler SIGSEGV.
 (define (compiler-backend-entry-call-main) : String
   "    movq $0x40000000, %rsi
     xorq %rdi, %rdi
@@ -55895,14 +55896,26 @@
     movq $9, %rax
     syscall
     testq %rax, %rax
-    js .L_tl_main_keep_stack
+    js .L_tl_main_stack_abort
     addq $0x40000000, %rax
     andq $-16, %rax
     movq %rax, %rsp
-.L_tl_main_keep_stack:
     call main
     movq %rax, %rdi
     movq $60, %rax
+    syscall
+    .section .rodata
+.L_tl_main_stack_mmap_error:
+    .ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"
+    .text
+.L_tl_main_stack_abort:
+    movq $1, %rax
+    movq $2, %rdi
+    leaq .L_tl_main_stack_mmap_error(%rip), %rsi
+    movq $47, %rdx
+    syscall
+    movq $60, %rax
+    movq $134, %rdi
     syscall
 ")
 

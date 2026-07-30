@@ -50578,6 +50578,7 @@
   [te : i64]
   [end : i64]
   [mnemonic-kind : i64]
+  [comma-hint : i64]
   [delta : i64]) : i64
   (let
     [none : i64 compiler-backend-sweep-no-candidate]
@@ -50601,58 +50602,62 @@
             (if (not (or (= b0 37) (= b0 36)))
               none
               (let
-                [c : i64 s0]
-                [found : bool false]
-                (begin
-                  (while (and (not found) (< (+ c 1) end))
-                    (if (and
-                      (= (compiler-backend-peephole-byte-at data c) 44)
-                      (= (compiler-backend-peephole-byte-at data (+ c 1)) 32))
-                      (set! found true)
-                      (set! c (+ c 1))))
-                  (if (not found)
-                    none
+                [c
+                  : i64
+                  ;; >= 0: the caller's descriptor already found this ", " at
+                  ;; the same position the scan below would return.
+                  (if (>= comma-hint 0)
+                    comma-hint
                     (let
-                      [j : i64 s0]
-                      [bad : bool false]
+                      [q : i64 s0]
+                      [found : i64 -1]
                       (begin
-                        (while (< j c)
-                          (begin
-                            (if (=
-                              (compiler-backend-peephole-byte-at data j)
-                              40)
-                              (set! bad true)
-                              unit)
-                            (set! j (+ j 1))))
-                        (if (compiler-backend-peephole-range-eq?
-                          data
-                          s0
-                          c
-                          "%rsp")
-                          (set! bad true)
-                          unit)
-                        (if bad
-                          none
-                          (let
-                            [ds : i64 (+ c 2)]
-                            [de : i64 (- end 6)]
-                            (if (>= ds de)
-                              ;; bare "(%rsp)" store dst: not a rebased local.
-                              none
-                              (let
-                                [ks : i64
-                                  (compiler-backend-rsp-rebase-int-start
+                        (while (and (= found -1) (< (+ q 1) end))
+                          (if (and
+                            (= (compiler-backend-peephole-byte-at data q) 44)
+                            (=
+                              (compiler-backend-peephole-byte-at data (+ q 1))
+                              32))
+                            (set! found q)
+                            (set! q (+ q 1))))
+                        found)))]
+                (if (< c 0)
+                  none
+                  (let
+                    [j : i64 s0]
+                    [bad : bool false]
+                    (begin
+                      (while (< j c)
+                        (begin
+                          (if (= (compiler-backend-peephole-byte-at data j) 40)
+                            (set! bad true)
+                            unit)
+                          (set! j (+ j 1))))
+                      (if (compiler-backend-peephole-range-eq? data s0 c "%rsp")
+                        (set! bad true)
+                        unit)
+                      (if bad
+                        none
+                        (let
+                          [ds : i64 (+ c 2)]
+                          [de : i64 (- end 6)]
+                          (if (>= ds de)
+                            ;; bare "(%rsp)" store dst: not a rebased local.
+                            none
+                            (let
+                              [ks : i64
+                                (compiler-backend-rsp-rebase-int-start
+                                  data
+                                  m
+                                  de)]
+                              (if (not (= ks ds))
+                                none
+                                (-
+                                  (compiler-backend-rsp-rebase-parse-int
                                     data
-                                    m
-                                    de)]
-                                (if (not (= ks ds))
-                                  none
-                                  (-
-                                    (compiler-backend-rsp-rebase-parse-int
-                                      data
-                                      ks
-                                      de)
-                                    delta))))))))))))))))))
+                                    ks
+                                    de)
+                                  delta)))))))))))))))))
 
 ;; If line [m,end) is exactly `leaq N(%rsp), %rsp`, return the canonical N-delta.
 ;; Win64 uses this only for terminal CSR pop-run epilogues; callers still check
@@ -50778,12 +50783,13 @@
 ;; record. The `%rsp` occurrence walk is skipped for verified candidate stores,
 ;; exactly like the byte walk it replaces.
 (define (compiler-backend-peephole-line-sweep-summary
-  [data : (Ptr u8)]
-  [end : i64]
-  [ms : i64]
-  [mlen : i64]
-  [is-label : bool]) : CompilerBackendPeepholeLineSweepSummary
+  [line : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLineSweepSummary
   (let
+    [data : (Ptr u8) (struct-get line data)]
+    [end : i64 (compiler-backend-peephole-desc-end line)]
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
+    [mlen : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
+    [is-label : bool (compiler-backend-peephole-desc-label? line)]
     [none : i64 compiler-backend-sweep-no-candidate]
     [skip : CompilerBackendPeepholeLineSweepSummary
       (CompilerBackendPeepholeLineSweepSummary
@@ -50814,8 +50820,12 @@
             skip
             (let
               [te : i64 (+ ms mlen)]
+              ;; A descriptor-proven movq line forces the token, so its
+              ;; control kind needs no re-derivation from the bytes.
               [mnemonic-kind : i64
-                (compiler-backend-control-mnemonic-kind data ms mlen)]
+                (if (compiler-backend-peephole-desc-movq? line)
+                  compiler-backend-control-mnemonic-movq
+                  (compiler-backend-control-mnemonic-kind data ms mlen))]
               [pop? : bool
                 (= mnemonic-kind compiler-backend-control-mnemonic-pop)]
               [leaq? : bool
@@ -50844,6 +50854,16 @@
                   te
                   end
                   mnemonic-kind
+                  ;; The descriptor already found the operand comma; reuse it
+                  ;; exactly where the verifier's own scan would start (the
+                  ;; one-space form), and let it scan everywhere else.
+                  (if (and
+                    (compiler-backend-peephole-desc-movq? line)
+                    (=
+                      (compiler-backend-peephole-desc-op-src-start line)
+                      (+ te 1)))
+                    (compiler-backend-peephole-desc-op-src-end line)
+                    -1)
                   0)]
               [flags : i64
                 (+
@@ -50995,6 +51015,32 @@
 ;; store's record deleted. The line bytes are never re-read -- the per-record
 ;; summary already carries everything the byte walk derived, with the
 ;; delta-dependent offsets kept raw and rebased here.
+;; Fixed-size scratch bitmap for the region sweep's pass 2: one bit per byte
+;; of the eligibility coverage window, reused across regions (only the used
+;; prefix is zeroed per region). Pass 2's per-candidate decisions are
+;; mutually independent given the reads, watermark and windows, so the
+;; overlap test runs against this bitmap when the window fits the cap:
+;; candidate at c is swept iff no bit is set in [c-wlo, c+8-wlo). A set bit at
+;; x means some read covers byte x, and eligibility forces c into a window
+;; (hence [c,c+8) into the coverage window), so the query is literally the
+;; per-read predicate it replaces: any bit in [c,c+8) iff exists r with
+;; lo_r < c+8 and hi_r > c. Byte granularity keeps unaligned reads and
+;; 16/32/64-byte widths exact.
+;;
+;; The array is allocated once at module init, in the process arena, at the
+;; full cap size: pass 2 runs inside emission's scratch/raw arenas, so a
+;; grow-on-demand array reallocated there would dangle after the next arena
+;; rewind (the arena-transient rule of the operand-string caches applies to
+;; every module-level array).
+(define compiler-backend-sweep-coverage-bits : (Array i64)
+  (array.make-array i64 4096))
+
+;; Largest coverage window served by the bitmap, in i64 words (64 bytes per
+;; word). Wider frames keep the exact per-candidate read scan; the choice
+;; depends only on region metadata, never on results.
+(define compiler-backend-sweep-coverage-max-words : i64
+  4096)
+
 (define (compiler-backend-sweep-region-records!
   [recs : (Array CompilerBackendPeepholeLineRecord)]
   [live : (Array i64)]
@@ -51035,225 +51081,397 @@
                   (set! delta 0))]
               [else
                 (let
-                  [flags : i64 (compiler-backend-peephole-record-flags line)]
-                  [push? : bool
-                    (compiler-backend-sweep-line-flag?
-                      flags
-                      compiler-backend-sweep-line-flag-push)]
-                  [pop? : bool
-                    (compiler-backend-sweep-line-flag?
-                      flags
-                      compiler-backend-sweep-line-flag-pop)]
-                  [leaq? : bool
-                    (compiler-backend-sweep-line-flag?
-                      flags
-                      compiler-backend-sweep-line-flag-leaq)]
-                  [leave? : bool
-                    (compiler-backend-sweep-line-flag?
-                      flags
-                      compiler-backend-sweep-line-flag-leave)]
-                  [subq? : bool
-                    (compiler-backend-sweep-line-flag?
-                      flags
-                      compiler-backend-sweep-line-flag-subq)]
-                  [rsp-dst? : bool
-                    (compiler-backend-sweep-line-flag?
-                      flags
-                      compiler-backend-sweep-line-flag-rsp-dst)]
-                  [tracked-rsp-write? : bool
-                    (compiler-backend-sweep-line-flag?
-                      flags
-                      compiler-backend-sweep-line-flag-tracked-rsp-write)]
-                  [win64-rbp-set? : bool
-                    (and
-                      win64
-                      (compiler-backend-sweep-line-flag?
-                        flags
-                        compiler-backend-sweep-line-flag-win64-rbp-set))]
-                  [epilogue-raw : i64 (struct-get line epilogue)]
-                  [win64-epilogue-c : i64
-                    (if (or (not win64) (= epilogue-raw none))
-                      none
-                      (- epilogue-raw delta))]
-                  [win64-epilogue-leaq? : bool
-                    (and
-                      (not (= win64-epilogue-c none))
-                      (< win64-epilogue-c lo))]
-                  [win64-tail-ok? : bool
-                    (or
-                      pop?
-                      leave?
-                      (compiler-backend-sweep-line-flag?
-                        flags
-                        compiler-backend-sweep-line-flag-ret)
-                      (compiler-backend-sweep-line-flag?
-                        flags
-                        compiler-backend-sweep-line-flag-jmp))]
-                  [cand-raw : i64 (struct-get line cand)]
-                  [cand : i64
-                    (if (= cand-raw none)
-                      none
-                      (- cand-raw delta))]
-                  (begin
-                    (if (and win64-tail (not win64-tail-ok?))
-                      (set! sweepable false)
-                      unit)
-                    (if (and leave? (not win64))
-                      (set! sweepable false)
-                      unit)
-                    (if (not (= cand none))
-                      ;; verified pure store: record; no other rsp effect.
-                      (begin
-                        (set!
-                          cand-pos
-                          (compiler-backend-sweep-i64-push
-                            cand-pos
-                            cand-count
-                            i))
-                        (set!
-                          cand-off
-                          (compiler-backend-sweep-i64-push
-                            cand-off
-                            cand-count
-                            cand))
-                        (set! cand-count (+ cand-count 1)))
-                      ;; general line: replay the recorded %rsp classification.
-                      (let
-                        [mem-count : i64
-                          (compiler-backend-peephole-record-mem-count line)]
-                        [w : i64 (compiler-backend-peephole-record-width line)]
-                        [k : i64 0]
+                  [meta : i64 (struct-get line meta)]
+                  (if (not
+                    (=
+                      (bit-and
+                        meta
+                        compiler-backend-peephole-record-sweep-inert-bit)
+                      0))
+                    ;; Sweep-inert record: no rsp motion, read, candidate or
+                    ;; epilogue effect by construction (the bit's comment at
+                    ;; the record packing gives the exact invariant); only
+                    ;; Win64-tail poisoning remains.
+                    (when win64-tail (set! sweepable false))
+                    (let
+                      [cand-raw : i64 (struct-get line cand)]
+                      (if (not (= cand-raw none))
+                        ;; Verified candidate store: flags, mem-count and
+                        ;; epilogue are empty by construction, so only
+                        ;; Win64-tail poisoning and the candidate pushes
+                        ;; remain.
                         (begin
-                          ;; "(%rsp," indexed / truncated, or popq MEM
-                          ;; (which addresses AFTER the bump).
-                          (when
+                          (when win64-tail (set! sweepable false))
+                          (set!
+                            cand-pos
+                            (if (< cand-count (array-length cand-pos))
+                              (begin
+                                (array-set! cand-pos cand-count i)
+                                cand-pos)
+                              (compiler-backend-sweep-i64-push
+                                cand-pos
+                                cand-count
+                                i)))
+                          (set!
+                            cand-off
+                            (if (< cand-count (array-length cand-off))
+                              (begin
+                                (array-set!
+                                  cand-off
+                                  cand-count
+                                  (- cand-raw delta))
+                                cand-off)
+                              (compiler-backend-sweep-i64-push
+                                cand-off
+                                cand-count
+                                (- cand-raw delta))))
+                          (set! cand-count (+ cand-count 1)))
+                        (let
+                          [flags : i64
+                            (compiler-backend-peephole-record-flags line)]
+                          [push? : bool
                             (compiler-backend-sweep-line-flag?
                               flags
-                              compiler-backend-sweep-line-flag-fatal-mem)
-                            (set! sweepable false))
-                          ;; bare %rsp: only the tracked subq/addq $imm dst and
-                          ;; proven Win64 prologue/epilogue shapes are allowed.
-                          (when
+                              compiler-backend-sweep-line-flag-push)]
+                          [pop? : bool
+                            (compiler-backend-sweep-line-flag?
+                              flags
+                              compiler-backend-sweep-line-flag-pop)]
+                          [leaq? : bool
+                            (compiler-backend-sweep-line-flag?
+                              flags
+                              compiler-backend-sweep-line-flag-leaq)]
+                          [leave? : bool
+                            (compiler-backend-sweep-line-flag?
+                              flags
+                              compiler-backend-sweep-line-flag-leave)]
+                          [subq? : bool
+                            (compiler-backend-sweep-line-flag?
+                              flags
+                              compiler-backend-sweep-line-flag-subq)]
+                          [rsp-dst? : bool
+                            (compiler-backend-sweep-line-flag?
+                              flags
+                              compiler-backend-sweep-line-flag-rsp-dst)]
+                          [tracked-rsp-write? : bool
+                            (compiler-backend-sweep-line-flag?
+                              flags
+                              compiler-backend-sweep-line-flag-tracked-rsp-write)]
+                          [win64-rbp-set? : bool
                             (and
+                              win64
                               (compiler-backend-sweep-line-flag?
                                 flags
-                                compiler-backend-sweep-line-flag-bare-rsp)
-                              (not win64-rbp-set?))
-                            (set! sweepable false))
-                          (when
+                                compiler-backend-sweep-line-flag-win64-rbp-set))]
+                          [epilogue-raw : i64 (struct-get line epilogue)]
+                          [win64-epilogue-c : i64
+                            (if (or (not win64) (= epilogue-raw none))
+                              none
+                              (- epilogue-raw delta))]
+                          [win64-epilogue-leaq? : bool
                             (and
+                              (not (= win64-epilogue-c none))
+                              (< win64-epilogue-c lo))]
+                          [win64-tail-ok? : bool
+                            (or
+                              pop?
+                              leave?
                               (compiler-backend-sweep-line-flag?
                                 flags
-                                compiler-backend-sweep-line-flag-bare-rsp-tail)
-                              (not win64-rbp-set?)
-                              (not win64-epilogue-leaq?)
-                              (not tracked-rsp-write?))
-                            (set! sweepable false))
-                          (while (< k mem-count)
+                                compiler-backend-sweep-line-flag-ret)
+                              (compiler-backend-sweep-line-flag?
+                                flags
+                                compiler-backend-sweep-line-flag-jmp))]
+                          (begin
+                            (if (and win64-tail (not win64-tail-ok?))
+                              (set! sweepable false)
+                              unit)
+                            (if (and leave? (not win64))
+                              (set! sweepable false)
+                              unit)
+                            ;; general line: replay the recorded %rsp classification.
                             (let
-                              [c : i64
-                                (-
-                                  (if (= k 0)
-                                    (struct-get line value)
-                                    (compiler-backend-sweep-line-mem-off-nth
-                                      (compiler-backend-peephole-record-data
-                                        line)
-                                      (compiler-backend-peephole-record-mnemonic-start
-                                        line)
-                                      (compiler-backend-peephole-record-end
-                                        line)
-                                      k))
-                                  delta)]
+                              [mem-count : i64
+                                (compiler-backend-peephole-record-mem-count
+                                  line)]
+                              [w : i64
+                                (compiler-backend-peephole-record-width line)]
+                              [k : i64 0]
                               (begin
-                                (if leaq?
-                                  ;; address taken: poison upward
-                                  (if win64-epilogue-leaq?
-                                    unit
-                                    (if (< c watermark)
-                                      (set! watermark c)
-                                      unit))
-                                  (begin
+                                ;; "(%rsp," indexed / truncated, or popq MEM
+                                ;; (which addresses AFTER the bump).
+                                (when
+                                  (compiler-backend-sweep-line-flag?
+                                    flags
+                                    compiler-backend-sweep-line-flag-fatal-mem)
+                                  (set! sweepable false))
+                                ;; bare %rsp: only the tracked subq/addq $imm dst and
+                                ;; proven Win64 prologue/epilogue shapes are allowed.
+                                (when
+                                  (and
+                                    (compiler-backend-sweep-line-flag?
+                                      flags
+                                      compiler-backend-sweep-line-flag-bare-rsp)
+                                    (not win64-rbp-set?))
+                                  (set! sweepable false))
+                                (when
+                                  (and
+                                    (compiler-backend-sweep-line-flag?
+                                      flags
+                                      compiler-backend-sweep-line-flag-bare-rsp-tail)
+                                    (not win64-rbp-set?)
+                                    (not win64-epilogue-leaq?)
+                                    (not tracked-rsp-write?))
+                                  (set! sweepable false))
+                                (while (< k mem-count)
+                                  (let
+                                    [c : i64
+                                      (-
+                                        (if (= k 0)
+                                          (struct-get line value)
+                                          (compiler-backend-sweep-line-mem-off-nth
+                                            (compiler-backend-peephole-record-data
+                                              line)
+                                            (compiler-backend-peephole-record-mnemonic-start
+                                              line)
+                                            (compiler-backend-peephole-record-end
+                                              line)
+                                            k))
+                                        delta)]
+                                    (begin
+                                      (if leaq?
+                                        ;; address taken: poison upward
+                                        (if win64-epilogue-leaq?
+                                          unit
+                                          (if (< c watermark)
+                                            (set! watermark c)
+                                            unit))
+                                        (begin
+                                          (set!
+                                            reads-lo
+                                            (if (<
+                                              read-count
+                                              (array-length reads-lo))
+                                              (begin
+                                                (array-set!
+                                                  reads-lo
+                                                  read-count
+                                                  c)
+                                                reads-lo)
+                                              (compiler-backend-sweep-i64-push
+                                                reads-lo
+                                                read-count
+                                                c)))
+                                          (set!
+                                            reads-hi
+                                            (if (<
+                                              read-count
+                                              (array-length reads-hi))
+                                              (begin
+                                                (array-set!
+                                                  reads-hi
+                                                  read-count
+                                                  (+ c w))
+                                                reads-hi)
+                                              (compiler-backend-sweep-i64-push
+                                                reads-hi
+                                                read-count
+                                                (+ c w))))
+                                          (set! read-count (+ read-count 1))))
+                                      (set! k (+ k 1)))))))
+                            ;; rsp motion
+                            (if (and rsp-dst? (not pop?))
+                              (if win64-epilogue-leaq?
+                                (begin
+                                  (set! delta (- 0 win64-epilogue-c))
+                                  (set! win64-tail true))
+                                (if tracked-rsp-write?
+                                  (if subq?
                                     (set!
-                                      reads-lo
-                                      (compiler-backend-sweep-i64-push
-                                        reads-lo
-                                        read-count
-                                        c))
+                                      delta
+                                      (+ delta (struct-get line value)))
                                     (set!
-                                      reads-hi
-                                      (compiler-backend-sweep-i64-push
-                                        reads-hi
-                                        read-count
-                                        (+ c w)))
-                                    (set! read-count (+ read-count 1))))
-                                (set! k (+ k 1))))))))
-                    ;; rsp motion
-                    (if (and rsp-dst? (not pop?))
-                      (if win64-epilogue-leaq?
-                        (begin
-                          (set! delta (- 0 win64-epilogue-c))
-                          (set! win64-tail true))
-                        (if tracked-rsp-write?
-                          (if subq?
-                            (set! delta (+ delta (struct-get line value)))
-                            (set! delta (- delta (struct-get line value))))
-                          (set! sweepable false)))
-                      unit)
-                    (if push?
-                      (set! delta (+ delta 8))
-                      unit)
-                    (if pop?
-                      (set! delta (- delta 8))
-                      unit)))])
+                                      delta
+                                      (- delta (struct-get line value))))
+                                  (set! sweepable false)))
+                              unit)
+                            (if push?
+                              (set! delta (+ delta 8))
+                              unit)
+                            (if pop?
+                              (set! delta (- delta 8))
+                              unit)))))))])
             (set! i (+ i 1)))))
       ;; ---- pass 2 ----
+      ;; Coverage window over the eligibility windows (the em window's
+      ;; emptiness convention is em-lo=8 > em-hi=0; the var window is empty
+      ;; when slot-vars=0, i.e. lo > hi). whi gets +8 so a candidate at
+      ;; exactly c == hi has its whole [hi, hi+8) store covered. Both windows
+      ;; empty means no candidate can be eligible; a window wider than the
+      ;; cap keeps the exact per-candidate read scan.
       (if (or (not sweepable) (= cand-count 0))
         unit
         (let
-          [k : i64 0]
-          [swept : i64 0]
+          [em-nonempty? : bool (<= em-lo em-hi)]
+          [var-nonempty? : bool (<= lo hi)]
+          [wlo : i64
+            (if (and em-nonempty? (< em-lo lo))
+              em-lo
+              lo)]
+          [whi : i64
+            (+
+              (if (> hi em-hi)
+                hi
+                em-hi)
+              8)]
+          [words : i64 (/ (+ (- whi wlo) 63) 64)]
+          [use-bitmap? : bool
+            (and
+              (or em-nonempty? var-nonempty?)
+              (<= words compiler-backend-sweep-coverage-max-words))]
           (begin
-            (while (< k cand-count)
-              (let
-                [c : i64 (array-ref cand-off k)]
-                [pos : i64 (array-ref cand-pos k)]
-                (begin
-                  (if (and
-                    (or
-                      (and (>= c lo) (<= c hi) (= (bit-and (- c lo) 7) 0))
-                      (and
-                        (>= c em-lo)
-                        (<= c em-hi)
-                        (= (bit-and (- c em-lo) 7) 0)))
-                    (< c watermark))
-                    (let
-                      [r : i64 0]
-                      [read : bool false]
-                      (begin
-                        (while (and (not read) (< r read-count))
-                          (begin
-                            (if (and
-                              (< (array-ref reads-lo r) (+ c 8))
-                              (< c (array-ref reads-hi r)))
-                              (set! read true)
-                              unit)
-                            (set! r (+ r 1))))
-                        (if read
-                          unit
-                          (begin
-                            (array-set! live pos 0)
-                            (set! swept (+ swept 1))))))
-                    unit)
-                  (set! k (+ k 1)))))
-            (if (> swept 0)
+            (if use-bitmap?
               (begin
-                (set!
-                  compiler-backend-sweep-swept-stores
-                  (+ compiler-backend-sweep-swept-stores swept))
-                (set!
-                  compiler-backend-sweep-swept-funcs
-                  (+ compiler-backend-sweep-swept-funcs 1)))
-              unit)))))))
+                (let
+                  [w : i64 0]
+                  (while (< w words)
+                    (begin
+                      (array-set! compiler-backend-sweep-coverage-bits w 0)
+                      (set! w (+ w 1)))))
+                (let
+                  [r : i64 0]
+                  (while (< r read-count)
+                    (let
+                      [a : i64
+                        (-
+                          (if (> (array-ref reads-lo r) wlo)
+                            (array-ref reads-lo r)
+                            wlo)
+                          wlo)]
+                      [b : i64
+                        (-
+                          (if (< (array-ref reads-hi r) whi)
+                            (array-ref reads-hi r)
+                            whi)
+                          wlo)]
+                      (begin
+                        (if (< a b)
+                          (let
+                            [aw : i64 (shr a 6)]
+                            [bw : i64 (shr (- b 1) 6)]
+                            [w : i64 aw]
+                            (while (<= w bw)
+                              (let
+                                [lo-bit : i64
+                                  (if (= w aw)
+                                    (bit-and a 63)
+                                    0)]
+                                [hi-bit : i64
+                                  (if (= w bw)
+                                    (bit-and (- b 1) 63)
+                                    63)]
+                                [width : i64 (+ (- hi-bit lo-bit) 1)]
+                                [mask : i64
+                                  (if (= width 64)
+                                    -1
+                                    (shl (- (shl 1 width) 1) lo-bit))]
+                                (begin
+                                  (array-set!
+                                    compiler-backend-sweep-coverage-bits
+                                    w
+                                    (bit-or
+                                      (array-ref
+                                        compiler-backend-sweep-coverage-bits
+                                        w)
+                                      mask))
+                                  (set! w (+ w 1))))))
+                          unit)
+                        (set! r (+ r 1)))))))
+              unit)
+            (let
+              [k : i64 0]
+              [swept : i64 0]
+              (begin
+                (while (< k cand-count)
+                  (let
+                    [c : i64 (array-ref cand-off k)]
+                    [pos : i64 (array-ref cand-pos k)]
+                    (begin
+                      (if (and
+                        (or
+                          (and (>= c lo) (<= c hi) (= (bit-and (- c lo) 7) 0))
+                          (and
+                            (>= c em-lo)
+                            (<= c em-hi)
+                            (= (bit-and (- c em-lo) 7) 0)))
+                        (< c watermark))
+                        (let
+                          [read : bool
+                            (if use-bitmap?
+                              (let
+                                [a : i64 (- c wlo)]
+                                [aw : i64 (shr a 6)]
+                                [bw : i64 (shr (+ a 7) 6)]
+                                [w : i64 aw]
+                                [hit : bool false]
+                                (begin
+                                  (while (and (not hit) (<= w bw))
+                                    (let
+                                      [lo-bit : i64
+                                        (if (= w aw)
+                                          (bit-and a 63)
+                                          0)]
+                                      [hi-bit : i64
+                                        (if (= w bw)
+                                          (bit-and (+ a 7) 63)
+                                          63)]
+                                      [width : i64 (+ (- hi-bit lo-bit) 1)]
+                                      [mask : i64
+                                        (if (= width 64)
+                                          -1
+                                          (shl (- (shl 1 width) 1) lo-bit))]
+                                      (begin
+                                        (if (not
+                                          (=
+                                            (bit-and
+                                              (array-ref
+                                                compiler-backend-sweep-coverage-bits
+                                                w)
+                                              mask)
+                                            0))
+                                          (set! hit true)
+                                          unit)
+                                        (set! w (+ w 1)))))
+                                  hit))
+                              (let
+                                [r : i64 0]
+                                [hit : bool false]
+                                (begin
+                                  (while (and (not hit) (< r read-count))
+                                    (begin
+                                      (if (and
+                                        (< (array-ref reads-lo r) (+ c 8))
+                                        (< c (array-ref reads-hi r)))
+                                        (set! hit true)
+                                        unit)
+                                      (set! r (+ r 1))))
+                                  hit)))]
+                          (if read
+                            unit
+                            (begin
+                              (array-set! live pos 0)
+                              (set! swept (+ swept 1)))))
+                        unit)
+                      (set! k (+ k 1)))))
+                (if (> swept 0)
+                  (begin
+                    (set!
+                      compiler-backend-sweep-swept-stores
+                      (+ compiler-backend-sweep-swept-stores swept))
+                    (set!
+                      compiler-backend-sweep-swept-funcs
+                      (+ compiler-backend-sweep-swept-funcs 1)))
+                  unit)))))))))
 
 (define (compiler-backend-borrowed-copy-to-owned
   [buf : (text_buf_borrowed.TextBufBorrowed asm)]) : text_buf.TextBuf
@@ -61191,7 +61409,8 @@
 ;; forms place them mid-operand where the end-anchored memory-base probe
 ;; cannot see them): bit 1 = has "(%rbp)", bit 2 = has "(%rsp)". Replaces up
 ;; to three separate substring searches per operand with the same existence
-;; answers.
+;; answers. Jumps between '(' bytes with memchr instead of stepping every
+;; byte (the same form compiler-backend-rsp-rebase-find-rbp uses).
 (define (compiler-backend-peephole-stack-parens-range
   [data : (Ptr u8)]
   [start : i64]
@@ -61199,23 +61418,35 @@
   (let
     [i : i64 start]
     [bits : i64 0]
+    [done : bool false]
     (begin
-      (while (and (< bits 3) (<= (+ i 6) end))
-        (begin
-          (if (and
-            (= (compiler-backend-peephole-byte-at data i) 40)
-            (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
-            (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
-            (= (compiler-backend-peephole-byte-at data (+ i 4)) 112)
-            (= (compiler-backend-peephole-byte-at data (+ i 5)) 41))
+      (while (and (not done) (< bits 3) (<= (+ i 6) end))
+        (let
+          [offset : i64
+            (unsafe
+              (compiler-backend-runtime-index-of-byte
+                (ptr-offset data i)
+                (- end i)
+                (cast 40 : u8)))]
+          (if (or (< offset 0) (> (+ i offset 6) end))
+            (set! done true)
             (let
-              [b3 : i64 (compiler-backend-peephole-byte-at data (+ i 3))]
-              (cond
-                [(= b3 98) (set! bits (bit-or bits 1))]
-                [(= b3 115) (set! bits (bit-or bits 2))]
-                [else unit]))
-            unit)
-          (set! i (+ i 1))))
+              [pos : i64 (+ i offset)]
+              (begin
+                (if (and
+                  (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 5)) 41))
+                  (let
+                    [b3 : i64
+                      (compiler-backend-peephole-byte-at data (+ pos 3))]
+                    (cond
+                      [(= b3 98) (set! bits (bit-or bits 1))]
+                      [(= b3 115) (set! bits (bit-or bits 2))]
+                      [else unit]))
+                  unit)
+                (set! i (+ pos 1)))))))
       bits)))
 
 (define compiler-backend-peephole-op-register-flag : i64
@@ -62191,6 +62422,14 @@
 (define compiler-backend-peephole-record-mem-count-shift : i64
   32)
 
+;; Sweep-inert marker, the first free low-half bit after the width field: set
+;; at record build when the line is an instruction with no sweep flags, no
+;; candidate, no epilogue effect and no `(%rsp)` memory references. By the
+;; classifier's construction such a record has no rsp motion, read, candidate
+;; or epilogue effect in the region sweep; only Win64-tail poisoning remains.
+(define compiler-backend-peephole-record-sweep-inert-bit : i64
+  67108864)
+
 (define (compiler-backend-peephole-record-start
   [rec : CompilerBackendPeepholeLineRecord]) : i64
   (bit-and (struct-get rec span) compiler-backend-peephole-record-span-mask))
@@ -62283,12 +62522,7 @@
     [end : i64 (compiler-backend-peephole-desc-end line)]
     [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
     [sweep : CompilerBackendPeepholeLineSweepSummary
-      (compiler-backend-peephole-line-sweep-summary
-        data
-        end
-        ms
-        (compiler-backend-peephole-desc-mnemonic-len line)
-        (compiler-backend-peephole-desc-label? line))]
+      (compiler-backend-peephole-line-sweep-summary line)]
     (CompilerBackendPeepholeLineRecord
       (struct-get line src)
       (bit-or
@@ -62313,12 +62547,25 @@
             compiler-backend-peephole-record-globl-bit
             0)
           (bit-or
-            (shl
-              (struct-get sweep width)
-              compiler-backend-peephole-record-width-shift)
-            (shl
-              (struct-get sweep mem-count)
-              compiler-backend-peephole-record-mem-count-shift))))
+            (if (and
+              (=
+                (struct-get sweep kind)
+                compiler-backend-sweep-line-kind-instruction)
+              (= (struct-get sweep flags) 0)
+              (= (struct-get sweep cand) compiler-backend-sweep-no-candidate)
+              (=
+                (struct-get sweep epilogue)
+                compiler-backend-sweep-no-candidate)
+              (= (struct-get sweep mem-count) 0))
+              compiler-backend-peephole-record-sweep-inert-bit
+              0)
+            (bit-or
+              (shl
+                (struct-get sweep width)
+                compiler-backend-peephole-record-width-shift)
+              (shl
+                (struct-get sweep mem-count)
+                compiler-backend-peephole-record-mem-count-shift)))))
       (struct-get sweep cand)
       (struct-get sweep epilogue)
       (if (compiler-backend-sweep-line-flag?

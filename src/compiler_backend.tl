@@ -61791,8 +61791,10 @@
                 (and (= mlen 3) (= b0 111) (= b1 114))
                 (and
                   (= mlen 4)
-                  ;; mov{l,w,b}; movq stays on the dedicated move path.
+                  ;; mov{l,w,b}; movq stays on the dedicated move path. leaq
+                  ;; is the most common mlen-4 mnemonic, so test it first.
                   (or
+                    (= base3 6382956)
                     (and (not (= suffix 113)) (= base3 7761773))
                     (= base3 6579297)
                     (= base3 6452595)
@@ -61805,8 +61807,7 @@
                     (= base3 6776174)
                     (= base3 7630702)
                     (= base3 6516329)
-                    (= base3 6514020)
-                    (= base3 6382956))))))]))))
+                    (= base3 6514020))))))]))))
 
 (define (compiler-backend-peephole-range-mentions-r10-data?
   [data : (Ptr u8)]
@@ -62152,8 +62153,20 @@
         [operand-start : i64 (+ ms mlen)]
         [has-operands : bool false]
         [comma : i64 -1]
-        [movq-prefix? : bool
-          (compiler-backend-peephole-movq-prefix-at-range? data start end)]
+        [movq-prefix?
+          : bool
+          ;; Derive from facts already in hand: ms is the first non-space
+          ;; byte, so ms=start+4 iff exactly four leading spaces; mlen=4 with
+          ;; ms+4<end iff memchr found ' ' at exactly ms+4. With the four
+          ;; mnemonic bytes this is exactly "    movq ".
+          (and
+            (= mlen 4)
+            (= ms (+ start 4))
+            (< (+ ms 4) end)
+            (= (compiler-backend-peephole-byte-at data ms) 109)
+            (= (compiler-backend-peephole-byte-at data (+ ms 1)) 111)
+            (= (compiler-backend-peephole-byte-at data (+ ms 2)) 118)
+            (= (compiler-backend-peephole-byte-at data (+ ms 3)) 113))]
         [zext? : bool (compiler-backend-peephole-mnemonic-zext? data ms mlen)]
         (begin
           ;; Only move/zext pair rules consume split operands. Most assembly
@@ -62161,6 +62174,11 @@
           ;; their full text looking for a comma that no rule will read.
           (if (or movq-prefix? zext?)
             (begin
+              ;; token-len already proved byte[operand-start] is a space when
+              ;; operand-start<end, so the first skip iteration is free.
+              (if (< operand-start end)
+                (set! operand-start (+ operand-start 1))
+                unit)
               (while (and
                 (< operand-start end)
                 (= (compiler-backend-peephole-byte-at data operand-start) 32))
@@ -62199,6 +62217,9 @@
                 [is-label true]
                 [(= (compiler-backend-peephole-byte-at data ms) 46) false]
                 [(= (compiler-backend-peephole-byte-at data ms) 106) false]
+                ;; A movq line fails cmp-or-test ('m' is not 'c'/'t') and
+                ;; vector-preserves ('m' is not 'v'), so it clears.
+                [movq-prefix? true]
                 [cmp-or-test? false]
                 [(compiler-backend-peephole-vector-preserves-gp-owners?
                     data
@@ -62317,7 +62338,7 @@
                       call?
                       (compiler-backend-peephole-line-noreturn-abort?
                         data
-                        start
+                        ms
                         end))
                       compiler-backend-peephole-desc-flag-noreturn-abort
                       0))

@@ -62,7 +62,7 @@
 
 (defenum CompilerLoadPackageSpmdInterface
   (Unavailable)
-  (Available TlciSpmdCallableList))
+  (Available TlciSpmdCallables))
 
 (defenum ResultCompilerLoadPackageSpmdInterface
   (Ok CompilerLoadPackageSpmdInterface)
@@ -10131,65 +10131,54 @@
                     (CompilerLoadPackageSpmdInterface.Available
                       (struct-get metadata spmd-callables)))))])]))))
 
-(define (compiler-load-imported-spmd-specializations-into
-  [items : TlciSpmdSpecializationList]
-  [out : (&mut out AstImportedSpmdSpecializationList)]) : unit
-  (match items
-    [(TlciSpmdSpecializationList.Nil) unit]
-    [(TlciSpmdSpecializationList.Cons item rest)
-      (begin
-        (ast-imported-spmd-specialization-list-push
-          out
-          (AstImportedSpmdSpecialization
-            (ci.intern-generated-canonical-name (struct-get item abi))
-            (ci.intern-generated-canonical-name (struct-get item backend))
-            (struct-get item lanes)
-            (ci.intern-generated-canonical-name (struct-get item args))
-            (ci.intern-generated-canonical-name (struct-get item result))
-            (struct-get item index-param)
-            (ci.intern-generated-canonical-name (struct-get item symbol))))
-        (compiler-load-imported-spmd-specializations-into (box-get rest) out))]))
-
 (define (compiler-load-imported-spmd-specializations
-  [items : TlciSpmdSpecializationList]) : AstImportedSpmdSpecializationList
+  [items : TlciSpmdSpecializations]) : AstImportedSpmdSpecializationList
   (let
     [out : AstImportedSpmdSpecializationList
       (ast-imported-spmd-specialization-list-new)]
+    [count : i64 (tlci-spmd-specializations-len items)]
+    [index : i64 0]
     (begin
-      (compiler-load-imported-spmd-specializations-into items (&mut out))
+      (while (< index count)
+        (let
+          [item : TlciSpmdSpecialization
+            (tlci-spmd-specializations-ref items index)]
+          (begin
+            (ast-imported-spmd-specialization-list-push
+              (&mut out)
+              (AstImportedSpmdSpecialization
+                (ci.intern-generated-canonical-name (struct-get item abi))
+                (ci.intern-generated-canonical-name (struct-get item backend))
+                (struct-get item lanes)
+                (ci.intern-generated-canonical-name (struct-get item args))
+                (ci.intern-generated-canonical-name (struct-get item result))
+                (struct-get item index-param)
+                (ci.intern-generated-canonical-name (struct-get item symbol))))
+            (set! index (+ index 1)))))
       out)))
-
-(define (compiler-load-imported-spmd-callables-for-into
-  [canonical-name : String]
-  [items : TlciSpmdCallableList]
-  [out : (&mut out AstImportedSpmdCallableList)]) : unit
-  (match items
-    [(TlciSpmdCallableList.Nil) unit]
-    [(TlciSpmdCallableList.Cons item rest)
-      (begin
-        (if (string.eq (struct-get item name) canonical-name)
-          (ast-imported-spmd-callable-list-push
-            out
-            (AstImportedSpmdCallable
-              (ci.intern-generated-canonical-name (struct-get item signature))
-              (compiler-load-imported-spmd-specializations
-                (struct-get item specializations))))
-          unit)
-        (compiler-load-imported-spmd-callables-for-into
-          canonical-name
-          (box-get rest)
-          out))]))
 
 (define (compiler-load-imported-spmd-callables-for
   [canonical-name : String]
-  [items : TlciSpmdCallableList]) : AstImportedSpmdCallableList
+  [items : TlciSpmdCallables]) : AstImportedSpmdCallableList
   (let
     [out : AstImportedSpmdCallableList (ast-imported-spmd-callable-list-new)]
+    [count : i64 (tlci-spmd-callables-len items)]
+    [index : i64 0]
     (begin
-      (compiler-load-imported-spmd-callables-for-into
-        canonical-name
-        items
-        (&mut out))
+      (while (< index count)
+        (let
+          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+          (begin
+            (if (string.eq (struct-get item name) canonical-name)
+              (ast-imported-spmd-callable-list-push
+                (&mut out)
+                (AstImportedSpmdCallable
+                  (ci.intern-generated-canonical-name
+                    (struct-get item signature))
+                  (compiler-load-imported-spmd-specializations
+                    (struct-get item specializations))))
+              unit)
+            (set! index (+ index 1)))))
       out)))
 
 (define (compiler-load-imported-spmd-metadata
@@ -15962,18 +15951,16 @@
       (tlci-make-spmd-callable
         "spmd_fixture/helper"
         "(-> i64 i64 i64)"
-        (tlci-spmd-specialization-list-cons
-          specialization
-          (tlci-spmd-specialization-list-empty)))]
+        (tlci-spmd-specializations-push
+          (tlci-spmd-specializations-empty)
+          specialization))]
     [metadata : AstImportedSpmdMetadata
       (compiler-load-imported-spmd-metadata
         "spmd_fixture"
         "spmd_fixture"
         (intern "helper")
         (CompilerLoadPackageSpmdInterface.Available
-          (tlci-spmd-callable-list-cons
-            callable
-            (tlci-spmd-callable-list-empty))))]
+          (tlci-spmd-callables-push (tlci-spmd-callables-empty) callable)))]
     (match metadata
       [(AstImportedSpmdMetadata.No) false]
       [(AstImportedSpmdMetadata.Package canonical-name callables-box)

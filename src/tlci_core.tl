@@ -8,6 +8,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.vector)
 (import lex as lexer)
 (import read as reader)
 
@@ -29,18 +30,22 @@
   (index-param i64)
   (symbol String))
 
-(defenum TlciSpmdSpecializationList
-  (Nil)
-  (Cons TlciSpmdSpecialization (Box TlciSpmdSpecializationList)))
+(import (vector.vector TlciSpmdSpecialization core) as tlci_specialization_vec)
+
+;: Specializations of one helper, in metadata order.
+(defstruct TlciSpmdSpecializations
+  (items tlci_specialization_vec.Vec))
 
 (defstruct TlciSpmdCallable
   (name String)
   (signature String)
-  (specializations TlciSpmdSpecializationList))
+  (specializations TlciSpmdSpecializations))
 
-(defenum TlciSpmdCallableList
-  (Nil)
-  (Cons TlciSpmdCallable (Box TlciSpmdCallableList)))
+(import (vector.vector TlciSpmdCallable core) as tlci_callable_vec)
+
+;: Helper records of one metadata block, in metadata order.
+(defstruct TlciSpmdCallables
+  (items tlci_callable_vec.Vec))
 
 (define (tlci-make-spmd-specialization
   [abi : String]
@@ -52,44 +57,76 @@
   [symbol : String]) : TlciSpmdSpecialization
   (TlciSpmdSpecialization abi backend lanes args result index-param symbol))
 
-(define (tlci-spmd-specialization-list-empty) : TlciSpmdSpecializationList
-  TlciSpmdSpecializationList.Nil)
+(define (tlci-spmd-specializations-with-capacity [capacity : i64]) : TlciSpmdSpecializations
+  (TlciSpmdSpecializations (tlci_specialization_vec.with-capacity capacity)))
 
-(define (tlci-spmd-specialization-list-cons
-  [item : TlciSpmdSpecialization]
-  [rest : TlciSpmdSpecializationList]) : TlciSpmdSpecializationList
-  (TlciSpmdSpecializationList.Cons item (box rest)))
+(define (tlci-spmd-specializations-empty) : TlciSpmdSpecializations
+  (tlci-spmd-specializations-with-capacity 0))
+
+(define (tlci-spmd-specializations-len [seq : TlciSpmdSpecializations]) : i64
+  (tlci_specialization_vec.len (& (struct-get seq items))))
+
+(define (tlci-spmd-specializations-ref
+  [seq : TlciSpmdSpecializations]
+  [index : i64]) : TlciSpmdSpecialization
+  (array-ref (tlci_specialization_vec.slots (& (struct-get seq items))) index))
+
+(define (tlci-spmd-specializations-push
+  [items : TlciSpmdSpecializations]
+  [item : TlciSpmdSpecialization]) : TlciSpmdSpecializations
+  (let
+    [values : tlci_specialization_vec.Vec (struct-get items items)]
+    (begin
+      (tlci_specialization_vec.push (&mut values) item)
+      (TlciSpmdSpecializations values))))
 
 (define (tlci-make-spmd-callable
   [name : String]
   [signature : String]
-  [specializations : TlciSpmdSpecializationList]) : TlciSpmdCallable
+  [specializations : TlciSpmdSpecializations]) : TlciSpmdCallable
   (TlciSpmdCallable name signature specializations))
 
-(define (tlci-spmd-callable-list-empty) : TlciSpmdCallableList
-  TlciSpmdCallableList.Nil)
+(define (tlci-spmd-callables-with-capacity [capacity : i64]) : TlciSpmdCallables
+  (TlciSpmdCallables (tlci_callable_vec.with-capacity capacity)))
 
-(define (tlci-spmd-callable-list-cons
-  [item : TlciSpmdCallable]
-  [rest : TlciSpmdCallableList]) : TlciSpmdCallableList
-  (TlciSpmdCallableList.Cons item (box rest)))
+(define (tlci-spmd-callables-empty) : TlciSpmdCallables
+  (tlci-spmd-callables-with-capacity 0))
+
+(define (tlci-spmd-callables-len [seq : TlciSpmdCallables]) : i64
+  (tlci_callable_vec.len (& (struct-get seq items))))
+
+(define (tlci-spmd-callables-ref [seq : TlciSpmdCallables] [index : i64]) : TlciSpmdCallable
+  (array-ref (tlci_callable_vec.slots (& (struct-get seq items))) index))
+
+(define (tlci-spmd-callables-push
+  [items : TlciSpmdCallables]
+  [item : TlciSpmdCallable]) : TlciSpmdCallables
+  (let
+    [values : tlci_callable_vec.Vec (struct-get items items)]
+    (begin
+      (tlci_callable_vec.push (&mut values) item)
+      (TlciSpmdCallables values))))
 
 (defstruct TlciMetadata
   (version String)
   (package-name String)
   (package-version String)
-  (spmd-callables TlciSpmdCallableList))
+  (spmd-callables TlciSpmdCallables))
 
 (define (tlci-make-metadata
   [version : String]
   [package-name : String]
   [package-version : String]) : TlciMetadata
-  (TlciMetadata version package-name package-version TlciSpmdCallableList.Nil))
+  (TlciMetadata
+    version
+    package-name
+    package-version
+    (tlci-spmd-callables-empty)))
 
 (define (tlci-make-metadata-v2
   [package-name : String]
   [package-version : String]
-  [spmd-callables : TlciSpmdCallableList]) : TlciMetadata
+  [spmd-callables : TlciSpmdCallables]) : TlciMetadata
   (TlciMetadata "v2" package-name package-version spmd-callables))
 
 (defstruct TlciImage
@@ -146,8 +183,8 @@
   (Ok TlciSpmdCallable)
   (Err String))
 
-(defenum ResultTlciSpmdCallableList
-  (Ok TlciSpmdCallableList)
+(defenum ResultTlciSpmdCallables
+  (Ok TlciSpmdCallables)
   (Err String))
 
 (defenum ResultTlciMetadata
@@ -1905,29 +1942,52 @@
         (struct-get right signature)))))
 
 (define (tlci-spmd-specializations-validation-error
-  [items : TlciSpmdSpecializationList]
+  [items : TlciSpmdSpecializations]
   [param-count : i64]) : String
-  (match items
-    [(TlciSpmdSpecializationList.Nil) ""]
-    [(TlciSpmdSpecializationList.Cons item rest)
-      (let
-        [item-error : String
-          (tlci-spmd-specialization-validation-error item param-count)]
-        (if (not (string.eq item-error ""))
-          item-error
-          (match (box-get rest)
-            [(TlciSpmdSpecializationList.Nil) ""]
-            [(TlciSpmdSpecializationList.Cons next _)
-              (let
-                [order : i64 (tlci-spmd-specialization-compare item next)]
-                (cond
-                  [(= order 0) "tlci metadata: duplicate specialization record"]
-                  [(> order 0)
-                    "tlci metadata: specialization records are not in stable order"]
-                  [else
-                    (tlci-spmd-specializations-validation-error
-                      (box-get rest)
-                      param-count)]))])))]))
+  (let
+    [count : i64 (tlci-spmd-specializations-len items)]
+    [index : i64 0]
+    ;; A separate stop flag keeps `error` unborrowed at the loop head, so the
+    ;; first failing record can be moved into it.
+    [failed : bool false]
+    [error : String ""]
+    (begin
+      (while (and (not failed) (< index count))
+        (let
+          [item : TlciSpmdSpecialization
+            (tlci-spmd-specializations-ref items index)]
+          [item-error : String
+            (tlci-spmd-specialization-validation-error item param-count)]
+          [item-ok : bool (string.eq item-error "")]
+          (begin
+            (cond
+              [(not item-ok)
+                (begin
+                  (set! failed true)
+                  (set! error item-error))]
+              [(>= (+ index 1) count) unit]
+              [else
+                (let
+                  [order : i64
+                    (tlci-spmd-specialization-compare
+                      item
+                      (tlci-spmd-specializations-ref items (+ index 1)))]
+                  (cond
+                    [(= order 0)
+                      (begin
+                        (set! failed true)
+                        (set!
+                          error
+                          "tlci metadata: duplicate specialization record"))]
+                    [(> order 0)
+                      (begin
+                        (set! failed true)
+                        (set!
+                          error
+                          "tlci metadata: specialization records are not in stable order"))]
+                    [else unit]))])
+            (set! index (+ index 1)))))
+      error)))
 
 (define (tlci-spmd-callable-validation-error [callable : TlciSpmdCallable]) : String
   (let
@@ -1940,53 +2000,55 @@
         "tlci metadata: helper signature must not be empty"]
       [(< param-count 0)
         "tlci metadata: helper signature must be a function signature"]
-      [(match (struct-get callable specializations)
-          [(TlciSpmdSpecializationList.Nil) true]
-          [_ false])
+      [(=
+          (tlci-spmd-specializations-len (struct-get callable specializations))
+          0)
         "tlci metadata: helper requires at least one specialization"]
       [else
         (tlci-spmd-specializations-validation-error
           (struct-get callable specializations)
           param-count)])))
 
-(define (tlci-spmd-callables-validation-error [items : TlciSpmdCallableList]) : String
-  (match items
-    [(TlciSpmdCallableList.Nil) ""]
-    [(TlciSpmdCallableList.Cons item rest)
-      (let
-        [item-error : String (tlci-spmd-callable-validation-error item)]
-        (if (not (string.eq item-error ""))
-          item-error
-          (match (box-get rest)
-            [(TlciSpmdCallableList.Nil) ""]
-            [(TlciSpmdCallableList.Cons next _)
-              (let
-                [order : i64 (tlci-spmd-callable-compare item next)]
-                (cond
-                  [(= order 0) "tlci metadata: duplicate helper record"]
-                  [(> order 0)
-                    "tlci metadata: helper records are not in stable order"]
-                  [else (tlci-spmd-callables-validation-error (box-get rest))]))])))]))
-
-(define (tlci-spmd-specializations-reverse-onto
-  [items : TlciSpmdSpecializationList]
-  [out : TlciSpmdSpecializationList]) : TlciSpmdSpecializationList
-  (match items
-    [(TlciSpmdSpecializationList.Nil) out]
-    [(TlciSpmdSpecializationList.Cons item rest)
-      (tlci-spmd-specializations-reverse-onto
-        (box-get rest)
-        (TlciSpmdSpecializationList.Cons item (box out)))]))
-
-(define (tlci-spmd-callables-reverse-onto
-  [items : TlciSpmdCallableList]
-  [out : TlciSpmdCallableList]) : TlciSpmdCallableList
-  (match items
-    [(TlciSpmdCallableList.Nil) out]
-    [(TlciSpmdCallableList.Cons item rest)
-      (tlci-spmd-callables-reverse-onto
-        (box-get rest)
-        (TlciSpmdCallableList.Cons item (box out)))]))
+(define (tlci-spmd-callables-validation-error [items : TlciSpmdCallables]) : String
+  (let
+    [count : i64 (tlci-spmd-callables-len items)]
+    [index : i64 0]
+    ;; Same stop flag as the specialization walk above.
+    [failed : bool false]
+    [error : String ""]
+    (begin
+      (while (and (not failed) (< index count))
+        (let
+          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+          [item-error : String (tlci-spmd-callable-validation-error item)]
+          [item-ok : bool (string.eq item-error "")]
+          (begin
+            (cond
+              [(not item-ok)
+                (begin
+                  (set! failed true)
+                  (set! error item-error))]
+              [(>= (+ index 1) count) unit]
+              [else
+                (let
+                  [order : i64
+                    (tlci-spmd-callable-compare
+                      item
+                      (tlci-spmd-callables-ref items (+ index 1)))]
+                  (cond
+                    [(= order 0)
+                      (begin
+                        (set! failed true)
+                        (set! error "tlci metadata: duplicate helper record"))]
+                    [(> order 0)
+                      (begin
+                        (set! failed true)
+                        (set!
+                          error
+                          "tlci metadata: helper records are not in stable order"))]
+                    [else unit]))])
+            (set! index (+ index 1)))))
+      error)))
 
 (define (tlci-spmd-specialization-fields
   [fields : reader.Sexpr]
@@ -2262,7 +2324,7 @@
   [has-name : bool]
   [signature : String]
   [has-signature : bool]
-  [specializations-rev : TlciSpmdSpecializationList]) : ResultTlciSpmdCallable
+  [specializations : TlciSpmdSpecializations]) : ResultTlciSpmdCallable
   (match (reader.sexpr-view fields)
     [(reader.SexprView.Nil)
       (cond
@@ -2274,12 +2336,7 @@
             "tlci metadata: helper missing required field `signature`")]
         [else
           (ResultTlciSpmdCallable.Ok
-            (TlciSpmdCallable
-              name
-              signature
-              (tlci-spmd-specializations-reverse-onto
-                specializations-rev
-                TlciSpmdSpecializationList.Nil)))])]
+            (TlciSpmdCallable name signature specializations))])]
     [(reader.SexprView.Cons field rest)
       (match (reader.sexpr-view field)
         [(reader.SexprView.Cons fhead ftail)
@@ -2302,7 +2359,7 @@
                           true
                           signature
                           has-signature
-                          specializations-rev)]))]
+                          specializations)]))]
                 [(string.eq (tlci-symbol-text fname) "signature")
                   (if has-signature
                     (ResultTlciSpmdCallable.Err
@@ -2319,7 +2376,7 @@
                           has-name
                           value
                           true
-                          specializations-rev)]))]
+                          specializations)]))]
                 [(string.eq (tlci-symbol-text fname) "specialization")
                   (match (tlci-spmd-specialization-from-field ftail)
                     [(ResultTlciSpmdSpecialization.Err message)
@@ -2331,9 +2388,9 @@
                         has-name
                         signature
                         has-signature
-                        (TlciSpmdSpecializationList.Cons
-                          specialization
-                          (box specializations-rev)))])]
+                        (tlci-spmd-specializations-push
+                          specializations
+                          specialization))])]
                 [else
                   (ResultTlciSpmdCallable.Err
                     (str_cat.str-cat
@@ -2355,13 +2412,18 @@
       (match (reader.sexpr-view head)
         [(reader.SexprView.Sym name)
           (if (string.eq (tlci-symbol-text name) "helper")
-            (tlci-spmd-helper-fields
-              rest
-              ""
-              false
-              ""
-              false
-              TlciSpmdSpecializationList.Nil)
+            (let
+              [field-count : i64 (tlci-sexpr-list-length rest)]
+              (tlci-spmd-helper-fields
+                rest
+                ""
+                false
+                ""
+                false
+                (tlci-spmd-specializations-with-capacity
+                  (if (< field-count 0)
+                    0
+                    field-count))))
             (ResultTlciSpmdCallable.Err
               (str_cat.str-cat
                 "tlci metadata: expected `helper`, got `"
@@ -2374,27 +2436,32 @@
       (ResultTlciSpmdCallable.Err
         "tlci metadata: spmd-callables entries must be helper lists")]))
 
-(define (tlci-spmd-callables-from-fields-rev
+(define (tlci-spmd-callables-from-fields
   [fields : reader.Sexpr]
-  [items-rev : TlciSpmdCallableList]) : ResultTlciSpmdCallableList
+  [items : TlciSpmdCallables]) : ResultTlciSpmdCallables
   (match (reader.sexpr-view fields)
-    [(reader.SexprView.Nil)
-      (ResultTlciSpmdCallableList.Ok
-        (tlci-spmd-callables-reverse-onto items-rev TlciSpmdCallableList.Nil))]
+    [(reader.SexprView.Nil) (ResultTlciSpmdCallables.Ok items)]
     [(reader.SexprView.Cons item rest)
       (match (tlci-spmd-helper-from-form item)
         [(ResultTlciSpmdCallable.Err message)
-          (ResultTlciSpmdCallableList.Err message)]
+          (ResultTlciSpmdCallables.Err message)]
         [(ResultTlciSpmdCallable.Ok callable)
-          (tlci-spmd-callables-from-fields-rev
+          (tlci-spmd-callables-from-fields
             rest
-            (TlciSpmdCallableList.Cons callable (box items-rev)))])]
+            (tlci-spmd-callables-push items callable))])]
     [_
-      (ResultTlciSpmdCallableList.Err
+      (ResultTlciSpmdCallables.Err
         "tlci metadata: spmd-callables must contain helper lists")]))
 
-(define (tlci-spmd-callables-from-field [fields : reader.Sexpr]) : ResultTlciSpmdCallableList
-  (tlci-spmd-callables-from-fields-rev fields TlciSpmdCallableList.Nil))
+(define (tlci-spmd-callables-from-field [fields : reader.Sexpr]) : ResultTlciSpmdCallables
+  (let
+    [field-count : i64 (tlci-sexpr-list-length fields)]
+    (tlci-spmd-callables-from-fields
+      fields
+      (tlci-spmd-callables-with-capacity
+        (if (< field-count 0)
+          0
+          field-count)))))
 
 (define (tlci-package-fields
   [fields : reader.Sexpr]
@@ -2423,7 +2490,7 @@
               tlci-metadata-version
               name
               version
-              TlciSpmdCallableList.Nil))])]
+              (tlci-spmd-callables-empty)))])]
     [(reader.SexprView.Cons field rest)
       (match (reader.sexpr-view field)
         [(reader.SexprView.Cons fhead ftail)
@@ -2473,7 +2540,7 @@
   [package-name : String]
   [package-version : String]
   [has-package : bool]
-  [spmd-callables : TlciSpmdCallableList]
+  [spmd-callables : TlciSpmdCallables]
   [has-spmd-callables : bool]) : ResultTlciMetadata
   (match (reader.sexpr-view fields)
     [(reader.SexprView.Nil)
@@ -2547,9 +2614,9 @@
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `spmd-callables`")
                     (match (tlci-spmd-callables-from-field ftail)
-                      [(ResultTlciSpmdCallableList.Err message)
+                      [(ResultTlciSpmdCallables.Err message)
                         (ResultTlciMetadata.Err message)]
-                      [(ResultTlciSpmdCallableList.Ok parsed)
+                      [(ResultTlciSpmdCallables.Ok parsed)
                         (tlci-metadata-fields
                           rest
                           version
@@ -2584,7 +2651,7 @@
               ""
               ""
               false
-              TlciSpmdCallableList.Nil
+              (tlci-spmd-callables-empty)
               false)
             (ResultTlciMetadata.Err
               (str_cat.str-cat
@@ -2639,64 +2706,85 @@
     (tlci-escape-string text)
     (tlci-quote-text)))
 
-(define (tlci-spmd-specializations-emit [items : TlciSpmdSpecializationList]) : String
-  (match items
-    [(TlciSpmdSpecializationList.Nil) ""]
-    [(TlciSpmdSpecializationList.Cons item rest)
-      (str_cat.str-cat
-        "    (specialization\n"
-        "      (abi "
-        (tlci-quote-string (struct-get item abi))
-        ")\n"
-        "      (backend "
-        (tlci-quote-string (struct-get item backend))
-        ")\n"
-        "      (lanes "
-        (string.int->string (struct-get item lanes))
-        ")\n"
-        "      (args "
-        (tlci-quote-string (struct-get item args))
-        ")\n"
-        "      (result "
-        (tlci-quote-string (struct-get item result))
-        ")\n"
-        "      (index-param "
-        (string.int->string (struct-get item index-param))
-        ")\n"
-        "      (symbol "
-        (tlci-quote-string (struct-get item symbol))
-        "))\n"
-        (tlci-spmd-specializations-emit (box-get rest)))]))
+(define (tlci-spmd-specializations-emit [items : TlciSpmdSpecializations]) : String
+  (let
+    [count : i64 (tlci-spmd-specializations-len items)]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index count)
+        (let
+          [item : TlciSpmdSpecialization
+            (tlci-spmd-specializations-ref items index)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                "    (specialization\n"
+                "      (abi "
+                (tlci-quote-string (struct-get item abi))
+                ")\n"
+                "      (backend "
+                (tlci-quote-string (struct-get item backend))
+                ")\n"
+                "      (lanes "
+                (string.int->string (struct-get item lanes))
+                ")\n"
+                "      (args "
+                (tlci-quote-string (struct-get item args))
+                ")\n"
+                "      (result "
+                (tlci-quote-string (struct-get item result))
+                ")\n"
+                "      (index-param "
+                (string.int->string (struct-get item index-param))
+                ")\n"
+                "      (symbol "
+                (tlci-quote-string (struct-get item symbol))
+                "))\n"))
+            (set! index (+ index 1)))))
+      out)))
 
-(define (tlci-spmd-callables-emit-items [items : TlciSpmdCallableList]) : String
-  (match items
-    [(TlciSpmdCallableList.Nil) ""]
-    [(TlciSpmdCallableList.Cons item rest)
-      (str_cat.str-cat
-        "  (helper\n"
-        "    (name "
-        (tlci-quote-string (struct-get item name))
-        ")\n"
-        "    (signature "
-        (tlci-quote-string (struct-get item signature))
-        ")\n"
-        (tlci-spmd-specializations-emit (struct-get item specializations))
-        "  )\n"
-        (tlci-spmd-callables-emit-items (box-get rest)))]))
+(define (tlci-spmd-callables-emit-items [items : TlciSpmdCallables]) : String
+  (let
+    [count : i64 (tlci-spmd-callables-len items)]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index count)
+        (let
+          [item : TlciSpmdCallable (tlci-spmd-callables-ref items index)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                "  (helper\n"
+                "    (name "
+                (tlci-quote-string (struct-get item name))
+                ")\n"
+                "    (signature "
+                (tlci-quote-string (struct-get item signature))
+                ")\n"
+                (tlci-spmd-specializations-emit
+                  (struct-get item specializations))
+                "  )\n"))
+            (set! index (+ index 1)))))
+      out)))
 
-(define (tlci-spmd-callables-emit [items : TlciSpmdCallableList]) : String
-  (match items
-    [(TlciSpmdCallableList.Nil) ""]
-    [_
-      (str_cat.str-cat
-        "  (spmd-callables\n"
-        (tlci-spmd-callables-emit-items items)
-        "  )\n")]))
+(define (tlci-spmd-callables-emit [items : TlciSpmdCallables]) : String
+  (if (= (tlci-spmd-callables-len items) 0)
+    ""
+    (str_cat.str-cat
+      "  (spmd-callables\n"
+      (tlci-spmd-callables-emit-items items)
+      "  )\n")))
 
 (define (tlci-metadata-validation-error [metadata : TlciMetadata]) : String
   (let
     [version : String (struct-get metadata version)]
-    [callables : TlciSpmdCallableList (struct-get metadata spmd-callables)]
+    [callables : TlciSpmdCallables (struct-get metadata spmd-callables)]
     (cond
       [(not
           (or
@@ -2709,9 +2797,7 @@
         "tlci metadata: package version must not be empty"]
       [(and
           (string.eq version tlci-metadata-version)
-          (match callables
-            [(TlciSpmdCallableList.Nil) false]
-            [_ true]))
+          (> (tlci-spmd-callables-len callables) 0))
         "tlci metadata: field `spmd-callables` requires version `v2`"]
       [else (tlci-spmd-callables-validation-error callables)])))
 
@@ -2727,15 +2813,10 @@
         (tlci-quote-string (struct-get metadata package-name))
         ") (version "
         (tlci-quote-string (struct-get metadata package-version)))]
-    [callables : TlciSpmdCallableList (struct-get metadata spmd-callables)]
-    (match callables
-      [(TlciSpmdCallableList.Nil) (str_cat.str-cat prefix ")))\n")]
-      [_
-        (str_cat.str-cat
-          prefix
-          "))\n"
-          (tlci-spmd-callables-emit callables)
-          ")\n")])))
+    [callables : TlciSpmdCallables (struct-get metadata spmd-callables)]
+    (if (= (tlci-spmd-callables-len callables) 0)
+      (str_cat.str-cat prefix ")))\n")
+      (str_cat.str-cat prefix "))\n" (tlci-spmd-callables-emit callables) ")\n"))))
 
 (define (tlci-section-offset [cursor : i64] [len : i64] [align : i64]) : i64
   (if (= len 0)
@@ -3200,24 +3281,24 @@
       (tlci-make-spmd-callable
         "demo.alpha"
         "(-> i64 i64)"
-        (tlci-spmd-specialization-list-cons
-          avx
-          (tlci-spmd-specialization-list-cons
-            scalar
-            (tlci-spmd-specialization-list-empty))))]
+        (tlci-spmd-specializations-push
+          (tlci-spmd-specializations-push
+            (tlci-spmd-specializations-with-capacity 2)
+            avx)
+          scalar))]
     [beta : TlciSpmdCallable
       (tlci-make-spmd-callable
         "demo.beta"
         "(-> i64 i64)"
-        (tlci-spmd-specialization-list-cons
-          future
-          (tlci-spmd-specialization-list-empty)))]
+        (tlci-spmd-specializations-push
+          (tlci-spmd-specializations-with-capacity 1)
+          future))]
     (tlci-make-metadata-v2
       "demo"
       "0.2.0"
-      (tlci-spmd-callable-list-cons
-        alpha
-        (tlci-spmd-callable-list-cons beta (tlci-spmd-callable-list-empty))))))
+      (tlci-spmd-callables-push
+        (tlci-spmd-callables-push (tlci-spmd-callables-with-capacity 2) alpha)
+        beta))))
 
 (define (tlci-test-bytes3 [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array u8)
   (let
@@ -3631,50 +3712,35 @@
           (string.eq (struct-get parsed package-name) "demo")
           (string.eq (struct-get parsed package-version) "0.1.0"))])))
 
-(define (tlci-test-v2-alpha-specializations?
-  [items : TlciSpmdSpecializationList]) : bool
-  (match items
-    [(TlciSpmdSpecializationList.Nil) false]
-    [(TlciSpmdSpecializationList.Cons first first-rest)
-      (match (box-get first-rest)
-        [(TlciSpmdSpecializationList.Nil) false]
-        [(TlciSpmdSpecializationList.Cons second second-rest)
-          (and
-            (string.eq (struct-get first backend) "avx512")
-            (= (struct-get first lanes) 8)
-            (string.eq (struct-get second backend) "scalar")
-            (match (box-get second-rest)
-              [(TlciSpmdSpecializationList.Nil) true]
-              [_ false]))])]))
-
-(define (tlci-test-v2-beta-specializations?
-  [items : TlciSpmdSpecializationList]) : bool
-  (match items
-    [(TlciSpmdSpecializationList.Nil) false]
-    [(TlciSpmdSpecializationList.Cons future rest)
+(define (tlci-test-v2-alpha-specializations? [items : TlciSpmdSpecializations]) : bool
+  (and
+    (= (tlci-spmd-specializations-len items) 2)
+    (let
+      [first : TlciSpmdSpecialization (tlci-spmd-specializations-ref items 0)]
+      [second : TlciSpmdSpecialization (tlci-spmd-specializations-ref items 1)]
       (and
-        (string.eq (struct-get future abi) "spmd-call-future")
-        (match (box-get rest)
-          [(TlciSpmdSpecializationList.Nil) true]
-          [_ false]))]))
+        (string.eq (struct-get first backend) "avx512")
+        (= (struct-get first lanes) 8)
+        (string.eq (struct-get second backend) "scalar")))))
 
-(define (tlci-test-v2-callables-shape? [items : TlciSpmdCallableList]) : bool
-  (match items
-    [(TlciSpmdCallableList.Nil) false]
-    [(TlciSpmdCallableList.Cons alpha rest)
-      (match (box-get rest)
-        [(TlciSpmdCallableList.Nil) false]
-        [(TlciSpmdCallableList.Cons beta beta-rest)
-          (and
-            (string.eq (struct-get alpha name) "demo.alpha")
-            (tlci-test-v2-alpha-specializations?
-              (struct-get alpha specializations))
-            (string.eq (struct-get beta name) "demo.beta")
-            (tlci-test-v2-beta-specializations?
-              (struct-get beta specializations))
-            (match (box-get beta-rest)
-              [(TlciSpmdCallableList.Nil) true]
-              [_ false]))])]))
+(define (tlci-test-v2-beta-specializations? [items : TlciSpmdSpecializations]) : bool
+  (and
+    (= (tlci-spmd-specializations-len items) 1)
+    (string.eq
+      (struct-get (tlci-spmd-specializations-ref items 0) abi)
+      "spmd-call-future")))
+
+(define (tlci-test-v2-callables-shape? [items : TlciSpmdCallables]) : bool
+  (and
+    (= (tlci-spmd-callables-len items) 2)
+    (let
+      [alpha : TlciSpmdCallable (tlci-spmd-callables-ref items 0)]
+      [beta : TlciSpmdCallable (tlci-spmd-callables-ref items 1)]
+      (and
+        (string.eq (struct-get alpha name) "demo.alpha")
+        (tlci-test-v2-alpha-specializations? (struct-get alpha specializations))
+        (string.eq (struct-get beta name) "demo.beta")
+        (tlci-test-v2-beta-specializations? (struct-get beta specializations))))))
 
 (define (tlci-test-v2-parsed-shape? [metadata : TlciMetadata]) : bool
   (and
@@ -3691,6 +3757,62 @@
         (and
           (tlci-test-v2-parsed-shape? parsed)
           (string.eq source (tlci-metadata-emit parsed)))])))
+
+(define (tlci-test-dense-spmd-sequences?) : bool
+  (let
+    [specializations : TlciSpmdSpecializations
+      (tlci-spmd-specializations-empty)]
+    [callables : TlciSpmdCallables (tlci-spmd-callables-empty)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      ;; Cross several vector growth boundaries for both metadata sequences.
+      (while (< index 33)
+        (begin
+          (set!
+            specializations
+            (tlci-spmd-specializations-push
+              specializations
+              (tlci-make-spmd-specialization
+                "spmd-call-v1"
+                "scalar"
+                (+ index 1)
+                "u"
+                "u"
+                -1
+                (str_cat.str-cat "specialization-" (string.int->string index)))))
+          (set!
+            callables
+            (tlci-spmd-callables-push
+              callables
+              (tlci-make-spmd-callable
+                (str_cat.str-cat "helper-" (string.int->string index))
+                "(-> i64 i64)"
+                (tlci-spmd-specializations-empty))))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index 33)
+        (let
+          [specialization : TlciSpmdSpecialization
+            (tlci-spmd-specializations-ref specializations index)]
+          [callable : TlciSpmdCallable
+            (tlci-spmd-callables-ref callables index)]
+          (begin
+            (unless
+              (and
+                (= (struct-get specialization lanes) (+ index 1))
+                (string.eq
+                  (struct-get specialization symbol)
+                  (str_cat.str-cat "specialization-" (string.int->string index)))
+                (string.eq
+                  (struct-get callable name)
+                  (str_cat.str-cat "helper-" (string.int->string index))))
+              (set! ok false))
+            (set! index (+ index 1)))))
+      (and
+        ok
+        (= (tlci-spmd-specializations-len specializations) 33)
+        (= (tlci-spmd-callables-len callables) 33)))))
 
 (define (tlci-test-v1-emission-unchanged?) : bool
   (string.eq
@@ -4097,6 +4219,7 @@
     [(not (tlci-test-aux-sections-ok?)) 14]
     [(not (tlci-test-aux-corruption-rejected?)) 15]
     [(not (tlci-test-producer-identity-admission-ok?)) 16]
+    [(not (tlci-test-dense-spmd-sequences?)) 17]
     [else 0]))
 
 (define (tlci-core-self-test-ok?) : bool

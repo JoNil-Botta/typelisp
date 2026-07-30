@@ -199,12 +199,12 @@
 (define (package-lock-field-string-value
   [ftail : reader.Sexpr]
   [fname : String]) : ResultPackageLockString
-  (match ftail
-    [(reader.Sexpr.Cons vhead vrest)
-      (match (box-get vhead)
-        [(reader.Sexpr.Str val-id)
-          (match (box-get vrest)
-            [(reader.Sexpr.Nil)
+  (match (reader.sexpr-view ftail)
+    [(reader.SexprView.Cons vhead vrest)
+      (match (reader.sexpr-view vhead)
+        [(reader.SexprView.Str val-id)
+          (match (reader.sexpr-view vrest)
+            [(reader.SexprView.Nil)
               (ResultPackageLockString.Ok (reader.symbol-text-for-id val-id))]
             [_
               (ResultPackageLockString.Err
@@ -242,16 +242,16 @@
     "package-lock: pin must be `(rev|tag|branch \"value\")`"))
 
 (define (package-lock-pin-form [form : reader.Sexpr]) : ResultPackageLockPin
-  (match form
-    [(reader.Sexpr.Cons kind-node kind-tail)
-      (match (box-get kind-node)
-        [(reader.Sexpr.Sym kind-name)
-          (match (box-get kind-tail)
-            [(reader.Sexpr.Cons value-node end)
-              (match (box-get end)
-                [(reader.Sexpr.Nil)
-                  (match (box-get value-node)
-                    [(reader.Sexpr.Str pin-value-id)
+  (match (reader.sexpr-view form)
+    [(reader.SexprView.Cons kind-node kind-tail)
+      (match (reader.sexpr-view kind-node)
+        [(reader.SexprView.Sym kind-name)
+          (match (reader.sexpr-view kind-tail)
+            [(reader.SexprView.Cons value-node end)
+              (match (reader.sexpr-view end)
+                [(reader.SexprView.Nil)
+                  (match (reader.sexpr-view value-node)
+                    [(reader.SexprView.Str pin-value-id)
                       (let
                         [pin-value : String
                           (reader.symbol-text-for-id pin-value-id)]
@@ -272,10 +272,10 @@
     [_ (package-lock-pin-shape-error)]))
 
 (define (package-lock-field-pin-value [ftail : reader.Sexpr]) : ResultPackageLockPin
-  (match ftail
-    [(reader.Sexpr.Cons pin-form after-pin)
-      (match (box-get after-pin)
-        [(reader.Sexpr.Nil) (package-lock-pin-form (box-get pin-form))]
+  (match (reader.sexpr-view ftail)
+    [(reader.SexprView.Cons pin-form after-pin)
+      (match (reader.sexpr-view after-pin)
+        [(reader.SexprView.Nil) (package-lock-pin-form pin-form)]
         [_
           (ResultPackageLockPin.Err "package-lock: field `pin` takes one value")])]
     [_ (ResultPackageLockPin.Err "package-lock: field `pin` takes one value")]))
@@ -291,8 +291,8 @@
   [has-pin : bool]
   [commit : String]
   [has-commit : bool]) : ResultPackageLockEntry
-  (match fields
-    [(reader.Sexpr.Nil)
+  (match (reader.sexpr-view fields)
+    [(reader.SexprView.Nil)
       (cond
         [(not has-alias)
           (ResultPackageLockEntry.Err
@@ -321,24 +321,24 @@
         [else
           (ResultPackageLockEntry.Ok
             (PackageLockEntry alias url pin-kind pin-value commit))])]
-    [(reader.Sexpr.Cons field rest)
-      (match (box-get field)
-        [(reader.Sexpr.Cons fhead ftail)
-          (match (box-get fhead)
-            [(reader.Sexpr.Sym fname)
+    [(reader.SexprView.Cons field rest)
+      (match (reader.sexpr-view field)
+        [(reader.SexprView.Cons fhead ftail)
+          (match (reader.sexpr-view fhead)
+            [(reader.SexprView.Sym fname)
               (cond
                 [(string.eq (package-lock-symbol-text fname) "alias")
                   (if has-alias
                     (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `alias`")
                     (match (package-lock-field-string-value
-                      (box-get ftail)
+                      ftail
                       (package-lock-symbol-text fname))
                       [(ResultPackageLockString.Err message)
                         (ResultPackageLockEntry.Err message)]
                       [(ResultPackageLockString.Ok value)
                         (package-lock-entry-fields
-                          (box-get rest)
+                          rest
                           value
                           true
                           url
@@ -353,13 +353,13 @@
                     (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `url`")
                     (match (package-lock-field-string-value
-                      (box-get ftail)
+                      ftail
                       (package-lock-symbol-text fname))
                       [(ResultPackageLockString.Err message)
                         (ResultPackageLockEntry.Err message)]
                       [(ResultPackageLockString.Ok value)
                         (package-lock-entry-fields
-                          (box-get rest)
+                          rest
                           alias
                           has-alias
                           value
@@ -373,12 +373,12 @@
                   (if has-pin
                     (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `pin`")
-                    (match (package-lock-field-pin-value (box-get ftail))
+                    (match (package-lock-field-pin-value ftail)
                       [(ResultPackageLockPin.Err message)
                         (ResultPackageLockEntry.Err message)]
                       [(ResultPackageLockPin.Ok pin)
                         (package-lock-entry-fields
-                          (box-get rest)
+                          rest
                           alias
                           has-alias
                           url
@@ -393,13 +393,13 @@
                     (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `commit`")
                     (match (package-lock-field-string-value
-                      (box-get ftail)
+                      ftail
                       (package-lock-symbol-text fname))
                       [(ResultPackageLockString.Err message)
                         (ResultPackageLockEntry.Err message)]
                       [(ResultPackageLockString.Ok value)
                         (package-lock-entry-fields
-                          (box-get rest)
+                          rest
                           alias
                           has-alias
                           url
@@ -426,13 +426,13 @@
         "package-lock: dependency fields must be lists")]))
 
 (define (package-lock-entry-from-form [form : reader.Sexpr]) : ResultPackageLockEntry
-  (match form
-    [(reader.Sexpr.Cons head rest)
-      (match (box-get head)
-        [(reader.Sexpr.Sym name)
+  (match (reader.sexpr-view form)
+    [(reader.SexprView.Cons head rest)
+      (match (reader.sexpr-view head)
+        [(reader.SexprView.Sym name)
           (if (string.eq (package-lock-symbol-text name) "dependency")
             (package-lock-entry-fields
-              (box-get rest)
+              rest
               ""
               false
               ""
@@ -454,10 +454,10 @@
 (define (package-lock-dependencies-entries
   [entries : reader.Sexpr]
   [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
-  (match entries
-    [(reader.Sexpr.Nil) (ResultPackageLockEntryList.Ok acc)]
-    [(reader.Sexpr.Cons entry rest)
-      (match (package-lock-entry-from-form (box-get entry))
+  (match (reader.sexpr-view entries)
+    [(reader.SexprView.Nil) (ResultPackageLockEntryList.Ok acc)]
+    [(reader.SexprView.Cons entry rest)
+      (match (package-lock-entry-from-form entry)
         [(ResultPackageLockEntry.Err message)
           (ResultPackageLockEntryList.Err message)]
         [(ResultPackageLockEntry.Ok parsed)
@@ -465,7 +465,7 @@
             [(ResultPackageLockEntryList.Err message)
               (ResultPackageLockEntryList.Err message)]
             [(ResultPackageLockEntryList.Ok next)
-              (package-lock-dependencies-entries (box-get rest) next)])])]
+              (package-lock-dependencies-entries rest next)])])]
     [_
       (ResultPackageLockEntryList.Err
         "package-lock: `dependencies` must contain dependency lists")]))
@@ -476,8 +476,8 @@
   [has-version : bool]
   [entries : package_lock_entry_vec.Vec]
   [has-deps : bool]) : ResultPackageLockFile
-  (match fields
-    [(reader.Sexpr.Nil)
+  (match (reader.sexpr-view fields)
+    [(reader.SexprView.Nil)
       (cond
         [(not has-version)
           (ResultPackageLockFile.Err
@@ -489,39 +489,34 @@
           (ResultPackageLockFile.Err
             "package-lock: missing required field `dependencies`")]
         [else (ResultPackageLockFile.Ok (PackageLockFile version entries))])]
-    [(reader.Sexpr.Cons field rest)
-      (match (box-get field)
-        [(reader.Sexpr.Cons fhead ftail)
-          (match (box-get fhead)
-            [(reader.Sexpr.Sym fname)
+    [(reader.SexprView.Cons field rest)
+      (match (reader.sexpr-view field)
+        [(reader.SexprView.Cons fhead ftail)
+          (match (reader.sexpr-view fhead)
+            [(reader.SexprView.Sym fname)
               (if (string.eq (package-lock-symbol-text fname) "version")
                 (if has-version
                   (ResultPackageLockFile.Err
                     "package-lock: duplicate field `version`")
                   (match (package-lock-field-string-value
-                    (box-get ftail)
+                    ftail
                     (package-lock-symbol-text fname))
                     [(ResultPackageLockString.Err message)
                       (ResultPackageLockFile.Err message)]
                     [(ResultPackageLockString.Ok value)
-                      (package-lock-fields
-                        (box-get rest)
-                        value
-                        true
-                        entries
-                        has-deps)]))
+                      (package-lock-fields rest value true entries has-deps)]))
                 (if (string.eq (package-lock-symbol-text fname) "dependencies")
                   (if has-deps
                     (ResultPackageLockFile.Err
                       "package-lock: duplicate field `dependencies`")
                     (match (package-lock-dependencies-entries
-                      (box-get ftail)
+                      ftail
                       (package_lock_entry_vec.new))
                       [(ResultPackageLockEntryList.Err message)
                         (ResultPackageLockFile.Err message)]
                       [(ResultPackageLockEntryList.Ok parsed)
                         (package-lock-fields
-                          (box-get rest)
+                          rest
                           version
                           has-version
                           parsed
@@ -538,13 +533,13 @@
     [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")]))
 
 (define (package-lock-from-form [form : reader.Sexpr]) : ResultPackageLockFile
-  (match form
-    [(reader.Sexpr.Cons head rest)
-      (match (box-get head)
-        [(reader.Sexpr.Sym name)
+  (match (reader.sexpr-view form)
+    [(reader.SexprView.Cons head rest)
+      (match (reader.sexpr-view head)
+        [(reader.SexprView.Sym name)
           (if (string.eq (package-lock-symbol-text name) "typelisp-lock")
             (package-lock-fields
-              (box-get rest)
+              rest
               ""
               false
               (package_lock_entry_vec.new)

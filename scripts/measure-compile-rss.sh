@@ -204,7 +204,7 @@ fi
 MEASUREMENTS="$WORKDIR/measurements.tsv"
 printf 'workload\tinput\tchunk_id\tchunk_ordinal\tchunk_count\tbatch_size\tentry_count\texit_code\telapsed_ms\tmax_rss_kb\tstdout\tstderr\ttime_log\targv_log\n' > "$MEASUREMENTS"
 PROFILE_MEASUREMENTS="$WORKDIR/batch-profile.tsv"
-printf 'workload\tentry_ordinal\tmarker\telapsed_ms\talloc_delta_bytes\tlive_delta_bytes\tpeak_live_delta_bytes\tmax_rss_kb\n' > "$PROFILE_MEASUREMENTS"
+printf 'workload\tentry_ordinal\tmarker\telapsed_ms\talloc_delta_bytes\tlive_delta_bytes\tpeak_live_delta_bytes\tlive_bytes\tentry0_baseline_delta_bytes\tmax_rss_kb\n' > "$PROFILE_MEASUREMENTS"
 
 parse_max_rss_kb() {
     time_log=$1
@@ -280,8 +280,8 @@ run_measured() {
     fi
     awk -F'|' -v workload="$workload" -v rss="$max_rss" '
         $1 == "compile-batch-profile" && $2 ~ /^[0-9]+$/ {
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-                workload, $2, $3, $4, $5, $6, $7, rss
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+                workload, $2, $3, $4, $5, $6, $7, $8, $9, rss
         }
     ' "$stderr" >> "$PROFILE_MEASUREMENTS"
 }

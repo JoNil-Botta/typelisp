@@ -6841,9 +6841,20 @@ A compiler built with `--cfg compile-profile` additionally writes
 start, emission complete, owned-pool replacement/release, intern/session
 cleanup, lower-arena cleanup, and scratch destruction/steady state. Rows use a
 zero-based ordinal rather than a host path and report interval elapsed time,
-allocation total, live, and peak-live deltas. Normal compiler builds emit no
-such rows and produce byte-identical assembly. The measurement harnesses keep
-the ordinal-to-input mapping separately.
+allocation total, live, and peak-live deltas, followed by absolute live bytes
+and drift from entry zero's starting live-byte baseline. The absolute fields
+make cross-entry retention visible without reconstructing interval rows.
+Normal compiler builds emit no such rows and produce byte-identical assembly.
+The measurement harnesses keep the ordinal-to-input mapping separately.
+
+`compile --profile-allocations` emits `compile-allocation-profile` owner rows
+without changing generated output. Batch rows name the saved entry scratch
+owner before and after state release, the process entry owner before release,
+and the surviving `batch-compat-reset` owner at steady state. Post-emission
+compatibility globals are rebuilt in that rotating owner: entry N remains live
+through entry N+1 preflight, then is destroyed only after every compatibility
+surface has been republished. This bounds reset residency to one entry rather
+than retaining every manifest entry in the process arena.
 
 `build --profile dev|release` selects the package build profile (default
 `release`), `--release` aliases `--profile release`, and

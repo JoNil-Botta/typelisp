@@ -877,15 +877,16 @@ for ordinal in 0 1; do
 done
 if ! awk -F'|' '
     $1 == "compile-batch-profile" && $2 != "entry_ordinal" {
-        if (NF != 7 || $2 !~ /^[0-9]+$/ || $4 !~ /^-?[0-9]+$/ ||
+        if (NF != 9 || $2 !~ /^[0-9]+$/ || $4 !~ /^-?[0-9]+$/ ||
             $5 !~ /^-?[0-9]+$/ || $6 !~ /^-?[0-9]+$/ ||
-            $7 !~ /^-?[0-9]+$/) bad = 1
+            $7 !~ /^-?[0-9]+$/ || $8 !~ /^-?[0-9]+$/ ||
+            $9 !~ /^-?[0-9]+$/) bad = 1
         rows++
     }
     END { exit rows == 12 && !bad ? 0 : 1 }
 ' "$BATCH_STDERR"; then
     show_failure_logs "$BATCH_STDOUT" "$BATCH_STDERR"
-    fail "batch profile rows do not match the stable seven-field schema"
+    fail "batch profile rows do not match the stable nine-field schema"
 fi
 if ! awk -F'|' '
     $1 == "compile-batch-profile" && $3 == "owned-pool-release" {
@@ -896,6 +897,22 @@ if ! awk -F'|' '
 ' "$BATCH_STDERR"; then
     show_failure_logs "$BATCH_STDOUT" "$BATCH_STDERR"
     fail "post-emission pool release rematerialized more than 1 MiB"
+fi
+if ! awk -F'|' '
+    $1 == "compile-batch-profile" && $2 == 0 && $3 == "entry-start" {
+        starts++
+        if (($8 + 0) <= 0 || ($9 + 0) != 0) bad = 1
+    }
+    $1 == "compile-batch-profile" && $3 == "scratch-destroy-steady" {
+        steady++
+        drift = $9 + 0
+        if (drift < 0) drift = -drift
+        if (drift > 4194304) bad = 1
+    }
+    END { exit starts == 1 && steady == 2 && !bad ? 0 : 1 }
+' "$BATCH_STDERR"; then
+    show_failure_logs "$BATCH_STDOUT" "$BATCH_STDERR"
+    fail "batch absolute live baseline drift exceeded 4 MiB"
 fi
 if ! "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
     -o "$BATCH_SINGLE_ARITH" --target "$NL_BOOTSTRAP_TARGET" \

@@ -3781,9 +3781,16 @@
           (compiler-backend-runtime-global-shape-ok? asm "cells")
           (compiler-backend-runtime-global-shape-ok? asm "nested")
           (compiler-backend-string-contains? asm "_tl_start:\n")
-          (compiler-backend-string-contains?
-            asm
-            ".L_tl_main_keep_stack:\n    call main\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    js .L_tl_main_stack_abort\n")
+            (compiler-backend-string-contains?
+              asm
+              ".ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_main_stack_abort:\n    movq $1, %rax\n"))
           (not
             (compiler-backend-string-contains?
               asm

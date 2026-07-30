@@ -879,12 +879,24 @@ _tl_start:
     movq $9, %rax
     syscall
     testq %rax, %rax
-    js .L_tl_main_keep_stack
+    js .L_tl_main_stack_abort
     addq $0x40000000, %rax
     andq $-16, %rax
     movq %rax, %rsp
-.L_tl_main_keep_stack:
     call main
     movq %rax, %rdi
     movq $60, %rax
+    syscall
+    .section .rodata
+.L_tl_main_stack_mmap_error:
+    .ascii "typelisp runtime: 1 GiB main-stack mmap failed\n"
+    .text
+.L_tl_main_stack_abort:
+    movq $1, %rax
+    movq $2, %rdi
+    leaq .L_tl_main_stack_mmap_error(%rip), %rsi
+    movq $47, %rdx
+    syscall
+    movq $60, %rax
+    movq $134, %rdi
     syscall

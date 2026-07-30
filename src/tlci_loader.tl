@@ -2192,9 +2192,6 @@
               [(not release-ok) 16]
               [else 0]))])]))
 
-(define (tlci-loader-test-loads-and-fixes-up?) : bool
-  (= (tlci-loader-test-loads-and-fixes-up-status) 0))
-
 (define (tlci-loader-test-rejects?
   [result : ResultTlciLoadedImage]
   [expected : String]) : bool

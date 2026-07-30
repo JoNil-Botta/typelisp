@@ -67096,6 +67096,12 @@
 (define (macro-hygiene-env-output-flat-import-kind) : i64
   2)
 
+(define (macro-hygiene-env-kind-mask) : i64
+  3)
+
+(define (macro-hygiene-env-output-flat-import-flag) : i64
+  4)
+
 (define (macro-hygiene-env-empty) : MacroHygieneEnv
   (MacroHygieneEnv.Snapshot -1))
 
@@ -67223,8 +67229,14 @@
     (macro-hygiene-env-ensure-capacity!)
     (let
       [index : i64 macro-hygiene-env-slot-count]
+      [stored-kind : i64
+        (if (or
+          (= kind (macro-hygiene-env-output-flat-import-kind))
+          (macro-hygiene-env-has-output-flat-import? env))
+          (bit-or kind (macro-hygiene-env-output-flat-import-flag))
+          kind)]
       (begin
-        (array-set! macro-hygiene-env-kinds index kind)
+        (array-set! macro-hygiene-env-kinds index stored-kind)
         (array-set! macro-hygiene-env-keys index key-id)
         (array-set! macro-hygiene-env-values index value-id)
         (array-set!
@@ -67271,7 +67283,9 @@
             (compiler-tc-macro-hygiene-note-pattern-lookup-step!))
           (if (and
             (=
-              (array-ref macro-hygiene-env-kinds cursor)
+              (bit-and
+                (array-ref macro-hygiene-env-kinds cursor)
+                (macro-hygiene-env-kind-mask))
               (macro-hygiene-env-pattern-name-kind))
             (= (array-ref macro-hygiene-env-keys cursor) name-id))
             (begin
@@ -67285,16 +67299,15 @@
 
 (define (macro-hygiene-env-has-output-flat-import? [env : MacroHygieneEnv]) : bool
   (let
-    [cursor : i64 (macro-hygiene-env-head env)]
-    [found : bool false]
-    (begin
-      (while (and (not found) (>= cursor 0))
-        (if (=
-          (array-ref macro-hygiene-env-kinds cursor)
-          (macro-hygiene-env-output-flat-import-kind))
-          (set! found true)
-          (set! cursor (array-ref macro-hygiene-env-parents cursor))))
-      found)))
+    [head : i64 (macro-hygiene-env-head env)]
+    (and
+      (>= head 0)
+      (not
+        (=
+          (bit-and
+            (array-ref macro-hygiene-env-kinds head)
+            (macro-hygiene-env-output-flat-import-flag))
+          0)))))
 
 (define (macro-hygiene-env-bind-raw
   [env : MacroHygieneEnv]

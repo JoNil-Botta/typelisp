@@ -30,6 +30,42 @@ documented `lint-allow: deprecated-string-concat` suppressions. Qualified
 `comptime.string-append` calls are compiler-recognized macro-CTFE operations,
 not deprecated runtime concatenation.
 
+## Public Mutator Names
+
+A public stdlib operation that mutates caller-owned state through an `&mut`
+receiver has a terminal `!`. The bang is an API naming contract: it signals
+mutation, but it does not enable implicit mutable auto-borrowing. An ordinary
+function call still passes an explicit mutable reference, as in
+`(deque_i64.push-back-ref! (&mut pending) value)`.
+
+A family may additionally provide a place-taking bang macro for convenience.
+For example, `(deque_i64.push-back! pending value)` and the corresponding
+hashmap/set `insert!` operations borrow their storage places through the normal
+checked `&mut` rules and dispatch to explicit `*-ref!` helpers. Such a macro
+must evaluate the place and every other operand exactly once; it is not a
+general method-call or auto-borrow feature. `text_buf.append!` and
+`text_buf.clear!` use the same place-taking convention, while
+`byte_buf.bytes-set!` is an ordinary bang-named function over an already
+explicit mutable byte view.
+
+The rule follows effects, not spelling mechanics:
+
+- Consuming or returning an owner does not by itself require `!`;
+  `iterator.into-iterator`, for example, consumes its range without mutating a
+  caller-owned receiver.
+- A read or view operation is not a mutator merely because it accepts `&mut`.
+  `byte_buf.bytes-mut-length` reads a mutable view, and
+  `byte_buf.as-mut-bytes` yields one.
+- Iterator protocol steps retain the established `next` / `next-mut` names even
+  though they advance iterator state. Private construction and growth helpers
+  are outside this public API convention.
+
+Naming migrations update callers, documentation, tests, and generated surfaces
+atomically. Do not preserve the pre-bang name as a compatibility alias. The
+generated Vec family is still migrating under #4683: its currently shipped
+reference-taking operations remain `set`, `push`, and `pop`, so do not present
+Vec bang place macros as available yet.
+
 ## Current Modules
 
 - `arena.tl`: typed first-class `Arena`, `ArenaMark`, and `ArenaPhase` helper

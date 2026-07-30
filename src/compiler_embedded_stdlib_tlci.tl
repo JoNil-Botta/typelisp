@@ -2430,11 +2430,13 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
-;; type-key: pop a type value and push its canonical key string, the same
-;; mapping the interpreted reflection uses.
+;; Type identity reflection shares one registered callback: selector 0 is the
+;; canonical type key and selector 1 is the nominal declaration module. Keeping
+;; this as one host-table row avoids rebuilding and relinking another callback
+;; for every macro dispatch. Refs #6000.
 (define (compiler-comptime-host-callback-type-key
   [session : i64]
-  [_arg-a : i64]
+  [arg-a : i64]
   [_arg-b : i64]
   [_arg-c : i64]) : i64
   (if (or
@@ -2452,16 +2454,39 @@
               compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 1))
               [(CompilerCtfeValue.Type ty)
-                (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 1))
-                  (compiler-comptime-host-push!
-                    (ctfe-generated-string-value
-                      (ctfe-type-key-with-reflections-and-pools
-                        (array-ref compiler-comptime-host-pools 0)
-                        (array-ref compiler-comptime-host-reflections 0)
-                        ty))))]
+                (cond
+                  [(= arg-a 0)
+                    (begin
+                      (set!
+                        compiler-comptime-host-stack-len
+                        (- compiler-comptime-host-stack-len 1))
+                      (compiler-comptime-host-push!
+                        (ctfe-generated-string-value
+                          (ctfe-type-key-with-reflections-and-pools
+                            (array-ref compiler-comptime-host-pools 0)
+                            (array-ref compiler-comptime-host-reflections 0)
+                            ty))))]
+                  [(= arg-a 1)
+                    (match (ctfe-reflect-info-for-type-with-pools
+                      (array-ref compiler-comptime-host-pools 0)
+                      (array-ref compiler-comptime-host-reflections 0)
+                      ty)
+                      [(CtfeMaybeReflectInfo.Some info)
+                        (begin
+                          (set!
+                            compiler-comptime-host-stack-len
+                            (- compiler-comptime-host-stack-len 1))
+                          (compiler-comptime-host-push!
+                            (ctfe-name-value
+                              (ctfe-reflect-info-nominal-module-id info))))]
+                      [(CtfeMaybeReflectInfo.None)
+                        (begin
+                          (array-set!
+                            compiler-comptime-host-diagnostic
+                            0
+                            "type-nominal-module requires struct or enum type")
+                          tlci-host-callback-status-diagnostic)])]
+                  [else tlci-host-callback-status-bad-request])]
               [_ tlci-host-callback-status-bad-request]))]
         (begin
           (when

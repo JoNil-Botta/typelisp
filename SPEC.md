@@ -6821,7 +6821,8 @@ process.
 With `--windows-coff-plan <result-plan>` and
 `--target windows-x86_64`, batch input rows instead use
 `input|object|assembly[|force-assembly]`. An automatic row writes a COFF object
-when the compiler-owned image is serializable and linkable by the freestanding
+when object lowering is semantically complete for every source instruction and
+the compiler-owned image is serializable and linkable by the freestanding
 Windows runtime contract; otherwise it writes assembly. `force-assembly`
 bypasses the object attempt and preserves the legacy assembly bytes.
 
@@ -6829,7 +6830,8 @@ After every row succeeds, the compiler writes deterministic
 `source|kind|path|reason` result rows in input order. `kind` is `coff-object` or
 `assembly`; an object uses reason `none`, a forced row uses
 `forced-assembly`, and automatic fallback uses one of
-`unsupported-coff-image`, `unsupported-external-relocation`,
+`unsupported-object-semantics`, `unsupported-coff-image`,
+`unsupported-external-relocation`,
 `missing-entry-symbol`, `missing-runtime-entry`, or `empty-text-section`.
 Compile, type, backend, object-serialization, and file-write errors fail the
 batch and do not produce the result plan. Each source is loaded, checked,

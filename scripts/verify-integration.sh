@@ -197,23 +197,58 @@ integration_batch_run_chunk() {
     INTEGRATION_BATCH_CHUNKS=$((INTEGRATION_BATCH_CHUNKS + 1))
     _chunk_stdout="$WORKDIR/batch-$_chunk_label.stdout"
     _chunk_stderr="$WORKDIR/batch-$_chunk_label.stderr"
+    _chunk_plan=
+    if [ "$HOST_OS" = windows ]; then
+        _chunk_plan="$WORKDIR/batch-$_chunk_label.plan"
+        rm -f "$_chunk_plan"
+        ci_timing_set_now_ms
+        _windows_batch_started=$CI_TIMING_NOW_MS
+    fi
     set +e
-    ci_timing_run "batch-$_chunk_label" compile \
-        "$COMPILER" compile --batch "$_chunk_list" "$@" \
-        > "$_chunk_stdout" 2> "$_chunk_stderr"
+    if [ "$HOST_OS" = windows ]; then
+        ci_timing_run "batch-$_chunk_label" compile \
+            "$COMPILER" compile --batch "$_chunk_list" \
+            --windows-coff-plan "$_chunk_plan" "$@" \
+            > "$_chunk_stdout" 2> "$_chunk_stderr"
+    else
+        ci_timing_run "batch-$_chunk_label" compile \
+            "$COMPILER" compile --batch "$_chunk_list" "$@" \
+            > "$_chunk_stdout" 2> "$_chunk_stderr"
+    fi
     _chunk_rc=$?
     set -e
+    if [ "$HOST_OS" = windows ]; then
+        ci_timing_set_now_ms
+        _windows_batch_finished=$CI_TIMING_NOW_MS
+        WINDOWS_MANIFEST_BATCH_COMPILE_MS=$((
+            WINDOWS_MANIFEST_BATCH_COMPILE_MS +
+            _windows_batch_finished -
+            _windows_batch_started
+        ))
+        WINDOWS_MANIFEST_BATCH_COMPILES=$((WINDOWS_MANIFEST_BATCH_COMPILES + 1))
+    fi
     if [ "$_chunk_rc" -eq 0 ]; then
+        if [ "$HOST_OS" = windows ]; then
+            integration_windows_register_plan \
+                "$_chunk_list" "$_chunk_plan" "$_chunk_label"
+        fi
         return 0
     fi
     INTEGRATION_BATCH_FAILED_CHUNKS=$((INTEGRATION_BATCH_FAILED_CHUNKS + 1))
     echo "[integration] batch chunk $_chunk_label exited $_chunk_rc;" \
         "replaying its entries standalone" >&2
     sed 's/^/  /' "$_chunk_stderr" >&2 || true
-    while IFS='|' read -r _batch_src _batch_asm; do
-        [ -n "$_batch_asm" ] || continue
-        rm -f "$_batch_asm"
+    while IFS='|' read -r _batch_src _batch_artifact1 _batch_artifact2 _batch_mode; do
+        [ -n "$_batch_artifact1" ] || continue
+        rm -f "$_batch_artifact1"
+        if [ -n "$_batch_artifact2" ]; then
+            rm -f "$_batch_artifact2"
+            _batch_case_path=${_batch_src%/*}
+            _batch_case=${_batch_case_path##*/}
+            rm -f "$WORKDIR/$_batch_case/windows-coff.artifact"
+        fi
     done < "$_chunk_list"
+    [ -z "$_chunk_plan" ] || rm -f "$_chunk_plan"
     return 0
 }
 
@@ -246,11 +281,17 @@ WINDOWS_SUMMARY_WIN=
 WINDOWS_RUNNER_STDOUT=
 WINDOWS_RUNNER_STDERR=
 WINDOWS_QUEUED_CASES=
+WINDOWS_COFF_FALLBACK_REASONS=
 WINDOWS_LINK_REQUESTS=0
 WINDOWS_MANIFEST_QUEUED=0
 WINDOWS_QUEUE_REQUESTS=0
 WINDOWS_MANIFEST_COMPILE_MS=0
+WINDOWS_MANIFEST_BATCH_COMPILE_MS=0
+WINDOWS_MANIFEST_PLAN_PROCESS_MS=0
 WINDOWS_MANIFEST_ASSEMBLE_MS=0
+WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS=0
+WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS=0
+WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS=0
 WINDOWS_MANIFEST_LINK_MS=0
 WINDOWS_MANIFEST_LINK_WALL_MS=0
 WINDOWS_MANIFEST_LINK_HELPER_MS=0
@@ -263,9 +304,15 @@ WINDOWS_MANIFEST_RESULT_PROCESS_MS=0
 WINDOWS_MANIFEST_ASSERT_MS=0
 WINDOWS_MANIFEST_ASSERT_REPORT_MS=0
 WINDOWS_MANIFEST_COMPILES=0
+WINDOWS_MANIFEST_BATCH_COMPILES=0
+WINDOWS_MANIFEST_PLAN_ROWS=0
+WINDOWS_MANIFEST_DIRECT_OBJECTS=0
+WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES=0
+WINDOWS_MANIFEST_FORCED_ASSEMBLIES=0
 WINDOWS_MANIFEST_ASSEMBLES=0
 WINDOWS_MANIFEST_LINKS=0
 WINDOWS_MANIFEST_ASSERTS=0
+WINDOWS_CURRENT_ASSEMBLY_CLASS=standalone
 WINDOWS_LINK_POWERSHELL_STARTS=0
 WINDOWS_MANIFEST_POWERSHELL_STARTS=0
 WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=0
@@ -316,16 +363,108 @@ if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     WINDOWS_RUNNER_STDOUT="$WORKDIR/windows-integration-runner.stdout"
     WINDOWS_RUNNER_STDERR="$WORKDIR/windows-integration-runner.stderr"
     WINDOWS_QUEUED_CASES="$WORKDIR/windows-integration.queued"
+    WINDOWS_COFF_FALLBACK_REASONS="$WORKDIR/windows-coff-fallback-reasons.txt"
     printf 'tlwinlink1\000' > "$WINDOWS_LINK_REQUEST"
     : > "$WINDOWS_LINK_CASES"
     printf 'tlwinq2\000' > "$WINDOWS_QUEUE"
     : > "$WINDOWS_QUEUED_CASES"
+    : > "$WINDOWS_COFF_FALLBACK_REASONS"
     # The two queue helpers, lld-link, and their common work root are the only
     # manifest path conversions. Per-case inputs/outputs are constructed from
     # validated case names below.
     WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=4
     WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=1
 fi
+
+integration_windows_register_plan() {
+    _windows_plan_batch=$1
+    _windows_plan_result=$2
+    _windows_plan_label=$3
+    _windows_plan_normalized="$WORKDIR/batch-$_windows_plan_label.validated"
+    ci_timing_set_now_ms
+    _windows_plan_started=$CI_TIMING_NOW_MS
+
+    if ! awk -f "$ROOT/scripts/validate-windows-coff-plan.awk" \
+        "$_windows_plan_batch" "$_windows_plan_result" \
+        > "$_windows_plan_normalized"; then
+        echo "FAIL: invalid Windows COFF result plan for batch $_windows_plan_label" >&2
+        return 1
+    fi
+
+    while IFS='|' read -r \
+        _plan_source \
+        _plan_kind \
+        _plan_selected \
+        _plan_reason \
+        _plan_object \
+        _plan_assembly \
+        _plan_forced || [ -n "$_plan_source" ]; do
+        [ -n "$_plan_source" ] || continue
+        _plan_case_path=${_plan_source%/*}
+        _plan_case=${_plan_case_path##*/}
+        _plan_expected_source="target/integration-verify/windows/$_plan_case/$_plan_case.tl"
+        if [ "$_plan_source" != "$_plan_expected_source" ]; then
+            echo "FAIL: Windows COFF plan source is outside its validated case path: $_plan_source" >&2
+            return 1
+        fi
+        _plan_case_dir="$WORKDIR/$_plan_case"
+        _plan_marker="$_plan_case_dir/windows-coff.artifact"
+        if [ -e "$_plan_marker" ]; then
+            echo "FAIL: Windows COFF plan selected $_plan_case more than once" >&2
+            return 1
+        fi
+
+        _plan_selected_abs="$ROOT/$_plan_selected"
+        _plan_object_abs="$ROOT/$_plan_object"
+        _plan_assembly_abs="$ROOT/$_plan_assembly"
+        case "$_plan_kind" in
+            coff-object)
+                if [ ! -s "$_plan_selected_abs" ]; then
+                    echo "FAIL: Windows COFF plan omitted object for $_plan_case: $_plan_selected" >&2
+                    return 1
+                fi
+                if [ -e "$_plan_assembly_abs" ]; then
+                    echo "FAIL: Windows COFF object row also wrote assembly for $_plan_case" >&2
+                    return 1
+                fi
+                WINDOWS_MANIFEST_DIRECT_OBJECTS=$((WINDOWS_MANIFEST_DIRECT_OBJECTS + 1))
+                ;;
+            assembly)
+                if [ ! -s "$_plan_selected_abs" ]; then
+                    echo "FAIL: Windows COFF plan omitted assembly for $_plan_case: $_plan_selected" >&2
+                    return 1
+                fi
+                if [ -e "$_plan_object_abs" ]; then
+                    echo "FAIL: Windows COFF assembly row also wrote an object for $_plan_case" >&2
+                    return 1
+                fi
+                if [ "$_plan_forced" -eq 1 ]; then
+                    if ! _plan_requirement_reason=$(windows_manifest_assembly_reason "$_plan_case"); then
+                        echo "FAIL: Windows COFF plan forced unclassified assembly for $_plan_case" >&2
+                        return 1
+                    fi
+                    WINDOWS_MANIFEST_FORCED_ASSEMBLIES=$((WINDOWS_MANIFEST_FORCED_ASSEMBLIES + 1))
+                else
+                    WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES=$((WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES + 1))
+                    printf '%s\n' "$_plan_reason" >> "$WINDOWS_COFF_FALLBACK_REASONS"
+                fi
+                ;;
+        esac
+
+        printf '%s|%s|%s\n' \
+            "$_plan_kind" "$_plan_selected_abs" "$_plan_reason" \
+            > "$_plan_marker"
+        WINDOWS_MANIFEST_PLAN_ROWS=$((WINDOWS_MANIFEST_PLAN_ROWS + 1))
+    done < "$_windows_plan_normalized"
+
+    ci_timing_set_now_ms
+    _windows_plan_finished=$CI_TIMING_NOW_MS
+    WINDOWS_MANIFEST_PLAN_PROCESS_MS=$((
+        WINDOWS_MANIFEST_PLAN_PROCESS_MS +
+        _windows_plan_finished -
+        _windows_plan_started
+    ))
+}
 
 deps_or_empty() {
     case "$1" in
@@ -576,6 +715,95 @@ compiler_arena_debug
 EOF
 }
 
+# Windows COFF-plan rows use forced assembly only when an integration assertion
+# needs to inspect the textual backend artifact. Keep the human-readable reason
+# beside the classification so summary output explains every intentional clang
+# assembler launch.
+windows_manifest_assembly_requirement_rows() {
+    cat <<'EOF'
+stdlib_string|stdlib-helper-symbol-elision
+string_eq|stdlib-helper-symbol-elision
+u64_float_casts|u64-float-cast-instruction-shape
+EOF
+}
+
+# This list is deliberately independent of the plan classification above. The
+# validator compares the two sets so adding or deleting an assembly assertion
+# cannot silently leave a stale force-assembly exemption.
+windows_manifest_assembly_assertion_cases() {
+    cat <<'EOF'
+stdlib_string
+string_eq
+u64_float_casts
+EOF
+}
+
+windows_manifest_assembly_reason() {
+    case "$1" in
+        stdlib_string | string_eq)
+            printf '%s\n' stdlib-helper-symbol-elision
+            ;;
+        u64_float_casts)
+            printf '%s\n' u64-float-cast-instruction-shape
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+validate_windows_manifest_assembly_requirements() {
+    _requirements="$WORKDIR/windows-assembly-requirements.txt"
+    _assertions="$WORKDIR/windows-assembly-assertions.txt"
+    windows_manifest_assembly_requirement_rows > "$_requirements"
+    windows_manifest_assembly_assertion_cases > "$_assertions"
+    awk -F '|' \
+        -v requirements_file="$_requirements" \
+        -v assertions_file="$_assertions" '
+        function report(message) {
+            print message > "/dev/stderr"
+            failed = 1
+        }
+        FILENAME == requirements_file {
+            if (NF != 2 || $1 !~ /^[A-Za-z0-9_]+$/ || $2 !~ /^[a-z0-9-]+$/) {
+                report("invalid Windows assembly requirement row: " $0)
+            } else if (requirement[$1] != "") {
+                report("duplicate Windows assembly requirement: " $1)
+            } else {
+                requirement[$1] = $2
+            }
+            next
+        }
+        FILENAME == assertions_file {
+            if (NF != 1 || $1 !~ /^[A-Za-z0-9_]+$/) {
+                report("invalid Windows assembly assertion row: " $0)
+            } else if (assertion[$1]++) {
+                report("duplicate Windows assembly assertion: " $1)
+            }
+            next
+        }
+        {
+            if ($0 != "" && $0 !~ /^#/) manifest_case[$1]++
+        }
+        END {
+            for (name in requirement) {
+                if (!assertion[name]) {
+                    report("Windows assembly requirement has no text assertion: " name)
+                }
+                if (manifest_case[name] != 1) {
+                    report("Windows assembly requirement is stale or ambiguous in the manifest: " name)
+                }
+            }
+            for (name in assertion) {
+                if (requirement[name] == "") {
+                    report("Windows assembly text assertion lacks a force-assembly reason: " name)
+                }
+            }
+            exit failed
+        }
+    ' "$_requirements" "$_assertions" "$NORMALIZED_MANIFEST"
+}
+
 validate_manifest() {
     _known="$WORKDIR/manifest-known.txt"
     _known_sorted="$WORKDIR/manifest-known.sorted"
@@ -590,6 +818,7 @@ validate_manifest() {
         "$_catalog" "$NORMALIZED_MANIFEST"
 
     if [ "$HOST_OS" = windows ]; then
+        validate_windows_manifest_assembly_requirements
         windows_integration_non_applicable_cases >> "$_known"
     fi
     if [ "$HOST_OS" = linux ]; then
@@ -861,6 +1090,21 @@ windows_timed_assemble() {
     _finished=$CI_TIMING_NOW_MS
     _elapsed=$((_finished - _started))
     WINDOWS_MANIFEST_ASSEMBLE_MS=$((WINDOWS_MANIFEST_ASSEMBLE_MS + _elapsed))
+    case "$WINDOWS_CURRENT_ASSEMBLY_CLASS" in
+        fallback)
+            WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS=$((WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS + _elapsed))
+            ;;
+        forced)
+            WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS=$((WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS + _elapsed))
+            ;;
+        standalone)
+            WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS=$((WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS + _elapsed))
+            ;;
+        *)
+            echo "FAIL: unknown Windows assembly timing class: $WINDOWS_CURRENT_ASSEMBLY_CLASS" >&2
+            return 1
+            ;;
+    esac
     WINDOWS_MANIFEST_ASSEMBLES=$((WINDOWS_MANIFEST_ASSEMBLES + 1))
     ci_timing_record_elapsed "$name" assemble "$_elapsed" "$_status"
     return "$_status"
@@ -990,6 +1234,19 @@ check_stdlib_string_helpers_asm() {
     assert_not_contains "$_asm" ".globl tl_substring" "$_label"
     assert_not_contains "$_asm" "call tl_substring" "$_label"
     assert_not_contains "$_asm" ".extern tl_substring" "$_label"
+}
+
+assert_manifest_assembly_requirements() {
+    _assembly_case=$1
+    _assembly_path=$2
+    case "$_assembly_case" in
+        u64_float_casts)
+            check_u64_float_cast_asm "$_assembly_path"
+            ;;
+        stdlib_string | string_eq)
+            check_stdlib_string_helpers_asm "$_assembly_path" "$_assembly_case"
+            ;;
+    esac
 }
 
 assert_empty_file() {
@@ -1204,6 +1461,9 @@ EOF
 
     WORKDIR=$_dir
     COMPILER=$_fake_compiler
+    # This self-test exercises the legacy assembly batch timing/sentinel
+    # contract. Windows plan structure has its own focused validator self-test.
+    HOST_OS=linux
     INTEGRATION_BATCH_CHUNKS=0
     INTEGRATION_BATCH_FAILED_CHUNKS=0
     TYPELISP_CI_TIMING=1
@@ -1957,12 +2217,7 @@ assert_manifest_case() {
     _expected_stdout="$_case_dir/$_name.expected.stdout"
     _expected_stderr="$_case_dir/$_name.expected.stderr"
 
-    if [ "$_name" = u64_float_casts ]; then
-        check_u64_float_cast_asm "$_asm"
-    fi
-    case "$_name" in
-        stdlib_string | string_eq) check_stdlib_string_helpers_asm "$_asm" "$_name" ;;
-    esac
+    assert_manifest_assembly_requirements "$_name" "$_asm"
 
     write_expected_stream "$_stdout_spec" "$_expected_stdout"
     write_expected_stream "$_stderr_spec" "$_expected_stderr"
@@ -2288,12 +2543,7 @@ windows_assert_queued_cases() {
         _asm="$_case_dir/$_name.s"
         _run_shell_stderr="$_case_dir/$_name.run-shell.stderr"
 
-        if [ "$_name" = u64_float_casts ]; then
-            check_u64_float_cast_asm "$_asm"
-        fi
-        case "$_name" in
-            stdlib_string | string_eq) check_stdlib_string_helpers_asm "$_asm" "$_name" ;;
-        esac
+        assert_manifest_assembly_requirements "$_name" "$_asm"
 
         _case_failed=0
         if [ "$_status" != ok ]; then
@@ -2460,6 +2710,44 @@ windows_runner_differential_self_test() {
     echo "Windows queue runner differential self-test passed."
 }
 
+windows_validate_manifest_artifact_counts() {
+    _selected_artifacts=$((
+        WINDOWS_MANIFEST_DIRECT_OBJECTS +
+        WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES +
+        WINDOWS_MANIFEST_FORCED_ASSEMBLIES
+    ))
+    _assembly_selected=$((
+        WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES +
+        WINDOWS_MANIFEST_FORCED_ASSEMBLIES +
+        INTEGRATION_STANDALONE_COMPILES
+    ))
+    if [ "$_selected_artifacts" -ne "$WINDOWS_MANIFEST_PLAN_ROWS" ] ||
+        [ "$WINDOWS_MANIFEST_PLAN_ROWS" -ne "$INTEGRATION_BATCHED_CASES" ]; then
+        echo "FAIL: Windows COFF plan accounting mismatch: selected=$_selected_artifacts plan_rows=$WINDOWS_MANIFEST_PLAN_ROWS consumed=$INTEGRATION_BATCHED_CASES" >&2
+        return 1
+    fi
+    if [ "$_assembly_selected" -ne "$WINDOWS_MANIFEST_ASSEMBLES" ]; then
+        echo "FAIL: Windows COFF plan launched clang for the wrong artifact set: selected_assembly=$_assembly_selected clang=$WINDOWS_MANIFEST_ASSEMBLES" >&2
+        return 1
+    fi
+    if [ "$WINDOWS_MANIFEST_BATCH_COMPILES" -ne "$INTEGRATION_BATCH_CHUNKS" ]; then
+        echo "FAIL: Windows COFF batch process accounting mismatch: plan=$WINDOWS_MANIFEST_BATCH_COMPILES chunks=$INTEGRATION_BATCH_CHUNKS" >&2
+        return 1
+    fi
+    if [ $((INTEGRATION_BATCHED_CASES + INTEGRATION_STANDALONE_COMPILES)) -ne "$WINDOWS_MANIFEST_QUEUED" ]; then
+        echo "FAIL: Windows COFF plan did not account for every queued manifest case" >&2
+        return 1
+    fi
+    _fallback_reason_rows=0
+    if [ -s "$WINDOWS_COFF_FALLBACK_REASONS" ]; then
+        _fallback_reason_rows=$(wc -l < "$WINDOWS_COFF_FALLBACK_REASONS" | tr -d ' ')
+    fi
+    if [ "$_fallback_reason_rows" -ne "$WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES" ]; then
+        echo "FAIL: Windows COFF fallback reason accounting mismatch: reasons=$_fallback_reason_rows fallbacks=$WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES" >&2
+        return 1
+    fi
+}
+
 windows_print_manifest_summary() {
     _legacy_launch_cygpath=$((WINDOWS_MANIFEST_QUEUED * 4))
     echo "Windows integration process/timing summary:"
@@ -2470,8 +2758,20 @@ windows_print_manifest_summary() {
     echo "  links: requests=$WINDOWS_LINK_SUMMARY_REQUESTS child_starts=$WINDOWS_LINK_SUMMARY_CHILD_STARTS launch_failures=$WINDOWS_LINK_SUMMARY_LAUNCH_FAILURES failed=$WINDOWS_LINK_SUMMARY_FAILED_PROCESSES missing_outputs=$WINDOWS_LINK_SUMMARY_MISSING_OUTPUTS"
     echo "  link scheduler: jobs=$WINDOWS_LINK_SUMMARY_JOBS peak=$WINDOWS_LINK_SUMMARY_PEAK_CONCURRENCY wall_ms=$WINDOWS_MANIFEST_LINK_WALL_MS child_ms=$WINDOWS_MANIFEST_LINK_MS powershell=$WINDOWS_LINK_POWERSHELL_STARTS"
     echo "  queue: requests=$WINDOWS_SUMMARY_REQUESTS launch_failures=$WINDOWS_SUMMARY_LAUNCH_FAILURES elapsed_ms=$WINDOWS_SUMMARY_ELAPSED_MS"
-    echo "  phase_ms: compile=$WINDOWS_MANIFEST_COMPILE_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS link_child_sum=$WINDOWS_MANIFEST_LINK_MS link_scheduler=$WINDOWS_MANIFEST_LINK_WALL_MS link_helper=$WINDOWS_MANIFEST_LINK_HELPER_MS link_plan=$WINDOWS_MANIFEST_LINK_PREP_MS link_result_process=$WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS link_attribution=$WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS queue_prepare=$WINDOWS_MANIFEST_QUEUE_PREP_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
-    echo "  phase_counts: compile=$WINDOWS_MANIFEST_COMPILES assemble=$WINDOWS_MANIFEST_ASSEMBLES link=$WINDOWS_MANIFEST_LINKS assert=$WINDOWS_MANIFEST_ASSERTS"
+    echo "  COFF plan: rows=$WINDOWS_MANIFEST_PLAN_ROWS direct_objects=$WINDOWS_MANIFEST_DIRECT_OBJECTS compiler_fallback_assembly=$WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES forced_assertion_assembly=$WINDOWS_MANIFEST_FORCED_ASSEMBLIES"
+    echo "  direct-object render: count=$WINDOWS_MANIFEST_DIRECT_OBJECTS timing=included-in-batch-compile batch_compile_ms=$WINDOWS_MANIFEST_BATCH_COMPILE_MS"
+    echo "  assembly: compiler_fallback_ms=$WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS forced_assertion_ms=$WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS standalone_replay_ms=$WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS clang_launches=$WINDOWS_MANIFEST_ASSEMBLES"
+    if [ -s "$WINDOWS_COFF_FALLBACK_REASONS" ]; then
+        echo "  compiler fallback reasons:"
+        LC_ALL=C sort "$WINDOWS_COFF_FALLBACK_REASONS" |
+            uniq -c |
+            while read -r _reason_count _reason; do
+                echo "    $_reason=$_reason_count"
+            done
+    fi
+    echo "  forced assembly reasons: stdlib-helper-symbol-elision=2 u64-float-cast-instruction-shape=1"
+    echo "  phase_ms: batch_compile=$WINDOWS_MANIFEST_BATCH_COMPILE_MS standalone_compile=$WINDOWS_MANIFEST_COMPILE_MS plan_process=$WINDOWS_MANIFEST_PLAN_PROCESS_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS link_child_sum=$WINDOWS_MANIFEST_LINK_MS link_scheduler=$WINDOWS_MANIFEST_LINK_WALL_MS link_helper=$WINDOWS_MANIFEST_LINK_HELPER_MS link_plan=$WINDOWS_MANIFEST_LINK_PREP_MS link_result_process=$WINDOWS_MANIFEST_LINK_RESULT_PROCESS_MS link_attribution=$WINDOWS_MANIFEST_LINK_ATTRIBUTION_MS queue_prepare=$WINDOWS_MANIFEST_QUEUE_PREP_MS runner=$WINDOWS_MANIFEST_RUN_MS result_process=$WINDOWS_MANIFEST_RESULT_PROCESS_MS assertions=$WINDOWS_MANIFEST_ASSERT_MS assertion_report=$WINDOWS_MANIFEST_ASSERT_REPORT_MS"
+    echo "  phase_counts: batch_compile=$WINDOWS_MANIFEST_BATCH_COMPILES standalone_compile=$WINDOWS_MANIFEST_COMPILES assemble=$WINDOWS_MANIFEST_ASSEMBLES link=$WINDOWS_MANIFEST_LINKS assert=$WINDOWS_MANIFEST_ASSERTS"
     echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
 }
 
@@ -2488,12 +2788,12 @@ fi
 # each group compiles in bounded `compile --batch` chunks instead of one
 # compiler process per case.
 #
-# The pre-pass only *populates* the per-case assembly. The loop below still owns
-# every assertion, and still compiles standalone whenever the assembly is
-# missing -- which is exactly what a failed chunk leaves behind, since a failing
-# chunk's outputs are removed. So failure isolation costs no new code path: a
-# bad chunk degrades to the per-case compile that was there before, with its
-# per-case diagnostics intact.
+# On Linux the pre-pass populates per-case assembly. On Windows each row asks
+# the compiler for both destinations and consumes its deterministic COFF plan:
+# linkable rows write an object directly, while explicit text assertions and
+# compiler-classified fallbacks write assembly for the existing clang path.
+# Failed chunks remove both candidate outputs, so the case loop still replays
+# those sources standalone with source-specific diagnostics.
 INTEGRATION_BATCH_SIZE=${TYPELISP_INTEGRATION_BATCH_SIZE:-20}
 INTEGRATION_BATCH_CHUNKS=0
 INTEGRATION_BATCH_FAILED_CHUNKS=0
@@ -2525,7 +2825,19 @@ integration_batch_precompile() {
         # Relative to ROOT, which is the working directory: the compiler reads
         # these out of a file, so no shell path translation happens on Windows.
         _b_rel="target/integration-verify/$HOST_OS/$_b_name/$_b_name"
-        if [ "$_b_stage" -eq 1 ]; then
+        if [ "$HOST_OS" = windows ]; then
+            _b_force=
+            if _b_assembly_reason=$(windows_manifest_assembly_reason "$_b_name"); then
+                _b_force='|force-assembly'
+            fi
+            if [ "$_b_stage" -eq 1 ]; then
+                printf '%s.tl|%s.obj|%s.s%s\n' \
+                    "$_b_rel" "$_b_rel" "$_b_rel" "$_b_force" >> "$_group1"
+            else
+                printf '%s.tl|%s.obj|%s.s%s\n' \
+                    "$_b_rel" "$_b_rel" "$_b_rel" "$_b_force" >> "$_group0"
+            fi
+        elif [ "$_b_stage" -eq 1 ]; then
             printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_group1"
         else
             printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_group0"
@@ -2574,6 +2886,10 @@ fi
 # rather than trusting the argv construction above.
 integration_batch_sentinel() {
     [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
+    # Windows plan rows intentionally select either object or assembly. Their
+    # object/forced-assembly differential lives in the focused COFF verifier;
+    # this legacy assembly byte comparison remains the Linux batch oracle.
+    [ "$HOST_OS" = linux ] || return 0
     for _group in embedded stage-stdlib; do
         _list="$WORKDIR/batch-$_group-1.list"
         [ -s "$_list" ] || continue
@@ -2654,7 +2970,11 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
     fi
 
     asm="$case_dir/$name.s"
-    obj="$case_dir/$name.o"
+    if [ "$HOST_OS" = windows ]; then
+        obj="$case_dir/$name.obj"
+    else
+        obj="$case_dir/$name.o"
+    fi
     bin="$case_dir/$name"
     stdout="$case_dir/$name.stdout"
     stderr="$case_dir/$name.stderr"
@@ -2672,22 +2992,54 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
     echo "[$name] build -> run ($HOST_OS)"
     if [ "$HOST_OS" = windows ]; then
         # The compile-only bootstrapped stage1 has `compile` but not `build`, so
-        # emit Windows asm then assemble (clang) + link (lld-link), mirroring the
-        # Linux compile->as->ld path below.
+        # consume the batch COFF-or-assembly selection, invoke clang only for
+        # selected assembly, then link with lld-link.
         case_dir_win="$WINDOWS_WORKDIR_WIN\\$name"
-        obj_win="$case_dir_win\\$name.o"
+        obj_win="$case_dir_win\\$name.obj"
         bin_win="$case_dir_win\\$name.exe"
         build_stdout_win="$case_dir_win\\$name.build.stdout"
         build_stderr_win="$case_dir_win\\$name.build.stderr"
+        windows_artifact="$case_dir/windows-coff.artifact"
+        windows_needs_assemble=1
+        windows_assembly_class=standalone
         # Stdlib comes from the embedded payload unless the case opted into
         # the on-disk layout (stage-stdlib), matching the staged copies.
-        if [ -s "$asm" ]; then
-            # Produced by the batch pre-pass (#5555). A failed chunk removes its
-            # outputs, so reaching here with no assembly means compiling now.
+        if [ -s "$windows_artifact" ]; then
+            if ! IFS='|' read -r \
+                windows_artifact_kind \
+                windows_artifact_path \
+                windows_artifact_reason < "$windows_artifact"; then
+                echo "FAIL: $name has an unreadable Windows COFF artifact marker" >&2
+                exit 1
+            fi
             INTEGRATION_BATCHED_CASES=$((INTEGRATION_BATCHED_CASES + 1))
             build_rc=0
             : > "$build_stdout"
             : > "$build_stderr"
+            case "$windows_artifact_kind" in
+                coff-object)
+                    if [ "$windows_artifact_path" != "$obj" ] || [ ! -s "$obj" ]; then
+                        echo "FAIL: $name Windows COFF object marker does not name its object" >&2
+                        exit 1
+                    fi
+                    windows_needs_assemble=0
+                    ;;
+                assembly)
+                    if [ "$windows_artifact_path" != "$asm" ] || [ ! -s "$asm" ]; then
+                        echo "FAIL: $name Windows COFF assembly marker does not name its assembly" >&2
+                        exit 1
+                    fi
+                    if [ "$windows_artifact_reason" = forced-assembly ]; then
+                        windows_assembly_class=forced
+                    else
+                        windows_assembly_class=fallback
+                    fi
+                    ;;
+                *)
+                    echo "FAIL: $name has unknown Windows COFF artifact kind: $windows_artifact_kind" >&2
+                    exit 1
+                    ;;
+            esac
         elif [ "$stage_stdlib" -eq 1 ]; then
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
@@ -2715,13 +3067,16 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             ran=$((ran + 1))
             continue
         fi
-        if ! windows_timed_assemble --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
-            >> "$build_stdout" 2>> "$build_stderr"; then
-            echo "FAIL: $name assemble failed" >&2
-            show_build_streams "$build_stdout" "$build_stderr"
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
+        if [ "$windows_needs_assemble" -eq 1 ]; then
+            WINDOWS_CURRENT_ASSEMBLY_CLASS=$windows_assembly_class
+            if ! windows_timed_assemble --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
+                >> "$build_stdout" 2>> "$build_stderr"; then
+                echo "FAIL: $name assemble failed" >&2
+                show_build_streams "$build_stdout" "$build_stderr"
+                failed=$((failed + 1))
+                ran=$((ran + 1))
+                continue
+            fi
         fi
         if ! native_objs=$(compile_windows_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr" "$case_dir_win"); then
             echo "FAIL: $name C dependency compile failed" >&2
@@ -2866,6 +3221,9 @@ if [ "$HOST_OS" = windows ] && [ "$WINDOWS_MANIFEST_QUEUED" -gt 0 ]; then
         exit 1
     fi
     windows_assert_queued_cases
+    if [ "$failed" -eq 0 ]; then
+        windows_validate_manifest_artifact_counts
+    fi
     windows_print_manifest_summary
 fi
 

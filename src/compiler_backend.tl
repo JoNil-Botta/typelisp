@@ -57124,6 +57124,28 @@
           (compiler-backend-object-push-u32! (&mut out) disp)))
       (compiler-backend-object-bytes-finish (& out)))))
 
+(define (compiler-backend-object-lea-rbp-disp-bytes [disp : i64] [reg : String]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
+    [rex : i64
+      (+
+        0x48
+        (if (compiler-backend-object-reg-high? reg)
+          4
+          0))]
+    (begin
+      (compiler-backend-object-push-u8! (&mut out) rex)
+      (compiler-backend-object-push-u8! (&mut out) 0x8d)
+      (if (compiler-backend-object-disp8? disp)
+        (begin
+          (compiler-backend-object-push-u8! (&mut out) (+ 0x45 (* reg-code 8)))
+          (compiler-backend-object-push-u8! (&mut out) disp))
+        (begin
+          (compiler-backend-object-push-u8! (&mut out) (+ 0x85 (* reg-code 8)))
+          (compiler-backend-object-push-u32! (&mut out) disp)))
+      (compiler-backend-object-bytes-finish (& out)))))
+
 (define (compiler-backend-object-store-slot-bytes [var-id : i64] [reg : String]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
@@ -57452,6 +57474,19 @@
   (compiler-backend-object-add-nonempty-bytes
     parts
     (compiler-backend-object-store-slot-bytes dst reg)))
+
+(define (compiler-backend-object-addr-of-to-var
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [dst : i64]
+  [src : i64]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-store-reg-to-var
+    (compiler-backend-object-add-nonempty-bytes
+      parts
+      (compiler-backend-object-lea-rbp-disp-bytes
+        (compiler-backend-object-slot-disp src)
+        "%rax"))
+    dst
+    "%rax"))
 
 (define (compiler-backend-object-move-value-to-var
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -57822,7 +57857,21 @@
       default-label
       total-switch)))
 
-(define (compiler-backend-object-binop-bytes [op : CompilerIrBinOp]) : String
+(define (compiler-backend-object-divmod-bytes
+  [signed : bool]
+  [remainder : bool]) : String
+  (object_target.compiler-backend-object-bytes-from-hex
+    (cond
+      ;; cqo; idivq %r8; optionally movq %rdx, %rax
+      [(and signed remainder) "489949f7f84889d0"]
+      [signed "489949f7f8"]
+      ;; xorl %edx, %edx; divq %r8; optionally movq %rdx, %rax
+      [remainder "31d249f7f04889d0"]
+      [else "31d249f7f0"])))
+
+(define (compiler-backend-object-binop-bytes
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : String
   (match op
     [(CompilerIrBinOp.Add)
       (object_target.compiler-backend-object-bytes-from-hex "4c01c0")]
@@ -57830,6 +57879,14 @@
       (object_target.compiler-backend-object-bytes-from-hex "4c29c0")]
     [(CompilerIrBinOp.Mul)
       (object_target.compiler-backend-object-bytes-from-hex "490fafc0")]
+    [(CompilerIrBinOp.Div)
+      (compiler-backend-object-divmod-bytes
+        (compiler-backend-type-signed? ty)
+        false)]
+    [(CompilerIrBinOp.Mod)
+      (compiler-backend-object-divmod-bytes
+        (compiler-backend-type-signed? ty)
+        true)]
     [(CompilerIrBinOp.Eq)
       (object_target.compiler-backend-object-bytes-from-hex
         "4c39c00f94c0480fb6c0")]
@@ -57870,22 +57927,22 @@
   (match op
     [(CompilerIrBinOp.Eq)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f94c0480fb6c0")]
+        "4885c00f94c0480fb6c0")]
     [(CompilerIrBinOp.Ne)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f95c0480fb6c0")]
+        "4885c00f95c0480fb6c0")]
     [(CompilerIrBinOp.Lt)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f9cc0480fb6c0")]
+        "4885c00f9cc0480fb6c0")]
     [(CompilerIrBinOp.Le)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f9ec0480fb6c0")]
+        "4885c00f9ec0480fb6c0")]
     [(CompilerIrBinOp.Gt)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f9fc0480fb6c0")]
+        "4885c00f9fc0480fb6c0")]
     [(CompilerIrBinOp.Ge)
       (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f9dc0480fb6c0")]
+        "4885c00f9dc0480fb6c0")]
     [_ ""]))
 
 (define (compiler-backend-object-binop
@@ -57903,7 +57960,7 @@
           (and (= value 0) (compiler-backend-compare-uses-zero-test? op))]
         [_ false])
         (compiler-backend-object-zero-compare-bytes op)
-        (compiler-backend-object-binop-bytes op))]
+        (compiler-backend-object-binop-bytes op ty))]
     (if (or
       (= (string.string-length op-bytes) 0)
       (compiler-backend-float-type? ty))
@@ -57915,10 +57972,10 @@
       (compiler-backend-object-store-reg-to-var
         (compiler-backend-object-add-nonempty-bytes
           (compiler-backend-object-load-value-to-reg
-            (compiler-backend-object-load-value-to-reg parts site lhs "%rax")
+            (compiler-backend-object-load-value-to-reg parts site rhs "%r8")
             site
-            rhs
-            "%r8")
+            lhs
+            "%rax")
           op-bytes)
         dst
         "%rax"))))
@@ -58430,11 +58487,12 @@
         [symbol : String (compiler-backend-user-symbol-id name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
-            (compiler-backend-object-value-ref-with-type
+            (compiler-backend-object-load-value-to-reg-with-type
               parts
               function
               value
-              ty)
+              ty
+              "%rax")
             function
             (cobj.CompilerObjectRelocationKind.RipAddress)
             symbol)
@@ -58483,7 +58541,11 @@
           (object_target.compiler-backend-object-add-text
             (object_target.compiler-backend-object-add-text-relocation
               (object_target.compiler-backend-object-add-text-relocation
-                (compiler-backend-object-value-ref parts function cond)
+                (compiler-backend-object-load-value-to-reg
+                  parts
+                  function
+                  cond
+                  "%rax")
                 function
                 (cobj.CompilerObjectRelocationKind.Branch)
                 true-symbol)
@@ -58519,10 +58581,11 @@
                                 (object_target.compiler-backend-object-add-text
                                   (object_target.compiler-backend-object-add-text-relocation
                                     (object_target.compiler-backend-object-add-text-relocation
-                                      (compiler-backend-object-value-ref
+                                      (compiler-backend-object-load-value-to-reg
                                         parts
                                         function
-                                        cond)
+                                        cond
+                                        "%rax")
                                       function
                                       (cobj.CompilerObjectRelocationKind.Branch)
                                       true-edge)
@@ -58815,9 +58878,10 @@
         function
         args
         0)]
-    ;; Operand-free instructions and raw address-of emit no object references.
+    ;; Operand-free instructions emit no object bytes.
     [(CompilerIrInstr.Alloc _ _) parts]
-    [(CompilerIrInstr.AddrOf _ _) parts]
+    [(CompilerIrInstr.AddrOf dst src)
+      (compiler-backend-object-addr-of-to-var parts dst src)]
     [(CompilerIrInstr.LaneId _ _ _) parts]
     [(CompilerIrInstr.EntryArgc _) parts]
     [(CompilerIrInstr.EntryArgv _) parts]

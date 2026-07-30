@@ -750,7 +750,10 @@ behavior.
 The assertion helpers in `stdlib/test.tl` are also intended for inline
 `(test ...)` items. They do not allocate on success; `assert-string-eq` takes
 borrowed `str` comparison inputs, while messages remain owned `String` values
-because the public `panic` API still takes owned text. Repository CI runs
+so failures can render composed diagnostics. In a generated `typelisp test`
+harness, failures are recorded and execution continues through the remaining
+assertions and tests. In any other program, a failed assertion still aborts.
+Repository CI runs
 `scripts/verify-inline-tests.sh`, so inline tests placed under stdlib modules or
 fixtures are discovered without a manifest edit.
 

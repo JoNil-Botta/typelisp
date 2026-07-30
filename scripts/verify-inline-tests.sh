@@ -179,7 +179,7 @@ if grep -q '^0$' "$run_counts"; then
     exit 1
 fi
 
-success_count=$(grep -c '^TypeLisp tests passed: ' "$batch_run_stderr" || true)
+success_count=$(grep -c '^TypeLisp tests: .* passed; 0 failed; .* total$' "$batch_run_stderr" || true)
 if [ "$success_count" -ne "$discovered_file_count" ]; then
     echo "inline test execution batch reported $success_count success summary line(s), expected $discovered_file_count" >&2
     show_streams "$batch_run_stdout" "$batch_run_stderr"

@@ -5819,6 +5819,28 @@
         "554889e54881ec00100000830c24004881ec00100000")]
     (and (string.eq linux direct) (string.eq windows probed))))
 
+(define (compiler-backend-object-runtime-state-encoding-ok?) : bool
+  (and
+    (string.eq
+      (compiler-backend-object-lea-rbp-disp-bytes -64 "%rax")
+      (object_target.compiler-backend-object-bytes-from-hex "488d45c0"))
+    (string.eq
+      (compiler-backend-object-zero-compare-bytes (CompilerIrBinOp.Eq))
+      (object_target.compiler-backend-object-bytes-from-hex
+        "4885c00f94c0480fb6c0"))
+    (string.eq
+      (compiler-backend-object-divmod-bytes false false)
+      (object_target.compiler-backend-object-bytes-from-hex "31d249f7f0"))
+    (string.eq
+      (compiler-backend-object-divmod-bytes false true)
+      (object_target.compiler-backend-object-bytes-from-hex "31d249f7f04889d0"))
+    (string.eq
+      (compiler-backend-object-divmod-bytes true false)
+      (object_target.compiler-backend-object-bytes-from-hex "489949f7f8"))
+    (string.eq
+      (compiler-backend-object-divmod-bytes true true)
+      (object_target.compiler-backend-object-bytes-from-hex "489949f7f84889d0"))))
+
 (define (compiler-backend-reg-part-entry-ok?
   [reg : String]
   [reg32 : String]
@@ -29955,7 +29977,8 @@
         (compiler-backend-aggregate-ok?)
         (compiler-backend-pack-immediate-word-shape-ok?)
         (compiler-backend-descriptor-pair-ok?)
-        (compiler-backend-object-windows-stack-probe-ok?)))
+        (compiler-backend-object-windows-stack-probe-ok?)
+        (compiler-backend-object-runtime-state-encoding-ok?)))
     (backend-and8
       (compiler-backend-literal-payload-ok?)
       (and

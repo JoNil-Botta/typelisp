@@ -836,7 +836,7 @@ EOF
     assert_contains "$WORKDIR/test-run-batch.stderr" "ok inc-basic"
     assert_contains "$WORKDIR/test-run-batch.stderr" "test batch-one"
     assert_contains "$WORKDIR/test-run-batch.stderr" "ok batch-two"
-    if [ "$(grep -c '^TypeLisp tests passed: ' "$WORKDIR/test-run-batch.stderr")" -ne 2 ]; then
+    if [ "$(grep -c '^TypeLisp tests: .* passed; 0 failed; .* total$' "$WORKDIR/test-run-batch.stderr")" -ne 2 ]; then
         fail "test execution batch did not report one success summary per source"
     fi
 
@@ -851,7 +851,7 @@ EOF
     cat > "$TEST_BATCH_SENTINEL_SRC" <<'EOF'
 (import "stdlib/test.tl")
 
-(test must-not-run-in-failed-batch
+(test runs-after-failed-file
   (assert-i64-eq 42 42 "isolation sentinel"))
 EOF
     TEST_BATCH_FAIL_LIST="$WORKDIR/inline-test-batch-fail.txt"
@@ -859,11 +859,13 @@ EOF
     # cli-gate-case stage1-wrapper-test-run-batch-failure wrapper run_expect_failure
     run_expect_failure test-run-batch-failure "$COMPILER" test --batch "$TEST_BATCH_FAIL_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-failure.stderr" "intentional batch failure"
-    assert_contains "$WORKDIR/test-run-batch-failure.stderr" "test: batch source failed: $TEST_BATCH_FAIL_SRC"
-    assert_not_contains "$WORKDIR/test-run-batch-failure.stderr" "must-not-run-in-failed-batch"
+    assert_contains "$WORKDIR/test-run-batch-failure.stderr" "FAILED intentional-batch-failure"
+    assert_contains "$WORKDIR/test-run-batch-failure.stderr" "ok runs-after-failed-file"
+    assert_not_contains "$WORKDIR/test-run-batch-failure.stderr" "test: batch source failed: $TEST_BATCH_FAIL_SRC"
+    assert_contains "$WORKDIR/test-run-batch-failure.stdout" "TypeLisp test batch failed: 1 of 3 file(s) failed; 3 test(s)"
     # cli-gate-case stage1-wrapper-test-run-batch-sentinel-fresh wrapper run_capture
     run_capture test-run-batch-sentinel-fresh "$COMPILER" test "$TEST_BATCH_SENTINEL_SRC" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
-    assert_contains "$WORKDIR/test-run-batch-sentinel-fresh.stderr" "ok must-not-run-in-failed-batch"
+    assert_contains "$WORKDIR/test-run-batch-sentinel-fresh.stderr" "ok runs-after-failed-file"
 
     TEST_BATCH_BAD_SRC="$WORKDIR/inline-test-batch-bad.tl"
     cat > "$TEST_BATCH_BAD_SRC" <<'EOF'
@@ -876,7 +878,7 @@ EOF
     run_expect_failure test-run-batch-compile-error "$COMPILER" test --batch "$TEST_BATCH_BAD_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-compile-error.stderr" "unbound name missing-inline-test-name"
     assert_contains "$WORKDIR/test-run-batch-compile-error.stderr" "test: batch source failed: $TEST_BATCH_BAD_SRC"
-    assert_not_contains "$WORKDIR/test-run-batch-compile-error.stderr" "must-not-run-in-failed-batch"
+    assert_not_contains "$WORKDIR/test-run-batch-compile-error.stderr" "runs-after-failed-file"
 
     TEST_BATCH_LOWER_BAD_SRC="$WORKDIR/inline-test-batch-lower-bad.tl"
     cat > "$TEST_BATCH_LOWER_BAD_SRC" <<'EOF'
@@ -891,7 +893,7 @@ EOF
     run_expect_failure test-run-batch-lower-error "$COMPILER" test --batch "$TEST_BATCH_LOWER_BAD_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-lower-error.stderr" "Expr value is compile-time only"
     assert_contains "$WORKDIR/test-run-batch-lower-error.stderr" "test: batch source failed: $TEST_BATCH_LOWER_BAD_SRC"
-    assert_not_contains "$WORKDIR/test-run-batch-lower-error.stderr" "must-not-run-in-failed-batch"
+    assert_not_contains "$WORKDIR/test-run-batch-lower-error.stderr" "runs-after-failed-file"
 
     echo "[host-action-cli] test"
     # cli-gate-case stage1-wrapper-test-run wrapper run_capture
@@ -899,7 +901,7 @@ EOF
     assert_empty "$WORKDIR/test-run.stdout"
     assert_contains "$WORKDIR/test-run.stderr" "test inc-basic"
     assert_contains "$WORKDIR/test-run.stderr" "ok inc-basic"
-    assert_contains "$WORKDIR/test-run.stderr" "TypeLisp tests passed: 1 test(s)"
+    assert_contains "$WORKDIR/test-run.stderr" "TypeLisp tests: 1 passed; 0 failed; 1 total"
     [ ! -f "$TEST_SRC.test.s" ] || {
         echo "test left scratch assembly behind: $TEST_SRC.test.s" >&2
         exit 1
@@ -917,14 +919,14 @@ EOF
     # cli-gate-case stage1-wrapper-test-no-tests-run wrapper run_capture
     run_capture test-no-tests-run "$COMPILER" test "$NO_TEST_SRC"
     assert_empty "$WORKDIR/test-no-tests-run.stdout"
-    assert_contains "$WORKDIR/test-no-tests-run.stderr" "TypeLisp tests passed: 0 test(s)"
+    assert_contains "$WORKDIR/test-no-tests-run.stderr" "TypeLisp tests: 0 passed; 0 failed; 0 total"
     TEST_BATCH_ZERO_LIST="$WORKDIR/inline-test-batch-zero.txt"
     printf '%s\n' "$NO_TEST_SRC" "$TEST_SRC" > "$TEST_BATCH_ZERO_LIST"
     # cli-gate-case stage1-wrapper-test-run-batch-zero wrapper run_capture
     run_capture test-run-batch-zero "$COMPILER" test --batch "$TEST_BATCH_ZERO_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-zero.stdout" "TypeLisp test file: $NO_TEST_SRC (0 test(s))"
     assert_contains "$WORKDIR/test-run-batch-zero.stdout" "TypeLisp test batch passed: 1 test(s) in 2 file(s)"
-    assert_contains "$WORKDIR/test-run-batch-zero.stderr" "TypeLisp tests passed: 0 test(s)"
+    assert_contains "$WORKDIR/test-run-batch-zero.stderr" "TypeLisp tests: 0 passed; 0 failed; 0 total"
     [ ! -f "$NO_TEST_SRC.test.s" ] || {
         echo "test no-tests left scratch assembly behind: $NO_TEST_SRC.test.s" >&2
         exit 1
@@ -1058,14 +1060,16 @@ EOF
     TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$FAIL_SRC" --stdlib-root "$ROOT/stdlib" 3>&2 > "$WORKDIR/test-fail.stdout" 2> "$WORKDIR/test-fail.stderr"
     fail_status=$?
     set -e
-    if [ "$fail_status" -eq 0 ]; then
-        echo "host-action CLI test failure case unexpectedly succeeded" >&2
+    if [ "$fail_status" -ne 1 ]; then
+        echo "host-action CLI test assertion failure exited $fail_status, expected 1" >&2
         exit 1
     fi
     assert_empty "$WORKDIR/test-fail.stdout"
     assert_contains "$WORKDIR/test-fail.stderr" "test failing-case"
     assert_contains "$WORKDIR/test-fail.stderr" "inline failure message"
-    assert_contains "$WORKDIR/test-fail.stderr" "typelisp test: test executable exited"
+    assert_contains "$WORKDIR/test-fail.stderr" "FAILED failing-case"
+    assert_contains "$WORKDIR/test-fail.stderr" "TypeLisp tests: 0 passed; 1 failed; 1 total"
+    assert_not_contains "$WORKDIR/test-fail.stderr" "typelisp test: test executable exited"
     [ ! -f "$FAIL_SRC.test.s" ] || {
         echo "failing test left scratch assembly behind: $FAIL_SRC.test.s" >&2
         exit 1

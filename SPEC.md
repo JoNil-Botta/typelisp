@@ -2872,8 +2872,21 @@ their inline tests checked merely because they were imported.
 the requested source into private unit-returning functions, skips any
 production `main`, generates a test-owned `main`, and runs the resulting
 executable. `typelisp test --check <file.tl>` type-checks the generated harness
-without assembling or linking. The runner is intended for unit-returning test
-bodies; assertion helpers in `stdlib.test` panic on failure.
+without assembling or linking. Before invoking each selected test, the runner
+prints its name and declaration location. It runs all selected tests after
+ordinary assertion failures, prints `ok` or `FAILED` per test, lists every
+recorded assertion message, and prints final passed, failed, and total counts
+in declaration order. Assertion helpers in `stdlib.test` record failures while
+a generated test harness is active; outside that harness they retain aborting
+behavior. A run exits `1` when assertions failed. A hard panic, trap, or other
+unexpected harness termination stops the process and is reported by the test
+command with exit `2`.
+
+`typelisp test --filter <substring>` selects inline-test names containing the
+case-sensitive substring. In package mode the same filter selects integration
+test paths. `typelisp test --list` prints the selected names and declaration
+locations without compiling or running a harness; it may be combined with
+`--filter` but not `--check`.
 
 Example:
 ```lisp test=check name=inline-test-declaration
@@ -6897,8 +6910,10 @@ tests, and labels are outside this staged rule.
 `test` runs inline `(test ...)` declarations. `test --check` type-checks the
 generated inline test harnesses without assembling or running them, and
 `test --check --batch <inputs.txt>` checks newline-separated input paths in
-one process. `test` defaults to the host target unless `--target <target>`
-is supplied.
+one process. `test --filter <substring>` selects inline-test names and package
+integration paths containing the substring. `test --list` lists the selected
+tests without running them. `test` defaults to the host target unless
+`--target <target>` is supplied.
 
 `doc` generates markdown documentation for a source file or package.
 `doc --test` checks TypeLisp fenced examples in documentation files, with
